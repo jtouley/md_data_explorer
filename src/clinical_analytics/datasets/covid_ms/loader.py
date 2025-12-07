@@ -1,5 +1,7 @@
 import polars as pl
 from pathlib import Path
+from typing import Optional
+from clinical_analytics.core.mapper import ColumnMapper
 
 def load_raw_data(path: Path) -> pl.DataFrame:
     """Read the raw CSV file using Polars for efficient processing."""
@@ -8,46 +10,28 @@ def load_raw_data(path: Path) -> pl.DataFrame:
 
     return pl.read_csv(path)
 
-def normalize_outcome(val: str) -> int:
-    """Normalize outcome values to binary integers."""
-    if val is None:
-        return 0
-    val = val.lower().strip()
-    if val == 'yes':
-        return 1
-    if val == 'no':
-        return 0
-    return 0
-
-def clean_data(df: pl.DataFrame) -> pl.DataFrame:
+def clean_data(df: pl.DataFrame, mapper: Optional[ColumnMapper] = None) -> pl.DataFrame:
     """
     Clean and standardize the COVID-MS dataframe using Polars.
 
-    1. Normalize hospitalization outcomes
-    2. Standardize sex column
-    3. Handle missing data
+    Now config-driven: Outcome transformations are applied via mapper.
+    Only basic data cleaning (null handling) is done here.
+
+    Args:
+        df: Raw Polars DataFrame
+        mapper: ColumnMapper instance for config-driven transformations
+
+    Returns:
+        Cleaned DataFrame with outcome transformations applied
     """
-    # Use Polars expressions for efficient data cleaning
+    # Basic data cleaning: handle nulls in sex column
     df = df.with_columns([
-        # Normalize outcomes using when-then-otherwise (Polars equivalent of apply)
-        pl.when(pl.col('covid19_admission_hospital').str.to_lowercase() == 'yes')
-          .then(1)
-          .otherwise(0)
-          .alias('outcome_hospitalized'),
-
-        pl.when(pl.col('covid19_icu_stay').str.to_lowercase() == 'yes')
-          .then(1)
-          .otherwise(0)
-          .alias('outcome_icu'),
-
-        pl.when(pl.col('covid19_ventilation').str.to_lowercase() == 'yes')
-          .then(1)
-          .otherwise(0)
-          .alias('outcome_ventilation'),
-
-        # Standardize Sex with fill_null
         pl.col('sex').fill_null('Unknown').cast(pl.Utf8).alias('sex')
     ])
+
+    # Apply outcome transformations via mapper (config-driven)
+    if mapper:
+        df = mapper.apply_outcome_transformations(df)
 
     return df
 

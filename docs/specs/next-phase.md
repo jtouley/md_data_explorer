@@ -1,20 +1,43 @@
-# Complete Polars Refactor and Validation
+# Plan: MIMIC-III Integration & QA Hardening
 
-We have implemented the Core architecture, Polars-based datasets (COVID-MS, Sepsis), and the UI. To complete the project, we will update the orchestration configuration and perform validation.
+## 1. Specification Alignment
 
-## 1. Update Orchestration Configuration
+- Update [docs/specs/spec_clinical_analytics_platform.md](docs/specs/spec_clinical_analytics_platform.md) to formally define "Phase 5: MIMIC-III & Advanced Analytics".
+- Update [docs/specs/IMPLEMENTATION_STATUS.md](docs/specs/IMPLEMENTATION_STATUS.md) to move target features from "Future" to "In Progress".
 
-- Update [`taskmaster.yaml`](taskmaster.yaml) to reflect the Polars-optimized implementation in agent descriptions and task details.
+## 2. Documentation & User Guide
 
-## 2. Validation Suite
+- **Update [README.md](README.md)**:
+- Add "User Guide for Non-Technical Users" section.
+- Explain how to launch the app simply (e.g., "Double click run_app.sh" or similar).
+- Describe the UI tabs in plain language (e.g., "The 'Analysis' tab is where you see the charts").
+- Add troubleshooting tips for common issues.
+- Update `scripts/run_app.sh` to print friendly start-up messages.
 
-- Create [`scripts/validate_platform.py`](scripts/validate_platform.py) to:
-    - Verify `CovidMSDataset` loading and cleaning (Polars backend).
-    - Verify `SepsisDataset` loading and aggregation (Polars backend).
-    - Test `run_logistic_regression` with the harmonized data.
-    - Ensure `UnifiedCohort` schema compliance.
+## 3. Orchestration Updates
 
-## 3. Execution & Verification
+- Update [taskmaster.yaml](taskmaster.yaml):
+- **Add Agent**: `validator` (Responsibilities: `pytest`, `data profiling`).
+- **Update Agent**: `ui_manager` (Add tasks: `Export results`, `Data profiling`).
+- **Update Agent**: `analyzer` (Add tasks: `Survival Analysis`, `Mixed Effects`).
+- **Expand Workflow**: `mimic_iii_analysis` (Define DuckDB connection & SQL extraction steps).
+- **New Workflow**: `quality_assurance` (Run tests & validation).
 
-- Run `uv sync` to ensure dependencies are installed.
-- Execute `python scripts/validate_platform.py` to verify system integrity.
+## 4. QA Infrastructure
+
+- Create `tests/` directory with `conftest.py` and initial unit tests for `Core` and `CovidMS`.
+- Create `src/clinical_analytics/core/profiling.py` for generating dataset statistics.
+
+## 5. MIMIC-III Scaffolding
+
+- Create [src/clinical_analytics/datasets/mimic3/loader.py](src/clinical_analytics/datasets/mimic3/loader.py):
+- Implement DuckDB connection logic.
+- Implement SQL query execution.
+- Create [src/clinical_analytics/datasets/mimic3/definition.py](src/clinical_analytics/datasets/mimic3/definition.py):
+- Concrete `Mimic3Dataset` class.
+
+## 6. Feature Implementation
+
+- **Analysis**: Add `run_survival_analysis` to `src/clinical_analytics/analysis/stats.py`.
+- **UI**: Add "Export Results" button and "Data Profiling" tab to `src/clinical_analytics/ui/app.py`.
+- **Caching**: Implement simple disk/memory caching for expensive queries.

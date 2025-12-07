@@ -12,8 +12,7 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
-from clinical_analytics.datasets.sepsis.definition import SepsisDataset
+from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.analysis.stats import run_logistic_regression
 from clinical_analytics.core.schema import UnifiedCohort
 
@@ -28,19 +27,40 @@ def main():
     st.title("🏥 Clinical Analytics Platform")
     st.markdown("Multi-dataset clinical analytics with unified schema")
 
+    # DYNAMIC DATASET DISCOVERY - No more hardcoding!
+    # Auto-discover all available datasets from registry
+    available_datasets = DatasetRegistry.list_datasets()
+    dataset_info = DatasetRegistry.get_all_dataset_info()
+
+    # Build display names from config
+    dataset_display_names = {}
+    for ds_name in available_datasets:
+        info = dataset_info[ds_name]
+        display_name = info['config'].get('display_name', ds_name.replace('_', '-').upper())
+        dataset_display_names[display_name] = ds_name
+
     # Sidebar for dataset selection
     st.sidebar.header("Dataset Selection")
-    dataset_choice = st.sidebar.selectbox(
-        "Choose Dataset",
-        ["COVID-MS", "Sepsis", "MIMIC-III (Coming Soon)"]
-    )
 
-    if dataset_choice == "MIMIC-III (Coming Soon)":
-        st.info("MIMIC-III dataset integration is planned for a future release.")
+    if not dataset_display_names:
+        st.error("No datasets found! Please check your dataset implementations.")
         return
 
-    # Load selected dataset
-    with st.spinner(f"Loading {dataset_choice} dataset..."):
+    dataset_choice_display = st.sidebar.selectbox(
+        "Choose Dataset",
+        list(dataset_display_names.keys())
+    )
+
+    # Get internal dataset name
+    dataset_choice = dataset_display_names[dataset_choice_display]
+
+    # Show dataset info in sidebar
+    info = dataset_info[dataset_choice]
+    st.sidebar.markdown(f"**Status:** {info['config'].get('status', 'unknown')}")
+    st.sidebar.markdown(f"**Source:** {info['config'].get('source', 'N/A')}")
+
+    # Load selected dataset using registry (no more if/else!)
+    with st.spinner(f"Loading {dataset_choice_display} dataset..."):
         dataset = load_dataset(dataset_choice)
 
         if dataset is None:
@@ -128,14 +148,14 @@ def main():
 
 
 def load_dataset(dataset_name: str):
-    """Load the selected dataset."""
+    """
+    Load the selected dataset using registry factory method.
+
+    NO MORE HARDCODED IF/ELSE! Registry auto-discovers and instantiates.
+    """
     try:
-        if dataset_name == "COVID-MS":
-            dataset = CovidMSDataset()
-        elif dataset_name == "Sepsis":
-            dataset = SepsisDataset()
-        else:
-            return None
+        # Use registry factory - completely dynamic
+        dataset = DatasetRegistry.get_dataset(dataset_name)
 
         # Validate and load
         if not dataset.validate():
@@ -145,8 +165,12 @@ def load_dataset(dataset_name: str):
         dataset.load()
         return dataset
 
+    except KeyError as e:
+        st.error(f"Dataset '{dataset_name}' not found in registry: {str(e)}")
+        return None
     except Exception as e:
         st.error(f"Error loading dataset: {str(e)}")
+        st.exception(e)
         return None
 
 

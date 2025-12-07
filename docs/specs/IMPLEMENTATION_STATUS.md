@@ -224,20 +224,38 @@ Streamlit UI (Visualization)
 
 ---
 
-## Future Enhancements
+## Phase 5: In Progress (MIMIC-III & Advanced Analytics)
 
-### Planned (MIMIC-III Integration)
+### 🔄 MIMIC-III Integration
 - [ ] DuckDB backend implementation
 - [ ] SQL-based cohort extraction
 - [ ] 30-day mortality analysis
 - [ ] Antibiotic resistance analysis
 
-### Potential Improvements
+### 🔄 QA & Testing Infrastructure
 - [ ] Add unit tests with pytest
+- [ ] Create test fixtures and conftest.py
+- [ ] Implement integration tests
+- [ ] Code coverage reporting
+
+### 🔄 Advanced Features
 - [ ] Implement caching for large datasets
 - [ ] Add data profiling dashboard
-- [ ] Export results to various formats
-- [ ] Add more statistical models (survival analysis, mixed effects)
+- [ ] Export results to various formats (CSV, Excel, JSON)
+- [ ] Add survival analysis (Kaplan-Meier, Cox regression)
+- [ ] Add mixed effects models for clustered data
+
+### 🔄 Documentation & UX
+- [ ] Enhanced user guide for non-technical users
+- [ ] Troubleshooting section in README
+- [ ] Friendly startup messages
+- [ ] UI/UX improvements
+
+### Future Enhancements
+- [ ] Real-time data streaming support
+- [ ] Machine learning model integration
+- [ ] Multi-center study support
+- [ ] Cloud deployment templates
 
 ---
 

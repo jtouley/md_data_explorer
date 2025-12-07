@@ -126,11 +126,71 @@ class ClinicalDataset(ABC):
 
 ---
 
-## 7. Execution Plan
+## 7. Phase 5: MIMIC-III & Advanced Analytics
 
-1. **Scaffold**: Create directory structure and `pyproject.toml`.
-2. **Core**: Implement `ClinicalDataset` interface.
-3. **COVID-MS**: Implement `CovidMSDataset` class.
-4. **Validation**: Verify COVID-MS analysis works.
-5. **Sepsis**: Implement `SepsisDataset` class (placeholder if data missing).
-6. **UI**: Connect both to Streamlit.
+### Agent ID: `MIMIC_III_AGENT`
+
+**Status:** In Progress
+**Source:** MIMIC-III Clinical Database
+
+### Tasks
+
+1. **DuckDB Backend Implementation**:
+   - Implement `Mimic3Dataset` class with DuckDB connection support
+   - SQL-based cohort extraction from relational tables
+   - Support for ADMISSIONS, PATIENTS, DIAGNOSES_ICD tables
+   - Efficient query execution and data loading
+
+2. **Advanced Statistical Analysis**:
+   - `run_survival_analysis()`: Kaplan-Meier curves and Cox regression
+   - `run_mixed_effects()`: Hierarchical models for clustered data
+   - Time-series analysis for ICU vital signs
+   - Risk stratification models
+
+3. **Data Quality & Profiling**:
+   - `src/clinical_analytics/core/profiling.py`: Dataset profiling module
+   - Missing data visualization and reporting
+   - Distribution analysis for numeric features
+   - Categorical feature frequency tables
+   - Data quality metrics and validation
+
+4. **Enhanced UI Features**:
+   - **Export Results**: CSV, Excel, JSON export functionality
+   - **Data Profiling Tab**: Interactive data quality dashboard
+   - **Advanced Filters**: Multi-level filtering and cohort building
+   - **Caching**: Disk/memory caching for expensive queries
+   - **Visualization**: Enhanced plots with Plotly/Altair
+
+5. **Testing & QA Infrastructure**:
+   - Unit tests for core modules with `pytest`
+   - Integration tests for dataset loading
+   - Regression tests for statistical analysis
+   - Continuous validation suite
+   - Code coverage reporting
+
+### Deliverables
+
+- `src/clinical_analytics/datasets/mimic3/`
+  - `loader.py`: DuckDB connection and SQL query execution
+  - `definition.py`: `Mimic3Dataset` implementation
+  - `queries.py`: Common SQL queries for cohort extraction
+
+- `src/clinical_analytics/core/profiling.py`
+- `src/clinical_analytics/analysis/survival.py`
+- `tests/` directory with comprehensive test suite
+- Enhanced `ui/app.py` with export and profiling features
+- Updated documentation and user guide
+
+---
+
+## 8. Execution Plan
+
+1. **Scaffold**: Create directory structure and `pyproject.toml`. ✅
+2. **Core**: Implement `ClinicalDataset` interface. ✅
+3. **COVID-MS**: Implement `CovidMSDataset` class. ✅
+4. **Validation**: Verify COVID-MS analysis works. ✅
+5. **Sepsis**: Implement `SepsisDataset` class (placeholder if data missing). ✅
+6. **UI**: Connect both to Streamlit. ✅
+7. **QA**: Implement testing infrastructure. 🔄 In Progress
+8. **MIMIC-III**: Implement DuckDB backend and dataset. 🔄 In Progress
+9. **Advanced Analytics**: Add survival analysis and profiling. 🔄 In Progress
