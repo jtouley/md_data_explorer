@@ -134,12 +134,75 @@ class TestColumnMapper:
         # Test equals filter
         result = mapper.apply_filters(df, {'confirmed_only': True})
         assert len(result) == 2
-        assert all(result['status'].to_list() == ['yes', 'yes'])
+        assert result['status'].to_list() == ['yes', 'yes']
 
         # Test with False
         result = mapper.apply_filters(df, {'confirmed_only': False})
         assert len(result) == 2
-        assert all(result['status'].to_list() == ['no', 'no'])
+        assert result['status'].to_list() == ['no', 'no']
+
+    def test_apply_filters_with_different_types(self):
+        """Test boolean filters with different column types (regression test for type comparison error)."""
+        # Test with integer column
+        config_int = {
+            'filters': {
+                'active_int': {
+                    'type': 'equals',
+                    'column': 'active'
+                }
+            }
+        }
+        mapper_int = ColumnMapper(config_int)
+        df_int = pl.DataFrame({
+            'active': [1, 0, 1, 0],
+            'id': ['A', 'B', 'C', 'D']
+        })
+
+        result = mapper_int.apply_filters(df_int, {'active_int': True})
+        assert len(result) == 2
+        assert result['active'].to_list() == [1, 1]
+
+        result = mapper_int.apply_filters(df_int, {'active_int': False})
+        assert len(result) == 2
+        assert result['active'].to_list() == [0, 0]
+
+        # Test with boolean column
+        config_bool = {
+            'filters': {
+                'active_bool': {
+                    'type': 'equals',
+                    'column': 'active'
+                }
+            }
+        }
+        mapper_bool = ColumnMapper(config_bool)
+        df_bool = pl.DataFrame({
+            'active': [True, False, True, False],
+            'id': ['A', 'B', 'C', 'D']
+        })
+
+        result = mapper_bool.apply_filters(df_bool, {'active_bool': True})
+        assert len(result) == 2
+        assert result['active'].to_list() == [True, True]
+
+        # Test with float column
+        config_float = {
+            'filters': {
+                'active_float': {
+                    'type': 'equals',
+                    'column': 'active'
+                }
+            }
+        }
+        mapper_float = ColumnMapper(config_float)
+        df_float = pl.DataFrame({
+            'active': [1.0, 0.0, 1.0, 0.0],
+            'id': ['A', 'B', 'C', 'D']
+        })
+
+        result = mapper_float.apply_filters(df_float, {'active_float': True})
+        assert len(result) == 2
+        assert result['active'].to_list() == [1.0, 1.0]
 
     def test_apply_aggregations(self):
         """Test aggregation engine."""

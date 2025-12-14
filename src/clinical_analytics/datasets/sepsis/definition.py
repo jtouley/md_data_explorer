@@ -2,23 +2,26 @@ from pathlib import Path
 import pandas as pd
 import polars as pl
 from typing import Optional
+import ibis
 
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.core.mapper import ColumnMapper, load_dataset_config
+from clinical_analytics.core.mapper import load_dataset_config, ColumnMapper
+from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.datasets.sepsis.loader import load_and_aggregate, find_psv_files
+
 
 class SepsisDataset(ClinicalDataset):
     """
     Implementation for PhysioNet Challenge 2019 Sepsis Dataset.
     Source: https://physionet.org/content/challenge-2019/
 
-    Uses Polars for efficient PSV processing, returns Pandas for stats compatibility.
-    NOW CONFIG-DRIVEN: Uses datasets.yaml for all mappings and settings.
+    Hybrid approach: Uses Polars to aggregate PSV files (time-series -> patient-level),
+    then registers with DuckDB and uses semantic layer for querying.
     """
 
     def __init__(self, source_path: Optional[str] = None):
-        # Load config FIRST - no more hardcoded defaults!
+        # Load config
         self.config = load_dataset_config('sepsis')
 
         # Use config default if not provided
@@ -26,12 +29,11 @@ class SepsisDataset(ClinicalDataset):
             source_path = self.config['init_params']['source_path']
 
         super().__init__(name="sepsis", source_path=source_path)
-        self._data: Optional[pl.DataFrame] = None
-
-        # Initialize config-driven mapper
-        self.mapper = ColumnMapper(self.config)
+        self._aggregated_data: Optional[pl.DataFrame] = None
+        self.semantic: Optional[SemanticLayer] = None
 
     def validate(self) -> bool:
+        """Validate that PSV files exist."""
         if not self.source_path or not self.source_path.exists():
             return False
         # Check if any .psv files exist
@@ -42,52 +44,68 @@ class SepsisDataset(ClinicalDataset):
             return False
 
     def load(self) -> None:
-        """Load and aggregate PSV files using Polars."""
+        """
+        Load and aggregate PSV files using Polars, then register with DuckDB.
+        
+        Since Sepsis requires time-series aggregation, we use Polars for that,
+        then register the aggregated result with DuckDB for semantic layer querying.
+        """
         if not self.validate():
-            # For the purpose of the scaffold, if validation fails (no data),
-            # we don't crash, but warn.
             print(f"WARNING: No PSV files found in {self.source_path}. Sepsis dataset will be empty.")
-            self._data = pl.DataFrame()
+            self._aggregated_data = pl.DataFrame()
             return
 
-        # Load with mapper for config-driven aggregation
-        self._data = load_and_aggregate(self.source_path, mapper=self.mapper)
+        # Use existing Polars aggregation logic (it works well for this)
+        mapper = ColumnMapper(self.config)
+        self._aggregated_data = load_and_aggregate(self.source_path, mapper=mapper)
+        
+        # Register aggregated data with DuckDB for semantic layer
+        if len(self._aggregated_data) > 0:
+            con = ibis.duckdb.connect()
+            # Convert Polars to Pandas (Ibis works with pandas)
+            df_pandas = self._aggregated_data.to_pandas()
+            
+            # Register pandas DataFrame with DuckDB using the underlying connection
+            # Ibis DuckDB connection wraps a DuckDB connection
+            import duckdb
+            # Get the underlying DuckDB connection from Ibis
+            # Ibis stores it in _con or we can access via execute
+            duckdb_con = con.con if hasattr(con, 'con') else duckdb.connect()
+            duckdb_con.register('sepsis_aggregated', df_pandas)
+            
+            # Create semantic layer with custom config that points to the registered table
+            semantic_config = self.config.copy()
+            semantic_config['init_params'] = {'db_table': 'sepsis_aggregated'}
+            
+            self.semantic = SemanticLayer('sepsis', config=semantic_config)
+            # Override the connection to use the one we just created
+            self.semantic.con = con
+            self.semantic.raw = con.table('sepsis_aggregated')
+            self.semantic._base_view = None  # Force rebuild with new raw table
 
     def get_cohort(self, **filters) -> pd.DataFrame:
         """
-        Return analysis cohort in Pandas format for statsmodels compatibility.
-
-        NOW CONFIG-DRIVEN: All mappings, filters, and defaults come from datasets.yaml
+        Return analysis cohort - uses semantic layer for SQL generation.
+        
+        Aggregation is done once in load(), then semantic layer handles
+        all filtering and transformation via SQL.
         """
-        if self._data is None:
+        if self._aggregated_data is None:
             self.load()
 
-        if len(self._data) == 0:
+        if len(self._aggregated_data) == 0:
             return pd.DataFrame(columns=UnifiedCohort.REQUIRED_COLUMNS)
 
-        df = self._data.clone()
-
-        # Apply filters using mapper (config-driven)
-        # Remove target_outcome from filters (it's not a data filter)
+        # Extract outcome override if provided
+        outcome_col = filters.get("target_outcome")
+        
+        # Remove target_outcome from filters
         filter_only = {k: v for k, v in filters.items() if k != "target_outcome"}
-        df = self.mapper.apply_filters(df, filter_only)
-
-        # Determine which outcome to use (from config or override)
-        outcome_col = filters.get("target_outcome", self.mapper.get_default_outcome())
-
-        # Get config-driven defaults
-        time_zero_value = self.mapper.get_time_zero_value()
-        outcome_label = self.mapper.get_default_outcome_label(outcome_col)
-
-        # Use mapper to transform to UnifiedCohort schema
-        # This uses datasets.yaml column_mapping instead of hardcoded logic
-        cohort = self.mapper.map_to_unified_cohort(
-            df,
-            time_zero_value=time_zero_value,
+        
+        # Delegate to semantic layer
+        return self.semantic.get_cohort(
             outcome_col=outcome_col,
-            outcome_label=outcome_label
+            filters=filter_only,
+            show_sql=False
         )
-
-        # Convert to Pandas for statsmodels compatibility
-        return cohort.to_pandas()
 

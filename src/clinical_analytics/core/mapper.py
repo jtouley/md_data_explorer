@@ -76,9 +76,23 @@ class ColumnMapper:
                 # Build Polars expression for mapping
                 expr = pl.lit(0)  # default
                 for key, value in mapping.items():
-                    expr = pl.when(
-                        pl.col(source_col).str.to_lowercase() == key.lower()
-                    ).then(value).otherwise(expr)
+                    # Handle both string and boolean keys
+                    if isinstance(key, bool):
+                        # Boolean key: compare directly
+                        expr = pl.when(
+                            pl.col(source_col) == key
+                        ).then(value).otherwise(expr)
+                    elif isinstance(key, str):
+                        # String key: convert to lowercase for comparison
+                        # Handle case where source column might be string or boolean
+                        expr = pl.when(
+                            pl.col(source_col).cast(pl.Utf8).str.to_lowercase() == key.lower()
+                        ).then(value).otherwise(expr)
+                    else:
+                        # Numeric or other types: direct comparison
+                        expr = pl.when(
+                            pl.col(source_col) == key
+                        ).then(value).otherwise(expr)
 
                 df = df.with_columns([expr.alias(outcome_name)])
 
@@ -119,18 +133,29 @@ class ColumnMapper:
                 # Simple equality filter
                 if isinstance(filter_value, bool):
                     # Boolean filter - check for yes/no strings or boolean values
-                    if filter_value:
-                        df = df.filter(
-                            (pl.col(column).str.to_lowercase() == 'yes') |
-                            (pl.col(column) == True) |
-                            (pl.col(column) == 1)
-                        )
+                    # Need to handle different column types separately to avoid type errors
+                    col_dtype = df[column].dtype
+
+                    # Define type-specific truthy/falsy value mappings
+                    int_types = [pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64]
+                    float_types = [pl.Float32, pl.Float64]
+                    string_types = [pl.Utf8, pl.Categorical]
+
+                    # Get the comparison value based on column type and filter value
+                    if col_dtype in string_types:
+                        comparison_value = 'yes' if filter_value else 'no'
+                        df = df.filter(pl.col(column).str.to_lowercase() == comparison_value)
+                    elif col_dtype == pl.Boolean:
+                        df = df.filter(pl.col(column) == filter_value)
+                    elif col_dtype in int_types:
+                        comparison_value = 1 if filter_value else 0
+                        df = df.filter(pl.col(column) == comparison_value)
+                    elif col_dtype in float_types:
+                        comparison_value = 1.0 if filter_value else 0.0
+                        df = df.filter(pl.col(column) == comparison_value)
                     else:
-                        df = df.filter(
-                            (pl.col(column).str.to_lowercase() == 'no') |
-                            (pl.col(column) == False) |
-                            (pl.col(column) == 0)
-                        )
+                        # Unknown type - try direct comparison
+                        df = df.filter(pl.col(column) == filter_value)
                 else:
                     df = df.filter(pl.col(column) == filter_value)
                     

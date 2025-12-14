@@ -39,13 +39,25 @@ agents:
 
   ui_manager:
     description: "Manages Streamlit UI interactions"
-    implementation: "Streamlit-based interactive dashboard"
+    implementation: "Streamlit-based interactive dashboard with tabs and export"
     tasks:
-      - "Handle dataset selection (COVID-MS, Sepsis, MIMIC-III)"
+      - "Handle dataset selection via registry auto-discovery"
       - "Display data previews and statistics"
       - "Run interactive logistic regression analysis"
       - "Visualize results with tables and metrics"
       - "Manage user interactions and filters"
+      - "Provide data export (CSV, JSON)"
+      - "Display data profiling reports"
+
+  qa_validator:
+    description: "Validates code quality, tests, and configuration"
+    implementation: "pytest-based test suite with coverage tracking"
+    tasks:
+      - "Run unit tests for mapper, registry, datasets"
+      - "Run integration tests for UI workflows"
+      - "Verify config-driven architecture (no hardcoding)"
+      - "Check idempotency of transformations"
+      - "Validate type safety in filters"
 
 workflows:
   covid_ms_analysis:
@@ -95,6 +107,49 @@ workflows:
         action: "Mortality and resistance analysis"
       - agent: ui_manager
         action: "Display results"
+
+  qa_full_validation:
+    description: "Complete QA validation workflow"
+    steps:
+      - agent: qa_validator
+        action: "Run full test suite"
+        command: "uv run pytest tests/ -v"
+        expected: "44+ tests passing"
+      - agent: qa_validator
+        action: "Check test coverage"
+        command: "uv run pytest tests/ --cov=src/clinical_analytics --cov-report=term"
+        threshold: "80% coverage minimum"
+      - agent: qa_validator
+        action: "Validate configuration"
+        checks:
+          - "All datasets use config from datasets.yaml"
+          - "No hardcoded transformations in loaders"
+          - "UI uses registry auto-discovery"
+
+  qa_regression_tests:
+    description: "Regression test workflow for critical bug fixes"
+    steps:
+      - agent: qa_validator
+        action: "Test type comparison in filters"
+        test: "tests/test_mapper.py::TestColumnMapper::test_apply_filters_with_different_types"
+      - agent: qa_validator
+        action: "Test boolean filter type safety"
+        test: "tests/test_ui_integration.py::TestUIDatasetIntegration::test_boolean_filter_type_safety"
+      - agent: qa_validator
+        action: "Test idempotency"
+        tests:
+          - "tests/test_mapper.py::TestColumnMapper::test_idempotency"
+          - "tests/test_covid_ms_dataset.py::TestCovidMSDataset::test_idempotency"
+
+  qa_pre_commit:
+    description: "Quick validation before commits"
+    steps:
+      - agent: qa_validator
+        action: "Run fast unit tests"
+        command: "uv run pytest tests/test_mapper.py tests/test_registry.py -v"
+      - agent: qa_validator
+        action: "Check code formatting"
+        command: "uv run ruff check src/"
 
 settings:
   log_level: "INFO"

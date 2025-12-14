@@ -73,6 +73,44 @@ covid_ms:
       - ms_type
       - has_comorbidities
 
+  # Metrics definitions (for query builder)
+  metrics:
+    hospitalization_rate:
+      expression: "outcome_hospitalized.mean()"
+      type: "rate"
+      label: "Hospitalization Rate"
+      description: "Proportion of patients hospitalized"
+    icu_rate:
+      expression: "outcome_icu.mean()"
+      type: "rate"
+      label: "ICU Admission Rate"
+    ventilation_rate:
+      expression: "outcome_ventilation.mean()"
+      type: "rate"
+      label: "Ventilation Rate"
+    patient_count:
+      expression: "count()"
+      type: "count"
+      label: "Patient Count"
+
+  # Dimensions definitions (for query builder)
+  dimensions:
+    age_group:
+      label: "Age Group"
+      type: "categorical"
+    sex:
+      label: "Sex"
+      type: "categorical"
+    dmt:
+      label: "DMT Type"
+      type: "categorical"
+    ms_type:
+      label: "MS Type"
+      type: "categorical"
+    has_comorbidities:
+      label: "Has Comorbidities"
+      type: "boolean"
+
   # Filter definitions
   filters:
     confirmed_only:
@@ -142,6 +180,37 @@ sepsis:
 
     categorical_variables:
       - gender
+
+  # Metrics definitions
+  metrics:
+    sepsis_rate:
+      expression: "sepsis_label.mean()"
+      type: "rate"
+      label: "Sepsis Rate"
+    patient_count:
+      expression: "count()"
+      type: "count"
+      label: "Patient Count"
+    avg_age:
+      expression: "age.mean()"
+      type: "continuous"
+      label: "Average Age"
+    avg_hours:
+      expression: "num_hours.mean()"
+      type: "continuous"
+      label: "Average ICU Hours"
+
+  # Dimensions definitions
+  dimensions:
+    age:
+      label: "Age"
+      type: "continuous"
+    gender:
+      label: "Gender"
+      type: "categorical"
+    num_hours:
+      label: "ICU Hours"
+      type: "continuous"
 
   # Data aggregation (for time-series to patient-level)
   aggregation:

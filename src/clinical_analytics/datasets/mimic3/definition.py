@@ -1,140 +1,86 @@
 """
-MIMIC-III Dataset Definition - DuckDB/Postgres-based implementation.
+MIMIC-III Dataset Definition - Config-driven with Semantic Layer.
 
-Config-driven implementation for MIMIC-III Clinical Database.
+Follows the standard pattern documented in IBIS_SEMANTIC_LAYER.md.
 """
 
 from pathlib import Path
 import pandas as pd
-import polars as pl
 from typing import Optional
 
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.core.mapper import ColumnMapper, load_dataset_config
-from clinical_analytics.datasets.mimic3.loader import MIMIC3Loader
+from clinical_analytics.core.mapper import load_dataset_config
+from clinical_analytics.core.semantic import SemanticLayer
 
 
 class Mimic3Dataset(ClinicalDataset):
     """
     Implementation for MIMIC-III Clinical Database.
 
-    Uses DuckDB for SQL-based data extraction.
-    Config-driven via datasets.yaml.
+    Follows standard semantic layer pattern with special handling for DB sources.
     """
 
-    def __init__(self, db_path: Optional[str] = None, db_connection=None):
-        # Load config FIRST - config-driven!
+    def __init__(self, db_path: Optional[str] = None):
         self.config = load_dataset_config('mimic3')
 
         # Use config default if not provided
-        if db_path is None and db_connection is None:
+        if db_path is None:
             db_path = self.config['init_params'].get('db_path')
 
-        super().__init__(name="mimic3", source_path=None, db_connection=db_connection)
+        # Note: source_path will be None for DB-based datasets
+        super().__init__(name="mimic3", source_path=Path(db_path) if db_path else None)
 
-        self.db_path = Path(db_path) if db_path else None
-        self._data: Optional[pl.DataFrame] = None
-
-        # Initialize config-driven mapper
-        self.mapper = ColumnMapper(self.config)
-
-        # Initialize loader
-        self.loader = MIMIC3Loader(db_path=self.db_path, db_connection=db_connection)
+        # Initialize semantic layer (standard pattern)
+        self.semantic = SemanticLayer('mimic3', config=self.config)
 
     def validate(self) -> bool:
         """
-        Validate database connection and required tables.
+        Validate that database is accessible.
 
         Returns:
-            True if database accessible and has required tables
+            True if database exists and has data, False otherwise
         """
+        if not self.source_path or not self.source_path.exists():
+            return False
+
         try:
-            self.loader.connect()
-
-            # Check if required tables exist
-            table_status = self.loader.check_tables_exist()
-
-            # At minimum, need patients and admissions tables
-            required = ['patients', 'admissions']
-            has_required = all(table_status.get(t, False) for t in required)
-
-            self.loader.disconnect()
-
-            return has_required
-
+            # SemanticLayer already registered the source
+            # Try to query count to verify it works
+            if hasattr(self.semantic, 'raw') and self.semantic.raw is not None:
+                count = self.semantic.raw.count().execute()
+                return count > 0
+            return False
         except Exception as e:
-            print(f"Validation failed: {e}")
+            print(f"MIMIC-III validation failed: {e}")
             return False
 
     def load(self) -> None:
         """
-        Load data from database using SQL query from config.
+        Load is a no-op - data is queried on-demand via semantic layer.
 
-        Query must be specified in config (sql_queries.cohort_extraction).
+        The semantic layer registers the source with DuckDB but doesn't load into memory.
         """
         if not self.validate():
-            print(f"WARNING: Database validation failed. Dataset will be empty.")
-            self._data = pl.DataFrame()
-            return
-
-        # Get query from config (required, no fallback)
-        query = self.config.get('sql_queries', {}).get('cohort_extraction')
-        
-        if not query:
-            raise ValueError(
-                "SQL query not found in config. "
-                "Please define sql_queries.cohort_extraction in datasets.yaml for mimic3"
-            )
-
-        # Load data
-        self._data = self.loader.load_cohort(query=query)
-
-        print(f"Loaded {len(self._data)} records from {self.name}")
+            print(f"WARNING: MIMIC-III database not available. Dataset will be empty.")
+        else:
+            print(f"Semantic layer initialized for {self.name}")
 
     def get_cohort(self, **filters) -> pd.DataFrame:
         """
-        Return analysis cohort in Pandas format for statsmodels compatibility.
+        Return analysis cohort using semantic layer (standard pattern).
 
-        NOW CONFIG-DRIVEN: All mappings and defaults come from datasets.yaml
+        All logic comes from datasets.yaml config.
         """
-        if self._data is None:
-            self.load()
-
-        if len(self._data) == 0:
+        if not self.validate():
+            # Return empty DataFrame with correct schema
             return pd.DataFrame(columns=UnifiedCohort.REQUIRED_COLUMNS)
 
-        df = self._data.clone()
-
-        # Apply filters using mapper (config-driven)
-        # Remove target_outcome from filters (it's not a data filter)
+        # Delegate to semantic layer (standard pattern)
+        outcome_col = filters.get("target_outcome")
         filter_only = {k: v for k, v in filters.items() if k != "target_outcome"}
-        df = self.mapper.apply_filters(df, filter_only)
 
-        # Determine which outcome to use (from config or override)
-        outcome_col = filters.get("target_outcome", self.mapper.get_default_outcome())
-
-        # Get config-driven defaults
-        time_zero_value = self.mapper.get_time_zero_value()
-        outcome_label = self.mapper.get_default_outcome_label(outcome_col)
-
-        # Use mapper to transform to UnifiedCohort schema
-        # Since MIMIC-III already has proper column names from SQL,
-        # we may need less mapping than file-based datasets
-        cohort = self.mapper.map_to_unified_cohort(
-            df,
-            time_zero_value=time_zero_value,
+        return self.semantic.get_cohort(
             outcome_col=outcome_col,
-            outcome_label=outcome_label
+            filters=filter_only
         )
-
-        # Convert to Pandas for statsmodels compatibility
-        return cohort.to_pandas()
-
-    def __del__(self):
-        """Cleanup: disconnect loader if still connected."""
-        if hasattr(self, 'loader') and self.loader:
-            try:
-                self.loader.disconnect()
-            except:
-                pass

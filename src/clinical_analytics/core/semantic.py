@@ -1,0 +1,489 @@
+"""
+Semantic Layer - Dynamic SQL Generation via Ibis.
+
+This module provides a DRY, config-driven semantic layer that generates SQL
+behind the scenes based on dataset configurations. No more custom Python
+mapping logic - just define your logic in YAML and let Ibis compile to SQL.
+"""
+
+import ibis
+from ibis import _
+from typing import Dict, Any, List, Optional
+from pathlib import Path
+import pandas as pd
+
+from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.core.mapper import load_dataset_config
+
+
+class SemanticLayer:
+    """
+    Base semantic layer class that generates SQL dynamically from config.
+    
+    DRY Principle: All datasets use this same class, just with different configs.
+    """
+    
+    def __init__(self, dataset_name: str, config: Optional[Dict[str, Any]] = None):
+        """
+        Initialize semantic layer for a dataset.
+        
+        Args:
+            dataset_name: Name of dataset (e.g., 'covid_ms', 'sepsis')
+            config: Optional config dict (if None, loads from datasets.yaml)
+        """
+        if config is None:
+            config = load_dataset_config(dataset_name)
+        
+        self.config = config
+        self.dataset_name = dataset_name
+        
+        # Connect to DuckDB (in-memory for now, can be file-based later)
+        self.con = ibis.duckdb.connect()
+        
+        # Register data source
+        self._register_source()
+        
+        # Build base semantic view (lazy - no SQL executed yet)
+        self._base_view = None
+    
+    def _register_source(self):
+        """Register the raw data source (CSV, table, etc.) with DuckDB."""
+        init_params = self.config.get('init_params', {})
+        
+        if 'source_path' in init_params:
+            source_path = Path(init_params['source_path'])
+            if not source_path.exists():
+                raise FileNotFoundError(f"Source file not found: {source_path}")
+            
+            table_name = f"{self.dataset_name}_raw"
+            
+            # Check if it's a directory (for multi-file datasets like Sepsis)
+            if source_path.is_dir():
+                # For directory-based sources, we need to aggregate first
+                # This is handled by dataset-specific logic
+                # For now, we'll use DuckDB's ability to read multiple files
+                # But Sepsis needs special handling - see SepsisDataset
+                raise NotImplementedError(
+                    f"Directory sources need dataset-specific handling. "
+                    f"See {self.dataset_name} dataset implementation."
+                )
+            else:
+                # Single file (CSV)
+                # Use DuckDB's read_csv function via SQL
+                # Access underlying DuckDB connection from Ibis
+                abs_path = str(source_path.resolve())
+                # Get underlying DuckDB connection and execute raw SQL
+                duckdb_con = self.con.con
+                # Create table using raw DuckDB SQL
+                duckdb_con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM read_csv_auto('{abs_path}')")
+                # Now reference it via Ibis
+                self.raw = self.con.table(table_name)
+            
+        elif 'db_table' in init_params:
+            # Database table source (already registered)
+            self.raw = self.con.table(init_params['db_table'])
+        else:
+            raise ValueError(f"No valid source found in config for {self.dataset_name}")
+    
+    def get_base_view(self):
+        """
+        Build the semantic view from config - defines logic, doesn't execute.
+        
+        This is where the "SQL behind the scenes" magic happens. We read the
+        YAML config and build Ibis expressions that compile to SQL.
+        """
+        if self._base_view is not None:
+            return self._base_view
+        
+        mutations = {}
+        
+        # 1. Build outcome columns from config
+        outcomes = self.config.get('outcomes', {})
+        for outcome_name, outcome_def in outcomes.items():
+            source_col = outcome_def['source_column']
+            
+            if outcome_def.get('type') == 'binary' and 'mapping' in outcome_def:
+                # Build CASE WHEN expression for binary mapping
+                mapping = outcome_def['mapping']
+                case_expr = ibis.case()
+                
+                for key, value in mapping.items():
+                    # Handle string keys (case-insensitive comparison)
+                    if isinstance(key, str):
+                        case_expr = case_expr.when(
+                            _[source_col].cast(ibis.string).lower() == key.lower(),
+                            value
+                        )
+                    else:
+                        # Handle boolean/numeric keys
+                        case_expr = case_expr.when(_[source_col] == key, value)
+                
+                case_expr = case_expr.else_(None).end()
+                mutations[outcome_name] = case_expr.cast('int64')
+            else:
+                # Simple column reference
+                mutations[outcome_name] = _[source_col]
+        
+        # 2. Apply column mappings (rename columns)
+        column_mapping = self.config.get('column_mapping', {})
+        for source_col, target_col in column_mapping.items():
+            if source_col in self.raw.columns:
+                mutations[target_col] = _[source_col]
+            elif source_col == target_col:
+                # Column already has correct name
+                if source_col in self.raw.columns:
+                    mutations[target_col] = _[source_col]
+        
+        # 3. Add time_zero (from config)
+        time_zero_config = self.config.get('time_zero', {})
+        if isinstance(time_zero_config, dict) and 'value' in time_zero_config:
+            # Static time_zero value
+            time_zero_val = time_zero_config['value']
+            mutations[UnifiedCohort.TIME_ZERO] = ibis.literal(time_zero_val).cast('date')
+        elif isinstance(time_zero_config, dict) and 'source_column' in time_zero_config:
+            # Time_zero from a column
+            source_col = time_zero_config['source_column']
+            if source_col in self.raw.columns:
+                mutations[UnifiedCohort.TIME_ZERO] = _[source_col]
+        elif isinstance(time_zero_config, str):
+            # Simple string value
+            mutations[UnifiedCohort.TIME_ZERO] = ibis.literal(time_zero_config).cast('date')
+        
+        # 4. Ensure required UnifiedCohort columns exist
+        # patient_id should already be mapped, outcome will be set later
+        
+        # Build the view with all mutations
+        if mutations:
+            self._base_view = self.raw.mutate(**mutations)
+        else:
+            self._base_view = self.raw
+        
+        return self._base_view
+    
+    def apply_filters(self, view, filters: Dict[str, Any]) -> ibis.Table:
+        """
+        Apply filters dynamically to the view.
+        
+        Args:
+            view: Ibis table expression
+            filters: Dictionary of filter_name -> filter_value
+            
+        Returns:
+            Filtered Ibis table expression
+        """
+        if not filters:
+            return view
+        
+        filter_definitions = self.config.get('filters', {})
+        
+        for filter_name, filter_value in filters.items():
+            if filter_value is None:
+                continue
+            
+            # Get filter definition from config
+            filter_def = filter_definitions.get(filter_name, {})
+            filter_type = filter_def.get('type', 'equals')
+            column = filter_def.get('column', filter_name)
+            
+            # Check if column exists in view
+            if column not in view.columns:
+                continue
+            
+            if filter_type == 'equals':
+                if isinstance(filter_value, bool):
+                    # Boolean filter - handle different column types
+                    view = view.filter(_[column] == filter_value)
+                else:
+                    view = view.filter(_[column] == filter_value)
+            elif filter_type == 'in':
+                if isinstance(filter_value, list):
+                    view = view.filter(_[column].isin(filter_value))
+            elif filter_type == 'range':
+                if isinstance(filter_value, dict):
+                    if 'min' in filter_value:
+                        view = view.filter(_[column] >= filter_value['min'])
+                    if 'max' in filter_value:
+                        view = view.filter(_[column] <= filter_value['max'])
+            elif filter_type == 'exists':
+                if filter_value:
+                    view = view.filter(_[column].isnull().not_())
+                else:
+                    view = view.filter(_[column].isnull())
+        
+        return view
+    
+    def build_cohort_query(
+        self,
+        outcome_col: Optional[str] = None,
+        outcome_label: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> ibis.Table:
+        """
+        Build a query that returns UnifiedCohort-compliant data.
+        
+        Args:
+            outcome_col: Which outcome column to use (defaults to config)
+            outcome_label: Label for outcome (defaults to config)
+            filters: Optional filters to apply
+            
+        Returns:
+            Ibis table expression (lazy - SQL not executed yet)
+        """
+        view = self.get_base_view()
+        
+        # Apply default filters from config
+        default_filters = self.config.get('default_filters', {})
+        all_filters = {**default_filters, **(filters or {})}
+        
+        # Remove target_outcome from filters (it's not a data filter)
+        filter_only = {k: v for k, v in all_filters.items() if k != "target_outcome"}
+        view = self.apply_filters(view, filter_only)
+        
+        # Determine outcome column
+        if outcome_col is None:
+            analysis_config = self.config.get('analysis', {})
+            outcome_col = analysis_config.get('default_outcome', 'outcome')
+        
+        # Determine outcome label
+        if outcome_label is None:
+            outcome_labels = self.config.get('outcome_labels', {})
+            outcome_label = outcome_labels.get(outcome_col, outcome_col)
+        
+        # Build select to ensure UnifiedCohort schema
+        selects = {}
+        
+        # Required columns
+        patient_id_col = self._find_mapped_column(UnifiedCohort.PATIENT_ID)
+        if patient_id_col and patient_id_col in view.columns:
+            selects[UnifiedCohort.PATIENT_ID] = _[patient_id_col]
+        
+        if UnifiedCohort.TIME_ZERO in view.columns:
+            selects[UnifiedCohort.TIME_ZERO] = _[UnifiedCohort.TIME_ZERO]
+        
+        # Outcome column
+        if outcome_col in view.columns:
+            selects[UnifiedCohort.OUTCOME] = _[outcome_col]
+        else:
+            # Fallback: use first outcome if available
+            outcomes = self.config.get('outcomes', {})
+            if outcomes:
+                first_outcome = list(outcomes.keys())[0]
+                if first_outcome in view.columns:
+                    selects[UnifiedCohort.OUTCOME] = _[first_outcome]
+        
+        # Outcome label (literal)
+        selects[UnifiedCohort.OUTCOME_LABEL] = ibis.literal(outcome_label)
+        
+        # Add all other columns as features
+        for col in view.columns:
+            if col not in selects and col not in UnifiedCohort.REQUIRED_COLUMNS:
+                selects[col] = _[col]
+        
+        return view.select(list(selects.keys()))
+    
+    def _find_mapped_column(self, target_col: str) -> Optional[str]:
+        """Find source column name for a target column."""
+        column_mapping = self.config.get('column_mapping', {})
+        for source, target in column_mapping.items():
+            if target == target_col:
+                return source
+        return target_col  # Fallback: assume same name
+    
+    def get_cohort(
+        self,
+        outcome_col: Optional[str] = None,
+        outcome_label: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        show_sql: bool = False
+    ) -> pd.DataFrame:
+        """
+        Execute the cohort query and return Pandas DataFrame.
+        
+        This is the main entry point - generates SQL behind the scenes and executes it.
+        
+        Args:
+            outcome_col: Which outcome to use
+            outcome_label: Label for outcome
+            filters: Optional filters
+            show_sql: If True, print the generated SQL (for debugging)
+            
+        Returns:
+            Pandas DataFrame conforming to UnifiedCohort schema
+        """
+        query = self.build_cohort_query(
+            outcome_col=outcome_col,
+            outcome_label=outcome_label,
+            filters=filters
+        )
+        
+        if show_sql:
+            # Compile to SQL string for debugging
+            sql = query.compile()
+            print(f"Generated SQL for {self.dataset_name}:\n{sql}\n")
+        
+        # Execute query (this is where SQL actually runs)
+        result = query.execute()
+        
+        return result
+    
+    def get_available_metrics(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all available metrics from config.
+        
+        Returns:
+            Dictionary mapping metric names to their definitions
+        """
+        return self.config.get('metrics', {})
+    
+    def get_available_dimensions(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all available dimensions from config.
+        
+        Returns:
+            Dictionary mapping dimension names to their definitions
+        """
+        return self.config.get('dimensions', {})
+    
+    def get_available_filters(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all available filter definitions from config.
+        
+        Returns:
+            Dictionary mapping filter names to their definitions
+        """
+        return self.config.get('filters', {})
+    
+    def get_dataset_info(self) -> Dict[str, Any]:
+        """
+        Get dataset metadata from config.
+        
+        Returns:
+            Dictionary with dataset metadata (name, display_name, description, etc.)
+        """
+        return {
+            'name': self.config.get('name', self.dataset_name),
+            'display_name': self.config.get('display_name', self.dataset_name),
+            'description': self.config.get('description', ''),
+            'source': self.config.get('source', ''),
+            'status': self.config.get('status', 'unknown'),
+            'metrics': self.get_available_metrics(),
+            'dimensions': self.get_available_dimensions(),
+            'filters': self.get_available_filters(),
+        }
+    
+    def _build_metric_expression(self, metric_name: str, view: ibis.Table) -> ibis.Expr:
+        """
+        Build an Ibis expression for a metric from config.
+        
+        Args:
+            metric_name: Name of metric (must be in config)
+            view: Ibis table to build expression on
+            
+        Returns:
+            Ibis expression for the metric
+        """
+        metrics = self.get_available_metrics()
+        if metric_name not in metrics:
+            raise ValueError(f"Metric '{metric_name}' not found in config")
+        
+        metric_def = metrics[metric_name]
+        expression = metric_def.get('expression', '')
+        
+        # Parse expression (simple cases for now)
+        # Format: "column.aggregation()" or "aggregation()"
+        if '.' in expression:
+            col_name, agg_func = expression.rsplit('.', 1)
+            if col_name in view.columns:
+                col_expr = _[col_name]
+                if agg_func == 'mean()':
+                    return col_expr.mean()
+                elif agg_func == 'sum()':
+                    return col_expr.sum()
+                elif agg_func == 'max()':
+                    return col_expr.max()
+                elif agg_func == 'min()':
+                    return col_expr.min()
+                elif agg_func == 'count()':
+                    return col_expr.count()
+        elif expression == 'count()':
+            return ibis.count()
+        
+        # Fallback: try to use column directly
+        if metric_name in view.columns:
+            return _[metric_name]
+        
+        raise ValueError(f"Could not build expression for metric '{metric_name}'")
+    
+    def query(
+        self,
+        metrics: Optional[List[str]] = None,
+        dimensions: Optional[List[str]] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        show_sql: bool = False
+    ) -> pd.DataFrame:
+        """
+        Build and execute a custom query with metrics and dimensions.
+        
+        This is for more advanced use cases (aggregations, group bys).
+        All metrics and dimensions come from config - fully extensible!
+        
+        Args:
+            metrics: List of metric names (from config) to aggregate
+            dimensions: List of dimension names (from config) to group by
+            filters: Optional filters
+            show_sql: If True, print generated SQL
+            
+        Returns:
+            Pandas DataFrame with query results
+        """
+        view = self.get_base_view()
+        
+        # Apply filters
+        default_filters = self.config.get('default_filters', {})
+        all_filters = {**default_filters, **(filters or {})}
+        view = self.apply_filters(view, all_filters)
+        
+        if metrics or dimensions:
+            # Build aggregations from config
+            aggs = []
+            
+            if metrics:
+                for metric_name in metrics:
+                    try:
+                        metric_expr = self._build_metric_expression(metric_name, view)
+                        metric_def = self.get_available_metrics().get(metric_name, {})
+                        label = metric_def.get('label', metric_name)
+                        aggs.append(metric_expr.name(label))
+                    except ValueError as e:
+                        print(f"Warning: {e}, skipping metric '{metric_name}'")
+            
+            if dimensions:
+                # Group by dimensions (validate they exist in config)
+                available_dims = self.get_available_dimensions()
+                group_cols = []
+                for dim in dimensions:
+                    if dim in available_dims and dim in view.columns:
+                        group_cols.append(dim)
+                    else:
+                        print(f"Warning: Dimension '{dim}' not found, skipping")
+                
+                if aggs:
+                    result = view.group_by(group_cols).aggregate(aggs)
+                elif group_cols:
+                    result = view.select(group_cols)
+                else:
+                    result = view
+            else:
+                if aggs:
+                    result = view.aggregate(aggs)
+                else:
+                    result = view
+        else:
+            result = view
+        
+        if show_sql:
+            sql = result.compile()
+            print(f"Generated SQL:\n{sql}\n")
+        
+        return result.execute()
+
