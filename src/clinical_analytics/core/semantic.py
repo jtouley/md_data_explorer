@@ -103,23 +103,22 @@ class SemanticLayer:
             source_col = outcome_def['source_column']
             
             if outcome_def.get('type') == 'binary' and 'mapping' in outcome_def:
-                # Build CASE WHEN expression for binary mapping
+                # Build CASE WHEN expression for binary mapping using modern Ibis API
                 mapping = outcome_def['mapping']
-                case_expr = ibis.case()
-                
-                for key, value in mapping.items():
+
+                # Build nested ifelse expression (reverse order for proper chaining)
+                result = ibis.null()  # Default value
+                for key, value in reversed(list(mapping.items())):
                     # Handle string keys (case-insensitive comparison)
                     if isinstance(key, str):
-                        case_expr = case_expr.when(
-                            _[source_col].cast(ibis.string).lower() == key.lower(),
-                            value
-                        )
+                        condition = _[source_col].cast(str).lower() == key.lower()
                     else:
                         # Handle boolean/numeric keys
-                        case_expr = case_expr.when(_[source_col] == key, value)
-                
-                case_expr = case_expr.else_(None).end()
-                mutations[outcome_name] = case_expr.cast('int64')
+                        condition = _[source_col] == key
+
+                    result = condition.ifelse(value, result)
+
+                mutations[outcome_name] = result.cast('int64')
             else:
                 # Simple column reference
                 mutations[outcome_name] = _[source_col]
@@ -129,6 +128,9 @@ class SemanticLayer:
         for source_col, target_col in column_mapping.items():
             if source_col in self.raw.columns:
                 mutations[target_col] = _[source_col]
+            elif source_col in mutations:
+                # Column was created in step 1 (outcomes) - can rename it
+                mutations[target_col] = mutations[source_col]
             elif source_col == target_col:
                 # Column already has correct name
                 if source_col in self.raw.columns:
@@ -278,8 +280,9 @@ class SemanticLayer:
         for col in view.columns:
             if col not in selects and col not in UnifiedCohort.REQUIRED_COLUMNS:
                 selects[col] = _[col]
-        
-        return view.select(list(selects.keys()))
+
+        # Pass the expressions dict, not just the keys
+        return view.select(**selects)
     
     def _find_mapped_column(self, target_col: str) -> Optional[str]:
         """Find source column name for a target column."""

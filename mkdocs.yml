@@ -1,0 +1,87 @@
+site_name: Clinical Analytics Platform
+site_description: Spec-driven clinical analytics with question-driven semantic analysis
+site_author: Development Team
+repo_url: https://github.com/yourusername/md_data_explorer
+repo_name: md_data_explorer
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+            group_by_category: true
+            show_signature_annotations: true
+  - mermaid2
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+      - Uploading Data: getting-started/uploading-data.md
+  - User Guide:
+      - Question-Driven Analysis: user-guide/question-driven-analysis.md
+      - Statistical Tests: user-guide/statistical-tests.md
+      - Interpreting Results: user-guide/interpreting-results.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Semantic Layer: architecture/semantic-layer.md
+      - Dataset Registry: architecture/dataset-registry.md
+      - NL Query Engine: architecture/nl-query-engine.md
+  - API Reference:
+      - Core: api-reference/core.md
+      - Datasets: api-reference/datasets.md
+      - UI Components: api-reference/ui.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Development Setup: development/setup.md
+      - Testing: development/testing.md
+  - Specifications:
+      - Question-Driven Analysis: specs/question-driven-analysis.md
+      - Multi-Table Support: specs/multi-table-support.md
