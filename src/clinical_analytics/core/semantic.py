@@ -128,6 +128,9 @@ class SemanticLayer:
         for source_col, target_col in column_mapping.items():
             if source_col in self.raw.columns:
                 mutations[target_col] = _[source_col]
+            elif source_col in mutations:
+                # Column was created in step 1 (outcomes) - can rename it
+                mutations[target_col] = mutations[source_col]
             elif source_col == target_col:
                 # Column already has correct name
                 if source_col in self.raw.columns:
