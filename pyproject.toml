@@ -17,6 +17,7 @@ dependencies = [
     "pyreadstat>=1.2.0",  # SPSS file support
     "sentence-transformers>=5.2.0",
     "scikit-learn>=1.8.0",
+    "seaborn>=0.13.2",
 ]
 
 [project.optional-dependencies]
@@ -50,6 +51,11 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.uv.workspace]
+members = [
+    "docs",
+]
 
 [dependency-groups]
 dev = [
