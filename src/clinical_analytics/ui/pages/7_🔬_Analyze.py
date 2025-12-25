@@ -410,27 +410,59 @@ def main():
     if 'analysis_context' not in st.session_state:
         st.session_state['analysis_context'] = None
         st.session_state['intent_signal'] = None
+        st.session_state['use_nl_query'] = True  # Default to NL query first
 
-    # Step 1: Ask initial question
+    # Step 1: Ask question (NL or structured)
     if st.session_state['intent_signal'] is None:
-        intent_signal = QuestionEngine.ask_initial_question(cohort)
+        # Try free-form NL query first
+        if st.session_state['use_nl_query']:
+            try:
+                semantic_layer = dataset.get_semantic_layer()
+                context = QuestionEngine.ask_free_form_question(semantic_layer)
 
-        if intent_signal:
-            if intent_signal == 'help':
-                st.divider()
-                help_answers = QuestionEngine.ask_help_questions(cohort)
+                if context:
+                    # Successfully parsed NL query
+                    st.session_state['analysis_context'] = context
+                    st.session_state['intent_signal'] = 'nl_parsed'
+                    st.rerun()
 
-                # Map help answers to intent
-                if help_answers.get('has_time'):
-                    intent_signal = 'survival'
-                elif help_answers.get('has_outcome'):
-                    intent_signal = help_answers.get('approach', 'predict')
-                else:
-                    intent_signal = 'describe'
+            except Exception as e:
+                st.error(f"Error parsing natural language query: {e}")
+                st.session_state['use_nl_query'] = False
 
-            st.session_state['intent_signal'] = intent_signal
-            st.session_state['analysis_context'] = QuestionEngine.build_context_from_intent(intent_signal, cohort)
-            st.rerun()
+            # Show option to use structured questions instead
+            st.divider()
+            st.markdown("### Or use structured questions")
+            if st.button("💬 Use structured questions instead", help="Choose from predefined question types"):
+                st.session_state['use_nl_query'] = False
+                st.rerun()
+
+        else:
+            # Use structured questions
+            intent_signal = QuestionEngine.ask_initial_question(cohort)
+
+            if intent_signal:
+                if intent_signal == 'help':
+                    st.divider()
+                    help_answers = QuestionEngine.ask_help_questions(cohort)
+
+                    # Map help answers to intent
+                    if help_answers.get('has_time'):
+                        intent_signal = 'survival'
+                    elif help_answers.get('has_outcome'):
+                        intent_signal = help_answers.get('approach', 'predict')
+                    else:
+                        intent_signal = 'describe'
+
+                st.session_state['intent_signal'] = intent_signal
+                st.session_state['analysis_context'] = QuestionEngine.build_context_from_intent(intent_signal, cohort)
+                st.rerun()
+
+            # Show option to go back to NL query
+            st.divider()
+            if st.button("🔙 Try natural language query instead"):
+                st.session_state['use_nl_query'] = True
+                st.rerun()
 
     else:
         # We have intent, now gather details

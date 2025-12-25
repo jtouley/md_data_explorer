@@ -3,6 +3,7 @@ Question Engine - Conversational analysis configuration through questions.
 
 Guides users through analysis setup by asking natural questions,
 infers the appropriate statistical test, and dynamically configures analysis.
+Supports both free-form natural language queries and structured questions.
 """
 
 import streamlit as st
@@ -356,3 +357,128 @@ class QuestionEngine:
             st.info(f"ℹ️ I still need to know: {', '.join(missing)}")
         else:
             st.success("✅ I have everything I need to run the analysis!")
+
+    @staticmethod
+    def ask_free_form_question(semantic_layer) -> Optional[AnalysisContext]:
+        """
+        Ask user to type their question in natural language.
+
+        Uses NLQueryEngine to parse the query and convert to AnalysisContext.
+        Shows confidence and interpretation, asks for clarification if needed.
+
+        Args:
+            semantic_layer: SemanticLayer instance for NL parsing
+
+        Returns:
+            AnalysisContext if query successfully parsed, None otherwise
+        """
+        st.markdown("## 💬 Ask your question")
+
+        st.markdown("""
+        Just type what you want to know in plain English. I'll figure out the right analysis.
+
+        **Examples:**
+        - "Compare survival by treatment arm"
+        - "What predicts mortality?"
+        - "Show me correlation between age and outcome"
+        - "Descriptive statistics for all patients"
+        """)
+
+        # Text input for query
+        query = st.text_input(
+            "Your question:",
+            placeholder="e.g., compare survival by treatment arm",
+            help="Ask in plain English - I'll figure out the right analysis",
+            key="nl_query_input"
+        )
+
+        if not query:
+            return None
+
+        # Parse query with NLQueryEngine
+        with st.spinner("Understanding your question..."):
+            try:
+                from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+                # Initialize NL query engine
+                nl_engine = NLQueryEngine(semantic_layer)
+
+                # Parse query
+                query_intent = nl_engine.parse_query(query)
+
+                # Show confidence
+                if query_intent.confidence > 0.75:
+                    st.success(f"✅ I understand! (Confidence: {query_intent.confidence:.0%})")
+                elif query_intent.confidence > 0.5:
+                    st.warning(f"⚠️ I think I understand, but please verify (Confidence: {query_intent.confidence:.0%})")
+                else:
+                    st.info("🤔 I'm not sure what you're asking. Let me ask some clarifying questions...")
+                    return None  # Fall back to structured questions
+
+                # Show interpretation
+                with st.expander("🔍 How I interpreted your question", expanded=(query_intent.confidence < 0.85)):
+                    intent_names = {
+                        'DESCRIBE': 'Descriptive Statistics',
+                        'COMPARE_GROUPS': 'Compare Groups',
+                        'FIND_PREDICTORS': 'Find Risk Factors/Predictors',
+                        'SURVIVAL': 'Survival Analysis',
+                        'CORRELATIONS': 'Correlation Analysis'
+                    }
+
+                    st.write(f"**Analysis Type**: {intent_names.get(query_intent.intent_type, query_intent.intent_type)}")
+
+                    if query_intent.primary_variable:
+                        st.write(f"**Primary Variable**: {query_intent.primary_variable}")
+                    if query_intent.grouping_variable:
+                        st.write(f"**Grouping Variable**: {query_intent.grouping_variable}")
+                    if query_intent.predictor_variables:
+                        st.write(f"**Predictor Variables**: {', '.join(query_intent.predictor_variables)}")
+                    if query_intent.time_variable:
+                        st.write(f"**Time Variable**: {query_intent.time_variable}")
+                    if query_intent.event_variable:
+                        st.write(f"**Event Variable**: {query_intent.event_variable}")
+
+                    # Allow user to correct
+                    if query_intent.confidence < 0.85:
+                        correct = st.radio(
+                            "Is this what you meant?",
+                            ["Yes, that's correct", "No, let me clarify"],
+                            key="nl_query_confirm"
+                        )
+
+                        if "No" in correct:
+                            st.info("💡 Try rephrasing your question or use the structured questions below.")
+                            return None
+
+                # Convert QueryIntent to AnalysisContext
+                context = AnalysisContext()
+
+                # Map intent type
+                intent_map = {
+                    'DESCRIBE': AnalysisIntent.DESCRIBE,
+                    'COMPARE_GROUPS': AnalysisIntent.COMPARE_GROUPS,
+                    'FIND_PREDICTORS': AnalysisIntent.FIND_PREDICTORS,
+                    'SURVIVAL': AnalysisIntent.EXAMINE_SURVIVAL,
+                    'CORRELATIONS': AnalysisIntent.EXPLORE_RELATIONSHIPS,
+                }
+                context.inferred_intent = intent_map.get(query_intent.intent_type, AnalysisIntent.UNKNOWN)
+
+                # Map variables
+                context.research_question = query
+                context.primary_variable = query_intent.primary_variable
+                context.grouping_variable = query_intent.grouping_variable
+                context.predictor_variables = query_intent.predictor_variables
+                context.time_variable = query_intent.time_variable
+                context.event_variable = query_intent.event_variable
+
+                # Set flags based on intent
+                context.compare_groups = (query_intent.intent_type == 'COMPARE_GROUPS')
+                context.find_predictors = (query_intent.intent_type == 'FIND_PREDICTORS')
+                context.time_to_event = (query_intent.intent_type == 'SURVIVAL')
+
+                return context
+
+            except Exception as e:
+                st.error(f"❌ Error parsing query: {str(e)}")
+                st.info("💡 Please try using the structured questions below instead.")
+                return None
