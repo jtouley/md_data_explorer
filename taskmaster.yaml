@@ -1,0 +1,164 @@
+# Taskmaster Configuration for Clinical Analytics Platform
+# Agent orchestration configuration - Polars-Optimized Implementation
+
+agents:
+  data_loader:
+    description: "Loads and validates clinical datasets using Polars for efficient ETL"
+    implementation: "Polars-based data loading with lazy evaluation"
+    tasks:
+      - "Load COVID-MS dataset from CSV using pl.read_csv()"
+      - "Load Sepsis dataset from PSV files using pl.read_csv(separator='|')"
+      - "Validate data schema and quality"
+      - "Perform initial data profiling"
+    performance:
+      - "Polars achieves 5-10x faster CSV reading vs pandas"
+      - "Lazy evaluation reduces memory footprint"
+
+  data_processor:
+    description: "Processes and harmonizes clinical data using Polars expressions"
+    implementation: "Polars select(), with_columns(), filter() for efficient transformations"
+    tasks:
+      - "Map dataset-specific fields to unified schema using pl.col().alias()"
+      - "Handle missing data with pl.fill_null()"
+      - "Create unified cohorts with schema compliance checks"
+      - "Convert to Pandas for statsmodels compatibility via .to_pandas()"
+    optimizations:
+      - "Vectorized operations with Polars expressions"
+      - "Zero-copy conversions where possible"
+
+  analyzer:
+    description: "Performs statistical analysis on cohorts using statsmodels"
+    implementation: "Pandas-based analysis after Polars ETL"
+    tasks:
+      - "Run logistic regression models using statsmodels.formula.api"
+      - "Generate statistical summaries with confidence intervals"
+      - "Compute odds ratios and risk metrics"
+      - "Handle categorical variables with dummy encoding"
+    inputs:
+      - "UnifiedCohort-compliant Pandas DataFrames"
+
+  ui_manager:
+    description: "Manages Streamlit UI interactions"
+    implementation: "Streamlit-based interactive dashboard with tabs and export"
+    tasks:
+      - "Handle dataset selection via registry auto-discovery"
+      - "Display data previews and statistics"
+      - "Run interactive logistic regression analysis"
+      - "Visualize results with tables and metrics"
+      - "Manage user interactions and filters"
+      - "Provide data export (CSV, JSON)"
+      - "Display data profiling reports"
+
+  qa_validator:
+    description: "Validates code quality, tests, and configuration"
+    implementation: "pytest-based test suite with coverage tracking"
+    tasks:
+      - "Run unit tests for mapper, registry, datasets"
+      - "Run integration tests for UI workflows"
+      - "Verify config-driven architecture (no hardcoding)"
+      - "Check idempotency of transformations"
+      - "Validate type safety in filters"
+
+workflows:
+  covid_ms_analysis:
+    description: "Complete Polars-optimized analysis workflow for COVID-MS dataset"
+    steps:
+      - agent: data_loader
+        action: "Load COVID-MS CSV using Polars"
+        output: "pl.DataFrame with 1141 records"
+      - agent: data_processor
+        action: "Clean and harmonize to unified schema using Polars expressions"
+        transformations:
+          - "Normalize binary outcomes (yes/no -> 1/0)"
+          - "Handle missing sex values"
+          - "Filter confirmed cases only"
+      - agent: analyzer
+        action: "Convert to Pandas and run logistic regression"
+        model: "outcome_hospitalized ~ age_group + sex + dmt + ms_type"
+      - agent: ui_manager
+        action: "Display results in Streamlit"
+
+  sepsis_analysis:
+    description: "Complete Polars-optimized analysis workflow for Sepsis dataset"
+    steps:
+      - agent: data_loader
+        action: "Load multiple PSV files using Polars"
+        aggregation: "Patient-level aggregation from time-series"
+      - agent: data_processor
+        action: "Aggregate time-series and harmonize to unified schema"
+        features:
+          - "sepsis_label: max(SepsisLabel)"
+          - "age: first(Age)"
+          - "gender: first(Gender)"
+      - agent: analyzer
+        action: "Convert to Pandas and run statistical analysis"
+      - agent: ui_manager
+        action: "Display results in Streamlit"
+
+  mimic_iii_analysis:
+    description: "Future workflow for MIMIC-III dataset (DuckDB-based)"
+    status: "planned"
+    steps:
+      - agent: data_loader
+        action: "Connect to DuckDB or Postgres"
+      - agent: data_processor
+        action: "SQL-based cohort extraction"
+      - agent: analyzer
+        action: "Mortality and resistance analysis"
+      - agent: ui_manager
+        action: "Display results"
+
+  qa_full_validation:
+    description: "Complete QA validation workflow"
+    steps:
+      - agent: qa_validator
+        action: "Run full test suite"
+        command: "uv run pytest tests/ -v"
+        expected: "44+ tests passing"
+      - agent: qa_validator
+        action: "Check test coverage"
+        command: "uv run pytest tests/ --cov=src/clinical_analytics --cov-report=term"
+        threshold: "80% coverage minimum"
+      - agent: qa_validator
+        action: "Validate configuration"
+        checks:
+          - "All datasets use config from datasets.yaml"
+          - "No hardcoded transformations in loaders"
+          - "UI uses registry auto-discovery"
+
+  qa_regression_tests:
+    description: "Regression test workflow for critical bug fixes"
+    steps:
+      - agent: qa_validator
+        action: "Test type comparison in filters"
+        test: "tests/test_mapper.py::TestColumnMapper::test_apply_filters_with_different_types"
+      - agent: qa_validator
+        action: "Test boolean filter type safety"
+        test: "tests/test_ui_integration.py::TestUIDatasetIntegration::test_boolean_filter_type_safety"
+      - agent: qa_validator
+        action: "Test idempotency"
+        tests:
+          - "tests/test_mapper.py::TestColumnMapper::test_idempotency"
+          - "tests/test_covid_ms_dataset.py::TestCovidMSDataset::test_idempotency"
+
+  qa_pre_commit:
+    description: "Quick validation before commits"
+    steps:
+      - agent: qa_validator
+        action: "Run fast unit tests"
+        command: "uv run pytest tests/test_mapper.py tests/test_registry.py -v"
+      - agent: qa_validator
+        action: "Check code formatting"
+        command: "uv run ruff check src/"
+
+settings:
+  log_level: "INFO"
+  max_concurrent_tasks: 4
+  timeout_seconds: 300
+  backend:
+    etl_engine: "polars"
+    analysis_engine: "statsmodels"
+    ui_framework: "streamlit"
+  performance:
+    enable_lazy_evaluation: true
+    polars_string_cache: true
