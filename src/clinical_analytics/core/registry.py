@@ -9,10 +9,12 @@ import importlib
 import inspect
 import pkgutil
 from pathlib import Path
-from typing import Dict, Type, Optional, List
+from typing import Dict, Type, Optional, List, Any
 import yaml
+import polars as pl
 
 from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
 
 class DatasetRegistry:
@@ -25,6 +27,7 @@ class DatasetRegistry:
     _datasets: Dict[str, Type[ClinicalDataset]] = {}
     _configs: Dict[str, dict] = {}
     _config_loaded: bool = False
+    _auto_inferred: Dict[str, pl.DataFrame] = {}  # Store DataFrames for auto-inferred datasets
 
     @classmethod
     def discover_datasets(cls) -> Dict[str, Type[ClinicalDataset]]:
@@ -186,8 +189,88 @@ class DatasetRegistry:
         return {name: cls.get_dataset_info(name) for name in cls._datasets.keys()}
 
     @classmethod
+    def register_from_dataframe(
+        cls,
+        dataset_name: str,
+        df: pl.DataFrame,
+        display_name: Optional[str] = None,
+        infer_schema: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Register dataset from Polars DataFrame with automatic schema inference.
+
+        This eliminates the need for manual YAML configuration files.
+        Schema is automatically detected using SchemaInferenceEngine.
+
+        Args:
+            dataset_name: Unique identifier for this dataset
+            df: Polars DataFrame with raw data
+            display_name: Human-readable name (defaults to dataset_name)
+            infer_schema: Whether to auto-infer schema (default: True)
+
+        Returns:
+            Generated config dictionary
+
+        Example:
+            >>> df = pl.read_csv("patient_data.csv")
+            >>> config = DatasetRegistry.register_from_dataframe(
+            ...     "my_study",
+            ...     df,
+            ...     display_name="My Clinical Study"
+            ... )
+            >>> print(f"Detected patient ID: {config['column_mapping']}")
+
+        Note:
+            For uploaded datasets, this is called automatically by UserDatasetStorage.
+            For built-in datasets, YAML configs can be replaced with this method.
+        """
+        # Infer schema from DataFrame
+        if infer_schema:
+            engine = SchemaInferenceEngine()
+            schema = engine.infer_schema(df)
+            config = schema.to_dataset_config()
+        else:
+            config = {
+                'column_mapping': {},
+                'outcomes': {},
+                'time_zero': {}
+            }
+
+        # Add metadata
+        config['name'] = dataset_name
+        config['display_name'] = display_name or dataset_name
+        config['status'] = 'auto-inferred' if infer_schema else 'manual'
+        config['row_count'] = df.height
+        config['column_count'] = df.width
+
+        # Store config
+        cls._configs[dataset_name] = config
+
+        # Store DataFrame for later retrieval
+        cls._auto_inferred[dataset_name] = df
+
+        # Mark config as loaded
+        cls._config_loaded = True
+
+        return config
+
+    @classmethod
+    def get_auto_inferred_dataframe(cls, dataset_name: str) -> Optional[pl.DataFrame]:
+        """
+        Retrieve Polars DataFrame for an auto-inferred dataset.
+
+        Args:
+            dataset_name: Dataset identifier
+
+        Returns:
+            Polars DataFrame or None if not found
+        """
+        return cls._auto_inferred.get(dataset_name)
+
+    @classmethod
     def reset(cls) -> None:
         """Reset registry (mainly for testing)."""
         cls._datasets = {}
         cls._configs = {}
         cls._config_loaded = False
+        cls._auto_inferred = {}

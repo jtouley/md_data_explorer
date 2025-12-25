@@ -25,7 +25,7 @@ class UploadSecurityValidator:
     """
 
     # Allowlisted file extensions
-    ALLOWED_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.sav'}
+    ALLOWED_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.sav', '.zip'}
 
     # Maximum file size (100MB as per Phase 0 spec)
     MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB
@@ -369,3 +369,101 @@ class UserDatasetStorage:
 
         except Exception as e:
             return False, f"Error updating metadata: {str(e)}"
+
+    def save_zip_upload(
+        self,
+        file_bytes: bytes,
+        original_filename: str,
+        metadata: Dict[str, Any]
+    ) -> tuple[bool, str, Optional[str]]:
+        """
+        Save uploaded ZIP file containing multiple CSV files.
+
+        This enables multi-table dataset support (e.g., MIMIC-IV).
+        Tables are extracted, relationships detected, and unified cohort created.
+
+        Args:
+            file_bytes: ZIP file content
+            original_filename: Original filename
+            metadata: Upload metadata
+
+        Returns:
+            Tuple of (success, message, upload_id)
+        """
+        from clinical_analytics.core.multi_table_handler import MultiTableHandler
+        from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+        import zipfile
+        import io
+
+        # Security validation
+        valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
+        if not valid:
+            return False, error, None
+
+        # Generate upload ID
+        upload_id = self.generate_upload_id(original_filename)
+
+        try:
+            # Extract ZIP contents
+            zip_buffer = io.BytesIO(file_bytes)
+            tables: Dict[str, pl.DataFrame] = {}
+
+            with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
+                # Get list of CSV files in ZIP
+                csv_files = [f for f in zip_file.namelist()
+                           if f.endswith('.csv') and not f.startswith('__MACOSX')]
+
+                if not csv_files:
+                    return False, "No CSV files found in ZIP archive", None
+
+                # Load each CSV as a table
+                for csv_filename in csv_files:
+                    table_name = Path(csv_filename).stem
+                    csv_content = zip_file.read(csv_filename)
+
+                    # Load as Polars DataFrame
+                    df = pl.read_csv(io.BytesIO(csv_content))
+                    tables[table_name] = df
+
+            # Detect relationships between tables
+            handler = MultiTableHandler(tables)
+            relationships = handler.detect_relationships()
+
+            # Build unified cohort
+            unified_df = handler.build_unified_cohort()
+
+            # Save unified cohort as CSV
+            csv_path = self.raw_dir / f"{upload_id}.csv"
+            unified_df.write_csv(csv_path)
+
+            # Infer schema for unified cohort
+            engine = SchemaInferenceEngine()
+            schema = engine.infer_schema(unified_df)
+
+            # Save metadata
+            full_metadata = {
+                "upload_id": upload_id,
+                "original_filename": UploadSecurityValidator.sanitize_filename(original_filename),
+                "upload_timestamp": datetime.now().isoformat(),
+                "file_size_bytes": len(file_bytes),
+                "file_format": "zip_multi_table",
+                "row_count": unified_df.height,
+                "column_count": unified_df.width,
+                "columns": list(unified_df.columns),
+                "tables": list(tables.keys()),
+                "table_counts": {name: df.height for name, df in tables.items()},
+                "relationships": [str(rel) for rel in relationships],
+                "inferred_schema": schema.to_dataset_config(),
+                **metadata
+            }
+
+            metadata_path = self.metadata_dir / f"{upload_id}.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(full_metadata, f, indent=2)
+
+            handler.close()
+
+            return True, f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height} rows", upload_id
+
+        except Exception as e:
+            return False, f"Error processing ZIP upload: {str(e)}", None
