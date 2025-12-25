@@ -9,6 +9,10 @@
 
 This implementation plan addresses **50+ findings** from a comprehensive code review covering security, performance, data integrity, testing, and code quality. The plan is organized into phases based on priority and dependencies, with estimated effort and risk assessment for each phase.
 
+**Strategic Enhancement:** Phase 3 adds natural language query capabilities to QuestionEngine, leveraging the existing semantic layer architecture with RAG patterns. This aligns with the unified vision documented in [vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md).
+
+**Alternative Approach:** For a feature-first implementation focusing on question-driven analysis transformation, see [plans/consolidate-docs-and-implement-question-driven-analysis.md](./plans/consolidate-docs-and-implement-question-driven-analysis.md) - a comprehensive 17-day plan that includes documentation infrastructure, NL query engine, schema inference, and multi-table support.
+
 **Overall Assessment:**
 - **Security:** D grade (Critical vulnerabilities require immediate attention)
 - **Performance:** C+ grade (Will degrade without optimization)
@@ -156,14 +160,71 @@ This implementation plan addresses **50+ findings** from a comprehensive code re
 
 ---
 
-## Phase 3: Additional Improvements (Months 2-3)
+## Phase 3: Natural Language Query Enhancement (Months 2-3)
+
+**Goal:** Add semantic natural language query capabilities to QuestionEngine
+
+**Duration:** 20 days (can run parallel with Phase 2)
+**Risk Level:** MEDIUM - New feature, builds on existing architecture
+
+### NL Query Implementation
+
+21. **[TODO-021] Free-Form NL Input** (8 hours)
+   - **Impact:** Transform UX from structured forms to natural language
+   - **Solution:** Add text input to QuestionEngine with embedding-based intent classification
+   - **Files:** `question_engine.py`, `Analyze.py`
+   - **Dependencies:** `sentence-transformers`, semantic layer config
+   - **Tests:** Intent classification accuracy ≥85%
+   - **Acceptance:** Users can type NL queries, intent correctly inferred
+
+22. **[TODO-022] Semantic Layer RAG Integration** (6 hours)
+   - **Impact:** Use semantic layer metadata for context-aware query understanding
+   - **Solution:** Extract outcomes/variables from semantic layer config for entity matching
+   - **Files:** `question_engine.py`, `semantic.py`
+   - **Dependencies:** Semantic layer config structure
+   - **Tests:** Variable matching accuracy ≥80%
+   - **Acceptance:** Semantic layer metadata used for NL query understanding
+
+23. **[TODO-023] Hybrid NL + Structured Questions** (4 hours)
+   - **Impact:** Best UX - NL primary, structured fallback
+   - **Solution:** Seamless transition between NL input and structured questions
+   - **Files:** `question_engine.py`, `Analyze.py`
+   - **Tests:** User can switch between modes, context preserved
+   - **Acceptance:** Hybrid approach functional, confidence-based prompting
+
+24. **[TODO-024] Entity Extraction from NL Queries** (6 hours)
+   - **Impact:** Automatically identify outcomes, predictors, grouping variables
+   - **Solution:** Embedding-based matching against semantic layer entities
+   - **Files:** `question_engine.py`
+   - **Dependencies:** Semantic layer config, embedding model
+   - **Tests:** Entity extraction accuracy ≥75%
+   - **Acceptance:** Relevant variables extracted from NL queries
+
+### Phase 3 Deliverables
+- ✅ Free-form natural language query input
+- ✅ Semantic layer RAG integration
+- ✅ Hybrid NL + structured question interface
+- ✅ Entity extraction from NL queries
+- ✅ Intent classification accuracy ≥85%
+- ✅ Documentation updated (see [vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md))
+
+### Phase 3 Success Criteria
+- [ ] Users can type natural language queries
+- [ ] Intent classification accuracy ≥85%
+- [ ] Semantic layer metadata used for entity extraction
+- [ ] Structured questions remain as fallback
+- [ ] Multi-turn conversation support
+
+---
+
+## Phase 4: Additional Improvements (Months 3-4)
 
 **Goal:** Architecture optimization, comprehensive testing, documentation
 
 **Duration:** 30 days (as needed)
 **Risk Level:** LOW - Quality of life improvements
 
-### P3 Issues (Medium Priority)
+### P4 Issues (Medium Priority)
 11. Input validation on all filters and user inputs
 12. YAML configuration security hardening
 13. Semantic layer comprehensive testing
@@ -175,7 +236,7 @@ This implementation plan addresses **50+ findings** from a comprehensive code re
 19. Additional performance optimizations
 20. Advanced security hardening
 
-### Phase 3 Deliverables
+### Phase 4 Deliverables
 - ✅ Comprehensive test suite (≥90% coverage)
 - ✅ Simplified codebase
 - ✅ Complete documentation
@@ -201,6 +262,12 @@ Week 2-4:
 ├─ TODO-010 (Error Messages) - Can parallelize
 └─ TODO-006 (Statistical Tests) - Ongoing
 
+Month 2-3 (Phase 3):
+├─ TODO-021 (Free-Form NL Input) - Can start after Phase 1
+├─ TODO-022 (Semantic Layer RAG) - After TODO-021
+├─ TODO-023 (Hybrid NL + Structured) - After TODO-021
+└─ TODO-024 (Entity Extraction) - After TODO-022
+
 DEPENDENCY GRAPH:
 TODO-003 (Auth) ──┬─→ TODO-009 (Audit Logging)
                   └─→ Production Deployment
@@ -211,7 +278,12 @@ TODO-005 (Path) ──┘
 TODO-002 (Types) ──→ Code Quality Milestone
 
 TODO-007 (Cache) ──→ TODO-008 (Polars) ──→ Performance Milestone
+
+TODO-021 (NL Input) ──→ TODO-022 (RAG) ──→ TODO-024 (Entities)
+                  └─→ TODO-023 (Hybrid) ──→ NL Query Milestone
 ```
+
+**Note:** Phase 3 (NL Query Enhancement) can run in parallel with Phase 2 after critical security fixes are complete. See [vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md) for detailed architecture and implementation approach.
 
 ## Resource Allocation
 

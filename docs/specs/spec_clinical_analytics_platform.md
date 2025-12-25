@@ -1,9 +1,15 @@
 # Clinical Analytics Platform - Multi-Dataset Specification
 
-**Version:** 3.0 (Multi-Modal)
+**Version:** 3.1 (Semantic Layer Enhanced)
 **Status:** In Progress
 **Scope:** COVID-19 MS, Sepsis (PhysioNet 2019), MIMIC-III (Future)
 **Package Manager:** uv
+
+**Related Documentation:**
+- **[vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md)** - Strategic direction and semantic NL query vision
+- **[architecture/IBIS_SEMANTIC_LAYER.md](../architecture/IBIS_SEMANTIC_LAYER.md)** - Semantic layer implementation details
+- **[architecture/ARCHITECTURE_OVERVIEW.md](../architecture/ARCHITECTURE_OVERVIEW.md)** - System architecture overview
+- **[vision/SPECS_EVOLUTION_ANALYSIS.md](../vision/SPECS_EVOLUTION_ANALYSIS.md)** - Evolution from original specs
 
 ---
 
@@ -33,6 +39,60 @@ A unified clinical analytics platform capable of ingesting heterogeneous medical
   - `outcome` (int/float)
   - `outcome_label` (str)
 
+### Semantic Layer (`src/clinical_analytics/core/semantic.py`)
+
+**Status:** ✅ Implemented
+
+The platform uses an **Ibis-based semantic layer** that generates SQL dynamically from configuration, eliminating hardcoded transformations.
+
+**Key Components:**
+- **`SemanticLayer`**: Config-driven SQL generation via Ibis
+- **`DatasetRegistry`**: Auto-discovery of dataset implementations
+- **Configuration**: `data/configs/datasets.yaml` - Single source of truth
+
+**Capabilities:**
+- ✅ Config-driven outcomes, metrics, dimensions
+- ✅ Dynamic SQL generation from semantic understanding
+- ✅ Zero-code dataset addition (add config entry + implement class)
+- ✅ Query builder UI reads from config
+- ✅ Filter application via config definitions
+
+**Benefits:**
+- No hardcoded transformations in loaders
+- Consistent behavior across all datasets
+- Easy to extend with new datasets
+- SQL generation transparent and debuggable
+
+**See:** [IBIS_SEMANTIC_LAYER.md](../IBIS_SEMANTIC_LAYER.md) for detailed implementation.
+
+### Natural Language Query Enhancement (Optional)
+
+**Status:** 🔄 Planned (Phase 3 in implementation plan)
+
+The platform architecture supports enhancement with **natural language query capabilities** that leverage the semantic layer for context-aware understanding.
+
+**Proposed Features:**
+- Free-form natural language input (primary)
+- Structured questions as fallback
+- Semantic embeddings for intent classification
+- RAG pattern using semantic layer metadata
+- Automatic variable matching from queries
+
+**Architecture:**
+```
+User Query (NL or Structured)
+    ↓
+Semantic Understanding (Embeddings + RAG)
+    ↓
+Semantic Layer (Ibis SQL Generation)
+    ↓
+Results
+```
+
+**Note:** This is an **optional enhancement** that builds on the existing semantic layer architecture. The current menu-driven UI remains functional, with NL queries as an additional interface option.
+
+**See:** [vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md) for complete strategic vision and implementation approach.
+
 ### Directory Structure
 ```
 clinical-analytics-platform/
@@ -43,10 +103,16 @@ clinical-analytics-platform/
 │   │   ├── covid_ms/       # GDSI_OpenDataset_Final.csv
 │   │   ├── sepsis/         # PhysioNet 2019 PSVs
 │   │   └── mimic3/         # Future use
+│   ├── configs/
+│   │   └── datasets.yaml    # Semantic layer configuration
+│   ├── dictionaries/       # Data dictionary PDFs (for NL queries)
 │   └── processed/          # Parquet/DuckDB for standardized data
 ├── src/
 │   └── clinical_analytics/
 │       ├── core/           # Base classes & interfaces
+│       │   ├── semantic.py  # Semantic layer (Ibis-based)
+│       │   ├── registry.py  # Dataset auto-discovery
+│       │   └── mapper.py    # Column mapping engine
 │       ├── datasets/       # Dataset-specific implementations
 │       │   ├── covid_ms/
 │       │   └── sepsis/
@@ -120,9 +186,11 @@ class ClinicalDataset(ABC):
    - `run_logistic_regression(df, formula)`
    - `generate_summary_table(df, groupings)`
 2. **Streamlit UI**:
-   - Sidebar: Select Dataset (COVID-MS / Sepsis).
-   - Main: Dynamic filter widgets based on dataset.
+   - Sidebar: Select Dataset (auto-discovered via Registry).
+   - Main: Dynamic filter widgets based on dataset config.
+   - Query Builder: Config-driven metrics and dimensions selection.
    - Output: Formatted tables & plots.
+   - **Future Enhancement:** Natural language query input (see [vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md))
 
 ---
 
@@ -191,6 +259,41 @@ class ClinicalDataset(ABC):
 4. **Validation**: Verify COVID-MS analysis works. ✅
 5. **Sepsis**: Implement `SepsisDataset` class (placeholder if data missing). ✅
 6. **UI**: Connect both to Streamlit. ✅
-7. **QA**: Implement testing infrastructure. 🔄 In Progress
-8. **MIMIC-III**: Implement DuckDB backend and dataset. 🔄 In Progress
-9. **Advanced Analytics**: Add survival analysis and profiling. 🔄 In Progress
+7. **Semantic Layer**: Implement Ibis-based semantic layer. ✅
+8. **Config-Driven**: Refactor to fully config-driven architecture. ✅
+9. **QA**: Implement testing infrastructure. 🔄 In Progress
+10. **MIMIC-III**: Implement DuckDB backend and dataset. 🔄 In Progress
+11. **Advanced Analytics**: Add survival analysis and profiling. 🔄 In Progress
+12. **NL Query Enhancement**: Natural language query interface (optional). ⏳ Planned
+
+---
+
+## 9. Evolution Notes
+
+### From Hardcoded to Config-Driven
+
+The platform has evolved from hardcoded transformations to a fully config-driven semantic layer:
+
+**Before:**
+- Hardcoded column mappings in loaders
+- Manual if/else chains for dataset loading
+- Hardcoded filter logic
+- Fixed analysis configurations
+
+**After:**
+- Config-driven semantic layer (Ibis-based)
+- Auto-discovery via DatasetRegistry
+- Config-driven filters, outcomes, metrics
+- Zero-code dataset addition
+
+**See:** [ARCHITECTURE_REFACTOR.md](../ARCHITECTURE_REFACTOR.md) for detailed evolution documentation.
+
+### Future Enhancements
+
+**Natural Language Query Interface** (Optional):
+- Enhances user experience with free-form queries
+- Builds on existing semantic layer architecture
+- Uses RAG patterns with semantic layer metadata
+- Maintains backward compatibility (structured questions remain)
+
+**See:** [UNIFIED_VISION.md](../UNIFIED_VISION.md) for complete strategic vision and implementation roadmap.

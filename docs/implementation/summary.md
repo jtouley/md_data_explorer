@@ -354,6 +354,8 @@
 
   With 1 month of focused work addressing the critical and high-priority findings, this platform will be production-ready for clinical research.
 
-  Your config-driven approach and registry pattern are industry-leading examples of how to build extensible systems. The semantic layer with Ibis is innovative. The separation of concerns is textbook-quality.
+Your config-driven approach and registry pattern are industry-leading examples of how to build extensible systems. The semantic layer with Ibis is innovative. The separation of concerns is textbook-quality.
 
-  This is salvageable and worth the investment to bring to production quality. 🚀
+**Strategic Direction:** The platform is positioned to enhance QuestionEngine with semantic natural language query capabilities, leveraging the existing semantic layer architecture with RAG patterns and embedding-based intent classification. See [vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md) for the consolidated roadmap.
+
+This is salvageable and worth the investment to bring to production quality. 🚀
