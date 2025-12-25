@@ -280,8 +280,9 @@ class SemanticLayer:
         for col in view.columns:
             if col not in selects and col not in UnifiedCohort.REQUIRED_COLUMNS:
                 selects[col] = _[col]
-        
-        return view.select(list(selects.keys()))
+
+        # Pass the expressions dict, not just the keys
+        return view.select(**selects)
     
     def _find_mapped_column(self, target_col: str) -> Optional[str]:
         """Find source column name for a target column."""
