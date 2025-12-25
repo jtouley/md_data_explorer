@@ -1,19 +1,119 @@
 # Consolidate Documentation & Implement Question-Driven Semantic Analysis
 
-**Status**: Draft
+**Status**: Phase 1 & 2 Complete ✅
 **Priority**: P0 (Critical - addresses core user friction)
 **Created**: 2025-12-24
+**Updated**: 2025-12-24
 **Owner**: Development Team
+**PR**: [#2 - Phase 1+2: Documentation Infrastructure & Natural Language Query Engine](https://github.com/jtouley/md_data_explorer/pull/2)
 
 ## Executive Summary
 
 This plan addresses the critical transition from hardcoded, menu-driven analysis to an intelligent, question-driven semantic analysis system. Based on comprehensive research of repository documentation (28 files, 11,500 lines) and modern NL query best practices, this plan consolidates documentation infrastructure while implementing a natural language interface that transforms clinical analytics from "click through menus" to "just ask your question."
 
 **Key Outcomes**:
-1. Documentation infrastructure with MkDocs + Material (auto-generated API docs, single source of truth)
-2. Natural language query engine (free-form text → semantic understanding → dynamic SQL)
-3. Automatic schema inference (zero manual configuration for any dataset)
-4. Multi-table support for complex datasets like MIMIC-IV
+1. ✅ Documentation infrastructure with MkDocs + Material (auto-generated API docs, single source of truth) - **COMPLETE**
+2. ✅ Natural language query engine (free-form text → semantic understanding → dynamic SQL) - **COMPLETE**
+3. ⏳ Automatic schema inference (zero manual configuration for any dataset) - **PENDING** (Phase 3)
+4. ⏳ Multi-table support for complex datasets like MIMIC-IV - **PENDING** (Phase 4)
+
+## Implementation Progress
+
+### ✅ Phase 1: Documentation Infrastructure (Complete - 2025-12-24)
+
+**Delivered:**
+- MkDocs + Material theme with auto-generated API docs
+- 23 comprehensive documentation pages (~11,500 lines)
+- GitHub Actions workflow for auto-deployment
+- Complete restructuring of docs/ directory
+
+**Key Files:**
+- `mkdocs.yml` - Site configuration
+- `docs/index.md` - Homepage
+- `docs/getting-started/` - Installation, Quick Start, Data Upload
+- `docs/user-guide/` - Question-driven analysis, Statistical tests, Interpreting results
+- `docs/architecture/` - System design documentation
+- `docs/api-reference/` - Auto-generated API docs
+- `docs/development/` - Contributing, Setup, Testing
+- `.github/workflows/docs.yml` - Auto-deploy to GitHub Pages
+
+**Commits:**
+- `58dec2b` - docs: reorganize documentation structure
+- `a3f45b2` - feat(docs): implement Phase 1 documentation infrastructure with MkDocs
+
+### ✅ Phase 2: Natural Language Query Engine (Complete - 2025-12-24)
+
+**Delivered:**
+- Three-tier NL query parsing engine (regex → embeddings → LLM)
+- Full UI integration with confidence display
+- 15 query templates covering all analysis types
+- Fuzzy variable matching with synonyms
+- Bidirectional switching (NL ↔ structured questions)
+
+**Key Files:**
+- `src/clinical_analytics/core/nl_query_engine.py` - Core NL parsing engine
+  - `QueryIntent` dataclass
+  - `NLQueryEngine` class with three-tier architecture
+  - Pattern matching, semantic embeddings, LLM fallback
+- `src/clinical_analytics/ui/components/question_engine.py` - UI integration
+  - `ask_free_form_question()` method
+  - Confidence display and interpretation
+- `src/clinical_analytics/ui/pages/7_🔬_Analyze.py` - Unified analysis page
+  - Defaults to free-form NL query
+  - Fallback to structured questions
+
+**Technical Details:**
+- Tier 1: Regex (90-95% confidence, <1ms latency)
+- Tier 2: Semantic embeddings via sentence-transformers (70-90% confidence, ~50ms)
+- Tier 3: LLM fallback stub (triggers clarifying questions)
+- Privacy-preserving: Tiers 1 & 2 fully local (no API calls)
+
+**Dependencies Added:**
+- `sentence-transformers` ^5.2.0
+- `scikit-learn` ^1.8.0
+- `seaborn` ^0.13.2
+- `torch` ^2.9.1
+
+**Commits:**
+- `dcb85cd` - feat(nl-query): implement Phase 2 natural language query engine core
+- `f61d201` - feat(ui): integrate NL query engine with Streamlit UI
+- `aaf18f5` - fix(deps): add missing seaborn dependency
+
+**Example Queries:**
+- "compare survival by treatment arm"
+- "what predicts mortality"
+- "descriptive statistics"
+- "correlation between age and outcome"
+
+### ⏳ Phase 3: Automatic Schema Inference (Pending)
+
+**Planned Features:**
+- Remove all hardcoded YAML configs
+- Auto-detect patient IDs, outcomes, time variables
+- Schema inference for uploaded datasets
+- Consistent handling of built-in and uploaded datasets
+
+**Target:** Future PR
+
+### ⏳ Phase 4: Multi-Table Support (Pending)
+
+**Planned Features:**
+- ZIP upload with multiple CSVs
+- Auto-detect foreign key relationships
+- Build join graph and execute joins
+- MIMIC-IV dataset support
+
+**Target:** Future PR
+
+### ⏳ Phase 5: Testing & Refinement (Pending)
+
+**Planned Features:**
+- Comprehensive test coverage (80%+)
+- User acceptance testing
+- Performance optimization
+- Bug fixes and edge case handling
+
+**Target:** Future PR
 
 ## Problem Statement
 
