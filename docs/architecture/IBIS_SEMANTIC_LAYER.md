@@ -280,4 +280,8 @@ cohort = semantic.get_cohort(show_sql=True)
 - [ ] Config-driven visualization types
 - [ ] Multi-dataset joins via config
 - [ ] Config-driven data quality checks
+- [ ] Automatic data dictionary parsing from README files (MIMIC, COVID-MS pattern)
+  - Extract table/column descriptions
+  - Infer relationships from documentation
+  - Auto-generate semantic layer config from data dictionary
 
