@@ -190,6 +190,82 @@ but this could easily be due to chance.
         return interpretation
 
     @staticmethod
+    def interpret_hazard_ratio(
+        hr_value: float,
+        ci_lower: float,
+        ci_upper: float,
+        p_value: float,
+        variable_name: str
+    ) -> str:
+        """
+        Interpret a hazard ratio in clinical terms.
+
+        Args:
+            hr_value: Hazard ratio point estimate
+            ci_lower: Lower 95% CI
+            ci_upper: Upper 95% CI
+            p_value: P-value
+            variable_name: Name of variable
+
+        Returns:
+            Plain-language interpretation
+        """
+        p_interp = ResultInterpreter.interpret_p_value(p_value)
+
+        if not p_interp['is_significant']:
+            return f"""
+**{variable_name}**: Not significantly associated with outcome (p={p_value:.3f})
+
+The hazard ratio is {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but this could be due to chance.
+"""
+
+        if hr_value > 1:
+            if hr_value >= 2:
+                magnitude = "**strongly increases**"
+            elif hr_value >= 1.5:
+                magnitude = "**moderately increases**"
+            else:
+                magnitude = "**slightly increases**"
+
+            pct_increase = (hr_value - 1) * 100
+
+            interpretation = f"""
+**{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp['emoji']}
+
+- **Hazard Ratio**: {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
+- **Interpretation**: Having this characteristic increases the hazard by approximately **{pct_increase:.0f}%** (faster time to event)
+- **Statistical Significance**: {p_interp['interpretation']}
+"""
+
+        elif hr_value < 1:
+            if hr_value <= 0.5:
+                magnitude = "**strongly decreases**"
+            elif hr_value <= 0.67:
+                magnitude = "**moderately decreases**"
+            else:
+                magnitude = "**slightly decreases**"
+
+            pct_decrease = (1 - hr_value) * 100
+
+            interpretation = f"""
+**{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp['emoji']}
+
+- **Hazard Ratio**: {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
+- **Interpretation**: Having this characteristic decreases the hazard by approximately **{pct_decrease:.0f}%** (slower time to event)
+- **Statistical Significance**: {p_interp['interpretation']}
+"""
+
+        else:  # HR ≈ 1
+            interpretation = f"""
+**{variable_name}**: No meaningful association with event timing
+
+- **Hazard Ratio**: {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
+- **Interpretation**: This variable doesn't appear to affect time to event
+"""
+
+        return interpretation
+
+    @staticmethod
     def interpret_correlation(
         correlation: float,
         p_value: float,
