@@ -1,0 +1,304 @@
+# Clinical Analytics Platform - Dataset Configurations
+# This file drives dataset loading, column mapping, and analysis specifications
+# All datasets follow the UnifiedCohort schema
+
+covid_ms:
+  # Metadata
+  name: "COVID-MS"
+  display_name: "COVID-19 & Multiple Sclerosis"
+  description: "Global Data Sharing Initiative (GDSI) COVID-19 and MS patient registry"
+  source: "PhysioNet"
+  status: "available"
+
+  # Initialization parameters
+  init_params:
+    source_path: "data/raw/covid_ms/GDSI_OpenDataset_Final.csv"
+
+  # Time zero configuration
+  time_zero:
+    value: "2020-01-01"  # Registry lacks dates, use placeholder
+
+  # Column mapping: source_column -> unified_column
+  # These are applied during get_cohort() to map to UnifiedCohort schema
+  column_mapping:
+    # Required UnifiedCohort columns
+    secret_name: patient_id
+
+    # Outcome columns (derived in loader)
+    outcome_hospitalized: outcome  # default outcome
+
+    # Feature columns
+    age_in_cat: age_group
+    sex: sex
+    dmt_type_overall: dmt
+    ms_type2: ms_type
+    has_comorbidities: has_comorbidities
+
+  # Outcome definitions (computed in loader from raw columns)
+  outcomes:
+    outcome_hospitalized:
+      source_column: covid19_admission_hospital
+      type: binary
+      mapping:
+        yes: 1
+        no: 0
+    outcome_icu:
+      source_column: covid19_icu_stay
+      type: binary
+      mapping:
+        yes: 1
+        no: 0
+    outcome_ventilation:
+      source_column: covid19_ventilation
+      type: binary
+      mapping:
+        yes: 1
+        no: 0
+
+  # Default analysis configuration
+  analysis:
+    default_outcome: outcome_hospitalized
+    default_predictors:
+      - age_group
+      - sex
+      - dmt
+      - ms_type
+      - has_comorbidities
+
+    # Categorical variables that need dummy encoding
+    categorical_variables:
+      - age_group
+      - sex
+      - dmt
+      - ms_type
+      - has_comorbidities
+
+  # Metrics definitions (for query builder)
+  metrics:
+    hospitalization_rate:
+      expression: "outcome_hospitalized.mean()"
+      type: "rate"
+      label: "Hospitalization Rate"
+      description: "Proportion of patients hospitalized"
+    icu_rate:
+      expression: "outcome_icu.mean()"
+      type: "rate"
+      label: "ICU Admission Rate"
+    ventilation_rate:
+      expression: "outcome_ventilation.mean()"
+      type: "rate"
+      label: "Ventilation Rate"
+    patient_count:
+      expression: "count()"
+      type: "count"
+      label: "Patient Count"
+
+  # Dimensions definitions (for query builder)
+  dimensions:
+    age_group:
+      label: "Age Group"
+      type: "categorical"
+    sex:
+      label: "Sex"
+      type: "categorical"
+    dmt:
+      label: "DMT Type"
+      type: "categorical"
+    ms_type:
+      label: "MS Type"
+      type: "categorical"
+    has_comorbidities:
+      label: "Has Comorbidities"
+      type: "boolean"
+
+  # Filter definitions
+  filters:
+    confirmed_only:
+      type: equals
+      column: covid19_confirmed_case
+      description: "Filter to only confirmed COVID-19 cases"
+
+  # Default filters to apply
+  default_filters:
+    confirmed_only: true
+
+  # Outcome label mappings
+  outcome_labels:
+    outcome_hospitalized: "hospitalization"
+    outcome_icu: "icu_admission"
+    outcome_ventilation: "ventilation"
+
+  # Data quality
+  expected_records: 1141
+  expected_confirmed: 60
+
+sepsis:
+  # Metadata
+  name: "Sepsis"
+  display_name: "Sepsis (PhysioNet 2019)"
+  description: "PhysioNet Challenge 2019 - Early Prediction of Sepsis from ICU data"
+  source: "PhysioNet"
+  status: "available"  # but data may not be present
+
+  # Initialization parameters
+  init_params:
+    source_path: "data/raw/sepsis/"
+
+  # Time zero configuration
+  time_zero:
+    value: "2019-01-01"  # Placeholder as data uses relative hours
+
+  # Column mapping: source_column -> unified_column
+  column_mapping:
+    patient_id: patient_id  # derived from filename
+    sepsis_label: outcome
+
+    # Features
+    age: age
+    gender: gender
+    num_hours: num_hours
+
+  # Outcome definitions
+  outcomes:
+    sepsis_label:
+      source_column: SepsisLabel
+      type: binary
+      aggregation: max  # 1 if ever septic during stay
+      label: "sepsis_occurrence"
+
+  # Outcome label mappings
+  outcome_labels:
+    sepsis_label: "sepsis_occurrence"
+
+  # Default analysis configuration
+  analysis:
+    default_outcome: outcome
+    default_predictors:
+      - age
+      - gender
+      - num_hours
+
+    categorical_variables:
+      - gender
+
+  # Metrics definitions
+  metrics:
+    sepsis_rate:
+      expression: "sepsis_label.mean()"
+      type: "rate"
+      label: "Sepsis Rate"
+    patient_count:
+      expression: "count()"
+      type: "count"
+      label: "Patient Count"
+    avg_age:
+      expression: "age.mean()"
+      type: "continuous"
+      label: "Average Age"
+    avg_hours:
+      expression: "num_hours.mean()"
+      type: "continuous"
+      label: "Average ICU Hours"
+
+  # Dimensions definitions
+  dimensions:
+    age:
+      label: "Age"
+      type: "continuous"
+    gender:
+      label: "Gender"
+      type: "categorical"
+    num_hours:
+      label: "ICU Hours"
+      type: "continuous"
+
+  # Data aggregation (for time-series to patient-level)
+  aggregation:
+    static_features:
+      - column: Age
+        method: first
+        target: age
+      - column: Gender
+        method: first
+        target: gender
+
+    outcome:
+      column: SepsisLabel
+      method: max
+      target: sepsis_label
+
+mimic3:
+  # Metadata
+  name: "MIMIC-III"
+  display_name: "MIMIC-III Clinical Database"
+  description: "Medical Information Mart for Intensive Care - Critical care database"
+  source: "MIT Lab for Computational Physiology"
+  status: "planned"
+
+  # Initialization parameters
+  init_params:
+    db_connection: null  # Will be DuckDB connection
+    db_path: "data/processed/mimic3.duckdb"
+
+  # Time zero configuration
+  time_zero:
+    source_column: admittime  # Use admittime from SQL query
+
+  # SQL-based extraction
+  sql_queries:
+    cohort_extraction: |
+      SELECT
+        p.subject_id as patient_id,
+        a.admittime as time_zero,
+        CASE WHEN p.dod IS NOT NULL AND p.dod <= a.admittime + INTERVAL '30 days'
+             THEN 1 ELSE 0 END as outcome,
+        'mortality_30d' as outcome_label,
+        EXTRACT(YEAR FROM a.admittime) - EXTRACT(YEAR FROM p.dob) as age,
+        p.gender,
+        a.admission_type,
+        a.admission_location
+      FROM patients p
+      INNER JOIN admissions a ON p.subject_id = a.subject_id
+      WHERE a.has_chartevents_data = 1
+
+  # Column mapping
+  column_mapping:
+    subject_id: patient_id
+    admittime: time_zero
+    outcome: outcome
+
+  # Outcome label mappings
+  outcome_labels:
+    outcome: "mortality_30d"
+
+  # Default analysis configuration
+  analysis:
+    default_outcome: outcome
+    default_predictors:
+      - age
+      - gender
+      - admission_type
+
+    categorical_variables:
+      - gender
+      - admission_type
+      - admission_location
+
+# Global settings
+global:
+  # UnifiedCohort required columns (enforced across all datasets)
+  required_columns:
+    - patient_id
+    - time_zero
+    - outcome
+    - outcome_label
+
+  # Default datetime formats
+  datetime_formats:
+    - "%Y-%m-%d"
+    - "%Y-%m-%d %H:%M:%S"
+
+  # Missing data handling
+  missing_data:
+    strategy: "drop"  # or "impute", "flag"
+    threshold: 0.1  # Drop columns with >10% missing

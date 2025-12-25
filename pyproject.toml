@@ -1,0 +1,48 @@
+[project]
+name = "clinical-analytics"
+version = "0.1.0"
+description = "Multi-dataset clinical analytics platform"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.1.0",
+    "polars>=0.19.0",
+    "duckdb>=0.9.0",
+    "ibis-framework[duckdb]>=10.0.0",
+    "streamlit>=1.28.0",
+    "statsmodels>=0.14.0",
+    "pyyaml>=6.0",
+    "lifelines>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
