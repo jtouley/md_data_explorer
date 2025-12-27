@@ -15,12 +15,52 @@ Key Principles:
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional, Set
+from typing import Dict, List, Tuple, Optional, Set, Literal
 import polars as pl
 import duckdb
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TableClassification:
+    """
+    Classification metadata for a table in a multi-table dataset.
+
+    Used to determine how a table should be handled in aggregate-before-join pipeline:
+    - Dimensions: Small, unique on grain, safe to join directly
+    - Facts: High cardinality, must be pre-aggregated before joining
+    - Events: Time-series facts, high cardinality, temporal dimension
+    - Bridges: Many-to-many relationships (composite unique), excluded from auto-joins
+    - Reference: Code mappings, lookup tables with duplicates allowed
+
+    Attributes:
+        table_name: Name of the table
+        classification: Category based on cardinality and structure
+        grain: Level of granularity (patient, admission, event)
+        grain_key: Column name of the detected grain key
+        cardinality_ratio: rows / unique(grain_key), >1.1 indicates facts/events
+        is_unique_on_grain: True if grain_key is unique (cardinality_ratio ≈ 1.0)
+        estimated_bytes: Total table size in bytes (rows * avg_row_bytes)
+        relationship_degree: Number of foreign keys detected
+        has_time_column: True if table has non-constant time column
+        time_column_name: Name of time column if detected
+        is_n_side_of_anchor: True if table is on N-side of relationship to anchor
+        null_rate_in_grain: % of NULLs in grain_key column (0-1)
+    """
+    table_name: str
+    classification: Literal["dimension", "fact", "event", "bridge", "reference"]
+    grain: Literal["patient", "admission", "event"]
+    grain_key: str
+    cardinality_ratio: float
+    is_unique_on_grain: bool
+    estimated_bytes: int
+    relationship_degree: int
+    has_time_column: bool
+    time_column_name: Optional[str]
+    is_n_side_of_anchor: bool
+    null_rate_in_grain: float
 
 
 @dataclass
@@ -75,16 +115,23 @@ class MultiTableHandler:
         >>> cohort = handler.build_unified_cohort()
     """
 
-    def __init__(self, tables: Dict[str, pl.DataFrame]):
+    def __init__(
+        self,
+        tables: Dict[str, pl.DataFrame],
+        max_dimension_bytes: int = 250_000_000  # 250 MB default
+    ):
         """
         Initialize with dictionary of table_name -> Polars DataFrame.
 
         Args:
             tables: Dict mapping table names to Polars DataFrames
+            max_dimension_bytes: Max size for dimension tables (default 250 MB)
         """
         self.tables = tables
         self.relationships: List[TableRelationship] = []
         self.primary_keys: Dict[str, str] = {}
+        self.classifications: Dict[str, TableClassification] = {}
+        self.max_dimension_bytes = max_dimension_bytes
 
         # Normalize key column types across all tables
         self._normalize_key_columns()
@@ -231,6 +278,388 @@ class MultiTableHandler:
         self.relationships.sort(key=lambda r: r.confidence, reverse=True)
 
         return self.relationships
+
+    def classify_tables(self, anchor_table: Optional[str] = None) -> Dict[str, TableClassification]:
+        """
+        Classify all tables as dimension/fact/event/bridge/reference.
+
+        Classification rules:
+        - Dimension: cardinality_ratio <= 1.1, unique on grain, bytes < max_dimension_bytes
+        - Fact: cardinality_ratio > 1.1, NOT unique on grain, NOT bridge
+        - Event: has_time_column, cardinality_ratio > 1.1, time not constant, N-side of anchor
+        - Bridge: 2+ foreign keys, neither unique, but composite near-unique
+        - Reference: code mappings, small size with duplicates allowed
+
+        Args:
+            anchor_table: Optional anchor table name (for is_n_side_of_anchor detection)
+
+        Returns:
+            Dict mapping table names to TableClassification objects
+        """
+        logger.info("Classifying tables for aggregate-before-join pipeline")
+
+        # Ensure relationships are detected first
+        if not self.relationships:
+            self.detect_relationships()
+
+        # Count foreign keys per table
+        fk_counts = self._count_foreign_keys()
+
+        for table_name, df in self.tables.items():
+            # Detect grain key
+            grain_key = self._detect_grain_key(df)
+            if not grain_key:
+                logger.warning(f"No grain key detected for table '{table_name}', skipping classification")
+                continue
+
+            # Calculate cardinality metrics
+            total_rows = df.height
+            unique_grain_values = df[grain_key].n_unique()
+            null_count = df[grain_key].null_count()
+            null_rate = null_count / total_rows if total_rows > 0 else 0.0
+
+            cardinality_ratio = total_rows / unique_grain_values if unique_grain_values > 0 else float('inf')
+            is_unique = (unique_grain_values == total_rows - null_count)
+
+            # Estimate bytes
+            estimated_bytes = self._estimate_table_bytes(df)
+
+            # Detect time column
+            time_col, has_time = self._detect_time_column(df)
+
+            # Detect grain level
+            grain_level = self._detect_grain_level(grain_key)
+
+            # Detect bridge table
+            is_bridge = self._detect_bridge_table(table_name, df, fk_counts.get(table_name, 0))
+
+            # Determine if table is on N-side of anchor relationship
+            is_n_side = self._is_n_side_of_anchor(table_name, anchor_table) if anchor_table else False
+
+            # Classify based on rules
+            classification = self._classify_table_type(
+                cardinality_ratio=cardinality_ratio,
+                is_unique=is_unique,
+                estimated_bytes=estimated_bytes,
+                has_time=has_time,
+                is_bridge=is_bridge,
+                is_n_side=is_n_side,
+                time_col=time_col,
+                df=df
+            )
+
+            # Store classification
+            self.classifications[table_name] = TableClassification(
+                table_name=table_name,
+                classification=classification,
+                grain=grain_level,
+                grain_key=grain_key,
+                cardinality_ratio=cardinality_ratio,
+                is_unique_on_grain=is_unique,
+                estimated_bytes=estimated_bytes,
+                relationship_degree=fk_counts.get(table_name, 0),
+                has_time_column=has_time,
+                time_column_name=time_col,
+                is_n_side_of_anchor=is_n_side,
+                null_rate_in_grain=null_rate
+            )
+
+            logger.debug(
+                f"Classified '{table_name}': {classification} "
+                f"(grain={grain_level}, key={grain_key}, card_ratio={cardinality_ratio:.2f}, "
+                f"bytes={estimated_bytes:,}, fks={fk_counts.get(table_name, 0)})"
+            )
+
+        return self.classifications
+
+    def _detect_grain_key(self, df: pl.DataFrame) -> Optional[str]:
+        """
+        Detect grain key column using pattern matching and cardinality.
+
+        Grain key patterns (in order of priority):
+        1. patient_id, subject_id (patient grain)
+        2. hadm_id, encounter_id, visit_id (admission grain)
+        3. Any column with high uniqueness and *_id pattern
+
+        Args:
+            df: Polars DataFrame
+
+        Returns:
+            Grain key column name or None
+        """
+        # Patient grain patterns
+        patient_patterns = ['patient_id', 'subject_id', 'patientid', 'subjectid']
+        for col in df.columns:
+            if col.lower() in patient_patterns:
+                return col
+
+        # Admission grain patterns
+        admission_patterns = ['hadm_id', 'encounter_id', 'visit_id', 'admissionid', 'encounterid']
+        for col in df.columns:
+            if col.lower() in admission_patterns:
+                return col
+
+        # Fallback: highest cardinality column with _id suffix
+        id_cols = [col for col in df.columns if col.lower().endswith('_id') or col.lower().endswith('id')]
+        if id_cols:
+            # Pick column with highest uniqueness
+            best_col = max(id_cols, key=lambda c: df[c].n_unique())
+            return best_col
+
+        return None
+
+    def _detect_grain_level(self, grain_key: str) -> Literal["patient", "admission", "event"]:
+        """
+        Detect grain level from grain key name.
+
+        Args:
+            grain_key: Name of grain key column
+
+        Returns:
+            Grain level (patient, admission, or event)
+        """
+        grain_key_lower = grain_key.lower()
+
+        if any(p in grain_key_lower for p in ['patient', 'subject']):
+            return "patient"
+        elif any(p in grain_key_lower for p in ['hadm', 'encounter', 'visit', 'admission']):
+            return "admission"
+        else:
+            return "event"
+
+    def _estimate_table_bytes(self, df: pl.DataFrame, sample_size: int = 1000) -> int:
+        """
+        Estimate total table size in bytes.
+
+        Strategy:
+        1. Sample up to sample_size rows
+        2. Calculate average bytes per row
+        3. Multiply by total rows
+
+        Args:
+            df: Polars DataFrame
+            sample_size: Number of rows to sample for estimation
+
+        Returns:
+            Estimated total bytes
+        """
+        if df.height == 0:
+            return 0
+
+        # Sample rows
+        sample = df.head(min(sample_size, df.height))
+
+        # Estimate bytes per row (rough approximation)
+        bytes_per_row = 0
+        for col in sample.columns:
+            dtype = sample[col].dtype
+
+            if dtype in [pl.Int8, pl.UInt8]:
+                bytes_per_row += 1
+            elif dtype in [pl.Int16, pl.UInt16]:
+                bytes_per_row += 2
+            elif dtype in [pl.Int32, pl.UInt32, pl.Float32]:
+                bytes_per_row += 4
+            elif dtype in [pl.Int64, pl.UInt64, pl.Float64]:
+                bytes_per_row += 8
+            elif dtype == pl.Utf8:
+                # Estimate string column bytes
+                avg_str_len = sample[col].drop_nulls().str.len_chars().mean() or 0
+                bytes_per_row += int(avg_str_len)
+            elif dtype == pl.Boolean:
+                bytes_per_row += 1
+            else:
+                # Default estimate for unknown types
+                bytes_per_row += 8
+
+        # Total estimate
+        return bytes_per_row * df.height
+
+    def _detect_time_column(self, df: pl.DataFrame) -> Tuple[Optional[str], bool]:
+        """
+        Detect time column in DataFrame.
+
+        A valid time column must:
+        1. Have datetime/date type OR name contains time/date patterns
+        2. Not be constant (all same value)
+
+        Args:
+            df: Polars DataFrame
+
+        Returns:
+            Tuple of (column_name, has_valid_time_column)
+        """
+        time_patterns = ['time', 'date', 'timestamp', 'datetime', 'dt']
+
+        for col in df.columns:
+            # Check dtype
+            is_time_type = df[col].dtype in [pl.Datetime, pl.Date]
+
+            # Check name pattern
+            col_lower = col.lower()
+            has_time_pattern = any(p in col_lower for p in time_patterns)
+
+            if is_time_type or has_time_pattern:
+                # Verify not constant
+                unique_count = df[col].n_unique()
+                if unique_count > 1:
+                    return (col, True)
+
+        return (None, False)
+
+    def _count_foreign_keys(self) -> Dict[str, int]:
+        """
+        Count number of foreign key relationships per table.
+
+        Returns:
+            Dict mapping table name to number of FKs
+        """
+        fk_counts: Dict[str, int] = {}
+
+        for rel in self.relationships:
+            # Child table has a foreign key
+            fk_counts[rel.child_table] = fk_counts.get(rel.child_table, 0) + 1
+
+        return fk_counts
+
+    def _detect_bridge_table(
+        self,
+        table_name: str,
+        df: pl.DataFrame,
+        fk_count: int
+    ) -> bool:
+        """
+        Detect if table is a bridge (many-to-many) table.
+
+        Bridge table characteristics:
+        1. Two or more foreign keys to different parent tables
+        2. Neither FK is unique individually
+        3. Composite key (fk1, fk2) is near-unique (>95% unique)
+        4. High relationship degree but low column payload (<10 columns typically)
+
+        Args:
+            table_name: Name of table
+            df: Polars DataFrame
+            fk_count: Number of foreign keys
+
+        Returns:
+            True if bridge table detected
+        """
+        # Must have 2+ foreign keys
+        if fk_count < 2:
+            return False
+
+        # Get FK columns for this table
+        fk_cols = [
+            rel.child_key for rel in self.relationships
+            if rel.child_table == table_name
+        ]
+
+        if len(fk_cols) < 2:
+            return False
+
+        # Check if individual FKs are non-unique
+        fk_unique_flags = [df[col].n_unique() == df.height for col in fk_cols if col in df.columns]
+
+        if all(fk_unique_flags):
+            # If all FKs are unique, not a bridge
+            return False
+
+        # Check if composite key is near-unique
+        try:
+            # Use first two FK columns for composite check
+            fk1, fk2 = fk_cols[0], fk_cols[1]
+            if fk1 in df.columns and fk2 in df.columns:
+                composite_unique = df.select([fk1, fk2]).n_unique()
+                composite_ratio = composite_unique / df.height if df.height > 0 else 0.0
+
+                # Near-unique threshold: 95%
+                is_composite_unique = composite_ratio > 0.95
+
+                # Check column count (bridges typically have few columns)
+                has_low_payload = df.width < 10
+
+                return is_composite_unique and has_low_payload
+        except Exception as e:
+            logger.debug(f"Error detecting bridge for {table_name}: {e}")
+            return False
+
+        return False
+
+    def _is_n_side_of_anchor(self, table_name: str, anchor_table: Optional[str]) -> bool:
+        """
+        Check if table is on N-side of relationship to anchor.
+
+        Args:
+            table_name: Table to check
+            anchor_table: Anchor table name
+
+        Returns:
+            True if table is child (N-side) of anchor in relationship
+        """
+        if not anchor_table:
+            return False
+
+        for rel in self.relationships:
+            if rel.parent_table == anchor_table and rel.child_table == table_name:
+                return True
+
+        return False
+
+    def _classify_table_type(
+        self,
+        cardinality_ratio: float,
+        is_unique: bool,
+        estimated_bytes: int,
+        has_time: bool,
+        is_bridge: bool,
+        is_n_side: bool,
+        time_col: Optional[str],
+        df: pl.DataFrame
+    ) -> Literal["dimension", "fact", "event", "bridge", "reference"]:
+        """
+        Classify table based on characteristics.
+
+        Classification priority (first match wins):
+        1. Bridge: detected as bridge table
+        2. Reference: small size (<10 MB) with duplicates allowed
+        3. Event: has time column, high cardinality, N-side of anchor
+        4. Dimension: low cardinality, unique on grain, size < max_dimension_bytes
+        5. Fact: high cardinality, not unique
+
+        Args:
+            cardinality_ratio: rows / unique(grain_key)
+            is_unique: True if unique on grain
+            estimated_bytes: Table size in bytes
+            has_time: True if has time column
+            is_bridge: True if bridge table
+            is_n_side: True if N-side of anchor
+            time_col: Time column name
+            df: DataFrame
+
+        Returns:
+            Classification type
+        """
+        # Priority 1: Bridge
+        if is_bridge:
+            return "bridge"
+
+        # Priority 2: Reference (small lookup tables)
+        if estimated_bytes < 10_000_000 and not is_unique:  # < 10 MB
+            return "reference"
+
+        # Priority 3: Event (time-series facts)
+        if has_time and cardinality_ratio > 1.1 and is_n_side:
+            # Verify time column is not constant
+            if time_col and df[time_col].n_unique() > 1:
+                return "event"
+
+        # Priority 4: Dimension
+        if cardinality_ratio <= 1.1 and is_unique and estimated_bytes < self.max_dimension_bytes:
+            return "dimension"
+
+        # Priority 5: Fact (default for high cardinality non-events)
+        return "fact"
 
     def build_unified_cohort(
         self,
