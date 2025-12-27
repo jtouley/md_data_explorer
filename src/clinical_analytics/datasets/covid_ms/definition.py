@@ -1,11 +1,14 @@
 from pathlib import Path
+import logging
 import pandas as pd
 from typing import Optional
 
-from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.semantic import SemanticLayer
+
+logger = logging.getLogger(__name__)
 
 
 class CovidMSDataset(ClinicalDataset):
@@ -44,15 +47,31 @@ class CovidMSDataset(ClinicalDataset):
         if not self.validate():
             raise FileNotFoundError(f"Source file not found: {self.source_path}")
         # Semantic layer handles registration, nothing to load into memory
-        print(f"Semantic layer initialized for {self.name}")
+        logger.info(f"Semantic layer initialized for {self.name}")
 
-    def get_cohort(self, **filters) -> pd.DataFrame:
+    def get_cohort(
+        self,
+        granularity: Granularity = "patient_level",
+        **filters
+    ) -> pd.DataFrame:
         """
         Return analysis cohort - SQL generated behind the scenes via Ibis.
         
         All logic comes from datasets.yaml config. The semantic layer compiles
         the config into SQL and executes it on-demand.
+        
+        Args:
+            granularity: Grain level (patient_level, admission_level, event_level)
+                        For single-table datasets, defaults to patient_level
+            **filters: Optional filters
         """
+        # Validate: single-table datasets only support patient_level
+        if granularity != "patient_level":
+            raise ValueError(
+                f"{self.__class__.__name__} only supports patient_level granularity. "
+                f"Requested: {granularity}"
+            )
+        
         # Extract outcome override if provided
         outcome_col = filters.get("target_outcome")
         

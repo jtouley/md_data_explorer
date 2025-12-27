@@ -5,13 +5,16 @@ Follows the standard pattern documented in IBIS_SEMANTIC_LAYER.md.
 """
 
 from pathlib import Path
+import logging
 import pandas as pd
 from typing import Optional
 
-from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.semantic import SemanticLayer
+
+logger = logging.getLogger(__name__)
 
 
 class Mimic3Dataset(ClinicalDataset):
@@ -52,7 +55,7 @@ class Mimic3Dataset(ClinicalDataset):
                 return count > 0
             return False
         except Exception as e:
-            print(f"MIMIC-III validation failed: {e}")
+            logger.warning(f"MIMIC-III validation failed: {e}")
             return False
 
     def load(self) -> None:
@@ -62,16 +65,32 @@ class Mimic3Dataset(ClinicalDataset):
         The semantic layer registers the source with DuckDB but doesn't load into memory.
         """
         if not self.validate():
-            print(f"WARNING: MIMIC-III database not available. Dataset will be empty.")
+            logger.warning("MIMIC-III database not available. Dataset will be empty.")
         else:
-            print(f"Semantic layer initialized for {self.name}")
+            logger.info(f"Semantic layer initialized for {self.name}")
 
-    def get_cohort(self, **filters) -> pd.DataFrame:
+    def get_cohort(
+        self,
+        granularity: Granularity = "patient_level",
+        **filters
+    ) -> pd.DataFrame:
         """
         Return analysis cohort using semantic layer (standard pattern).
 
         All logic comes from datasets.yaml config.
+        
+        Args:
+            granularity: Grain level (patient_level, admission_level, event_level)
+                        MIMIC-III is patient-level only (for now)
+            **filters: Optional filters
         """
+        # Validate: MIMIC-III is patient-level only (for now)
+        if granularity != "patient_level":
+            raise ValueError(
+                f"Mimic3Dataset only supports patient_level granularity. "
+                f"Requested: {granularity}"
+            )
+        
         if not self.validate():
             # Return empty DataFrame with correct schema
             return pd.DataFrame(columns=UnifiedCohort.REQUIRED_COLUMNS)

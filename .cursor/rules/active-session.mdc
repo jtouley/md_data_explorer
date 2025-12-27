@@ -1,0 +1,38 @@
+# Active Session: M5 Ibis Planning and Materialization
+
+**Session ID**: `m5-ibis-planning-materialization-complete`
+
+**Session File**: `.context/sessions/m5-ibis-planning-materialization-complete.yaml`
+
+**Status**: Completed
+
+**Resume Prompt**:
+
+Resume work on Milestone 5 (M5) - Ibis Planning and Materialization Layer.
+
+Status: COMPLETED with fixes applied.
+
+Implementation complete:
+- materialize_mart() method: Polars pipeline → Parquet with caching (run_id)
+- plan_mart() method: Lazy Ibis expressions over materialized Parquet
+- CohortMetadata dataclass with run_id for deterministic caching
+- Hash bucket partitioning for event-level marts
+- Observability logging (duration, row counts, parquet size)
+
+Fixes applied:
+- SCHEMA_VERSION module-level constant (replaces placeholder)
+- Improved dataset fingerprinting: includes content hash (sample) to detect value changes
+- Ibis connection caching on instance (_ibis_connection)
+- Bucket column dropped from planned tables (internal partition column)
+
+Test coverage: 13 tests passing (9 original + 4 new for fixes)
+
+Key files:
+- src/clinical_analytics/core/multi_table_handler.py (main implementation)
+- tests/core/test_multi_table_handler.py (test suite)
+
+Commits:
+- 6e3706e: Implement Milestone 5
+- 616135a: Fix M5 nits
+
+Next steps: Ready for integration with semantic layer and query planning.

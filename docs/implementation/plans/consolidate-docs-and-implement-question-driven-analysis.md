@@ -85,25 +85,60 @@ This plan addresses the critical transition from hardcoded, menu-driven analysis
 - "descriptive statistics"
 - "correlation between age and outcome"
 
-### ⏳ Phase 3: Automatic Schema Inference (Pending)
+### 🔄 Phase 3: Automatic Schema Inference (In Progress)
 
-**Planned Features:**
-- Remove all hardcoded YAML configs
-- Auto-detect patient IDs, outcomes, time variables
-- Schema inference for uploaded datasets
-- Consistent handling of built-in and uploaded datasets
+**Delivered Features:**
+- ✅ Remove all hardcoded YAML configs
+- ✅ Auto-detect patient IDs, outcomes, time variables from DataFrame
+- ✅ **Parse data dictionary PDFs using LangChain** (NEW!)
+- ✅ **Merge PDF metadata with inferred schema** (NEW!)
+- ✅ Schema inference for uploaded datasets
+- ✅ Consistent handling of built-in and uploaded datasets
 
-**Target:** Future PR
+**Key Innovation: Dictionary-Enhanced Schema Inference**
+Before users see their data, the system now:
+1. Checks for corresponding data dictionary PDF in `data/dictionaries/`
+2. Extracts column descriptions, types, and valid values using LangChain
+3. Merges PDF metadata with DataFrame-based inference
+4. Presents enriched schema with both statistical analysis + documentation context
+5. Boosts confidence scores when dictionary confirms inferred types
 
-### ⏳ Phase 4: Multi-Table Support (Pending)
+**Implementation:**
+- `schema_inference.py`:
+  - `DictionaryMetadata` dataclass for PDF-extracted info
+  - `parse_dictionary_pdf()` using LangChain's PyPDFLoader
+  - `infer_schema_with_dictionary()` merges both sources
+- `registry.py`:
+  - `register_from_dataframe()` with automatic schema inference
+  - Stores DataFrames for auto-inferred datasets
 
-**Planned Features:**
-- ZIP upload with multiple CSVs
-- Auto-detect foreign key relationships
-- Build join graph and execute joins
-- MIMIC-IV dataset support
+**Dependencies Added:**
+- `langchain` ^1.2.0
+- `langchain-community` ^0.4.1
 
-**Target:** Future PR
+**Target:** PR #3 (in progress)
+
+### 🔄 Phase 4: Multi-Table Support (In Progress)
+
+**Delivered Features:**
+- ✅ ZIP upload with multiple CSVs
+- ✅ Auto-detect foreign key relationships using Polars/DuckDB
+- ✅ Build join graph and execute joins via DuckDB SQL
+- ✅ MIMIC-IV-style dataset support
+- ✅ Unified cohort creation from related tables
+
+**Implementation:**
+- `multi_table_handler.py`:
+  - `TableRelationship` dataclass for FK detection
+  - `MultiTableHandler` with DuckDB-based joins
+  - Primary/foreign key detection via cardinality + naming patterns
+  - BFS join graph traversal
+- `user_datasets.py`:
+  - `save_zip_upload()` method for multi-table ZIP files
+  - Automatic relationship detection and cohort building
+  - Metadata includes table counts and join relationships
+
+**Target:** PR #3 (in progress)
 
 ### ⏳ Phase 5: Testing & Refinement (Pending)
 

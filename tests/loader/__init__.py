@@ -1,0 +1,4 @@
+"""
+Loader module tests.
+"""
+

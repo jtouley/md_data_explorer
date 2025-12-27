@@ -1,0 +1,230 @@
+---
+description: Polars-first data engineering. Enforces lazy execution, expression API, and idiomatic patterns. Pandas is prohibited unless interfacing with legacy systems.
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# Polars-First Data Engineering
+
+## Hard Rule: No Pandas
+
+Pandas is prohibited in new code. Exceptions require explicit justification in comments:
+
+```python
+# PANDAS EXCEPTION: Required for sklearn.preprocessing API compatibility
+# TODO: Remove when sklearn supports Polars natively
+import pandas as pd
+```
+
+## Lazy Execution by Default
+
+### Always Start Lazy
+
+```python
+# CORRECT: Lazy by default
+lf = pl.scan_parquet("data/*.parquet")
+lf = pl.scan_csv("input.csv")
+lf = pl.scan_delta("s3://bucket/table")
+
+# WRONG: Eager unless you have a specific reason
+df = pl.read_parquet("data/*.parquet")  # Why are you materializing immediately?
+```
+
+### Collect Strategically
+
+```python
+# CORRECT: Single collect at the end of the pipeline
+result = (
+    pl.scan_parquet("raw/*.parquet")
+    .filter(pl.col("status") == "active")
+    .group_by("customer_id")
+    .agg(pl.col("amount").sum().alias("total"))
+    .collect()
+)
+
+# WRONG: Multiple collects break query optimization
+df = pl.scan_parquet("raw/*.parquet").collect()  # Materializes everything
+df = df.filter(pl.col("status") == "active")     # Lost lazy benefits
+```
+
+## Expression API Mastery
+
+### Use Expressions, Not Methods
+
+```python
+# CORRECT: Expression-based
+df.select(
+    pl.col("name").str.to_uppercase(),
+    pl.col("amount").fill_null(0),
+    (pl.col("price") * pl.col("quantity")).alias("total"),
+)
+
+# WRONG: Method chaining on columns
+df["name"].str.upper()  # This isn't Polars idiom
+```
+
+### Selector Patterns
+
+```python
+import polars.selectors as cs
+
+# CORRECT: Use selectors for column groups
+df.select(
+    cs.by_name("id", "created_at"),
+    cs.numeric().fill_null(0),
+    cs.string().str.strip_chars(),
+)
+
+# Pattern matching
+df.select(cs.starts_with("metric_"))
+df.select(cs.matches("^amount_\d+$"))
+```
+
+### Horizontal Operations
+
+```python
+# CORRECT: Use fold/reduce for row-wise operations
+df.with_columns(
+    pl.sum_horizontal("score_1", "score_2", "score_3").alias("total_score"),
+    pl.max_horizontal(cs.starts_with("metric_")).alias("max_metric"),
+)
+
+# CORRECT: Conditional with when/then/otherwise
+df.with_columns(
+    pl.when(pl.col("status") == "premium")
+    .then(pl.col("rate") * 0.9)
+    .otherwise(pl.col("rate"))
+    .alias("adjusted_rate")
+)
+```
+
+## Schema Enforcement
+
+### Define Schemas Explicitly
+
+```python
+# CORRECT: Explicit schema definition
+CUSTOMER_SCHEMA = {
+    "customer_id": pl.Utf8,
+    "created_at": pl.Datetime("us"),
+    "balance": pl.Decimal(precision=18, scale=2),
+    "is_active": pl.Boolean,
+}
+
+lf = pl.scan_csv("customers.csv", schema=CUSTOMER_SCHEMA)
+
+# CORRECT: Schema validation on load
+def validate_schema(lf: pl.LazyFrame, expected: dict) -> pl.LazyFrame:
+    actual = dict(lf.schema)
+    missing = set(expected.keys()) - set(actual.keys())
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+    type_mismatches = {
+        k: (expected[k], actual[k])
+        for k in expected
+        if k in actual and expected[k] != actual[k]
+    }
+    if type_mismatches:
+        raise TypeError(f"Type mismatches: {type_mismatches}")
+    return lf
+```
+
+## Common Anti-Patterns
+
+### Avoid Apply
+
+```python
+# WRONG: apply breaks vectorization
+df.with_columns(
+    pl.col("text").apply(lambda x: x.upper())  # Python callback = slow
+)
+
+# CORRECT: Use native expressions
+df.with_columns(
+    pl.col("text").str.to_uppercase()
+)
+```
+
+### Avoid Iteration
+
+```python
+# WRONG: Row-by-row iteration
+for row in df.iter_rows(named=True):
+    process(row)
+
+# CORRECT: Vectorized operations or struct packing
+df.with_columns(
+    pl.struct(["col1", "col2"]).map_elements(process_struct)
+)
+
+# BEST: Rewrite process() as expressions
+```
+
+### Avoid Repeated Expressions
+
+```python
+# WRONG: Repeated calculation
+df.with_columns(
+    ((pl.col("a") + pl.col("b")) * 2).alias("x"),
+    ((pl.col("a") + pl.col("b")) * 3).alias("y"),
+)
+
+# CORRECT: Compute once
+sum_ab = pl.col("a") + pl.col("b")
+df.with_columns(
+    (sum_ab * 2).alias("x"),
+    (sum_ab * 3).alias("y"),
+)
+```
+
+## Streaming for Large Datasets
+
+```python
+# For datasets larger than memory
+lf = pl.scan_parquet("huge_dataset/*.parquet")
+
+# Streaming collect
+result = lf.filter(...).group_by(...).agg(...).collect(streaming=True)
+
+# Streaming sink
+lf.filter(...).sink_parquet("output/", partition_by=["date"])
+```
+
+## Testing Polars Code
+
+```python
+import polars.testing as plt
+
+def test_transformation():
+    input_df = pl.DataFrame({
+        "id": [1, 2, 3],
+        "value": [10, 20, 30],
+    })
+    
+    result = transform(input_df)
+    
+    expected = pl.DataFrame({
+        "id": [1, 2, 3],
+        "value": [10, 20, 30],
+        "doubled": [20, 40, 60],
+    })
+    
+    plt.assert_frame_equal(result, expected)
+```
+
+## Migration from Pandas
+
+When encountering legacy Pandas code:
+
+```python
+# Convert at boundaries only
+pandas_df = legacy_function_returning_pandas()
+polars_df = pl.from_pandas(pandas_df)
+
+# Process in Polars
+result = polars_df.lazy().pipe(transform_pipeline).collect()
+
+# Convert back only if absolutely required by downstream
+if legacy_consumer_needs_pandas:
+    return result.to_pandas()
+```

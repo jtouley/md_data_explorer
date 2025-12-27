@@ -86,6 +86,12 @@ def main():
             st.error(f"Error loading dataset: {e}")
             return
 
+    # Check if outcome is required and available
+    if UnifiedCohort.OUTCOME not in cohort.columns:
+        st.error("This analysis requires an outcome column. Please upload data with outcome mapping.")
+        st.info("💡 Risk Factors analysis needs a binary outcome variable to identify predictors.")
+        return
+
     # Configuration
     st.markdown("## 🔧 Configure Analysis")
 

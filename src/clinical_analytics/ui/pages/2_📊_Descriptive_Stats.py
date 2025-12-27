@@ -155,6 +155,7 @@ def main():
 
     # Add uploaded datasets
     uploaded_datasets = {}
+    uploaded_ids = set()  # Track upload IDs for detection
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
         for upload in uploads:
@@ -163,6 +164,7 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
+            uploaded_ids.add(upload_id)
     except Exception as e:
         st.sidebar.warning(f"Could not load uploads: {e}")
 
@@ -176,20 +178,47 @@ def main():
     )
 
     dataset_choice = dataset_display_names[dataset_choice_display]
-    is_uploaded = dataset_choice in uploaded_datasets
+    
+    # Check if this is an uploaded dataset
+    # Method 1: Check if in uploaded_datasets dict
+    # Method 2: Check if display name starts with 📤
+    # Method 3: Check if dataset_choice is an upload_id (UUID-like or matches upload pattern)
+    is_uploaded = (
+        dataset_choice in uploaded_datasets or
+        dataset_choice_display.startswith("📤") or
+        dataset_choice in uploaded_ids
+    )
 
     # Load dataset
     with st.spinner(f"Loading {dataset_choice_display}..."):
         try:
             if is_uploaded:
-                dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
-                dataset.load()
-            else:
-                dataset = DatasetRegistry.get_dataset(dataset_choice)
-                if not dataset.validate():
-                    st.error("Dataset validation failed")
+                # For uploaded datasets, use the factory
+                upload_id = dataset_choice  # dataset_choice is the upload_id for uploaded datasets
+                try:
+                    dataset = UploadedDatasetFactory.create_dataset(upload_id)
+                    dataset.load()
+                except Exception as e:
+                    st.error(f"Error loading uploaded dataset: {str(e)}")
+                    st.exception(e)
                     return
-                dataset.load()
+            else:
+                # For built-in datasets, use the registry
+                try:
+                    dataset = DatasetRegistry.get_dataset(dataset_choice)
+                    if not dataset.validate():
+                        st.error("Dataset validation failed")
+                        return
+                    dataset.load()
+                except KeyError as e:
+                    # Dataset not found in registry - might be an uploaded dataset that wasn't detected
+                    st.error(f"Dataset '{dataset_choice}' not found in registry.")
+                    st.info("💡 If this is an uploaded dataset, please refresh the page or check the upload status.")
+                    return
+                except Exception as e:
+                    st.error(f"Error loading dataset: {str(e)}")
+                    st.exception(e)
+                    return
 
             cohort = dataset.get_cohort()
 
