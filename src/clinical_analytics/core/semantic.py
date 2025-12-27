@@ -11,9 +11,12 @@ from ibis import _
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import pandas as pd
+import logging
 
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.core.mapper import load_dataset_config
+
+logger = logging.getLogger(__name__)
 
 
 class SemanticLayer:
@@ -23,19 +26,32 @@ class SemanticLayer:
     DRY Principle: All datasets use this same class, just with different configs.
     """
     
-    def __init__(self, dataset_name: str, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self, 
+        dataset_name: str, 
+        config: Optional[Dict[str, Any]] = None,
+        workspace_root: Optional[Path] = None
+    ):
         """
         Initialize semantic layer for a dataset.
         
         Args:
             dataset_name: Name of dataset (e.g., 'covid_ms', 'sepsis')
             config: Optional config dict (if None, loads from datasets.yaml)
+            workspace_root: Optional workspace root path (if None, auto-detects)
         """
         if config is None:
             config = load_dataset_config(dataset_name)
         
         self.config = config
         self.dataset_name = dataset_name
+        
+        # Detect workspace root
+        self.workspace_root = self._detect_workspace_root(workspace_root)
+        logger.info(
+            f"Initializing semantic layer for dataset '{dataset_name}'",
+            extra={"workspace_root": str(self.workspace_root)}
+        )
         
         # Connect to DuckDB (in-memory for now, can be file-based later)
         self.con = ibis.duckdb.connect()
@@ -46,14 +62,86 @@ class SemanticLayer:
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
     
+    def _detect_workspace_root(self, provided_root: Optional[Path] = None) -> Path:
+        """
+        Detect workspace root using priority order:
+        1. Provided workspace_root parameter
+        2. config.get("workspace_root")
+        3. Walk up from __file__ until finding marker (.git or pyproject.toml)
+        4. Fallback to Path.cwd() with warning
+        
+        Args:
+            provided_root: Optional workspace root path provided at init
+            
+        Returns:
+            Path to workspace root
+        """
+        # Priority 1: Use provided parameter
+        if provided_root is not None:
+            logger.debug(f"Using provided workspace root: {provided_root}")
+            return provided_root.resolve()
+        
+        # Priority 2: Check config
+        config_root = self.config.get("workspace_root")
+        if config_root:
+            root_path = Path(config_root).resolve()
+            logger.debug(f"Using workspace root from config: {root_path}")
+            return root_path
+        
+        # Priority 3: Walk up from __file__ looking for markers
+        # Markers: .git (directory) or pyproject.toml (file)
+        current = Path(__file__).parent
+        while current != current.parent:  # Stop at filesystem root
+            # Check for .git directory
+            if (current / ".git").exists() and (current / ".git").is_dir():
+                logger.debug(f"Detected workspace root via .git marker: {current}")
+                return current.resolve()
+            # Check for pyproject.toml file
+            if (current / "pyproject.toml").exists() and (current / "pyproject.toml").is_file():
+                logger.debug(f"Detected workspace root via pyproject.toml marker: {current}")
+                return current.resolve()
+            current = current.parent
+        
+        # Priority 4: Fallback to cwd()
+        fallback_root = Path.cwd()
+        logger.warning(
+            f"Could not detect workspace root via markers (.git or pyproject.toml). "
+            f"Falling back to current working directory: {fallback_root}. "
+            f"This may cause path resolution issues if running from a different directory."
+        )
+        return fallback_root.resolve()
+    
     def _register_source(self):
         """Register the raw data source (CSV, table, etc.) with DuckDB."""
         init_params = self.config.get('init_params', {})
         
         if 'source_path' in init_params:
-            source_path = Path(init_params['source_path'])
+            original_path = Path(init_params['source_path'])
+            
+            # Resolve relative paths relative to workspace root
+            if original_path.is_absolute():
+                source_path = original_path
+                logger.debug(
+                    f"Using absolute source path: {source_path}",
+                    extra={"original_path": str(original_path), "resolved_path": str(source_path)}
+                )
+            else:
+                # Resolve relative to workspace root
+                source_path = self.workspace_root / original_path
+                logger.debug(
+                    f"Resolved relative source path",
+                    extra={
+                        "original_path": str(original_path),
+                        "resolved_path": str(source_path),
+                        "workspace_root": str(self.workspace_root)
+                    }
+                )
+            
             if not source_path.exists():
-                raise FileNotFoundError(f"Source file not found: {source_path}")
+                raise FileNotFoundError(
+                    f"Source file not found: {source_path} "
+                    f"(original path: {original_path}, workspace root: {self.workspace_root})"
+                )
             
             table_name = f"{self.dataset_name}_raw"
             
@@ -72,16 +160,22 @@ class SemanticLayer:
                 # Use DuckDB's read_csv function via SQL
                 # Access underlying DuckDB connection from Ibis
                 abs_path = str(source_path.resolve())
+                logger.debug(f"Registering source file with DuckDB: {abs_path}")
+                
                 # Get underlying DuckDB connection and execute raw SQL
                 duckdb_con = self.con.con
                 # Create table using raw DuckDB SQL
                 duckdb_con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM read_csv_auto('{abs_path}')")
                 # Now reference it via Ibis
                 self.raw = self.con.table(table_name)
+                logger.info(f"Successfully registered source table '{table_name}' from {abs_path}")
             
         elif 'db_table' in init_params:
             # Database table source (already registered)
-            self.raw = self.con.table(init_params['db_table'])
+            table_name = init_params['db_table']
+            logger.debug(f"Using database table source: {table_name}")
+            self.raw = self.con.table(table_name)
+            logger.info(f"Successfully registered database table '{table_name}'")
         else:
             raise ValueError(f"No valid source found in config for {self.dataset_name}")
     
