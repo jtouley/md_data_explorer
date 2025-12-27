@@ -16,10 +16,18 @@ Key Principles:
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Set, Literal
+from typing import Dict, List, Tuple, Optional, Set, Literal, Any
+from pathlib import Path
+from datetime import datetime
+import hashlib
 import polars as pl
 import duckdb
 import logging
+
+try:
+    import ibis
+except ImportError:
+    ibis = None  # Optional dependency
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +105,20 @@ class TableClassification:
     time_column_name: Optional[str]
     is_n_side_of_anchor: bool
     null_rate_in_grain: float
+
+
+@dataclass
+class CohortMetadata:
+    """Metadata for materialized cohort mart."""
+    grain: Literal["patient", "admission", "event"]
+    grain_key: str
+    anchor_table: str
+    output_path: Path  # Base output directory
+    parquet_path: Path  # Single path to mart Parquet (file or directory)
+    schema: Dict[str, str]  # column_name -> dtype (e.g., "patient_id" -> "Utf8")
+    row_count: int
+    materialized_at: datetime
+    run_id: str  # Deterministic hash: sha256(config + schema_version + dataset_fingerprint)
 
 
 @dataclass
@@ -1249,6 +1271,363 @@ class MultiTableHandler:
             f"(anchor={anchor_table}, grain={grain_key}, features={len(feature_tables)})"
         )
         return result
+
+    def _get_ibis_connection(self) -> Any:
+        """
+        Get or create Ibis DuckDB connection.
+        
+        Returns:
+            Ibis DuckDB connection
+        """
+        if ibis is None:
+            raise ImportError(
+                "Ibis is required for plan_mart(). Install with: pip install ibis-framework[duckdb]"
+            )
+        
+        # Create new connection (can be optimized to reuse if needed)
+        return ibis.duckdb.connect()
+
+    def _add_hash_bucket_column(
+        self,
+        df: pl.DataFrame,
+        grain_key: str,
+        num_buckets: int,
+    ) -> pl.DataFrame:
+        """
+        Add deterministic hash bucket column for partitioning.
+        
+        Uses stable hash seed for reproducibility across runs.
+        
+        Args:
+            df: Polars DataFrame
+            grain_key: Column to hash
+            num_buckets: Number of buckets
+        
+        Returns:
+            DataFrame with 'bucket' column added
+        """
+        bucket_col = (
+            pl.col(grain_key)
+            .hash(seed=0)  # Stable seed for reproducibility
+            .mod(num_buckets)
+            .cast(pl.UInt16)
+            .alias("bucket")
+        )
+        return df.with_columns(bucket_col)
+
+    def _compute_dataset_fingerprint(self) -> str:
+        """
+        Compute deterministic fingerprint of dataset for caching.
+        
+        Fingerprint includes: table names, row counts, column counts.
+        
+        Returns:
+            SHA256 hash as hex string
+        """
+        import hashlib
+        
+        # Build fingerprint from table metadata
+        fingerprint_parts = []
+        for table_name in sorted(self.tables.keys()):
+            df = self.tables[table_name]
+            fingerprint_parts.append(
+                f"{table_name}:{df.height}:{df.width}:{','.join(sorted(df.columns))}"
+            )
+        
+        fingerprint_str = "|".join(fingerprint_parts)
+        return hashlib.sha256(fingerprint_str.encode()).hexdigest()
+
+    def _compute_run_id(
+        self,
+        grain: str,
+        anchor_table: str,
+        grain_key: str,
+        join_type: str,
+    ) -> str:
+        """
+        Compute deterministic run_id for caching.
+        
+        Hash of: config (grain, anchor, grain_key, join_type) + schema_version + dataset fingerprint.
+        
+        Args:
+            grain: Grain level
+            anchor_table: Anchor table name
+            grain_key: Grain key column
+            join_type: Join type
+        
+        Returns:
+            SHA256 hash as hex string
+        """
+        # Build config string
+        config_str = f"{grain}:{anchor_table}:{grain_key}:{join_type}"
+        
+        # Add schema version (if available)
+        schema_version = "1.0"  # TODO: get from actual schema version
+        
+        # Add dataset fingerprint (hash of table names + row counts)
+        dataset_fingerprint = self._compute_dataset_fingerprint()
+        
+        # Combine and hash
+        combined = f"{config_str}:{schema_version}:{dataset_fingerprint}"
+        return hashlib.sha256(combined.encode()).hexdigest()
+
+    def materialize_mart(
+        self,
+        output_path: Path,
+        grain: str = "patient",
+        anchor_table: Optional[str] = None,
+        join_type: str = "left",
+        num_buckets: int = 64,
+        force_recompute: bool = False,
+    ) -> CohortMetadata:
+        """
+        Compute mart using Polars pipeline and write to partitioned Parquet.
+        
+        Strategy:
+          1) Compute run_id (deterministic hash of config + schema + dataset)
+          2) Check cache: if {output_path}/{run_id}/ exists and not force_recompute, return existing metadata
+          3) Use existing Polars pipeline (_build_dimension_mart, _aggregate_fact_tables)
+          4) Collect Polars LazyFrames to DataFrames (bounded: facts pre-aggregated to grain)
+          5) Write to Parquet:
+             - Patient/admission level: single file at {output_path}/{run_id}/{grain}/mart.parquet
+             - Event level: hash-bucketed directory at {output_path}/{run_id}/{grain}/mart/ (bucket=0, bucket=1, ...)
+          6) Return metadata with paths, schema, row counts, run_id
+        
+        Memory Constraint:
+          Materialization is bounded because facts/events are pre-aggregated to grain
+          (one row per grain). Final mart should be manageable. If _aggregate_fact_tables()
+          produces a wide mart that's still large, this should be documented as a limitation.
+        
+        Args:
+            output_path: Base directory for Parquet output
+            grain: Grain level (patient, admission, event)
+            anchor_table: Optional anchor table (auto-detected if None)
+            join_type: Join type for dimension mart
+            num_buckets: Number of hash buckets for event-level partitioning
+            force_recompute: If True, recompute even if cached version exists
+        
+        Returns:
+            CohortMetadata with paths, schema, row counts, and run_id
+        """
+        import time
+        
+        start_time = time.perf_counter()
+        logger.info(f"Materializing mart (grain={grain}, anchor_table={anchor_table}, join_type={join_type})")
+
+        # Normalize and validate join_type
+        join_type = join_type.lower().strip()
+        if join_type not in {"left", "inner", "outer"}:
+            raise ValueError(f"Unsupported join_type: {join_type}")
+
+        # Ensure classifications and relationships exist
+        if not self.classifications:
+            self.classify_tables()
+        if not self.relationships:
+            self.detect_relationships()
+
+        # Find anchor table
+        if anchor_table is None:
+            anchor_table = self._find_anchor_by_centrality()
+            logger.info(f"Auto-detected anchor table: {anchor_table}")
+
+        if anchor_table not in self.tables:
+            raise ValueError(f"Anchor table '{anchor_table}' not found in tables")
+
+        anchor_class = self.classifications.get(anchor_table)
+        if anchor_class is None:
+            raise ValueError(f"Anchor table '{anchor_table}' not classified")
+
+        grain_key = anchor_class.grain_key
+        if not grain_key:
+            raise ValueError(f"Anchor table '{anchor_table}' has no detected grain_key")
+
+        # Compute run_id
+        run_id = self._compute_run_id(grain, anchor_table, grain_key, join_type)
+        logger.info(f"Computed run_id: {run_id[:16]}...")
+
+        # Check cache
+        run_dir = output_path / run_id
+        metadata_file = run_dir / f"{grain}_metadata.json"
+        
+        if run_dir.exists() and metadata_file.exists() and not force_recompute:
+            logger.info(f"Cache hit: reusing existing materialized mart at {run_dir}")
+            import json
+            with open(metadata_file) as f:
+                metadata_dict = json.load(f)
+            
+            # Convert string paths back to Path objects
+            metadata_dict["output_path"] = Path(metadata_dict["output_path"])
+            metadata_dict["parquet_path"] = Path(metadata_dict["parquet_path"])
+            metadata_dict["materialized_at"] = datetime.fromisoformat(metadata_dict["materialized_at"])
+            
+            metadata = CohortMetadata(**metadata_dict)
+            logger.info(
+                f"Reusing cached mart: {metadata.row_count:,} rows, "
+                f"path={metadata.parquet_path}"
+            )
+            return metadata
+        
+        # Build mart using Polars pipeline
+        logger.info("Building dimension mart...")
+        mart = self._build_dimension_mart(anchor_table=anchor_table, join_type=join_type)
+
+        logger.info("Aggregating fact/event tables...")
+        feature_tables = self._aggregate_fact_tables(grain_key=grain_key)
+
+        # Join feature tables to mart
+        if feature_tables:
+            logger.info(f"Joining {len(feature_tables)} feature tables to mart...")
+            for feature_name in sorted(feature_tables.keys()):
+                feature_lazy = feature_tables[feature_name]
+
+                schema = feature_lazy.collect_schema()
+                names = schema.names()
+                if grain_key not in names:
+                    logger.warning(
+                        f"Skipping '{feature_name}': grain_key '{grain_key}' not in schema "
+                        f"(cols={names})"
+                    )
+                    continue
+
+                # Enforce deterministic RHS column order
+                rhs_cols = [grain_key] + sorted([c for c in names if c != grain_key])
+                feature_lazy = feature_lazy.select(rhs_cols)
+
+                mart = mart.join(
+                    feature_lazy,
+                    on=grain_key,
+                    how="left",
+                    validate="1:1",
+                )
+
+        # Collect to DataFrame
+        logger.info("Collecting mart...")
+        mart_df = mart.collect()
+        row_count = mart_df.height
+
+        # Determine parquet path
+        parquet_base = run_dir / grain
+        parquet_base.mkdir(parents=True, exist_ok=True)
+
+        # Write Parquet based on grain level
+        if grain == "event":
+            # Event level: hash bucket partitioning
+            logger.info(f"Writing event-level mart with hash bucket partitioning ({num_buckets} buckets)...")
+            mart_df = self._add_hash_bucket_column(mart_df, grain_key, num_buckets)
+            parquet_path = parquet_base / "mart"
+            mart_df.write_parquet(
+                str(parquet_path),
+                partition_by=["bucket"],
+            )
+        else:
+            # Patient/admission level: single file
+            logger.info(f"Writing {grain}-level mart as single Parquet file...")
+            parquet_path = parquet_base / "mart.parquet"
+            mart_df.write_parquet(str(parquet_path))
+
+        # Build schema dict (column_name -> dtype string)
+        schema_dict = {
+            col: str(dtype) for col, dtype in zip(mart_df.columns, mart_df.dtypes)
+        }
+
+        # Create metadata
+        metadata = CohortMetadata(
+            grain=grain,
+            grain_key=grain_key,
+            anchor_table=anchor_table,
+            output_path=output_path,
+            parquet_path=parquet_path,
+            schema=schema_dict,
+            row_count=row_count,
+            materialized_at=datetime.now(),
+            run_id=run_id,
+        )
+
+        # Save metadata to file for caching
+        import json
+        metadata_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_file, 'w') as f:
+            json.dump({
+                "grain": metadata.grain,
+                "grain_key": metadata.grain_key,
+                "anchor_table": metadata.anchor_table,
+                "output_path": str(metadata.output_path),
+                "parquet_path": str(metadata.parquet_path),
+                "schema": metadata.schema,
+                "row_count": metadata.row_count,
+                "materialized_at": metadata.materialized_at.isoformat(),
+                "run_id": metadata.run_id,
+            }, f, indent=2)
+
+        duration = time.perf_counter() - start_time
+        parquet_size = sum(f.stat().st_size for f in parquet_path.rglob("*.parquet") if f.is_file()) if parquet_path.is_dir() else parquet_path.stat().st_size
+        
+        logger.info(
+            f"Mart materialized: {row_count:,} rows, {len(schema_dict)} cols, "
+            f"{parquet_size / 1024 / 1024:.2f} MB, duration={duration:.2f}s, "
+            f"path={parquet_path}"
+        )
+
+        return metadata
+
+    def plan_mart(
+        self,
+        metadata: Optional[CohortMetadata] = None,
+        parquet_path: Optional[Path] = None,
+    ) -> Any:
+        """
+        Return lazy Ibis expression over materialized Parquet mart.
+        
+        Strategy:
+          1) Resolve parquet_path from metadata or parameter
+          2) Create/get DuckDB Ibis connection
+          3) Use con.read_parquet() (DuckDB handles partitioned directories natively)
+          4) Return lazy Ibis.Table (no computation, SQL generation only)
+          5) Enables semantic layer queries to compile to SQL lazily
+        
+        Args:
+            metadata: CohortMetadata (preferred, includes schema info)
+            parquet_path: Path to materialized Parquet (file or directory)
+        
+        Returns:
+            Lazy Ibis expression over Parquet (SQL not executed)
+        
+        Raises:
+            ValueError: If neither metadata nor parquet_path provided
+            FileNotFoundError: If Parquet path doesn't exist
+        """
+        if ibis is None:
+            raise ImportError(
+                "Ibis is required for plan_mart(). Install with: pip install ibis-framework[duckdb]"
+            )
+
+        # Resolve parquet_path
+        if metadata is not None:
+            parquet_path = metadata.parquet_path
+        elif parquet_path is None:
+            raise ValueError("Either metadata or parquet_path must be provided")
+
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Parquet path does not exist: {parquet_path}")
+
+        logger.info(f"Planning mart query over Parquet: {parquet_path}")
+
+        # Create DuckDB Ibis connection
+        con = self._get_ibis_connection()
+
+        # Read Parquet (DuckDB handles partitioned directories natively)
+        if parquet_path.is_dir():
+            # Partitioned directory: DuckDB read_parquet handles this natively
+            # Use glob pattern to read all parquet files in directory tree
+            # DuckDB read_parquet accepts directory paths and reads recursively
+            table = con.read_parquet(str(parquet_path))
+        else:
+            # Single file
+            table = con.read_parquet(str(parquet_path))
+
+        logger.debug(f"Created lazy Ibis table over Parquet (no computation triggered)")
+
+        return table
 
     def _detect_primary_key(self, df: pl.DataFrame) -> Optional[str]:
         """
