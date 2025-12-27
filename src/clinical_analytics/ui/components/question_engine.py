@@ -6,15 +6,17 @@ infers the appropriate statistical test, and dynamically configures analysis.
 Supports both free-form natural language queries and structured questions.
 """
 
-import streamlit as st
-import pandas as pd
-from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
+
+import pandas as pd
+import streamlit as st
 
 
 class AnalysisIntent(Enum):
     """Inferred analysis intentions (hidden from user)."""
+
     DESCRIBE = "describe"
     COMPARE_GROUPS = "compare_groups"
     FIND_PREDICTORS = "find_predictors"
@@ -30,26 +32,27 @@ class AnalysisContext:
 
     This is built up through user responses to questions.
     """
+
     # What the user wants to know
-    research_question: Optional[str] = None
+    research_question: str | None = None
 
     # Variables
-    primary_variable: Optional[str] = None
-    grouping_variable: Optional[str] = None
-    predictor_variables: List[str] = field(default_factory=list)
-    time_variable: Optional[str] = None
-    event_variable: Optional[str] = None
+    primary_variable: str | None = None
+    grouping_variable: str | None = None
+    predictor_variables: list[str] = field(default_factory=list)
+    time_variable: str | None = None
+    event_variable: str | None = None
 
     # Analysis configuration
-    compare_groups: Optional[bool] = None
-    find_predictors: Optional[bool] = None
-    time_to_event: Optional[bool] = None
+    compare_groups: bool | None = None
+    find_predictors: bool | None = None
+    time_to_event: bool | None = None
 
     # Inferred intent (hidden from user)
     inferred_intent: AnalysisIntent = AnalysisIntent.UNKNOWN
 
     # Metadata
-    variable_types: Dict[str, str] = field(default_factory=dict)
+    variable_types: dict[str, str] = field(default_factory=dict)
 
     def is_complete_for_intent(self) -> bool:
         """Check if we have enough information for the inferred analysis."""
@@ -63,15 +66,14 @@ class AnalysisContext:
             return self.primary_variable is not None and len(self.predictor_variables) > 0
 
         elif self.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
-            return (self.time_variable is not None and
-                   self.event_variable is not None)
+            return self.time_variable is not None and self.event_variable is not None
 
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             return len(self.predictor_variables) >= 2
 
         return False
 
-    def get_missing_info(self) -> List[str]:
+    def get_missing_info(self) -> list[str]:
         """Return list of missing information needed to complete analysis."""
         missing = []
 
@@ -144,7 +146,7 @@ class QuestionEngine:
         return AnalysisIntent.UNKNOWN
 
     @staticmethod
-    def ask_initial_question(df: pd.DataFrame) -> Optional[str]:
+    def ask_initial_question(df: pd.DataFrame) -> str | None:
         """
         Ask the first question: What do you want to know?
 
@@ -165,9 +167,9 @@ class QuestionEngine:
                 "🎯 Find what predicts or causes an outcome",
                 "⏱️ Analyze time until an event happens (survival analysis)",
                 "🔗 See how variables relate to each other",
-                "💭 I'm not sure - help me figure it out"
+                "💭 I'm not sure - help me figure it out",
             ],
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
 
         # Map to intent signals
@@ -177,7 +179,7 @@ class QuestionEngine:
             "🎯 Find what predicts or causes an outcome": "predict",
             "⏱️ Analyze time until an event happens": "survival",
             "🔗 See how variables relate to each other": "relationships",
-            "💭 I'm not sure": "help"
+            "💭 I'm not sure": "help",
         }
 
         for key, value in intent_map.items():
@@ -187,7 +189,7 @@ class QuestionEngine:
         return None
 
     @staticmethod
-    def ask_help_questions(df: pd.DataFrame) -> Dict[str, Any]:
+    def ask_help_questions(df: pd.DataFrame) -> dict[str, Any]:
         """
         If user selects 'help me figure it out', ask clarifying questions.
 
@@ -200,39 +202,48 @@ class QuestionEngine:
         # Question 1: Do they have an outcome?
         has_outcome = st.radio(
             "Do you have a specific outcome or result you're interested in?",
-            ["Yes, I want to understand what affects a specific outcome",
-             "No, I just want to explore and describe my data"]
+            [
+                "Yes, I want to understand what affects a specific outcome",
+                "No, I just want to explore and describe my data",
+            ],
         )
-        answers['has_outcome'] = 'yes' in has_outcome.lower()
+        answers["has_outcome"] = "yes" in has_outcome.lower()
 
-        if answers['has_outcome']:
+        if answers["has_outcome"]:
             # Question 2: Groups or predictors?
             approach = st.radio(
                 "What do you want to know about this outcome?",
-                ["Compare it between groups (e.g., does treatment affect outcome?)",
-                 "Find what variables predict or cause it"]
+                [
+                    "Compare it between groups (e.g., does treatment affect outcome?)",
+                    "Find what variables predict or cause it",
+                ],
             )
-            answers['approach'] = 'compare' if 'compare' in approach.lower() else 'predict'
+            answers["approach"] = "compare" if "compare" in approach.lower() else "predict"
 
         # Question 3: Time element?
         has_time = st.radio(
             "Does your question involve time?",
-            ["Yes - I want to know how long until something happens",
-             "No - time isn't important for my question"]
+            [
+                "Yes - I want to know how long until something happens",
+                "No - time isn't important for my question",
+            ],
         )
-        answers['has_time'] = 'yes' in has_time.lower()
+        answers["has_time"] = "yes" in has_time.lower()
 
         return answers
 
     @staticmethod
-    def select_primary_variable(df: pd.DataFrame, context: AnalysisContext,
-                               prompt: str = "What do you want to measure or analyze?") -> Optional[str]:
+    def select_primary_variable(
+        df: pd.DataFrame,
+        context: AnalysisContext,
+        prompt: str = "What do you want to measure or analyze?",
+    ) -> str | None:
         """
         Ask user to select their primary variable of interest.
 
         Uses plain language prompt based on context.
         """
-        available_cols = [c for c in df.columns if c not in ['patient_id', 'time_zero']]
+        available_cols = [c for c in df.columns if c not in ["patient_id", "time_zero"]]
 
         st.markdown(f"### {prompt}")
 
@@ -244,18 +255,14 @@ class QuestionEngine:
         else:
             help_text = "Select the main variable you're interested in"
 
-        variable = st.selectbox(
-            "Variable:",
-            ['(Choose one)'] + available_cols,
-            help=help_text
-        )
+        variable = st.selectbox("Variable:", ["(Choose one)"] + available_cols, help=help_text)
 
-        return None if variable == '(Choose one)' else variable
+        return None if variable == "(Choose one)" else variable
 
     @staticmethod
-    def select_grouping_variable(df: pd.DataFrame, exclude: List[str] = None) -> Optional[str]:
+    def select_grouping_variable(df: pd.DataFrame, exclude: list[str] = None) -> str | None:
         """Ask user to select groups to compare."""
-        available_cols = [c for c in df.columns if c not in ['patient_id', 'time_zero']]
+        available_cols = [c for c in df.columns if c not in ["patient_id", "time_zero"]]
         if exclude:
             available_cols = [c for c in available_cols if c not in exclude]
 
@@ -263,17 +270,18 @@ class QuestionEngine:
 
         variable = st.selectbox(
             "Grouping variable:",
-            ['(Choose one)'] + available_cols,
-            help="This splits your data into groups (e.g., treatment arm, sex, age group)"
+            ["(Choose one)"] + available_cols,
+            help="This splits your data into groups (e.g., treatment arm, sex, age group)",
         )
 
-        return None if variable == '(Choose one)' else variable
+        return None if variable == "(Choose one)" else variable
 
     @staticmethod
-    def select_predictor_variables(df: pd.DataFrame, exclude: List[str] = None,
-                                   min_vars: int = 1) -> List[str]:
+    def select_predictor_variables(
+        df: pd.DataFrame, exclude: list[str] = None, min_vars: int = 1
+    ) -> list[str]:
         """Ask user to select predictor variables."""
-        available_cols = [c for c in df.columns if c not in ['patient_id', 'time_zero']]
+        available_cols = [c for c in df.columns if c not in ["patient_id", "time_zero"]]
         if exclude:
             available_cols = [c for c in available_cols if c not in exclude]
 
@@ -283,15 +291,15 @@ class QuestionEngine:
             "Predictor variables:",
             available_cols,
             default=[],
-            help=f"Select at least {min_vars} variable(s) that might influence the outcome"
+            help=f"Select at least {min_vars} variable(s) that might influence the outcome",
         )
 
         return variables
 
     @staticmethod
-    def select_time_variables(df: pd.DataFrame) -> Tuple[Optional[str], Optional[str]]:
+    def select_time_variables(df: pd.DataFrame) -> tuple[str | None, str | None]:
         """Ask user to select time and event variables for survival analysis."""
-        available_cols = [c for c in df.columns if c not in ['patient_id', 'time_zero']]
+        available_cols = [c for c in df.columns if c not in ["patient_id", "time_zero"]]
 
         col1, col2 = st.columns(2)
 
@@ -299,8 +307,8 @@ class QuestionEngine:
             st.markdown("### How do you measure time?")
             time_var = st.selectbox(
                 "Time variable:",
-                ['(Choose one)'] + available_cols,
-                help="Time from start until event or censoring (e.g., days, months)"
+                ["(Choose one)"] + available_cols,
+                help="Time from start until event or censoring (e.g., days, months)",
             )
 
         with col2:
@@ -308,12 +316,12 @@ class QuestionEngine:
             remaining_cols = [c for c in available_cols if c != time_var]
             event_var = st.selectbox(
                 "Event variable:",
-                ['(Choose one)'] + remaining_cols,
-                help="Binary: did the event happen? (1=yes, 0=no/censored)"
+                ["(Choose one)"] + remaining_cols,
+                help="Binary: did the event happen? (1=yes, 0=no/censored)",
             )
 
-        time_var = None if time_var == '(Choose one)' else time_var
-        event_var = None if event_var == '(Choose one)' else event_var
+        time_var = None if time_var == "(Choose one)" else time_var
+        event_var = None if event_var == "(Choose one)" else event_var
 
         return time_var, event_var
 
@@ -332,18 +340,18 @@ class QuestionEngine:
         context = AnalysisContext()
 
         # Map intent signal to flags
-        if intent_signal == 'describe':
+        if intent_signal == "describe":
             context.inferred_intent = AnalysisIntent.DESCRIBE
-        elif intent_signal == 'compare':
+        elif intent_signal == "compare":
             context.compare_groups = True
             context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
-        elif intent_signal == 'predict':
+        elif intent_signal == "predict":
             context.find_predictors = True
             context.inferred_intent = AnalysisIntent.FIND_PREDICTORS
-        elif intent_signal == 'survival':
+        elif intent_signal == "survival":
             context.time_to_event = True
             context.inferred_intent = AnalysisIntent.EXAMINE_SURVIVAL
-        elif intent_signal == 'relationships':
+        elif intent_signal == "relationships":
             context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
 
         return context
@@ -359,7 +367,7 @@ class QuestionEngine:
             st.success("✅ I have everything I need to run the analysis!")
 
     @staticmethod
-    def ask_free_form_question(semantic_layer) -> Optional[AnalysisContext]:
+    def ask_free_form_question(semantic_layer) -> AnalysisContext | None:
         """
         Ask user to type their question in natural language.
 
@@ -389,7 +397,7 @@ class QuestionEngine:
             "Your question:",
             placeholder="e.g., compare survival by treatment arm",
             help="Ask in plain English - I'll figure out the right analysis",
-            key="nl_query_input"
+            key="nl_query_input",
         )
 
         if not query:
@@ -410,29 +418,39 @@ class QuestionEngine:
                 if query_intent.confidence > 0.75:
                     st.success(f"✅ I understand! (Confidence: {query_intent.confidence:.0%})")
                 elif query_intent.confidence > 0.5:
-                    st.warning(f"⚠️ I think I understand, but please verify (Confidence: {query_intent.confidence:.0%})")
+                    st.warning(
+                        f"⚠️ I think I understand, but please verify (Confidence: {query_intent.confidence:.0%})"
+                    )
                 else:
-                    st.info("🤔 I'm not sure what you're asking. Let me ask some clarifying questions...")
+                    st.info(
+                        "🤔 I'm not sure what you're asking. Let me ask some clarifying questions..."
+                    )
                     return None  # Fall back to structured questions
 
                 # Show interpretation
-                with st.expander("🔍 How I interpreted your question", expanded=(query_intent.confidence < 0.85)):
+                with st.expander(
+                    "🔍 How I interpreted your question", expanded=(query_intent.confidence < 0.85)
+                ):
                     intent_names = {
-                        'DESCRIBE': 'Descriptive Statistics',
-                        'COMPARE_GROUPS': 'Compare Groups',
-                        'FIND_PREDICTORS': 'Find Risk Factors/Predictors',
-                        'SURVIVAL': 'Survival Analysis',
-                        'CORRELATIONS': 'Correlation Analysis'
+                        "DESCRIBE": "Descriptive Statistics",
+                        "COMPARE_GROUPS": "Compare Groups",
+                        "FIND_PREDICTORS": "Find Risk Factors/Predictors",
+                        "SURVIVAL": "Survival Analysis",
+                        "CORRELATIONS": "Correlation Analysis",
                     }
 
-                    st.write(f"**Analysis Type**: {intent_names.get(query_intent.intent_type, query_intent.intent_type)}")
+                    st.write(
+                        f"**Analysis Type**: {intent_names.get(query_intent.intent_type, query_intent.intent_type)}"
+                    )
 
                     if query_intent.primary_variable:
                         st.write(f"**Primary Variable**: {query_intent.primary_variable}")
                     if query_intent.grouping_variable:
                         st.write(f"**Grouping Variable**: {query_intent.grouping_variable}")
                     if query_intent.predictor_variables:
-                        st.write(f"**Predictor Variables**: {', '.join(query_intent.predictor_variables)}")
+                        st.write(
+                            f"**Predictor Variables**: {', '.join(query_intent.predictor_variables)}"
+                        )
                     if query_intent.time_variable:
                         st.write(f"**Time Variable**: {query_intent.time_variable}")
                     if query_intent.event_variable:
@@ -443,11 +461,13 @@ class QuestionEngine:
                         correct = st.radio(
                             "Is this what you meant?",
                             ["Yes, that's correct", "No, let me clarify"],
-                            key="nl_query_confirm"
+                            key="nl_query_confirm",
                         )
 
                         if "No" in correct:
-                            st.info("💡 Try rephrasing your question or use the structured questions below.")
+                            st.info(
+                                "💡 Try rephrasing your question or use the structured questions below."
+                            )
                             return None
 
                 # Convert QueryIntent to AnalysisContext
@@ -455,13 +475,15 @@ class QuestionEngine:
 
                 # Map intent type
                 intent_map = {
-                    'DESCRIBE': AnalysisIntent.DESCRIBE,
-                    'COMPARE_GROUPS': AnalysisIntent.COMPARE_GROUPS,
-                    'FIND_PREDICTORS': AnalysisIntent.FIND_PREDICTORS,
-                    'SURVIVAL': AnalysisIntent.EXAMINE_SURVIVAL,
-                    'CORRELATIONS': AnalysisIntent.EXPLORE_RELATIONSHIPS,
+                    "DESCRIBE": AnalysisIntent.DESCRIBE,
+                    "COMPARE_GROUPS": AnalysisIntent.COMPARE_GROUPS,
+                    "FIND_PREDICTORS": AnalysisIntent.FIND_PREDICTORS,
+                    "SURVIVAL": AnalysisIntent.EXAMINE_SURVIVAL,
+                    "CORRELATIONS": AnalysisIntent.EXPLORE_RELATIONSHIPS,
                 }
-                context.inferred_intent = intent_map.get(query_intent.intent_type, AnalysisIntent.UNKNOWN)
+                context.inferred_intent = intent_map.get(
+                    query_intent.intent_type, AnalysisIntent.UNKNOWN
+                )
 
                 # Map variables
                 context.research_question = query
@@ -472,9 +494,9 @@ class QuestionEngine:
                 context.event_variable = query_intent.event_variable
 
                 # Set flags based on intent
-                context.compare_groups = (query_intent.intent_type == 'COMPARE_GROUPS')
-                context.find_predictors = (query_intent.intent_type == 'FIND_PREDICTORS')
-                context.time_to_event = (query_intent.intent_type == 'SURVIVAL')
+                context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
+                context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
+                context.time_to_event = query_intent.intent_type == "SURVIVAL"
 
                 return context
 

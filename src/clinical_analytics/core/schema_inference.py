@@ -16,12 +16,12 @@ Key Principles:
 - Fail gracefully with sensible defaults
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Set
-from pathlib import Path
-import polars as pl
-import duckdb
 import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import polars as pl
 
 
 @dataclass
@@ -38,12 +38,13 @@ class DictionaryMetadata:
         valid_values: Dict mapping column names to valid value sets
         source_file: Path to the PDF dictionary
     """
-    column_descriptions: Dict[str, str] = field(default_factory=dict)
-    column_types: Dict[str, str] = field(default_factory=dict)
-    valid_values: Dict[str, List[str]] = field(default_factory=dict)
-    source_file: Optional[Path] = None
 
-    def get_description(self, column: str) -> Optional[str]:
+    column_descriptions: dict[str, str] = field(default_factory=dict)
+    column_types: dict[str, str] = field(default_factory=dict)
+    valid_values: dict[str, list[str]] = field(default_factory=dict)
+    source_file: Path | None = None
+
+    def get_description(self, column: str) -> str | None:
         """Get description for a column, case-insensitive."""
         col_lower = column.lower()
         for key, value in self.column_descriptions.items():
@@ -70,17 +71,18 @@ class InferredSchema:
         continuous_columns: Continuous numeric variables
         confidence_scores: Detection confidence for each field (0-1)
     """
-    patient_id_column: Optional[str] = None
-    time_zero: Optional[str] = None
-    outcome_columns: List[str] = field(default_factory=list)
-    time_columns: List[str] = field(default_factory=list)
-    event_columns: List[str] = field(default_factory=list)
-    categorical_columns: List[str] = field(default_factory=list)
-    continuous_columns: List[str] = field(default_factory=list)
-    confidence_scores: Dict[str, float] = field(default_factory=dict)
-    dictionary_metadata: Optional[DictionaryMetadata] = None
 
-    def to_dataset_config(self) -> Dict[str, Any]:
+    patient_id_column: str | None = None
+    time_zero: str | None = None
+    outcome_columns: list[str] = field(default_factory=list)
+    time_columns: list[str] = field(default_factory=list)
+    event_columns: list[str] = field(default_factory=list)
+    categorical_columns: list[str] = field(default_factory=list)
+    continuous_columns: list[str] = field(default_factory=list)
+    confidence_scores: dict[str, float] = field(default_factory=dict)
+    dictionary_metadata: DictionaryMetadata | None = None
+
+    def to_dataset_config(self) -> dict[str, Any]:
         """
         Convert inferred schema to dataset config format.
 
@@ -90,38 +92,34 @@ class InferredSchema:
         Returns:
             Config dictionary compatible with ClinicalDataset
         """
-        config = {
-            'column_mapping': {},
-            'outcomes': {},
-            'time_zero': {}
-        }
+        config = {"column_mapping": {}, "outcomes": {}, "time_zero": {}}
 
         # Map patient ID
         if self.patient_id_column:
-            config['column_mapping'][self.patient_id_column] = 'patient_id'
+            config["column_mapping"][self.patient_id_column] = "patient_id"
 
         # Map outcomes with descriptions from dictionary
         for outcome_col in self.outcome_columns:
             outcome_config = {
-                'source_column': outcome_col,
-                'type': 'binary',
-                'confidence': self.confidence_scores.get(f'outcome_{outcome_col}', 0.5)
+                "source_column": outcome_col,
+                "type": "binary",
+                "confidence": self.confidence_scores.get(f"outcome_{outcome_col}", 0.5),
             }
 
             # Add description from dictionary if available
             if self.dictionary_metadata:
                 desc = self.dictionary_metadata.get_description(outcome_col)
                 if desc:
-                    outcome_config['description'] = desc
+                    outcome_config["description"] = desc
 
-            config['outcomes'][outcome_col] = outcome_config
+            config["outcomes"][outcome_col] = outcome_config
 
         # Time zero
         if self.time_zero:
             if self.time_zero in self.time_columns:
-                config['time_zero'] = {'source_column': self.time_zero}
+                config["time_zero"] = {"source_column": self.time_zero}
             else:
-                config['time_zero'] = {'value': self.time_zero}
+                config["time_zero"] = {"value": self.time_zero}
 
         return config
 
@@ -130,17 +128,21 @@ class InferredSchema:
         lines = ["=== Inferred Schema Summary ==="]
 
         if self.patient_id_column:
-            conf = self.confidence_scores.get('patient_id', 0.0)
+            conf = self.confidence_scores.get("patient_id", 0.0)
             lines.append(f"Patient ID: {self.patient_id_column} (confidence: {conf:.2f})")
 
         if self.outcome_columns:
-            lines.append(f"Outcomes ({len(self.outcome_columns)}): {', '.join(self.outcome_columns)}")
+            lines.append(
+                f"Outcomes ({len(self.outcome_columns)}): {', '.join(self.outcome_columns)}"
+            )
 
         if self.time_columns:
             lines.append(f"Time columns ({len(self.time_columns)}): {', '.join(self.time_columns)}")
 
         if self.event_columns:
-            lines.append(f"Event columns ({len(self.event_columns)}): {', '.join(self.event_columns)}")
+            lines.append(
+                f"Event columns ({len(self.event_columns)}): {', '.join(self.event_columns)}"
+            )
 
         lines.append(f"Categorical: {len(self.categorical_columns)} columns")
         lines.append(f"Continuous: {len(self.continuous_columns)} columns")
@@ -169,25 +171,54 @@ class SchemaInferenceEngine:
     """
 
     # Pattern keywords for different column types
-    PATIENT_ID_PATTERNS: Set[str] = {
-        'patient_id', 'patientid', 'patient', 'id', 'subject_id',
-        'subjectid', 'subject', 'mrn', 'study_id', 'studyid', 'participant_id'
+    PATIENT_ID_PATTERNS: set[str] = {
+        "patient_id",
+        "patientid",
+        "patient",
+        "id",
+        "subject_id",
+        "subjectid",
+        "subject",
+        "mrn",
+        "study_id",
+        "studyid",
+        "participant_id",
     }
 
-    OUTCOME_PATTERNS: Set[str] = {
-        'outcome', 'death', 'mortality', 'died', 'deceased', 'expired',
-        'icu', 'hospitalized', 'hospitalisation', 'readmit', 'complication',
-        'adverse', 'event', 'endpoint', 'status', 'relapse'
+    OUTCOME_PATTERNS: set[str] = {
+        "outcome",
+        "death",
+        "mortality",
+        "died",
+        "deceased",
+        "expired",
+        "icu",
+        "hospitalized",
+        "hospitalisation",
+        "readmit",
+        "complication",
+        "adverse",
+        "event",
+        "endpoint",
+        "status",
+        "relapse",
     }
 
-    TIME_PATTERNS: Set[str] = {
-        'time', 'date', 'day', 'month', 'year', 'duration',
-        'survival', 'followup', 'follow_up', 'days_to', 'time_to'
+    TIME_PATTERNS: set[str] = {
+        "time",
+        "date",
+        "day",
+        "month",
+        "year",
+        "duration",
+        "survival",
+        "followup",
+        "follow_up",
+        "days_to",
+        "time_to",
     }
 
-    EVENT_PATTERNS: Set[str] = {
-        'event', 'status', 'censor', 'indicator', 'flag', 'occurred'
-    }
+    EVENT_PATTERNS: set[str] = {"event", "status", "censor", "indicator", "flag", "occurred"}
 
     def __init__(self):
         """Initialize schema inference engine."""
@@ -213,12 +244,12 @@ class SchemaInferenceEngine:
         # 1. Detect patient ID column (highest priority)
         schema.patient_id_column, conf = self._detect_patient_id(df)
         if schema.patient_id_column:
-            schema.confidence_scores['patient_id'] = conf
+            schema.confidence_scores["patient_id"] = conf
 
         # 2. Detect outcome columns (binary variables with clinical names)
         schema.outcome_columns = self._detect_outcomes(df)
         for col in schema.outcome_columns:
-            schema.confidence_scores[f'outcome_{col}'] = 0.8  # Default confidence
+            schema.confidence_scores[f"outcome_{col}"] = 0.8  # Default confidence
 
         # 3. Detect time columns (dates, numeric time values)
         schema.time_columns = self._detect_time_columns(df)
@@ -227,8 +258,12 @@ class SchemaInferenceEngine:
         schema.event_columns = self._detect_event_columns(df)
 
         # 5. Classify remaining columns as categorical or continuous
-        classified = {schema.patient_id_column} | set(schema.outcome_columns) | \
-                     set(schema.time_columns) | set(schema.event_columns)
+        classified = (
+            {schema.patient_id_column}
+            | set(schema.outcome_columns)
+            | set(schema.time_columns)
+            | set(schema.event_columns)
+        )
 
         for col in df.columns:
             if col in classified:
@@ -249,7 +284,7 @@ class SchemaInferenceEngine:
 
         return schema
 
-    def _detect_patient_id(self, df: pl.DataFrame) -> tuple[Optional[str], float]:
+    def _detect_patient_id(self, df: pl.DataFrame) -> tuple[str | None, float]:
         """
         Detect patient ID column using Polars operations.
 
@@ -302,7 +337,7 @@ class SchemaInferenceEngine:
 
         return None, 0.0
 
-    def _detect_outcomes(self, df: pl.DataFrame) -> List[str]:
+    def _detect_outcomes(self, df: pl.DataFrame) -> list[str]:
         """
         Detect outcome columns (binary with clinical names).
 
@@ -334,7 +369,7 @@ class SchemaInferenceEngine:
 
         return outcome_cols
 
-    def _detect_time_columns(self, df: pl.DataFrame) -> List[str]:
+    def _detect_time_columns(self, df: pl.DataFrame) -> list[str]:
         """
         Detect time-related columns using Polars dtype checking.
 
@@ -366,7 +401,7 @@ class SchemaInferenceEngine:
 
         return time_cols
 
-    def _detect_event_columns(self, df: pl.DataFrame) -> List[str]:
+    def _detect_event_columns(self, df: pl.DataFrame) -> list[str]:
         """
         Detect event indicator columns (binary, often paired with time).
 
@@ -425,16 +460,25 @@ class SchemaInferenceEngine:
             return True
 
         # Numeric columns: check cardinality
-        if dtype in [pl.Int8, pl.Int16, pl.Int32, pl.Int64,
-                     pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
-                     pl.Float32, pl.Float64]:
+        if dtype in [
+            pl.Int8,
+            pl.Int16,
+            pl.Int32,
+            pl.Int64,
+            pl.UInt8,
+            pl.UInt16,
+            pl.UInt32,
+            pl.UInt64,
+            pl.Float32,
+            pl.Float64,
+        ]:
             unique_count = df[col].n_unique()
             return unique_count <= 20
 
         # Default to categorical for unknown types
         return True
 
-    def parse_dictionary_pdf(self, pdf_path: Path) -> Optional[DictionaryMetadata]:
+    def parse_dictionary_pdf(self, pdf_path: Path) -> DictionaryMetadata | None:
         """
         Parse data dictionary PDF to extract column metadata using LangChain.
 
@@ -457,7 +501,9 @@ class SchemaInferenceEngine:
         try:
             from langchain_community.document_loaders import PyPDFLoader
         except ImportError:
-            print("Warning: LangChain not installed. Install with: uv add langchain langchain-community")
+            print(
+                "Warning: LangChain not installed. Install with: uv add langchain langchain-community"
+            )
             return None
 
         if not pdf_path.exists():
@@ -474,12 +520,12 @@ class SchemaInferenceEngine:
             full_text = "\n".join([page.page_content for page in pages])
 
             # Pattern 1: "ColumnName: Description" or "ColumnName - Description"
-            pattern1 = r'^([a-z_][a-z0-9_]*)\s*[:\-]\s*(.+)$'
+            pattern1 = r"^([a-z_][a-z0-9_]*)\s*[:\-]\s*(.+)$"
 
             # Pattern 2: "Variable Name: Description" format
-            pattern2 = r'(?:variable|column|field)\s+(?:name|id)?\s*[:\-]?\s*([a-z_][a-z0-9_]*)\s*(?:description|meaning)?[:\-]\s*(.+)$'
+            pattern2 = r"(?:variable|column|field)\s+(?:name|id)?\s*[:\-]?\s*([a-z_][a-z0-9_]*)\s*(?:description|meaning)?[:\-]\s*(.+)$"
 
-            for line in full_text.split('\n'):
+            for line in full_text.split("\n"):
                 line = line.strip()
 
                 if not line:
@@ -507,11 +553,11 @@ class SchemaInferenceEngine:
 
             # Extract data types if mentioned
             type_patterns = {
-                'integer': ['integer', 'int', 'numeric', 'number'],
-                'float': ['float', 'decimal', 'real', 'double'],
-                'string': ['string', 'text', 'varchar', 'char'],
-                'date': ['date', 'datetime', 'timestamp'],
-                'boolean': ['boolean', 'bool', 'binary', 'yes/no']
+                "integer": ["integer", "int", "numeric", "number"],
+                "float": ["float", "decimal", "real", "double"],
+                "string": ["string", "text", "varchar", "char"],
+                "date": ["date", "datetime", "timestamp"],
+                "boolean": ["boolean", "bool", "binary", "yes/no"],
             }
 
             for col_name, desc in metadata.column_descriptions.items():
@@ -529,9 +575,7 @@ class SchemaInferenceEngine:
             return None
 
     def infer_schema_with_dictionary(
-        self,
-        df: pl.DataFrame,
-        dictionary_path: Optional[Path] = None
+        self, df: pl.DataFrame, dictionary_path: Path | None = None
     ) -> InferredSchema:
         """
         Infer schema from DataFrame and merge with PDF dictionary metadata.
@@ -573,16 +617,18 @@ class SchemaInferenceEngine:
                     desc_lower = col_desc.lower()
 
                     # Check if dictionary suggests this is an outcome
-                    outcome_keywords = ['outcome', 'mortality', 'death', 'died', 'icu', 'event']
+                    outcome_keywords = ["outcome", "mortality", "death", "died", "icu", "event"]
                     if any(kw in desc_lower for kw in outcome_keywords):
                         if col not in schema.outcome_columns:
                             # Dictionary suggests this is an outcome
                             if df[col].n_unique() == 2:  # Verify it's binary
                                 schema.outcome_columns.append(col)
-                                schema.confidence_scores[f'outcome_{col}'] = 0.95  # High confidence from dictionary
+                                schema.confidence_scores[f"outcome_{col}"] = (
+                                    0.95  # High confidence from dictionary
+                                )
 
                     # Check if dictionary suggests this is a time variable
-                    time_keywords = ['time', 'date', 'duration', 'days', 'months', 'years']
+                    time_keywords = ["time", "date", "duration", "days", "months", "years"]
                     if any(kw in desc_lower for kw in time_keywords):
                         if col not in schema.time_columns:
                             schema.time_columns.append(col)

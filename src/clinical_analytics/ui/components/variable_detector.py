@@ -8,10 +8,7 @@ Automatically detects variable types from uploaded data:
 - Date/Time
 """
 
-from typing import Dict, List, Tuple, Optional
 import pandas as pd
-import numpy as np
-from datetime import datetime
 
 
 class VariableTypeDetector:
@@ -29,23 +26,21 @@ class VariableTypeDetector:
     CATEGORICAL_THRESHOLD = 20  # If unique values <= this, likely categorical
 
     # Common patterns for specific variable types
-    ID_PATTERNS = ['id', 'patient', 'subject', 'record', 'mrn']
-    OUTCOME_PATTERNS = ['outcome', 'result', 'death', 'died', 'survived', 'status', 'event']
-    TIME_PATTERNS = ['date', 'time', 'timestamp', 'admission', 'discharge', 'dob', 'visit']
+    ID_PATTERNS = ["id", "patient", "subject", "record", "mrn"]
+    OUTCOME_PATTERNS = ["outcome", "result", "death", "died", "survived", "status", "event"]
+    TIME_PATTERNS = ["date", "time", "timestamp", "admission", "discharge", "dob", "visit"]
     BINARY_VALUES = {
-        'yes/no': (['yes', 'no'], ['Yes', 'No']),
-        '1/0': ([1, 0], ['1', '0']),
-        'true/false': (['true', 'false'], ['True', 'False'], [True, False]),
-        'male/female': (['male', 'female'], ['Male', 'Female'], ['M', 'F']),
-        'alive/dead': (['alive', 'dead'], ['Alive', 'Dead']),
+        "yes/no": (["yes", "no"], ["Yes", "No"]),
+        "1/0": ([1, 0], ["1", "0"]),
+        "true/false": (["true", "false"], ["True", "False"], [True, False]),
+        "male/female": (["male", "female"], ["Male", "Female"], ["M", "F"]),
+        "alive/dead": (["alive", "dead"], ["Alive", "Dead"]),
     }
 
     @classmethod
     def detect_variable_type(
-        cls,
-        series: pd.Series,
-        column_name: str
-    ) -> Tuple[str, Dict[str, any]]:
+        cls, series: pd.Series, column_name: str
+    ) -> tuple[str, dict[str, any]]:
         """
         Detect variable type for a single column.
 
@@ -68,29 +63,20 @@ class VariableTypeDetector:
         # Check for ID column first (high cardinality, often string)
         if any(pattern in col_lower for pattern in cls.ID_PATTERNS):
             if n_unique / n_total > 0.95:  # 95%+ unique values
-                return 'id', {
-                    'unique_count': n_unique,
-                    'suggested_as_patient_id': True
-                }
+                return "id", {"unique_count": n_unique, "suggested_as_patient_id": True}
 
         # Check for datetime
         if any(pattern in col_lower for pattern in cls.TIME_PATTERNS):
             # Try parsing as datetime
             try:
-                pd.to_datetime(series.dropna(), errors='coerce')
-                return 'datetime', {
-                    'format': 'auto-detected',
-                    'requires_parsing': True
-                }
+                pd.to_datetime(series.dropna(), errors="coerce")
+                return "datetime", {"format": "auto-detected", "requires_parsing": True}
             except:
                 pass
 
         # Explicit datetime type
         if pd.api.types.is_datetime64_any_dtype(series):
-            return 'datetime', {
-                'format': 'datetime',
-                'requires_parsing': False
-            }
+            return "datetime", {"format": "datetime", "requires_parsing": False}
 
         # Check for binary
         if n_unique == 2:
@@ -110,10 +96,10 @@ class VariableTypeDetector:
             # Check if this might be an outcome
             is_outcome = any(pattern in col_lower for pattern in cls.OUTCOME_PATTERNS)
 
-            return 'binary', {
-                'values': list(unique_values),
-                'pattern': binary_type or 'custom',
-                'suggested_as_outcome': is_outcome
+            return "binary", {
+                "values": list(unique_values),
+                "pattern": binary_type or "custom",
+                "suggested_as_outcome": is_outcome,
             }
 
         # Check for categorical (limited unique values)
@@ -121,37 +107,37 @@ class VariableTypeDetector:
             # Numeric with few unique values
             if pd.api.types.is_numeric_dtype(series):
                 # Could be ordinal (0,1,2,3) or categorical
-                return 'categorical', {
-                    'unique_count': n_unique,
-                    'values': sorted(unique_values.tolist()),
-                    'numeric_categorical': True
+                return "categorical", {
+                    "unique_count": n_unique,
+                    "values": sorted(unique_values.tolist()),
+                    "numeric_categorical": True,
                 }
 
             # String/object categorical
-            return 'categorical', {
-                'unique_count': n_unique,
-                'values': sorted(unique_values.tolist()),
-                'numeric_categorical': False
+            return "categorical", {
+                "unique_count": n_unique,
+                "values": sorted(unique_values.tolist()),
+                "numeric_categorical": False,
             }
 
         # Check for continuous (numeric)
         if pd.api.types.is_numeric_dtype(series):
-            return 'continuous', {
-                'min': float(series.min()),
-                'max': float(series.max()),
-                'mean': float(series.mean()),
-                'std': float(series.std())
+            return "continuous", {
+                "min": float(series.min()),
+                "max": float(series.max()),
+                "mean": float(series.mean()),
+                "std": float(series.std()),
             }
 
         # Default to categorical for high-cardinality string columns
-        return 'categorical', {
-            'unique_count': n_unique,
-            'high_cardinality': True,
-            'values': sorted(unique_values[:10].tolist())  # Sample values
+        return "categorical", {
+            "unique_count": n_unique,
+            "high_cardinality": True,
+            "values": sorted(unique_values[:10].tolist()),  # Sample values
         }
 
     @classmethod
-    def detect_all_variables(cls, df: pd.DataFrame) -> Dict[str, Dict[str, any]]:
+    def detect_all_variables(cls, df: pd.DataFrame) -> dict[str, dict[str, any]]:
         """
         Detect variable types for all columns in a DataFrame.
 
@@ -174,27 +160,27 @@ class VariableTypeDetector:
             var_type, metadata = cls.detect_variable_type(df[col], col)
 
             # Suggest role based on type and metadata
-            suggested_role = 'predictor'  # Default
+            suggested_role = "predictor"  # Default
 
-            if var_type == 'id':
-                suggested_role = 'patient_id'
-            elif var_type == 'datetime':
-                suggested_role = 'time_variable'
-            elif metadata.get('suggested_as_outcome', False):
-                suggested_role = 'outcome'
+            if var_type == "id":
+                suggested_role = "patient_id"
+            elif var_type == "datetime":
+                suggested_role = "time_variable"
+            elif metadata.get("suggested_as_outcome", False):
+                suggested_role = "outcome"
 
             results[col] = {
-                'type': var_type,
-                'metadata': metadata,
-                'suggested_role': suggested_role,
-                'missing_count': int(df[col].isna().sum()),
-                'missing_pct': float(df[col].isna().sum() / len(df) * 100)
+                "type": var_type,
+                "metadata": metadata,
+                "suggested_role": suggested_role,
+                "missing_count": int(df[col].isna().sum()),
+                "missing_pct": float(df[col].isna().sum() / len(df) * 100),
             }
 
         return results
 
     @classmethod
-    def suggest_schema_mapping(cls, df: pd.DataFrame) -> Dict[str, Optional[str]]:
+    def suggest_schema_mapping(cls, df: pd.DataFrame) -> dict[str, str | None]:
         """
         Suggest mapping to UnifiedCohort schema.
 
@@ -211,34 +197,27 @@ class VariableTypeDetector:
         """
         variable_info = cls.detect_all_variables(df)
 
-        suggestions = {
-            'patient_id': None,
-            'outcome': None,
-            'time_zero': None
-        }
+        suggestions = {"patient_id": None, "outcome": None, "time_zero": None}
 
         # Find patient ID candidate
         id_candidates = [
-            col for col, info in variable_info.items()
-            if info['suggested_role'] == 'patient_id'
+            col for col, info in variable_info.items() if info["suggested_role"] == "patient_id"
         ]
         if id_candidates:
-            suggestions['patient_id'] = id_candidates[0]
+            suggestions["patient_id"] = id_candidates[0]
 
         # Find outcome candidate
         outcome_candidates = [
-            col for col, info in variable_info.items()
-            if info['suggested_role'] == 'outcome'
+            col for col, info in variable_info.items() if info["suggested_role"] == "outcome"
         ]
         if outcome_candidates:
-            suggestions['outcome'] = outcome_candidates[0]
+            suggestions["outcome"] = outcome_candidates[0]
 
         # Find time variable candidate
         time_candidates = [
-            col for col, info in variable_info.items()
-            if info['suggested_role'] == 'time_variable'
+            col for col, info in variable_info.items() if info["suggested_role"] == "time_variable"
         ]
         if time_candidates:
-            suggestions['time_zero'] = time_candidates[0]
+            suggestions["time_zero"] = time_candidates[0]
 
         return suggestions

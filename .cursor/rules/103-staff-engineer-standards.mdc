@@ -1,5 +1,5 @@
 ---
-description: Staff-level data engineering standards. Enforces production-grade patterns for error handling, observability, idempotency, and operational excellence.
+description: Staff-level data engineering standards. Enforces production-grade patterns for error handling, observability, idempotency, and operational excellence. Always use Makefile commands for code quality checks.
 globs: ["**/*.py"]
 alwaysApply: true
 ---
@@ -366,3 +366,20 @@ Before approving any PR:
 5. **Performance**: Any unbounded operations?
 6. **Testing**: Are edge cases covered?
 7. **Documentation**: Can someone new understand the why?
+8. **Code quality**: Run `make check` - all checks must pass
+
+## Pre-Commit Verification
+
+**Before committing code, always run:**
+```bash
+make format        # Auto-format code
+make lint-fix      # Auto-fix linting issues
+make check         # Full check: lint, format-check, type-check, test
+```
+
+**If checks fail:**
+- Fix issues before committing
+- Never commit code that fails `make check`
+- Use `make check-fast` for quicker feedback during development
+
+See `.cursor/rules/000-project-setup-and-makefile.mdc` for full Makefile reference.

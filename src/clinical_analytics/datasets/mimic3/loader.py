@@ -4,9 +4,9 @@ MIMIC-III Dataset Loader - DuckDB-based SQL extraction.
 This module handles loading MIMIC-III data from DuckDB or Postgres databases.
 """
 
-import duckdb
 from pathlib import Path
-from typing import Optional, Union
+
+import duckdb
 import polars as pl
 
 
@@ -17,7 +17,7 @@ class MIMIC3Loader:
     Supports both DuckDB files and PostgreSQL connections.
     """
 
-    def __init__(self, db_path: Optional[Union[str, Path]] = None, db_connection=None):
+    def __init__(self, db_path: str | Path | None = None, db_connection=None):
         """
         Initialize MIMIC-III loader.
 
@@ -97,7 +97,7 @@ class MIMIC3Loader:
         if not self.conn:
             self.connect()
 
-        required_tables = ['patients', 'admissions', 'diagnoses_icd', 'chartevents']
+        required_tables = ["patients", "admissions", "diagnoses_icd", "chartevents"]
 
         table_status = {}
         for table in required_tables:
@@ -119,7 +119,7 @@ class MIMIC3Loader:
         self.disconnect()
 
 
-def load_mimic3_from_duckdb(db_path: Union[str, Path], query: str) -> pl.DataFrame:
+def load_mimic3_from_duckdb(db_path: str | Path, query: str) -> pl.DataFrame:
     """
     Convenience function to load MIMIC-III data from DuckDB.
 

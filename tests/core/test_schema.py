@@ -2,7 +2,6 @@
 Tests for schema module.
 """
 
-import pytest
 from clinical_analytics.core.schema import UnifiedCohort
 
 
@@ -28,4 +27,3 @@ class TestUnifiedCohort:
         """Test that REQUIRED_COLUMNS is a list with all required columns."""
         assert isinstance(UnifiedCohort.REQUIRED_COLUMNS, list)
         assert len(UnifiedCohort.REQUIRED_COLUMNS) == 4
-

@@ -4,69 +4,69 @@ overview: Fix path resolution bug in SemanticLayer._register_source() to resolve
 todos:
   - id: "1"
     content: Add logging import and logger setup to semantic.py module
-    status: pending
+    status: completed
   - id: "2"
     content: Add workspace_root parameter to __init__() and _detect_workspace_root() helper method (config -> parameter -> marker detection -> cwd fallback)
-    status: pending
+    status: completed
     dependencies:
       - "1"
   - id: 2a
     content: Update _register_source() to use self.workspace_root for resolving relative paths
-    status: pending
+    status: completed
     dependencies:
       - "2"
   - id: "3"
     content: Add logging statements throughout _register_source() with appropriate levels (debug/info for path resolution, warning/error for failures)
-    status: pending
+    status: completed
     dependencies:
       - 2a
   - id: "4"
     content: Add logging to __init__() method for initialization tracking
-    status: pending
+    status: completed
     dependencies:
       - "1"
   - id: "5"
     content: Create test file tests/core/test_semantic_layer.py with fixtures for temporary test data
-    status: pending
+    status: completed
   - id: "6"
     content: Add test for relative path resolution (should resolve to workspace root)
-    status: pending
+    status: completed
     dependencies:
       - "5"
   - id: "7"
     content: Add test for absolute path handling (should work unchanged)
-    status: pending
+    status: completed
     dependencies:
       - "5"
   - id: "8"
     content: Add test for missing file error (should show resolved path in error)
-    status: pending
+    status: completed
     dependencies:
       - "5"
   - id: "9"
     content: Add test for directory source (should still raise NotImplementedError)
-    status: pending
+    status: completed
     dependencies:
       - "5"
   - id: "10"
     content: Add test for database table source (should work with db_table param)
-    status: pending
+    status: completed
     dependencies:
       - "5"
   - id: "11"
     content: Add test for workspace root detection (marker-based detection and fallback to cwd)
-    status: pending
+    status: completed
     dependencies:
       - "5"
   - id: 11a
     content: Add minimal logging test (verify stable substrings like 'resolved path' in logs, avoid fragile detailed assertions)
-    status: pending
+    status: completed
     dependencies:
       - "5"
       - "3"
   - id: "12"
     content: Run all tests and verify they pass
-    status: pending
+    status: completed
     dependencies:
       - "6"
       - "7"

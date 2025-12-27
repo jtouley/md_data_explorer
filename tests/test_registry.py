@@ -3,8 +3,9 @@ Tests for the dataset registry module.
 """
 
 import pytest
-from clinical_analytics.core.registry import DatasetRegistry
+
 from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.registry import DatasetRegistry
 
 
 class TestDatasetRegistry:
@@ -19,7 +20,7 @@ class TestDatasetRegistry:
 
         assert isinstance(datasets, dict)
         assert len(datasets) > 0
-        assert 'covid_ms' in datasets or 'sepsis' in datasets
+        assert "covid_ms" in datasets or "sepsis" in datasets
 
     def test_list_datasets(self):
         """Test listing available datasets."""
@@ -41,18 +42,18 @@ class TestDatasetRegistry:
             info = DatasetRegistry.get_dataset_info(datasets[0])
 
             assert isinstance(info, dict)
-            assert 'name' in info
-            assert 'available' in info
-            assert 'config' in info
+            assert "name" in info
+            assert "available" in info
+            assert "config" in info
 
     def test_get_dataset_factory(self):
         """Test factory method for creating datasets."""
         DatasetRegistry.reset()
 
-        dataset = DatasetRegistry.get_dataset('covid_ms')
+        dataset = DatasetRegistry.get_dataset("covid_ms")
 
         assert isinstance(dataset, ClinicalDataset)
-        assert dataset.name == 'covid_ms'
+        assert dataset.name == "covid_ms"
 
     def test_get_all_dataset_info(self):
         """Test getting info for all datasets."""
@@ -64,8 +65,8 @@ class TestDatasetRegistry:
         assert len(all_info) > 0
 
         for name, info in all_info.items():
-            assert 'name' in info
-            assert 'config' in info
+            assert "name" in info
+            assert "config" in info
 
     def test_reset(self):
         """Test registry reset functionality."""
@@ -86,4 +87,4 @@ class TestDatasetRegistry:
         DatasetRegistry.discover_datasets()
 
         with pytest.raises(KeyError):
-            DatasetRegistry.get_dataset('nonexistent_dataset')
+            DatasetRegistry.get_dataset("nonexistent_dataset")

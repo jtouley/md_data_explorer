@@ -14,10 +14,10 @@ Example:
     'COMPARE_GROUPS'
 """
 
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
 import re
+from dataclasses import dataclass, field
 from difflib import get_close_matches
+from typing import Any
 
 
 @dataclass
@@ -35,13 +35,14 @@ class QueryIntent:
         filters: Dictionary of filter conditions
         confidence: Confidence score 0-1 for the parse
     """
+
     intent_type: str
-    primary_variable: Optional[str] = None
-    grouping_variable: Optional[str] = None
-    predictor_variables: List[str] = field(default_factory=list)
-    time_variable: Optional[str] = None
-    event_variable: Optional[str] = None
-    filters: Dict[str, Any] = field(default_factory=dict)
+    primary_variable: str | None = None
+    grouping_variable: str | None = None
+    predictor_variables: list[str] = field(default_factory=list)
+    time_variable: str | None = None
+    event_variable: str | None = None
+    filters: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
 
 
@@ -87,78 +88,50 @@ class NLQueryEngine:
             {
                 "template": "compare {outcome} by {group}",
                 "intent": "COMPARE_GROUPS",
-                "slots": ["outcome", "group"]
+                "slots": ["outcome", "group"],
             },
             {
                 "template": "compare {outcome} between {group}",
                 "intent": "COMPARE_GROUPS",
-                "slots": ["outcome", "group"]
+                "slots": ["outcome", "group"],
             },
             {
                 "template": "difference in {outcome} by {group}",
                 "intent": "COMPARE_GROUPS",
-                "slots": ["outcome", "group"]
+                "slots": ["outcome", "group"],
             },
             {
                 "template": "what predicts {outcome}",
                 "intent": "FIND_PREDICTORS",
-                "slots": ["outcome"]
+                "slots": ["outcome"],
             },
             {
                 "template": "risk factors for {outcome}",
                 "intent": "FIND_PREDICTORS",
-                "slots": ["outcome"]
+                "slots": ["outcome"],
             },
             {
                 "template": "predictors of {outcome}",
                 "intent": "FIND_PREDICTORS",
-                "slots": ["outcome"]
+                "slots": ["outcome"],
             },
-            {
-                "template": "survival analysis",
-                "intent": "SURVIVAL",
-                "slots": []
-            },
-            {
-                "template": "kaplan meier",
-                "intent": "SURVIVAL",
-                "slots": []
-            },
-            {
-                "template": "time to event",
-                "intent": "SURVIVAL",
-                "slots": []
-            },
+            {"template": "survival analysis", "intent": "SURVIVAL", "slots": []},
+            {"template": "kaplan meier", "intent": "SURVIVAL", "slots": []},
+            {"template": "time to event", "intent": "SURVIVAL", "slots": []},
             {
                 "template": "correlation between {var1} and {var2}",
                 "intent": "CORRELATIONS",
-                "slots": ["var1", "var2"]
+                "slots": ["var1", "var2"],
             },
             {
                 "template": "relationship between {var1} and {var2}",
                 "intent": "CORRELATIONS",
-                "slots": ["var1", "var2"]
+                "slots": ["var1", "var2"],
             },
-            {
-                "template": "association",
-                "intent": "CORRELATIONS",
-                "slots": []
-            },
-            {
-                "template": "descriptive statistics",
-                "intent": "DESCRIBE",
-                "slots": []
-            },
-            {
-                "template": "summary statistics",
-                "intent": "DESCRIBE",
-                "slots": []
-            },
-            {
-                "template": "describe",
-                "intent": "DESCRIBE",
-                "slots": []
-            },
+            {"template": "association", "intent": "CORRELATIONS", "slots": []},
+            {"template": "descriptive statistics", "intent": "DESCRIBE", "slots": []},
+            {"template": "summary statistics", "intent": "DESCRIBE", "slots": []},
+            {"template": "describe", "intent": "DESCRIBE", "slots": []},
         ]
 
     def parse_query(self, query: str) -> QueryIntent:
@@ -198,7 +171,7 @@ class NLQueryEngine:
         intent = self._llm_parse(query)
         return intent
 
-    def _pattern_match(self, query: str) -> Optional[QueryIntent]:
+    def _pattern_match(self, query: str) -> QueryIntent | None:
         """
         Tier 1: Regex pattern matching for common queries.
 
@@ -211,10 +184,7 @@ class NLQueryEngine:
         query_lower = query.lower()
 
         # Pattern: "compare X by Y" or "compare X between Y"
-        match = re.search(
-            r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)",
-            query_lower
-        )
+        match = re.search(r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)", query_lower)
         if match:
             primary_var = self._fuzzy_match_variable(match.group(1))
             group_var = self._fuzzy_match_variable(match.group(2))
@@ -224,30 +194,24 @@ class NLQueryEngine:
                     intent_type="COMPARE_GROUPS",
                     primary_variable=primary_var,
                     grouping_variable=group_var,
-                    confidence=0.95
+                    confidence=0.95,
                 )
 
         # Pattern: "what predicts X" or "predictors of X"
         match = re.search(
-            r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)",
-            query_lower
+            r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)", query_lower
         )
         if match:
             outcome_var = self._fuzzy_match_variable(match.group(1))
 
             if outcome_var:
                 return QueryIntent(
-                    intent_type="FIND_PREDICTORS",
-                    primary_variable=outcome_var,
-                    confidence=0.95
+                    intent_type="FIND_PREDICTORS", primary_variable=outcome_var, confidence=0.95
                 )
 
         # Pattern: "survival" or "time to event"
         if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
-            return QueryIntent(
-                intent_type="SURVIVAL",
-                confidence=0.9
-            )
+            return QueryIntent(intent_type="SURVIVAL", confidence=0.9)
 
         # Pattern: "correlation" or "relationship"
         if re.search(r"\b(correlat|relationship|associat)\b", query_lower):
@@ -258,26 +222,17 @@ class NLQueryEngine:
                     intent_type="CORRELATIONS",
                     primary_variable=variables[0],
                     grouping_variable=variables[1],
-                    confidence=0.9
+                    confidence=0.9,
                 )
             else:
-                return QueryIntent(
-                    intent_type="CORRELATIONS",
-                    confidence=0.85
-                )
+                return QueryIntent(intent_type="CORRELATIONS", confidence=0.85)
 
         # Pattern: "describe" or "summary"
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
-            return QueryIntent(
-                intent_type="DESCRIBE",
-                confidence=0.9
-            )
+            return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
 
         # Pattern: "difference" implies comparison
-        match = re.search(
-            r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)",
-            query_lower
-        )
+        match = re.search(r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)", query_lower)
         if match:
             primary_var = self._fuzzy_match_variable(match.group(1))
             group_var = self._fuzzy_match_variable(match.group(2))
@@ -287,12 +242,12 @@ class NLQueryEngine:
                     intent_type="COMPARE_GROUPS",
                     primary_variable=primary_var,
                     grouping_variable=group_var,
-                    confidence=0.95
+                    confidence=0.95,
                 )
 
         return None
 
-    def _semantic_match(self, query: str) -> Optional[QueryIntent]:
+    def _semantic_match(self, query: str) -> QueryIntent | None:
         """
         Tier 2: Semantic embedding similarity matching.
 
@@ -306,6 +261,7 @@ class NLQueryEngine:
             # Lazy load encoder
             if self.encoder is None:
                 from sentence_transformers import SentenceTransformer
+
                 self.encoder = SentenceTransformer(self.embedding_model_name)
 
             # Lazy compute template embeddings
@@ -318,6 +274,7 @@ class NLQueryEngine:
 
             # Compute similarity with all templates
             from sklearn.metrics.pairwise import cosine_similarity
+
             similarities = cosine_similarity(query_embedding, self.template_embeddings)[0]
 
             # Get best match
@@ -329,8 +286,7 @@ class NLQueryEngine:
 
                 # Extract slot values using fuzzy matching
                 intent = QueryIntent(
-                    intent_type=best_template["intent"],
-                    confidence=float(best_score)
+                    intent_type=best_template["intent"], confidence=float(best_score)
                 )
 
                 # Extract variables mentioned in query
@@ -373,12 +329,9 @@ class NLQueryEngine:
         """
         # For now, return a low-confidence DESCRIBE intent as safe default
         # This triggers the "ask clarifying questions" flow in the UI
-        return QueryIntent(
-            intent_type="DESCRIBE",
-            confidence=0.3
-        )
+        return QueryIntent(intent_type="DESCRIBE", confidence=0.3)
 
-    def _fuzzy_match_variable(self, query_term: str) -> Optional[str]:
+    def _fuzzy_match_variable(self, query_term: str) -> str | None:
         """
         Fuzzy match query term to actual column name in dataset.
 
@@ -408,12 +361,12 @@ class NLQueryEngine:
 
         # Check synonyms
         synonyms = {
-            'age': ['age_years', 'patient_age', 'age_at_admission'],
-            'mortality': ['died', 'death', 'deceased', 'expired', 'dead'],
-            'treatment': ['tx', 'therapy', 'intervention', 'treatment_arm'],
-            'outcome': ['result', 'endpoint', 'event'],
-            'icu': ['intensive_care', 'icu_admission'],
-            'hospital': ['hospitalized', 'hospitalization', 'hosp'],
+            "age": ["age_years", "patient_age", "age_at_admission"],
+            "mortality": ["died", "death", "deceased", "expired", "dead"],
+            "treatment": ["tx", "therapy", "intervention", "treatment_arm"],
+            "outcome": ["result", "endpoint", "event"],
+            "icu": ["intensive_care", "icu_admission"],
+            "hospital": ["hospitalized", "hospitalization", "hosp"],
         }
 
         query_term_lower = query_term.lower()
@@ -427,10 +380,7 @@ class NLQueryEngine:
 
         # Fuzzy match
         matches = get_close_matches(
-            query_term.lower(),
-            [c.lower() for c in available_columns],
-            n=1,
-            cutoff=0.6
+            query_term.lower(), [c.lower() for c in available_columns], n=1, cutoff=0.6
         )
 
         if matches:
@@ -441,7 +391,7 @@ class NLQueryEngine:
 
         return None
 
-    def _extract_variables_from_query(self, query: str) -> List[str]:
+    def _extract_variables_from_query(self, query: str) -> list[str]:
         """
         Extract all potential variable names from query.
 
@@ -464,7 +414,7 @@ class NLQueryEngine:
         matched_vars = []
         for word in words:
             # Remove punctuation
-            word_clean = word.strip(',.?!')
+            word_clean = word.strip(",.?!")
 
             # Check if word is a column name (fuzzy)
             matched = self._fuzzy_match_variable(word_clean)

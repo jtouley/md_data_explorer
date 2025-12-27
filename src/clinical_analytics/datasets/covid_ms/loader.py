@@ -1,7 +1,9 @@
-import polars as pl
 from pathlib import Path
-from typing import Optional
+
+import polars as pl
+
 from clinical_analytics.core.mapper import ColumnMapper
+
 
 def load_raw_data(path: Path) -> pl.DataFrame:
     """Read the raw CSV file using Polars for efficient processing."""
@@ -10,7 +12,8 @@ def load_raw_data(path: Path) -> pl.DataFrame:
 
     return pl.read_csv(path)
 
-def clean_data(df: pl.DataFrame, mapper: Optional[ColumnMapper] = None) -> pl.DataFrame:
+
+def clean_data(df: pl.DataFrame, mapper: ColumnMapper | None = None) -> pl.DataFrame:
     """
     Clean and standardize the COVID-MS dataframe using Polars.
 
@@ -25,13 +28,10 @@ def clean_data(df: pl.DataFrame, mapper: Optional[ColumnMapper] = None) -> pl.Da
         Cleaned DataFrame with outcome transformations applied
     """
     # Basic data cleaning: handle nulls in sex column
-    df = df.with_columns([
-        pl.col('sex').fill_null('Unknown').cast(pl.Utf8).alias('sex')
-    ])
+    df = df.with_columns([pl.col("sex").fill_null("Unknown").cast(pl.Utf8).alias("sex")])
 
     # Apply outcome transformations via mapper (config-driven)
     if mapper:
         df = mapper.apply_outcome_transformations(df)
 
     return df
-
