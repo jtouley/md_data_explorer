@@ -14,6 +14,7 @@ Key Principles:
 - Fail gracefully with user override options
 """
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, Set, Literal
 import polars as pl
@@ -803,6 +804,170 @@ class MultiTableHandler:
 
         # Priority 5: Fact (default for high cardinality non-events)
         return "fact"
+
+    def _build_dimension_mart(
+        self,
+        anchor_table: Optional[str] = None,
+        join_type: str = "left"
+    ) -> pl.LazyFrame:
+        """
+        Build dimension mart by joining only 1:1 and small dimensions to anchor.
+
+        Critical invariants enforced:
+        1. Mart rowcount equals anchor unique grain count
+        2. No joins where RHS key is non-unique
+        3. Bridges, facts, and events are EXCLUDED
+
+        Strategy:
+        1. Find anchor table using centrality-based selection
+        2. Filter to only dimension tables (exclude fact/event/bridge)
+        3. Verify RHS join keys are unique (enforce 1:1 or many:1)
+        4. Execute joins in BFS order from anchor
+        5. Return LazyFrame (not materialized)
+
+        Args:
+            anchor_table: Optional anchor table name (auto-detected if None)
+            join_type: Type of join (default "left")
+
+        Returns:
+            LazyFrame with dimension mart (anchor + joined dimensions)
+
+        Raises:
+            ValueError: If anchor has non-unique grain key or no dimensions found
+        """
+        logger.info("Building dimension mart with aggregate-before-join architecture")
+
+        # Ensure classifications exist
+        if not self.classifications:
+            self.classify_tables()
+
+        # Ensure relationships exist
+        if not self.relationships:
+            self.detect_relationships()
+
+        # Auto-detect anchor if not specified
+        if anchor_table is None:
+            anchor_table = self._find_anchor_by_centrality()
+            logger.info(f"Auto-detected anchor table: {anchor_table}")
+
+        if anchor_table not in self.tables:
+            raise ValueError(f"Anchor table '{anchor_table}' not found in tables")
+
+        anchor_class = self.classifications.get(anchor_table)
+        if not anchor_class:
+            raise ValueError(f"Anchor table '{anchor_table}' not classified")
+
+        # Verify anchor is unique on grain
+        if not anchor_class.is_unique_on_grain:
+            raise ValueError(
+                f"Anchor table '{anchor_table}' is not unique on grain key "
+                f"'{anchor_class.grain_key}' (cardinality_ratio={anchor_class.cardinality_ratio:.2f})"
+            )
+
+        # Start with anchor table as LazyFrame
+        anchor_df = self.tables[anchor_table]
+        mart = anchor_df.lazy()
+        joined_tables = {anchor_table}
+
+        logger.debug(
+            f"Anchor '{anchor_table}': {anchor_df.height} rows, "
+            f"grain_key={anchor_class.grain_key}"
+        )
+
+        # Build join graph using BFS from anchor
+        queue = deque([anchor_table])
+        join_count = 0
+
+        while queue:
+            current = queue.popleft()
+
+            # Find relationships where current table is involved
+            # Sort for deterministic traversal order
+            for rel in sorted(
+                self.relationships,
+                key=lambda r: (r.parent_table, r.child_table, r.parent_key, r.child_key)
+            ):
+                next_table = None
+                join_key_left = None
+                join_key_right = None
+
+                # Check if we can join a new table to current table
+                if rel.parent_table == current and rel.child_table not in joined_tables:
+                    next_table = rel.child_table
+                    join_key_left = rel.parent_key
+                    join_key_right = rel.child_key
+
+                elif rel.child_table == current and rel.parent_table not in joined_tables:
+                    next_table = rel.parent_table
+                    join_key_left = rel.child_key
+                    join_key_right = rel.parent_key
+
+                if next_table:
+                    # Check if next_table is a dimension (exclude facts, events, bridges)
+                    next_class = self.classifications.get(next_table)
+
+                    if not next_class:
+                        logger.debug(f"Skipping '{next_table}': not classified")
+                        continue
+
+                    if next_class.classification != "dimension":
+                        logger.debug(
+                            f"Skipping '{next_table}': classification={next_class.classification} "
+                            f"(only dimensions allowed in mart)"
+                        )
+                        continue
+
+                    # CRITICAL: Verify RHS join key is unique (enforce 1:1 or many:1)
+                    next_df = self.tables[next_table]
+
+                    # Use sampled uniqueness to check if RHS key is unique
+                    rhs_unique_count, rhs_null_rate = self._compute_sampled_uniqueness(
+                        next_df, join_key_right
+                    )
+                    s = self._sample_df(next_df)
+                    non_null_sample = s.height - int(rhs_null_rate * s.height)
+
+                    if non_null_sample > 0:
+                        rhs_uniq_ratio = rhs_unique_count / non_null_sample
+                    else:
+                        rhs_uniq_ratio = 0.0
+
+                    # Allow 5% tolerance for sampling error
+                    if rhs_uniq_ratio < 0.95:
+                        logger.warning(
+                            f"Skipping join to '{next_table}': RHS key '{join_key_right}' "
+                            f"is not unique (uniq_ratio={rhs_uniq_ratio:.2%}, "
+                            f"violates 1:1 or many:1 constraint)"
+                        )
+                        continue
+
+                    # Join next dimension table
+                    next_lazy = next_df.lazy()
+
+                    mart = mart.join(
+                        next_lazy,
+                        left_on=join_key_left,
+                        right_on=join_key_right,
+                        how=join_type,
+                        suffix=f"_{next_table}",
+                        validate="m:1",  # fail fast if RHS key is not unique
+                    )
+
+                    joined_tables.add(next_table)
+                    queue.append(next_table)
+                    join_count += 1
+
+                    logger.debug(
+                        f"Joined dimension '{next_table}' on {join_key_left}={join_key_right} "
+                        f"(rhs_uniq_ratio={rhs_uniq_ratio:.2%})"
+                    )
+
+        logger.info(
+            f"Dimension mart built: anchor='{anchor_table}', "
+            f"joined_dimensions={join_count}, total_tables={len(joined_tables)}"
+        )
+
+        return mart
 
     def build_unified_cohort(
         self,

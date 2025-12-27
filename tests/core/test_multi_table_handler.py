@@ -104,11 +104,18 @@ class TestTableClassification:
         """
         # Arrange: Create table with known characteristics
         num_rows = 1000
-        df = pl.DataFrame({
-            "id": range(num_rows),  # Int64: 8 bytes/row
-            "name": [f"Name_{i:04d}" for i in range(num_rows)],  # Utf8: ~9 chars = 9 bytes/row
-            "value": [float(i) * 1.5 for i in range(num_rows)],  # Float64: 8 bytes/row
-        })
+        df = (
+            pl.select(idx=pl.int_range(0, num_rows))
+            .with_columns([
+                pl.col("idx").alias("id"),  # Int64: 8 bytes/row
+                pl.concat_str([
+                    pl.lit("Name_"),
+                    pl.col("idx").cast(pl.Utf8).str.zfill(4)
+                ]).alias("name"),  # Utf8: ~9 chars = 9 bytes/row
+                (pl.col("idx") * 1.5).cast(pl.Float64).alias("value"),  # Float64: 8 bytes/row
+            ])
+            .drop("idx")
+        )
 
         tables = {"test_table": df}
         handler = MultiTableHandler(tables)
@@ -253,11 +260,21 @@ class TestTableClassification:
         # Need > 10 MB to avoid reference classification
         # Create enough rows to exceed 10 MB threshold
         num_vitals_rows = 100_000  # Ensure > 10 MB
-        vitals = pl.DataFrame({
-            "patient_id": [f"P{i % 100}" for i in range(num_vitals_rows)],
-            "charttime": [f"2024-01-{(i % 30) + 1:02d}" for i in range(num_vitals_rows)],
-            "heart_rate": [70 + (i % 30) for i in range(num_vitals_rows)]
-        })
+        vitals = (
+            pl.select(idx=pl.int_range(0, num_vitals_rows))
+            .with_columns([
+                pl.concat_str([
+                    pl.lit("P"),
+                    (pl.col("idx") % 100).cast(pl.Utf8)
+                ]).alias("patient_id"),
+                pl.concat_str([
+                    pl.lit("2024-01-"),
+                    ((pl.col("idx") % 30) + 1).cast(pl.Utf8).str.zfill(2)
+                ]).alias("charttime"),
+                (70 + (pl.col("idx") % 30)).alias("heart_rate"),
+            ])
+            .drop("idx")
+        )
 
         tables = {
             "patients": patients,
@@ -443,10 +460,18 @@ class TestPerformanceOptimizations:
         This test tracks calls to our own _sample_df() helper to verify sampling is used.
         """
         # Arrange: Create large DataFrame
-        large_df = pl.DataFrame({
-            "patient_id": [f"P{i % 1000}" for i in range(100_000)],
-            "value": list(range(100_000))
-        })
+        n = 100_000
+        large_df = (
+            pl.select(idx=pl.int_range(0, n))
+            .with_columns([
+                pl.concat_str([
+                    pl.lit("P"),
+                    (pl.col("idx") % 1000).cast(pl.Utf8)
+                ]).alias("patient_id"),
+                pl.col("idx").alias("value"),
+            ])
+            .drop("idx")
+        )
 
         # Track calls to _sample_df()
         sample_df_calls = []
@@ -484,11 +509,22 @@ class TestPerformanceOptimizations:
         import time
 
         # Arrange: Create 1M-row table
-        large_df = pl.DataFrame({
-            "patient_id": [f"P{i % 1000}" for i in range(1_000_000)],  # 1000 unique patients
-            "event_id": [f"E{i}" for i in range(1_000_000)],  # 1M unique events (row-level ID)
-            "value": list(range(1_000_000))
-        })
+        n = 1_000_000
+        large_df = (
+            pl.select(idx=pl.int_range(0, n))
+            .with_columns([
+                pl.concat_str([
+                    pl.lit("P"),
+                    (pl.col("idx") % 1000).cast(pl.Utf8)
+                ]).alias("patient_id"),  # 1000 unique patients
+                pl.concat_str([
+                    pl.lit("E"),
+                    pl.col("idx").cast(pl.Utf8)
+                ]).alias("event_id"),  # 1M unique events (row-level ID)
+                pl.col("idx").alias("value"),
+            ])
+            .drop("idx")
+        )
 
         handler = MultiTableHandler({"large": large_df})
 
@@ -536,11 +572,21 @@ class TestAnchorSelection:
 
         # Large vitals table (event classification)
         num_vitals = 100_000
-        vitals = pl.DataFrame({
-            "patient_id": [f"P{(i % 3) + 1}" for i in range(num_vitals)],
-            "charttime": [f"2024-01-{(i % 30) + 1:02d}" for i in range(num_vitals)],
-            "heart_rate": [70 + (i % 30) for i in range(num_vitals)]
-        })
+        vitals = (
+            pl.select(idx=pl.int_range(0, num_vitals))
+            .with_columns([
+                pl.concat_str([
+                    pl.lit("P"),
+                    ((pl.col("idx") % 3) + 1).cast(pl.Utf8)
+                ]).alias("patient_id"),
+                pl.concat_str([
+                    pl.lit("2024-01-"),
+                    ((pl.col("idx") % 30) + 1).cast(pl.Utf8).str.zfill(2)
+                ]).alias("charttime"),
+                (70 + (pl.col("idx") % 30)).alias("heart_rate"),
+            ])
+            .drop("idx")
+        )
 
         medications = pl.DataFrame({
             "medication_id": ["M1", "M2", "M3"],
@@ -700,7 +746,7 @@ class TestAnchorSelection:
         handler = MultiTableHandler(tables)
         handler.detect_relationships()
 
-        with pytest.raises(ValueError, match="No suitable anchor table found"):
+        with pytest.raises(ValueError, match="No dimension tables found"):
             handler._find_anchor_by_centrality()
 
         handler.close()
@@ -727,3 +773,109 @@ class TestAnchorSelection:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestDimensionMart:
+    """Test suite for Milestone 3: Dimension Mart Builder."""
+
+    def test_mart_rowcount_equals_anchor_unique_grain_count(self):
+        """
+        M3 Acceptance Test 1: Mart rowcount equals anchor unique grain count.
+
+        Critical invariant: Joining dimensions should preserve anchor cardinality.
+        """
+        # Arrange: Anchor with 3 unique patients + dimension with patient attributes
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "name": ["Alice", "Bob", "Charlie"],
+            "age": [30, 45, 28]
+        })
+
+        # Dimension table (1:1 relationship with patients)
+        demographics = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "gender": ["F", "M", "M"],
+            "ethnicity": ["Asian", "White", "Hispanic"]
+        })
+
+        tables = {
+            "patients": patients,
+            "demographics": demographics
+        }
+
+        # Act
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        mart_lazy = handler._build_dimension_mart(anchor_table="patients")
+        mart = mart_lazy.collect()
+
+        # Assert: Mart should have same row count as anchor
+        assert mart.height == patients.height, (
+            f"Mart rowcount {mart.height} != anchor rowcount {patients.height}"
+        )
+
+        assert mart.height == 3, "Mart should have 3 rows (one per unique patient)"
+
+        # Verify all anchor rows preserved
+        assert set(mart["patient_id"]) == {"P1", "P2", "P3"}
+
+        handler.close()
+
+    def test_no_joins_where_rhs_key_is_non_unique(self):
+        """
+        M3 Acceptance Test 2: No joins where RHS key is non-unique.
+
+        Critical invariant: Dimension mart should reject tables with non-unique join keys
+        to prevent row explosion.
+        """
+        # Arrange
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "age": [30, 45, 28]
+        })
+
+        # Valid dimension (unique patient_id)
+        demographics = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "gender": ["F", "M", "M"]
+        })
+
+        # Invalid "dimension" (non-unique patient_id - actually a fact table)
+        # This would cause row explosion if joined
+        vitals = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P2", "P3"],  # Non-unique!
+            "charttime": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03", "2024-01-01"],
+            "heart_rate": [70, 72, 68, 71, 75]
+        })
+
+        tables = {
+            "patients": patients,
+            "demographics": demographics,
+            "vitals": vitals
+        }
+
+        # Act
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        mart_lazy = handler._build_dimension_mart(anchor_table="patients")
+        mart = mart_lazy.collect()
+
+        # Assert: Mart should have same row count (vitals should be excluded)
+        assert mart.height == patients.height, (
+            f"Mart rowcount {mart.height} != anchor rowcount {patients.height}. "
+            f"Non-unique join key may have caused row explosion!"
+        )
+
+        # Verify vitals was not joined (would appear as vitals_heart_rate column)
+        vitals_columns = [col for col in mart.columns if "heart_rate" in col]
+        assert len(vitals_columns) == 0, (
+            f"Vitals table (non-unique key) should not be joined, "
+            f"found columns: {vitals_columns}"
+        )
+
+        # Verify demographics WAS joined (unique key)
+        assert "gender" in mart.columns or "demographics_gender" in mart.columns, (
+            "Demographics (unique key) should be joined"
+        )
+
+        handler.close()
