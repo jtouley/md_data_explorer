@@ -376,5 +376,217 @@ class TestTableClassificationEdgeCases:
         handler.close()
 
 
+class TestAnchorSelection:
+    """Test suite for Milestone 2: Centrality-Based Anchor Selection."""
+
+    def test_never_anchors_on_event_fact_bridge(self):
+        """
+        M2 Acceptance Test 1: Never anchors on {event, fact, bridge} classifications.
+
+        Setup:
+        - patients (dimension): unique patient_id
+        - vitals (event): high cardinality with time column
+        - patient_medications (bridge): many-to-many relationship
+
+        Expected:
+        - Anchor is "patients" (dimension), never vitals or patient_medications
+        """
+        # Arrange
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "age": [30, 45, 28]
+        })
+
+        # Large vitals table (event classification)
+        num_vitals = 100_000
+        vitals = pl.DataFrame({
+            "patient_id": [f"P{(i % 3) + 1}" for i in range(num_vitals)],
+            "charttime": [f"2024-01-{(i % 30) + 1:02d}" for i in range(num_vitals)],
+            "heart_rate": [70 + (i % 30) for i in range(num_vitals)]
+        })
+
+        medications = pl.DataFrame({
+            "medication_id": ["M1", "M2", "M3"],
+            "drug_name": ["Aspirin", "Metformin", "Lisinopril"]
+        })
+
+        # Bridge table
+        patient_medications = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P3"],
+            "medication_id": ["M1", "M2", "M1", "M3"],
+            "start_date": ["2024-01-01", "2024-01-15", "2024-02-01", "2024-03-01"]
+        })
+
+        tables = {
+            "patients": patients,
+            "vitals": vitals,
+            "medications": medications,
+            "patient_medications": patient_medications
+        }
+
+        # Act
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        anchor = handler._find_anchor_by_centrality()
+
+        # Assert: Never anchor on event, fact, or bridge
+        anchor_class = handler.classifications[anchor]
+        assert anchor_class.classification == "dimension", (
+            f"Anchor '{anchor}' must be dimension, got {anchor_class.classification}"
+        )
+
+        # Verify it's actually patients (the only dimension)
+        assert anchor in ["patients", "medications"], (
+            f"Anchor should be patients or medications (dimensions), got '{anchor}'"
+        )
+
+        handler.close()
+
+    def test_same_input_graph_yields_same_anchor(self):
+        """
+        M2 Acceptance Test 2: Same input graph yields same anchor (determinism).
+
+        Run anchor selection multiple times with same data, verify same result.
+        """
+        # Arrange
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3", "P4"],
+            "age": [30, 45, 28, 55]
+        })
+
+        admissions = pl.DataFrame({
+            "hadm_id": ["H1", "H2", "H3", "H4", "H5"],
+            "patient_id": ["P1", "P1", "P2", "P3", "P4"],
+            "admit_date": ["2024-01-01", "2024-02-01", "2024-01-15", "2024-03-01", "2024-04-01"]
+        })
+
+        tables = {
+            "patients": patients,
+            "admissions": admissions
+        }
+
+        # Act: Run anchor selection multiple times
+        anchors = []
+        for _ in range(5):
+            handler = MultiTableHandler(tables.copy())
+            handler.detect_relationships()
+            anchor = handler._find_anchor_by_centrality()
+            anchors.append(anchor)
+            handler.close()
+
+        # Assert: All anchors should be the same
+        assert len(set(anchors)) == 1, (
+            f"Anchor selection not deterministic: got {set(anchors)}"
+        )
+
+        # Verify it picked patients (patient grain preferred)
+        assert anchors[0] == "patients", (
+            f"Expected 'patients' as anchor, got '{anchors[0]}'"
+        )
+
+    def test_prefers_lower_null_rate_and_smaller_bytes_on_ties(self):
+        """
+        M2 Acceptance Test 3: Prefers lower null-rate and smaller bytes on ties.
+
+        Setup:
+        - dim_a: dimension, 0% nulls, 100 bytes
+        - dim_b: dimension, 20% nulls, 50 bytes
+        - dim_c: dimension, 0% nulls, 200 bytes
+
+        Expected:
+        - Anchor is dim_a (0% nulls wins over dim_b, smaller bytes wins over dim_c)
+        """
+        # Arrange: Three dimension tables with different null rates and sizes
+        # dim_a: 0% nulls, small size
+        dim_a = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "value_a": [100, 200, 300]
+        })
+
+        # dim_b: 20% nulls (1 out of 5), smaller bytes
+        dim_b = pl.DataFrame({
+            "patient_id": ["P1", "P2", None, "P4", "P5"],
+            "value_b": [10, 20, 30, 40, 50]
+        })
+
+        # dim_c: 0% nulls, larger size (more columns and longer strings)
+        dim_c = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "col1": ["A" * 100, "B" * 100, "C" * 100],  # Long strings
+            "col2": ["D" * 100, "E" * 100, "F" * 100],
+            "col3": ["G" * 100, "H" * 100, "I" * 100],
+            "col4": ["J" * 100, "K" * 100, "L" * 100],
+            "col5": ["M" * 100, "N" * 100, "O" * 100]
+        })
+
+        tables = {
+            "dim_a": dim_a,
+            "dim_b": dim_b,
+            "dim_c": dim_c
+        }
+
+        # Act
+        handler = MultiTableHandler(tables)
+        # No relationships, so all will have same relationship count
+        handler.detect_relationships()
+        anchor = handler._find_anchor_by_centrality()
+
+        # Assert: Should pick dim_a (0% nulls and smallest among 0% null tables)
+        assert anchor == "dim_a", (
+            f"Expected 'dim_a' as anchor (0% nulls, smallest), got '{anchor}'"
+        )
+
+        # Verify classifications
+        dim_a_class = handler.classifications["dim_a"]
+        dim_b_class = handler.classifications["dim_b"]
+        dim_c_class = handler.classifications["dim_c"]
+
+        # dim_a should have lower null rate than dim_b
+        assert dim_a_class.null_rate_in_grain < dim_b_class.null_rate_in_grain
+
+        # dim_a should have smaller bytes than dim_c
+        assert dim_a_class.estimated_bytes < dim_c_class.estimated_bytes
+
+        handler.close()
+
+    def test_hard_exclusions_no_unique_grain(self):
+        """Test that tables without unique grain keys are excluded from anchor selection."""
+        # Arrange: Only non-unique tables
+        non_unique = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P2"],  # Not unique
+            "value": [100, 200, 300, 400]
+        })
+
+        tables = {"non_unique": non_unique}
+
+        # Act & Assert: Should raise ValueError
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+
+        with pytest.raises(ValueError, match="No suitable anchor table found"):
+            handler._find_anchor_by_centrality()
+
+        handler.close()
+
+    def test_hard_exclusions_high_null_rate(self):
+        """Test that tables with >50% NULL rate are excluded."""
+        # Arrange: Table with >50% NULLs
+        high_nulls = pl.DataFrame({
+            "patient_id": ["P1", None, None, None, "P5"],  # 60% nulls
+            "value": [100, 200, 300, 400, 500]
+        })
+
+        tables = {"high_nulls": high_nulls}
+
+        # Act & Assert
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+
+        with pytest.raises(ValueError, match="No suitable anchor table found"):
+            handler._find_anchor_by_centrality()
+
+        handler.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

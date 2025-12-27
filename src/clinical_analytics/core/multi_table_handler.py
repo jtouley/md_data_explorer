@@ -911,6 +911,8 @@ class MultiTableHandler:
         """
         Find anchor table (most central in join graph).
 
+        DEPRECATED: Use _find_anchor_by_centrality() instead.
+
         Strategy:
         - Table with most relationships (parent or child)
         - Prefer tables with "patient" or "subject" in name
@@ -918,6 +920,10 @@ class MultiTableHandler:
         Returns:
             Anchor table name
         """
+        logger.warning(
+            "_find_anchor_table() is deprecated, use _find_anchor_by_centrality() instead"
+        )
+
         # Count relationships for each table
         table_counts = {}
 
@@ -941,6 +947,175 @@ class MultiTableHandler:
 
         # Last resort: first table
         return list(self.tables.keys())[0]
+
+    def _find_anchor_by_centrality(self) -> str:
+        """
+        Find anchor table using graph centrality with hard exclusions and tie-breakers.
+
+        Hard Exclusions (never anchor on):
+        - Classification in {event, fact, bridge}
+        - Tables without unique grain key
+        - Tables with >50% NULLs in grain key
+
+        Scoring Rules:
+        - +10 if has hadm_id or encounter_id column
+        - +5 if has patient_id or subject_id column
+        - +1 per relationship (incoming + outgoing)
+        - +3 if classified as dimension with patient grain
+
+        Tie-breakers (deterministic, in order):
+        1. Prefer fewer NULLs in grain key (lower null_rate)
+        2. Prefer unique grain key (is_unique_on_grain = True)
+        3. Prefer smaller estimated_bytes
+        4. Prefer patient grain over admission grain
+
+        Returns:
+            Anchor table name
+
+        Raises:
+            ValueError: If no suitable anchor table found
+        """
+        # Ensure classifications exist
+        if not self.classifications:
+            self.classify_tables()
+
+        # Hard exclusion: filter to only dimensions
+        dimension_tables = {
+            name: cls for name, cls in self.classifications.items()
+            if cls.classification == "dimension"
+        }
+
+        if not dimension_tables:
+            raise ValueError(
+                "No dimension tables found for anchor selection. "
+                "All tables are classified as fact/event/bridge/reference."
+            )
+
+        # Hard exclusion: filter out tables with >50% NULLs or non-unique grain
+        candidates = {}
+        for name, cls in dimension_tables.items():
+            if cls.null_rate_in_grain > 0.5:
+                logger.debug(f"Excluding {name} from anchor candidates: null_rate={cls.null_rate_in_grain:.2%}")
+                continue
+
+            if not cls.is_unique_on_grain:
+                logger.debug(f"Excluding {name} from anchor candidates: not unique on grain")
+                continue
+
+            candidates[name] = cls
+
+        if not candidates:
+            raise ValueError(
+                "No suitable anchor table found. All dimensions have >50% NULLs "
+                "or non-unique grain keys."
+            )
+
+        # Count relationships per table
+        relationship_counts = {}
+        for rel in self.relationships:
+            relationship_counts[rel.parent_table] = relationship_counts.get(rel.parent_table, 0) + 1
+            relationship_counts[rel.child_table] = relationship_counts.get(rel.child_table, 0) + 1
+
+        # Score each candidate
+        scores = {}
+        for name, cls in candidates.items():
+            score = 0
+
+            # Check for key columns
+            df = self.tables[name]
+            col_lower = [c.lower() for c in df.columns]
+
+            if any(p in col_lower for p in ['hadm_id', 'encounter_id']):
+                score += 10
+
+            if any(p in col_lower for p in ['patient_id', 'subject_id']):
+                score += 5
+
+            # Relationship count
+            score += relationship_counts.get(name, 0)
+
+            # Bonus for dimension with patient grain
+            if cls.grain == "patient":
+                score += 3
+
+            scores[name] = score
+
+        # Find max score
+        max_score = max(scores.values())
+        top_candidates = [name for name, score in scores.items() if score == max_score]
+
+        # If single winner, return it
+        if len(top_candidates) == 1:
+            winner = top_candidates[0]
+            logger.info(
+                f"Selected anchor table '{winner}' (score={max_score}, "
+                f"grain={candidates[winner].grain}, "
+                f"null_rate={candidates[winner].null_rate_in_grain:.2%})"
+            )
+            return winner
+
+        # Apply tie-breakers
+        logger.debug(f"Tie detected among {len(top_candidates)} tables, applying tie-breakers")
+
+        # Tie-breaker 1: Lower null rate
+        min_null_rate = min(candidates[name].null_rate_in_grain for name in top_candidates)
+        top_candidates = [
+            name for name in top_candidates
+            if candidates[name].null_rate_in_grain == min_null_rate
+        ]
+
+        if len(top_candidates) == 1:
+            winner = top_candidates[0]
+            logger.info(
+                f"Selected anchor table '{winner}' (tie-breaker: null_rate={min_null_rate:.2%})"
+            )
+            return winner
+
+        # Tie-breaker 2: Unique on grain (should all be True at this point, but check anyway)
+        unique_candidates = [
+            name for name in top_candidates
+            if candidates[name].is_unique_on_grain
+        ]
+
+        if unique_candidates:
+            top_candidates = unique_candidates
+
+        if len(top_candidates) == 1:
+            winner = top_candidates[0]
+            logger.info(f"Selected anchor table '{winner}' (tie-breaker: unique on grain)")
+            return winner
+
+        # Tie-breaker 3: Smaller estimated bytes
+        min_bytes = min(candidates[name].estimated_bytes for name in top_candidates)
+        top_candidates = [
+            name for name in top_candidates
+            if candidates[name].estimated_bytes == min_bytes
+        ]
+
+        if len(top_candidates) == 1:
+            winner = top_candidates[0]
+            logger.info(
+                f"Selected anchor table '{winner}' (tie-breaker: bytes={min_bytes:,})"
+            )
+            return winner
+
+        # Tie-breaker 4: Patient grain over admission grain
+        patient_grain_candidates = [
+            name for name in top_candidates
+            if candidates[name].grain == "patient"
+        ]
+
+        if patient_grain_candidates:
+            top_candidates = patient_grain_candidates
+
+        # Final tie-breaker: alphabetical order (deterministic)
+        winner = sorted(top_candidates)[0]
+        logger.info(
+            f"Selected anchor table '{winner}' (tie-breaker: alphabetical, "
+            f"grain={candidates[winner].grain})"
+        )
+
+        return winner
 
     def get_relationship_summary(self) -> str:
         """Generate human-readable summary of detected relationships."""
