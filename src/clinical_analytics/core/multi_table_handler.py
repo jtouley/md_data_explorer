@@ -1230,11 +1230,15 @@ class MultiTableHandler:
             rhs_cols = [grain_key] + sorted([c for c in names if c != grain_key])
             feature_lazy = feature_lazy.select(rhs_cols)
 
+            # Extract base table name from feature_name (format: "{table_name}_features")
+            base_table_name = feature_name.replace("_features", "")
+
             mart = mart.join(
                 feature_lazy,
                 on=grain_key,
                 how="left",
                 validate="1:1",  # mart unique on grain, aggregated features unique on grain
+                suffix=f"_{base_table_name}",  # Unique suffix per feature table
             )
 
         logger.info("Collecting unified cohort...")
