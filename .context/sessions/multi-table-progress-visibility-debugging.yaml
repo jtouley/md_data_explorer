@@ -1,0 +1,84 @@
+schema_version: "1.0"
+session_id: "multi-table-progress-visibility-debugging"
+ticket: "Multi-Table Progress Visibility and Verbose Logging"
+gate: "Implementation/Debugging"
+status: "in_progress"
+
+context:
+  specs:
+    - "docs/specs/multi-table-support.md"
+    - "docs/specs/spec_clinical_analytics_platform.md"
+  
+  adrs: []
+  
+  diffs:
+    - ".context/diffs/user_datasets_progress_callback.diff"
+    - ".context/diffs/upload_data_progress_ui.diff"
+    - ".context/diffs/run_app_verbose.diff"
+  
+  key_files:
+    - "src/clinical_analytics/ui/storage/user_datasets.py"
+    - "src/clinical_analytics/ui/pages/1_📤_Upload_Data.py"
+    - "src/clinical_analytics/core/multi_table_handler.py"
+    - "scripts/run_app.sh"
+    - "tests/ui/test_zip_upload_progress.py"
+  
+  branch: null
+  
+  dependencies_added: []
+
+prompt_template: |
+  Resume work on multi-table progress visibility and verbose logging implementation.
+  
+  Current state:
+  - Progress callback system added to save_zip_upload() in user_datasets.py
+  - UI progress bars and detailed logging added to Upload_Data.py page
+  - Streamlit launch script updated for verbose mode (--logger.level=info)
+  - Comprehensive test suite created (test_zip_upload_progress.py) - all 6 tests passing
+  - Verbose logging working: shows individual table loading with row/column counts
+  - Relationship detection logging: shows 94 relationships detected for MIMIC-IV demo
+  - Progress tracking: real-time updates for each table (1/32, 2/32, etc.)
+  
+  Completed:
+  - ✅ Progress callback parameter added to save_zip_upload()
+  - ✅ Progress updates at each step: initialization, table discovery, loading, relationship detection, cohort building, saving, schema inference
+  - ✅ UI progress bar and status text in Streamlit
+  - ✅ Expandable processing log showing each table as it loads
+  - ✅ Detailed table information (rows, cols) in progress callbacks
+  - ✅ Logging configuration with INFO level for multi_table_handler and user_datasets
+  - ✅ All tests passing (6/6) verifying progress callback functionality
+  - ✅ Fixed indentation errors
+  - ✅ Fixed ruff linting issues (whitespace, imports, type hints)
+  - ✅ Fixed step calculation bug (total_steps consistency)
+  
+  Current issue:
+  - ❌ DuckDB OutOfMemoryException when joining all 32 tables in single query
+  - Error: "failed to offload data block of size 32.0 KiB (90.8 GiB/90.8 GiB used)"
+  - Large tables like chartevents (668,862 rows) causing memory explosion
+  - Single massive LEFT JOIN of all tables exhausts temp directory space
+  
+  Proposed solutions (not yet implemented):
+  1. Configure DuckDB with better memory settings (memory_limit, threads, temp_directory)
+  2. Use incremental joins instead of single massive join
+  3. Selective joins - exclude very large tables by default (e.g., chartevents > 100k rows)
+  
+  Key decisions:
+  - Progress callback signature: (step: int, total_steps: int, message: str, details: dict) -> None
+  - Total steps calculation: 1 (init) + len(csv_files) (loading) + 4 (detect, build, save, infer)
+  - UI shows progress bar, status text, and expandable log container
+  - Logging at INFO level for visibility without overwhelming output
+  - Tests verify callback is called, receives correct data, and handles edge cases
+  
+  Next steps:
+  1. Fix DuckDB memory issue - configure connection with appropriate limits
+  2. Consider incremental join strategy for very large datasets
+  3. Add option to exclude large tables from unified cohort
+  4. Test with full MIMIC-IV demo dataset (32 tables, some with 600k+ rows)
+
+notes: |
+  - Verbose logging successfully implemented and working
+  - Progress visibility excellent: users can see each table loading individually
+  - Relationship detection working well: 94 relationships detected with high confidence
+  - Memory issue discovered when processing full MIMIC-IV demo with 32 tables
+  - Need to optimize join strategy for large multi-table datasets
+

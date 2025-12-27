@@ -73,8 +73,9 @@ class UploadedDataset(ClinicalDataset):
         """
         Return analysis cohort mapped to UnifiedCohort schema.
 
-        Maps user columns to UnifiedCohort schema based on
-        the variable mapping from upload wizard.
+        Maps user columns to UnifiedCohort schema based on either:
+        - variable_mapping (from single-table upload wizard)
+        - inferred_schema (from multi-table ZIP upload)
 
         Args:
             **filters: Optional filters (not yet implemented)
@@ -85,11 +86,18 @@ class UploadedDataset(ClinicalDataset):
         if self.data is None:
             self.load()
 
-        # Get variable mapping from metadata
+        # Get variable mapping from metadata (single-table uploads)
         variable_mapping = self.metadata.get('variable_mapping', {})
 
+        # If no variable mapping, try to build it from inferred schema (ZIP uploads)
         if not variable_mapping:
-            raise ValueError("Variable mapping not found in upload metadata")
+            inferred_schema = self.metadata.get('inferred_schema', {})
+
+            if inferred_schema:
+                # Convert inferred_schema to variable_mapping format
+                variable_mapping = self._convert_inferred_schema_to_mapping(inferred_schema)
+            else:
+                raise ValueError("Neither variable_mapping nor inferred_schema found in upload metadata")
 
         # Extract mapping fields
         patient_id_col = variable_mapping.get('patient_id')
@@ -140,6 +148,53 @@ class UploadedDataset(ClinicalDataset):
                     cohort = cohort[cohort[key] == value]
 
         return cohort
+
+    def _convert_inferred_schema_to_mapping(self, inferred_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert inferred_schema format (from ZIP uploads) to variable_mapping format.
+
+        Args:
+            inferred_schema: Schema from schema inference engine
+
+        Returns:
+            variable_mapping dictionary compatible with get_cohort()
+        """
+        variable_mapping = {
+            'patient_id': None,
+            'outcome': None,
+            'time_variables': {},
+            'predictors': []
+        }
+
+        # Extract patient ID from column_mapping
+        column_mapping = inferred_schema.get('column_mapping', {})
+        for col, role in column_mapping.items():
+            if role == 'patient_id':
+                variable_mapping['patient_id'] = col
+                break
+
+        # Extract first outcome
+        outcomes = inferred_schema.get('outcomes', {})
+        if outcomes:
+            # Use first outcome as primary
+            first_outcome = list(outcomes.keys())[0]
+            variable_mapping['outcome'] = first_outcome
+
+        # Extract time_zero
+        time_zero_config = inferred_schema.get('time_zero', {})
+        if 'source_column' in time_zero_config:
+            variable_mapping['time_variables']['time_zero'] = time_zero_config['source_column']
+
+        # Add all other columns as predictors (exclude patient_id and outcome)
+        if self.data is not None:
+            all_cols = set(self.data.columns)
+            excluded = {variable_mapping['patient_id'], variable_mapping['outcome']}
+            variable_mapping['predictors'] = [
+                col for col in all_cols
+                if col not in excluded and col not in {None}
+            ]
+
+        return variable_mapping
 
     def get_info(self) -> Dict[str, Any]:
         """

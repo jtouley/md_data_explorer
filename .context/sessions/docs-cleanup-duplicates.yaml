@@ -1,0 +1,66 @@
+schema_version: 1.0
+session_id: docs-cleanup-duplicates
+ticket: Documentation cleanup - remove duplicate files
+gate: Post-Phase 1 cleanup
+phase: Documentation file cleanup
+status: in_progress
+branch: feat/phase0-data-upload
+
+context:
+  specs:
+    - docs/implementation/plans/consolidate-docs-and-implement-question-driven-analysis.md
+  diffs: []
+  adrs: []
+  key_files:
+    - docs/README.md
+    - docs/architecture/ARCHITECTURE_OVERVIEW.md
+    - docs/architecture/overview.md
+    - docs/architecture/IBIS_SEMANTIC_LAYER.md
+    - docs/architecture/semantic-layer.md
+    - mkdocs.yml
+  notes: |
+    Identified duplicate files in docs/architecture/:
+    - ARCHITECTURE_OVERVIEW.md (duplicate of overview.md)
+    - IBIS_SEMANTIC_LAYER.md (duplicate of semantic-layer.md)
+    
+    MkDocs uses lowercase versions (overview.md, semantic-layer.md) per mkdocs.yml lines 73-74.
+    README.md still references uppercase versions in 11 locations.
+    
+    Action required:
+    1. Delete docs/architecture/ARCHITECTURE_OVERVIEW.md
+    2. Delete docs/architecture/IBIS_SEMANTIC_LAYER.md
+    3. Update docs/README.md to reference lowercase versions:
+       - architecture/ARCHITECTURE_OVERVIEW.md → architecture/overview.md
+       - architecture/IBIS_SEMANTIC_LAYER.md → architecture/semantic-layer.md
+
+prompt_template: |
+  Resume documentation cleanup work: remove duplicate architecture files and update references.
+  
+  Status: Identified duplicates, ready to delete and update references.
+  
+  Duplicate files identified:
+  - docs/architecture/ARCHITECTURE_OVERVIEW.md (duplicate of overview.md)
+  - docs/architecture/IBIS_SEMANTIC_LAYER.md (duplicate of semantic-layer.md)
+  
+  MkDocs configuration uses lowercase versions:
+  - architecture/overview.md (line 73 in mkdocs.yml)
+  - architecture/semantic-layer.md (line 74 in mkdocs.yml)
+  
+  README.md needs updates in 11 locations:
+  - Line 39: architecture/ARCHITECTURE_OVERVIEW.md → architecture/overview.md
+  - Line 51: architecture/IBIS_SEMANTIC_LAYER.md → architecture/semantic-layer.md
+  - Line 147: architecture/ARCHITECTURE_OVERVIEW.md → architecture/overview.md
+  - Line 154: architecture/IBIS_SEMANTIC_LAYER.md → architecture/semantic-layer.md
+  - Line 160: architecture/IBIS_SEMANTIC_LAYER.md → architecture/semantic-layer.md
+  - Line 185: architecture/ARCHITECTURE_OVERVIEW.md → architecture/overview.md
+  - Line 187: architecture/IBIS_SEMANTIC_LAYER.md → architecture/semantic-layer.md
+  - Line 225: architecture/ARCHITECTURE_OVERVIEW.md → architecture/overview.md
+  - Line 226: architecture/IBIS_SEMANTIC_LAYER.md → architecture/semantic-layer.md
+  - Line 265: architecture/ARCHITECTURE_OVERVIEW.md → architecture/overview.md
+  - Line 292: architecture/ARCHITECTURE_OVERVIEW.md → architecture/overview.md
+  
+  Tasks:
+  1. Delete duplicate files
+  2. Update all README.md references to lowercase versions
+  3. Verify no broken links remain
+

@@ -1,0 +1,61 @@
+schema_version: "1.0"
+session_id: "question-driven-nl-semantic"
+ticket: "Question-driven analysis with NL queries and semantic layer integration"
+gate: "Phase 0 - Clinician Workflows"
+phase: "Design/Planning"
+status: "Recommendations made, implementation pending"
+
+context:
+  topic: "Enhancing question-driven analysis interface with natural language query understanding and semantic layer integration"
+  
+  specs:
+    - "docs/NL_QUERY_BEST_PRACTICES.md"
+    - "docs/PHASE_0_CLINICIAN_WORKFLOWS.md"
+    - "docs/IBIS_SEMANTIC_LAYER.md"
+    - "docs/user-guide/question-driven-analysis.md"
+  
+  key_files:
+    - "src/clinical_analytics/ui/components/question_engine.py"
+    - "src/clinical_analytics/ui/components/analysis_wizard.py"
+    - "src/clinical_analytics/core/semantic.py"
+    - "src/clinical_analytics/ui/pages/7_🔬_Analyze.py"
+  
+  adrs: []
+  
+  diffs: []
+
+prompt_template: |
+  Resume work on question-driven analysis enhancement: integrate natural language query understanding with semantic layer metadata.
+  
+  Current state:
+  - QuestionEngine uses structured questions (radio buttons)
+  - Analysis wizard has hardcoded analysis type pages
+  - Semantic layer provides config-driven metadata (outcomes, variables, relationships)
+  - NL_QUERY_BEST_PRACTICES.md documents modern approaches (embeddings, RAG, transformers)
+  
+  Goal:
+  - Add free-form natural language input to QuestionEngine
+  - Use semantic embeddings for intent classification (sentence-transformers)
+  - Integrate semantic layer metadata for RAG-based query understanding
+  - Implement hybrid approach: free-form NL + structured questions as fallback
+  - Extract entities (variables, outcomes) from queries using semantic matching
+  
+  Key decisions:
+  - Use semantic embeddings (Tier 2) as primary approach, pattern matching (Tier 1) for speed
+  - Leverage semantic layer config for variable matching and context
+  - Follow Looker RAG pattern: semantic layer provides metadata, embeddings match queries
+  - MIMIC-IV Demo identified as test dataset opportunity
+  
+  Next steps:
+  1. Enhance QuestionEngine.parse_natural_language_query() with semantic embeddings
+  2. Integrate semantic layer metadata for variable matching
+  3. Add free-form text input to Analyze.py page
+  4. Test with MIMIC-IV Demo dataset
+
+notes: |
+  - Current QuestionEngine uses structured questions, needs free-form NL support
+  - Semantic layer already provides rich metadata (outcomes, variables, metrics, dimensions)
+  - NL_QUERY_BEST_PRACTICES recommends: embeddings for intent (75-85% accuracy), RAG with semantic layer (66% error reduction)
+  - MIMIC-IV Demo (100 patients, open access) identified as integration test case
+  - Hybrid approach approved: NL queries with structured fallback for low confidence
+

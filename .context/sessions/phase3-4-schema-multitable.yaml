@@ -1,0 +1,87 @@
+schema_version: "1.0"
+session_id: "phase3-4-schema-multitable"
+ticket: "Phase 3 & 4: Automatic Schema Inference & Multi-Table Support"
+gate: "Phase 3 & 4 Implementation"
+status: "in_progress"
+
+context:
+  specs:
+    - "docs/implementation/plans/consolidate-docs-and-implement-question-driven-analysis.md"
+    - "docs/specs/multi-table-support.md"
+    - "docs/architecture/DATASET_STRUCTURE_PATTERNS.md"
+  
+  adrs: []
+  
+  key_files:
+    - "src/clinical_analytics/core/schema_inference.py"
+    - "src/clinical_analytics/core/multi_table_handler.py"
+    - "src/clinical_analytics/core/registry.py"
+    - "src/clinical_analytics/ui/storage/user_datasets.py"
+    - "docs/implementation/plans/consolidate-docs-and-implement-question-driven-analysis.md"
+  
+  branch: "feat/phase3-4-schema-inference-multi-table"
+  
+  dependencies_added:
+    - "langchain ^1.2.0"
+    - "langchain-community ^0.4.1"
+
+prompt_template: |
+  Resume work on Phase 3 & 4 implementation: Automatic Schema Inference and Multi-Table Support.
+  
+  Current state:
+  - Schema inference engine implemented with Polars/DuckDB-only operations
+  - DictionaryMetadata dataclass added for PDF-extracted metadata
+  - parse_dictionary_pdf() implemented using LangChain PyPDFLoader
+  - infer_schema_with_dictionary() merges DataFrame analysis + PDF dictionary
+  - MultiTableHandler implemented with automatic relationship detection
+  - ZIP upload support added to user_datasets.py
+  - Plan document updated with dictionary integration
+  
+  Completed:
+  - ✅ SchemaInferenceEngine with patient ID, outcome, time column detection
+  - ✅ DictionaryMetadata dataclass for PDF metadata storage
+  - ✅ PDF parsing with LangChain (parse_dictionary_pdf method)
+  - ✅ Schema merging logic (infer_schema_with_dictionary)
+  - ✅ MultiTableHandler with primary/foreign key detection
+  - ✅ TableRelationship dataclass for FK relationships
+  - ✅ ZIP upload handler (save_zip_upload) for multi-table datasets
+  - ✅ DatasetRegistry.register_from_dataframe() method
+  - ✅ Plan document updated with Phase 3 & 4 progress
+  
+  Missing/Incomplete:
+  - ❌ find_dictionary_pdf() method to locate PDFs in data/dictionaries/
+  - ❌ Main infer_schema() doesn't automatically use dictionaries (only infer_schema_with_dictionary does)
+  - ❌ Dataset name mapping logic (e.g., "covid_ms" → PDF filename matching)
+  - ❌ UI component to display dictionary info when dataset selected
+  - ❌ Registry integration: register_from_dataframe() doesn't pass dataset_name for dictionary lookup
+  - ❌ Testing with MIMIC-IV demo ZIP file
+  
+  Key decisions:
+  - Use Polars and DuckDB only (no pandas operations)
+  - LangChain for PDF parsing (better than PyPDF2 for structured extraction)
+  - Dictionary metadata enhances but doesn't replace DataFrame-based inference
+  - Multi-table handler uses DuckDB for SQL-based joins
+  - ZIP upload extracts CSVs, detects relationships, builds unified cohort
+  
+  Data dictionaries location:
+  - data/dictionaries/ contains PDFs for COVID-MS, Sepsis, VAP datasets
+  - Need to add MIMIC-IV dictionary when available
+  - Dictionary matching: dataset name → PDF filename (fuzzy matching)
+  
+  Next steps:
+  1. Add find_dictionary_pdf() method to SchemaInferenceEngine
+  2. Update infer_schema() to accept dataset_name parameter and auto-load dictionary
+  3. Update register_from_dataframe() to pass dataset_name to schema inference
+  4. Create dictionary_viewer.py UI component
+  5. Integrate dictionary display into dataset selection pages
+  6. Test with MIMIC-IV demo ZIP (mimic-iv-clinical-database-demo-2.2.zip)
+  7. Extract MIMIC-IV README and add to data/dictionaries/
+  8. Test dictionary matching for all datasets (covid_ms, sepsis, mimic_iv_demo)
+
+notes: |
+  - Dictionary integration was added per user request to bring data dictionaries into context before users see data
+  - MIMIC-IV demo ZIP file available for testing multi-table support
+  - MIMIC-IV structure: patients (subject_id) → admissions (hadm_id) → other tables
+  - All operations must use Polars/DuckDB only (no pandas)
+  - Dictionary parsing uses LangChain PyPDFLoader for better text extraction
+

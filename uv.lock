@@ -400,6 +400,8 @@ dev = [
     { name = "mkdocs-mermaid2-plugin" },
     { name = "mkdocstrings", extra = ["python"] },
     { name = "pymdown-extensions" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
 ]
 
 [package.metadata]
@@ -433,6 +435,8 @@ dev = [
     { name = "mkdocs-mermaid2-plugin", specifier = ">=1.2.3" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.0" },
     { name = "pymdown-extensions", specifier = ">=10.19.1" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
 ]
 
 [[package]]

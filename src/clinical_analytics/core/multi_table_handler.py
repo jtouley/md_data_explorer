@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, Set
 import polars as pl
 import duckdb
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -83,12 +86,93 @@ class MultiTableHandler:
         self.relationships: List[TableRelationship] = []
         self.primary_keys: Dict[str, str] = {}
 
+        # Normalize key column types across all tables
+        self._normalize_key_columns()
+
         # Initialize DuckDB connection for SQL-based joins
         self.conn = duckdb.connect(':memory:')
 
         # Register all tables in DuckDB
         for table_name, df in self.tables.items():
             self.conn.register(table_name, df)
+
+    def _normalize_key_columns(self) -> None:
+        """
+        Normalize data types for common key columns across all tables.
+
+        This prevents type mismatch errors when comparing keys across tables
+        (e.g., subject_id as int64 in one table, string in another).
+
+        Strategy:
+        1. Identify columns that appear in multiple tables (potential join keys)
+        2. Normalize them to string type for consistent comparisons
+        """
+        logger.debug("Starting key column normalization")
+        
+        # Count how many tables each column appears in
+        column_counts = {}
+        for df in self.tables.values():
+            for col in df.columns:
+                column_counts[col] = column_counts.get(col, 0) + 1
+
+        # Identify columns that appear in multiple tables (potential join keys)
+        shared_columns = {col for col, count in column_counts.items() if count > 1}
+        logger.debug(f"Found {len(shared_columns)} shared columns: {list(shared_columns)[:10]}")
+
+        # Also include common key patterns
+        key_patterns = [
+            '_id', 'subject_id', 'hadm_id', 'stay_id', 'itemid',
+            'icustay_id', 'transfer_id', 'caregiver_id', 'charttime'
+        ]
+
+        key_columns = shared_columns.copy()
+        for df in self.tables.values():
+            for col in df.columns:
+                col_lower = col.lower()
+                if any(pattern in col_lower for pattern in key_patterns):
+                    key_columns.add(col)
+
+        logger.debug(f"Total key columns to normalize: {len(key_columns)}")
+
+        # Normalize each key column to string type across all tables
+        for table_name, df in self.tables.items():
+            cols_to_cast = [col for col in key_columns if col in df.columns]
+
+            if cols_to_cast:
+                logger.debug(f"Normalizing {len(cols_to_cast)} columns in table '{table_name}': {cols_to_cast}")
+                # Log original dtypes
+                original_dtypes = {col: df[col].dtype for col in cols_to_cast}
+                logger.debug(f"Original dtypes for {table_name}: {original_dtypes}")
+                
+                try:
+                    # Cast all key columns in one operation
+                    cast_exprs = [pl.col(col).cast(pl.Utf8, strict=False).alias(col)
+                                  for col in cols_to_cast]
+                    self.tables[table_name] = df.with_columns(cast_exprs)
+                    
+                    # Verify cast succeeded
+                    new_dtypes = {col: self.tables[table_name][col].dtype for col in cols_to_cast}
+                    logger.debug(f"New dtypes for {table_name}: {new_dtypes}")
+                    
+                    # Check for any that didn't convert
+                    failed_casts = [col for col in cols_to_cast if self.tables[table_name][col].dtype != pl.Utf8]
+                    if failed_casts:
+                        logger.warning(f"Failed to cast columns in {table_name}: {failed_casts}")
+                        
+                except Exception as e:
+                    logger.error(f"Batch cast failed for {table_name}: {type(e).__name__}: {str(e)}")
+                    # Try one by one if batch fails
+                    for col in cols_to_cast:
+                        try:
+                            original_dtype = df[col].dtype
+                            self.tables[table_name] = self.tables[table_name].with_columns(
+                                pl.col(col).cast(pl.Utf8, strict=False)
+                            )
+                            new_dtype = self.tables[table_name][col].dtype
+                            logger.debug(f"Cast {table_name}.{col}: {original_dtype} -> {new_dtype}")
+                        except Exception as col_e:
+                            logger.error(f"Failed to cast {table_name}.{col} from {df[col].dtype}: {type(col_e).__name__}: {str(col_e)}")
+                            pass  # Skip if casting fails
 
     def detect_relationships(self) -> List[TableRelationship]:
         """
@@ -172,12 +256,17 @@ class MultiTableHandler:
         Example:
             >>> cohort = handler.build_unified_cohort(anchor_table='patients')
         """
+        logger.info(f"Building unified cohort (anchor_table={anchor_table}, join_type={join_type})")
+        
         # Auto-detect anchor table if not specified
         if anchor_table is None:
             anchor_table = self._find_anchor_table()
+            logger.info(f"Auto-detected anchor table: {anchor_table}")
 
         if anchor_table not in self.tables:
             raise ValueError(f"Anchor table '{anchor_table}' not found in tables")
+        
+        logger.debug(f"Anchor table '{anchor_table}' has {self.tables[anchor_table].height} rows, {self.tables[anchor_table].width} columns")
 
         # Build join graph using BFS
         joined_tables = {anchor_table}
@@ -215,6 +304,7 @@ class MultiTableHandler:
         # Build SQL query for joins
         if not join_clauses:
             # No joins possible, return anchor table
+            logger.debug(f"No joins possible, returning anchor table: {anchor_table}")
             return self.tables[anchor_table]
 
         # Construct SQL query
@@ -223,10 +313,20 @@ class MultiTableHandler:
         for table, on_clause, jtype in join_clauses:
             query += f" {jtype.upper()} JOIN {table} ON {on_clause}"
 
-        # Execute query using DuckDB
-        result = self.conn.execute(query).pl()
+        logger.debug(f"Executing SQL query with {len(join_clauses)} joins")
+        logger.debug(f"Query: {query[:500]}...")  # Log first 500 chars of query
 
-        return result
+        # Execute query using DuckDB
+        try:
+            result = self.conn.execute(query).pl()
+            logger.debug(f"Query executed successfully: {result.height} rows, {result.width} columns")
+            return result
+        except Exception as e:
+            logger.error(f"Error executing SQL query: {type(e).__name__}: {str(e)}")
+            logger.error(f"Full query: {query}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
 
     def _detect_primary_key(self, df: pl.DataFrame) -> Optional[str]:
         """
@@ -318,19 +418,65 @@ class MultiTableHandler:
         Returns:
             Match ratio (0-1) representing referential integrity
         """
+        logger.debug(f"Verifying referential integrity: {parent_key} -> {child_col}")
+        
         # Get non-null child values
-        child_values = child_df[child_col].drop_nulls().unique()
+        child_values = child_df[child_col].drop_nulls()
+        logger.debug(f"Child values dtype: {child_values.dtype}, len: {child_values.len()}, sample: {child_values.head(3).to_list()}")
 
         if child_values.len() == 0:
+            logger.debug("Child values empty, returning 0.0")
             return 0.0
 
         # Get parent values
-        parent_values = parent_df[parent_key].unique()
+        parent_values = parent_df[parent_key].drop_nulls()
+        logger.debug(f"Parent values dtype: {parent_values.dtype}, len: {parent_values.len()}, sample: {parent_values.head(3).to_list()}")
 
-        # Check how many child values exist in parent
-        matches = child_values.is_in(parent_values).sum()
+        # Cast both to string for type-safe comparison using pure Polars operations
+        # This handles cases where one table has int64 and another has string
+        try:
+            # Cast both to Utf8 for consistent comparison
+            logger.debug(f"Casting child from {child_values.dtype} to Utf8")
+            child_str = child_values.cast(pl.Utf8, strict=False).drop_nulls().unique()
+            logger.debug(f"Child after cast: dtype={child_str.dtype}, len={child_str.len()}, sample={child_str.head(3).to_list()}")
+            
+            logger.debug(f"Casting parent from {parent_values.dtype} to Utf8")
+            parent_str = parent_values.cast(pl.Utf8, strict=False).drop_nulls().unique()
+            logger.debug(f"Parent after cast: dtype={parent_str.dtype}, len={parent_str.len()}, sample={parent_str.head(3).to_list()}")
 
-        return float(matches) / float(child_values.len())
+            # Verify both are Utf8 before join
+            if child_str.dtype != pl.Utf8:
+                logger.warning(f"Child cast failed: expected Utf8, got {child_str.dtype}, recasting...")
+                child_str = child_str.cast(pl.Utf8, strict=False)
+            if parent_str.dtype != pl.Utf8:
+                logger.warning(f"Parent cast failed: expected Utf8, got {parent_str.dtype}, recasting...")
+                parent_str = parent_str.cast(pl.Utf8, strict=False)
+
+            # Use join-based approach to avoid is_in() deprecation warning
+            # Create DataFrames for join operation
+            logger.debug("Creating DataFrames for join operation")
+            child_df_join = pl.DataFrame({"value": child_str})
+            parent_df_join = pl.DataFrame({"value": parent_str})
+            
+            logger.debug(f"Child DF schema: {child_df_join.schema}, Parent DF schema: {parent_df_join.schema}")
+            
+            # Inner join to find matches
+            logger.debug("Performing inner join to find matches")
+            matches_df = child_df_join.join(parent_df_join, on="value", how="inner")
+            matches = matches_df.height
+            logger.debug(f"Found {matches} matches out of {child_str.len()} child values")
+
+            ratio = float(matches) / float(child_str.len()) if child_str.len() > 0 else 0.0
+            logger.debug(f"Match ratio: {ratio:.4f}")
+            return ratio
+
+        except Exception as e:
+            # If casting fails, skip this relationship
+            logger.error(f"Error in referential integrity check ({parent_key} -> {child_col}): {type(e).__name__}: {str(e)}")
+            logger.error(f"Child dtype: {child_values.dtype}, Parent dtype: {parent_values.dtype}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return 0.0
 
     def _find_anchor_table(self) -> str:
         """

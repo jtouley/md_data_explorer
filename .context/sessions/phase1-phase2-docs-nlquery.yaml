@@ -1,0 +1,83 @@
+schema_version: 1.0
+session_id: phase1-phase2-docs-nlquery
+ticket: Phase 1+2: Documentation Infrastructure & Natural Language Query Engine
+gate: Phase 1 and Phase 2
+phase: Phase 1 (Documentation Infrastructure) and Phase 2 (NL Query Engine + UI Integration)
+status: completed
+pr: https://github.com/jtouley/md_data_explorer/pull/2
+branch: feat/phase0-data-upload
+
+context:
+  specs:
+    - docs/implementation/plans/consolidate-docs-and-implement-question-driven-analysis.md
+  diffs:
+    - commits:
+        - aaf18f5: fix(deps): add missing seaborn dependency
+        - f61d201: feat(ui): integrate NL query engine with Streamlit UI
+        - dcb85cd: feat(nl-query): implement Phase 2 natural language query engine core
+        - a3f45b2: feat(docs): implement Phase 1 documentation infrastructure with MkDocs
+        - 58dec2b: docs: reorganize documentation structure for better discoverability
+  adrs: []
+  key_files:
+    - src/clinical_analytics/core/nl_query_engine.py
+    - src/clinical_analytics/ui/components/question_engine.py
+    - src/clinical_analytics/ui/pages/7_🔬_Analyze.py
+    - mkdocs.yml
+    - .github/workflows/docs.yml
+    - docs/index.md
+    - docs/getting-started/installation.md
+    - docs/getting-started/quick-start.md
+    - docs/getting-started/uploading-data.md
+    - docs/user-guide/question-driven-analysis.md
+    - docs/user-guide/statistical-tests.md
+    - docs/user-guide/interpreting-results.md
+    - docs/architecture/overview.md
+    - docs/architecture/semantic-layer.md
+    - docs/architecture/dataset-registry.md
+    - docs/architecture/nl-query-engine.md
+    - docs/api-reference/core.md
+    - docs/api-reference/datasets.md
+    - docs/api-reference/ui.md
+    - docs/development/contributing.md
+    - docs/development/setup.md
+    - docs/development/testing.md
+    - docs/specs/question-driven-analysis.md
+    - docs/specs/multi-table-support.md
+
+prompt_template: |
+  Resume work on Phase 1+2 implementation: Documentation Infrastructure & Natural Language Query Engine.
+  
+  Status: Completed. PR #2 created on branch feat/phase0-data-upload.
+  
+  Phase 1 (Documentation Infrastructure) - Completed:
+  - MkDocs site with Material theme configured
+  - 23 documentation files created across getting-started, user-guide, architecture, api-reference, development, specs
+  - GitHub Actions workflow for auto-deployment
+  - Auto-generated API reference from docstrings
+  
+  Phase 2 (NL Query Engine) - Completed:
+  - Core NL Query Engine implemented (src/clinical_analytics/core/nl_query_engine.py)
+  - Three-tier architecture: regex patterns, semantic embeddings, LLM fallback stub
+  - UI integration in QuestionEngine component (ask_free_form_question method)
+  - Unified Analysis page updated to default to NL query input
+  - Bidirectional switching between NL and structured questions
+  - Dependencies added: sentence-transformers, scikit-learn, seaborn
+  
+  Key deliverables:
+  - Natural language query parsing with confidence scoring
+  - QueryIntent → AnalysisContext conversion
+  - Professional documentation site ready for deployment
+  - All code tested and running successfully
+  
+  Next steps (if continuing):
+  - Phase 3: Schema Inference Engine
+  - Phase 4: Multi-Table Handler
+  - Phase 5: Advanced NL Query Patterns
+
+notes: |
+  - Streamlit app tested and running at http://localhost:8501
+  - All dependencies resolved (seaborn added to fix missing import)
+  - Documentation builds successfully with only minor warnings about broken links to future features
+  - NL Query Engine uses local processing (Tier 1 & 2) for privacy-preserving queries
+  - UI defaults to free-form NL query input with fallback to structured questions
+

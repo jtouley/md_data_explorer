@@ -1,0 +1,15 @@
+diff --git a/scripts/run_app.sh b/scripts/run_app.sh
+index 575c21b..a848a4f 100755
+--- a/scripts/run_app.sh
++++ b/scripts/run_app.sh
+@@ -73,6 +73,8 @@ echo ""
+ echo -e "${YELLOW}   Press Ctrl+C to stop the server${NC}"
+ echo ""
+ 
+-# Run streamlit with the app
++# Run streamlit with the app (verbose mode for debugging)
+ source .venv/bin/activate
+-streamlit run src/clinical_analytics/ui/app.py
++streamlit run src/clinical_analytics/ui/app.py \
++    --logger.level=info \
++    --server.fileWatcherType=poll
