@@ -81,8 +81,7 @@ class MIMIC3Loader:
         """
         if not query or not query.strip():
             raise ValueError(
-                "SQL query must be provided. "
-                "Load query from config using datasets.yaml sql_queries.cohort_extraction"
+                "SQL query must be provided. Load query from config using datasets.yaml sql_queries.cohort_extraction"
             )
 
         return self.execute_query(query)
@@ -104,7 +103,7 @@ class MIMIC3Loader:
             try:
                 self.conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
                 table_status[table] = True
-            except:
+            except Exception:
                 table_status[table] = False
 
         return table_status

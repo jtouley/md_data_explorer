@@ -190,8 +190,7 @@ class SemanticLayer:
                 # For now, we'll use DuckDB's ability to read multiple files
                 # But Sepsis needs special handling - see SepsisDataset
                 raise NotImplementedError(
-                    f"Directory sources need dataset-specific handling. "
-                    f"See {self.dataset_name} dataset implementation."
+                    f"Directory sources need dataset-specific handling. See {self.dataset_name} dataset implementation."
                 )
             else:
                 # Single file (CSV)

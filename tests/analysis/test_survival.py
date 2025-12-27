@@ -45,9 +45,7 @@ class TestSurvivalAnalysis:
             }
         )
 
-        kmf, summary = run_kaplan_meier(
-            df, duration_col="duration", event_col="event", group_col="group"
-        )
+        kmf, summary = run_kaplan_meier(df, duration_col="duration", event_col="event", group_col="group")
 
         assert kmf is not None
         assert isinstance(summary, pd.DataFrame)
@@ -102,9 +100,7 @@ class TestSurvivalAnalysis:
             }
         )
 
-        cph, summary_df = run_cox_regression(
-            df, duration_col="duration", event_col="event", covariates=["treatment"]
-        )
+        cph, summary_df = run_cox_regression(df, duration_col="duration", event_col="event", covariates=["treatment"])
 
         assert cph is not None
         assert isinstance(summary_df, pd.DataFrame)
@@ -119,18 +115,14 @@ class TestSurvivalAnalysis:
             }
         )
 
-        cph, summary_df = run_cox_regression(
-            df, duration_col="duration", event_col="event", covariates=["age"]
-        )
+        cph, summary_df = run_cox_regression(df, duration_col="duration", event_col="event", covariates=["age"])
 
         assert cph is not None
         assert isinstance(summary_df, pd.DataFrame)
 
     def test_run_cox_regression_all_nulls(self):
         """Test Cox regression with all nulls raises error."""
-        df = pd.DataFrame(
-            {"duration": [None, None, None], "event": [None, None, None], "age": [None, None, None]}
-        )
+        df = pd.DataFrame({"duration": [None, None, None], "event": [None, None, None], "age": [None, None, None]})
 
         with pytest.raises(ValueError, match="No data remaining"):
             run_cox_regression(df, duration_col="duration", event_col="event", covariates=["age"])
@@ -182,9 +174,7 @@ class TestSurvivalAnalysis:
 
     def test_calculate_median_survival_single_cohort(self):
         """Test calculating median survival for single cohort."""
-        df = pd.DataFrame(
-            {"duration": [10, 20, 30, 40, 50, 60, 70, 80], "event": [1, 1, 0, 1, 0, 1, 1, 0]}
-        )
+        df = pd.DataFrame({"duration": [10, 20, 30, 40, 50, 60, 70, 80], "event": [1, 1, 0, 1, 0, 1, 1, 0]})
 
         result = calculate_median_survival(df, duration_col="duration", event_col="event")
 
@@ -204,9 +194,7 @@ class TestSurvivalAnalysis:
             }
         )
 
-        result = calculate_median_survival(
-            df, duration_col="duration", event_col="event", group_col="group"
-        )
+        result = calculate_median_survival(df, duration_col="duration", event_col="event", group_col="group")
 
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 2  # Two groups

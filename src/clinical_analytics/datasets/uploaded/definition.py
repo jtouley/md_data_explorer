@@ -110,9 +110,7 @@ class UploadedDataset(ClinicalDataset):
                 # Convert inferred_schema to variable_mapping format
                 variable_mapping = self._convert_inferred_schema_to_mapping(inferred_schema)
             else:
-                raise ValueError(
-                    "Neither variable_mapping nor inferred_schema found in upload metadata"
-                )
+                raise ValueError("Neither variable_mapping nor inferred_schema found in upload metadata")
 
         # Extract mapping fields
         patient_id_col = variable_mapping.get("patient_id")
@@ -146,9 +144,7 @@ class UploadedDataset(ClinicalDataset):
             if time_col in self.data.columns:
                 cohort_data[UnifiedCohort.TIME_ZERO] = pd.to_datetime(self.data[time_col])
             else:
-                cohort_data[UnifiedCohort.TIME_ZERO] = pd.Timestamp(
-                    self.metadata["upload_timestamp"]
-                )
+                cohort_data[UnifiedCohort.TIME_ZERO] = pd.Timestamp(self.metadata["upload_timestamp"])
         else:
             # Use upload timestamp as time zero
             cohort_data[UnifiedCohort.TIME_ZERO] = pd.Timestamp(self.metadata["upload_timestamp"])
@@ -170,9 +166,7 @@ class UploadedDataset(ClinicalDataset):
 
         return cohort
 
-    def _convert_inferred_schema_to_mapping(
-        self, inferred_schema: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _convert_inferred_schema_to_mapping(self, inferred_schema: dict[str, Any]) -> dict[str, Any]:
         """
         Convert inferred_schema format (from ZIP uploads) to variable_mapping format.
 
@@ -212,9 +206,7 @@ class UploadedDataset(ClinicalDataset):
         if self.data is not None:
             all_cols = set(self.data.columns)
             excluded = {variable_mapping["patient_id"], variable_mapping["outcome"]}
-            variable_mapping["predictors"] = [
-                col for col in all_cols if col not in excluded and col not in {None}
-            ]
+            variable_mapping["predictors"] = [col for col in all_cols if col not in excluded and col not in {None}]
 
         return variable_mapping
 
@@ -253,9 +245,7 @@ class UploadedDataset(ClinicalDataset):
             # Use absolute path - SemanticLayer handles absolute paths correctly
             config["init_params"] = {"source_path": str(csv_path.resolve())}
 
-            self.semantic = SemanticLayer(
-                dataset_name=self.name, config=config, workspace_root=workspace_root
-            )
+            self.semantic = SemanticLayer(dataset_name=self.name, config=config, workspace_root=workspace_root)
 
             # Register all individual tables from the upload
             tables_dir = self.storage.raw_dir / f"{self.upload_id}_tables"
@@ -280,9 +270,7 @@ class UploadedDataset(ClinicalDataset):
                     else:
                         logger.warning(f"Table file not found: {table_path}")
 
-                logger.info(
-                    f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables"
-                )
+                logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
             else:
                 logger.info(f"Created semantic layer for uploaded dataset '{self.name}'")
         except Exception as e:

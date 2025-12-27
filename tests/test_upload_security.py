@@ -224,9 +224,7 @@ class TestSecurityConstants:
 
         # None of the dangerous types should be allowed
         for dangerous in dangerous_extensions:
-            assert dangerous not in allowed, (
-                f"Dangerous extension {dangerous} should not be allowed"
-            )
+            assert dangerous not in allowed, f"Dangerous extension {dangerous} should not be allowed"
 
 
 if __name__ == "__main__":

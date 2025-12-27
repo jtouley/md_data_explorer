@@ -88,9 +88,7 @@ class TestColumnMapper:
         mapper = ColumnMapper(config)
 
         # Create test dataframe
-        df = pl.DataFrame(
-            {"id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]}
-        )
+        df = pl.DataFrame({"id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]})
 
         result = mapper.map_to_unified_cohort(
             df, time_zero_value="2020-01-01", outcome_col="outcome", outcome_label="test_outcome"
@@ -309,11 +307,7 @@ class TestColumnMapper:
         assert label == "hospitalization"
 
         # Test with outcome definition label
-        config2 = {
-            "outcomes": {
-                "test_outcome": {"source_column": "source", "type": "binary", "label": "test_label"}
-            }
-        }
+        config2 = {"outcomes": {"test_outcome": {"source_column": "source", "type": "binary", "label": "test_label"}}}
         mapper2 = ColumnMapper(config2)
         label = mapper2.get_default_outcome_label("test_outcome")
         assert label == "test_label"

@@ -277,9 +277,7 @@ class QuestionEngine:
         return None if variable == "(Choose one)" else variable
 
     @staticmethod
-    def select_predictor_variables(
-        df: pd.DataFrame, exclude: list[str] = None, min_vars: int = 1
-    ) -> list[str]:
+    def select_predictor_variables(df: pd.DataFrame, exclude: list[str] = None, min_vars: int = 1) -> list[str]:
         """Ask user to select predictor variables."""
         available_cols = [c for c in df.columns if c not in ["patient_id", "time_zero"]]
         if exclude:
@@ -418,19 +416,13 @@ class QuestionEngine:
                 if query_intent.confidence > 0.75:
                     st.success(f"✅ I understand! (Confidence: {query_intent.confidence:.0%})")
                 elif query_intent.confidence > 0.5:
-                    st.warning(
-                        f"⚠️ I think I understand, but please verify (Confidence: {query_intent.confidence:.0%})"
-                    )
+                    st.warning(f"⚠️ I think I understand, but please verify (Confidence: {query_intent.confidence:.0%})")
                 else:
-                    st.info(
-                        "🤔 I'm not sure what you're asking. Let me ask some clarifying questions..."
-                    )
+                    st.info("🤔 I'm not sure what you're asking. Let me ask some clarifying questions...")
                     return None  # Fall back to structured questions
 
                 # Show interpretation
-                with st.expander(
-                    "🔍 How I interpreted your question", expanded=(query_intent.confidence < 0.85)
-                ):
+                with st.expander("🔍 How I interpreted your question", expanded=(query_intent.confidence < 0.85)):
                     intent_names = {
                         "DESCRIBE": "Descriptive Statistics",
                         "COMPARE_GROUPS": "Compare Groups",
@@ -448,9 +440,7 @@ class QuestionEngine:
                     if query_intent.grouping_variable:
                         st.write(f"**Grouping Variable**: {query_intent.grouping_variable}")
                     if query_intent.predictor_variables:
-                        st.write(
-                            f"**Predictor Variables**: {', '.join(query_intent.predictor_variables)}"
-                        )
+                        st.write(f"**Predictor Variables**: {', '.join(query_intent.predictor_variables)}")
                     if query_intent.time_variable:
                         st.write(f"**Time Variable**: {query_intent.time_variable}")
                     if query_intent.event_variable:
@@ -465,9 +455,7 @@ class QuestionEngine:
                         )
 
                         if "No" in correct:
-                            st.info(
-                                "💡 Try rephrasing your question or use the structured questions below."
-                            )
+                            st.info("💡 Try rephrasing your question or use the structured questions below.")
                             return None
 
                 # Convert QueryIntent to AnalysisContext
@@ -481,9 +469,7 @@ class QuestionEngine:
                     "SURVIVAL": AnalysisIntent.EXAMINE_SURVIVAL,
                     "CORRELATIONS": AnalysisIntent.EXPLORE_RELATIONSHIPS,
                 }
-                context.inferred_intent = intent_map.get(
-                    query_intent.intent_type, AnalysisIntent.UNKNOWN
-                )
+                context.inferred_intent = intent_map.get(query_intent.intent_type, AnalysisIntent.UNKNOWN)
 
                 # Map variables
                 context.research_question = query

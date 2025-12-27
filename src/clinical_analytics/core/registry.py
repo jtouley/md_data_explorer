@@ -87,9 +87,7 @@ class DatasetRegistry:
 
                 try:
                     # Import the definition module
-                    definition_module = importlib.import_module(
-                        f"clinical_analytics.datasets.{module_name}.definition"
-                    )
+                    definition_module = importlib.import_module(f"clinical_analytics.datasets.{module_name}.definition")
 
                     # Find all ClinicalDataset subclasses in this module
                     for name, obj in inspect.getmembers(definition_module, inspect.isclass):
@@ -117,9 +115,7 @@ class DatasetRegistry:
             config_path: Path to datasets.yaml config file
         """
         if config_path is None:
-            config_path = (
-                Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
-            )
+            config_path = Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
 
         if not config_path.exists():
             print(f"Warning: Config file not found at {config_path}")
@@ -157,9 +153,7 @@ class DatasetRegistry:
 
         if name not in cls._datasets:
             available = ", ".join(cls._datasets.keys())
-            raise KeyError(
-                f"Dataset '{name}' not found in registry. Available datasets: {available}"
-            )
+            raise KeyError(f"Dataset '{name}' not found in registry. Available datasets: {available}")
 
         dataset_class = cls._datasets[name]
 

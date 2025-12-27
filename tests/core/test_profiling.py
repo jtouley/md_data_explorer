@@ -59,9 +59,7 @@ class TestDataProfiler:
 
     def test_profile_missing_data(self):
         """Test missing data analysis."""
-        df = pd.DataFrame(
-            {"complete": [1, 2, 3], "some_missing": [1, None, 3], "all_missing": [None, None, None]}
-        )
+        df = pd.DataFrame({"complete": [1, 2, 3], "some_missing": [1, None, 3], "all_missing": [None, None, None]})
         profiler = DataProfiler(df)
         missing = profiler._profile_missing_data()
 
@@ -188,9 +186,7 @@ class TestDataProfiler:
         quality = profiler._profile_data_quality()
 
         # Should detect duplicates
-        duplicate_issues = [
-            issue for issue in quality["issues"] if issue["type"] == "duplicate_rows"
-        ]
+        duplicate_issues = [issue for issue in quality["issues"] if issue["type"] == "duplicate_rows"]
         assert len(duplicate_issues) > 0
 
     def test_profile_with_constant_columns(self):
@@ -199,8 +195,6 @@ class TestDataProfiler:
         profiler = DataProfiler(df)
         quality = profiler._profile_data_quality()
 
-        constant_issues = [
-            issue for issue in quality["issues"] if issue["type"] == "constant_columns"
-        ]
+        constant_issues = [issue for issue in quality["issues"] if issue["type"] == "constant_columns"]
         assert len(constant_issues) > 0
         assert "constant" in constant_issues[0]["columns"]

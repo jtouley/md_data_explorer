@@ -8,6 +8,7 @@ Validates uploaded data for common quality issues:
 - Data type mismatches
 """
 
+
 import pandas as pd
 
 
@@ -27,9 +28,7 @@ class DataQualityValidator:
     MISSING_DATA_ERROR_THRESHOLD = 80  # % missing per column
 
     @classmethod
-    def validate_patient_id(
-        cls, df: pd.DataFrame, id_column: str
-    ) -> tuple[bool, list[dict[str, any]]]:
+    def validate_patient_id(cls, df: pd.DataFrame, id_column: str) -> tuple[bool, list[dict[str, any]]]:
         """
         Validate patient ID column.
 
@@ -179,9 +178,7 @@ class DataQualityValidator:
         return is_acceptable, issues
 
     @classmethod
-    def validate_outcome_column(
-        cls, df: pd.DataFrame, outcome_column: str
-    ) -> tuple[bool, list[dict[str, any]]]:
+    def validate_outcome_column(cls, df: pd.DataFrame, outcome_column: str) -> tuple[bool, list[dict[str, any]]]:
         """
         Validate outcome column.
 
@@ -261,7 +258,7 @@ class DataQualityValidator:
 
     @classmethod
     def validate_complete(
-        cls, df: pd.DataFrame, id_column: Optional[str] = None, outcome_column: Optional[str] = None
+        cls, df: pd.DataFrame, id_column: str | None = None, outcome_column: str | None = None
     ) -> dict[str, any]:
         """
         Run complete validation suite.
@@ -298,9 +295,7 @@ class DataQualityValidator:
         if len(df.columns) == 0:
             return {
                 "is_valid": False,
-                "issues": [
-                    {"severity": "error", "type": "no_columns", "message": "Dataset has no columns"}
-                ],
+                "issues": [{"severity": "error", "type": "no_columns", "message": "Dataset has no columns"}],
                 "summary": None,
             }
 

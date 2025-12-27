@@ -56,9 +56,7 @@ def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
 
                 # Show columns with missing data
                 if missing["columns_with_missing"]:
-                    missing_df = pd.DataFrame.from_dict(
-                        missing["columns_with_missing"], orient="index"
-                    )
+                    missing_df = pd.DataFrame.from_dict(missing["columns_with_missing"], orient="index")
                     missing_df.index.name = "Column"
                     missing_df = missing_df.reset_index()
                     st.dataframe(missing_df)
@@ -96,9 +94,7 @@ def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
                     # Show top values if available
                     if stats["top_values"]:
                         with st.expander(f"Top values for {col}"):
-                            top_df = pd.DataFrame(
-                                list(stats["top_values"].items()), columns=["Value", "Count"]
-                            )
+                            top_df = pd.DataFrame(list(stats["top_values"].items()), columns=["Value", "Count"])
                             st.dataframe(top_df)
                     st.divider()
             else:
@@ -135,9 +131,7 @@ def display_statistical_analysis(cohort: pd.DataFrame, dataset_name: str):
     st.subheader("Logistic Regression Analysis")
 
     # Get available predictors (exclude required schema columns)
-    available_predictors = [
-        col for col in cohort.columns if col not in UnifiedCohort.REQUIRED_COLUMNS
-    ]
+    available_predictors = [col for col in cohort.columns if col not in UnifiedCohort.REQUIRED_COLUMNS]
 
     if available_predictors:
         selected_predictors = st.multiselect(
@@ -246,13 +240,9 @@ def main():
 
     # Show dataset count
     if uploaded_dataset_names:
-        st.sidebar.caption(
-            f"{len(builtin_datasets)} built-in, {len(uploaded_dataset_names)} uploaded"
-        )
+        st.sidebar.caption(f"{len(builtin_datasets)} built-in, {len(uploaded_dataset_names)} uploaded")
 
-    dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset", list(dataset_display_names.keys())
-    )
+    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
 
     # Get internal dataset name
     dataset_choice = dataset_display_names[dataset_choice_display]
@@ -285,9 +275,7 @@ def main():
             # Load registry dataset
             dataset = load_dataset(dataset_choice)
             if dataset is None:
-                st.error(
-                    f"Failed to load {dataset_choice} dataset. Please check data availability."
-                )
+                st.error(f"Failed to load {dataset_choice} dataset. Please check data availability.")
                 return
 
     # Display dataset info
@@ -375,9 +363,7 @@ def load_dataset(dataset_name: str):
 
         # Validate and load
         if not dataset.validate():
-            st.warning(
-                f"{dataset_name} data not found. Please ensure data files are in the correct location."
-            )
+            st.warning(f"{dataset_name} data not found. Please ensure data files are in the correct location.")
             return None
 
         dataset.load()
@@ -395,9 +381,7 @@ def load_dataset(dataset_name: str):
 def display_query_builder(dataset, dataset_name: str):
     """Display config-driven query builder using semantic layer."""
     st.subheader("🔍 Query Builder")
-    st.markdown(
-        "Build custom queries using config-defined metrics and dimensions. SQL generated behind the scenes!"
-    )
+    st.markdown("Build custom queries using config-defined metrics and dimensions. SQL generated behind the scenes!")
 
     # Get semantic layer using contract pattern
     try:
@@ -431,9 +415,7 @@ def display_query_builder(dataset, dataset_name: str):
             # Show metric descriptions
             for metric_name in selected_metrics:
                 metric_def = metrics[metric_name]
-                st.caption(
-                    f"**{metric_def.get('label', metric_name)}**: {metric_def.get('description', '')}"
-                )
+                st.caption(f"**{metric_def.get('label', metric_name)}**: {metric_def.get('description', '')}")
         else:
             st.info("No metrics defined in config")
             selected_metrics = []
@@ -450,9 +432,7 @@ def display_query_builder(dataset, dataset_name: str):
             # Show dimension info
             for dim_name in selected_dimensions:
                 dim_def = dimensions[dim_name]
-                st.caption(
-                    f"**{dim_def.get('label', dim_name)}**: {dim_def.get('type', 'unknown')} type"
-                )
+                st.caption(f"**{dim_def.get('label', dim_name)}**: {dim_def.get('type', 'unknown')} type")
         else:
             st.info("No dimensions defined in config")
             selected_dimensions = []
@@ -517,16 +497,10 @@ def display_query_builder(dataset, dataset_name: str):
     with st.expander("📖 Available Metrics & Dimensions"):
         st.json(
             {
-                "metrics": {
-                    k: {"label": v.get("label"), "type": v.get("type")} for k, v in metrics.items()
-                },
-                "dimensions": {
-                    k: {"label": v.get("label"), "type": v.get("type")}
-                    for k, v in dimensions.items()
-                },
+                "metrics": {k: {"label": v.get("label"), "type": v.get("type")} for k, v in metrics.items()},
+                "dimensions": {k: {"label": v.get("label"), "type": v.get("type")} for k, v in dimensions.items()},
                 "filters": {
-                    k: {"type": v.get("type"), "description": v.get("description")}
-                    for k, v in filters.items()
+                    k: {"type": v.get("type"), "description": v.get("description")} for k, v in filters.items()
                 },
             }
         )
@@ -555,9 +529,7 @@ def prepare_analysis_data(cohort: pd.DataFrame, predictors: list) -> pd.DataFram
     categorical_cols = data.select_dtypes(include=["object", "category"]).columns.tolist()
 
     if categorical_cols:
-        st.info(
-            f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}"
-        )
+        st.info(f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}")
         data = pd.get_dummies(data, columns=categorical_cols, drop_first=True)
 
     # Drop rows with missing values
