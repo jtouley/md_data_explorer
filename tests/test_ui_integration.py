@@ -122,6 +122,64 @@ class TestUIDatasetIntegration:
         except Exception as e:
             pytest.fail(f"Boolean filter failed with error: {e}")
 
+    def test_sepsis_get_cohort_with_granularity_patient_level(self):
+        """Test that SepsisDataset.get_cohort(granularity="patient_level") works (M8 integration test)."""
+        dataset = DatasetRegistry.get_dataset('sepsis')
+
+        if not dataset.validate():
+            pytest.skip("Sepsis data not available")
+
+        cohort = dataset.get_cohort(granularity="patient_level")
+
+        assert isinstance(cohort, pd.DataFrame)
+        # Should have required columns
+        for col in UnifiedCohort.REQUIRED_COLUMNS:
+            assert col in cohort.columns
+
+    def test_sepsis_rejects_non_patient_level_granularity(self):
+        """Test that SepsisDataset rejects non-patient_level granularity (M8)."""
+        dataset = DatasetRegistry.get_dataset('sepsis')
+
+        if not dataset.validate():
+            pytest.skip("Sepsis data not available")
+
+        # Single-table datasets only support patient_level
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="admission_level")
+
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="event_level")
+
+    def test_mimic3_get_cohort_with_granularity_patient_level(self):
+        """Test that Mimic3Dataset.get_cohort(granularity="patient_level") works (M8 integration test)."""
+        from clinical_analytics.datasets.mimic3.definition import Mimic3Dataset
+        
+        dataset = DatasetRegistry.get_dataset('mimic3')
+
+        if not dataset.validate():
+            pytest.skip("MIMIC3 data not available")
+
+        cohort = dataset.get_cohort(granularity="patient_level")
+
+        assert isinstance(cohort, pd.DataFrame)
+        # Should have required columns
+        for col in UnifiedCohort.REQUIRED_COLUMNS:
+            assert col in cohort.columns
+
+    def test_mimic3_rejects_non_patient_level_granularity(self):
+        """Test that Mimic3Dataset rejects non-patient_level granularity (M8)."""
+        dataset = DatasetRegistry.get_dataset('mimic3')
+
+        if not dataset.validate():
+            pytest.skip("MIMIC3 data not available")
+
+        # Single-table datasets only support patient_level
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="admission_level")
+
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="event_level")
+
 
 class TestUIErrorHandling:
     """Test error handling scenarios that might occur in UI."""

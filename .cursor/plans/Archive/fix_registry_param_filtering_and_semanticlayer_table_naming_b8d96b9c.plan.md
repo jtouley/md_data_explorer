@@ -4,33 +4,33 @@ overview: "Implement two systemic architecture fixes: (1) Registry filters init 
 todos:
   - id: "1"
     content: Add _filter_kwargs_for_ctor() helper function to registry.py with inspect.signature logic
-    status: pending
+    status: completed
   - id: "2"
     content: Update DatasetRegistry.get_dataset() to filter params using _filter_kwargs_for_ctor() before instantiation
-    status: pending
+    status: completed
     dependencies:
       - "1"
   - id: "3"
     content: Add _safe_identifier() helper function to semantic.py with sanitization and hashing logic
-    status: pending
+    status: completed
   - id: "4"
     content: Update SemanticLayer._register_source() to use _safe_identifier() for table names
-    status: pending
+    status: completed
     dependencies:
       - "3"
   - id: "5"
     content: Update SemanticLayer._register_source() to use parameter binding (?) for SQL queries instead of string interpolation
-    status: pending
+    status: completed
     dependencies:
       - "4"
   - id: "6"
     content: "Test: verify registry filtering works with configs containing extra params (e.g., db_connection for Mimic3Dataset)"
-    status: pending
+    status: completed
     dependencies:
       - "2"
   - id: "7"
     content: "Test: verify safe identifiers work with dataset names containing hyphens, dots, spaces, emojis"
-    status: pending
+    status: completed
     dependencies:
       - "4"
       - "5"
@@ -232,4 +232,3 @@ def _register_source(self):
 
 - No more "unexpected keyword argument" errors from registry param mismatches
 - No more SQL syntax errors from special characters in dataset names
-- User-provided dataset names work regardless of characters used

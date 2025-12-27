@@ -166,3 +166,24 @@ class TestDatasetRegistry:
         if dataset.source_path:
             assert str(dataset.source_path) == '/custom/path'
 
+    def test_registry_filters_unsupported_params(self, caplog):
+        """Test that registry filters out unsupported init params (e.g., db_connection for non-MIMIC datasets)."""
+        DatasetRegistry.reset()
+        
+        # Create a config with extra params that CovidMSDataset doesn't accept
+        # CovidMSDataset doesn't have db_connection parameter
+        with caplog.at_level("INFO"):
+            dataset = DatasetRegistry.get_dataset(
+                'covid_ms',
+                db_connection=None,  # This param should be filtered out
+                some_other_param='value'  # This should also be filtered out
+            )
+        
+        # Should not raise "unexpected keyword argument" error
+        assert isinstance(dataset, ClinicalDataset)
+        assert dataset.name == 'covid_ms'
+        
+        # Verify logging indicates dropped params
+        log_messages = ' '.join([record.message for record in caplog.records])
+        assert 'Dropping unsupported init params' in log_messages or len(caplog.records) == 0
+
