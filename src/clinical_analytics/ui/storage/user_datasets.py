@@ -554,6 +554,16 @@ class UserDatasetStorage:
                 )
             unified_df.write_csv(csv_path)
 
+            # Save individual tables to disk for semantic layer access
+            tables_dir = self.raw_dir / f"{upload_id}_tables"
+            tables_dir.mkdir(exist_ok=True)
+            logger.info(f"Saving {len(tables)} individual tables to {tables_dir}")
+
+            for table_name, df in tables.items():
+                table_path = tables_dir / f"{table_name}.csv"
+                df.write_csv(table_path)
+                logger.debug(f"Saved table '{table_name}' ({df.height:,} rows) to {table_path}")
+
             # Infer schema for unified cohort
             logger.info("Inferring schema for unified cohort")
             if progress_callback:

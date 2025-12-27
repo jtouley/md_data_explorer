@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Literal, Optional, TypeAlias, Union
+from typing import Any, ClassVar, Dict, List, Literal, Optional, TypeAlias, Union, TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from clinical_analytics.core.semantic import SemanticLayer
 
 Granularity: TypeAlias = Literal["patient_level", "admission_level", "event_level"]
 Grain: TypeAlias = Literal["patient", "admission", "event"]
@@ -23,6 +26,9 @@ class ClinicalDataset(ABC):
         "event_level": "event",
     }
     VALID_GRANULARITIES: ClassVar[frozenset[str]] = frozenset(GRANULARITY_TO_GRAIN.keys())
+    
+    # Class attribute - exists regardless of __init__() being called
+    semantic: Optional["SemanticLayer"] = None
 
     def __init__(self, name: str, source_path: Union[str, Path, None] = None, db_connection: Any = None):
         """
@@ -36,6 +42,7 @@ class ClinicalDataset(ABC):
         self.name = name
         self.source_path = Path(source_path) if source_path else None
         self.db_connection = db_connection
+        # Note: semantic is a class attribute, not set here
 
     @abstractmethod
     def validate(self) -> bool:
@@ -101,4 +108,22 @@ class ClinicalDataset(ABC):
             )
 
         return cls.GRANULARITY_TO_GRAIN[granularity]
+    
+    def get_semantic_layer(self) -> "SemanticLayer":
+        """
+        Get semantic layer for this dataset.
+        
+        Returns:
+            SemanticLayer instance
+            
+        Raises:
+            ValueError: If semantic layer is not available for this dataset
+        """
+        if self.semantic is None:
+            raise ValueError(
+                f"Dataset '{self.name}' does not support semantic layer features "
+                "(natural language queries, SQL preview, query builder). "
+                "This is typically only available for registry datasets with config-driven semantic layers."
+            )
+        return self.semantic
 

@@ -5,25 +5,11 @@ Self-service data upload for clinicians.
 Upload CSV, Excel, or SPSS files without code or YAML configuration.
 """
 
-import logging
 import sys
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-
-# Configure logging for verbose output
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-
-# Set specific loggers to INFO/DEBUG for visibility
-logging.getLogger('clinical_analytics.core.multi_table_handler').setLevel(logging.INFO)
-logging.getLogger('clinical_analytics.ui.storage.user_datasets').setLevel(logging.INFO)
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))

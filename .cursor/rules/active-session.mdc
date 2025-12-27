@@ -1,38 +1,26 @@
-# Active Session: M5 Ibis Planning and Materialization
+---
+description: Active development session
+globs: []
+alwaysApply: true
+---
 
-**Session ID**: `m5-ibis-planning-materialization-complete`
+# Active Session: multi-table-semantic-layer-fix
 
-**Session File**: `.context/sessions/m5-ibis-planning-materialization-complete.yaml`
+## Session File
+.context/sessions/multi-table-semantic-layer-fix.yaml
 
-**Status**: Completed
+## Resume Prompt
+Resume session: multi-table-semantic-layer-fix
 
-**Resume Prompt**:
+Problem: When uploading multi-table ZIP files (e.g., MIMIC-IV), only the unified cohort table was being registered in the semantic layer, not the individual tables.
 
-Resume work on Milestone 5 (M5) - Ibis Planning and Materialization Layer.
+Completed:
+1. Modified save_zip_upload() in user_datasets.py to save individual tables to {upload_id}_tables/ directory
+2. Modified _maybe_init_semantic() in uploaded/definition.py to register all individual tables in DuckDB
 
-Status: COMPLETED with fixes applied.
+Remaining:
+1. Fix list_uploads() to deduplicate by dataset_name (keep most recent upload)
+   - Current issue: When re-uploading with same dataset_name, old upload is used because dictionary overwrites with oldest entry
+   - Solution: Add deduplication logic to list_uploads() method
 
-Implementation complete:
-- materialize_mart() method: Polars pipeline → Parquet with caching (run_id)
-- plan_mart() method: Lazy Ibis expressions over materialized Parquet
-- CohortMetadata dataclass with run_id for deterministic caching
-- Hash bucket partitioning for event-level marts
-- Observability logging (duration, row counts, parquet size)
-
-Fixes applied:
-- SCHEMA_VERSION module-level constant (replaces placeholder)
-- Improved dataset fingerprinting: includes content hash (sample) to detect value changes
-- Ibis connection caching on instance (_ibis_connection)
-- Bucket column dropped from planned tables (internal partition column)
-
-Test coverage: 13 tests passing (9 original + 4 new for fixes)
-
-Key files:
-- src/clinical_analytics/core/multi_table_handler.py (main implementation)
-- tests/core/test_multi_table_handler.py (test suite)
-
-Commits:
-- 6e3706e: Implement Milestone 5
-- 616135a: Fix M5 nits
-
-Next steps: Ready for integration with semantic layer and query planning.
+Apply the deduplication fix to list_uploads() in src/clinical_analytics/ui/storage/user_datasets.py

@@ -417,6 +417,7 @@ def main():
         # Try free-form NL query first
         if st.session_state['use_nl_query']:
             try:
+                # Get semantic layer using contract pattern
                 semantic_layer = dataset.get_semantic_layer()
                 context = QuestionEngine.ask_free_form_question(semantic_layer)
 
@@ -426,6 +427,12 @@ def main():
                     st.session_state['intent_signal'] = 'nl_parsed'
                     st.rerun()
 
+            except ValueError as e:
+                # Semantic layer not available
+                st.info("Natural language queries are only available for datasets with semantic layers.")
+                st.session_state['use_nl_query'] = False
+                st.rerun()
+                return
             except Exception as e:
                 st.error(f"Error parsing natural language query: {e}")
                 st.session_state['use_nl_query'] = False

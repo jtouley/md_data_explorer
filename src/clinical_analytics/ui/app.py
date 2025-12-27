@@ -12,11 +12,16 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+# Configure logging ONCE at entry point (not in pages)
+from clinical_analytics.ui.logging_config import configure_logging
+configure_logging()
+
 from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.analysis.stats import run_logistic_regression
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.core.profiling import DataProfiler
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+from clinical_analytics.ui.helpers import require_outcome
 
 
 def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
@@ -136,6 +141,9 @@ def display_statistical_analysis(cohort: pd.DataFrame, dataset_name: str):
 
         if selected_predictors and st.button("Run Logistic Regression"):
             try:
+                # Check if outcome exists (required for logistic regression)
+                require_outcome(cohort, "Logistic regression")
+                
                 # Prepare data for analysis
                 analysis_data = prepare_analysis_data(cohort, selected_predictors)
 
@@ -294,8 +302,11 @@ def main():
         with col1:
             st.metric("Total Patients", len(cohort))
         with col2:
-            outcome_rate = cohort[UnifiedCohort.OUTCOME].mean() * 100
-            st.metric("Outcome Rate", f"{outcome_rate:.1f}%")
+            if UnifiedCohort.OUTCOME in cohort.columns:
+                outcome_rate = cohort[UnifiedCohort.OUTCOME].mean() * 100
+                st.metric("Outcome Rate", f"{outcome_rate:.1f}%")
+            else:
+                st.metric("Outcome Rate", "N/A")
         with col3:
             st.metric("Features", len(cohort.columns) - len(UnifiedCohort.REQUIRED_COLUMNS))
 
@@ -378,12 +389,12 @@ def display_query_builder(dataset, dataset_name: str):
     st.subheader("🔍 Query Builder")
     st.markdown("Build custom queries using config-defined metrics and dimensions. SQL generated behind the scenes!")
     
-    # Get semantic layer info from dataset
-    if not hasattr(dataset, 'semantic'):
-        st.error("Dataset does not support query builder (no semantic layer)")
+    # Get semantic layer using contract pattern
+    try:
+        semantic = dataset.get_semantic_layer()
+    except ValueError as e:
+        st.error(f"Dataset does not support query builder: {e}")
         return
-    
-    semantic = dataset.semantic
     dataset_info = semantic.get_dataset_info()
     
     # Get available metrics and dimensions from config
@@ -506,9 +517,18 @@ def prepare_analysis_data(cohort: pd.DataFrame, predictors: list) -> pd.DataFram
 
     Handles categorical variables and missing data.
     """
-    # Select relevant columns
-    analysis_cols = [UnifiedCohort.OUTCOME] + predictors
-    data = cohort[analysis_cols].copy()
+    # Select relevant columns - only include OUTCOME if it exists
+    analysis_cols = predictors.copy()
+    if UnifiedCohort.OUTCOME in cohort.columns:
+        analysis_cols = [UnifiedCohort.OUTCOME] + analysis_cols
+    
+    # Check if we have any columns to analyze
+    available_cols = [col for col in analysis_cols if col in cohort.columns]
+    if not available_cols:
+        st.error("No valid analysis columns found in dataset.")
+        return None
+    
+    data = cohort[available_cols].copy()
 
     # Handle categorical variables - convert to dummy variables
     categorical_cols = data.select_dtypes(include=['object', 'category']).columns.tolist()
