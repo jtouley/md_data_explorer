@@ -1,7 +1,13 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, ClassVar, Dict, List, Literal, Optional, TypeAlias, Union
+
 import pandas as pd
+
+Granularity: TypeAlias = Literal["patient_level", "admission_level", "event_level"]
+Grain: TypeAlias = Literal["patient", "admission", "event"]
 
 class ClinicalDataset(ABC):
     """
@@ -10,6 +16,13 @@ class ClinicalDataset(ABC):
     Designed to be extensible for both file-based (CSV, PSV) and 
     SQL-based (DuckDB, Postgres) data sources.
     """
+
+    GRANULARITY_TO_GRAIN: ClassVar[Dict[str, Grain]] = {
+        "patient_level": "patient",
+        "admission_level": "admission",
+        "event_level": "event",
+    }
+    VALID_GRANULARITIES: ClassVar[frozenset[str]] = frozenset(GRANULARITY_TO_GRAIN.keys())
 
     def __init__(self, name: str, source_path: Union[str, Path, None] = None, db_connection: Any = None):
         """
@@ -45,15 +58,47 @@ class ClinicalDataset(ABC):
         pass
 
     @abstractmethod
-    def get_cohort(self, **filters) -> pd.DataFrame:
+    def get_cohort(
+        self,
+        granularity: Granularity = "patient_level",
+        **filters: Any,
+    ) -> pd.DataFrame:
         """
         Return a standardized analysis dataframe conformant to UnifiedCohort schema.
         
         Args:
+            granularity:
+                - "patient_level": One row per patient (default)
+                - "admission_level": One row per admission/encounter
+                - "event_level": One row per event (e.g., lab result, medication)
             **filters: Dataset-specific filters (e.g., age_min=18, specific_diagnosis=True)
             
         Returns:
             pd.DataFrame: A DataFrame containing at least the required UnifiedCohort columns.
         """
-        pass
+        raise NotImplementedError  # Alternative: use ... (ellipsis) for pure style
+
+    @classmethod
+    def _map_granularity_to_grain(cls, granularity: Granularity) -> Grain:
+        """
+        Map API granularity values to internal grain values.
+        
+        Args:
+            granularity: API granularity value (patient_level, admission_level, event_level)
+            
+        Returns:
+            Internal grain value for multi-table handler (patient, admission, event)
+            
+        Raises:
+            ValueError: If granularity is not one of the valid values
+        """
+        # Defensive runtime validation. Literal does not enforce this at runtime.
+        # Use GRANULARITY_TO_GRAIN as single source of truth.
+        if granularity not in cls.GRANULARITY_TO_GRAIN:
+            raise ValueError(
+                f"Invalid granularity: {granularity!r}. "
+                f"Must be one of: {sorted(cls.GRANULARITY_TO_GRAIN.keys())}"
+            )
+
+        return cls.GRANULARITY_TO_GRAIN[granularity]
 
