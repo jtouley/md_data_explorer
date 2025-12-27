@@ -1,48 +1,26 @@
-# Active Session: Milestone 6 - Granularity Parameter
+---
+description: Active development session
+globs: []
+alwaysApply: true
+---
 
-**Session ID**: `milestone6_granularity_parameter`
+# Active Session: multi-table-semantic-layer-fix
 
-**Status**: COMPLETED
-
-**Session File**: `.context/sessions/milestone6_granularity_parameter.yaml`
+## Session File
+.context/sessions/multi-table-semantic-layer-fix.yaml
 
 ## Resume Prompt
+Resume session: multi-table-semantic-layer-fix
 
-```
-Resume work on Milestone 6: Add Granularity Parameter to ClinicalDataset.get_cohort()
+Problem: When uploading multi-table ZIP files (e.g., MIMIC-IV), only the unified cohort table was being registered in the semantic layer, not the individual tables.
 
-Status: COMPLETED
+Completed:
+1. Modified save_zip_upload() in user_datasets.py to save individual tables to {upload_id}_tables/ directory
+2. Modified _maybe_init_semantic() in uploaded/definition.py to register all individual tables in DuckDB
 
-Implementation Summary:
-- Updated ClinicalDataset.get_cohort() abstract method signature to include granularity parameter (default: "patient_level")
-- Added GRANULARITY_TO_GRAIN ClassVar dict as single source of truth
-- Added VALID_GRANULARITIES ClassVar derived from GRANULARITY_TO_GRAIN.keys()
-- Added _map_granularity_to_grain() classmethod with runtime validation (raises ValueError)
-- Added Granularity and Grain TypeAlias definitions
-- Created unit tests in tests/core/test_dataset.py
-- Removed tracked __pycache__ file
+Remaining:
+1. Fix list_uploads() to deduplicate by dataset_name (keep most recent upload)
+   - Current issue: When re-uploading with same dataset_name, old upload is used because dictionary overwrites with oldest entry
+   - Solution: Add deduplication logic to list_uploads() method
 
-Key Design Decisions:
-- Single source of truth: GRANULARITY_TO_GRAIN dict, VALID_GRANULARITIES derived from it
-- Runtime validation in mapping helper (Literal types don't enforce at runtime)
-- Contract-only change: concrete implementations will handle granularity in M7
-- Backward compatible: default parameter ensures existing code works
-
-Files Modified:
-- src/clinical_analytics/core/dataset.py (added granularity parameter, mapping helper, TypeAlias)
-- tests/core/test_dataset.py (new file with mapping helper tests)
-
-Next Steps:
-- Milestone 7: Update all dataset implementations to support granularity parameter
-- Milestone 8: Update SemanticLayer.get_cohort() to handle granularity mapping
-
-Reference:
-- Plan: .cursor/plans/milestone_6_add_granularity_parameter_to_clinicaldataset.get_cohort()_774d7687.plan.md
-- Diff: .context/diffs/m6-granularity-parameter.diff
-```
-
-## Context
-
-- **Plan**: `.cursor/plans/milestone_6_add_granularity_parameter_to_clinicaldataset.get_cohort()_774d7687.plan.md`
-- **Diff**: `.context/diffs/m6-granularity-parameter.diff`
-- **Key Files**: `src/clinical_analytics/core/dataset.py`, `tests/core/test_dataset.py`
+Apply the deduplication fix to list_uploads() in src/clinical_analytics/ui/storage/user_datasets.py

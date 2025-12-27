@@ -244,7 +244,7 @@ class UploadedDataset(ClinicalDataset):
             return
         
         try:
-            from clinical_analytics.core.semantic import SemanticLayer
+            from clinical_analytics.core.semantic import SemanticLayer, _safe_identifier
             
             config = self._build_config_from_inferred_schema(inferred_schema)
             workspace_root = self.storage.upload_dir.parent.parent
@@ -257,9 +257,37 @@ class UploadedDataset(ClinicalDataset):
                 config=config,
                 workspace_root=workspace_root
             )
-            logger.info(f"Created semantic layer for uploaded dataset '{self.name}'")
+            
+            # Register all individual tables from the upload
+            tables_dir = self.storage.raw_dir / f"{self.upload_id}_tables"
+            if tables_dir.exists():
+                table_names = self.metadata.get('tables', [])
+                logger.info(f"Registering {len(table_names)} individual tables from {tables_dir}")
+                
+                duckdb_con = self.semantic.con.con
+                safe_dataset_name = _safe_identifier(self.name)
+                
+                for table_name in table_names:
+                    table_path = tables_dir / f"{table_name}.csv"
+                    if table_path.exists():
+                        safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
+                        abs_path = str(table_path.resolve())
+                        
+                        duckdb_con.execute(
+                            f"CREATE OR REPLACE TABLE {safe_table_name} AS SELECT * FROM read_csv_auto(?)",
+                            [abs_path]
+                        )
+                        logger.info(f"Registered table '{safe_table_name}' from {abs_path}")
+                    else:
+                        logger.warning(f"Table file not found: {table_path}")
+                
+                logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
+            else:
+                logger.info(f"Created semantic layer for uploaded dataset '{self.name}'")
         except Exception as e:
             logger.warning(f"Failed to create semantic layer: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             # Leave self.semantic as None (class attribute default)
     
     def _build_config_from_inferred_schema(self, inferred_schema: Dict[str, Any]) -> Dict[str, Any]:
