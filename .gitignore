@@ -216,3 +216,8 @@ __marimo__/
 # Ignore raw data files to avoid committing large datasets
 data/raw/*
 !data/raw/.gitkeep
+
+.context/
+data/uploads/
+docs/screenshots/
+data/raw/
