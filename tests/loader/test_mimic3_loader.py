@@ -2,10 +2,10 @@
 Tests for MIMIC-III dataset loader.
 """
 
-import pytest
-import polars as pl
-from pathlib import Path
 import duckdb
+import polars as pl
+import pytest
+
 from clinical_analytics.datasets.mimic3.loader import MIMIC3Loader, load_mimic3_from_duckdb
 
 
@@ -23,7 +23,7 @@ class TestMIMIC3Loader:
 
     def test_loader_initialization_with_connection(self):
         """Test loader initialization with existing connection."""
-        conn = duckdb.connect(':memory:')
+        conn = duckdb.connect(":memory:")
         loader = MIMIC3Loader(db_connection=conn)
 
         assert loader.db_connection == conn
@@ -82,8 +82,8 @@ class TestMIMIC3Loader:
 
         assert isinstance(result, pl.DataFrame)
         assert len(result) == 2
-        assert 'id' in result.columns
-        assert 'name' in result.columns
+        assert "id" in result.columns
+        assert "name" in result.columns
         loader.disconnect()
 
     def test_load_cohort(self, tmp_path):
@@ -130,8 +130,8 @@ class TestMIMIC3Loader:
         table_status = loader.check_tables_exist()
 
         assert isinstance(table_status, dict)
-        assert table_status['patients'] is True
-        assert table_status['admissions'] is False  # Not created
+        assert table_status["patients"] is True
+        assert table_status["admissions"] is False  # Not created
         loader.disconnect()
 
     def test_context_manager(self, tmp_path):
@@ -161,4 +161,3 @@ class TestMIMIC3Loader:
 
         assert isinstance(result, pl.DataFrame)
         assert len(result) == 2
-

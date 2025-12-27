@@ -2,19 +2,20 @@
 UI helper functions for common checks and validations.
 """
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
+
 from clinical_analytics.core.schema import UnifiedCohort
 
 
 def require_outcome(cohort: pd.DataFrame, analysis_name: str = "This analysis") -> None:
     """
     Require outcome column in cohort, show error and stop execution if missing.
-    
+
     Args:
         cohort: Cohort DataFrame
         analysis_name: Name of analysis requiring outcome (for error message)
-        
+
     Raises:
         SystemExit: If outcome is missing (stops page execution via st.stop())
     """
@@ -24,4 +25,3 @@ def require_outcome(cohort: pd.DataFrame, analysis_name: str = "This analysis") 
             "Please upload data with outcome mapping or select a dataset that includes outcomes."
         )
         st.stop()
-

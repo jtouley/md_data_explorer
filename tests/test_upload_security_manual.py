@@ -26,7 +26,9 @@ def test_file_type_validation():
 
     # Invalid types
     assert not UploadSecurityValidator.validate_file_type("data.exe")[0], "EXE should be invalid"
-    assert not UploadSecurityValidator.validate_file_type("data")[0], "No extension should be invalid"
+    assert not UploadSecurityValidator.validate_file_type("data")[0], (
+        "No extension should be invalid"
+    )
 
     print("✅ File type validation tests passed")
 
@@ -45,15 +47,21 @@ def test_file_size_validation():
 
     # Too large (101MB)
     file_101mb = b"x" * (101 * 1024 * 1024)
-    assert not UploadSecurityValidator.validate_file_size(file_101mb)[0], "101MB file should be invalid"
+    assert not UploadSecurityValidator.validate_file_size(file_101mb)[0], (
+        "101MB file should be invalid"
+    )
 
     # Too small (500 bytes)
     file_500b = b"x" * 500
-    assert not UploadSecurityValidator.validate_file_size(file_500b)[0], "500 byte file should be invalid"
+    assert not UploadSecurityValidator.validate_file_size(file_500b)[0], (
+        "500 byte file should be invalid"
+    )
 
     # Empty
     empty_file = b""
-    assert not UploadSecurityValidator.validate_file_size(empty_file)[0], "Empty file should be invalid"
+    assert not UploadSecurityValidator.validate_file_size(empty_file)[0], (
+        "Empty file should be invalid"
+    )
 
     print("✅ File size validation tests passed")
 
@@ -112,16 +120,16 @@ def test_security_constants():
     print("Testing security constants...")
 
     # Check constants exist
-    assert hasattr(UploadSecurityValidator, 'ALLOWED_EXTENSIONS')
-    assert hasattr(UploadSecurityValidator, 'MAX_FILE_SIZE_BYTES')
-    assert hasattr(UploadSecurityValidator, 'MIN_FILE_SIZE_BYTES')
+    assert hasattr(UploadSecurityValidator, "ALLOWED_EXTENSIONS")
+    assert hasattr(UploadSecurityValidator, "MAX_FILE_SIZE_BYTES")
+    assert hasattr(UploadSecurityValidator, "MIN_FILE_SIZE_BYTES")
 
     # Check values
     assert UploadSecurityValidator.MAX_FILE_SIZE_BYTES == 100 * 1024 * 1024
     assert UploadSecurityValidator.MIN_FILE_SIZE_BYTES == 1024
 
     # Check no dangerous extensions
-    dangerous = {'.exe', '.bat', '.sh', '.py', '.js', '.php'}
+    dangerous = {".exe", ".bat", ".sh", ".py", ".js", ".php"}
     allowed = UploadSecurityValidator.ALLOWED_EXTENSIONS
     for ext in dangerous:
         assert ext not in allowed, f"Dangerous extension {ext} should not be allowed"
@@ -153,6 +161,7 @@ def run_all_tests():
     except Exception as e:
         print(f"\n❌ ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

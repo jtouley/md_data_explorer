@@ -17,4 +17,3 @@ def test_map_granularity_to_grain_invalid_raises():
     with pytest.raises(ValueError, match="Invalid granularity"):
         # type: ignore[arg-type]  # runtime validation test
         ClinicalDataset._map_granularity_to_grain("invalid_level")
-

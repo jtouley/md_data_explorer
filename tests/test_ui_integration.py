@@ -5,12 +5,12 @@ These tests verify that the UI can interact with datasets correctly
 without requiring manual browser testing.
 """
 
-import pytest
 import pandas as pd
-from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
-from clinical_analytics.datasets.sepsis.definition import SepsisDataset
+import pytest
+
 from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
 
 
 class TestUIDatasetIntegration:
@@ -21,31 +21,31 @@ class TestUIDatasetIntegration:
         datasets = DatasetRegistry.list_datasets()
 
         assert isinstance(datasets, list)
-        assert 'covid_ms' in datasets
-        assert 'sepsis' in datasets
+        assert "covid_ms" in datasets
+        assert "sepsis" in datasets
 
     def test_dataset_info_retrieval(self):
         """Test that dataset info can be retrieved for UI display."""
         dataset_info = DatasetRegistry.get_all_dataset_info()
 
         assert isinstance(dataset_info, dict)
-        assert 'covid_ms' in dataset_info
+        assert "covid_ms" in dataset_info
 
-        covid_info = dataset_info['covid_ms']
-        assert 'config' in covid_info
-        assert 'class' in covid_info
+        covid_info = dataset_info["covid_ms"]
+        assert "config" in covid_info
+        assert "class" in covid_info
 
     def test_dataset_factory_creation(self):
         """Test that datasets can be created via factory."""
         # This is the pattern used in the UI
-        dataset = DatasetRegistry.get_dataset('covid_ms')
+        dataset = DatasetRegistry.get_dataset("covid_ms")
 
         assert dataset is not None
         assert isinstance(dataset, CovidMSDataset)
 
     def test_covid_ms_cohort_retrieval_with_filters(self):
         """Test COVID-MS dataset cohort retrieval with different filter types."""
-        dataset = DatasetRegistry.get_dataset('covid_ms')
+        dataset = DatasetRegistry.get_dataset("covid_ms")
 
         if not dataset.validate():
             pytest.skip("COVID-MS data not available")
@@ -66,7 +66,7 @@ class TestUIDatasetIntegration:
 
     def test_sepsis_cohort_retrieval(self):
         """Test Sepsis dataset cohort retrieval."""
-        dataset = DatasetRegistry.get_dataset('sepsis')
+        dataset = DatasetRegistry.get_dataset("sepsis")
 
         if not dataset.validate():
             pytest.skip("Sepsis data not available")
@@ -86,7 +86,7 @@ class TestUIDatasetIntegration:
         available_datasets = DatasetRegistry.list_datasets()
 
         for dataset_name in available_datasets:
-            if dataset_name == 'mimic3':
+            if dataset_name == "mimic3":
                 # Skip MIMIC3 as it requires database connection
                 continue
 
@@ -105,12 +105,13 @@ class TestUIDatasetIntegration:
 
             # Check schema compliance
             for col in UnifiedCohort.REQUIRED_COLUMNS:
-                assert col in cohort.columns, \
+                assert col in cohort.columns, (
                     f"Dataset {dataset_name} missing required column: {col}"
+                )
 
     def test_boolean_filter_type_safety(self):
         """Regression test: Ensure boolean filters work with different column types."""
-        dataset = DatasetRegistry.get_dataset('covid_ms')
+        dataset = DatasetRegistry.get_dataset("covid_ms")
 
         if not dataset.validate():
             pytest.skip("COVID-MS data not available")
@@ -122,6 +123,63 @@ class TestUIDatasetIntegration:
         except Exception as e:
             pytest.fail(f"Boolean filter failed with error: {e}")
 
+    def test_sepsis_get_cohort_with_granularity_patient_level(self):
+        """Test that SepsisDataset.get_cohort(granularity="patient_level") works (M8 integration test)."""
+        dataset = DatasetRegistry.get_dataset("sepsis")
+
+        if not dataset.validate():
+            pytest.skip("Sepsis data not available")
+
+        cohort = dataset.get_cohort(granularity="patient_level")
+
+        assert isinstance(cohort, pd.DataFrame)
+        # Should have required columns
+        for col in UnifiedCohort.REQUIRED_COLUMNS:
+            assert col in cohort.columns
+
+    def test_sepsis_rejects_non_patient_level_granularity(self):
+        """Test that SepsisDataset rejects non-patient_level granularity (M8)."""
+        dataset = DatasetRegistry.get_dataset("sepsis")
+
+        if not dataset.validate():
+            pytest.skip("Sepsis data not available")
+
+        # Single-table datasets only support patient_level
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="admission_level")
+
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="event_level")
+
+    def test_mimic3_get_cohort_with_granularity_patient_level(self):
+        """Test that Mimic3Dataset.get_cohort(granularity="patient_level") works (M8 integration test)."""
+
+        dataset = DatasetRegistry.get_dataset("mimic3")
+
+        if not dataset.validate():
+            pytest.skip("MIMIC3 data not available")
+
+        cohort = dataset.get_cohort(granularity="patient_level")
+
+        assert isinstance(cohort, pd.DataFrame)
+        # Should have required columns
+        for col in UnifiedCohort.REQUIRED_COLUMNS:
+            assert col in cohort.columns
+
+    def test_mimic3_rejects_non_patient_level_granularity(self):
+        """Test that Mimic3Dataset rejects non-patient_level granularity (M8)."""
+        dataset = DatasetRegistry.get_dataset("mimic3")
+
+        if not dataset.validate():
+            pytest.skip("MIMIC3 data not available")
+
+        # Single-table datasets only support patient_level
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="admission_level")
+
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="event_level")
+
 
 class TestUIErrorHandling:
     """Test error handling scenarios that might occur in UI."""
@@ -129,12 +187,12 @@ class TestUIErrorHandling:
     def test_invalid_dataset_name(self):
         """Test that invalid dataset name raises appropriate error."""
         with pytest.raises(KeyError):
-            DatasetRegistry.get_dataset('nonexistent_dataset')
+            DatasetRegistry.get_dataset("nonexistent_dataset")
 
     def test_dataset_without_validation(self):
         """Test that dataset without valid data can still be created."""
         # MIMIC3 without database connection
-        dataset = DatasetRegistry.get_dataset('mimic3')
+        dataset = DatasetRegistry.get_dataset("mimic3")
 
         # Should be created but validation fails
         assert dataset is not None

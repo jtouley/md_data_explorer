@@ -2,10 +2,11 @@
 Tests for COVID-MS dataset implementation.
 """
 
-import pytest
 import pandas as pd
-from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
+import pytest
+
 from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
 
 
 class TestCovidMSDataset:
@@ -23,7 +24,7 @@ class TestCovidMSDataset:
         """Test dataset initialization."""
         dataset = CovidMSDataset()
 
-        assert dataset.name == 'covid_ms'
+        assert dataset.name == "covid_ms"
         assert dataset.config is not None
         assert dataset.mapper is not None
 
@@ -75,7 +76,7 @@ class TestCovidMSDataset:
 
     def test_config_driven_defaults(self, dataset):
         """Test that dataset uses config-driven defaults."""
-        assert hasattr(dataset, 'mapper')
+        assert hasattr(dataset, "mapper")
         assert dataset.mapper is not None
 
         # Check mapper has config-loaded values
@@ -112,7 +113,7 @@ class TestCovidMSDataset:
         # Results should be identical
         assert len(cohort1) == len(cohort2)
         assert set(cohort1.columns) == set(cohort2.columns)
-        
+
         # Check that required columns are present
         for col in UnifiedCohort.REQUIRED_COLUMNS:
             assert col in cohort1.columns
@@ -138,10 +139,34 @@ class TestCovidMSDataset:
 
         outcome_col = dataset.mapper.get_default_outcome()
         outcome_label = dataset.mapper.get_default_outcome_label(outcome_col)
-        
+
         assert outcome_label is not None
         assert isinstance(outcome_label, str)
 
         cohort = dataset.get_cohort()
         # Outcome label should be set from config
         assert UnifiedCohort.OUTCOME_LABEL in cohort.columns
+
+    def test_get_cohort_with_granularity_patient_level(self, dataset):
+        """Test that get_cohort(granularity="patient_level") works (M8 integration test)."""
+        if not dataset.validate():
+            pytest.skip("COVID-MS data not available")
+
+        cohort = dataset.get_cohort(granularity="patient_level")
+
+        assert isinstance(cohort, pd.DataFrame)
+        # Should have required columns
+        for col in UnifiedCohort.REQUIRED_COLUMNS:
+            assert col in cohort.columns
+
+    def test_get_cohort_rejects_non_patient_level_granularity(self, dataset):
+        """Test that non-patient_level granularity raises ValueError at dataset level (M8)."""
+        if not dataset.validate():
+            pytest.skip("COVID-MS data not available")
+
+        # Single-table datasets only support patient_level
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="admission_level")
+
+        with pytest.raises(ValueError, match="granularity"):
+            dataset.get_cohort(granularity="event_level")

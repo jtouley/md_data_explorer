@@ -14,15 +14,16 @@ Key Principles:
 - Fail gracefully with user override options
 """
 
+import hashlib
+import logging
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Set, Literal, Any
-from pathlib import Path
 from datetime import datetime
-import hashlib
-import polars as pl
+from pathlib import Path
+from typing import Any, Literal
+
 import duckdb
-import logging
+import polars as pl
 
 try:
     import ibis
@@ -41,6 +42,7 @@ CodeColumnPattern = str  # Regex or glob pattern for code columns
 
 class AggregationPolicyError(ValueError):
     """Raised when aggregation policy is violated (e.g., mean on code column)."""
+
     pass
 
 
@@ -60,13 +62,22 @@ class AggregationPolicy:
         allow_last: Enable last() aggregation (requires stable ordering)
         code_column_patterns: Patterns identifying code columns (no mean/avg)
     """
-    default_numeric: List[AggregationOp] = field(default_factory=lambda: ["min", "max"])
+
+    default_numeric: list[AggregationOp] = field(default_factory=lambda: ["min", "max"])
     allow_mean: bool = False
     allow_last: bool = True
-    code_column_patterns: List[CodeColumnPattern] = field(default_factory=lambda: [
-        "icd_code", "itemid", "ndc", "cpt_code", "drg", "hcpcs",
-        "*_code", "*_id"  # Glob patterns
-    ])
+    code_column_patterns: list[CodeColumnPattern] = field(
+        default_factory=lambda: [
+            "icd_code",
+            "itemid",
+            "ndc",
+            "cpt_code",
+            "drg",
+            "hcpcs",
+            "*_code",
+            "*_id",  # Glob patterns
+        ]
+    )
 
 
 @dataclass
@@ -95,6 +106,7 @@ class TableClassification:
         is_n_side_of_anchor: True if table is on N-side of relationship to anchor
         null_rate_in_grain: % of NULLs in grain_key column (0-1)
     """
+
     table_name: str
     classification: Literal["dimension", "fact", "event", "bridge", "reference"]
     grain: Literal["patient", "admission", "event"]
@@ -104,7 +116,7 @@ class TableClassification:
     estimated_bytes: int
     relationship_degree: int
     has_time_column: bool
-    time_column_name: Optional[str]
+    time_column_name: str | None
     is_n_side_of_anchor: bool
     null_rate_in_grain: float
 
@@ -112,12 +124,13 @@ class TableClassification:
 @dataclass
 class CohortMetadata:
     """Metadata for materialized cohort mart."""
+
     grain: Literal["patient", "admission", "event"]
     grain_key: str
     anchor_table: str
     output_path: Path  # Base output directory
     parquet_path: Path  # Single path to mart Parquet (file or directory)
-    schema: Dict[str, str]  # column_name -> dtype (e.g., "patient_id" -> "Utf8")
+    schema: dict[str, str]  # column_name -> dtype (e.g., "patient_id" -> "Utf8")
     row_count: int
     materialized_at: datetime
     run_id: str  # Deterministic hash: sha256(config + schema_version + dataset_fingerprint)
@@ -140,6 +153,7 @@ class TableRelationship:
         confidence: Detection confidence score (0-1)
         match_ratio: % of child values that exist in parent
     """
+
     parent_table: str
     child_table: str
     parent_key: str
@@ -149,8 +163,10 @@ class TableRelationship:
     match_ratio: float = 0.0
 
     def __str__(self) -> str:
-        return f"{self.parent_table}.{self.parent_key} → {self.child_table}.{self.child_key} " \
-               f"({self.relationship_type}, conf={self.confidence:.2f}, match={self.match_ratio:.2f})"
+        return (
+            f"{self.parent_table}.{self.parent_key} → {self.child_table}.{self.child_key} "
+            f"({self.relationship_type}, conf={self.confidence:.2f}, match={self.match_ratio:.2f})"
+        )
 
 
 class MultiTableHandler:
@@ -177,8 +193,8 @@ class MultiTableHandler:
 
     def __init__(
         self,
-        tables: Dict[str, pl.DataFrame],
-        max_dimension_bytes: int = 250_000_000  # 250 MB default
+        tables: dict[str, pl.DataFrame],
+        max_dimension_bytes: int = 250_000_000,  # 250 MB default
     ):
         """
         Initialize with dictionary of table_name -> Polars DataFrame.
@@ -188,17 +204,17 @@ class MultiTableHandler:
             max_dimension_bytes: Max size for dimension tables (default 250 MB)
         """
         self.tables = tables
-        self.relationships: List[TableRelationship] = []
-        self.primary_keys: Dict[str, str] = {}
-        self.classifications: Dict[str, TableClassification] = {}
+        self.relationships: list[TableRelationship] = []
+        self.primary_keys: dict[str, str] = {}
+        self.classifications: dict[str, TableClassification] = {}
         self.max_dimension_bytes = max_dimension_bytes
-        self._ibis_connection: Optional[Any] = None  # Cached Ibis DuckDB connection
+        self._ibis_connection: Any | None = None  # Cached Ibis DuckDB connection
 
         # Normalize key column types across all tables
         self._normalize_key_columns()
 
         # Initialize DuckDB connection for SQL-based joins
-        self.conn = duckdb.connect(':memory:')
+        self.conn = duckdb.connect(":memory:")
 
         # Register all tables in DuckDB
         for table_name, df in self.tables.items():
@@ -216,7 +232,7 @@ class MultiTableHandler:
         2. Normalize them to string type for consistent comparisons
         """
         logger.debug("Starting key column normalization")
-        
+
         # Count how many tables each column appears in
         column_counts = {}
         for df in self.tables.values():
@@ -229,8 +245,15 @@ class MultiTableHandler:
 
         # Also include common key patterns
         key_patterns = [
-            '_id', 'subject_id', 'hadm_id', 'stay_id', 'itemid',
-            'icustay_id', 'transfer_id', 'caregiver_id', 'charttime'
+            "_id",
+            "subject_id",
+            "hadm_id",
+            "stay_id",
+            "itemid",
+            "icustay_id",
+            "transfer_id",
+            "caregiver_id",
+            "charttime",
         ]
 
         key_columns = shared_columns.copy()
@@ -247,28 +270,35 @@ class MultiTableHandler:
             cols_to_cast = [col for col in key_columns if col in df.columns]
 
             if cols_to_cast:
-                logger.debug(f"Normalizing {len(cols_to_cast)} columns in table '{table_name}': {cols_to_cast}")
+                logger.debug(
+                    f"Normalizing {len(cols_to_cast)} columns in table '{table_name}': {cols_to_cast}"
+                )
                 # Log original dtypes
                 original_dtypes = {col: df[col].dtype for col in cols_to_cast}
                 logger.debug(f"Original dtypes for {table_name}: {original_dtypes}")
-                
+
                 try:
                     # Cast all key columns in one operation
-                    cast_exprs = [pl.col(col).cast(pl.Utf8, strict=False).alias(col)
-                                  for col in cols_to_cast]
+                    cast_exprs = [
+                        pl.col(col).cast(pl.Utf8, strict=False).alias(col) for col in cols_to_cast
+                    ]
                     self.tables[table_name] = df.with_columns(cast_exprs)
-                    
+
                     # Verify cast succeeded
                     new_dtypes = {col: self.tables[table_name][col].dtype for col in cols_to_cast}
                     logger.debug(f"New dtypes for {table_name}: {new_dtypes}")
-                    
+
                     # Check for any that didn't convert
-                    failed_casts = [col for col in cols_to_cast if self.tables[table_name][col].dtype != pl.Utf8]
+                    failed_casts = [
+                        col for col in cols_to_cast if self.tables[table_name][col].dtype != pl.Utf8
+                    ]
                     if failed_casts:
                         logger.warning(f"Failed to cast columns in {table_name}: {failed_casts}")
-                        
+
                 except Exception as e:
-                    logger.error(f"Batch cast failed for {table_name}: {type(e).__name__}: {str(e)}")
+                    logger.error(
+                        f"Batch cast failed for {table_name}: {type(e).__name__}: {str(e)}"
+                    )
                     # Try one by one if batch fails
                     for col in cols_to_cast:
                         try:
@@ -277,9 +307,13 @@ class MultiTableHandler:
                                 pl.col(col).cast(pl.Utf8, strict=False)
                             )
                             new_dtype = self.tables[table_name][col].dtype
-                            logger.debug(f"Cast {table_name}.{col}: {original_dtype} -> {new_dtype}")
+                            logger.debug(
+                                f"Cast {table_name}.{col}: {original_dtype} -> {new_dtype}"
+                            )
                         except Exception as col_e:
-                            logger.error(f"Failed to cast {table_name}.{col} from {df[col].dtype}: {type(col_e).__name__}: {str(col_e)}")
+                            logger.error(
+                                f"Failed to cast {table_name}.{col} from {df[col].dtype}: {type(col_e).__name__}: {str(col_e)}"
+                            )
                             pass  # Skip if casting fails
 
     def _sample_df(self, df: pl.DataFrame, n: int = 10_000) -> pl.DataFrame:
@@ -342,7 +376,7 @@ class MultiTableHandler:
         col_lower = col_name.lower()
         return col_lower == "id" or col_lower.endswith("_id")
 
-    def detect_relationships(self) -> List[TableRelationship]:
+    def detect_relationships(self) -> list[TableRelationship]:
         """
         Auto-detect foreign key relationships between tables.
 
@@ -385,22 +419,24 @@ class MultiTableHandler:
                             name_conf = 1.0 if parent_pk.lower() == child_col.lower() else 0.9
                             confidence = (name_conf + match_ratio) / 2
 
-                            self.relationships.append(TableRelationship(
-                                parent_table=parent_table,
-                                child_table=child_table,
-                                parent_key=parent_pk,
-                                child_key=child_col,
-                                relationship_type="one-to-many",
-                                confidence=confidence,
-                                match_ratio=match_ratio
-                            ))
+                            self.relationships.append(
+                                TableRelationship(
+                                    parent_table=parent_table,
+                                    child_table=child_table,
+                                    parent_key=parent_pk,
+                                    child_key=child_col,
+                                    relationship_type="one-to-many",
+                                    confidence=confidence,
+                                    match_ratio=match_ratio,
+                                )
+                            )
 
         # Sort by confidence (descending)
         self.relationships.sort(key=lambda r: r.confidence, reverse=True)
 
         return self.relationships
 
-    def classify_tables(self, anchor_table: Optional[str] = None) -> Dict[str, TableClassification]:
+    def classify_tables(self, anchor_table: str | None = None) -> dict[str, TableClassification]:
         """
         Classify all tables as dimension/fact/event/bridge/reference.
 
@@ -430,7 +466,9 @@ class MultiTableHandler:
             # Detect grain key
             grain_key = self._detect_grain_key(df)
             if not grain_key:
-                logger.warning(f"No grain key detected for table '{table_name}', skipping classification")
+                logger.warning(
+                    f"No grain key detected for table '{table_name}', skipping classification"
+                )
                 continue
 
             # Calculate cardinality metrics using sampled data
@@ -452,9 +490,9 @@ class MultiTableHandler:
                 # If ratio is ~1.0, table is unique on grain (dimension)
                 # If ratio > 1.1, table has duplicates (fact/event)
                 cardinality_ratio = total_rows / max(estimated_total_unique, 1)
-                is_unique = (cardinality_ratio <= 1.05)  # Allow 5% tolerance for sampling error
+                is_unique = cardinality_ratio <= 1.05  # Allow 5% tolerance for sampling error
             else:
-                cardinality_ratio = float('inf')
+                cardinality_ratio = float("inf")
                 is_unique = False
 
             null_rate = sampled_null_rate
@@ -472,7 +510,9 @@ class MultiTableHandler:
             is_bridge = self._detect_bridge_table(table_name, df, fk_counts.get(table_name, 0))
 
             # Determine if table is on N-side of anchor relationship
-            is_n_side = self._is_n_side_of_anchor(table_name, anchor_table) if anchor_table else False
+            is_n_side = (
+                self._is_n_side_of_anchor(table_name, anchor_table) if anchor_table else False
+            )
 
             # Classify based on rules
             classification = self._classify_table_type(
@@ -483,7 +523,7 @@ class MultiTableHandler:
                 is_bridge=is_bridge,
                 is_n_side=is_n_side,
                 time_col=time_col,
-                df=df
+                df=df,
             )
 
             # Store classification
@@ -499,7 +539,7 @@ class MultiTableHandler:
                 has_time_column=has_time,
                 time_column_name=time_col,
                 is_n_side_of_anchor=is_n_side,
-                null_rate_in_grain=null_rate
+                null_rate_in_grain=null_rate,
             )
 
             logger.debug(
@@ -510,7 +550,7 @@ class MultiTableHandler:
 
         return self.classifications
 
-    def _detect_grain_key(self, df: pl.DataFrame) -> Optional[str]:
+    def _detect_grain_key(self, df: pl.DataFrame) -> str | None:
         """
         Detect grain key column using explicit scoring formula.
 
@@ -532,13 +572,13 @@ class MultiTableHandler:
             Grain key column name or None
         """
         # 1. Check explicit patient grain patterns first (highest priority)
-        patient_patterns = ['patient_id', 'subject_id', 'patientid', 'subjectid']
+        patient_patterns = ["patient_id", "subject_id", "patientid", "subjectid"]
         for col in df.columns:
             if col.lower() in patient_patterns:
                 return col
 
         # 2. Check explicit admission grain patterns
-        admission_patterns = ['hadm_id', 'encounter_id', 'visit_id', 'admissionid', 'encounterid']
+        admission_patterns = ["hadm_id", "encounter_id", "visit_id", "admissionid", "encounterid"]
         for col in df.columns:
             if col.lower() in admission_patterns:
                 return col
@@ -565,7 +605,7 @@ class MultiTableHandler:
             # Apply scoring formula
             score = 0.0
             score -= 2.0 * uniq_ratio  # Penalize row-level IDs (uniq ~ 1.0)
-            score -= 1.0 * null_rate    # Penalize NULLs
+            score -= 1.0 * null_rate  # Penalize NULLs
             score += 1.0 if self._is_probably_id_col(col) else 0.0
             score += 2.0 if col.lower() in patient_patterns + admission_patterns else 0.0
 
@@ -601,9 +641,9 @@ class MultiTableHandler:
         """
         grain_key_lower = grain_key.lower()
 
-        if any(p in grain_key_lower for p in ['patient', 'subject']):
+        if any(p in grain_key_lower for p in ["patient", "subject"]):
             return "patient"
-        elif any(p in grain_key_lower for p in ['hadm', 'encounter', 'visit', 'admission']):
+        elif any(p in grain_key_lower for p in ["hadm", "encounter", "visit", "admission"]):
             return "admission"
         else:
             return "event"
@@ -656,7 +696,7 @@ class MultiTableHandler:
         # Total estimate
         return bytes_per_row * df.height
 
-    def _detect_time_column(self, df: pl.DataFrame) -> Tuple[Optional[str], bool]:
+    def _detect_time_column(self, df: pl.DataFrame) -> tuple[str | None, bool]:
         """
         Detect time column in DataFrame using sampled uniqueness.
 
@@ -673,7 +713,7 @@ class MultiTableHandler:
         Returns:
             Tuple of (column_name, has_valid_time_column)
         """
-        time_patterns = ['time', 'date', 'timestamp', 'datetime']
+        time_patterns = ["time", "date", "timestamp", "datetime"]
 
         # Prioritize dtype check first (more reliable)
         for col in df.columns:
@@ -699,14 +739,14 @@ class MultiTableHandler:
 
         return (None, False)
 
-    def _count_foreign_keys(self) -> Dict[str, int]:
+    def _count_foreign_keys(self) -> dict[str, int]:
         """
         Count number of foreign key relationships per table.
 
         Returns:
             Dict mapping table name to number of FKs
         """
-        fk_counts: Dict[str, int] = {}
+        fk_counts: dict[str, int] = {}
 
         for rel in self.relationships:
             # Child table has a foreign key
@@ -714,12 +754,7 @@ class MultiTableHandler:
 
         return fk_counts
 
-    def _detect_bridge_table(
-        self,
-        table_name: str,
-        df: pl.DataFrame,
-        fk_count: int
-    ) -> bool:
+    def _detect_bridge_table(self, table_name: str, df: pl.DataFrame, fk_count: int) -> bool:
         """
         Detect if table is a bridge (many-to-many) table using sampled data.
 
@@ -748,10 +783,7 @@ class MultiTableHandler:
             return False
 
         # Get FK columns for this table
-        fk_cols = [
-            rel.child_key for rel in self.relationships
-            if rel.child_table == table_name
-        ]
+        fk_cols = [rel.child_key for rel in self.relationships if rel.child_table == table_name]
 
         if len(fk_cols) < 2:
             return False
@@ -764,7 +796,7 @@ class MultiTableHandler:
         for col in fk_cols:
             if col in s.columns:
                 unique_count, _ = self._compute_sampled_uniqueness(df, col)
-                is_unique = (unique_count == s.height)
+                is_unique = unique_count == s.height
                 fk_unique_flags.append(is_unique)
 
         if all(fk_unique_flags):
@@ -790,7 +822,7 @@ class MultiTableHandler:
 
         return False
 
-    def _is_n_side_of_anchor(self, table_name: str, anchor_table: Optional[str]) -> bool:
+    def _is_n_side_of_anchor(self, table_name: str, anchor_table: str | None) -> bool:
         """
         Check if table is on N-side of relationship to anchor.
 
@@ -818,8 +850,8 @@ class MultiTableHandler:
         has_time: bool,
         is_bridge: bool,
         is_n_side: bool,
-        time_col: Optional[str],
-        df: pl.DataFrame
+        time_col: str | None,
+        df: pl.DataFrame,
     ) -> Literal["dimension", "fact", "event", "bridge", "reference"]:
         """
         Classify table based on characteristics.
@@ -866,9 +898,7 @@ class MultiTableHandler:
         return "fact"
 
     def _build_dimension_mart(
-        self,
-        anchor_table: Optional[str] = None,
-        join_type: str = "left"
+        self, anchor_table: str | None = None, join_type: str = "left"
     ) -> pl.LazyFrame:
         """
         Build dimension mart by joining only 1:1 and small dimensions to anchor.
@@ -930,8 +960,7 @@ class MultiTableHandler:
         joined_tables = {anchor_table}
 
         logger.debug(
-            f"Anchor '{anchor_table}': {anchor_df.height} rows, "
-            f"grain_key={anchor_class.grain_key}"
+            f"Anchor '{anchor_table}': {anchor_df.height} rows, grain_key={anchor_class.grain_key}"
         )
 
         # Build join graph using BFS from anchor
@@ -945,7 +974,7 @@ class MultiTableHandler:
             # Sort for deterministic traversal order
             for rel in sorted(
                 self.relationships,
-                key=lambda r: (r.parent_table, r.child_table, r.parent_key, r.child_key)
+                key=lambda r: (r.parent_table, r.child_table, r.parent_key, r.child_key),
             ):
                 next_table = None
                 join_key_left = None
@@ -1030,10 +1059,8 @@ class MultiTableHandler:
         return mart
 
     def _aggregate_fact_tables(
-        self,
-        grain_key: str,
-        policy: AggregationPolicy = None
-    ) -> Dict[str, pl.LazyFrame]:
+        self, grain_key: str, policy: AggregationPolicy = None
+    ) -> dict[str, pl.LazyFrame]:
         """
         Aggregate fact/event tables by grain key with policy enforcement.
 
@@ -1074,7 +1101,8 @@ class MultiTableHandler:
 
         # Filter to fact/event tables only
         fact_event_tables = {
-            name: cls for name, cls in self.classifications.items()
+            name: cls
+            for name, cls in self.classifications.items()
             if cls.classification in ["fact", "event"]
         }
 
@@ -1116,10 +1144,18 @@ class MultiTableHandler:
                 agg_exprs.append(pl.col(col).n_unique().alias(f"{col}_count_distinct"))
 
                 # Numeric aggregations
-                if dtype in [pl.Int8, pl.Int16, pl.Int32, pl.Int64,
-                            pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
-                            pl.Float32, pl.Float64]:
-
+                if dtype in [
+                    pl.Int8,
+                    pl.Int16,
+                    pl.Int32,
+                    pl.Int64,
+                    pl.UInt8,
+                    pl.UInt16,
+                    pl.UInt32,
+                    pl.UInt64,
+                    pl.Float32,
+                    pl.Float64,
+                ]:
                     # Safe aggregations: min/max (always allowed)
                     agg_exprs.append(pl.col(col).min().alias(f"{col}_min"))
                     agg_exprs.append(pl.col(col).max().alias(f"{col}_max"))
@@ -1170,7 +1206,7 @@ class MultiTableHandler:
 
     def build_unified_cohort(
         self,
-        anchor_table: Optional[str] = None,
+        anchor_table: str | None = None,
         join_type: str = "left",
     ) -> pl.DataFrame:
         """
@@ -1183,14 +1219,14 @@ class MultiTableHandler:
           4) aggregate fact/event tables to grain (one row per grain)
           5) join aggregated feature tables to mart (validate 1:1)
           6) collect
-          
+
         Args:
             anchor_table: Root table for joins (auto-detected if None)
             join_type: Type of join (left, inner, outer) - only affects dimension mart
-            
+
         Returns:
             Unified Polars DataFrame with all columns
-            
+
         Raises:
             ValueError: If anchor not found, not unique on grain, or invalid join_type
             AggregationPolicyError: If aggregation policy violation detected
@@ -1278,7 +1314,7 @@ class MultiTableHandler:
     def _get_ibis_connection(self) -> Any:
         """
         Get or create Ibis DuckDB connection (cached on instance).
-        
+
         Returns:
             Ibis DuckDB connection
         """
@@ -1286,11 +1322,11 @@ class MultiTableHandler:
             raise ImportError(
                 "Ibis is required for plan_mart(). Install with: pip install ibis-framework[duckdb]"
             )
-        
+
         # Reuse cached connection if available
         if self._ibis_connection is None:
             self._ibis_connection = ibis.duckdb.connect()
-        
+
         return self._ibis_connection
 
     def _add_hash_bucket_column(
@@ -1301,14 +1337,14 @@ class MultiTableHandler:
     ) -> pl.DataFrame:
         """
         Add deterministic hash bucket column for partitioning.
-        
+
         Uses stable hash seed for reproducibility across runs.
-        
+
         Args:
             df: Polars DataFrame
             grain_key: Column to hash
             num_buckets: Number of buckets
-        
+
         Returns:
             DataFrame with 'bucket' column added
         """
@@ -1324,11 +1360,11 @@ class MultiTableHandler:
     def _compute_dataset_fingerprint(self) -> str:
         """
         Compute deterministic fingerprint of dataset for caching.
-        
+
         Fingerprint includes: table names, row counts, column counts, and content hash.
         Content hash uses a small deterministic sample per table to detect value changes
         even when shape remains the same.
-        
+
         Returns:
             SHA256 hash as hex string
         """
@@ -1336,10 +1372,10 @@ class MultiTableHandler:
         fingerprint_parts = []
         for table_name in sorted(self.tables.keys()):
             df = self.tables[table_name]
-            
+
             # Shape metadata
             shape_info = f"{table_name}:{df.height}:{df.width}:{','.join(sorted(df.columns))}"
-            
+
             # Content hash: sample first 100 rows (or all if smaller) deterministically
             # This detects value changes even when shape is unchanged
             sample_size = min(100, df.height)
@@ -1348,11 +1384,13 @@ class MultiTableHandler:
                 sample_df = df.head(sample_size)
                 # Hash the sample data (convert to string representation)
                 sample_str = str(sample_df.to_dict(as_series=False))
-                content_hash = hashlib.sha256(sample_str.encode()).hexdigest()[:16]  # First 16 chars
+                content_hash = hashlib.sha256(sample_str.encode()).hexdigest()[
+                    :16
+                ]  # First 16 chars
                 fingerprint_parts.append(f"{shape_info}:{content_hash}")
             else:
                 fingerprint_parts.append(f"{shape_info}:empty")
-        
+
         fingerprint_str = "|".join(fingerprint_parts)
         return hashlib.sha256(fingerprint_str.encode()).hexdigest()
 
@@ -1365,27 +1403,27 @@ class MultiTableHandler:
     ) -> str:
         """
         Compute deterministic run_id for caching.
-        
+
         Hash of: config (grain, anchor, grain_key, join_type) + schema_version + dataset fingerprint.
-        
+
         Args:
             grain: Grain level
             anchor_table: Anchor table name
             grain_key: Grain key column
             join_type: Join type
-        
+
         Returns:
             SHA256 hash as hex string
         """
         # Build config string
         config_str = f"{grain}:{anchor_table}:{grain_key}:{join_type}"
-        
+
         # Add schema version (module-level constant)
         # SCHEMA_VERSION is defined at module level in this file
-        
+
         # Add dataset fingerprint (hash of table names + row counts + content sample)
         dataset_fingerprint = self._compute_dataset_fingerprint()
-        
+
         # Combine and hash
         combined = f"{config_str}:{SCHEMA_VERSION}:{dataset_fingerprint}"
         return hashlib.sha256(combined.encode()).hexdigest()
@@ -1394,14 +1432,14 @@ class MultiTableHandler:
         self,
         output_path: Path,
         grain: str = "patient",
-        anchor_table: Optional[str] = None,
+        anchor_table: str | None = None,
         join_type: str = "left",
         num_buckets: int = 64,
         force_recompute: bool = False,
     ) -> CohortMetadata:
         """
         Compute mart using Polars pipeline and write to partitioned Parquet.
-        
+
         Strategy:
           1) Compute run_id (deterministic hash of config + schema + dataset)
           2) Check cache: if {output_path}/{run_id}/ exists and not force_recompute, return existing metadata
@@ -1411,12 +1449,12 @@ class MultiTableHandler:
              - Patient/admission level: single file at {output_path}/{run_id}/{grain}/mart.parquet
              - Event level: hash-bucketed directory at {output_path}/{run_id}/{grain}/mart/ (bucket=0, bucket=1, ...)
           6) Return metadata with paths, schema, row counts, run_id
-        
+
         Memory Constraint:
           Materialization is bounded because facts/events are pre-aggregated to grain
           (one row per grain). Final mart should be manageable. If _aggregate_fact_tables()
           produces a wide mart that's still large, this should be documented as a limitation.
-        
+
         Args:
             output_path: Base directory for Parquet output
             grain: Grain level (patient, admission, event)
@@ -1424,14 +1462,16 @@ class MultiTableHandler:
             join_type: Join type for dimension mart
             num_buckets: Number of hash buckets for event-level partitioning
             force_recompute: If True, recompute even if cached version exists
-        
+
         Returns:
             CohortMetadata with paths, schema, row counts, and run_id
         """
         import time
-        
+
         start_time = time.perf_counter()
-        logger.info(f"Materializing mart (grain={grain}, anchor_table={anchor_table}, join_type={join_type})")
+        logger.info(
+            f"Materializing mart (grain={grain}, anchor_table={anchor_table}, join_type={join_type})"
+        )
 
         # Normalize and validate join_type
         join_type = join_type.lower().strip()
@@ -1467,25 +1507,27 @@ class MultiTableHandler:
         # Check cache
         run_dir = output_path / run_id
         metadata_file = run_dir / f"{grain}_metadata.json"
-        
+
         if run_dir.exists() and metadata_file.exists() and not force_recompute:
             logger.info(f"Cache hit: reusing existing materialized mart at {run_dir}")
             import json
+
             with open(metadata_file) as f:
                 metadata_dict = json.load(f)
-            
+
             # Convert string paths back to Path objects
             metadata_dict["output_path"] = Path(metadata_dict["output_path"])
             metadata_dict["parquet_path"] = Path(metadata_dict["parquet_path"])
-            metadata_dict["materialized_at"] = datetime.fromisoformat(metadata_dict["materialized_at"])
-            
+            metadata_dict["materialized_at"] = datetime.fromisoformat(
+                metadata_dict["materialized_at"]
+            )
+
             metadata = CohortMetadata(**metadata_dict)
             logger.info(
-                f"Reusing cached mart: {metadata.row_count:,} rows, "
-                f"path={metadata.parquet_path}"
+                f"Reusing cached mart: {metadata.row_count:,} rows, path={metadata.parquet_path}"
             )
             return metadata
-        
+
         # Build mart using Polars pipeline
         logger.info("Building dimension mart...")
         mart = self._build_dimension_mart(anchor_table=anchor_table, join_type=join_type)
@@ -1531,7 +1573,9 @@ class MultiTableHandler:
         # Write Parquet based on grain level
         if grain == "event":
             # Event level: hash bucket partitioning
-            logger.info(f"Writing event-level mart with hash bucket partitioning ({num_buckets} buckets)...")
+            logger.info(
+                f"Writing event-level mart with hash bucket partitioning ({num_buckets} buckets)..."
+            )
             mart_df = self._add_hash_bucket_column(mart_df, grain_key, num_buckets)
             parquet_path = parquet_base / "mart"
             mart_df.write_parquet(
@@ -1545,9 +1589,7 @@ class MultiTableHandler:
             mart_df.write_parquet(str(parquet_path))
 
         # Build schema dict (column_name -> dtype string)
-        schema_dict = {
-            col: str(dtype) for col, dtype in zip(mart_df.columns, mart_df.dtypes)
-        }
+        schema_dict = {col: str(dtype) for col, dtype in zip(mart_df.columns, mart_df.dtypes)}
 
         # Create metadata
         metadata = CohortMetadata(
@@ -1564,23 +1606,32 @@ class MultiTableHandler:
 
         # Save metadata to file for caching
         import json
+
         metadata_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(metadata_file, 'w') as f:
-            json.dump({
-                "grain": metadata.grain,
-                "grain_key": metadata.grain_key,
-                "anchor_table": metadata.anchor_table,
-                "output_path": str(metadata.output_path),
-                "parquet_path": str(metadata.parquet_path),
-                "schema": metadata.schema,
-                "row_count": metadata.row_count,
-                "materialized_at": metadata.materialized_at.isoformat(),
-                "run_id": metadata.run_id,
-            }, f, indent=2)
+        with open(metadata_file, "w") as f:
+            json.dump(
+                {
+                    "grain": metadata.grain,
+                    "grain_key": metadata.grain_key,
+                    "anchor_table": metadata.anchor_table,
+                    "output_path": str(metadata.output_path),
+                    "parquet_path": str(metadata.parquet_path),
+                    "schema": metadata.schema,
+                    "row_count": metadata.row_count,
+                    "materialized_at": metadata.materialized_at.isoformat(),
+                    "run_id": metadata.run_id,
+                },
+                f,
+                indent=2,
+            )
 
         duration = time.perf_counter() - start_time
-        parquet_size = sum(f.stat().st_size for f in parquet_path.rglob("*.parquet") if f.is_file()) if parquet_path.is_dir() else parquet_path.stat().st_size
-        
+        parquet_size = (
+            sum(f.stat().st_size for f in parquet_path.rglob("*.parquet") if f.is_file())
+            if parquet_path.is_dir()
+            else parquet_path.stat().st_size
+        )
+
         logger.info(
             f"Mart materialized: {row_count:,} rows, {len(schema_dict)} cols, "
             f"{parquet_size / 1024 / 1024:.2f} MB, duration={duration:.2f}s, "
@@ -1591,26 +1642,26 @@ class MultiTableHandler:
 
     def plan_mart(
         self,
-        metadata: Optional[CohortMetadata] = None,
-        parquet_path: Optional[Path] = None,
+        metadata: CohortMetadata | None = None,
+        parquet_path: Path | None = None,
     ) -> Any:
         """
         Return lazy Ibis expression over materialized Parquet mart.
-        
+
         Strategy:
           1) Resolve parquet_path from metadata or parameter
           2) Create/get DuckDB Ibis connection
           3) Use con.read_parquet() (DuckDB handles partitioned directories natively)
           4) Return lazy Ibis.Table (no computation, SQL generation only)
           5) Enables semantic layer queries to compile to SQL lazily
-        
+
         Args:
             metadata: CohortMetadata (preferred, includes schema info)
             parquet_path: Path to materialized Parquet (file or directory)
-        
+
         Returns:
             Lazy Ibis expression over Parquet (SQL not executed)
-        
+
         Raises:
             ValueError: If neither metadata nor parquet_path provided
             FileNotFoundError: If Parquet path doesn't exist
@@ -1650,21 +1701,21 @@ class MultiTableHandler:
         should_drop_bucket = False
         if metadata is not None:
             # Check metadata schema for bucket column
-            if 'bucket' in metadata.schema:
+            if "bucket" in metadata.schema:
                 should_drop_bucket = True
         elif parquet_path.is_dir():
             # Partitioned directory likely has bucket column (event-level partitioning)
             should_drop_bucket = True
-        
+
         if should_drop_bucket:
             logger.debug("Dropping internal 'bucket' partition column from planned table")
-            table = table.drop('bucket')
+            table = table.drop("bucket")
 
-        logger.debug(f"Created lazy Ibis table over Parquet (no computation triggered)")
+        logger.debug("Created lazy Ibis table over Parquet (no computation triggered)")
 
         return table
 
-    def _detect_primary_key(self, df: pl.DataFrame) -> Optional[str]:
+    def _detect_primary_key(self, df: pl.DataFrame) -> str | None:
         """
         Detect primary key column in a table using Polars.
 
@@ -1679,7 +1730,7 @@ class MultiTableHandler:
         Returns:
             Primary key column name or None
         """
-        id_pattern_cols = [col for col in df.columns if 'id' in col.lower()]
+        id_pattern_cols = [col for col in df.columns if "id" in col.lower()]
 
         # Check ID pattern columns first
         for col in id_pattern_cols:
@@ -1725,8 +1776,8 @@ class MultiTableHandler:
             return True
 
         # Handle cases like "patient_id" matching "patientid"
-        parent_no_underscore = parent_lower.replace('_', '')
-        child_no_underscore = child_lower.replace('_', '')
+        parent_no_underscore = parent_lower.replace("_", "")
+        child_no_underscore = child_lower.replace("_", "")
 
         if parent_no_underscore == child_no_underscore:
             return True
@@ -1734,11 +1785,7 @@ class MultiTableHandler:
         return False
 
     def _verify_referential_integrity(
-        self,
-        parent_df: pl.DataFrame,
-        parent_key: str,
-        child_df: pl.DataFrame,
-        child_col: str
+        self, parent_df: pl.DataFrame, parent_key: str, child_df: pl.DataFrame, child_col: str
     ) -> float:
         """
         Verify referential integrity using Polars operations.
@@ -1755,10 +1802,12 @@ class MultiTableHandler:
             Match ratio (0-1) representing referential integrity
         """
         logger.debug(f"Verifying referential integrity: {parent_key} -> {child_col}")
-        
+
         # Get non-null child values
         child_values = child_df[child_col].drop_nulls()
-        logger.debug(f"Child values dtype: {child_values.dtype}, len: {child_values.len()}, sample: {child_values.head(3).to_list()}")
+        logger.debug(
+            f"Child values dtype: {child_values.dtype}, len: {child_values.len()}, sample: {child_values.head(3).to_list()}"
+        )
 
         if child_values.len() == 0:
             logger.debug("Child values empty, returning 0.0")
@@ -1766,7 +1815,9 @@ class MultiTableHandler:
 
         # Get parent values
         parent_values = parent_df[parent_key].drop_nulls()
-        logger.debug(f"Parent values dtype: {parent_values.dtype}, len: {parent_values.len()}, sample: {parent_values.head(3).to_list()}")
+        logger.debug(
+            f"Parent values dtype: {parent_values.dtype}, len: {parent_values.len()}, sample: {parent_values.head(3).to_list()}"
+        )
 
         # Cast both to string for type-safe comparison using pure Polars operations
         # This handles cases where one table has int64 and another has string
@@ -1774,18 +1825,26 @@ class MultiTableHandler:
             # Cast both to Utf8 for consistent comparison
             logger.debug(f"Casting child from {child_values.dtype} to Utf8")
             child_str = child_values.cast(pl.Utf8, strict=False).drop_nulls().unique()
-            logger.debug(f"Child after cast: dtype={child_str.dtype}, len={child_str.len()}, sample={child_str.head(3).to_list()}")
-            
+            logger.debug(
+                f"Child after cast: dtype={child_str.dtype}, len={child_str.len()}, sample={child_str.head(3).to_list()}"
+            )
+
             logger.debug(f"Casting parent from {parent_values.dtype} to Utf8")
             parent_str = parent_values.cast(pl.Utf8, strict=False).drop_nulls().unique()
-            logger.debug(f"Parent after cast: dtype={parent_str.dtype}, len={parent_str.len()}, sample={parent_str.head(3).to_list()}")
+            logger.debug(
+                f"Parent after cast: dtype={parent_str.dtype}, len={parent_str.len()}, sample={parent_str.head(3).to_list()}"
+            )
 
             # Verify both are Utf8 before join
             if child_str.dtype != pl.Utf8:
-                logger.warning(f"Child cast failed: expected Utf8, got {child_str.dtype}, recasting...")
+                logger.warning(
+                    f"Child cast failed: expected Utf8, got {child_str.dtype}, recasting..."
+                )
                 child_str = child_str.cast(pl.Utf8, strict=False)
             if parent_str.dtype != pl.Utf8:
-                logger.warning(f"Parent cast failed: expected Utf8, got {parent_str.dtype}, recasting...")
+                logger.warning(
+                    f"Parent cast failed: expected Utf8, got {parent_str.dtype}, recasting..."
+                )
                 parent_str = parent_str.cast(pl.Utf8, strict=False)
 
             # Use join-based approach to avoid is_in() deprecation warning
@@ -1793,9 +1852,11 @@ class MultiTableHandler:
             logger.debug("Creating DataFrames for join operation")
             child_df_join = pl.DataFrame({"value": child_str})
             parent_df_join = pl.DataFrame({"value": parent_str})
-            
-            logger.debug(f"Child DF schema: {child_df_join.schema}, Parent DF schema: {parent_df_join.schema}")
-            
+
+            logger.debug(
+                f"Child DF schema: {child_df_join.schema}, Parent DF schema: {parent_df_join.schema}"
+            )
+
             # Inner join to find matches
             logger.debug("Performing inner join to find matches")
             matches_df = child_df_join.join(parent_df_join, on="value", how="inner")
@@ -1808,9 +1869,12 @@ class MultiTableHandler:
 
         except Exception as e:
             # If casting fails, skip this relationship
-            logger.error(f"Error in referential integrity check ({parent_key} -> {child_col}): {type(e).__name__}: {str(e)}")
+            logger.error(
+                f"Error in referential integrity check ({parent_key} -> {child_col}): {type(e).__name__}: {str(e)}"
+            )
             logger.error(f"Child dtype: {child_values.dtype}, Parent dtype: {parent_values.dtype}")
             import traceback
+
             logger.error(f"Traceback: {traceback.format_exc()}")
             return 0.0
 
@@ -1840,8 +1904,7 @@ class MultiTableHandler:
 
         # Prefer tables with "patient" or "subject" in name
         patient_tables = [
-            t for t in self.tables.keys()
-            if 'patient' in t.lower() or 'subject' in t.lower()
+            t for t in self.tables.keys() if "patient" in t.lower() or "subject" in t.lower()
         ]
 
         if patient_tables:
@@ -1888,7 +1951,8 @@ class MultiTableHandler:
 
         # Hard exclusion: filter to only dimensions
         dimension_tables = {
-            name: cls for name, cls in self.classifications.items()
+            name: cls
+            for name, cls in self.classifications.items()
             if cls.classification == "dimension"
         }
 
@@ -1902,7 +1966,9 @@ class MultiTableHandler:
         candidates = {}
         for name, cls in dimension_tables.items():
             if cls.null_rate_in_grain > 0.5:
-                logger.debug(f"Excluding {name} from anchor candidates: null_rate={cls.null_rate_in_grain:.2%}")
+                logger.debug(
+                    f"Excluding {name} from anchor candidates: null_rate={cls.null_rate_in_grain:.2%}"
+                )
                 continue
 
             if not cls.is_unique_on_grain:
@@ -1932,10 +1998,10 @@ class MultiTableHandler:
             df = self.tables[name]
             col_lower = [c.lower() for c in df.columns]
 
-            if any(p in col_lower for p in ['hadm_id', 'encounter_id']):
+            if any(p in col_lower for p in ["hadm_id", "encounter_id"]):
                 score += 10
 
-            if any(p in col_lower for p in ['patient_id', 'subject_id']):
+            if any(p in col_lower for p in ["patient_id", "subject_id"]):
                 score += 5
 
             # Relationship count
@@ -1967,8 +2033,7 @@ class MultiTableHandler:
         # Tie-breaker 1: Lower null rate
         min_null_rate = min(candidates[name].null_rate_in_grain for name in top_candidates)
         top_candidates = [
-            name for name in top_candidates
-            if candidates[name].null_rate_in_grain == min_null_rate
+            name for name in top_candidates if candidates[name].null_rate_in_grain == min_null_rate
         ]
 
         if len(top_candidates) == 1:
@@ -1979,10 +2044,7 @@ class MultiTableHandler:
             return winner
 
         # Tie-breaker 2: Unique on grain (should all be True at this point, but check anyway)
-        unique_candidates = [
-            name for name in top_candidates
-            if candidates[name].is_unique_on_grain
-        ]
+        unique_candidates = [name for name in top_candidates if candidates[name].is_unique_on_grain]
 
         if unique_candidates:
             top_candidates = unique_candidates
@@ -1995,21 +2057,17 @@ class MultiTableHandler:
         # Tie-breaker 3: Smaller estimated bytes
         min_bytes = min(candidates[name].estimated_bytes for name in top_candidates)
         top_candidates = [
-            name for name in top_candidates
-            if candidates[name].estimated_bytes == min_bytes
+            name for name in top_candidates if candidates[name].estimated_bytes == min_bytes
         ]
 
         if len(top_candidates) == 1:
             winner = top_candidates[0]
-            logger.info(
-                f"Selected anchor table '{winner}' (tie-breaker: bytes={min_bytes:,})"
-            )
+            logger.info(f"Selected anchor table '{winner}' (tie-breaker: bytes={min_bytes:,})")
             return winner
 
         # Tie-breaker 4: Patient grain over admission grain
         patient_grain_candidates = [
-            name for name in top_candidates
-            if candidates[name].grain == "patient"
+            name for name in top_candidates if candidates[name].grain == "patient"
         ]
 
         if patient_grain_candidates:

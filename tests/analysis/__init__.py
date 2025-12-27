@@ -1,4 +1,3 @@
 """
 Analysis module tests.
 """
-

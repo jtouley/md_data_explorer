@@ -5,25 +5,22 @@ Create Table 1 with patient characteristics and summary statistics.
 No statistical jargon - just clear descriptions of your data.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
 import sys
 from pathlib import Path
+
+import pandas as pd
+import streamlit as st
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from clinical_analytics.core.registry import DatasetRegistry
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.core.schema import UnifiedCohort
-
+from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
 # Page config
 st.set_page_config(
-    page_title="Descriptive Statistics | Clinical Analytics",
-    page_icon="📊",
-    layout="wide"
+    page_title="Descriptive Statistics | Clinical Analytics", page_icon="📊", layout="wide"
 )
 
 
@@ -45,7 +42,7 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFram
         groups = sorted(df[stratify_by].dropna().unique())
         overall = False
     else:
-        groups = ['Overall']
+        groups = ["Overall"]
         stratify_by = None
         overall = True
 
@@ -65,20 +62,20 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFram
 
             if n_unique == 2:
                 # Binary numeric (0/1)
-                var_type = 'binary'
+                var_type = "binary"
             elif n_unique <= 10:
                 # Categorical numeric
-                var_type = 'categorical'
+                var_type = "categorical"
             else:
                 # Continuous
-                var_type = 'continuous'
+                var_type = "continuous"
         else:
             # Non-numeric
-            var_type = 'categorical'
+            var_type = "categorical"
 
         # Generate statistics based on type
-        if var_type == 'continuous':
-            row = {'Variable': col, 'Type': 'Continuous'}
+        if var_type == "continuous":
+            row = {"Variable": col, "Type": "Continuous"}
 
             for group in groups:
                 if overall:
@@ -95,12 +92,12 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFram
 
             results.append(row)
 
-        elif var_type == 'categorical' or var_type == 'binary':
+        elif var_type == "categorical" or var_type == "binary":
             # Get value counts
             values = df[col].dropna().unique()
 
             for value in sorted(values):
-                row = {'Variable': f"{col}: {value}", 'Type': 'Categorical'}
+                row = {"Variable": f"{col}: {value}", "Type": "Categorical"}
 
                 for group in groups:
                     if overall:
@@ -120,7 +117,7 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFram
     table_one = pd.DataFrame(results)
 
     # Add sample size row at top
-    size_row = {'Variable': 'N (Sample Size)', 'Type': 'Count'}
+    size_row = {"Variable": "N (Sample Size)", "Type": "Count"}
     for group in groups:
         if overall:
             size_row[str(group)] = str(len(df))
@@ -150,7 +147,7 @@ def main():
     dataset_display_names = {}
     for ds_name in available_datasets:
         info = dataset_info[ds_name]
-        display_name = info['config'].get('display_name', ds_name.replace('_', '-').upper())
+        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
         dataset_display_names[display_name] = ds_name
 
     # Add uploaded datasets
@@ -159,8 +156,8 @@ def main():
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
         for upload in uploads:
-            upload_id = upload['upload_id']
-            dataset_name = upload.get('dataset_name', upload_id)
+            upload_id = upload["upload_id"]
+            dataset_name = upload.get("dataset_name", upload_id)
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
@@ -173,20 +170,19 @@ def main():
         return
 
     dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset",
-        list(dataset_display_names.keys())
+        "Choose Dataset", list(dataset_display_names.keys())
     )
 
     dataset_choice = dataset_display_names[dataset_choice_display]
-    
+
     # Check if this is an uploaded dataset
     # Method 1: Check if in uploaded_datasets dict
     # Method 2: Check if display name starts with 📤
     # Method 3: Check if dataset_choice is an upload_id (UUID-like or matches upload pattern)
     is_uploaded = (
-        dataset_choice in uploaded_datasets or
-        dataset_choice_display.startswith("📤") or
-        dataset_choice in uploaded_ids
+        dataset_choice in uploaded_datasets
+        or dataset_choice_display.startswith("📤")
+        or dataset_choice in uploaded_ids
     )
 
     # Load dataset
@@ -210,10 +206,12 @@ def main():
                         st.error("Dataset validation failed")
                         return
                     dataset.load()
-                except KeyError as e:
+                except KeyError:
                     # Dataset not found in registry - might be an uploaded dataset that wasn't detected
                     st.error(f"Dataset '{dataset_choice}' not found in registry.")
-                    st.info("💡 If this is an uploaded dataset, please refresh the page or check the upload status.")
+                    st.info(
+                        "💡 If this is an uploaded dataset, please refresh the page or check the upload status."
+                    )
                     return
                 except Exception as e:
                     st.error(f"Error loading dataset: {str(e)}")
@@ -241,7 +239,7 @@ def main():
         st.metric("Variables", len(cohort.columns))
     with col3:
         missing_pct = (cohort.isna().sum().sum() / cohort.size) * 100
-        st.metric("Complete Data", f"{100-missing_pct:.1f}%")
+        st.metric("Complete Data", f"{100 - missing_pct:.1f}%")
 
     # Configuration
     st.markdown("## ⚙️ Table Configuration")
@@ -250,24 +248,28 @@ def main():
 
     with col1:
         # Select variables to include
-        available_vars = [c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]]
+        available_vars = [
+            c
+            for c in cohort.columns
+            if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]
+        ]
 
         selected_vars = st.multiselect(
             "Variables to Include",
             available_vars,
             default=available_vars,
-            help="Select which variables to include in Table 1"
+            help="Select which variables to include in Table 1",
         )
 
     with col2:
         # Stratification option
         stratify_by = st.selectbox(
             "Stratify By (Optional)",
-            ['None'] + list(cohort.columns),
-            help="Split table by groups (e.g., treatment vs control)"
+            ["None"] + list(cohort.columns),
+            help="Split table by groups (e.g., treatment vs control)",
         )
 
-        if stratify_by == 'None':
+        if stratify_by == "None":
             stratify_by = None
 
     # Generate Table 1
@@ -305,23 +307,24 @@ def main():
                     label="Download CSV",
                     data=csv_data,
                     file_name=f"table1_{dataset_choice}.csv",
-                    mime="text/csv"
+                    mime="text/csv",
                 )
 
             with col2:
                 # Excel export
                 try:
                     from io import BytesIO
+
                     buffer = BytesIO()
-                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                        table_one.to_excel(writer, index=False, sheet_name='Table 1')
+                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                        table_one.to_excel(writer, index=False, sheet_name="Table 1")
                     buffer.seek(0)
 
                     st.download_button(
                         label="Download Excel",
                         data=buffer,
                         file_name=f"table1_{dataset_choice}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 except ImportError:
                     st.caption("Excel export requires openpyxl")
@@ -335,12 +338,12 @@ def main():
                     label="Download as Text",
                     data=formatted_text,
                     file_name=f"table1_{dataset_choice}.txt",
-                    mime="text/plain"
+                    mime="text/plain",
                 )
 
             # Methods text
             with st.expander("📝 Methods Section Text"):
-                methods_text = f"""
+                methods_text = """
 **Statistical Analysis**
 
 Descriptive statistics were calculated for all variables. Continuous variables are presented as mean ± standard deviation. Categorical variables are presented as frequencies and percentages.
@@ -356,7 +359,7 @@ Descriptive statistics were calculated for all variables. Continuous variables a
                     label="Copy Methods Text",
                     data=methods_text,
                     file_name="methods_descriptive.txt",
-                    mime="text/plain"
+                    mime="text/plain",
                 )
 
             # Interpretation guide

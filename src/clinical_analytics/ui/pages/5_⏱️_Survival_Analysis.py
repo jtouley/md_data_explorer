@@ -5,35 +5,31 @@ Analyze time-to-event data using Kaplan-Meier curves and Cox regression.
 Understand how long patients survive or how quickly events occur.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import sys
 from pathlib import Path
-from typing import Dict
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.core.registry import DatasetRegistry
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.analysis.survival import (
-    run_kaplan_meier,
+    calculate_median_survival,
     run_cox_regression,
+    run_kaplan_meier,
     run_logrank_test,
-    calculate_median_survival
 )
+from clinical_analytics.core.registry import DatasetRegistry
+from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 
-
 # Page config
 st.set_page_config(
-    page_title="Survival Analysis | Clinical Analytics",
-    page_icon="⏱️",
-    layout="wide"
+    page_title="Survival Analysis | Clinical Analytics", page_icon="⏱️", layout="wide"
 )
 
 
@@ -50,30 +46,29 @@ def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str = None):
 
     if group_col is None:
         # Single curve
-        ax.plot(summary_df['time'], summary_df['survival_probability'],
-                label='Overall', linewidth=2)
+        ax.plot(
+            summary_df["time"], summary_df["survival_probability"], label="Overall", linewidth=2
+        )
         ax.fill_between(
-            summary_df['time'],
-            summary_df['ci_lower'],
-            summary_df['ci_upper'],
-            alpha=0.2
+            summary_df["time"], summary_df["ci_lower"], summary_df["ci_upper"], alpha=0.2
         )
     else:
         # Multiple curves by group
-        for group in summary_df['group'].unique():
-            group_data = summary_df[summary_df['group'] == group]
-            ax.plot(group_data['time'], group_data['survival_probability'],
-                   label=str(group), linewidth=2)
+        for group in summary_df["group"].unique():
+            group_data = summary_df[summary_df["group"] == group]
+            ax.plot(
+                group_data["time"],
+                group_data["survival_probability"],
+                label=str(group),
+                linewidth=2,
+            )
             ax.fill_between(
-                group_data['time'],
-                group_data['ci_lower'],
-                group_data['ci_upper'],
-                alpha=0.2
+                group_data["time"], group_data["ci_lower"], group_data["ci_upper"], alpha=0.2
             )
 
-    ax.set_xlabel('Time', fontsize=12)
-    ax.set_ylabel('Survival Probability', fontsize=12)
-    ax.set_title('Kaplan-Meier Survival Curve', fontsize=14, fontweight='bold')
+    ax.set_xlabel("Time", fontsize=12)
+    ax.set_ylabel("Survival Probability", fontsize=12)
+    ax.set_title("Kaplan-Meier Survival Curve", fontsize=14, fontweight="bold")
     ax.legend()
     ax.grid(True, alpha=0.3)
     ax.set_ylim([0, 1])
@@ -98,15 +93,15 @@ def main():
     dataset_display_names = {}
     for ds_name in available_datasets:
         info = dataset_info[ds_name]
-        display_name = info['config'].get('display_name', ds_name.replace('_', '-').upper())
+        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
         dataset_display_names[display_name] = ds_name
 
     uploaded_datasets = {}
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
         for upload in uploads:
-            upload_id = upload['upload_id']
-            dataset_name = upload.get('dataset_name', upload_id)
+            upload_id = upload["upload_id"]
+            dataset_name = upload.get("dataset_name", upload_id)
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
@@ -117,7 +112,9 @@ def main():
         st.error("No datasets available. Please upload data first.")
         return
 
-    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
+    dataset_choice_display = st.sidebar.selectbox(
+        "Choose Dataset", list(dataset_display_names.keys())
+    )
     dataset_choice = dataset_display_names[dataset_choice_display]
     is_uploaded = dataset_choice in uploaded_datasets
 
@@ -140,14 +137,18 @@ def main():
     # Configuration
     st.markdown("## 🔧 Configure Analysis")
 
-    available_cols = [c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]]
+    available_cols = [
+        c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]
+    ]
 
     # Analysis type selection
     analysis_type = st.radio(
         "What do you want to analyze?",
-        ["📈 Compare survival between groups (Kaplan-Meier + Log-rank test)",
-         "🎯 Find predictors of survival (Cox Regression)"],
-        help="Choose your analysis approach"
+        [
+            "📈 Compare survival between groups (Kaplan-Meier + Log-rank test)",
+            "🎯 Find predictors of survival (Cox Regression)",
+        ],
+        help="Choose your analysis approach",
     )
 
     col1, col2 = st.columns(2)
@@ -157,7 +158,7 @@ def main():
         duration_col = st.selectbox(
             "How long until event or censoring?",
             available_cols,
-            help="Time from start until event occurs or patient is censored (e.g., days, months, years)"
+            help="Time from start until event occurs or patient is censored (e.g., days, months, years)",
         )
 
     with col2:
@@ -165,7 +166,7 @@ def main():
         event_col = st.selectbox(
             "Did the event occur?",
             [c for c in available_cols if c != duration_col],
-            help="Binary variable: 1 = event occurred, 0 = censored (event didn't occur yet)"
+            help="Binary variable: 1 = event occurred, 0 = censored (event didn't occur yet)",
         )
 
     # Check event variable
@@ -180,9 +181,7 @@ def main():
             # Ask user which value represents event
             st.info("ℹ️ Which value means the event **occurred**?")
             event_occurred_value = st.radio(
-                "Event occurred when value is:",
-                unique_vals,
-                horizontal=True
+                "Event occurred when value is:", unique_vals, horizontal=True
             )
         else:
             st.error(f"❌ Event variable must be binary (has {n_unique} unique values)")
@@ -193,11 +192,11 @@ def main():
         st.markdown("### Grouping Variable (Optional)")
         group_col = st.selectbox(
             "Compare survival between which groups?",
-            ['None'] + [c for c in available_cols if c not in [duration_col, event_col]],
-            help="Optional: split survival curves by groups (e.g., treatment vs control)"
+            ["None"] + [c for c in available_cols if c not in [duration_col, event_col]],
+            help="Optional: split survival curves by groups (e.g., treatment vs control)",
         )
 
-        if group_col == 'None':
+        if group_col == "None":
             group_col = None
 
     else:
@@ -208,8 +207,8 @@ def main():
         covariates = st.multiselect(
             "Which variables might predict survival time?",
             available_predictors,
-            default=available_predictors[:min(5, len(available_predictors))],
-            help="Select variables that might influence time to event"
+            default=available_predictors[: min(5, len(available_predictors))],
+            help="Select variables that might influence time to event",
         )
 
     # Data preview
@@ -257,7 +256,9 @@ def main():
                 analysis_df = cohort[analysis_cols].copy()
 
                 # Recode event variable to binary 0/1
-                analysis_df[event_col] = (analysis_df[event_col] == event_occurred_value).astype(int)
+                analysis_df[event_col] = (analysis_df[event_col] == event_occurred_value).astype(
+                    int
+                )
 
                 # Drop missing
                 initial_n = len(analysis_df)
@@ -265,7 +266,9 @@ def main():
                 final_n = len(analysis_df)
 
                 if final_n < initial_n:
-                    st.warning(f"Dropped {initial_n - final_n} rows with missing data ({(initial_n-final_n)/initial_n*100:.1f}%)")
+                    st.warning(
+                        f"Dropped {initial_n - final_n} rows with missing data ({(initial_n - final_n) / initial_n * 100:.1f}%)"
+                    )
 
                 if final_n < 10:
                     st.error("Insufficient data. Need at least 10 complete cases.")
@@ -277,16 +280,18 @@ def main():
                         analysis_df,
                         duration_col=duration_col,
                         event_col=event_col,
-                        group_col=group_col
+                        group_col=group_col,
                     )
 
                     st.success("✅ Analysis complete!")
 
                     # Explain method
                     AnalysisWizard.explain_test_choice(
-                        test_name='Kaplan-Meier' if not group_col else 'Kaplan-Meier + Log-rank Test',
-                        variable_types={duration_col: 'time', event_col: 'binary'},
-                        outcome_type='time-to-event'
+                        test_name="Kaplan-Meier"
+                        if not group_col
+                        else "Kaplan-Meier + Log-rank Test",
+                        variable_types={duration_col: "time", event_col: "binary"},
+                        outcome_type="time-to-event",
                     )
 
                     # Display results
@@ -303,7 +308,7 @@ def main():
                         analysis_df,
                         duration_col=duration_col,
                         event_col=event_col,
-                        group_col=group_col
+                        group_col=group_col,
                     )
                     st.dataframe(median_df)
 
@@ -314,7 +319,7 @@ def main():
                             analysis_df,
                             duration_col=duration_col,
                             event_col=event_col,
-                            group_col=group_col
+                            group_col=group_col,
                         )
 
                         col1, col2, col3 = st.columns(3)
@@ -323,16 +328,18 @@ def main():
                         with col2:
                             st.metric("P-value", f"{logrank_results['p_value']:.4f}")
                         with col3:
-                            p_interp = ResultInterpreter.interpret_p_value(logrank_results['p_value'])
+                            p_interp = ResultInterpreter.interpret_p_value(
+                                logrank_results["p_value"]
+                            )
                             st.metric("Result", f"{p_interp['significance']} {p_interp['emoji']}")
 
                         # Interpretation
                         st.markdown("### 📖 Interpretation")
-                        if p_interp['is_significant']:
+                        if p_interp["is_significant"]:
                             st.markdown(f"""
-**Significant difference in survival** {p_interp['emoji']}
+**Significant difference in survival** {p_interp["emoji"]}
 
-The log-rank test shows that survival curves differ significantly between groups (p={logrank_results['p_value']:.4f}).
+The log-rank test shows that survival curves differ significantly between groups (p={logrank_results["p_value"]:.4f}).
 
 **Clinical Interpretation**: The {group_col} groups have different survival patterns.
 Look at the survival curves and median survival times to see which group has better survival.
@@ -341,7 +348,7 @@ Look at the survival curves and median survival times to see which group has bet
                             st.markdown(f"""
 **No significant difference in survival** ❌
 
-The log-rank test shows no significant difference in survival between groups (p={logrank_results['p_value']:.4f}).
+The log-rank test shows no significant difference in survival between groups (p={logrank_results["p_value"]:.4f}).
 
 **Clinical Interpretation**: The {group_col} groups have similar survival patterns.
 """)
@@ -354,15 +361,16 @@ The log-rank test shows no significant difference in survival between groups (p=
                     with col1:
                         # Save plot
                         from io import BytesIO
+
                         buf = BytesIO()
-                        fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                        fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
                         buf.seek(0)
 
                         st.download_button(
                             "Download Survival Curve",
                             buf,
                             f"survival_curve_{dataset_choice}.png",
-                            "image/png"
+                            "image/png",
                         )
 
                     with col2:
@@ -372,16 +380,16 @@ The log-rank test shows no significant difference in survival between groups (p=
                             "Download Survival Data",
                             csv_data,
                             f"survival_data_{dataset_choice}.csv",
-                            "text/csv"
+                            "text/csv",
                         )
 
                     with col3:
                         # Methods text
                         if group_col:
                             methods = ResultInterpreter.generate_methods_text(
-                                analysis_type='survival',
-                                test_name='Kaplan-Meier survival analysis with log-rank test',
-                                variables={'event': event_col, 'groups': group_col}
+                                analysis_type="survival",
+                                test_name="Kaplan-Meier survival analysis with log-rank test",
+                                variables={"event": event_col, "groups": group_col},
                             )
                         else:
                             methods = f"""
@@ -392,10 +400,7 @@ performed using Clinical Analytics Platform.
 """
 
                         st.download_button(
-                            "Download Methods Text",
-                            methods,
-                            "methods_survival.txt",
-                            "text/plain"
+                            "Download Methods Text", methods, "methods_survival.txt", "text/plain"
                         )
 
                 else:
@@ -405,26 +410,30 @@ performed using Clinical Analytics Platform.
                         return
 
                     # Handle categorical variables
-                    categorical_cols = analysis_df.select_dtypes(include=['object', 'category']).columns.tolist()
+                    categorical_cols = analysis_df.select_dtypes(
+                        include=["object", "category"]
+                    ).columns.tolist()
                     categorical_cols = [c for c in categorical_cols if c in covariates]
 
                     if categorical_cols:
-                        st.info(f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}")
+                        st.info(
+                            f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}"
+                        )
 
                     cph, summary_df = run_cox_regression(
                         analysis_df,
                         duration_col=duration_col,
                         event_col=event_col,
-                        covariates=covariates
+                        covariates=covariates,
                     )
 
                     st.success("✅ Analysis complete!")
 
                     # Explain method
                     AnalysisWizard.explain_test_choice(
-                        test_name='Cox Regression',
-                        variable_types={event_col: 'time-to-event'},
-                        outcome_type='survival'
+                        test_name="Cox Regression",
+                        variable_types={event_col: "time-to-event"},
+                        outcome_type="survival",
                     )
 
                     # Display results
@@ -442,32 +451,44 @@ performed using Clinical Analytics Platform.
                     # Results table
                     st.markdown("### Hazard Ratios & Confidence Intervals")
                     display_df = summary_df.copy()
-                    display_df.columns = ['Hazard Ratio', 'HR CI Lower', 'HR CI Upper', 'P-Value', 'Coefficient', 'SE', 'Z-score']
-                    st.dataframe(display_df.style.format({
-                        'Hazard Ratio': '{:.3f}',
-                        'HR CI Lower': '{:.3f}',
-                        'HR CI Upper': '{:.3f}',
-                        'P-Value': '{:.4f}',
-                        'Coefficient': '{:.4f}',
-                        'SE': '{:.4f}',
-                        'Z-score': '{:.3f}'
-                    }))
+                    display_df.columns = [
+                        "Hazard Ratio",
+                        "HR CI Lower",
+                        "HR CI Upper",
+                        "P-Value",
+                        "Coefficient",
+                        "SE",
+                        "Z-score",
+                    ]
+                    st.dataframe(
+                        display_df.style.format(
+                            {
+                                "Hazard Ratio": "{:.3f}",
+                                "HR CI Lower": "{:.3f}",
+                                "HR CI Upper": "{:.3f}",
+                                "P-Value": "{:.4f}",
+                                "Coefficient": "{:.4f}",
+                                "SE": "{:.4f}",
+                                "Z-score": "{:.3f}",
+                            }
+                        )
+                    )
 
                     # Interpretation for each variable
                     st.markdown("### 📖 Interpretation")
 
                     for var in summary_df.index:
-                        hr_val = summary_df.loc[var, 'hazard_ratio']
-                        ci_lower = summary_df.loc[var, 'hr_ci_lower']
-                        ci_upper = summary_df.loc[var, 'hr_ci_upper']
-                        p_val = summary_df.loc[var, 'p']
+                        hr_val = summary_df.loc[var, "hazard_ratio"]
+                        ci_lower = summary_df.loc[var, "hr_ci_lower"]
+                        ci_upper = summary_df.loc[var, "hr_ci_upper"]
+                        p_val = summary_df.loc[var, "p"]
 
                         interpretation = ResultInterpreter.interpret_hazard_ratio(
                             hr_value=hr_val,
                             ci_lower=ci_lower,
                             ci_upper=ci_upper,
                             p_value=p_val,
-                            variable_name=var
+                            variable_name=var,
                         )
 
                         with st.expander(f"**{var}**"):
@@ -489,7 +510,7 @@ performed using Clinical Analytics Platform.
                             "Download Results CSV",
                             csv_data,
                             f"cox_regression_{dataset_choice}.csv",
-                            "text/csv"
+                            "text/csv",
                         )
 
                     with col2:
@@ -499,22 +520,19 @@ performed using Clinical Analytics Platform.
                             "Download Full Summary",
                             summary_text,
                             f"cox_summary_{dataset_choice}.txt",
-                            "text/plain"
+                            "text/plain",
                         )
 
                     with col3:
                         # Methods text
                         methods_text = ResultInterpreter.generate_methods_text(
-                            analysis_type='survival',
-                            test_name='Cox proportional hazards regression',
-                            variables={'event': event_col}
+                            analysis_type="survival",
+                            test_name="Cox proportional hazards regression",
+                            variables={"event": event_col},
                         )
 
                         st.download_button(
-                            "Download Methods Text",
-                            methods_text,
-                            "methods_cox.txt",
-                            "text/plain"
+                            "Download Methods Text", methods_text, "methods_cox.txt", "text/plain"
                         )
 
             except Exception as e:

@@ -27,7 +27,7 @@ class UploadSecurityValidator:
     """
 
     # Allowlisted file extensions
-    ALLOWED_EXTENSIONS = {'.csv', '.xlsx', '.xls', '.sav', '.zip'}
+    ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav", ".zip"}
 
     # Maximum file size (100MB as per Phase 0 spec)
     MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB
@@ -52,7 +52,7 @@ class UploadSecurityValidator:
             return False, "File has no extension"
 
         if file_ext not in cls.ALLOWED_EXTENSIONS:
-            allowed = ', '.join(cls.ALLOWED_EXTENSIONS)
+            allowed = ", ".join(cls.ALLOWED_EXTENSIONS)
             return False, f"File type '{file_ext}' not allowed. Allowed types: {allowed}"
 
         return True, ""
@@ -96,12 +96,12 @@ class UploadSecurityValidator:
         # Remove any remaining special characters except alphanumeric, underscore, dash, dot
         safe_chars = []
         for char in safe_name:
-            if char.isalnum() or char in ('_', '-', '.'):
+            if char.isalnum() or char in ("_", "-", "."):
                 safe_chars.append(char)
             else:
-                safe_chars.append('_')
+                safe_chars.append("_")
 
-        return ''.join(safe_chars)
+        return "".join(safe_chars)
 
     @classmethod
     def validate(cls, filename: str, file_bytes: bytes) -> tuple[bool, str]:
@@ -176,10 +176,7 @@ class UserDatasetStorage:
         return f"user_upload_{timestamp}_{file_hash}"
 
     def save_upload(
-        self,
-        file_bytes: bytes,
-        original_filename: str,
-        metadata: dict[str, Any]
+        self, file_bytes: bytes, original_filename: str, metadata: dict[str, Any]
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded file with security validation.
@@ -207,24 +204,26 @@ class UserDatasetStorage:
             # Convert to CSV format (normalize all uploads to CSV)
             file_ext = Path(original_filename).suffix.lower()
 
-            if file_ext == '.csv':
+            if file_ext == ".csv":
                 # Already CSV, save directly
                 csv_path = self.raw_dir / f"{upload_id}.csv"
                 csv_path.write_bytes(file_bytes)
                 df = pd.read_csv(csv_path)
 
-            elif file_ext in {'.xlsx', '.xls'}:
+            elif file_ext in {".xlsx", ".xls"}:
                 # Excel file - convert to CSV
                 import io
+
                 df = pd.read_excel(io.BytesIO(file_bytes))
                 csv_path = self.raw_dir / f"{upload_id}.csv"
                 df.to_csv(csv_path, index=False)
 
-            elif file_ext == '.sav':
+            elif file_ext == ".sav":
                 # SPSS file - convert to CSV
                 import io
 
                 import pyreadstat
+
                 df, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
                 csv_path = self.raw_dir / f"{upload_id}.csv"
                 df.to_csv(csv_path, index=False)
@@ -238,15 +237,15 @@ class UserDatasetStorage:
                 "original_filename": safe_filename,
                 "upload_timestamp": datetime.now().isoformat(),
                 "file_size_bytes": len(file_bytes),
-                "file_format": file_ext.lstrip('.'),
+                "file_format": file_ext.lstrip("."),
                 "row_count": len(df),
                 "column_count": len(df.columns),
                 "columns": list(df.columns),
-                **metadata
+                **metadata,
             }
 
             metadata_path = self.metadata_dir / f"{upload_id}.json"
-            with open(metadata_path, 'w') as f:
+            with open(metadata_path, "w") as f:
                 json.dump(full_metadata, f, indent=2)
 
             return True, f"Upload successful: {upload_id}", upload_id
@@ -304,7 +303,7 @@ class UserDatasetStorage:
                 uploads.append(metadata)
 
         # Sort by upload timestamp (newest first)
-        uploads.sort(key=lambda x: x['upload_timestamp'], reverse=True)
+        uploads.sort(key=lambda x: x["upload_timestamp"], reverse=True)
 
         return uploads
 
@@ -365,7 +364,7 @@ class UserDatasetStorage:
             metadata.update(metadata_updates)
 
             # Save updated metadata
-            with open(metadata_path, 'w') as f:
+            with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
 
             return True, "Metadata updated successfully"
@@ -378,7 +377,7 @@ class UserDatasetStorage:
         file_bytes: bytes,
         original_filename: str,
         metadata: dict[str, Any],
-        progress_callback: Callable[[int, int, str, dict], None] | None = None
+        progress_callback: Callable[[int, int, str, dict], None] | None = None,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded ZIP file containing multiple CSV files.
@@ -411,6 +410,7 @@ class UserDatasetStorage:
 
         try:
             import logging
+
             logger = logging.getLogger(__name__)
             logger.info(f"Starting ZIP upload processing: {original_filename}")
 
@@ -418,13 +418,14 @@ class UserDatasetStorage:
             zip_buffer = io.BytesIO(file_bytes)
             tables: dict[str, pl.DataFrame] = {}
 
-            with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
+            with zipfile.ZipFile(zip_buffer, "r") as zip_file:
                 # Get list of CSV files in ZIP (including .csv.gz in subdirectories)
                 csv_files = [
-                    f for f in zip_file.namelist()
-                    if (f.endswith('.csv') or f.endswith('.csv.gz'))
-                    and not f.startswith('__MACOSX')
-                    and not f.endswith('/')  # Skip directory entries
+                    f
+                    for f in zip_file.namelist()
+                    if (f.endswith(".csv") or f.endswith(".csv.gz"))
+                    and not f.startswith("__MACOSX")
+                    and not f.endswith("/")  # Skip directory entries
                 ]
 
                 if not csv_files:
@@ -438,20 +439,27 @@ class UserDatasetStorage:
 
                 if progress_callback:
                     progress_callback(0, total_steps, "Initializing ZIP extraction...", {})
-                    progress_callback(1, total_steps, f"Found {len(csv_files)} tables to load", {
-                        'tables_found': len(csv_files),
-                        'table_names': [Path(f).stem for f in csv_files]
-                    })
+                    progress_callback(
+                        1,
+                        total_steps,
+                        f"Found {len(csv_files)} tables to load",
+                        {
+                            "tables_found": len(csv_files),
+                            "table_names": [Path(f).stem for f in csv_files],
+                        },
+                    )
 
                 # Load each CSV as a table
                 for idx, csv_filename in enumerate(csv_files, start=1):
                     # Extract table name (without path and extension)
                     table_name = Path(csv_filename).stem
-                    if table_name.endswith('.csv'):
+                    if table_name.endswith(".csv"):
                         # Handle .csv.gz case where stem gives us "filename.csv"
                         table_name = Path(table_name).stem
 
-                    logger.info(f"Loading table {idx}/{len(csv_files)}: {table_name} from {csv_filename}")
+                    logger.info(
+                        f"Loading table {idx}/{len(csv_files)}: {table_name} from {csv_filename}"
+                    )
 
                     if progress_callback:
                         progress_callback(
@@ -459,18 +467,19 @@ class UserDatasetStorage:
                             total_steps,
                             f"Loading table: {table_name}",
                             {
-                                'table_name': table_name,
-                                'file': csv_filename,
-                                'progress': f"{idx}/{len(csv_files)}"
-                            }
+                                "table_name": table_name,
+                                "file": csv_filename,
+                                "progress": f"{idx}/{len(csv_files)}",
+                            },
                         )
 
                     # Read file content
                     csv_content = zip_file.read(csv_filename)
 
                     # Handle gzip compression
-                    if csv_filename.endswith('.gz'):
+                    if csv_filename.endswith(".gz"):
                         import gzip
+
                         logger.debug(f"Decompressing gzip file: {csv_filename}")
                         csv_content = gzip.decompress(csv_content)
 
@@ -481,14 +490,16 @@ class UserDatasetStorage:
                         df = pl.read_csv(
                             io.BytesIO(csv_content),
                             infer_schema_length=10000,  # Scan more rows for better type inference
-                            try_parse_dates=True
+                            try_parse_dates=True,
                         )
                     except Exception as e:
-                        logger.warning(f"Schema inference failed for {table_name}, falling back to string types: {e}")
+                        logger.warning(
+                            f"Schema inference failed for {table_name}, falling back to string types: {e}"
+                        )
                         # Fallback: read with all columns as strings, let DuckDB handle types
                         df = pl.read_csv(
                             io.BytesIO(csv_content),
-                            infer_schema_length=0  # Treat all as strings
+                            infer_schema_length=0,  # Treat all as strings
                         )
 
                     tables[table_name] = df
@@ -501,11 +512,11 @@ class UserDatasetStorage:
                             total_steps,
                             f"Loaded {table_name}: {df.height:,} rows, {df.width} cols",
                             {
-                                'table_name': table_name,
-                                'rows': df.height,
-                                'cols': df.width,
-                                'status': 'loaded'
-                            }
+                                "table_name": table_name,
+                                "rows": df.height,
+                                "cols": df.width,
+                                "status": "loaded",
+                            },
                         )
 
             logger.info(f"Extracted {len(tables)} tables from ZIP: {list(tables.keys())}")
@@ -516,10 +527,15 @@ class UserDatasetStorage:
             logger.info(f"Detecting relationships for {len(tables)} tables")
 
             if progress_callback:
-                progress_callback(step_num, total_steps, "Detecting table relationships...", {
-                    'tables': list(tables.keys()),
-                    'table_counts': {name: df.height for name, df in tables.items()}
-                })
+                progress_callback(
+                    step_num,
+                    total_steps,
+                    "Detecting table relationships...",
+                    {
+                        "tables": list(tables.keys()),
+                        "table_counts": {name: df.height for name, df in tables.items()},
+                    },
+                )
 
             handler = MultiTableHandler(tables)
             relationships = handler.detect_relationships()
@@ -530,9 +546,12 @@ class UserDatasetStorage:
                     logger.info(f"Relationship: {rel}")
 
             if progress_callback:
-                progress_callback(step_num + 1, total_steps, f"Detected {len(relationships)} relationships", {
-                    'relationships': [str(rel) for rel in relationships]
-                })
+                progress_callback(
+                    step_num + 1,
+                    total_steps,
+                    f"Detected {len(relationships)} relationships",
+                    {"relationships": [str(rel) for rel in relationships]},
+                )
 
             # Build unified cohort
             logger.info("Building unified cohort from detected relationships")
@@ -540,7 +559,9 @@ class UserDatasetStorage:
                 progress_callback(step_num + 2, total_steps, "Building unified cohort...", {})
 
             unified_df = handler.build_unified_cohort()
-            logger.info(f"Unified cohort created: {unified_df.height:,} rows, {unified_df.width} cols")
+            logger.info(
+                f"Unified cohort created: {unified_df.height:,} rows, {unified_df.width} cols"
+            )
 
             # Save unified cohort as CSV
             csv_path = self.raw_dir / f"{upload_id}.csv"
@@ -550,7 +571,7 @@ class UserDatasetStorage:
                     step_num + 3,
                     total_steps,
                     f"Saving unified cohort ({unified_df.height:,} rows)...",
-                    {}
+                    {},
                 )
             unified_df.write_csv(csv_path)
 
@@ -587,28 +608,36 @@ class UserDatasetStorage:
                 "table_counts": {name: df.height for name, df in tables.items()},
                 "relationships": [str(rel) for rel in relationships],
                 "inferred_schema": schema.to_dataset_config(),
-                **metadata
+                **metadata,
             }
 
             metadata_path = self.metadata_dir / f"{upload_id}.json"
-            with open(metadata_path, 'w') as f:
+            with open(metadata_path, "w") as f:
                 json.dump(full_metadata, f, indent=2)
 
             handler.close()
 
             if progress_callback:
-                progress_callback(step_num + 4, total_steps, "Processing complete!", {
-                    'tables': len(tables),
-                    'rows': unified_df.height,
-                    'cols': unified_df.width
-                })
+                progress_callback(
+                    step_num + 4,
+                    total_steps,
+                    "Processing complete!",
+                    {"tables": len(tables), "rows": unified_df.height, "cols": unified_df.width},
+                )
 
-            logger.info(f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows")
-            return True, f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows", upload_id
+            logger.info(
+                f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows"
+            )
+            return (
+                True,
+                f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows",
+                upload_id,
+            )
 
         except Exception as e:
             import logging
             import traceback
+
             logger = logging.getLogger(__name__)
             logger.error(f"Error processing ZIP upload: {type(e).__name__}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")

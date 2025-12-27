@@ -1,4 +1,3 @@
 """
 UI module tests.
 """
-

@@ -4,35 +4,35 @@ Dynamic Analysis Page - Question-Driven Analytics
 Ask questions, get answers. No statistical jargon - just tell me what you want to know.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import sys
 from pathlib import Path
-from typing import Dict, Any
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.core.registry import DatasetRegistry
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.ui.components.question_engine import QuestionEngine, AnalysisContext, AnalysisIntent
-from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+from scipy import stats
 
 # Import analysis functions
 from clinical_analytics.analysis.stats import run_logistic_regression
-from clinical_analytics.analysis.survival import run_kaplan_meier, run_cox_regression, run_logrank_test
-from scipy import stats
-
+from clinical_analytics.analysis.survival import (
+    run_kaplan_meier,
+)
+from clinical_analytics.core.registry import DatasetRegistry
+from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+from clinical_analytics.ui.components.question_engine import (
+    AnalysisContext,
+    AnalysisIntent,
+    QuestionEngine,
+)
+from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 
 # Page config
-st.set_page_config(
-    page_title="Analyze | Clinical Analytics",
-    page_icon="🔬",
-    layout="wide"
-)
+st.set_page_config(page_title="Analyze | Clinical Analytics", page_icon="🔬", layout="wide")
 
 
 def run_descriptive_analysis(df: pd.DataFrame, context: AnalysisContext):
@@ -47,13 +47,13 @@ def run_descriptive_analysis(df: pd.DataFrame, context: AnalysisContext):
         st.metric("Variables", len(df.columns))
     with col3:
         missing_pct = (df.isna().sum().sum() / df.size) * 100
-        st.metric("Data Completeness", f"{100-missing_pct:.1f}%")
+        st.metric("Data Completeness", f"{100 - missing_pct:.1f}%")
 
     # Summary statistics
     st.markdown("### Summary Statistics")
 
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
 
     if numeric_cols:
         st.markdown("**Numeric Variables:**")
@@ -118,14 +118,22 @@ def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
             mean_diff = group1_data.mean() - group2_data.mean()
             interpretation = ResultInterpreter.interpret_mean_difference(
                 mean_diff=mean_diff,
-                ci_lower=mean_diff - 1.96 * np.sqrt((group1_data.std()**2 / len(group1_data)) +
-                                                     (group2_data.std()**2 / len(group2_data))),
-                ci_upper=mean_diff + 1.96 * np.sqrt((group1_data.std()**2 / len(group1_data)) +
-                                                     (group2_data.std()**2 / len(group2_data))),
+                ci_lower=mean_diff
+                - 1.96
+                * np.sqrt(
+                    (group1_data.std() ** 2 / len(group1_data))
+                    + (group2_data.std() ** 2 / len(group2_data))
+                ),
+                ci_upper=mean_diff
+                + 1.96
+                * np.sqrt(
+                    (group1_data.std() ** 2 / len(group1_data))
+                    + (group2_data.std() ** 2 / len(group2_data))
+                ),
                 p_value=p_value,
                 group1=str(groups[0]),
                 group2=str(groups[1]),
-                outcome_name=outcome_col
+                outcome_name=outcome_col,
             )
             st.markdown(interpretation)
 
@@ -140,7 +148,7 @@ def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
             p_interp = ResultInterpreter.interpret_p_value(p_value)
             st.metric("Result", f"{p_interp['significance']} {p_interp['emoji']}")
 
-            if p_interp['is_significant']:
+            if p_interp["is_significant"]:
                 st.success("✅ The groups differ significantly")
                 st.markdown("**Group Averages:**")
                 for g in groups:
@@ -163,8 +171,10 @@ def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
         st.markdown("### Distribution")
         st.dataframe(contingency)
 
-        if p_interp['is_significant']:
-            st.success(f"✅ {outcome_col} distribution differs significantly across {group_col} groups")
+        if p_interp["is_significant"]:
+            st.success(
+                f"✅ {outcome_col} distribution differs significantly across {group_col} groups"
+            )
         else:
             st.info(f"ℹ️ {outcome_col} distribution is similar across groups")
 
@@ -185,11 +195,13 @@ def run_predictor_analysis(df: pd.DataFrame, context: AnalysisContext):
     n_unique = outcome_data.nunique()
 
     if n_unique != 2:
-        st.warning(f"Outcome has {n_unique} unique values. For now, only binary outcomes are supported.")
+        st.warning(
+            f"Outcome has {n_unique} unique values. For now, only binary outcomes are supported."
+        )
         return
 
     # Handle categorical predictors
-    categorical_cols = analysis_df.select_dtypes(include=['object', 'category']).columns.tolist()
+    categorical_cols = analysis_df.select_dtypes(include=["object", "category"]).columns.tolist()
     if outcome_col in categorical_cols:
         categorical_cols.remove(outcome_col)
 
@@ -214,17 +226,17 @@ def run_predictor_analysis(df: pd.DataFrame, context: AnalysisContext):
     st.markdown(f"**What predicts {outcome_col}?**")
 
     # Show significant predictors
-    significant = summary_df[summary_df['P-Value'] < 0.05]
+    significant = summary_df[summary_df["P-Value"] < 0.05]
 
     if len(significant) > 0:
         st.success(f"✅ Found {len(significant)} significant predictor(s)")
 
         for var in significant.index:
-            if var == 'Intercept':
+            if var == "Intercept":
                 continue
 
-            or_val = summary_df.loc[var, 'Odds Ratio']
-            p_val = summary_df.loc[var, 'P-Value']
+            or_val = summary_df.loc[var, "Odds Ratio"]
+            p_val = summary_df.loc[var, "P-Value"]
 
             if or_val > 1:
                 direction = "increases"
@@ -240,12 +252,16 @@ def run_predictor_analysis(df: pd.DataFrame, context: AnalysisContext):
 
     # Full results in expander
     with st.expander("📊 Detailed Results"):
-        st.dataframe(summary_df.style.format({
-            'Odds Ratio': '{:.3f}',
-            'CI Lower': '{:.3f}',
-            'CI Upper': '{:.3f}',
-            'P-Value': '{:.4f}'
-        }))
+        st.dataframe(
+            summary_df.style.format(
+                {
+                    "Odds Ratio": "{:.3f}",
+                    "CI Lower": "{:.3f}",
+                    "CI Upper": "{:.3f}",
+                    "P-Value": "{:.4f}",
+                }
+            )
+        )
 
 
 def run_survival_analysis(df: pd.DataFrame, context: AnalysisContext):
@@ -277,28 +293,27 @@ def run_survival_analysis(df: pd.DataFrame, context: AnalysisContext):
 
     # Run Kaplan-Meier
     kmf, summary_df = run_kaplan_meier(
-        analysis_df,
-        duration_col=time_col,
-        event_col=event_col,
-        group_col=context.grouping_variable
+        analysis_df, duration_col=time_col, event_col=event_col, group_col=context.grouping_variable
     )
 
     st.markdown("### Results")
 
     # Plot
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(summary_df['time'], summary_df['survival_probability'], linewidth=2)
-    ax.fill_between(summary_df['time'], summary_df['ci_lower'],
-                    summary_df['ci_upper'], alpha=0.2)
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Survival Probability')
-    ax.set_title('Survival Curve')
+    ax.plot(summary_df["time"], summary_df["survival_probability"], linewidth=2)
+    ax.fill_between(summary_df["time"], summary_df["ci_lower"], summary_df["ci_upper"], alpha=0.2)
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Survival Probability")
+    ax.set_title("Survival Curve")
     ax.grid(True, alpha=0.3)
     st.pyplot(fig)
 
     # Median survival
     median_survival = kmf.median_survival_time_
-    st.metric("Median Survival Time", f"{median_survival:.1f}" if not np.isnan(median_survival) else "Not reached")
+    st.metric(
+        "Median Survival Time",
+        f"{median_survival:.1f}" if not np.isnan(median_survival) else "Not reached",
+    )
 
 
 def run_relationship_analysis(df: pd.DataFrame, context: AnalysisContext):
@@ -325,9 +340,9 @@ def run_relationship_analysis(df: pd.DataFrame, context: AnalysisContext):
     # Simple heatmap
     fig, ax = plt.subplots(figsize=(10, 8))
     import seaborn as sns
-    sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm',
-               center=0, square=True, ax=ax)
-    ax.set_title('How Variables Relate')
+
+    sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="coolwarm", center=0, square=True, ax=ax)
+    ax.set_title("How Variables Relate")
     st.pyplot(fig)
 
     # Highlight strong correlations
@@ -342,7 +357,9 @@ def run_relationship_analysis(df: pd.DataFrame, context: AnalysisContext):
                     found_strong = True
                     direction = "positive" if corr_val > 0 else "negative"
                     strength = "strong" if abs(corr_val) >= 0.7 else "moderate"
-                    st.markdown(f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})")
+                    st.markdown(
+                        f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})"
+                    )
 
     if not found_strong:
         st.info("ℹ️ No strong correlations found (|r| >= 0.5)")
@@ -365,15 +382,15 @@ def main():
     dataset_display_names = {}
     for ds_name in available_datasets:
         info = dataset_info[ds_name]
-        display_name = info['config'].get('display_name', ds_name.replace('_', '-').upper())
+        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
         dataset_display_names[display_name] = ds_name
 
     uploaded_datasets = {}
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
         for upload in uploads:
-            upload_id = upload['upload_id']
-            dataset_name = upload.get('dataset_name', upload_id)
+            upload_id = upload["upload_id"]
+            dataset_name = upload.get("dataset_name", upload_id)
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
@@ -384,7 +401,9 @@ def main():
         st.error("No datasets available. Please upload data first.")
         return
 
-    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
+    dataset_choice_display = st.sidebar.selectbox(
+        "Choose Dataset", list(dataset_display_names.keys())
+    )
     dataset_choice = dataset_display_names[dataset_choice_display]
     is_uploaded = dataset_choice in uploaded_datasets
 
@@ -407,15 +426,15 @@ def main():
     st.divider()
 
     # Initialize session state for context
-    if 'analysis_context' not in st.session_state:
-        st.session_state['analysis_context'] = None
-        st.session_state['intent_signal'] = None
-        st.session_state['use_nl_query'] = True  # Default to NL query first
+    if "analysis_context" not in st.session_state:
+        st.session_state["analysis_context"] = None
+        st.session_state["intent_signal"] = None
+        st.session_state["use_nl_query"] = True  # Default to NL query first
 
     # Step 1: Ask question (NL or structured)
-    if st.session_state['intent_signal'] is None:
+    if st.session_state["intent_signal"] is None:
         # Try free-form NL query first
-        if st.session_state['use_nl_query']:
+        if st.session_state["use_nl_query"]:
             try:
                 # Get semantic layer using contract pattern
                 semantic_layer = dataset.get_semantic_layer()
@@ -423,25 +442,29 @@ def main():
 
                 if context:
                     # Successfully parsed NL query
-                    st.session_state['analysis_context'] = context
-                    st.session_state['intent_signal'] = 'nl_parsed'
+                    st.session_state["analysis_context"] = context
+                    st.session_state["intent_signal"] = "nl_parsed"
                     st.rerun()
 
-            except ValueError as e:
+            except ValueError:
                 # Semantic layer not available
-                st.info("Natural language queries are only available for datasets with semantic layers.")
-                st.session_state['use_nl_query'] = False
+                st.info(
+                    "Natural language queries are only available for datasets with semantic layers."
+                )
+                st.session_state["use_nl_query"] = False
                 st.rerun()
                 return
             except Exception as e:
                 st.error(f"Error parsing natural language query: {e}")
-                st.session_state['use_nl_query'] = False
+                st.session_state["use_nl_query"] = False
 
             # Show option to use structured questions instead
             st.divider()
             st.markdown("### Or use structured questions")
-            if st.button("💬 Use structured questions instead", help="Choose from predefined question types"):
-                st.session_state['use_nl_query'] = False
+            if st.button(
+                "💬 Use structured questions instead", help="Choose from predefined question types"
+            ):
+                st.session_state["use_nl_query"] = False
                 st.rerun()
 
         else:
@@ -449,31 +472,33 @@ def main():
             intent_signal = QuestionEngine.ask_initial_question(cohort)
 
             if intent_signal:
-                if intent_signal == 'help':
+                if intent_signal == "help":
                     st.divider()
                     help_answers = QuestionEngine.ask_help_questions(cohort)
 
                     # Map help answers to intent
-                    if help_answers.get('has_time'):
-                        intent_signal = 'survival'
-                    elif help_answers.get('has_outcome'):
-                        intent_signal = help_answers.get('approach', 'predict')
+                    if help_answers.get("has_time"):
+                        intent_signal = "survival"
+                    elif help_answers.get("has_outcome"):
+                        intent_signal = help_answers.get("approach", "predict")
                     else:
-                        intent_signal = 'describe'
+                        intent_signal = "describe"
 
-                st.session_state['intent_signal'] = intent_signal
-                st.session_state['analysis_context'] = QuestionEngine.build_context_from_intent(intent_signal, cohort)
+                st.session_state["intent_signal"] = intent_signal
+                st.session_state["analysis_context"] = QuestionEngine.build_context_from_intent(
+                    intent_signal, cohort
+                )
                 st.rerun()
 
             # Show option to go back to NL query
             st.divider()
             if st.button("🔙 Try natural language query instead"):
-                st.session_state['use_nl_query'] = True
+                st.session_state["use_nl_query"] = True
                 st.rerun()
 
     else:
         # We have intent, now gather details
-        context = st.session_state['analysis_context']
+        context = st.session_state["analysis_context"]
 
         st.divider()
 
@@ -506,7 +531,9 @@ def main():
 
         elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
             if not context.time_variable or not context.event_variable:
-                context.time_variable, context.event_variable = QuestionEngine.select_time_variables(cohort)
+                context.time_variable, context.event_variable = (
+                    QuestionEngine.select_time_variables(cohort)
+                )
 
         elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             if len(context.predictor_variables) < 2:
@@ -515,7 +542,7 @@ def main():
                 )
 
         # Update context in session state
-        st.session_state['analysis_context'] = context
+        st.session_state["analysis_context"] = context
 
         # Show progress
         st.divider()
@@ -545,8 +572,8 @@ def main():
 
         # Reset button
         if st.button("🔄 Start Over", use_container_width=True):
-            st.session_state['analysis_context'] = None
-            st.session_state['intent_signal'] = None
+            st.session_state["analysis_context"] = None
+            st.session_state["intent_signal"] = None
             st.rerun()
 
 

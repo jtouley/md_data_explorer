@@ -7,12 +7,13 @@ ClinicalDataset implementations without hardcoded if/else chains.
 
 import importlib
 import inspect
+import logging
 import pkgutil
 from pathlib import Path
-from typing import Dict, Type, Optional, List, Any
-import yaml
+from typing import Any
+
 import polars as pl
-import logging
+import yaml
 
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
@@ -23,35 +24,35 @@ logger = logging.getLogger(__name__)
 def _filter_kwargs_for_ctor(cls, kwargs: dict) -> dict:
     """
     Filter kwargs to only include parameters accepted by the class constructor.
-    
+
     Prevents "unexpected keyword argument" errors when configs contain params
     that a dataset class doesn't accept (e.g., db_connection for Mimic3Dataset).
-    
+
     Args:
         cls: Dataset class to instantiate
         kwargs: Dictionary of parameters to filter
-        
+
     Returns:
         Filtered dictionary with only accepted parameters
     """
     sig = inspect.signature(cls.__init__)
     params = sig.parameters
-    
+
     # If constructor accepts **kwargs, pass everything through
     accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
     if accepts_kwargs:
         return kwargs
-    
+
     # Filter to only accepted parameters
     allowed = {k: v for k, v in kwargs.items() if k in params}
     dropped = sorted(set(kwargs) - set(allowed))
-    
+
     if dropped:
         logger.info(
             f"Dropping unsupported init params for {cls.__name__}: {dropped}. "
             f"These parameters were ignored. Check dataset constructor signature."
         )
-    
+
     return allowed
 
 
@@ -62,13 +63,13 @@ class DatasetRegistry:
     This eliminates hardcoded dataset lists and enables true extensibility.
     """
 
-    _datasets: Dict[str, Type[ClinicalDataset]] = {}
-    _configs: Dict[str, dict] = {}
+    _datasets: dict[str, type[ClinicalDataset]] = {}
+    _configs: dict[str, dict] = {}
     _config_loaded: bool = False
-    _auto_inferred: Dict[str, pl.DataFrame] = {}  # Store DataFrames for auto-inferred datasets
+    _auto_inferred: dict[str, pl.DataFrame] = {}  # Store DataFrames for auto-inferred datasets
 
     @classmethod
-    def discover_datasets(cls) -> Dict[str, Type[ClinicalDataset]]:
+    def discover_datasets(cls) -> dict[str, type[ClinicalDataset]]:
         """
         Auto-discover all ClinicalDataset implementations in the datasets package.
 
@@ -92,10 +93,11 @@ class DatasetRegistry:
 
                     # Find all ClinicalDataset subclasses in this module
                     for name, obj in inspect.getmembers(definition_module, inspect.isclass):
-                        if (issubclass(obj, ClinicalDataset) and
-                            obj is not ClinicalDataset and
-                            obj.__module__ == definition_module.__name__):
-
+                        if (
+                            issubclass(obj, ClinicalDataset)
+                            and obj is not ClinicalDataset
+                            and obj.__module__ == definition_module.__name__
+                        ):
                             # Register using module name as key
                             cls._datasets[module_name] = obj
 
@@ -107,7 +109,7 @@ class DatasetRegistry:
         return cls._datasets
 
     @classmethod
-    def load_config(cls, config_path: Optional[Path] = None) -> None:
+    def load_config(cls, config_path: Path | None = None) -> None:
         """
         Load dataset configurations from YAML file.
 
@@ -115,7 +117,9 @@ class DatasetRegistry:
             config_path: Path to datasets.yaml config file
         """
         if config_path is None:
-            config_path = Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
+            config_path = (
+                Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
+            )
 
         if not config_path.exists():
             print(f"Warning: Config file not found at {config_path}")
@@ -123,7 +127,7 @@ class DatasetRegistry:
             cls._config_loaded = True
             return
 
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             cls._configs = yaml.safe_load(f) or {}
 
         cls._config_loaded = True
@@ -152,10 +156,9 @@ class DatasetRegistry:
             cls.load_config()
 
         if name not in cls._datasets:
-            available = ', '.join(cls._datasets.keys())
+            available = ", ".join(cls._datasets.keys())
             raise KeyError(
-                f"Dataset '{name}' not found in registry. "
-                f"Available datasets: {available}"
+                f"Dataset '{name}' not found in registry. Available datasets: {available}"
             )
 
         dataset_class = cls._datasets[name]
@@ -164,7 +167,7 @@ class DatasetRegistry:
         config = cls._configs.get(name, {})
 
         # Merge config with override params
-        params = {**config.get('init_params', {}), **override_params}
+        params = {**config.get("init_params", {}), **override_params}
 
         # Filter params by constructor signature
         params = _filter_kwargs_for_ctor(dataset_class, params)
@@ -173,7 +176,7 @@ class DatasetRegistry:
         return dataset_class(**params)
 
     @classmethod
-    def list_datasets(cls) -> List[str]:
+    def list_datasets(cls) -> list[str]:
         """
         Get list of available dataset names.
 
@@ -203,21 +206,21 @@ class DatasetRegistry:
             cls.discover_datasets()
 
         info = {
-            'name': name,
-            'available': name in cls._datasets,
-            'config': cls._configs.get(name, {}),
+            "name": name,
+            "available": name in cls._datasets,
+            "config": cls._configs.get(name, {}),
         }
 
         if name in cls._datasets:
             dataset_class = cls._datasets[name]
-            info['class'] = dataset_class.__name__
-            info['module'] = dataset_class.__module__
-            info['doc'] = dataset_class.__doc__
+            info["class"] = dataset_class.__name__
+            info["module"] = dataset_class.__module__
+            info["doc"] = dataset_class.__doc__
 
         return info
 
     @classmethod
-    def get_all_dataset_info(cls) -> Dict[str, dict]:
+    def get_all_dataset_info(cls) -> dict[str, dict]:
         """
         Get info for all available datasets.
 
@@ -234,9 +237,9 @@ class DatasetRegistry:
         cls,
         dataset_name: str,
         df: pl.DataFrame,
-        display_name: Optional[str] = None,
-        infer_schema: bool = True
-    ) -> Dict[str, Any]:
+        display_name: str | None = None,
+        infer_schema: bool = True,
+    ) -> dict[str, Any]:
         """
         Register dataset from Polars DataFrame with automatic schema inference.
 
@@ -271,18 +274,14 @@ class DatasetRegistry:
             schema = engine.infer_schema(df)
             config = schema.to_dataset_config()
         else:
-            config = {
-                'column_mapping': {},
-                'outcomes': {},
-                'time_zero': {}
-            }
+            config = {"column_mapping": {}, "outcomes": {}, "time_zero": {}}
 
         # Add metadata
-        config['name'] = dataset_name
-        config['display_name'] = display_name or dataset_name
-        config['status'] = 'auto-inferred' if infer_schema else 'manual'
-        config['row_count'] = df.height
-        config['column_count'] = df.width
+        config["name"] = dataset_name
+        config["display_name"] = display_name or dataset_name
+        config["status"] = "auto-inferred" if infer_schema else "manual"
+        config["row_count"] = df.height
+        config["column_count"] = df.width
 
         # Store config
         cls._configs[dataset_name] = config
@@ -296,7 +295,7 @@ class DatasetRegistry:
         return config
 
     @classmethod
-    def get_auto_inferred_dataframe(cls, dataset_name: str) -> Optional[pl.DataFrame]:
+    def get_auto_inferred_dataframe(cls, dataset_name: str) -> pl.DataFrame | None:
         """
         Retrieve Polars DataFrame for an auto-inferred dataset.
 

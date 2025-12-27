@@ -4,22 +4,24 @@ Clinical Analytics Platform - Streamlit UI
 Interactive interface for exploring and analyzing clinical datasets.
 """
 
-import streamlit as st
-import pandas as pd
 import sys
 from pathlib import Path
+
+import pandas as pd
+import streamlit as st
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Configure logging ONCE at entry point (not in pages)
 from clinical_analytics.ui.logging_config import configure_logging
+
 configure_logging()
 
-from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.analysis.stats import run_logistic_regression
-from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.core.profiling import DataProfiler
+from clinical_analytics.core.registry import DatasetRegistry
+from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.helpers import require_outcome
 
@@ -35,25 +37,29 @@ def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
 
         # Overview Section
         with st.expander("📋 Dataset Overview", expanded=True):
-            overview = profile['overview']
+            overview = profile["overview"]
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Rows", f"{overview['n_rows']:,}")
             with col2:
-                st.metric("Columns", overview['n_columns'])
+                st.metric("Columns", overview["n_columns"])
             with col3:
                 st.metric("Memory Usage (MB)", f"{overview['memory_usage_mb']:.2f}")
 
         # Missing Data Section
         with st.expander("❓ Missing Data Analysis", expanded=True):
-            missing = profile['missing_data']
-            if missing['total_missing_cells'] > 0:
-                st.warning(f"Total missing values: {missing['total_missing_cells']:,} ({missing['pct_missing_overall']:.2f}%)")
+            missing = profile["missing_data"]
+            if missing["total_missing_cells"] > 0:
+                st.warning(
+                    f"Total missing values: {missing['total_missing_cells']:,} ({missing['pct_missing_overall']:.2f}%)"
+                )
 
                 # Show columns with missing data
-                if missing['columns_with_missing']:
-                    missing_df = pd.DataFrame.from_dict(missing['columns_with_missing'], orient='index')
-                    missing_df.index.name = 'Column'
+                if missing["columns_with_missing"]:
+                    missing_df = pd.DataFrame.from_dict(
+                        missing["columns_with_missing"], orient="index"
+                    )
+                    missing_df.index.name = "Column"
                     missing_df = missing_df.reset_index()
                     st.dataframe(missing_df)
             else:
@@ -61,7 +67,7 @@ def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
 
         # Numeric Features Section
         with st.expander("🔢 Numeric Features"):
-            numeric = profile['numeric_features']
+            numeric = profile["numeric_features"]
             if numeric:
                 for col, stats in numeric.items():
                     st.markdown(f"**{col}**")
@@ -78,19 +84,21 @@ def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
 
         # Categorical Features Section
         with st.expander("📊 Categorical Features"):
-            categorical = profile['categorical_features']
+            categorical = profile["categorical_features"]
             if categorical:
                 for col, stats in categorical.items():
                     st.markdown(f"**{col}**")
                     cols = st.columns(3)
-                    cols[0].metric("Unique Values", stats['n_unique'])
-                    cols[1].metric("Most Common", str(stats['mode']) if stats['mode'] else 'N/A')
+                    cols[0].metric("Unique Values", stats["n_unique"])
+                    cols[1].metric("Most Common", str(stats["mode"]) if stats["mode"] else "N/A")
                     cols[2].metric("Mode %", f"{stats['pct_mode']:.1f}%")
 
                     # Show top values if available
-                    if stats['top_values']:
+                    if stats["top_values"]:
                         with st.expander(f"Top values for {col}"):
-                            top_df = pd.DataFrame(list(stats['top_values'].items()), columns=['Value', 'Count'])
+                            top_df = pd.DataFrame(
+                                list(stats["top_values"].items()), columns=["Value", "Count"]
+                            )
                             st.dataframe(top_df)
                     st.divider()
             else:
@@ -98,19 +106,19 @@ def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
 
         # Data Quality Score
         with st.expander("✅ Data Quality Assessment", expanded=True):
-            quality = profile['data_quality']
+            quality = profile["data_quality"]
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Overall Quality Score", f"{quality['quality_score']:.1f}/100")
             with col2:
-                st.metric("Issues Detected", quality['n_issues'])
+                st.metric("Issues Detected", quality["n_issues"])
 
             st.markdown("**Quality Issues:**")
-            if quality['issues']:
-                for issue in quality['issues']:
-                    severity = issue.get('severity', 'info')
-                    message = issue['message']
-                    if severity == 'warning':
+            if quality["issues"]:
+                for issue in quality["issues"]:
+                    severity = issue.get("severity", "info")
+                    message = issue["message"]
+                    if severity == "warning":
                         st.warning(f"⚠️ {message}")
                     else:
                         st.info(f"ℹ️ {message}")
@@ -128,30 +136,27 @@ def display_statistical_analysis(cohort: pd.DataFrame, dataset_name: str):
 
     # Get available predictors (exclude required schema columns)
     available_predictors = [
-        col for col in cohort.columns
-        if col not in UnifiedCohort.REQUIRED_COLUMNS
+        col for col in cohort.columns if col not in UnifiedCohort.REQUIRED_COLUMNS
     ]
 
     if available_predictors:
         selected_predictors = st.multiselect(
             "Select Predictor Variables",
             available_predictors,
-            default=available_predictors[:min(3, len(available_predictors))]
+            default=available_predictors[: min(3, len(available_predictors))],
         )
 
         if selected_predictors and st.button("Run Logistic Regression"):
             try:
                 # Check if outcome exists (required for logistic regression)
                 require_outcome(cohort, "Logistic regression")
-                
+
                 # Prepare data for analysis
                 analysis_data = prepare_analysis_data(cohort, selected_predictors)
 
                 if analysis_data is not None:
                     model, summary_df = run_logistic_regression(
-                        analysis_data,
-                        UnifiedCohort.OUTCOME,
-                        selected_predictors
+                        analysis_data, UnifiedCohort.OUTCOME, selected_predictors
                     )
 
                     st.subheader("Regression Results")
@@ -167,7 +172,7 @@ def display_statistical_analysis(cohort: pd.DataFrame, dataset_name: str):
                             label="Download Results CSV",
                             data=csv_results,
                             file_name=f"{dataset_name}_regression_results.csv",
-                            mime="text/csv"
+                            mime="text/csv",
                         )
                     with col_exp2:
                         # Export full model summary as text
@@ -176,7 +181,7 @@ def display_statistical_analysis(cohort: pd.DataFrame, dataset_name: str):
                             label="Download Full Summary",
                             data=model_summary_text,
                             file_name=f"{dataset_name}_model_summary.txt",
-                            mime="text/plain"
+                            mime="text/plain",
                         )
 
                     # Display model statistics
@@ -198,11 +203,7 @@ def display_statistical_analysis(cohort: pd.DataFrame, dataset_name: str):
 
 
 def main():
-    st.set_page_config(
-        page_title="Clinical Analytics Platform",
-        page_icon="🏥",
-        layout="wide"
-    )
+    st.set_page_config(page_title="Clinical Analytics Platform", page_icon="🏥", layout="wide")
 
     st.title("🏥 Clinical Analytics Platform")
     st.markdown("Multi-dataset clinical analytics with unified schema")
@@ -216,7 +217,7 @@ def main():
     dataset_display_names = {}
     for ds_name in available_datasets:
         info = dataset_info[ds_name]
-        display_name = info['config'].get('display_name', ds_name.replace('_', '-').upper())
+        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
         dataset_display_names[display_name] = ds_name
 
     # Add uploaded datasets
@@ -224,8 +225,8 @@ def main():
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
         for upload in uploads:
-            upload_id = upload['upload_id']
-            dataset_name = upload.get('dataset_name', upload_id)
+            upload_id = upload["upload_id"]
+            dataset_name = upload.get("dataset_name", upload_id)
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
@@ -245,11 +246,12 @@ def main():
 
     # Show dataset count
     if uploaded_dataset_names:
-        st.sidebar.caption(f"{len(builtin_datasets)} built-in, {len(uploaded_dataset_names)} uploaded")
+        st.sidebar.caption(
+            f"{len(builtin_datasets)} built-in, {len(uploaded_dataset_names)} uploaded"
+        )
 
     dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset",
-        list(dataset_display_names.keys())
+        "Choose Dataset", list(dataset_display_names.keys())
     )
 
     # Get internal dataset name
@@ -261,7 +263,7 @@ def main():
     # Show dataset info in sidebar
     if is_uploaded:
         upload_info = uploaded_datasets[dataset_choice]
-        st.sidebar.markdown(f"**Type:** User Upload")
+        st.sidebar.markdown("**Type:** User Upload")
         st.sidebar.markdown(f"**Uploaded:** {upload_info['upload_timestamp'][:10]}")
         st.sidebar.markdown(f"**Rows:** {upload_info.get('row_count', 'N/A'):,}")
     else:
@@ -283,7 +285,9 @@ def main():
             # Load registry dataset
             dataset = load_dataset(dataset_choice)
             if dataset is None:
-                st.error(f"Failed to load {dataset_choice} dataset. Please check data availability.")
+                st.error(
+                    f"Failed to load {dataset_choice} dataset. Please check data availability."
+                )
                 return
 
     # Display dataset info
@@ -311,7 +315,9 @@ def main():
             st.metric("Features", len(cohort.columns) - len(UnifiedCohort.REQUIRED_COLUMNS))
 
         # Create tabs for different views
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 Overview", "📊 Data Profiling", "📈 Statistical Analysis", "🔍 Query Builder"])
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["📋 Overview", "📊 Data Profiling", "📈 Statistical Analysis", "🔍 Query Builder"]
+        )
 
         with tab1:
             # Show data preview
@@ -328,16 +334,16 @@ def main():
                     label="Download CSV",
                     data=csv_data,
                     file_name=f"{dataset_choice}_cohort.csv",
-                    mime="text/csv"
+                    mime="text/csv",
                 )
 
             with col2:
-                json_data = cohort.to_json(orient='records', indent=2)
+                json_data = cohort.to_json(orient="records", indent=2)
                 st.download_button(
                     label="Download JSON",
                     data=json_data,
                     file_name=f"{dataset_choice}_cohort.json",
-                    mime="application/json"
+                    mime="application/json",
                 )
 
         with tab2:
@@ -347,7 +353,7 @@ def main():
         with tab3:
             # Statistical Analysis Tab
             display_statistical_analysis(cohort, dataset_choice)
-        
+
         with tab4:
             # Query Builder Tab - Config-driven!
             display_query_builder(dataset, dataset_choice)
@@ -369,7 +375,9 @@ def load_dataset(dataset_name: str):
 
         # Validate and load
         if not dataset.validate():
-            st.warning(f"{dataset_name} data not found. Please ensure data files are in the correct location.")
+            st.warning(
+                f"{dataset_name} data not found. Please ensure data files are in the correct location."
+            )
             return None
 
         dataset.load()
@@ -387,8 +395,10 @@ def load_dataset(dataset_name: str):
 def display_query_builder(dataset, dataset_name: str):
     """Display config-driven query builder using semantic layer."""
     st.subheader("🔍 Query Builder")
-    st.markdown("Build custom queries using config-defined metrics and dimensions. SQL generated behind the scenes!")
-    
+    st.markdown(
+        "Build custom queries using config-defined metrics and dimensions. SQL generated behind the scenes!"
+    )
+
     # Get semantic layer using contract pattern
     try:
         semantic = dataset.get_semantic_layer()
@@ -396,19 +406,19 @@ def display_query_builder(dataset, dataset_name: str):
         st.error(f"Dataset does not support query builder: {e}")
         return
     dataset_info = semantic.get_dataset_info()
-    
+
     # Get available metrics and dimensions from config
-    metrics = dataset_info.get('metrics', {})
-    dimensions = dataset_info.get('dimensions', {})
-    filters = dataset_info.get('filters', {})
-    
+    metrics = dataset_info.get("metrics", {})
+    dimensions = dataset_info.get("dimensions", {})
+    filters = dataset_info.get("filters", {})
+
     if not metrics and not dimensions:
         st.info("No metrics or dimensions defined in config for this dataset.")
         return
-    
+
     # Metrics selection
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.markdown("### Metrics")
         available_metrics = list(metrics.keys())
@@ -416,16 +426,18 @@ def display_query_builder(dataset, dataset_name: str):
             selected_metrics = st.multiselect(
                 "Select Metrics",
                 available_metrics,
-                help="Metrics are aggregated values (rates, counts, averages)"
+                help="Metrics are aggregated values (rates, counts, averages)",
             )
             # Show metric descriptions
             for metric_name in selected_metrics:
                 metric_def = metrics[metric_name]
-                st.caption(f"**{metric_def.get('label', metric_name)}**: {metric_def.get('description', '')}")
+                st.caption(
+                    f"**{metric_def.get('label', metric_name)}**: {metric_def.get('description', '')}"
+                )
         else:
             st.info("No metrics defined in config")
             selected_metrics = []
-    
+
     with col2:
         st.markdown("### Dimensions")
         available_dimensions = list(dimensions.keys())
@@ -433,16 +445,18 @@ def display_query_builder(dataset, dataset_name: str):
             selected_dimensions = st.multiselect(
                 "Group By (Dimensions)",
                 available_dimensions,
-                help="Dimensions are grouping variables (categorical or continuous)"
+                help="Dimensions are grouping variables (categorical or continuous)",
             )
             # Show dimension info
             for dim_name in selected_dimensions:
                 dim_def = dimensions[dim_name]
-                st.caption(f"**{dim_def.get('label', dim_name)}**: {dim_def.get('type', 'unknown')} type")
+                st.caption(
+                    f"**{dim_def.get('label', dim_name)}**: {dim_def.get('type', 'unknown')} type"
+                )
         else:
             st.info("No dimensions defined in config")
             selected_dimensions = []
-    
+
     # Filters
     st.markdown("### Filters")
     filter_values = {}
@@ -450,25 +464,25 @@ def display_query_builder(dataset, dataset_name: str):
         filter_cols = st.columns(min(3, len(filters)))
         for idx, (filter_name, filter_def) in enumerate(filters.items()):
             with filter_cols[idx % len(filter_cols)]:
-                filter_type = filter_def.get('type', 'equals')
-                description = filter_def.get('description', '')
-                
-                if filter_type == 'equals':
+                filter_type = filter_def.get("type", "equals")
+                description = filter_def.get("description", "")
+
+                if filter_type == "equals":
                     # Boolean filter
                     filter_values[filter_name] = st.checkbox(
-                        filter_def.get('description', filter_name),
-                        value=dataset.config.get('default_filters', {}).get(filter_name, False),
-                        help=description
+                        filter_def.get("description", filter_name),
+                        value=dataset.config.get("default_filters", {}).get(filter_name, False),
+                        help=description,
                     )
     else:
         st.info("No filters defined in config")
-    
+
     # Execute query
     if st.button("🔍 Run Query", type="primary"):
         if not selected_metrics and not selected_dimensions:
             st.warning("Please select at least one metric or dimension")
             return
-        
+
         try:
             with st.spinner("Generating SQL and executing query..."):
                 # Use semantic layer to build and execute query
@@ -476,14 +490,14 @@ def display_query_builder(dataset, dataset_name: str):
                     metrics=selected_metrics if selected_metrics else None,
                     dimensions=selected_dimensions if selected_dimensions else None,
                     filters=filter_values if filter_values else None,
-                    show_sql=True  # Show generated SQL for transparency
+                    show_sql=True,  # Show generated SQL for transparency
                 )
-                
+
                 st.success(f"Query executed successfully! Returned {len(results)} rows")
-                
+
                 # Display results
                 st.dataframe(results, use_container_width=True)
-                
+
                 # Export results
                 col1, col2 = st.columns(2)
                 with col1:
@@ -492,23 +506,30 @@ def display_query_builder(dataset, dataset_name: str):
                         label="📥 Download CSV",
                         data=csv_data,
                         file_name=f"{dataset_name}_query_results.csv",
-                        mime="text/csv"
+                        mime="text/csv",
                     )
-                
+
         except Exception as e:
             st.error(f"Error executing query: {str(e)}")
             st.exception(e)
-    
+
     # Show available config info
     with st.expander("📖 Available Metrics & Dimensions"):
-        st.json({
-            'metrics': {k: {'label': v.get('label'), 'type': v.get('type')} 
-                       for k, v in metrics.items()},
-            'dimensions': {k: {'label': v.get('label'), 'type': v.get('type')} 
-                          for k, v in dimensions.items()},
-            'filters': {k: {'type': v.get('type'), 'description': v.get('description')} 
-                       for k, v in filters.items()}
-        })
+        st.json(
+            {
+                "metrics": {
+                    k: {"label": v.get("label"), "type": v.get("type")} for k, v in metrics.items()
+                },
+                "dimensions": {
+                    k: {"label": v.get("label"), "type": v.get("type")}
+                    for k, v in dimensions.items()
+                },
+                "filters": {
+                    k: {"type": v.get("type"), "description": v.get("description")}
+                    for k, v in filters.items()
+                },
+            }
+        )
 
 
 def prepare_analysis_data(cohort: pd.DataFrame, predictors: list) -> pd.DataFrame:
@@ -521,20 +542,22 @@ def prepare_analysis_data(cohort: pd.DataFrame, predictors: list) -> pd.DataFram
     analysis_cols = predictors.copy()
     if UnifiedCohort.OUTCOME in cohort.columns:
         analysis_cols = [UnifiedCohort.OUTCOME] + analysis_cols
-    
+
     # Check if we have any columns to analyze
     available_cols = [col for col in analysis_cols if col in cohort.columns]
     if not available_cols:
         st.error("No valid analysis columns found in dataset.")
         return None
-    
+
     data = cohort[available_cols].copy()
 
     # Handle categorical variables - convert to dummy variables
-    categorical_cols = data.select_dtypes(include=['object', 'category']).columns.tolist()
+    categorical_cols = data.select_dtypes(include=["object", "category"]).columns.tolist()
 
     if categorical_cols:
-        st.info(f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}")
+        st.info(
+            f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}"
+        )
         data = pd.get_dummies(data, columns=categorical_cols, drop_first=True)
 
     # Drop rows with missing values
@@ -543,7 +566,9 @@ def prepare_analysis_data(cohort: pd.DataFrame, predictors: list) -> pd.DataFram
     dropped_rows = initial_rows - len(data)
 
     if dropped_rows > 0:
-        st.warning(f"Dropped {dropped_rows} rows with missing values ({dropped_rows/initial_rows*100:.1f}% of data)")
+        st.warning(
+            f"Dropped {dropped_rows} rows with missing values ({dropped_rows / initial_rows * 100:.1f}% of data)"
+        )
 
     if len(data) == 0:
         st.error("No data remaining after cleaning. Please check your data quality.")

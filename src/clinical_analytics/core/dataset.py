@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, ClassVar, Dict, List, Literal, Optional, TypeAlias, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias
 
 import pandas as pd
 
@@ -12,28 +12,29 @@ if TYPE_CHECKING:
 Granularity: TypeAlias = Literal["patient_level", "admission_level", "event_level"]
 Grain: TypeAlias = Literal["patient", "admission", "event"]
 
+
 class ClinicalDataset(ABC):
     """
     Abstract Base Class for all clinical datasets.
-    
-    Designed to be extensible for both file-based (CSV, PSV) and 
+
+    Designed to be extensible for both file-based (CSV, PSV) and
     SQL-based (DuckDB, Postgres) data sources.
     """
 
-    GRANULARITY_TO_GRAIN: ClassVar[Dict[str, Grain]] = {
+    GRANULARITY_TO_GRAIN: ClassVar[dict[str, Grain]] = {
         "patient_level": "patient",
         "admission_level": "admission",
         "event_level": "event",
     }
     VALID_GRANULARITIES: ClassVar[frozenset[str]] = frozenset(GRANULARITY_TO_GRAIN.keys())
-    
-    # Class attribute - exists regardless of __init__() being called
-    semantic: Optional["SemanticLayer"] = None
 
-    def __init__(self, name: str, source_path: Union[str, Path, None] = None, db_connection: Any = None):
+    # Class attribute - exists regardless of __init__() being called
+    semantic: SemanticLayer | None = None
+
+    def __init__(self, name: str, source_path: str | Path | None = None, db_connection: Any = None):
         """
         Initialize the clinical dataset.
-        
+
         Args:
             name: Unique identifier for the dataset (e.g., 'covid_ms', 'mimic3')
             source_path: Path to raw files (for file-based datasets)
@@ -48,7 +49,7 @@ class ClinicalDataset(ABC):
     def validate(self) -> bool:
         """
         Check if source data exists and meets minimum requirements.
-        
+
         Returns:
             bool: True if data is valid/accessible, False otherwise.
         """
@@ -58,7 +59,7 @@ class ClinicalDataset(ABC):
     def load(self) -> None:
         """
         Ingest data into an internal staging format.
-        
+
         For file-based sources: Reads files into memory or a local DuckDB.
         For SQL sources: Establishes/verifies connection and checks schema.
         """
@@ -72,14 +73,14 @@ class ClinicalDataset(ABC):
     ) -> pd.DataFrame:
         """
         Return a standardized analysis dataframe conformant to UnifiedCohort schema.
-        
+
         Args:
             granularity:
                 - "patient_level": One row per patient (default)
                 - "admission_level": One row per admission/encounter
                 - "event_level": One row per event (e.g., lab result, medication)
             **filters: Dataset-specific filters (e.g., age_min=18, specific_diagnosis=True)
-            
+
         Returns:
             pd.DataFrame: A DataFrame containing at least the required UnifiedCohort columns.
         """
@@ -89,13 +90,13 @@ class ClinicalDataset(ABC):
     def _map_granularity_to_grain(cls, granularity: Granularity) -> Grain:
         """
         Map API granularity values to internal grain values.
-        
+
         Args:
             granularity: API granularity value (patient_level, admission_level, event_level)
-            
+
         Returns:
             Internal grain value for multi-table handler (patient, admission, event)
-            
+
         Raises:
             ValueError: If granularity is not one of the valid values
         """
@@ -108,14 +109,14 @@ class ClinicalDataset(ABC):
             )
 
         return cls.GRANULARITY_TO_GRAIN[granularity]
-    
-    def get_semantic_layer(self) -> "SemanticLayer":
+
+    def get_semantic_layer(self) -> SemanticLayer:
         """
         Get semantic layer for this dataset.
-        
+
         Returns:
             SemanticLayer instance
-            
+
         Raises:
             ValueError: If semantic layer is not available for this dataset
         """
@@ -126,4 +127,3 @@ class ClinicalDataset(ABC):
                 "This is typically only available for registry datasets with config-driven semantic layers."
             )
         return self.semantic
-
