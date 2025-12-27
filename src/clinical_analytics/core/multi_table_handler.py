@@ -1146,98 +1146,105 @@ class MultiTableHandler:
     def build_unified_cohort(
         self,
         anchor_table: Optional[str] = None,
-        join_type: str = "left"
+        join_type: str = "left",
     ) -> pl.DataFrame:
         """
-        Join all related tables into unified cohort view using DuckDB.
+        Build unified cohort using aggregate-before-join architecture.
 
         Strategy:
-        1. Find anchor table (root of join graph)
-        2. Build join graph using BFS from anchor
-        3. Execute joins in correct order
-        4. Handle name collisions with suffixes
-
+          1) classify + detect relationships
+          2) choose anchor (centrality)
+          3) build dimension mart (1:1-ish joins only)
+          4) aggregate fact/event tables to grain (one row per grain)
+          5) join aggregated feature tables to mart (validate 1:1)
+          6) collect
+          
         Args:
             anchor_table: Root table for joins (auto-detected if None)
-            join_type: Type of SQL join (left, inner, outer)
-
+            join_type: Type of join (left, inner, outer) - only affects dimension mart
+            
         Returns:
             Unified Polars DataFrame with all columns
-
-        Example:
-            >>> cohort = handler.build_unified_cohort(anchor_table='patients')
+            
+        Raises:
+            ValueError: If anchor not found, not unique on grain, or invalid join_type
+            AggregationPolicyError: If aggregation policy violation detected
         """
         logger.info(f"Building unified cohort (anchor_table={anchor_table}, join_type={join_type})")
-        
-        # Auto-detect anchor table if not specified
+
+        # Normalize and validate join_type (fail-fast on invalid input)
+        join_type = join_type.lower().strip()
+        if join_type not in {"left", "inner", "outer"}:
+            raise ValueError(f"Unsupported join_type: {join_type}")
+
+        if not self.classifications:
+            self.classify_tables()
+        if not self.relationships:
+            self.detect_relationships()
+
         if anchor_table is None:
-            anchor_table = self._find_anchor_table()
+            anchor_table = self._find_anchor_by_centrality()
             logger.info(f"Auto-detected anchor table: {anchor_table}")
 
         if anchor_table not in self.tables:
             raise ValueError(f"Anchor table '{anchor_table}' not found in tables")
-        
-        logger.debug(f"Anchor table '{anchor_table}' has {self.tables[anchor_table].height} rows, {self.tables[anchor_table].width} columns")
 
-        # Build join graph using BFS
-        joined_tables = {anchor_table}
-        join_clauses = []
+        anchor_class = self.classifications.get(anchor_table)
+        if anchor_class is None:
+            raise ValueError(f"Anchor table '{anchor_table}' not classified")
 
-        # Start with anchor table
-        current_table_alias = anchor_table
+        grain_key = anchor_class.grain_key
+        if not grain_key:
+            raise ValueError(f"Anchor table '{anchor_table}' has no detected grain_key")
 
-        # BFS to find join order
-        queue = [anchor_table]
+        logger.info(f"Anchor '{anchor_table}' grain_key='{grain_key}'")
 
-        while queue:
-            current = queue.pop(0)
+        # 1) Dimensions only (safe joins)
+        logger.info("Building dimension mart...")
+        mart = self._build_dimension_mart(anchor_table=anchor_table, join_type=join_type)
 
-            # Find relationships where current table is parent or child
-            for rel in self.relationships:
-                next_table = None
-                join_on = None
+        # 2) Aggregate facts/events to grain
+        logger.info("Aggregating fact/event tables...")
+        feature_tables = self._aggregate_fact_tables(grain_key=grain_key)
 
-                if rel.parent_table == current and rel.child_table not in joined_tables:
-                    # Join child to parent
-                    next_table = rel.child_table
-                    join_on = f"{current}.{rel.parent_key} = {next_table}.{rel.child_key}"
+        if not feature_tables:
+            logger.warning("No fact/event tables to aggregate; returning dimension mart only")
+            return mart.collect()
 
-                elif rel.child_table == current and rel.parent_table not in joined_tables:
-                    # Join parent to child (reverse relationship)
-                    next_table = rel.parent_table
-                    join_on = f"{current}.{rel.child_key} = {next_table}.{rel.parent_key}"
+        # 3) Join features (must be 1 row per grain on both sides)
+        logger.info(f"Joining {len(feature_tables)} feature tables to mart...")
+        for feature_name in sorted(feature_tables.keys()):
+            feature_lazy = feature_tables[feature_name]
 
-                if next_table:
-                    join_clauses.append((next_table, join_on, join_type))
-                    joined_tables.add(next_table)
-                    queue.append(next_table)
+            # Use collect_schema() instead of .schema (reliable on LazyFrame)
+            schema = feature_lazy.collect_schema()
+            names = schema.names()
+            if grain_key not in names:
+                logger.warning(
+                    f"Skipping '{feature_name}': grain_key '{grain_key}' not in schema "
+                    f"(cols={names})"
+                )
+                continue
 
-        # Build SQL query for joins
-        if not join_clauses:
-            # No joins possible, return anchor table
-            logger.debug(f"No joins possible, returning anchor table: {anchor_table}")
-            return self.tables[anchor_table]
+            # Enforce deterministic RHS column order (grain_key first, then sorted)
+            rhs_cols = [grain_key] + sorted([c for c in names if c != grain_key])
+            feature_lazy = feature_lazy.select(rhs_cols)
 
-        # Construct SQL query
-        query = f"SELECT * FROM {anchor_table}"
+            mart = mart.join(
+                feature_lazy,
+                on=grain_key,
+                how="left",
+                validate="1:1",  # mart unique on grain, aggregated features unique on grain
+            )
 
-        for table, on_clause, jtype in join_clauses:
-            query += f" {jtype.upper()} JOIN {table} ON {on_clause}"
+        logger.info("Collecting unified cohort...")
+        result = mart.collect()
 
-        logger.debug(f"Executing SQL query with {len(join_clauses)} joins")
-        logger.debug(f"Query: {query[:500]}...")  # Log first 500 chars of query
-
-        # Execute query using DuckDB
-        try:
-            result = self.conn.execute(query).pl()
-            logger.debug(f"Query executed successfully: {result.height} rows, {result.width} columns")
-            return result
-        except Exception as e:
-            logger.error(f"Error executing SQL query: {type(e).__name__}: {str(e)}")
-            logger.error(f"Full query: {query}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
+        logger.info(
+            f"Unified cohort built: {result.height:,} rows, {result.width} cols "
+            f"(anchor={anchor_table}, grain={grain_key}, features={len(feature_tables)})"
+        )
+        return result
 
     def _detect_primary_key(self, df: pl.DataFrame) -> Optional[str]:
         """

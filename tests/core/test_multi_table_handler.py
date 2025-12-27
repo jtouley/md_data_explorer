@@ -1226,3 +1226,182 @@ class TestFactAggregation:
             assert "vitals_features" in feature_tables
 
         handler.close()
+
+
+class TestBuildUnifiedCohort:
+    """Test suite for build_unified_cohort() aggregate-before-join refactor."""
+
+    def test_build_unified_cohort_does_not_use_legacy_duckdb_join(self):
+        """Ensure build_unified_cohort() does not execute legacy DuckDB SQL join."""
+        import duckdb
+
+        # Arrange: Create handler with test data
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "age": [30, 45, 28]
+        })
+
+        vitals = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P2", "P3"],
+            "heart_rate": [70, 72, 68, 71, 75],
+            "charttime": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03", "2024-01-01"]
+        })
+
+        tables = {
+            "patients": patients,
+            "vitals": vitals
+        }
+
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        handler.classify_tables()
+
+        # Patch DuckDB to detect legacy SQL pattern
+        original_execute = duckdb.DuckDBPyConnection.execute
+
+        def guarded_execute(self, query, *args, **kwargs):
+            q = str(query)
+            if "SELECT * FROM" in q and "LEFT JOIN" in q:
+                raise AssertionError(f"Legacy DuckDB mega-join detected: {q[:200]}...")
+            return original_execute(self, query, *args, **kwargs)
+
+        duckdb.DuckDBPyConnection.execute = guarded_execute
+
+        try:
+            # This should not trigger the legacy path
+            result = handler.build_unified_cohort()
+            assert result.height > 0
+        finally:
+            duckdb.DuckDBPyConnection.execute = original_execute
+            handler.close()
+
+    def test_feature_joins_preserve_row_count(self):
+        """Feature joins should not change row count (1:1 validation)."""
+        # Arrange
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "age": [30, 45, 28]
+        })
+
+        vitals = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P2", "P3"],
+            "heart_rate": [70, 72, 68, 71, 75],
+            "charttime": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03", "2024-01-01"]
+        })
+
+        tables = {
+            "patients": patients,
+            "vitals": vitals
+        }
+
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        handler.classify_tables()
+
+        anchor = handler._find_anchor_by_centrality()
+        mart = handler._build_dimension_mart(anchor_table=anchor)
+        mart_height = mart.select(pl.len().alias("n")).collect()["n"][0]
+
+        # Act
+        result = handler.build_unified_cohort(anchor_table=anchor)
+
+        # Assert
+        assert result.height == mart_height, (
+            f"Row count changed: {mart_height} -> {result.height}. "
+            f"Feature joins may have caused row explosion."
+        )
+
+        handler.close()
+
+    def test_lazy_join_validate_1_1_fails_on_duplicates(self):
+        """Prove validate='1:1' works on LazyFrame.join() by testing duplicate keys."""
+        # Arrange
+        left = pl.DataFrame({"patient_id": ["P1", "P2"]}).lazy()
+        right = pl.DataFrame({"patient_id": ["P1", "P1"], "x": [1, 2]}).lazy()
+
+        # Act & Assert
+        with pytest.raises(pl.exceptions.ComputeError):
+            left.join(right, on="patient_id", how="left", validate="1:1").collect()
+
+    def test_build_unified_cohort_deterministic_columns(self):
+        """Unified cohort should have deterministic column order."""
+        # Arrange
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "age": [30, 45, 28]
+        })
+
+        vitals = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P2", "P3"],
+            "heart_rate": [70, 72, 68, 71, 75],
+            "charttime": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03", "2024-01-01"]
+        })
+
+        labevents = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "glucose": [100, 110, 95],
+            "charttime": ["2024-01-01", "2024-01-01", "2024-01-01"]
+        })
+
+        tables = {
+            "patients": patients,
+            "vitals": vitals,
+            "labevents": labevents
+        }
+
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        handler.classify_tables()
+
+        # Act: Run twice
+        result1 = handler.build_unified_cohort()
+        result2 = handler.build_unified_cohort()
+
+        # Assert: Column order should be deterministic
+        assert result1.columns == result2.columns, (
+            f"Column order not deterministic: "
+            f"{result1.columns} != {result2.columns}"
+        )
+
+        handler.close()
+
+    def test_build_unified_cohort_rejects_invalid_join_type(self):
+        """Invalid join_type should raise ValueError."""
+        # Arrange
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2"],
+            "age": [30, 45]
+        })
+
+        tables = {"patients": patients}
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        handler.classify_tables()
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Unsupported join_type"):
+            handler.build_unified_cohort(join_type="invalid")
+
+        handler.close()
+
+    def test_build_unified_cohort_accepts_case_insensitive_join_type(self):
+        """join_type should normalize case-insensitively."""
+        # Arrange
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2"],
+            "age": [30, 45]
+        })
+
+        tables = {"patients": patients}
+        handler = MultiTableHandler(tables)
+        handler.detect_relationships()
+        handler.classify_tables()
+
+        # Act: "LEFT" should normalize to "left" and be accepted
+        result = handler.build_unified_cohort(join_type="LEFT")
+        assert result.height > 0
+
+        result2 = handler.build_unified_cohort(join_type="left")
+        assert result2.height == result.height
+
+        handler.close()
