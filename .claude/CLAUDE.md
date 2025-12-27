@@ -12,7 +12,7 @@ You are a thought partner, not a yes-machine. Accuracy over politeness.
 
 ## Stack
 
-- **Polars only**. Pandas requires explicit justification comment.
+- **Polars only**. Pandas requires explicit justification comment. NEVER use map_elements.
 - **Lazy by default**: `scan_*`, single `collect()` at pipeline end
 - **Delta Lake** for persistence, medallion architecture (Bronze/Silver/Gold)
 - **Pydantic** for external data validation at boundaries

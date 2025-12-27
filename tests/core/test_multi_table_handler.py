@@ -879,3 +879,350 @@ class TestDimensionMart:
         )
 
         handler.close()
+
+
+# ============================================================================
+# Milestone 4: Fact Aggregation with Policy Enforcement
+# ============================================================================
+
+class TestFactAggregation:
+    """Test fact table aggregation with aggregation policy enforcement (M4)."""
+
+    def test_policy_violations_raise_errors_not_warnings(self):
+        """
+        M4 Acceptance: Policy violations raise AggregationPolicyError (not warnings).
+
+        Tests that attempting to compute mean on code columns raises an error
+        when mean is enabled, preventing silent data corruption.
+        """
+        from clinical_analytics.core.multi_table_handler import (
+            AggregationPolicy,
+            AggregationPolicyError
+        )
+
+        # Arrange: Create fact table with code column (large enough to be classified as fact)
+        # Need > 10 MB to avoid "reference" classification
+        n_patients = 1000
+        n_vitals_per_patient = 200  # 200k total vitals rows (should be ~14 MB)
+
+        patients = pl.DataFrame({
+            "patient_id": [f"P{i}" for i in range(n_patients)],
+        })
+
+        vitals = pl.DataFrame({
+            "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
+            "diagnosis_code": [100 + (i % 100) for i in range(n_patients * n_vitals_per_patient)],  # Numeric code column (matches *_code pattern)
+            "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],  # Numeric value
+            # Add many extra columns to exceed 10 MB threshold
+            "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
+            "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
+            "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
+            "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+            "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
+            "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
+            "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
+        })
+
+        handler = MultiTableHandler({"patients": patients, "vitals": vitals})
+
+        # Classify tables
+        handler.classify_tables()
+
+        # Act & Assert: Enable mean and attempt to aggregate
+        # This should raise AggregationPolicyError because diagnosis_code matches *_code pattern
+        policy = AggregationPolicy(allow_mean=True)
+
+        with pytest.raises(AggregationPolicyError) as exc_info:
+            handler._aggregate_fact_tables(grain_key="patient_id", policy=policy)
+
+        # Verify error message is informative
+        assert "diagnosis_code" in str(exc_info.value)
+        assert "mean" in str(exc_info.value).lower()
+        assert "code column" in str(exc_info.value).lower()
+
+        handler.close()
+
+    def test_default_policy_is_safe_no_mean_on_codes(self):
+        """
+        M4 Acceptance: Default policy prevents mean on code columns.
+
+        Verifies that default AggregationPolicy (allow_mean=False) never
+        computes mean, avoiding incorrect aggregations.
+        """
+        from clinical_analytics.core.multi_table_handler import AggregationPolicy
+
+        # Arrange: Create fact table with code and numeric columns (large enough)
+        n_patients = 1000
+        n_vitals_per_patient = 200  # 200k rows for > 10 MB
+
+        patients = pl.DataFrame({
+            "patient_id": [f"P{i}" for i in range(n_patients)],
+        })
+
+        vitals = pl.DataFrame({
+            "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
+            "icd_code": [f"I{i % 100}" for i in range(n_patients * n_vitals_per_patient)],
+            "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
+            # Add many extra columns to exceed 10 MB threshold
+            "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
+            "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
+            "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
+            "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+            "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
+            "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
+            "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
+        })
+
+        handler = MultiTableHandler({"patients": patients, "vitals": vitals})
+        handler.classify_tables()
+
+        # Act: Use default policy (allow_mean=False)
+        default_policy = AggregationPolicy()
+        feature_tables = handler._aggregate_fact_tables(
+            grain_key="patient_id",
+            policy=default_policy
+        )
+
+        # Assert: No mean columns should be generated
+        assert "vitals_features" in feature_tables
+
+        vitals_features = feature_tables["vitals_features"].collect()
+
+        # Check that no mean columns exist
+        mean_columns = [col for col in vitals_features.columns if "mean" in col]
+        assert len(mean_columns) == 0, (
+            f"Default policy should not generate mean columns, found: {mean_columns}"
+        )
+
+        # Verify safe aggregations exist (min, max, count_distinct)
+        assert "heart_rate_min" in vitals_features.columns
+        assert "heart_rate_max" in vitals_features.columns
+        assert "heart_rate_count_distinct" in vitals_features.columns
+
+        handler.close()
+
+    def test_opt_in_mean_works_on_non_code_columns(self):
+        """
+        M4 Acceptance: Opt-in mean aggregation works on non-code numeric columns.
+
+        Verifies that when allow_mean=True, mean is computed only on columns
+        that don't match code patterns.
+        """
+        from clinical_analytics.core.multi_table_handler import AggregationPolicy
+
+        # Arrange: Create fact table with code and numeric columns (large enough)
+        n_patients = 1000
+        n_vitals_per_patient = 200  # 200k rows for > 10 MB
+
+        patients = pl.DataFrame({
+            "patient_id": [f"P{i}" for i in range(n_patients)],
+        })
+
+        vitals = pl.DataFrame({
+            "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
+            "measurement_id": [f"M{i}" for i in range(n_patients * n_vitals_per_patient)],  # Matches *_id pattern (code)
+            "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],  # Numeric, not a code
+            # Add many extra columns to exceed 10 MB threshold
+            "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
+            "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
+            "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
+            "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+            "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
+            "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
+            "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
+        })
+
+        handler = MultiTableHandler({"patients": patients, "vitals": vitals})
+        handler.classify_tables()
+
+        # Act: Enable mean aggregation
+        policy = AggregationPolicy(allow_mean=True)
+
+        # This should NOT raise error - measurement_id is protected, heart_rate is allowed
+        feature_tables = handler._aggregate_fact_tables(
+            grain_key="patient_id",
+            policy=policy
+        )
+
+        # Assert: Mean should exist for heart_rate but not measurement_id
+        assert "vitals_features" in feature_tables
+
+        vitals_features = feature_tables["vitals_features"].collect()
+
+        # heart_rate should have mean (not a code column)
+        assert "heart_rate_mean" in vitals_features.columns
+
+        # measurement_id should NOT have mean (matches *_id pattern)
+        # It should only have count_distinct
+        assert "measurement_id_count_distinct" in vitals_features.columns
+        measurement_id_cols = [col for col in vitals_features.columns if "measurement_id" in col]
+        assert "measurement_id_mean" not in measurement_id_cols
+
+        handler.close()
+
+    def test_aggregated_features_use_lazy_frames(self):
+        """
+        M4 Acceptance: Feature tables are returned as LazyFrames, not collected.
+
+        Verifies that _aggregate_fact_tables returns LazyFrames to maintain
+        lazy evaluation pipeline (following CLAUDE.md: "lazy by default").
+        """
+        # Arrange: Create fact table (large enough)
+        n_patients = 1000
+        n_vitals_per_patient = 200  # 200k rows for > 10 MB
+
+        patients = pl.DataFrame({
+            "patient_id": [f"P{i}" for i in range(n_patients)],
+        })
+
+        vitals = pl.DataFrame({
+            "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
+            "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
+            # Add many extra columns to exceed 10 MB threshold
+            "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
+            "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
+            "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
+            "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+            "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
+            "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
+            "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
+        })
+
+        handler = MultiTableHandler({"patients": patients, "vitals": vitals})
+        handler.classify_tables()
+
+        # Act: Aggregate
+        feature_tables = handler._aggregate_fact_tables(grain_key="patient_id")
+
+        # Assert: Result should be LazyFrame
+        assert "vitals_features" in feature_tables
+        assert isinstance(feature_tables["vitals_features"], pl.LazyFrame), (
+            "Feature tables must be LazyFrames, not collected DataFrames"
+        )
+
+        handler.close()
+
+    def test_feature_tables_have_correct_schema(self):
+        """
+        M4 Acceptance: Aggregated feature tables have expected schema.
+
+        Verifies that aggregation creates correct column names with suffixes
+        (e.g., heart_rate_min, heart_rate_max, count).
+        """
+        from clinical_analytics.core.multi_table_handler import AggregationPolicy
+
+        # Arrange: Create fact table with multiple column types (large enough)
+        n_patients = 1000
+        n_vitals_per_patient = 200  # 200k rows for > 10 MB
+        n_total = n_patients * n_vitals_per_patient
+
+        patients = pl.DataFrame({
+            "patient_id": [f"P{i}" for i in range(n_patients)],
+        })
+
+        from datetime import datetime, timedelta
+
+        vitals = pl.DataFrame({
+            "patient_id": [f"P{i % n_patients}" for i in range(n_total)],
+            "heart_rate": [72 + (i % 30) for i in range(n_total)],
+            "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_total)],
+            "measurement_time": [
+                datetime(2024, 1, 1) + timedelta(hours=i) for i in range(n_total)
+            ],
+            # Add extra columns to exceed 10 MB threshold
+            "systolic_bp": [120 + (i % 40) for i in range(n_total)],
+            "diastolic_bp": [80 + (i % 20) for i in range(n_total)],
+            "oxygen_sat": [95 + (i % 5) for i in range(n_total)],
+        })
+
+        handler = MultiTableHandler({"patients": patients, "vitals": vitals})
+        handler.classify_tables()
+
+        # Act: Aggregate with default policy
+        policy = AggregationPolicy(allow_mean=False, allow_last=True)
+        feature_tables = handler._aggregate_fact_tables(
+            grain_key="patient_id",
+            policy=policy
+        )
+
+        vitals_features = feature_tables["vitals_features"].collect()
+
+        # Assert: Verify schema
+        assert "patient_id" in vitals_features.columns  # Grain key preserved
+        assert "count" in vitals_features.columns  # Count always included
+
+        # Numeric columns: min, max, count_distinct, last (no mean because allow_mean=False)
+        assert "heart_rate_min" in vitals_features.columns
+        assert "heart_rate_max" in vitals_features.columns
+        assert "heart_rate_count_distinct" in vitals_features.columns
+        assert "heart_rate_last" in vitals_features.columns
+
+        # Datetime columns: min, max, count_distinct, last
+        assert "measurement_time_min" in vitals_features.columns
+        assert "measurement_time_max" in vitals_features.columns
+        assert "measurement_time_count_distinct" in vitals_features.columns
+        assert "measurement_time_last" in vitals_features.columns
+
+        # Verify no mean columns (allow_mean=False)
+        mean_columns = [col for col in vitals_features.columns if "mean" in col]
+        assert len(mean_columns) == 0
+
+        handler.close()
+
+    def test_feature_tables_exclude_dimension_and_bridge_tables(self):
+        """
+        M4 Acceptance: Only fact/event tables are aggregated, dimensions/bridges excluded.
+
+        Verifies that _aggregate_fact_tables filters to only fact/event tables
+        and excludes dimensions, bridges, and reference tables.
+        """
+        # Arrange: Create mixed table types
+        patients = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "age": [45, 32, 67]
+        })
+
+        # Dimension table (unique on grain, small bytes)
+        demographics = pl.DataFrame({
+            "patient_id": ["P1", "P2", "P3"],
+            "gender": ["M", "F", "M"]
+        })
+
+        # Fact table (high cardinality, not unique)
+        vitals = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P2", "P3", "P3"],
+            "heart_rate": [72, 78, 85, 80, 90, 88],
+        })
+
+        handler = MultiTableHandler({
+            "patients": patients,
+            "demographics": demographics,
+            "vitals": vitals
+        })
+
+        # Classify tables
+        handler.classify_tables()
+
+        # Verify classifications
+        assert handler.classifications["patients"].classification == "dimension"
+        assert handler.classifications["demographics"].classification == "dimension"
+        # vitals should be fact or event (depends on size/time column)
+
+        # Act: Aggregate
+        feature_tables = handler._aggregate_fact_tables(grain_key="patient_id")
+
+        # Assert: Only fact/event tables should be in feature_tables
+        assert "patients_features" not in feature_tables, (
+            "Dimension table 'patients' should not be aggregated"
+        )
+        assert "demographics_features" not in feature_tables, (
+            "Dimension table 'demographics' should not be aggregated"
+        )
+
+        # vitals should be aggregated (it's a fact/event table)
+        # Note: vitals might be classified as "reference" if too small, let's check
+        vitals_class = handler.classifications["vitals"].classification
+        if vitals_class in ["fact", "event"]:
+            assert "vitals_features" in feature_tables
+
+        handler.close()

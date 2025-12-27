@@ -15,13 +15,48 @@ Key Principles:
 """
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Set, Literal
 import polars as pl
 import duckdb
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# Type aliases for clarity
+AggregationOp = Literal["count", "count_distinct", "min", "max", "mean", "sum", "last"]
+CodeColumnPattern = str  # Regex or glob pattern for code columns
+
+
+class AggregationPolicyError(ValueError):
+    """Raised when aggregation policy is violated (e.g., mean on code column)."""
+    pass
+
+
+@dataclass
+class AggregationPolicy:
+    """
+    Policy for safe aggregation of fact/event tables.
+
+    Enforces constraints to prevent incorrect aggregations:
+    - Default safe aggregations (always allowed)
+    - Opt-in aggregations (require explicit permission)
+    - Code column protection (prevent mean/avg on codes)
+
+    Attributes:
+        default_numeric: Aggregations always safe for numeric columns
+        allow_mean: Enable mean/avg aggregations (requires normalized units)
+        allow_last: Enable last() aggregation (requires stable ordering)
+        code_column_patterns: Patterns identifying code columns (no mean/avg)
+    """
+    default_numeric: List[AggregationOp] = field(default_factory=lambda: ["min", "max"])
+    allow_mean: bool = False
+    allow_last: bool = True
+    code_column_patterns: List[CodeColumnPattern] = field(default_factory=lambda: [
+        "icd_code", "itemid", "ndc", "cpt_code", "drg", "hcpcs",
+        "*_code", "*_id"  # Glob patterns
+    ])
 
 
 @dataclass
@@ -968,6 +1003,145 @@ class MultiTableHandler:
         )
 
         return mart
+
+    def _aggregate_fact_tables(
+        self,
+        grain_key: str,
+        policy: AggregationPolicy = None
+    ) -> Dict[str, pl.LazyFrame]:
+        """
+        Aggregate fact/event tables by grain key with policy enforcement.
+
+        Returns feature tables with safe aggregations applied. Enforces aggregation
+        policy to prevent incorrect operations (e.g., mean on code columns).
+
+        Strategy:
+        1. Filter to only fact/event tables (exclude dimensions/bridges/reference)
+        2. For each fact/event table:
+           - Verify grain_key exists in table
+           - Check columns against code patterns
+           - Build aggregation expressions per policy
+           - Group by grain_key and aggregate
+        3. Return Dict[table_name + "_features", LazyFrame]
+
+        Args:
+            grain_key: Column to group by (e.g., "patient_id")
+            policy: Aggregation policy with safety rules (default: safe policy)
+
+        Returns:
+            Dict mapping "{table_name}_features" to aggregated LazyFrames
+
+        Raises:
+            AggregationPolicyError: If policy violation detected (e.g., mean on code)
+            ValueError: If grain_key not found in fact table
+        """
+        import fnmatch
+
+        # Use default policy if not specified
+        if policy is None:
+            policy = AggregationPolicy()
+
+        logger.info(f"Aggregating fact/event tables by grain_key='{grain_key}'")
+
+        # Ensure classifications exist
+        if not self.classifications:
+            self.classify_tables()
+
+        # Filter to fact/event tables only
+        fact_event_tables = {
+            name: cls for name, cls in self.classifications.items()
+            if cls.classification in ["fact", "event"]
+        }
+
+        if not fact_event_tables:
+            logger.warning("No fact/event tables found for aggregation")
+            return {}
+
+        feature_tables = {}
+
+        for table_name, cls in fact_event_tables.items():
+            df = self.tables[table_name]
+
+            # Verify grain_key exists
+            if grain_key not in df.columns:
+                logger.warning(
+                    f"Skipping '{table_name}': grain_key '{grain_key}' not found in columns"
+                )
+                continue
+
+            # Build aggregation expressions
+            agg_exprs = []
+
+            # Always include count
+            agg_exprs.append(pl.len().alias("count"))
+
+            for col in df.columns:
+                if col == grain_key:
+                    continue  # Skip grain key
+
+                # Check if column matches code patterns
+                is_code_col = any(
+                    fnmatch.fnmatch(col.lower(), pattern.lower())
+                    for pattern in policy.code_column_patterns
+                )
+
+                dtype = df[col].dtype
+
+                # Count distinct for all columns
+                agg_exprs.append(pl.col(col).n_unique().alias(f"{col}_count_distinct"))
+
+                # Numeric aggregations
+                if dtype in [pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+                            pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+                            pl.Float32, pl.Float64]:
+
+                    # Safe aggregations: min/max (always allowed)
+                    agg_exprs.append(pl.col(col).min().alias(f"{col}_min"))
+                    agg_exprs.append(pl.col(col).max().alias(f"{col}_max"))
+
+                    # Mean: only if allowed AND not a code column
+                    if policy.allow_mean:
+                        if is_code_col:
+                            raise AggregationPolicyError(
+                                f"Cannot compute mean on code column '{col}' in table '{table_name}'. "
+                                f"Column matches pattern: {policy.code_column_patterns}. "
+                                f"Code columns should not be averaged."
+                            )
+                        else:
+                            agg_exprs.append(pl.col(col).mean().alias(f"{col}_mean"))
+
+                    # Last: only if allowed
+                    if policy.allow_last:
+                        agg_exprs.append(pl.col(col).last().alias(f"{col}_last"))
+
+                # Time aggregations
+                elif dtype in [pl.Datetime, pl.Date]:
+                    agg_exprs.append(pl.col(col).min().alias(f"{col}_min"))
+                    agg_exprs.append(pl.col(col).max().alias(f"{col}_max"))
+
+                    # Last: only if allowed
+                    if policy.allow_last:
+                        agg_exprs.append(pl.col(col).last().alias(f"{col}_last"))
+
+                # String columns: only count distinct (no aggregations)
+                # Already added count_distinct above
+
+            # Build lazy aggregation
+            lazy_df = df.lazy()
+            aggregated = lazy_df.group_by(grain_key).agg(agg_exprs)
+
+            # Store with _features suffix
+            feature_table_name = f"{table_name}_features"
+            feature_tables[feature_table_name] = aggregated
+
+            logger.debug(
+                f"Aggregated '{table_name}' → '{feature_table_name}': "
+                f"{len(agg_exprs)} aggregations on {len(df.columns)} columns"
+            )
+
+        logger.info(f"Created {len(feature_tables)} feature tables from fact/event tables")
+
+        return feature_tables
 
     def build_unified_cohort(
         self,
