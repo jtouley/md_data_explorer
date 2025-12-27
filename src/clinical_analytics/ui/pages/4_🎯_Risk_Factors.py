@@ -20,6 +20,7 @@ from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.analysis.stats import run_logistic_regression
 from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+from clinical_analytics.ui.helpers import require_outcome
 
 
 # Page config
@@ -87,10 +88,7 @@ def main():
             return
 
     # Check if outcome is required and available
-    if UnifiedCohort.OUTCOME not in cohort.columns:
-        st.error("This analysis requires an outcome column. Please upload data with outcome mapping.")
-        st.info("💡 Risk Factors analysis needs a binary outcome variable to identify predictors.")
-        return
+    require_outcome(cohort, "Risk Factors analysis")
 
     # Configuration
     st.markdown("## 🔧 Configure Analysis")

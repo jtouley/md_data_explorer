@@ -12,9 +12,47 @@ from pathlib import Path
 from typing import Dict, Type, Optional, List, Any
 import yaml
 import polars as pl
+import logging
 
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
+logger = logging.getLogger(__name__)
+
+
+def _filter_kwargs_for_ctor(cls, kwargs: dict) -> dict:
+    """
+    Filter kwargs to only include parameters accepted by the class constructor.
+    
+    Prevents "unexpected keyword argument" errors when configs contain params
+    that a dataset class doesn't accept (e.g., db_connection for Mimic3Dataset).
+    
+    Args:
+        cls: Dataset class to instantiate
+        kwargs: Dictionary of parameters to filter
+        
+    Returns:
+        Filtered dictionary with only accepted parameters
+    """
+    sig = inspect.signature(cls.__init__)
+    params = sig.parameters
+    
+    # If constructor accepts **kwargs, pass everything through
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if accepts_kwargs:
+        return kwargs
+    
+    # Filter to only accepted parameters
+    allowed = {k: v for k, v in kwargs.items() if k in params}
+    dropped = sorted(set(kwargs) - set(allowed))
+    
+    if dropped:
+        logger.info(
+            f"Dropping unsupported init params for {cls.__name__}: {dropped}. "
+            f"These parameters were ignored. Check dataset constructor signature."
+        )
+    
+    return allowed
 
 
 class DatasetRegistry:
@@ -127,6 +165,9 @@ class DatasetRegistry:
 
         # Merge config with override params
         params = {**config.get('init_params', {}), **override_params}
+
+        # Filter params by constructor signature
+        params = _filter_kwargs_for_ctor(dataset_class, params)
 
         # Instantiate and return
         return dataset_class(**params)
