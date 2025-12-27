@@ -1,7 +1,10 @@
+import logging
 import polars as pl
 from pathlib import Path
 from typing import Generator, Optional
 from clinical_analytics.core.mapper import ColumnMapper
+
+logger = logging.getLogger(__name__)
 
 def find_psv_files(root_path: Path) -> Generator[Path, None, None]:
     """Recursively find all .psv files in the directory."""
@@ -36,7 +39,7 @@ def load_and_aggregate(
     if not psv_files:
         raise FileNotFoundError(f"No .psv files found in {root_path}")
 
-    print(f"Found {len(psv_files)} patient files. Processing...")
+    logger.info(f"Found {len(psv_files)} patient files. Processing...")
 
     # Collect all time-series data with patient_id from filename
     all_data = []
@@ -56,7 +59,7 @@ def load_and_aggregate(
             count += 1
 
         except Exception as e:
-            print(f"Error processing {psv}: {e}")
+            logger.error(f"Error processing {psv}: {e}")
 
     if not all_data:
         return pl.DataFrame()

@@ -1,0 +1,285 @@
+---
+description: DRY principles and code organization for data engineering. Enforces single source of truth, configuration-driven patterns, and abstraction discipline.
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# DRY and Code Organization
+
+## The DRY Mandate
+
+Don't Repeat Yourself is not about typing less. It's about **single source of truth**. When a business rule exists in two places, they will diverge.
+
+## Configuration Over Code
+
+### Extract Magic Values
+
+```python
+# WRONG: Magic values scattered in code
+def filter_active_customers(df):
+    return df.filter(
+        (pl.col("status") == "active") &
+        (pl.col("days_since_last_order") < 90) &
+        (pl.col("total_spend") > 100)
+    )
+
+# CORRECT: Configuration-driven
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ActiveCustomerCriteria:
+    status: str = "active"
+    max_days_inactive: int = 90
+    min_total_spend: float = 100.0
+
+def filter_active_customers(
+    df: pl.DataFrame,
+    criteria: ActiveCustomerCriteria = ActiveCustomerCriteria(),
+) -> pl.DataFrame:
+    return df.filter(
+        (pl.col("status") == criteria.status) &
+        (pl.col("days_since_last_order") < criteria.max_days_inactive) &
+        (pl.col("total_spend") > criteria.min_total_spend)
+    )
+```
+
+### Centralize Column Definitions
+
+```python
+# columns.py - Single source of truth for column names
+class Columns:
+    # Raw layer
+    CUSTOMER_ID = "customer_id"
+    TRANSACTION_DATE = "transaction_date"
+    AMOUNT = "amount"
+    
+    # Derived
+    TOTAL_SPEND = "total_spend"
+    DAYS_SINCE_LAST_ORDER = "days_since_last_order"
+    
+    # Standardized audit columns
+    LOADED_AT = "_loaded_at"
+    SOURCE_FILE = "_source_file"
+
+
+# Usage
+from columns import Columns as C
+
+df.select(
+    pl.col(C.CUSTOMER_ID),
+    pl.col(C.AMOUNT).sum().alias(C.TOTAL_SPEND),
+)
+```
+
+### Schema Definitions
+
+```python
+# schemas.py
+CUSTOMER_SCHEMA = {
+    "customer_id": pl.Utf8,
+    "email": pl.Utf8,
+    "created_at": pl.Datetime("us"),
+    "is_active": pl.Boolean,
+}
+
+TRANSACTION_SCHEMA = {
+    "transaction_id": pl.Utf8,
+    "customer_id": pl.Utf8,
+    "amount": pl.Decimal(18, 2),
+    "timestamp": pl.Datetime("us"),
+}
+
+# Reuse in readers
+def read_customers(path: str) -> pl.LazyFrame:
+    return pl.scan_parquet(path).cast(CUSTOMER_SCHEMA)
+```
+
+## Expression Libraries
+
+### Build Reusable Expressions
+
+```python
+# expressions.py
+import polars as pl
+
+class DateExpressions:
+    @staticmethod
+    def fiscal_quarter(date_col: str = "date") -> pl.Expr:
+        """Convert date to fiscal quarter (July start)."""
+        month = pl.col(date_col).dt.month()
+        return (
+            pl.when(month >= 7)
+            .then(((month - 7) // 3) + 1)
+            .otherwise(((month + 5) // 3) + 1)
+        )
+    
+    @staticmethod
+    def days_since(date_col: str, as_of: date | None = None) -> pl.Expr:
+        """Calculate days since date column."""
+        reference = pl.lit(as_of) if as_of else pl.lit(date.today())
+        return (reference - pl.col(date_col)).dt.total_days()
+
+
+class MoneyExpressions:
+    @staticmethod
+    def to_cents(amount_col: str) -> pl.Expr:
+        """Convert decimal dollars to integer cents."""
+        return (pl.col(amount_col) * 100).cast(pl.Int64)
+    
+    @staticmethod
+    def from_cents(cents_col: str) -> pl.Expr:
+        """Convert integer cents to decimal dollars."""
+        return (pl.col(cents_col) / 100).cast(pl.Decimal(18, 2))
+
+
+# Usage
+from expressions import DateExpressions as DX, MoneyExpressions as MX
+
+df.with_columns(
+    DX.fiscal_quarter("order_date").alias("fiscal_qtr"),
+    DX.days_since("last_login").alias("days_inactive"),
+    MX.to_cents("price").alias("price_cents"),
+)
+```
+
+## Transform Functions
+
+### Pure Functions with Clear Contracts
+
+```python
+def add_customer_tier(
+    df: pl.DataFrame,
+    spend_col: str = "total_spend",
+    output_col: str = "tier",
+) -> pl.DataFrame:
+    """
+    Assign customer tier based on total spend.
+    
+    Tiers:
+        - platinum: >= $10,000
+        - gold: >= $5,000
+        - silver: >= $1,000
+        - bronze: < $1,000
+    """
+    return df.with_columns(
+        pl.when(pl.col(spend_col) >= 10_000).then(pl.lit("platinum"))
+        .when(pl.col(spend_col) >= 5_000).then(pl.lit("gold"))
+        .when(pl.col(spend_col) >= 1_000).then(pl.lit("silver"))
+        .otherwise(pl.lit("bronze"))
+        .alias(output_col)
+    )
+```
+
+### Composable Pipelines
+
+```python
+def build_customer_features(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """Compose transforms into a single optimized pipeline."""
+    return (
+        lf
+        .pipe(normalize_emails)
+        .pipe(add_customer_tier)
+        .pipe(calculate_recency_score)
+        .pipe(add_audit_columns)
+    )
+```
+
+## The Rule of Three
+
+**Don't abstract prematurely.** Wait until you have three concrete instances before creating an abstraction.
+
+```python
+# First instance: Just write the code
+def process_sales():
+    df = pl.scan_parquet("sales/*.parquet")
+    df.filter(pl.col("date") >= "2024-01-01").collect()
+
+# Second instance: Still just write it
+def process_returns():
+    df = pl.scan_parquet("returns/*.parquet")
+    df.filter(pl.col("date") >= "2024-01-01").collect()
+
+# Third instance: NOW abstract
+def process_dated_files(
+    path_pattern: str,
+    date_col: str = "date",
+    min_date: str | None = None,
+) -> pl.DataFrame:
+    lf = pl.scan_parquet(path_pattern)
+    if min_date:
+        lf = lf.filter(pl.col(date_col) >= min_date)
+    return lf.collect()
+```
+
+## Anti-Pattern: Copy-Paste Inheritance
+
+```python
+# WRONG: Inheritance for code reuse
+class BaseTransform:
+    def validate(self): ...
+    def transform(self): ...
+    def save(self): ...
+
+class CustomerTransform(BaseTransform):  # Inherits just to share code
+    def transform(self): ...
+
+# CORRECT: Composition and functions
+def run_transform(
+    loader: Callable[[], pl.LazyFrame],
+    transformer: Callable[[pl.LazyFrame], pl.LazyFrame],
+    validator: Callable[[pl.DataFrame], None],
+    saver: Callable[[pl.DataFrame], None],
+) -> None:
+    raw = loader()
+    transformed = transformer(raw).collect()
+    validator(transformed)
+    saver(transformed)
+```
+
+## Project Structure
+
+```
+project/
+├── src/
+│   └── pipeline/
+│       ├── __init__.py
+│       ├── config.py         # All configuration/thresholds
+│       ├── columns.py        # Column name constants
+│       ├── schemas.py        # Schema definitions
+│       ├── expressions.py    # Reusable Polars expressions
+│       ├── transforms/       # Transform functions by domain
+│       │   ├── __init__.py
+│       │   ├── customers.py
+│       │   └── transactions.py
+│       ├── io/               # Read/write operations
+│       │   ├── __init__.py
+│       │   ├── readers.py
+│       │   └── writers.py
+│       └── validation/       # Data quality checks
+│           ├── __init__.py
+│           └── contracts.py
+├── tests/
+│   ├── unit/
+│   └── integration/
+└── pyproject.toml
+```
+
+## Import Hygiene
+
+```python
+# WRONG: Wildcard imports
+from transforms import *
+
+# WRONG: Importing everything
+from transforms import (
+    func1, func2, func3, func4, func5, func6, ...
+)
+
+# CORRECT: Import modules, access via namespace
+from pipeline import transforms
+
+result = transforms.normalize_customer(df)
+
+# CORRECT: Import only what's needed for this file
+from pipeline.transforms import normalize_customer, add_tier
+```

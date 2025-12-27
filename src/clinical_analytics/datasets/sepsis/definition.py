@@ -1,14 +1,17 @@
 from pathlib import Path
+import logging
 import pandas as pd
 import polars as pl
 from typing import Optional
 import ibis
 
-from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.core.mapper import load_dataset_config, ColumnMapper
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.datasets.sepsis.loader import load_and_aggregate, find_psv_files
+
+logger = logging.getLogger(__name__)
 
 
 class SepsisDataset(ClinicalDataset):
@@ -51,7 +54,7 @@ class SepsisDataset(ClinicalDataset):
         then register the aggregated result with DuckDB for semantic layer querying.
         """
         if not self.validate():
-            print(f"WARNING: No PSV files found in {self.source_path}. Sepsis dataset will be empty.")
+            logger.warning(f"No PSV files found in {self.source_path}. Sepsis dataset will be empty.")
             self._aggregated_data = pl.DataFrame()
             return
 
@@ -83,13 +86,29 @@ class SepsisDataset(ClinicalDataset):
             self.semantic.raw = con.table('sepsis_aggregated')
             self.semantic._base_view = None  # Force rebuild with new raw table
 
-    def get_cohort(self, **filters) -> pd.DataFrame:
+    def get_cohort(
+        self,
+        granularity: Granularity = "patient_level",
+        **filters
+    ) -> pd.DataFrame:
         """
         Return analysis cohort - uses semantic layer for SQL generation.
         
         Aggregation is done once in load(), then semantic layer handles
         all filtering and transformation via SQL.
+        
+        Args:
+            granularity: Grain level (patient_level, admission_level, event_level)
+                        Sepsis dataset is patient-level only
+            **filters: Optional filters
         """
+        # Validate: Sepsis dataset is patient-level only
+        if granularity != "patient_level":
+            raise ValueError(
+                f"SepsisDataset only supports patient_level granularity. "
+                f"Requested: {granularity}"
+            )
+        
         if self._aggregated_data is None:
             self.load()
 

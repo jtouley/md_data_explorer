@@ -6,12 +6,15 @@ Integrates uploaded data with the existing registry system.
 """
 
 from pathlib import Path
+import logging
 import pandas as pd
 from typing import Optional, Dict, Any
 
-from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+logger = logging.getLogger(__name__)
 
 
 class UploadedDataset(ClinicalDataset):
@@ -69,27 +72,48 @@ class UploadedDataset(ClinicalDataset):
         if self.data is None:
             raise ValueError(f"Failed to load upload data: {self.upload_id}")
 
-    def get_cohort(self, **filters) -> pd.DataFrame:
+    def get_cohort(
+        self,
+        granularity: Granularity = "patient_level",
+        **filters
+    ) -> pd.DataFrame:
         """
         Return analysis cohort mapped to UnifiedCohort schema.
 
-        Maps user columns to UnifiedCohort schema based on
-        the variable mapping from upload wizard.
+        Maps user columns to UnifiedCohort schema based on either:
+        - variable_mapping (from single-table upload wizard)
+        - inferred_schema (from multi-table ZIP upload)
 
         Args:
+            granularity: Grain level (patient_level, admission_level, event_level)
+                        Single-table uploads only support patient_level
             **filters: Optional filters (not yet implemented)
 
         Returns:
-            DataFrame conforming to UnifiedCohort schema
+            DataFrame conforming to UnifiedCohort schema (outcome column optional)
         """
+        # Validate: single-table uploads only support patient_level
+        if granularity != "patient_level":
+            raise ValueError(
+                f"UploadedDataset (single-table) only supports patient_level granularity. "
+                f"Requested: {granularity}. Multi-table ZIP uploads support all granularities."
+            )
+        
         if self.data is None:
             self.load()
 
-        # Get variable mapping from metadata
+        # Get variable mapping from metadata (single-table uploads)
         variable_mapping = self.metadata.get('variable_mapping', {})
 
+        # If no variable mapping, try to build it from inferred schema (ZIP uploads)
         if not variable_mapping:
-            raise ValueError("Variable mapping not found in upload metadata")
+            inferred_schema = self.metadata.get('inferred_schema', {})
+
+            if inferred_schema:
+                # Convert inferred_schema to variable_mapping format
+                variable_mapping = self._convert_inferred_schema_to_mapping(inferred_schema)
+            else:
+                raise ValueError("Neither variable_mapping nor inferred_schema found in upload metadata")
 
         # Extract mapping fields
         patient_id_col = variable_mapping.get('patient_id')
@@ -107,11 +131,15 @@ class UploadedDataset(ClinicalDataset):
             # Generate sequential IDs if not provided
             cohort_data[UnifiedCohort.PATIENT_ID] = [f"patient_{i}" for i in range(len(self.data))]
 
-        # Map outcome
+        # Map outcome (optional - semantic layer pattern)
+        # Some analyses (Descriptive Stats, Correlations) don't require outcomes
         if outcome_col:
             cohort_data[UnifiedCohort.OUTCOME] = self.data[outcome_col]
-        else:
-            raise ValueError("Outcome column not specified in mapping")
+            # Add outcome_label if available
+            outcome_label = variable_mapping.get('outcome_label', 'outcome')
+            cohort_data[UnifiedCohort.OUTCOME_LABEL] = outcome_label
+        # If no outcome specified, skip it - semantic layer handles this gracefully
+        # Downstream code must check for OUTCOME/OUTCOME_LABEL existence before using
 
         # Map time zero (use upload date if not provided)
         if time_vars and time_vars.get('time_zero'):
@@ -140,6 +168,53 @@ class UploadedDataset(ClinicalDataset):
                     cohort = cohort[cohort[key] == value]
 
         return cohort
+
+    def _convert_inferred_schema_to_mapping(self, inferred_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert inferred_schema format (from ZIP uploads) to variable_mapping format.
+
+        Args:
+            inferred_schema: Schema from schema inference engine
+
+        Returns:
+            variable_mapping dictionary compatible with get_cohort()
+        """
+        variable_mapping = {
+            'patient_id': None,
+            'outcome': None,
+            'time_variables': {},
+            'predictors': []
+        }
+
+        # Extract patient ID from column_mapping
+        column_mapping = inferred_schema.get('column_mapping', {})
+        for col, role in column_mapping.items():
+            if role == 'patient_id':
+                variable_mapping['patient_id'] = col
+                break
+
+        # Extract first outcome
+        outcomes = inferred_schema.get('outcomes', {})
+        if outcomes:
+            # Use first outcome as primary
+            first_outcome = list(outcomes.keys())[0]
+            variable_mapping['outcome'] = first_outcome
+
+        # Extract time_zero
+        time_zero_config = inferred_schema.get('time_zero', {})
+        if 'source_column' in time_zero_config:
+            variable_mapping['time_variables']['time_zero'] = time_zero_config['source_column']
+
+        # Add all other columns as predictors (exclude patient_id and outcome)
+        if self.data is not None:
+            all_cols = set(self.data.columns)
+            excluded = {variable_mapping['patient_id'], variable_mapping['outcome']}
+            variable_mapping['predictors'] = [
+                col for col in all_cols
+                if col not in excluded and col not in {None}
+            ]
+
+        return variable_mapping
 
     def get_info(self) -> Dict[str, Any]:
         """
@@ -208,6 +283,6 @@ class UploadedDatasetFactory:
             try:
                 datasets[upload_id] = UploadedDataset(upload_id=upload_id)
             except Exception as e:
-                print(f"Warning: Failed to load upload {upload_id}: {e}")
+                logger.warning(f"Failed to load upload {upload_id}: {e}")
 
         return datasets

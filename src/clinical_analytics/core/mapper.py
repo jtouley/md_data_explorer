@@ -162,7 +162,26 @@ class ColumnMapper:
             elif filter_type == 'in':
                 # Value in list
                 if isinstance(filter_value, list):
-                    df = df.filter(pl.col(column).is_in(filter_value))
+                    # Ensure column and filter values have compatible types
+                    # Cast filter_value list elements to match column dtype
+                    col_dtype = df[column].dtype
+                    try:
+                        # If column is string, ensure filter values are strings
+                        if col_dtype == pl.Utf8:
+                            filter_value = [str(v) for v in filter_value]
+                        # If column is numeric, try to convert filter values
+                        elif col_dtype in [pl.Int8, pl.Int16, pl.Int32, pl.Int64]:
+                            filter_value = [int(v) for v in filter_value if v is not None]
+                        elif col_dtype in [pl.Float32, pl.Float64]:
+                            filter_value = [float(v) for v in filter_value if v is not None]
+                        
+                        df = df.filter(pl.col(column).is_in(filter_value))
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error in 'in' filter for column {column} (dtype={col_dtype}): {type(e).__name__}: {str(e)}")
+                        logger.error(f"Filter values: {filter_value[:10]}... (type: {type(filter_value[0]) if filter_value else 'empty'})")
+                        raise
                     
             elif filter_type == 'range':
                 # Range filter (min, max)

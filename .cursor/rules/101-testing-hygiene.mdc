@@ -1,0 +1,288 @@
+---
+description: Testing hygiene standards for data engineering. Enforces pytest patterns, test isolation, fixture discipline, and coverage requirements.
+globs: ["**/test_*.py", "**/tests/**/*.py", "**/*_test.py"]
+alwaysApply: true
+---
+
+# Testing Hygiene Standards
+
+## Test Structure: AAA Pattern
+
+Every test follows Arrange-Act-Assert with clear separation:
+
+```python
+def test_customer_aggregation_sums_transactions():
+    # Arrange: Set up test data and dependencies
+    transactions = pl.DataFrame({
+        "customer_id": ["A", "A", "B"],
+        "amount": [100, 200, 50],
+    })
+    
+    # Act: Execute the unit under test
+    result = aggregate_by_customer(transactions)
+    
+    # Assert: Verify expected outcomes
+    assert result.filter(pl.col("customer_id") == "A")["total"][0] == 300
+    assert result.filter(pl.col("customer_id") == "B")["total"][0] == 50
+```
+
+## Naming Convention
+
+Test names must describe: **unit_scenario_expectedBehavior**
+
+```python
+# CORRECT: Descriptive names
+def test_deduplication_with_null_keys_preserves_first_occurrence():
+def test_schema_validation_missing_required_column_raises_valueerror():
+def test_incremental_load_overlapping_dates_merges_correctly():
+
+# WRONG: Vague names
+def test_dedup():
+def test_validation():
+def test_load():
+```
+
+## Fixture Discipline
+
+### Scope Appropriately
+
+```python
+import pytest
+
+# Session: Expensive, immutable resources
+@pytest.fixture(scope="session")
+def spark_session():
+    # Only created once per test run
+    ...
+
+# Module: Shared across tests in one file
+@pytest.fixture(scope="module")
+def reference_data():
+    return pl.read_parquet("tests/fixtures/reference.parquet")
+
+# Function (default): Fresh per test, use for mutable state
+@pytest.fixture
+def empty_staging_table(test_database):
+    test_database.execute("TRUNCATE staging.events")
+    yield
+    test_database.execute("TRUNCATE staging.events")
+```
+
+### Factory Fixtures for Variations
+
+```python
+@pytest.fixture
+def make_transaction():
+    """Factory fixture for creating test transactions."""
+    def _make(
+        customer_id: str = "CUST001",
+        amount: float = 100.0,
+        status: str = "completed",
+        timestamp: datetime | None = None,
+    ) -> dict:
+        return {
+            "customer_id": customer_id,
+            "amount": amount,
+            "status": status,
+            "timestamp": timestamp or datetime.now(),
+        }
+    return _make
+
+
+def test_refund_calculation(make_transaction):
+    txn = make_transaction(amount=500.0, status="refunded")
+    result = calculate_refund(txn)
+    assert result == -500.0
+```
+
+### Fixture Files Location
+
+```
+project/
+├── src/
+│   └── pipeline/
+│       └── transforms.py
+└── tests/
+    ├── conftest.py           # Shared fixtures
+    ├── fixtures/
+    │   ├── customers.parquet
+    │   └── transactions.parquet
+    ├── unit/
+    │   ├── conftest.py       # Unit-specific fixtures
+    │   └── test_transforms.py
+    └── integration/
+        ├── conftest.py       # Integration-specific fixtures
+        └── test_pipeline.py
+```
+
+## Test Isolation
+
+### No Shared Mutable State
+
+```python
+# WRONG: Tests depend on execution order
+class TestBadIsolation:
+    results = []  # Shared state!
+    
+    def test_first(self):
+        self.results.append(1)
+        
+    def test_second(self):
+        assert len(self.results) == 1  # Fails if run alone
+
+# CORRECT: Each test is independent
+def test_first(tmp_path):
+    output = tmp_path / "results.json"
+    process_and_save(output)
+    assert output.exists()
+```
+
+### Database Isolation
+
+```python
+@pytest.fixture
+def isolated_schema(connection):
+    """Create isolated schema per test."""
+    schema_name = f"test_{uuid.uuid4().hex[:8]}"
+    connection.execute(f"CREATE SCHEMA {schema_name}")
+    yield schema_name
+    connection.execute(f"DROP SCHEMA {schema_name} CASCADE")
+
+
+def test_etl_pipeline(isolated_schema, connection):
+    # Test runs in isolated schema
+    connection.execute(f"SET search_path TO {isolated_schema}")
+    run_pipeline()
+    # No cleanup needed; fixture handles it
+```
+
+## Parameterization
+
+### Use pytest.mark.parametrize for Variations
+
+```python
+@pytest.mark.parametrize("input_status,expected_output", [
+    ("active", True),
+    ("inactive", False),
+    ("pending", False),
+    ("ACTIVE", True),  # Case insensitivity
+    (None, False),     # Null handling
+    ("", False),       # Empty string
+])
+def test_is_active_customer(input_status, expected_output):
+    result = is_active_customer(input_status)
+    assert result == expected_output
+```
+
+### IDs for Readable Output
+
+```python
+@pytest.mark.parametrize("date_str,expected", [
+    pytest.param("2024-01-15", date(2024, 1, 15), id="iso_format"),
+    pytest.param("01/15/2024", date(2024, 1, 15), id="us_format"),
+    pytest.param("15-Jan-2024", date(2024, 1, 15), id="abbrev_month"),
+])
+def test_parse_date(date_str, expected):
+    assert parse_date(date_str) == expected
+```
+
+## Error Testing
+
+```python
+def test_validation_rejects_negative_amounts():
+    invalid_df = pl.DataFrame({"amount": [-100, 50, -25]})
+    
+    with pytest.raises(ValueError, match="Negative amounts not allowed"):
+        validate_transactions(invalid_df)
+
+
+def test_missing_required_column_error_message():
+    incomplete_df = pl.DataFrame({"id": [1, 2]})  # Missing 'amount'
+    
+    with pytest.raises(ValueError) as exc_info:
+        validate_schema(incomplete_df)
+    
+    assert "amount" in str(exc_info.value)
+    assert "required" in str(exc_info.value).lower()
+```
+
+## Data Engineering Specific Patterns
+
+### Schema Contract Tests
+
+```python
+def test_output_schema_matches_contract():
+    """Ensure transform output matches downstream expectations."""
+    result = transform_pipeline(sample_input)
+    
+    expected_schema = {
+        "customer_id": pl.Utf8,
+        "total_amount": pl.Decimal,
+        "last_transaction_date": pl.Date,
+    }
+    
+    for col, dtype in expected_schema.items():
+        assert col in result.columns, f"Missing column: {col}"
+        assert result.schema[col] == dtype, f"Type mismatch for {col}"
+```
+
+### Idempotency Tests
+
+```python
+def test_pipeline_is_idempotent(test_database):
+    """Running pipeline twice produces same result."""
+    run_pipeline(test_database)
+    first_result = test_database.read_table("output")
+    
+    run_pipeline(test_database)
+    second_result = test_database.read_table("output")
+    
+    plt.assert_frame_equal(first_result, second_result)
+```
+
+### Null Handling Tests
+
+```python
+@pytest.fixture
+def df_with_nulls():
+    return pl.DataFrame({
+        "id": [1, 2, 3, 4],
+        "value": [100, None, 300, None],
+        "category": ["A", None, "A", "B"],
+    })
+
+
+def test_aggregation_handles_null_values(df_with_nulls):
+    result = aggregate_by_category(df_with_nulls)
+    # Verify nulls don't cause errors and are handled as expected
+    assert result.filter(pl.col("category") == "A")["sum"][0] == 400
+```
+
+## Minimum Coverage Requirements
+
+```toml
+# pyproject.toml
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+```
+
+## Test Performance
+
+```python
+# Mark slow tests for optional exclusion
+@pytest.mark.slow
+def test_full_backfill_processing():
+    """Takes 2+ minutes; skip in quick feedback loops."""
+    ...
+
+# Run fast tests only: pytest -m "not slow"
+```
