@@ -12,13 +12,13 @@ todos:
       - "1"
   - id: "3"
     content: Implement _build_dimension_mart() to join only 1:1/small dimensions to anchor table (exclude bridge tables)
-    status: pending
+    status: completed
     dependencies:
       - "1"
       - "2"
   - id: "4"
     content: Implement _aggregate_fact_tables() with aggregation policy enforcement (safe defaults, opt-in mean/avg, code column handling)
-    status: pending
+    status: completed
     dependencies:
       - "1"
   - id: "5"
