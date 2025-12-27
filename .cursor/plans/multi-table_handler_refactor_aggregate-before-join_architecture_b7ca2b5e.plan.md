@@ -22,8 +22,8 @@ todos:
     dependencies:
       - "1"
   - id: "5"
-    content: Replace build_unified_cohort() with plan_patient_mart() (returns Ibis expression) and materialize_patient_mart() (executes and writes Parquet)
-    status: pending
+    content: Replace build_unified_cohort() with plan_mart() (returns Ibis expression) and materialize_mart() (executes and writes Parquet). Includes CohortMetadata, caching with run_id, hash bucket partitioning for event-level, and observability logging.
+    status: completed
     dependencies:
       - "3"
       - "4"
@@ -50,7 +50,7 @@ todos:
       - "9"
   - id: "11"
     content: "Implement hash bucket partitioning for event-level outputs (default: hash(grain_key) % 64, directory structure event_level/{table}/bucket=XX/*.parquet)"
-    status: pending
+    status: completed
     dependencies:
       - "5"
   - id: "12"
@@ -62,21 +62,11 @@ todos:
 
 # Multi-Table Handler Refactor: Aggregate-Before-Join Architecture
 
-**Status**: P0 (Critical - Blocks Phase 4 of consolidate-docs plan)
-
-**Priority**: P0 (Resolves OOM issues blocking multi-table support)
-
-**Related Plan**: [consolidate-docs-and-implement-question-driven-analysis.md](docs/implementation/plans/consolidate-docs-and-implement-question-driven-analysis.md) - Phase 4
-
-**Created**: 2025-12-25
-
-**Owner**: Development Team
+**Status**: P0 (Critical - Blocks Phase 4 of consolidate-docs plan)**Priority**: P0 (Resolves OOM issues blocking multi-table support)**Related Plan**: [consolidate-docs-and-implement-question-driven-analysis.md](docs/implementation/plans/consolidate-docs-and-implement-question-driven-analysis.md) - Phase 4**Created**: 2025-12-25**Owner**: Development Team
 
 ## Overview
 
-**Critical Fix for Phase 4 OOM Blocker**: Refactor the multi-table handler to enforce aggregate-before-join patterns, replacing mega-joins that cause OutOfMemoryException with dimension marts and aggregated feature tables. This directly addresses the OOM issue blocking Phase 4 completion where joining 32 tables (including chartevents with 668k rows) exhausts 90.8 GiB of temp directory space.
-
-**Current Blocker** (from consolidate-docs Phase 4):
+**Critical Fix for Phase 4 OOM Blocker**: Refactor the multi-table handler to enforce aggregate-before-join patterns, replacing mega-joins that cause OutOfMemoryException with dimension marts and aggregated feature tables. This directly addresses the OOM issue blocking Phase 4 completion where joining 32 tables (including chartevents with 668k rows) exhausts 90.8 GiB of temp directory space.**Current Blocker** (from consolidate-docs Phase 4):
 
 - ❌ DuckDB OutOfMemoryException when joining all 32 tables in single query
 - Error: "failed to offload data block of size 32.0 KiB (90.8 GiB/90.8 GiB used)"
@@ -97,10 +87,10 @@ todos:
 
 1. **Mega-joins causing OOM**: `build_unified_cohort()` does `SELECT *` and joins all 32 tables in a single query, causing:
 
-   - DuckDB OutOfMemoryException: "failed to offload data block of size 32.0 KiB (90.8 GiB/90.8 GiB used)"
-   - Large tables like chartevents (668,862 rows) joined directly without aggregation
-   - Temp directory space exhaustion (90.8 GiB)
-   - Blocks MIMIC-IV demo dataset processing (32 tables, some with 600k+ rows)
+- DuckDB OutOfMemoryException: "failed to offload data block of size 32.0 KiB (90.8 GiB/90.8 GiB used)"
+- Large tables like chartevents (668,862 rows) joined directly without aggregation
+- Temp directory space exhaustion (90.8 GiB)
+- Blocks MIMIC-IV demo dataset processing (32 tables, some with 600k+ rows)
 
 ### Architectural Issues
 
@@ -144,9 +134,7 @@ Classification rules:
 
 ### Graph-Based Anchor Selection
 
-Replace `_find_anchor_table()` with centrality-based selection:
-
-**Hard Exclusions** (never anchor on these):
+Replace `_find_anchor_table()` with centrality-based selection:**Hard Exclusions** (never anchor on these):
 
 - Classification in `{event, fact, bridge}`
 - Tables without unique grain key
@@ -157,25 +145,23 @@ Replace `_find_anchor_table()` with centrality-based selection:
 1. Build relationship graph (nodes=tables, edges=relationships)
 2. Score each **dimension** table:
 
-   - +10 if has `hadm_id` or `encounter_id` column
-   - +5 if has `patient_id` or `subject_id` column
-   - +1 per relationship (incoming + outgoing)
-   - +3 if classified as dimension with patient grain
+- +10 if has `hadm_id` or `encounter_id` column
+- +5 if has `patient_id` or `subject_id` column
+- +1 per relationship (incoming + outgoing)
+- +3 if classified as dimension with patient grain
 
 3. **Tie-breakers** (deterministic):
 
-   - Prefer fewer NULLs in grain key (lower null_rate)
-   - Prefer unique grain key (is_unique_on_grain = True)
-   - Prefer smaller estimated_bytes
-   - Prefer patient grain over admission grain
+- Prefer fewer NULLs in grain key (lower null_rate)
+- Prefer unique grain key (is_unique_on_grain = True)
+- Prefer smaller estimated_bytes
+- Prefer patient grain over admission grain
 
 4. Select highest-scoring **dimension** table as anchor
 
 ### Aggregate-Before-Join Pipeline
 
-New `plan_patient_mart()` and `materialize_patient_mart()` methods:
-
-**plan_patient_mart() -> ibis.Table**:
+New `plan_mart()` and `materialize_mart()` methods:**plan_mart() -> ibis.Table**:
 
 1. **Classify all tables** using cardinality + uniqueness + byte estimates
 2. **Select anchor** using graph centrality (dimensions only)
@@ -184,15 +170,13 @@ New `plan_patient_mart()` and `materialize_patient_mart()` methods:
 5. **Join aggregated facts** to dimension mart
 6. **Return Ibis expression** (lazy, not materialized)
 
-**materialize_patient_mart(path: Path) -> CohortMetadata**:
+**materialize_mart(path: Path) -> CohortMetadata**:
 
 1. Execute Ibis plan
 2. Write to partitioned Parquet
 3. Return metadata with table locations
 
-**Aggregation Policy** (safety constraints):
-
-Default aggregations (always safe):
+**Aggregation Policy** (safety constraints):Default aggregations (always safe):
 
 - `count(*)` as `{table}_count`
 - `count(distinct {col})` for categorical columns
@@ -220,6 +204,8 @@ aggregation_policy = {
 }
 ```
 
+
+
 ### Granularity Mapping
 
 Update `get_cohort()` signature and implementations:
@@ -246,23 +232,23 @@ In `UserDatasetStorage.save_zip_upload()`:
 2. Create fresh DuckDB connection per handler (not shared)
 3. Use **cross-platform** file lock for metadata writes:
    ```python
-   from filelock import FileLock
-   
-   lock = FileLock(str(metadata_path) + ".lock")
-   with lock:
-       # Atomic write via temp file + rename
-       tmp = metadata_path.with_suffix(".json.tmp")
-       with open(tmp, 'w') as f:
-           json.dump(full_metadata, f, indent=2)
-       tmp.replace(metadata_path)  # atomic rename
+      from filelock import FileLock
+      
+      lock = FileLock(str(metadata_path) + ".lock")
+      with lock:
+          # Atomic write via temp file + rename
+          tmp = metadata_path.with_suffix(".json.tmp")
+          with open(tmp, 'w') as f:
+              json.dump(full_metadata, f, indent=2)
+          tmp.replace(metadata_path)  # atomic rename
    ```
+
+
 
 
 ### Event-Level Parquet Partitioning
 
-For event-level outputs:
-
-**Default strategy: Hash bucketing by grain key**
+For event-level outputs:**Default strategy: Hash bucketing by grain key**
 
 - Generic and works for all tables (doesn't require timestamps)
 - Improves selective reads (can query specific buckets)
@@ -286,47 +272,45 @@ def partition_event_table(df: pl.DataFrame, grain_key: str, num_buckets: int = 6
     )
 ```
 
+
+
 ## Implementation Files
 
 ### Core Changes
 
 - **[src/clinical_analytics/core/multi_table_handler.py](src/clinical_analytics/core/multi_table_handler.py)**
-  - Add `TableClassification` dataclass (with bridge/reference types, byte estimates)
-  - Add `classify_tables()` method (with bridge detection, byte estimation)
-  - Replace `_find_anchor_table()` with `_find_anchor_by_centrality()` (with hard exclusions, tie-breakers)
-  - Replace `build_unified_cohort()` with `plan_patient_mart()` (returns Ibis expression)
-  - Add `materialize_patient_mart()` (executes plan, writes Parquet)
-  - Add `_build_dimension_mart()` helper (excludes bridges)
-  - Add `_aggregate_fact_tables()` helper (with aggregation policy enforcement)
-  - Add `_detect_bridge_table()` helper
-
+- Add `TableClassification` dataclass (with bridge/reference types, byte estimates)
+- Add `classify_tables()` method (with bridge detection, byte estimation)
+- Replace `_find_anchor_table()` with `_find_anchor_by_centrality()` (with hard exclusions, tie-breakers)
+- Add `plan_mart()` (returns Ibis expression over materialized Parquet)
+- Add `materialize_mart()` (executes Polars pipeline, writes Parquet with caching)
+- Add `CohortMetadata` dataclass with run_id for caching
+- Add `_build_dimension_mart()` helper (excludes bridges)
+- Add `_aggregate_fact_tables()` helper (with aggregation policy enforcement)
+- Add `_detect_bridge_table()` helper
 - **[src/clinical_analytics/core/dataset.py](src/clinical_analytics/core/dataset.py)**
-  - Update `get_cohort()` signature to include `granularity` parameter
-
+- Update `get_cohort()` signature to include `granularity` parameter
 - **[src/clinical_analytics/core/semantic.py](src/clinical_analytics/core/semantic.py)**
-  - Update `get_cohort()` to handle granularity mapping
+- Update `get_cohort()` to handle granularity mapping
 
 ### Storage Changes
 
 - **[src/clinical_analytics/ui/storage/user_datasets.py](src/clinical_analytics/ui/storage/user_datasets.py)**
-  - Create fresh handler/connection in `save_zip_upload()`
-  - Add file locking for metadata writes
-  - Update to use `build_mart_cohort()` instead of `build_unified_cohort()`
-  - Add parquet partitioning for event-level outputs
+- Create fresh handler/connection in `save_zip_upload()`
+- Add file locking for metadata writes
+- Update to use `build_mart_cohort()` instead of `build_unified_cohort()`
+- Add parquet partitioning for event-level outputs
 
 ### Dataset Implementations
 
 - **[src/clinical_analytics/datasets/uploaded/definition.py](src/clinical_analytics/datasets/uploaded/definition.py)**
-  - Update `get_cohort()` to support granularity parameter
-
+- Update `get_cohort()` to support granularity parameter
 - **[src/clinical_analytics/datasets/sepsis/definition.py](src/clinical_analytics/datasets/sepsis/definition.py)**
-  - Update `get_cohort()` to support granularity parameter
-
+- Update `get_cohort()` to support granularity parameter
 - **[src/clinical_analytics/datasets/covid_ms/definition.py](src/clinical_analytics/datasets/covid_ms/definition.py)**
-  - Update `get_cohort()` to support granularity parameter
-
+- Update `get_cohort()` to support granularity parameter
 - **[src/clinical_analytics/datasets/mimic3/definition.py](src/clinical_analytics/datasets/mimic3/definition.py)**
-  - Update `get_cohort()` to support granularity parameter
+- Update `get_cohort()` to support granularity parameter
 
 ## Key Methods to Implement
 
@@ -349,21 +333,21 @@ For each table:
 3. Build relationship graph
 4. Score each dimension table:
 
-   - +10 if has `hadm_id` or `encounter_id` column
-   - +5 if has `patient_id` or `subject_id` column
-   - +1 per relationship (incoming + outgoing)
-   - +3 if classified as dimension with patient grain
+- +10 if has `hadm_id` or `encounter_id` column
+- +5 if has `patient_id` or `subject_id` column
+- +1 per relationship (incoming + outgoing)
+- +3 if classified as dimension with patient grain
 
 5. **Tie-breakers** (apply in order):
 
-   - Lower null_rate in grain key
-   - `is_unique_on_grain = True`
-   - Smaller `estimated_bytes`
-   - Patient grain > admission grain
+- Lower null_rate in grain key
+- `is_unique_on_grain = True`
+- Smaller `estimated_bytes`
+- Patient grain > admission grain
 
 6. Return highest-scoring dimension table
 
-### `plan_patient_mart(grain: str = "patient") -> ibis.Table`
+### `plan_mart(metadata: Optional[CohortMetadata] = None, parquet_path: Optional[Path] = None) -> ibis.Table`
 
 1. Classify tables (with byte estimates)
 2. Find anchor by centrality (dimensions only)
@@ -372,12 +356,14 @@ For each table:
 5. Join aggregated facts to mart
 6. Return **Ibis expression** (lazy, not materialized)
 
-### `materialize_patient_mart(output_path: Path, grain: str = "patient") -> CohortMetadata`
+### `materialize_mart(output_path: Path, grain: str = "patient", ...) -> CohortMetadata`
 
-1. Get Ibis plan from `plan_patient_mart()`
-2. Execute plan (compile to SQL, run in DuckDB)
-3. Write to partitioned Parquet (hash buckets for event-level)
-4. Return metadata with table locations and schema
+1. Compute run_id (deterministic hash for caching)
+2. Check cache: if run_id exists, return existing metadata
+3. Use Polars pipeline (`_build_dimension_mart` + `_aggregate_fact_tables`)
+4. Execute plan (compile to SQL, run in DuckDB)
+5. Write to partitioned Parquet (hash buckets for event-level)
+6. Return metadata with table locations and schema
 
 ### `_aggregate_fact_tables(grain_key: str, aggregation_policy: Dict) -> Dict[str, pl.DataFrame]`
 
@@ -386,9 +372,9 @@ For each fact/event table:
 1. Group by `grain_key`
 2. Compute **safe** aggregations per policy:
 
-   - Always: counts, distinct counts, min/max timestamps, min/max numerics
-   - Opt-in: mean/avg (if allowed), last value (if allowed and conditions met)
-   - Never: mean/avg on code columns
+- Always: counts, distinct counts, min/max timestamps, min/max numerics
+- Opt-in: mean/avg (if allowed), last value (if allowed and conditions met)
+- Never: mean/avg on code columns
 
 3. Return dict of `{table_name: aggregated_df}`
 
@@ -432,21 +418,21 @@ Execution flow:
 
 1. **MIMIC-IV Demo Test**:
 
-   - Load 32 tables from MIMIC-IV demo ZIP
-   - Verify no OOM when processing chartevents (668k rows)
-   - Verify temp directory usage < 10 GB (vs current 90.8 GiB)
-   - Verify successful mart creation
+- Load 32 tables from MIMIC-IV demo ZIP
+- Verify no OOM when processing chartevents (668k rows)
+- Verify temp directory usage < 10 GB (vs current 90.8 GiB)
+- Verify successful mart creation
 
 2. **Large Table Handling**:
 
-   - Test with tables > 100k rows
-   - Verify aggregation before join (not direct join)
-   - Verify memory usage stays bounded
+- Test with tables > 100k rows
+- Verify aggregation before join (not direct join)
+- Verify memory usage stays bounded
 
 3. **Bridge Table Tests**:
 
-   - Verify bridge tables excluded from auto-joins
-   - Verify no explosion from many-to-many relationships
+- Verify bridge tables excluded from auto-joins
+- Verify no explosion from many-to-many relationships
 
 ### Standard Tests
 
@@ -490,7 +476,7 @@ This refactor **completes Phase 4** of the [consolidate-docs plan](docs/implemen
 
 ### Integration Points
 
-1. **UserDatasetStorage.save_zip_upload()**: Update to use `plan_patient_mart()` + `materialize_patient_mart()` instead of `build_unified_cohort()`
+1. **UserDatasetStorage.save_zip_upload()**: Update to use `materialize_mart()` + `plan_mart()` instead of `build_unified_cohort()`
 2. **NL Query Engine**: Integrate QueryPlan to prevent "everything" queries from triggering OOM
 3. **Semantic Layer**: Support granularity mapping for multi-table datasets
 
@@ -505,9 +491,8 @@ This refactor **completes Phase 4** of the [consolidate-docs plan](docs/implemen
 
 ## Migration Notes
 
-- Keep `build_unified_cohort()` as deprecated method (logs warning, calls `plan_patient_mart()` + materialize)
+- Keep `build_unified_cohort()` as deprecated method (logs warning, can be wrapped around `materialize_mart()` + read in future)
 - Default granularity to `"patient_level"` for backward compatibility
 - Add feature flags to gradually roll out changes
 - Bridge tables: not auto-joined into marts; require explicit query planner selection
 - Aggregation policy: defaults to safe aggregations; mean/avg require explicit opt-in
-- **Critical**: This refactor must complete before Phase 4 can be marked complete

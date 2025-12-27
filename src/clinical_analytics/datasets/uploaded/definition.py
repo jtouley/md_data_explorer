@@ -6,12 +6,15 @@ Integrates uploaded data with the existing registry system.
 """
 
 from pathlib import Path
+import logging
 import pandas as pd
 from typing import Optional, Dict, Any
 
-from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+logger = logging.getLogger(__name__)
 
 
 class UploadedDataset(ClinicalDataset):
@@ -69,7 +72,11 @@ class UploadedDataset(ClinicalDataset):
         if self.data is None:
             raise ValueError(f"Failed to load upload data: {self.upload_id}")
 
-    def get_cohort(self, **filters) -> pd.DataFrame:
+    def get_cohort(
+        self,
+        granularity: Granularity = "patient_level",
+        **filters
+    ) -> pd.DataFrame:
         """
         Return analysis cohort mapped to UnifiedCohort schema.
 
@@ -78,11 +85,20 @@ class UploadedDataset(ClinicalDataset):
         - inferred_schema (from multi-table ZIP upload)
 
         Args:
+            granularity: Grain level (patient_level, admission_level, event_level)
+                        Single-table uploads only support patient_level
             **filters: Optional filters (not yet implemented)
 
         Returns:
-            DataFrame conforming to UnifiedCohort schema
+            DataFrame conforming to UnifiedCohort schema (outcome column optional)
         """
+        # Validate: single-table uploads only support patient_level
+        if granularity != "patient_level":
+            raise ValueError(
+                f"UploadedDataset (single-table) only supports patient_level granularity. "
+                f"Requested: {granularity}. Multi-table ZIP uploads support all granularities."
+            )
+        
         if self.data is None:
             self.load()
 
@@ -115,11 +131,15 @@ class UploadedDataset(ClinicalDataset):
             # Generate sequential IDs if not provided
             cohort_data[UnifiedCohort.PATIENT_ID] = [f"patient_{i}" for i in range(len(self.data))]
 
-        # Map outcome
+        # Map outcome (optional - semantic layer pattern)
+        # Some analyses (Descriptive Stats, Correlations) don't require outcomes
         if outcome_col:
             cohort_data[UnifiedCohort.OUTCOME] = self.data[outcome_col]
-        else:
-            raise ValueError("Outcome column not specified in mapping")
+            # Add outcome_label if available
+            outcome_label = variable_mapping.get('outcome_label', 'outcome')
+            cohort_data[UnifiedCohort.OUTCOME_LABEL] = outcome_label
+        # If no outcome specified, skip it - semantic layer handles this gracefully
+        # Downstream code must check for OUTCOME/OUTCOME_LABEL existence before using
 
         # Map time zero (use upload date if not provided)
         if time_vars and time_vars.get('time_zero'):
@@ -263,6 +283,6 @@ class UploadedDatasetFactory:
             try:
                 datasets[upload_id] = UploadedDataset(upload_id=upload_id)
             except Exception as e:
-                print(f"Warning: Failed to load upload {upload_id}: {e}")
+                logger.warning(f"Failed to load upload {upload_id}: {e}")
 
         return datasets
