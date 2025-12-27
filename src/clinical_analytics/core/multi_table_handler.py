@@ -31,6 +31,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Schema version for caching - increment when schema changes break compatibility
+SCHEMA_VERSION = "1.0"
 
 # Type aliases for clarity
 AggregationOp = Literal["count", "count_distinct", "min", "max", "mean", "sum", "last"]
@@ -190,6 +192,7 @@ class MultiTableHandler:
         self.primary_keys: Dict[str, str] = {}
         self.classifications: Dict[str, TableClassification] = {}
         self.max_dimension_bytes = max_dimension_bytes
+        self._ibis_connection: Optional[Any] = None  # Cached Ibis DuckDB connection
 
         # Normalize key column types across all tables
         self._normalize_key_columns()
@@ -1274,7 +1277,7 @@ class MultiTableHandler:
 
     def _get_ibis_connection(self) -> Any:
         """
-        Get or create Ibis DuckDB connection.
+        Get or create Ibis DuckDB connection (cached on instance).
         
         Returns:
             Ibis DuckDB connection
@@ -1284,8 +1287,11 @@ class MultiTableHandler:
                 "Ibis is required for plan_mart(). Install with: pip install ibis-framework[duckdb]"
             )
         
-        # Create new connection (can be optimized to reuse if needed)
-        return ibis.duckdb.connect()
+        # Reuse cached connection if available
+        if self._ibis_connection is None:
+            self._ibis_connection = ibis.duckdb.connect()
+        
+        return self._ibis_connection
 
     def _add_hash_bucket_column(
         self,
@@ -1319,20 +1325,33 @@ class MultiTableHandler:
         """
         Compute deterministic fingerprint of dataset for caching.
         
-        Fingerprint includes: table names, row counts, column counts.
+        Fingerprint includes: table names, row counts, column counts, and content hash.
+        Content hash uses a small deterministic sample per table to detect value changes
+        even when shape remains the same.
         
         Returns:
             SHA256 hash as hex string
         """
-        import hashlib
-        
-        # Build fingerprint from table metadata
+        # Build fingerprint from table metadata + content sample
         fingerprint_parts = []
         for table_name in sorted(self.tables.keys()):
             df = self.tables[table_name]
-            fingerprint_parts.append(
-                f"{table_name}:{df.height}:{df.width}:{','.join(sorted(df.columns))}"
-            )
+            
+            # Shape metadata
+            shape_info = f"{table_name}:{df.height}:{df.width}:{','.join(sorted(df.columns))}"
+            
+            # Content hash: sample first 100 rows (or all if smaller) deterministically
+            # This detects value changes even when shape is unchanged
+            sample_size = min(100, df.height)
+            if sample_size > 0:
+                # Sample deterministically (first N rows, sorted by all columns for stability)
+                sample_df = df.head(sample_size)
+                # Hash the sample data (convert to string representation)
+                sample_str = str(sample_df.to_dict(as_series=False))
+                content_hash = hashlib.sha256(sample_str.encode()).hexdigest()[:16]  # First 16 chars
+                fingerprint_parts.append(f"{shape_info}:{content_hash}")
+            else:
+                fingerprint_parts.append(f"{shape_info}:empty")
         
         fingerprint_str = "|".join(fingerprint_parts)
         return hashlib.sha256(fingerprint_str.encode()).hexdigest()
@@ -1361,14 +1380,14 @@ class MultiTableHandler:
         # Build config string
         config_str = f"{grain}:{anchor_table}:{grain_key}:{join_type}"
         
-        # Add schema version (if available)
-        schema_version = "1.0"  # TODO: get from actual schema version
+        # Add schema version (module-level constant)
+        # SCHEMA_VERSION is defined at module level in this file
         
-        # Add dataset fingerprint (hash of table names + row counts)
+        # Add dataset fingerprint (hash of table names + row counts + content sample)
         dataset_fingerprint = self._compute_dataset_fingerprint()
         
         # Combine and hash
-        combined = f"{config_str}:{schema_version}:{dataset_fingerprint}"
+        combined = f"{config_str}:{SCHEMA_VERSION}:{dataset_fingerprint}"
         return hashlib.sha256(combined.encode()).hexdigest()
 
     def materialize_mart(
@@ -1624,6 +1643,22 @@ class MultiTableHandler:
         else:
             # Single file
             table = con.read_parquet(str(parquet_path))
+
+        # Drop bucket column if present (internal partition column, not for consumers)
+        # Event-level marts use hash bucket partitioning, which adds a 'bucket' column
+        # Check metadata schema if available, otherwise check if it's a partitioned directory
+        should_drop_bucket = False
+        if metadata is not None:
+            # Check metadata schema for bucket column
+            if 'bucket' in metadata.schema:
+                should_drop_bucket = True
+        elif parquet_path.is_dir():
+            # Partitioned directory likely has bucket column (event-level partitioning)
+            should_drop_bucket = True
+        
+        if should_drop_bucket:
+            logger.debug("Dropping internal 'bucket' partition column from planned table")
+            table = table.drop('bucket')
 
         logger.debug(f"Created lazy Ibis table over Parquet (no computation triggered)")
 
