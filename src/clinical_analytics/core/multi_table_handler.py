@@ -221,6 +221,66 @@ class MultiTableHandler:
                             logger.error(f"Failed to cast {table_name}.{col} from {df[col].dtype}: {type(col_e).__name__}: {str(col_e)}")
                             pass  # Skip if casting fails
 
+    def _sample_df(self, df: pl.DataFrame, n: int = 10_000) -> pl.DataFrame:
+        """
+        Deterministic sample using head (fastest, stable).
+
+        Bounds classification cost to O(sample_size) regardless of table size.
+        Uses head() for simplicity and stability (no randomness).
+
+        Args:
+            df: DataFrame to sample
+            n: Maximum sample size (default 10k rows)
+
+        Returns:
+            Sampled DataFrame with at most n rows
+        """
+        return df.head(min(n, df.height))
+
+    def _compute_sampled_uniqueness(self, df: pl.DataFrame, col: str) -> tuple[int, float]:
+        """
+        Compute uniqueness and null rate on sampled data only.
+
+        Critical: This method ensures all uniqueness computations are bounded
+        by sample size, preventing expensive full table scans.
+
+        Args:
+            df: DataFrame to sample
+            col: Column name
+
+        Returns:
+            Tuple of (unique_count, null_rate)
+        """
+        s = self._sample_df(df)
+
+        if col not in s.columns:
+            return (0, 1.0)
+
+        non_null = s[col].drop_nulls()
+        if non_null.len() == 0:
+            return (0, 1.0)
+
+        unique_count = non_null.n_unique()
+        null_rate = s[col].null_count() / max(s.height, 1)
+
+        return (unique_count, null_rate)
+
+    def _is_probably_id_col(self, col_name: str) -> bool:
+        """
+        Check if column name suggests ID column using tight pattern matching.
+
+        Tight pattern: exact 'id' or endswith('_id')
+        This avoids false positives like: valid, fluid, paid, acid
+
+        Args:
+            col_name: Column name to check
+
+        Returns:
+            True if column name matches tight ID pattern
+        """
+        col_lower = col_name.lower()
+        return col_lower == "id" or col_lower.endswith("_id")
+
     def detect_relationships(self) -> List[TableRelationship]:
         """
         Auto-detect foreign key relationships between tables.
@@ -312,14 +372,31 @@ class MultiTableHandler:
                 logger.warning(f"No grain key detected for table '{table_name}', skipping classification")
                 continue
 
-            # Calculate cardinality metrics
+            # Calculate cardinality metrics using sampled data
             total_rows = df.height
-            unique_grain_values = df[grain_key].n_unique()
-            null_count = df[grain_key].null_count()
-            null_rate = null_count / total_rows if total_rows > 0 else 0.0
 
-            cardinality_ratio = total_rows / unique_grain_values if unique_grain_values > 0 else float('inf')
-            is_unique = (unique_grain_values == total_rows - null_count)
+            # Use sampled uniqueness to prevent expensive full table scans
+            sampled_unique, sampled_null_rate = self._compute_sampled_uniqueness(df, grain_key)
+
+            # Estimate cardinality ratio from sample
+            s = self._sample_df(df)
+            non_null_sample_rows = s.height - int(sampled_null_rate * s.height)
+
+            if sampled_unique > 0 and non_null_sample_rows > 0:
+                # Estimate total unique values from sample ratio
+                sample_uniq_ratio = sampled_unique / non_null_sample_rows
+                estimated_total_unique = int(total_rows * sample_uniq_ratio)
+
+                # Cardinality ratio: total_rows / unique_values
+                # If ratio is ~1.0, table is unique on grain (dimension)
+                # If ratio > 1.1, table has duplicates (fact/event)
+                cardinality_ratio = total_rows / max(estimated_total_unique, 1)
+                is_unique = (cardinality_ratio <= 1.05)  # Allow 5% tolerance for sampling error
+            else:
+                cardinality_ratio = float('inf')
+                is_unique = False
+
+            null_rate = sampled_null_rate
 
             # Estimate bytes
             estimated_bytes = self._estimate_table_bytes(df)
@@ -374,12 +451,18 @@ class MultiTableHandler:
 
     def _detect_grain_key(self, df: pl.DataFrame) -> Optional[str]:
         """
-        Detect grain key column using pattern matching and cardinality.
+        Detect grain key column using explicit scoring formula.
 
-        Grain key patterns (in order of priority):
-        1. patient_id, subject_id (patient grain)
-        2. hadm_id, encounter_id, visit_id (admission grain)
-        3. Any column with high uniqueness and *_id pattern
+        Prioritizes explicit keys (patient_id, subject_id, hadm_id) over
+        row-level IDs (event_id, row_id, uuid). Uses sampled uniqueness
+        to prevent expensive full table scans.
+
+        Scoring formula (on sample):
+        - -2.0 * uniq_ratio (penalize row-level IDs with uniq ~ 1.0)
+        - -1.0 * null_rate
+        - +1.0 if col ends with _id
+        - +2.0 if col is explicit key (patient_id, subject_id, etc.)
+        - -5.0 if col contains event/row/uuid/guid tokens
 
         Args:
             df: Polars DataFrame
@@ -387,23 +470,60 @@ class MultiTableHandler:
         Returns:
             Grain key column name or None
         """
-        # Patient grain patterns
+        # 1. Check explicit patient grain patterns first (highest priority)
         patient_patterns = ['patient_id', 'subject_id', 'patientid', 'subjectid']
         for col in df.columns:
             if col.lower() in patient_patterns:
                 return col
 
-        # Admission grain patterns
+        # 2. Check explicit admission grain patterns
         admission_patterns = ['hadm_id', 'encounter_id', 'visit_id', 'admissionid', 'encounterid']
         for col in df.columns:
             if col.lower() in admission_patterns:
                 return col
 
-        # Fallback: highest cardinality column with _id suffix
-        id_cols = [col for col in df.columns if col.lower().endswith('_id') or col.lower().endswith('id')]
-        if id_cols:
-            # Pick column with highest uniqueness
-            best_col = max(id_cols, key=lambda c: df[c].n_unique())
+        # 3. Fallback: score ID columns using sampled data
+        id_cols = [col for col in df.columns if self._is_probably_id_col(col)]
+
+        if not id_cols:
+            return None
+
+        # Sample for scoring
+        s = self._sample_df(df)
+
+        # Score each ID column
+        scores = {}
+        for col in id_cols:
+            # Compute sampled uniqueness
+            unique_count, null_rate = self._compute_sampled_uniqueness(df, col)
+
+            # Calculate uniqueness ratio on sample
+            non_null_count = max(s.height - int(null_rate * s.height), 1)
+            uniq_ratio = unique_count / non_null_count
+
+            # Apply scoring formula
+            score = 0.0
+            score -= 2.0 * uniq_ratio  # Penalize row-level IDs (uniq ~ 1.0)
+            score -= 1.0 * null_rate    # Penalize NULLs
+            score += 1.0 if self._is_probably_id_col(col) else 0.0
+            score += 2.0 if col.lower() in patient_patterns + admission_patterns else 0.0
+
+            # Hard penalty for row-level ID tokens
+            col_lower = col.lower()
+            if any(tok in col_lower for tok in ["event", "row", "uuid", "guid"]):
+                score -= 5.0
+
+            scores[col] = score
+
+            logger.debug(
+                f"Grain key candidate '{col}': score={score:.2f} "
+                f"(uniq_ratio={uniq_ratio:.2f}, null_rate={null_rate:.2f})"
+            )
+
+        # Return highest scoring column
+        if scores:
+            best_col = max(scores, key=scores.get)
+            logger.debug(f"Selected grain key: '{best_col}' (score={scores[best_col]:.2f})")
             return best_col
 
         return None
@@ -477,11 +597,14 @@ class MultiTableHandler:
 
     def _detect_time_column(self, df: pl.DataFrame) -> Tuple[Optional[str], bool]:
         """
-        Detect time column in DataFrame.
+        Detect time column in DataFrame using sampled uniqueness.
 
         A valid time column must:
         1. Have datetime/date type OR name contains time/date patterns
-        2. Not be constant (all same value)
+        2. Not be constant (all same value in sample)
+
+        Note: Removed 'dt' pattern to avoid false positives (dt_code, mdt_flag).
+        Uses sampled uniqueness to prevent expensive full table scans.
 
         Args:
             df: Polars DataFrame
@@ -489,19 +612,27 @@ class MultiTableHandler:
         Returns:
             Tuple of (column_name, has_valid_time_column)
         """
-        time_patterns = ['time', 'date', 'timestamp', 'datetime', 'dt']
+        time_patterns = ['time', 'date', 'timestamp', 'datetime']
 
+        # Prioritize dtype check first (more reliable)
         for col in df.columns:
-            # Check dtype
+            # Check dtype first
             is_time_type = df[col].dtype in [pl.Datetime, pl.Date]
 
-            # Check name pattern
+            if is_time_type:
+                # Verify not constant using sampled data
+                unique_count, _ = self._compute_sampled_uniqueness(df, col)
+                if unique_count > 1:
+                    return (col, True)
+
+        # Fallback: check name patterns
+        for col in df.columns:
             col_lower = col.lower()
             has_time_pattern = any(p in col_lower for p in time_patterns)
 
-            if is_time_type or has_time_pattern:
-                # Verify not constant
-                unique_count = df[col].n_unique()
+            if has_time_pattern:
+                # Verify not constant using sampled data
+                unique_count, _ = self._compute_sampled_uniqueness(df, col)
                 if unique_count > 1:
                     return (col, True)
 
@@ -529,13 +660,15 @@ class MultiTableHandler:
         fk_count: int
     ) -> bool:
         """
-        Detect if table is a bridge (many-to-many) table.
+        Detect if table is a bridge (many-to-many) table using sampled data.
 
         Bridge table characteristics:
         1. Two or more foreign keys to different parent tables
         2. Neither FK is unique individually
-        3. Composite key (fk1, fk2) is near-unique (>95% unique)
-        4. High relationship degree but low column payload (<10 columns typically)
+        3. Composite key (fk1, fk2) is near-unique (>95% unique on sample)
+        4. Narrow table (width < 15 columns)
+
+        Uses sampled composite uniqueness to prevent expensive full table scans.
 
         Args:
             table_name: Name of table
@@ -545,6 +678,10 @@ class MultiTableHandler:
         Returns:
             True if bridge table detected
         """
+        # Structural heuristic: bridges are narrow (< 15 columns)
+        if df.width >= 15:
+            return False
+
         # Must have 2+ foreign keys
         if fk_count < 2:
             return False
@@ -558,28 +695,34 @@ class MultiTableHandler:
         if len(fk_cols) < 2:
             return False
 
-        # Check if individual FKs are non-unique
-        fk_unique_flags = [df[col].n_unique() == df.height for col in fk_cols if col in df.columns]
+        # Sample for uniqueness checks
+        s = self._sample_df(df)
+
+        # Check if individual FKs are non-unique (on sample)
+        fk_unique_flags = []
+        for col in fk_cols:
+            if col in s.columns:
+                unique_count, _ = self._compute_sampled_uniqueness(df, col)
+                is_unique = (unique_count == s.height)
+                fk_unique_flags.append(is_unique)
 
         if all(fk_unique_flags):
             # If all FKs are unique, not a bridge
             return False
 
-        # Check if composite key is near-unique
+        # Check if composite key is near-unique (on sample)
         try:
             # Use first two FK columns for composite check
             fk1, fk2 = fk_cols[0], fk_cols[1]
-            if fk1 in df.columns and fk2 in df.columns:
-                composite_unique = df.select([fk1, fk2]).n_unique()
-                composite_ratio = composite_unique / df.height if df.height > 0 else 0.0
+            if fk1 in s.columns and fk2 in s.columns:
+                composite_unique = s.select([fk1, fk2]).n_unique()
+                composite_ratio = composite_unique / s.height if s.height > 0 else 0.0
 
                 # Near-unique threshold: 95%
                 is_composite_unique = composite_ratio > 0.95
 
-                # Check column count (bridges typically have few columns)
-                has_low_payload = df.width < 10
+                return is_composite_unique
 
-                return is_composite_unique and has_low_payload
         except Exception as e:
             logger.debug(f"Error detecting bridge for {table_name}: {e}")
             return False

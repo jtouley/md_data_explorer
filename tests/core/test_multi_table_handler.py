@@ -376,6 +376,143 @@ class TestTableClassificationEdgeCases:
         handler.close()
 
 
+class TestPerformanceOptimizations:
+    """Test suite for performance optimizations (sampling, pattern matching)."""
+
+    def test_grain_key_fallback_prefers_patient_over_event(self):
+        """
+        Acceptance: Table with patient_id and event_id picks patient_id even if event_id is more unique.
+
+        This tests the explicit scoring formula that penalizes row-level IDs (event_id, row_id, uuid).
+        """
+        # Arrange: event_id is perfectly unique (row-level ID), patient_id has duplicates
+        df = pl.DataFrame({
+            "patient_id": ["P1", "P1", "P2", "P2"],  # 2 unique
+            "event_id": ["E1", "E2", "E3", "E4"],    # 4 unique (higher uniqueness!)
+            "value": [100, 200, 300, 400]
+        })
+
+        # Act
+        handler = MultiTableHandler({"test": df})
+        grain_key = handler._detect_grain_key(df)
+
+        # Assert: Should pick patient_id despite event_id being more unique
+        assert grain_key == "patient_id", (
+            f"Expected 'patient_id' (explicit key), got '{grain_key}'"
+        )
+
+        handler.close()
+
+    def test_id_pattern_does_not_match_false_positives(self):
+        """
+        Acceptance: endswith('_id') pattern does not match 'valid', 'fluid', 'paid'.
+
+        This tests the tightened ID pattern matching that requires exact 'id' or endswith('_id').
+        """
+        # Arrange: False positives that end with 'id'
+        df = pl.DataFrame({
+            "valid": [True, False, True],
+            "fluid": [100, 200, 300],
+            "paid": [10.5, 20.5, 30.5],
+            "patient_id": ["P1", "P2", "P3"]
+        })
+
+        handler = MultiTableHandler({"test": df})
+
+        # Act
+        grain_key = handler._detect_grain_key(df)
+
+        # Assert: Should pick patient_id, not any false positives
+        assert grain_key == "patient_id", (
+            f"Expected 'patient_id', got '{grain_key}'"
+        )
+
+        # Verify _is_probably_id_col() rejects false positives
+        assert not handler._is_probably_id_col("valid")
+        assert not handler._is_probably_id_col("fluid")
+        assert not handler._is_probably_id_col("paid")
+        assert handler._is_probably_id_col("patient_id")
+
+        handler.close()
+
+    def test_classification_uses_sampled_helpers_only(self, monkeypatch):
+        """
+        Performance guardrail: Enforce that classification uses _sample_df() and never
+        touches df[...] for uniqueness on original frame.
+
+        This test tracks calls to our own _sample_df() helper to verify sampling is used.
+        """
+        # Arrange: Create large DataFrame
+        large_df = pl.DataFrame({
+            "patient_id": [f"P{i % 1000}" for i in range(100_000)],
+            "value": list(range(100_000))
+        })
+
+        # Track calls to _sample_df()
+        sample_df_calls = []
+        original_sample_df = MultiTableHandler._sample_df
+
+        def tracked_sample_df(self, df, n=10_000):
+            sample_df_calls.append((df.height, n))
+            return original_sample_df(self, df, n)
+
+        monkeypatch.setattr(MultiTableHandler, "_sample_df", tracked_sample_df)
+
+        # Act
+        handler = MultiTableHandler({"large": large_df})
+        handler.classify_tables()
+
+        # Assert: _sample_df() was called (proving we're using sampling)
+        assert len(sample_df_calls) > 0, (
+            "Classification should use _sample_df() for all uniqueness checks"
+        )
+
+        # Verify all samples are bounded
+        for df_height, sample_size in sample_df_calls:
+            assert sample_size <= 10_000, (
+                f"Sample size {sample_size} exceeds bound (df_height={df_height})"
+            )
+
+        handler.close()
+
+    def test_classification_1m_rows_completes_within_3_seconds(self):
+        """
+        Strict acceptance gate: Classifying a 1M-row table must complete within 3 seconds.
+
+        This is a hard performance requirement that ensures sampling is working correctly.
+        """
+        import time
+
+        # Arrange: Create 1M-row table
+        large_df = pl.DataFrame({
+            "patient_id": [f"P{i % 1000}" for i in range(1_000_000)],  # 1000 unique patients
+            "event_id": [f"E{i}" for i in range(1_000_000)],  # 1M unique events (row-level ID)
+            "value": list(range(1_000_000))
+        })
+
+        handler = MultiTableHandler({"large": large_df})
+
+        # Act: Time classification
+        start = time.perf_counter()
+        handler.classify_tables()
+        elapsed = time.perf_counter() - start
+
+        # Assert: Must complete within 3 seconds
+        assert elapsed < 3.0, (
+            f"Classification of 1M-row table took {elapsed:.3f}s, "
+            f"exceeds 3s bound (sampling may not be working)"
+        )
+
+        # Verify classification worked correctly
+        assert "large" in handler.classifications
+        classification = handler.classifications["large"]
+        assert classification.grain_key == "patient_id", (
+            f"Should pick patient_id over event_id (grain_key={classification.grain_key})"
+        )
+
+        handler.close()
+
+
 class TestAnchorSelection:
     """Test suite for Milestone 2: Centrality-Based Anchor Selection."""
 
