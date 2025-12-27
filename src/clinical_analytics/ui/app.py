@@ -18,12 +18,13 @@ from clinical_analytics.ui.logging_config import configure_logging
 
 configure_logging()
 
-from clinical_analytics.analysis.stats import run_logistic_regression
-from clinical_analytics.core.profiling import DataProfiler
-from clinical_analytics.core.registry import DatasetRegistry
-from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.ui.helpers import require_outcome
+# Imports after logging config (intentional - logging must be configured first)
+from clinical_analytics.analysis.stats import run_logistic_regression  # noqa: E402
+from clinical_analytics.core.profiling import DataProfiler  # noqa: E402
+from clinical_analytics.core.registry import DatasetRegistry  # noqa: E402
+from clinical_analytics.core.schema import UnifiedCohort  # noqa: E402
+from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory  # noqa: E402
+from clinical_analytics.ui.helpers import require_outcome  # noqa: E402
 
 
 def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):

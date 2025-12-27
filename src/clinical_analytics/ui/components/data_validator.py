@@ -8,7 +8,6 @@ Validates uploaded data for common quality issues:
 - Data type mismatches
 """
 
-
 import pandas as pd
 
 
@@ -95,7 +94,9 @@ class DataQualityValidator:
                     {
                         "severity": "warning",
                         "type": "low_uniqueness",
-                        "message": f"ID column only {uniqueness_ratio * 100:.1f}% unique. Expected >95% for patient IDs.",
+                        "message": (
+                            f"ID column only {uniqueness_ratio * 100:.1f}% unique. Expected >95% for patient IDs."
+                        ),
                         "uniqueness": uniqueness_ratio,
                     }
                 )
@@ -131,7 +132,9 @@ class DataQualityValidator:
                     {
                         "severity": "error",
                         "type": "excessive_missing",
-                        "message": f"Column '{col}' has {pct_missing:.1f}% missing data. Consider removing this variable.",
+                        "message": (
+                            f"Column '{col}' has {pct_missing:.1f}% missing data. Consider removing this variable."
+                        ),
                         "column": col,
                         "missing_count": int(n_missing),
                         "missing_pct": pct_missing,
@@ -247,7 +250,9 @@ class DataQualityValidator:
                     {
                         "severity": "warning",
                         "type": "imbalanced_outcome",
-                        "message": f"Outcome is very imbalanced ({minority_pct:.1f}% minority class). May affect analysis.",
+                        "message": (
+                            f"Outcome is very imbalanced ({minority_pct:.1f}% minority class). May affect analysis."
+                        ),
                         "minority_pct": minority_pct,
                         "distribution": value_counts.to_dict(),
                     }

@@ -1787,7 +1787,8 @@ class MultiTableHandler:
             logger.debug(f"Casting parent from {parent_values.dtype} to Utf8")
             parent_str = parent_values.cast(pl.Utf8, strict=False).drop_nulls().unique()
             logger.debug(
-                f"Parent after cast: dtype={parent_str.dtype}, len={parent_str.len()}, sample={parent_str.head(3).to_list()}"
+                f"Parent after cast: dtype={parent_str.dtype}, len={parent_str.len()}, "
+                f"sample: {parent_str.head(3).to_list()}"
             )
 
             # Verify both are Utf8 before join

@@ -400,8 +400,6 @@ class NLQueryEngine:
         words = query.lower().split()
 
         # Match against all available columns
-        view = self.semantic_layer.get_base_view()
-
         matched_vars = []
         for word in words:
             # Remove punctuation
