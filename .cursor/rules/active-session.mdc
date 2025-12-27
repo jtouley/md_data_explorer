@@ -1,38 +1,48 @@
-# Active Session: M5 Ibis Planning and Materialization
+# Active Session: Milestone 6 - Granularity Parameter
 
-**Session ID**: `m5-ibis-planning-materialization-complete`
+**Session ID**: `milestone6_granularity_parameter`
 
-**Session File**: `.context/sessions/m5-ibis-planning-materialization-complete.yaml`
+**Status**: COMPLETED
 
-**Status**: Completed
+**Session File**: `.context/sessions/milestone6_granularity_parameter.yaml`
 
-**Resume Prompt**:
+## Resume Prompt
 
-Resume work on Milestone 5 (M5) - Ibis Planning and Materialization Layer.
+```
+Resume work on Milestone 6: Add Granularity Parameter to ClinicalDataset.get_cohort()
 
-Status: COMPLETED with fixes applied.
+Status: COMPLETED
 
-Implementation complete:
-- materialize_mart() method: Polars pipeline → Parquet with caching (run_id)
-- plan_mart() method: Lazy Ibis expressions over materialized Parquet
-- CohortMetadata dataclass with run_id for deterministic caching
-- Hash bucket partitioning for event-level marts
-- Observability logging (duration, row counts, parquet size)
+Implementation Summary:
+- Updated ClinicalDataset.get_cohort() abstract method signature to include granularity parameter (default: "patient_level")
+- Added GRANULARITY_TO_GRAIN ClassVar dict as single source of truth
+- Added VALID_GRANULARITIES ClassVar derived from GRANULARITY_TO_GRAIN.keys()
+- Added _map_granularity_to_grain() classmethod with runtime validation (raises ValueError)
+- Added Granularity and Grain TypeAlias definitions
+- Created unit tests in tests/core/test_dataset.py
+- Removed tracked __pycache__ file
 
-Fixes applied:
-- SCHEMA_VERSION module-level constant (replaces placeholder)
-- Improved dataset fingerprinting: includes content hash (sample) to detect value changes
-- Ibis connection caching on instance (_ibis_connection)
-- Bucket column dropped from planned tables (internal partition column)
+Key Design Decisions:
+- Single source of truth: GRANULARITY_TO_GRAIN dict, VALID_GRANULARITIES derived from it
+- Runtime validation in mapping helper (Literal types don't enforce at runtime)
+- Contract-only change: concrete implementations will handle granularity in M7
+- Backward compatible: default parameter ensures existing code works
 
-Test coverage: 13 tests passing (9 original + 4 new for fixes)
+Files Modified:
+- src/clinical_analytics/core/dataset.py (added granularity parameter, mapping helper, TypeAlias)
+- tests/core/test_dataset.py (new file with mapping helper tests)
 
-Key files:
-- src/clinical_analytics/core/multi_table_handler.py (main implementation)
-- tests/core/test_multi_table_handler.py (test suite)
+Next Steps:
+- Milestone 7: Update all dataset implementations to support granularity parameter
+- Milestone 8: Update SemanticLayer.get_cohort() to handle granularity mapping
 
-Commits:
-- 6e3706e: Implement Milestone 5
-- 616135a: Fix M5 nits
+Reference:
+- Plan: .cursor/plans/milestone_6_add_granularity_parameter_to_clinicaldataset.get_cohort()_774d7687.plan.md
+- Diff: .context/diffs/m6-granularity-parameter.diff
+```
 
-Next steps: Ready for integration with semantic layer and query planning.
+## Context
+
+- **Plan**: `.cursor/plans/milestone_6_add_granularity_parameter_to_clinicaldataset.get_cohort()_774d7687.plan.md`
+- **Diff**: `.context/diffs/m6-granularity-parameter.diff`
+- **Key Files**: `src/clinical_analytics/core/dataset.py`, `tests/core/test_dataset.py`

@@ -12,11 +12,43 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 import pandas as pd
 import logging
+import hashlib
+import re
 
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.core.mapper import load_dataset_config
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_identifier(name: str, max_len: int = 50) -> str:
+    """
+    Generate a SQL-safe identifier from a dataset name.
+    
+    Handles any user-provided name (hyphens, dots, spaces, emojis, etc.)
+    by sanitizing and adding a hash for uniqueness.
+    
+    Args:
+        name: Original dataset name (can contain any characters)
+        max_len: Maximum length for base name (before hash)
+        
+    Returns:
+        SQL-safe identifier (e.g., "mimic_iv_clinical_demo_2_2_a1b2c3d4")
+    """
+    # Replace non-alphanumeric (except underscore) with underscore
+    base = re.sub(r"[^0-9a-zA-Z_]+", "_", name).strip("_").lower()
+    
+    # Ensure it starts with letter or underscore (not a number)
+    if not base or base[0].isdigit():
+        base = f"t_{base}" if base else "t"
+    
+    # Add hash suffix for uniqueness and collision prevention
+    h = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+    
+    # Limit base length
+    base = base[:max_len]
+    
+    return f"{base}_{h}"
 
 
 class SemanticLayer:
@@ -143,7 +175,9 @@ class SemanticLayer:
                     f"(original path: {original_path}, workspace root: {self.workspace_root})"
                 )
             
-            table_name = f"{self.dataset_name}_raw"
+            # Generate SQL-safe table name from dataset name
+            safe_name = _safe_identifier(self.dataset_name)
+            table_name = f"{safe_name}_raw"
             
             # Check if it's a directory (for multi-file datasets like Sepsis)
             if source_path.is_dir():
@@ -157,21 +191,28 @@ class SemanticLayer:
                 )
             else:
                 # Single file (CSV)
-                # Use DuckDB's read_csv function via SQL
-                # Access underlying DuckDB connection from Ibis
                 abs_path = str(source_path.resolve())
                 logger.debug(f"Registering source file with DuckDB: {abs_path}")
                 
-                # Get underlying DuckDB connection and execute raw SQL
+                # Get underlying DuckDB connection
                 duckdb_con = self.con.con
-                # Create table using raw DuckDB SQL
-                duckdb_con.execute(f"CREATE TABLE {table_name} AS SELECT * FROM read_csv_auto('{abs_path}')")
+                
+                # Use parameter binding to prevent SQL injection
+                # DuckDB supports ? placeholders for parameterized queries
+                duckdb_con.execute(
+                    f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto(?)",
+                    [abs_path]
+                )
+                
                 # Now reference it via Ibis
                 self.raw = self.con.table(table_name)
                 logger.info(f"Successfully registered source table '{table_name}' from {abs_path}")
             
         elif 'db_table' in init_params:
             # Database table source (already registered)
+            # Note: db_table must be a valid DuckDB identifier (no special chars, or quoted)
+            # If user provides a table name with special characters, they must quote it
+            # or use a sanitized identifier. Ibis con.table() handles quoted identifiers.
             table_name = init_params['db_table']
             logger.debug(f"Using database table source: {table_name}")
             self.raw = self.con.table(table_name)

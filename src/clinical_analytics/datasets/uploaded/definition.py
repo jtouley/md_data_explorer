@@ -40,6 +40,7 @@ class UploadedDataset(ClinicalDataset):
         self.upload_id = upload_id
         self.metadata = None
         self.data = None
+        self._semantic_initialized = False  # Track lazy init
 
         # Load metadata
         self.metadata = storage.get_upload_metadata(upload_id)
@@ -215,6 +216,72 @@ class UploadedDataset(ClinicalDataset):
             ]
 
         return variable_mapping
+    
+    def get_semantic_layer(self):
+        """
+        Get semantic layer, lazy-initializing from unified cohort if available.
+        
+        Overrides base class to support multi-table uploads.
+        """
+        # Lazy initialize if not already done
+        if not self._semantic_initialized:
+            self._maybe_init_semantic()
+            self._semantic_initialized = True
+        
+        # Call parent to get semantic (or raise if None)
+        return super().get_semantic_layer()
+    
+    def _maybe_init_semantic(self) -> None:
+        """Lazy initialization of semantic layer for multi-table uploads."""
+        # Only for multi-table uploads with inferred_schema
+        inferred_schema = self.metadata.get('inferred_schema')
+        if not inferred_schema:
+            return
+        
+        csv_path = self.storage.raw_dir / f"{self.upload_id}.csv"
+        if not csv_path.exists():
+            logger.warning(f"Unified cohort CSV not found for upload {self.upload_id}")
+            return
+        
+        try:
+            from clinical_analytics.core.semantic import SemanticLayer
+            
+            config = self._build_config_from_inferred_schema(inferred_schema)
+            workspace_root = self.storage.upload_dir.parent.parent
+            
+            # Use absolute path - SemanticLayer handles absolute paths correctly
+            config['init_params'] = {'source_path': str(csv_path.resolve())}
+            
+            self.semantic = SemanticLayer(
+                dataset_name=self.name,
+                config=config,
+                workspace_root=workspace_root
+            )
+            logger.info(f"Created semantic layer for uploaded dataset '{self.name}'")
+        except Exception as e:
+            logger.warning(f"Failed to create semantic layer: {e}")
+            # Leave self.semantic as None (class attribute default)
+    
+    def _build_config_from_inferred_schema(self, inferred_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Build semantic layer config from inferred schema."""
+        outcomes = inferred_schema.get('outcomes', {})
+        default_outcome = list(outcomes.keys())[0] if outcomes else None
+        
+        config = {
+            'name': self.name,
+            'display_name': self.metadata.get('original_filename', self.name),
+            'status': 'available',
+            'init_params': {},  # Will be set to absolute CSV path
+            'column_mapping': inferred_schema.get('column_mapping', {}),
+            'outcomes': outcomes,
+            'time_zero': inferred_schema.get('time_zero', {}),
+            'analysis': {
+                'default_outcome': default_outcome,
+                'default_predictors': inferred_schema.get('predictors', []),
+                'categorical_variables': inferred_schema.get('categorical_columns', [])
+            }
+        }
+        return config
 
     def get_info(self) -> Dict[str, Any]:
         """
