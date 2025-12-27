@@ -1,5 +1,5 @@
 ---
-description: Testing hygiene standards for data engineering. Enforces pytest patterns, test isolation, fixture discipline, and coverage requirements.
+description: Testing hygiene standards for data engineering. Enforces pytest patterns, test isolation, fixture discipline, and coverage requirements. Always use Makefile commands for testing.
 globs: ["**/test_*.py", "**/tests/**/*.py", "**/*_test.py"]
 alwaysApply: true
 ---
@@ -284,5 +284,29 @@ def test_full_backfill_processing():
     """Takes 2+ minutes; skip in quick feedback loops."""
     ...
 
-# Run fast tests only: pytest -m "not slow"
+# Run fast tests only: make test-fast
+# (Uses pytest -m "not slow" internally)
 ```
+
+## Running Tests (Use Makefile)
+
+**Always use Makefile commands:**
+```bash
+make test              # Run all tests
+make test-fast         # Fast tests only (skip slow)
+make test-cov          # Tests with coverage report
+make test-unit         # Unit tests only
+make test-integration  # Integration tests only
+```
+
+**Never run pytest directly:**
+```bash
+# WRONG
+pytest tests/
+uv run pytest tests/
+
+# CORRECT
+make test
+```
+
+See `.cursor/rules/000-project-setup-and-makefile.mdc` for full Makefile reference.

@@ -4,9 +4,10 @@ Tests for upload security validation.
 Tests file type validation, size limits, path traversal prevention, and other security measures.
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -203,13 +204,13 @@ class TestSecurityConstants:
 
     def test_allowed_extensions_defined(self):
         """Allowed extensions should be defined."""
-        assert hasattr(UploadSecurityValidator, 'ALLOWED_EXTENSIONS')
+        assert hasattr(UploadSecurityValidator, "ALLOWED_EXTENSIONS")
         assert len(UploadSecurityValidator.ALLOWED_EXTENSIONS) > 0
 
     def test_size_limits_defined(self):
         """Size limits should be defined."""
-        assert hasattr(UploadSecurityValidator, 'MAX_FILE_SIZE_BYTES')
-        assert hasattr(UploadSecurityValidator, 'MIN_FILE_SIZE_BYTES')
+        assert hasattr(UploadSecurityValidator, "MAX_FILE_SIZE_BYTES")
+        assert hasattr(UploadSecurityValidator, "MIN_FILE_SIZE_BYTES")
 
     def test_size_limits_reasonable(self):
         """Size limits should be reasonable."""
@@ -218,12 +219,14 @@ class TestSecurityConstants:
 
     def test_allowed_extensions_secure(self):
         """Only safe file types should be allowed."""
-        dangerous_extensions = {'.exe', '.bat', '.sh', '.py', '.js', '.php'}
+        dangerous_extensions = {".exe", ".bat", ".sh", ".py", ".js", ".php"}
         allowed = UploadSecurityValidator.ALLOWED_EXTENSIONS
 
         # None of the dangerous types should be allowed
         for dangerous in dangerous_extensions:
-            assert dangerous not in allowed, f"Dangerous extension {dangerous} should not be allowed"
+            assert dangerous not in allowed, (
+                f"Dangerous extension {dangerous} should not be allowed"
+            )
 
 
 if __name__ == "__main__":

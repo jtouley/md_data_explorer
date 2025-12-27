@@ -2,15 +2,15 @@
 Tests for Sepsis dataset loader.
 """
 
-import pytest
 import polars as pl
-from pathlib import Path
+import pytest
+
+from clinical_analytics.core.mapper import ColumnMapper
 from clinical_analytics.datasets.sepsis.loader import (
     find_psv_files,
+    load_and_aggregate,
     load_patient_file,
-    load_and_aggregate
 )
-from clinical_analytics.core.mapper import ColumnMapper
 
 
 class TestSepsisLoader:
@@ -29,7 +29,7 @@ class TestSepsisLoader:
         files = list(find_psv_files(tmp_path))
 
         assert len(files) == 2
-        assert all(f.suffix == '.psv' for f in files)
+        assert all(f.suffix == ".psv" for f in files)
 
     def test_find_psv_files_none(self, tmp_path):
         """Test finding PSV files when none exist."""
@@ -45,9 +45,9 @@ class TestSepsisLoader:
 
         assert isinstance(df, pl.DataFrame)
         assert len(df) == 1
-        assert 'Age' in df.columns
-        assert 'Gender' in df.columns
-        assert 'SepsisLabel' in df.columns
+        assert "Age" in df.columns
+        assert "Gender" in df.columns
+        assert "SepsisLabel" in df.columns
 
     def test_load_and_aggregate(self, tmp_path):
         """Test loading and aggregating multiple PSV files."""
@@ -56,16 +56,12 @@ class TestSepsisLoader:
         (tmp_path / "p00002.psv").write_text("Age|Gender|SepsisLabel\n62|F|0\n62|F|0\n")
 
         config = {
-            'aggregation': {
-                'static_features': [
-                    {'column': 'Age', 'method': 'first', 'target': 'age'},
-                    {'column': 'Gender', 'method': 'first', 'target': 'gender'}
+            "aggregation": {
+                "static_features": [
+                    {"column": "Age", "method": "first", "target": "age"},
+                    {"column": "Gender", "method": "first", "target": "gender"},
                 ],
-                'outcome': {
-                    'column': 'SepsisLabel',
-                    'method': 'max',
-                    'target': 'sepsis_label'
-                }
+                "outcome": {"column": "SepsisLabel", "method": "max", "target": "sepsis_label"},
             }
         }
         mapper = ColumnMapper(config)
@@ -74,10 +70,10 @@ class TestSepsisLoader:
 
         assert isinstance(result, pl.DataFrame)
         assert len(result) == 2  # Two patients
-        assert 'patient_id' in result.columns
-        assert 'age' in result.columns
-        assert 'gender' in result.columns
-        assert 'sepsis_label' in result.columns
+        assert "patient_id" in result.columns
+        assert "age" in result.columns
+        assert "gender" in result.columns
+        assert "sepsis_label" in result.columns
 
     def test_load_and_aggregate_no_files(self, tmp_path):
         """Test loading when no PSV files exist."""
@@ -103,5 +99,4 @@ class TestSepsisLoader:
 
         assert isinstance(result, pl.DataFrame)
         assert len(result) == 1
-        assert 'patient_id' in result.columns
-
+        assert "patient_id" in result.columns

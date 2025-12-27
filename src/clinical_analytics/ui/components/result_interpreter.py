@@ -5,9 +5,6 @@ Provides plain-language interpretation of statistical results for clinicians.
 """
 
 import streamlit as st
-import pandas as pd
-import numpy as np
-from typing import Dict, Optional
 
 
 class ResultInterpreter:
@@ -19,7 +16,7 @@ class ResultInterpreter:
     """
 
     @staticmethod
-    def interpret_p_value(p_value: float, alpha: float = 0.05) -> Dict[str, any]:
+    def interpret_p_value(p_value: float, alpha: float = 0.05) -> dict[str, any]:
         """
         Interpret a p-value in plain language.
 
@@ -52,20 +49,16 @@ class ResultInterpreter:
             interpretation = f"This result **could easily be due to chance** (p={p_value:.3f}). No strong evidence of an effect."
 
         return {
-            'p_value': p_value,
-            'significance': significance,
-            'emoji': emoji,
-            'interpretation': interpretation,
-            'is_significant': p_value < alpha
+            "p_value": p_value,
+            "significance": significance,
+            "emoji": emoji,
+            "interpretation": interpretation,
+            "is_significant": p_value < alpha,
         }
 
     @staticmethod
     def interpret_odds_ratio(
-        or_value: float,
-        ci_lower: float,
-        ci_upper: float,
-        p_value: float,
-        variable_name: str
+        or_value: float, ci_lower: float, ci_upper: float, p_value: float, variable_name: str
     ) -> str:
         """
         Interpret an odds ratio in clinical terms.
@@ -82,7 +75,7 @@ class ResultInterpreter:
         """
         p_interp = ResultInterpreter.interpret_p_value(p_value)
 
-        if not p_interp['is_significant']:
+        if not p_interp["is_significant"]:
             return f"""
 **{variable_name}**: Not significantly associated with outcome (p={p_value:.3f})
 
@@ -100,11 +93,11 @@ The odds ratio is {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but th
             pct_increase = (or_value - 1) * 100
 
             interpretation = f"""
-**{variable_name}**: {magnitude} the odds of the outcome {p_interp['emoji']}
+**{variable_name}**: {magnitude} the odds of the outcome {p_interp["emoji"]}
 
 - **Odds Ratio**: {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
 - **Interpretation**: Having this characteristic increases the odds of the outcome by approximately **{pct_increase:.0f}%**
-- **Statistical Significance**: {p_interp['interpretation']}
+- **Statistical Significance**: {p_interp["interpretation"]}
 """
 
         elif or_value < 1:
@@ -118,11 +111,11 @@ The odds ratio is {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but th
             pct_decrease = (1 - or_value) * 100
 
             interpretation = f"""
-**{variable_name}**: {magnitude} the odds of the outcome {p_interp['emoji']}
+**{variable_name}**: {magnitude} the odds of the outcome {p_interp["emoji"]}
 
 - **Odds Ratio**: {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
 - **Interpretation**: Having this characteristic decreases the odds of the outcome by approximately **{pct_decrease:.0f}%**
-- **Statistical Significance**: {p_interp['interpretation']}
+- **Statistical Significance**: {p_interp["interpretation"]}
 """
 
         else:  # OR ≈ 1
@@ -144,7 +137,7 @@ The odds ratio is {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but th
         group1: str,
         group2: str,
         outcome_name: str,
-        units: Optional[str] = None
+        units: str | None = None,
     ) -> str:
         """
         Interpret a mean difference (t-test result).
@@ -165,7 +158,7 @@ The odds ratio is {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but th
         p_interp = ResultInterpreter.interpret_p_value(p_value)
         units_str = f" {units}" if units else ""
 
-        if not p_interp['is_significant']:
+        if not p_interp["is_significant"]:
             return f"""
 **No significant difference** between {group1} and {group2} (p={p_value:.3f}) ❌
 
@@ -177,11 +170,11 @@ but this could easily be due to chance.
         abs_diff = abs(mean_diff)
 
         interpretation = f"""
-**Significant difference** between groups {p_interp['emoji']}
+**Significant difference** between groups {p_interp["emoji"]}
 
 - **{group1}** has {direction} {outcome_name} than **{group2}**
 - **Difference**: {abs_diff:.2f}{units_str} (95% CI: {abs(ci_lower):.2f} to {abs(ci_upper):.2f})
-- **Statistical Significance**: {p_interp['interpretation']}
+- **Statistical Significance**: {p_interp["interpretation"]}
 
 **Clinical Interpretation**: On average, {group1} patients have {outcome_name} that is
 {abs_diff:.2f}{units_str} {direction} than {group2} patients.
@@ -191,11 +184,7 @@ but this could easily be due to chance.
 
     @staticmethod
     def interpret_hazard_ratio(
-        hr_value: float,
-        ci_lower: float,
-        ci_upper: float,
-        p_value: float,
-        variable_name: str
+        hr_value: float, ci_lower: float, ci_upper: float, p_value: float, variable_name: str
     ) -> str:
         """
         Interpret a hazard ratio in clinical terms.
@@ -212,7 +201,7 @@ but this could easily be due to chance.
         """
         p_interp = ResultInterpreter.interpret_p_value(p_value)
 
-        if not p_interp['is_significant']:
+        if not p_interp["is_significant"]:
             return f"""
 **{variable_name}**: Not significantly associated with outcome (p={p_value:.3f})
 
@@ -230,11 +219,11 @@ The hazard ratio is {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but 
             pct_increase = (hr_value - 1) * 100
 
             interpretation = f"""
-**{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp['emoji']}
+**{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp["emoji"]}
 
 - **Hazard Ratio**: {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
 - **Interpretation**: Having this characteristic increases the hazard by approximately **{pct_increase:.0f}%** (faster time to event)
-- **Statistical Significance**: {p_interp['interpretation']}
+- **Statistical Significance**: {p_interp["interpretation"]}
 """
 
         elif hr_value < 1:
@@ -248,11 +237,11 @@ The hazard ratio is {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but 
             pct_decrease = (1 - hr_value) * 100
 
             interpretation = f"""
-**{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp['emoji']}
+**{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp["emoji"]}
 
 - **Hazard Ratio**: {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
 - **Interpretation**: Having this characteristic decreases the hazard by approximately **{pct_decrease:.0f}%** (slower time to event)
-- **Statistical Significance**: {p_interp['interpretation']}
+- **Statistical Significance**: {p_interp["interpretation"]}
 """
 
         else:  # HR ≈ 1
@@ -266,12 +255,7 @@ The hazard ratio is {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but 
         return interpretation
 
     @staticmethod
-    def interpret_correlation(
-        correlation: float,
-        p_value: float,
-        var1: str,
-        var2: str
-    ) -> str:
+    def interpret_correlation(correlation: float, p_value: float, var1: str, var2: str) -> str:
         """
         Interpret a correlation coefficient.
 
@@ -305,7 +289,7 @@ The hazard ratio is {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), but 
             direction = "**negative**"
             relationship = f"As {var1} increases, {var2} tends to decrease"
 
-        if not p_interp['is_significant']:
+        if not p_interp["is_significant"]:
             return f"""
 **No significant correlation** between {var1} and {var2} (p={p_value:.3f}) ❌
 
@@ -313,13 +297,13 @@ The correlation is {correlation:.3f}, but this could be due to chance.
 """
 
         interpretation = f"""
-**{strength.replace('**', '')} {direction.replace('**', '')} correlation** {p_interp['emoji']}
+**{strength.replace("**", "")} {direction.replace("**", "")} correlation** {p_interp["emoji"]}
 
 - **Correlation coefficient**: {correlation:.3f}
 - **Strength**: {strength} relationship
 - **Direction**: {direction}
 - **Interpretation**: {relationship}
-- **Statistical Significance**: {p_interp['interpretation']}
+- **Statistical Significance**: {p_interp["interpretation"]}
 """
 
         return interpretation
@@ -330,7 +314,7 @@ The correlation is {correlation:.3f}, but this could be due to chance.
         statistic: float,
         p_value: float,
         interpretation: str,
-        additional_info: Optional[Dict[str, any]] = None
+        additional_info: dict[str, any] | None = None,
     ):
         """
         Render a styled result card with interpretation.
@@ -376,8 +360,8 @@ The correlation is {correlation:.3f}, but this could be due to chance.
     def generate_methods_text(
         analysis_type: str,
         test_name: str,
-        variables: Dict[str, any],
-        software: str = "Clinical Analytics Platform"
+        variables: dict[str, any],
+        software: str = "Clinical Analytics Platform",
     ) -> str:
         """
         Generate methods section text for manuscripts.
@@ -392,31 +376,31 @@ The correlation is {correlation:.3f}, but this could be due to chance.
             Methods text ready for manuscript
         """
         methods_templates = {
-            'descriptive': """
+            "descriptive": """
 Descriptive statistics were calculated for all variables. Continuous variables are presented as mean ± standard
 deviation or median (interquartile range) as appropriate. Categorical variables are presented as frequencies
 and percentages. All analyses were performed using {software}.
 """,
-            'group_comparison': """
+            "group_comparison": """
 {test_name} was used to compare {outcome} between {groups}. For continuous variables, results are reported as
 mean difference with 95% confidence intervals. For categorical variables, results are reported as proportions.
 Statistical significance was defined as p<0.05 (two-tailed). All analyses were performed using {software}.
 """,
-            'regression': """
+            "regression": """
 {test_name} was performed to identify predictors of {outcome}. Results are reported as odds ratios (OR) with
 95% confidence intervals (CI). Variables with p<0.05 were considered statistically significant. Model fit was
 assessed using pseudo-R² and likelihood ratio tests. All analyses were performed using {software}.
 """,
-            'survival': """
+            "survival": """
 {test_name} was used to analyze time to {event}. Survival curves were compared using the log-rank test.
 Hazard ratios (HR) with 95% confidence intervals were calculated. Censoring was handled using the Kaplan-Meier
 method. Statistical significance was defined as p<0.05. All analyses were performed using {software}.
 """,
-            'correlation': """
+            "correlation": """
 Pearson correlation coefficients were calculated to assess relationships between continuous variables.
 Correlation strength was interpreted as weak (|r|<0.3), moderate (0.3≤|r|<0.7), or strong (|r|≥0.7).
 Statistical significance was defined as p<0.05 (two-tailed). All analyses were performed using {software}.
-"""
+""",
         }
 
         template = methods_templates.get(analysis_type, "")
@@ -425,9 +409,9 @@ Statistical significance was defined as p<0.05 (two-tailed). All analyses were p
         methods = template.format(
             test_name=test_name,
             software=software,
-            outcome=variables.get('outcome', '[outcome]'),
-            groups=variables.get('groups', '[groups]'),
-            event=variables.get('event', '[event]')
+            outcome=variables.get("outcome", "[outcome]"),
+            groups=variables.get("groups", "[groups]"),
+            event=variables.get("event", "[event]"),
         )
 
         return methods.strip()

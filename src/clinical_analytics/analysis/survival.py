@@ -4,10 +4,9 @@ Survival Analysis Module - Time-to-event analysis for clinical data.
 Provides Kaplan-Meier survival curves and Cox proportional hazards regression.
 """
 
-import pandas as pd
 import numpy as np
-from typing import List, Tuple, Optional, Any
-from lifelines import KaplanMeierFitter, CoxPHFitter
+import pandas as pd
+from lifelines import CoxPHFitter, KaplanMeierFitter
 from lifelines.statistics import logrank_test, multivariate_logrank_test
 
 
@@ -15,9 +14,9 @@ def run_kaplan_meier(
     df: pd.DataFrame,
     duration_col: str,
     event_col: str,
-    group_col: Optional[str] = None,
-    alpha: float = 0.05
-) -> Tuple[KaplanMeierFitter, pd.DataFrame]:
+    group_col: str | None = None,
+    alpha: float = 0.05,
+) -> tuple[KaplanMeierFitter, pd.DataFrame]:
     """
     Perform Kaplan-Meier survival analysis.
 
@@ -46,18 +45,16 @@ def run_kaplan_meier(
 
     if group_col is None:
         # Single cohort
-        kmf.fit(
-            durations=data[duration_col],
-            event_observed=data[event_col],
-            label="Overall"
-        )
+        kmf.fit(durations=data[duration_col], event_observed=data[event_col], label="Overall")
 
-        summary = pd.DataFrame({
-            'time': kmf.survival_function_.index,
-            'survival_probability': kmf.survival_function_['Overall'],
-            'ci_lower': kmf.confidence_interval_['Overall_lower_0.95'],
-            'ci_upper': kmf.confidence_interval_['Overall_upper_0.95']
-        })
+        summary = pd.DataFrame(
+            {
+                "time": kmf.survival_function_.index,
+                "survival_probability": kmf.survival_function_["Overall"],
+                "ci_lower": kmf.confidence_interval_["Overall_lower_0.95"],
+                "ci_upper": kmf.confidence_interval_["Overall_upper_0.95"],
+            }
+        )
 
     else:
         # Stratified by group
@@ -69,16 +66,18 @@ def run_kaplan_meier(
             kmf.fit(
                 durations=group_data[duration_col],
                 event_observed=group_data[event_col],
-                label=str(group)
+                label=str(group),
             )
 
-            group_summary = pd.DataFrame({
-                'group': group,
-                'time': kmf.survival_function_.index,
-                'survival_probability': kmf.survival_function_[str(group)],
-                'ci_lower': kmf.confidence_interval_[f'{group}_lower_0.95'],
-                'ci_upper': kmf.confidence_interval_[f'{group}_upper_0.95']
-            })
+            group_summary = pd.DataFrame(
+                {
+                    "group": group,
+                    "time": kmf.survival_function_.index,
+                    "survival_probability": kmf.survival_function_[str(group)],
+                    "ci_lower": kmf.confidence_interval_[f"{group}_lower_0.95"],
+                    "ci_upper": kmf.confidence_interval_[f"{group}_upper_0.95"],
+                }
+            )
 
             summaries.append(group_summary)
 
@@ -88,12 +87,8 @@ def run_kaplan_meier(
 
 
 def run_cox_regression(
-    df: pd.DataFrame,
-    duration_col: str,
-    event_col: str,
-    covariates: List[str],
-    alpha: float = 0.05
-) -> Tuple[CoxPHFitter, pd.DataFrame]:
+    df: pd.DataFrame, duration_col: str, event_col: str, covariates: list[str], alpha: float = 0.05
+) -> tuple[CoxPHFitter, pd.DataFrame]:
     """
     Perform Cox proportional hazards regression.
 
@@ -112,7 +107,7 @@ def run_cox_regression(
     data = df[model_cols].copy()
 
     # Handle categorical variables - convert to dummies
-    categorical_cols = data.select_dtypes(include=['object', 'category']).columns.tolist()
+    categorical_cols = data.select_dtypes(include=["object", "category"]).columns.tolist()
     categorical_cols = [c for c in categorical_cols if c in covariates]
 
     if categorical_cols:
@@ -132,32 +127,21 @@ def run_cox_regression(
     summary_df = cph.summary
 
     # Add hazard ratios explicitly
-    summary_df['hazard_ratio'] = np.exp(summary_df['coef'])
-    summary_df['hr_ci_lower'] = np.exp(summary_df['coef lower 95%'])
-    summary_df['hr_ci_upper'] = np.exp(summary_df['coef upper 95%'])
+    summary_df["hazard_ratio"] = np.exp(summary_df["coef"])
+    summary_df["hr_ci_lower"] = np.exp(summary_df["coef lower 95%"])
+    summary_df["hr_ci_upper"] = np.exp(summary_df["coef upper 95%"])
 
     # Reorder columns for clarity
-    summary_df = summary_df[[
-        'hazard_ratio',
-        'hr_ci_lower',
-        'hr_ci_upper',
-        'p',
-        'coef',
-        'se(coef)',
-        'z'
-    ]]
+    summary_df = summary_df[
+        ["hazard_ratio", "hr_ci_lower", "hr_ci_upper", "p", "coef", "se(coef)", "z"]
+    ]
 
     summary_df = summary_df.round(4)
 
     return cph, summary_df
 
 
-def run_logrank_test(
-    df: pd.DataFrame,
-    duration_col: str,
-    event_col: str,
-    group_col: str
-) -> dict:
+def run_logrank_test(df: pd.DataFrame, duration_col: str, event_col: str, group_col: str) -> dict:
     """
     Perform log-rank test to compare survival curves between groups.
 
@@ -189,15 +173,15 @@ def run_logrank_test(
             durations_A=group_a[duration_col],
             durations_B=group_b[duration_col],
             event_observed_A=group_a[event_col],
-            event_observed_B=group_b[event_col]
+            event_observed_B=group_b[event_col],
         )
 
         return {
-            'test_statistic': float(result.test_statistic),
-            'p_value': float(result.p_value),
-            'groups': [str(g) for g in groups],
-            'n_groups': 2,
-            'test_type': 'two_group_logrank'
+            "test_statistic": float(result.test_statistic),
+            "p_value": float(result.p_value),
+            "groups": [str(g) for g in groups],
+            "n_groups": 2,
+            "test_type": "two_group_logrank",
         }
 
     else:
@@ -205,24 +189,21 @@ def run_logrank_test(
         result = multivariate_logrank_test(
             event_durations=data[duration_col],
             groups=data[group_col],
-            event_observed=data[event_col]
+            event_observed=data[event_col],
         )
 
         return {
-            'test_statistic': float(result.test_statistic),
-            'p_value': float(result.p_value),
-            'groups': [str(g) for g in groups],
-            'n_groups': len(groups),
-            'test_type': 'multivariate_logrank',
-            'degrees_of_freedom': result.degrees_of_freedom
+            "test_statistic": float(result.test_statistic),
+            "p_value": float(result.p_value),
+            "groups": [str(g) for g in groups],
+            "n_groups": len(groups),
+            "test_type": "multivariate_logrank",
+            "degrees_of_freedom": result.degrees_of_freedom,
         }
 
 
 def calculate_median_survival(
-    df: pd.DataFrame,
-    duration_col: str,
-    event_col: str,
-    group_col: Optional[str] = None
+    df: pd.DataFrame, duration_col: str, event_col: str, group_col: str | None = None
 ) -> pd.DataFrame:
     """
     Calculate median survival time with confidence intervals.
@@ -244,16 +225,20 @@ def calculate_median_survival(
 
         kmf.fit(durations=data[duration_col], event_observed=data[event_col])
 
-        results.append({
-            'group': 'Overall',
-            'median_survival': kmf.median_survival_time_,
-            'ci_lower': kmf.confidence_interval_survival_function_.iloc[0, 0]
-            if not kmf.confidence_interval_survival_function_.empty else None,
-            'ci_upper': kmf.confidence_interval_survival_function_.iloc[0, 1]
-            if not kmf.confidence_interval_survival_function_.empty else None,
-            'n': len(data),
-            'n_events': int(data[event_col].sum())
-        })
+        results.append(
+            {
+                "group": "Overall",
+                "median_survival": kmf.median_survival_time_,
+                "ci_lower": kmf.confidence_interval_survival_function_.iloc[0, 0]
+                if not kmf.confidence_interval_survival_function_.empty
+                else None,
+                "ci_upper": kmf.confidence_interval_survival_function_.iloc[0, 1]
+                if not kmf.confidence_interval_survival_function_.empty
+                else None,
+                "n": len(data),
+                "n_events": int(data[event_col].sum()),
+            }
+        )
 
     else:
         data = df[[duration_col, event_col, group_col]].dropna()
@@ -261,16 +246,15 @@ def calculate_median_survival(
         for group in data[group_col].unique():
             group_data = data[data[group_col] == group]
 
-            kmf.fit(
-                durations=group_data[duration_col],
-                event_observed=group_data[event_col]
-            )
+            kmf.fit(durations=group_data[duration_col], event_observed=group_data[event_col])
 
-            results.append({
-                'group': str(group),
-                'median_survival': kmf.median_survival_time_,
-                'n': len(group_data),
-                'n_events': int(group_data[event_col].sum())
-            })
+            results.append(
+                {
+                    "group": str(group),
+                    "median_survival": kmf.median_survival_time_,
+                    "n": len(group_data),
+                    "n_events": int(group_data[event_col].sum()),
+                }
+            )
 
     return pd.DataFrame(results)

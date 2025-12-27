@@ -1,24 +1,30 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
 import pandas as pd
+import pytest
 from streamlit.testing.v1 import AppTest
+
 from clinical_analytics.core.schema import UnifiedCohort
 
 # --- Fixtures ---
 
+
 @pytest.fixture
 def mock_cohort():
     """Create a mock cohort dataframe with required and predictor columns."""
-    return pd.DataFrame({
-        UnifiedCohort.PATIENT_ID: [f"P{i}" for i in range(20)],
-        UnifiedCohort.TIME_ZERO: pd.date_range("2023-01-01", periods=20),
-        UnifiedCohort.OUTCOME: [0, 1] * 10,
-        UnifiedCohort.OUTCOME_LABEL: ["alive", "dead"] * 10,
-        # Predictors
-        "age": [25, 30, 35, 40] * 5,
-        "score": [1.5, 2.5, 3.5, 4.5] * 5,
-        "group": ["A", "B"] * 10
-    })
+    return pd.DataFrame(
+        {
+            UnifiedCohort.PATIENT_ID: [f"P{i}" for i in range(20)],
+            UnifiedCohort.TIME_ZERO: pd.date_range("2023-01-01", periods=20),
+            UnifiedCohort.OUTCOME: [0, 1] * 10,
+            UnifiedCohort.OUTCOME_LABEL: ["alive", "dead"] * 10,
+            # Predictors
+            "age": [25, 30, 35, 40] * 5,
+            "score": [1.5, 2.5, 3.5, 4.5] * 5,
+            "group": ["A", "B"] * 10,
+        }
+    )
+
 
 @pytest.fixture
 def mock_registry(mock_cohort):
@@ -26,37 +32,40 @@ def mock_registry(mock_cohort):
     with patch("clinical_analytics.core.registry.DatasetRegistry") as mock:
         # 1. Mock listing datasets
         mock.list_datasets.return_value = ["test_dataset"]
-        
+
         # 2. Mock dataset info (used for display names)
         mock.get_all_dataset_info.return_value = {
             "test_dataset": {
                 "config": {
                     "display_name": "Test Dataset",
                     "status": "active",
-                    "source": "Mock Source"
+                    "source": "Mock Source",
                 }
             }
         }
-        
+
         # 3. Mock the dataset object itself
         mock_dataset = MagicMock()
         mock_dataset.validate.return_value = True
         mock_dataset.load.return_value = None
         mock_dataset.get_cohort.return_value = mock_cohort
-        
+
         mock.get_dataset.return_value = mock_dataset
-        
+
         yield mock
 
+
 # --- Tests ---
+
 
 def test_app_initial_load(mock_registry):
     """Verify the app loads without errors and shows the correct title."""
     at = AppTest.from_file("src/clinical_analytics/ui/app.py")
     at.run()
-    
+
     assert not at.exception
     assert "Clinical Analytics Platform" in at.title[0].value
+
 
 def test_dataset_selection_flow(mock_registry):
     """Test selecting a dataset from the sidebar and verifying data display."""
@@ -83,6 +92,7 @@ def test_dataset_selection_flow(mock_registry):
 
     # Data preview should be visible
     assert len(at.dataframe) > 0
+
 
 def test_statistical_analysis_execution(mock_registry):
     """Test the end-to-end analysis flow: select predictors -> run regression."""

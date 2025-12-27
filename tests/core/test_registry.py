@@ -2,11 +2,13 @@
 Tests for the dataset registry module.
 """
 
-import pytest
-import polars as pl
 from pathlib import Path
-from clinical_analytics.core.registry import DatasetRegistry
+
+import polars as pl
+import pytest
+
 from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.registry import DatasetRegistry
 
 
 class TestDatasetRegistry:
@@ -21,7 +23,7 @@ class TestDatasetRegistry:
 
         assert isinstance(datasets, dict)
         assert len(datasets) > 0
-        assert 'covid_ms' in datasets or 'sepsis' in datasets
+        assert "covid_ms" in datasets or "sepsis" in datasets
 
     def test_list_datasets(self):
         """Test listing available datasets."""
@@ -43,18 +45,18 @@ class TestDatasetRegistry:
             info = DatasetRegistry.get_dataset_info(datasets[0])
 
             assert isinstance(info, dict)
-            assert 'name' in info
-            assert 'available' in info
-            assert 'config' in info
+            assert "name" in info
+            assert "available" in info
+            assert "config" in info
 
     def test_get_dataset_factory(self):
         """Test factory method for creating datasets."""
         DatasetRegistry.reset()
 
-        dataset = DatasetRegistry.get_dataset('covid_ms')
+        dataset = DatasetRegistry.get_dataset("covid_ms")
 
         assert isinstance(dataset, ClinicalDataset)
-        assert dataset.name == 'covid_ms'
+        assert dataset.name == "covid_ms"
 
     def test_get_all_dataset_info(self):
         """Test getting info for all datasets."""
@@ -66,8 +68,8 @@ class TestDatasetRegistry:
         assert len(all_info) > 0
 
         for name, info in all_info.items():
-            assert 'name' in info
-            assert 'config' in info
+            assert "name" in info
+            assert "config" in info
 
     def test_reset(self):
         """Test registry reset functionality."""
@@ -88,7 +90,7 @@ class TestDatasetRegistry:
         DatasetRegistry.discover_datasets()
 
         with pytest.raises(KeyError):
-            DatasetRegistry.get_dataset('nonexistent_dataset')
+            DatasetRegistry.get_dataset("nonexistent_dataset")
 
     def test_load_config(self):
         """Test loading configuration from YAML."""
@@ -101,10 +103,10 @@ class TestDatasetRegistry:
     def test_load_config_nonexistent_file(self):
         """Test loading config with nonexistent file path."""
         DatasetRegistry.reset()
-        
+
         # Should not raise error, just set empty config
-        DatasetRegistry.load_config(Path('/nonexistent/path/config.yaml'))
-        
+        DatasetRegistry.load_config(Path("/nonexistent/path/config.yaml"))
+
         assert DatasetRegistry._config_loaded
         assert DatasetRegistry._configs == {}
 
@@ -113,27 +115,23 @@ class TestDatasetRegistry:
         DatasetRegistry.reset()
 
         # Create test DataFrame
-        df = pl.DataFrame({
-            'patient_id': ['P001', 'P002', 'P003'],
-            'age': [45, 62, 38],
-            'outcome': [1, 0, 1]
-        })
+        df = pl.DataFrame(
+            {"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]}
+        )
 
         config = DatasetRegistry.register_from_dataframe(
-            'test_dataset',
-            df,
-            display_name='Test Dataset'
+            "test_dataset", df, display_name="Test Dataset"
         )
 
         assert isinstance(config, dict)
-        assert config['name'] == 'test_dataset'
-        assert config['display_name'] == 'Test Dataset'
-        assert config['status'] == 'auto-inferred'
-        assert config['row_count'] == 3
-        assert config['column_count'] == 3
+        assert config["name"] == "test_dataset"
+        assert config["display_name"] == "Test Dataset"
+        assert config["status"] == "auto-inferred"
+        assert config["row_count"] == 3
+        assert config["column_count"] == 3
 
         # Check DataFrame is stored
-        stored_df = DatasetRegistry.get_auto_inferred_dataframe('test_dataset')
+        stored_df = DatasetRegistry.get_auto_inferred_dataframe("test_dataset")
         assert stored_df is not None
         assert stored_df.height == 3
 
@@ -141,49 +139,45 @@ class TestDatasetRegistry:
         """Test retrieving auto-inferred DataFrame."""
         DatasetRegistry.reset()
 
-        df = pl.DataFrame({'col1': [1, 2, 3]})
-        DatasetRegistry.register_from_dataframe('test_df', df)
+        df = pl.DataFrame({"col1": [1, 2, 3]})
+        DatasetRegistry.register_from_dataframe("test_df", df)
 
-        retrieved = DatasetRegistry.get_auto_inferred_dataframe('test_df')
+        retrieved = DatasetRegistry.get_auto_inferred_dataframe("test_df")
         assert retrieved is not None
         assert retrieved.equals(df)
 
         # Test nonexistent dataset
-        assert DatasetRegistry.get_auto_inferred_dataframe('nonexistent') is None
+        assert DatasetRegistry.get_auto_inferred_dataframe("nonexistent") is None
 
     def test_get_dataset_with_override_params(self):
         """Test getting dataset with override parameters."""
         DatasetRegistry.reset()
 
         # Get dataset with override params
-        dataset = DatasetRegistry.get_dataset(
-            'covid_ms',
-            source_path='/custom/path'
-        )
+        dataset = DatasetRegistry.get_dataset("covid_ms", source_path="/custom/path")
 
         assert isinstance(dataset, ClinicalDataset)
         # Override params should be applied
         if dataset.source_path:
-            assert str(dataset.source_path) == '/custom/path'
+            assert str(dataset.source_path) == "/custom/path"
 
     def test_registry_filters_unsupported_params(self, caplog):
         """Test that registry filters out unsupported init params (e.g., db_connection for non-MIMIC datasets)."""
         DatasetRegistry.reset()
-        
+
         # Create a config with extra params that CovidMSDataset doesn't accept
         # CovidMSDataset doesn't have db_connection parameter
         with caplog.at_level("INFO"):
             dataset = DatasetRegistry.get_dataset(
-                'covid_ms',
+                "covid_ms",
                 db_connection=None,  # This param should be filtered out
-                some_other_param='value'  # This should also be filtered out
+                some_other_param="value",  # This should also be filtered out
             )
-        
+
         # Should not raise "unexpected keyword argument" error
         assert isinstance(dataset, ClinicalDataset)
-        assert dataset.name == 'covid_ms'
-        
-        # Verify logging indicates dropped params
-        log_messages = ' '.join([record.message for record in caplog.records])
-        assert 'Dropping unsupported init params' in log_messages or len(caplog.records) == 0
+        assert dataset.name == "covid_ms"
 
+        # Verify logging indicates dropped params
+        log_messages = " ".join([record.message for record in caplog.records])
+        assert "Dropping unsupported init params" in log_messages or len(caplog.records) == 0

@@ -2,10 +2,11 @@
 Tests for COVID-MS dataset implementation.
 """
 
-import pytest
 import pandas as pd
-from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
+import pytest
+
 from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
 
 
 class TestCovidMSDataset:
@@ -23,7 +24,7 @@ class TestCovidMSDataset:
         """Test dataset initialization."""
         dataset = CovidMSDataset()
 
-        assert dataset.name == 'covid_ms'
+        assert dataset.name == "covid_ms"
         assert dataset.config is not None
         assert dataset.mapper is not None
 
@@ -75,7 +76,7 @@ class TestCovidMSDataset:
 
     def test_config_driven_defaults(self, dataset):
         """Test that dataset uses config-driven defaults."""
-        assert hasattr(dataset, 'mapper')
+        assert hasattr(dataset, "mapper")
         assert dataset.mapper is not None
 
         # Check mapper has config-loaded values
@@ -112,7 +113,7 @@ class TestCovidMSDataset:
         # Results should be identical
         assert len(cohort1) == len(cohort2)
         assert set(cohort1.columns) == set(cohort2.columns)
-        
+
         # Check that required columns are present
         for col in UnifiedCohort.REQUIRED_COLUMNS:
             assert col in cohort1.columns
@@ -138,7 +139,7 @@ class TestCovidMSDataset:
 
         outcome_col = dataset.mapper.get_default_outcome()
         outcome_label = dataset.mapper.get_default_outcome_label(outcome_col)
-        
+
         assert outcome_label is not None
         assert isinstance(outcome_label, str)
 

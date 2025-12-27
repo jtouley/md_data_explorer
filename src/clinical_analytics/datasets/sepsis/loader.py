@@ -1,23 +1,26 @@
 import logging
-import polars as pl
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator, Optional
+
+import polars as pl
+
 from clinical_analytics.core.mapper import ColumnMapper
 
 logger = logging.getLogger(__name__)
+
 
 def find_psv_files(root_path: Path) -> Generator[Path, None, None]:
     """Recursively find all .psv files in the directory."""
     return root_path.rglob("*.psv")
 
+
 def load_patient_file(path: Path) -> pl.DataFrame:
     """Read a single patient PSV file using Polars."""
-    return pl.read_csv(path, separator='|')
+    return pl.read_csv(path, separator="|")
+
 
 def load_and_aggregate(
-    root_path: Path,
-    mapper: Optional[ColumnMapper] = None,
-    limit: Optional[int] = None
+    root_path: Path, mapper: ColumnMapper | None = None, limit: int | None = None
 ) -> pl.DataFrame:
     """
     Load sepsis data from PSV files using Polars for efficient aggregation.
@@ -52,9 +55,9 @@ def load_and_aggregate(
         try:
             df = load_patient_file(psv)
             patient_id = psv.stem  # Filename is usually patient ID (e.g. p00001)
-            
+
             # Add patient_id to each row
-            df = df.with_columns([pl.lit(patient_id).alias('patient_id')])
+            df = df.with_columns([pl.lit(patient_id).alias("patient_id")])
             all_data.append(df)
             count += 1
 
@@ -69,15 +72,22 @@ def load_and_aggregate(
 
     # Apply config-driven aggregation using mapper
     if mapper:
-        aggregated_df = mapper.apply_aggregations(combined_df, group_by='patient_id')
+        aggregated_df = mapper.apply_aggregations(combined_df, group_by="patient_id")
     else:
         # Fallback to basic aggregation if no mapper provided
-        aggregated_df = combined_df.group_by('patient_id').agg([
-            pl.col('Age').first().alias('age') if 'Age' in combined_df.columns else pl.lit(None).alias('age'),
-            pl.col('Gender').first().alias('gender') if 'Gender' in combined_df.columns else pl.lit(None).alias('gender'),
-            pl.col('SepsisLabel').max().alias('sepsis_label') if 'SepsisLabel' in combined_df.columns else pl.lit(0).alias('sepsis_label'),
-            pl.len().alias('num_hours')
-        ])
+        aggregated_df = combined_df.group_by("patient_id").agg(
+            [
+                pl.col("Age").first().alias("age")
+                if "Age" in combined_df.columns
+                else pl.lit(None).alias("age"),
+                pl.col("Gender").first().alias("gender")
+                if "Gender" in combined_df.columns
+                else pl.lit(None).alias("gender"),
+                pl.col("SepsisLabel").max().alias("sepsis_label")
+                if "SepsisLabel" in combined_df.columns
+                else pl.lit(0).alias("sepsis_label"),
+                pl.len().alias("num_hours"),
+            ]
+        )
 
     return aggregated_df
-
