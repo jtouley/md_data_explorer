@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import polars as pl
 import streamlit as st
 
 # Add src to path
@@ -146,7 +147,31 @@ def render_upload_step():
                 if file_ext == ".csv":
                     df = pd.read_csv(uploaded_file)
                 elif file_ext in {".xlsx", ".xls"}:
-                    df = pd.read_excel(uploaded_file)
+                    # Use Polars native Excel reader to handle mixed types better
+                    import io
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    file_bytes = uploaded_file.read()
+                    uploaded_file.seek(0)  # Reset for later use
+
+                    try:
+                        # Try with openpyxl engine (already installed)
+                        df_polars = pl.read_excel(
+                            io.BytesIO(file_bytes),
+                            engine="openpyxl",  # Use openpyxl instead of fastexcel
+                        )
+                        # Convert to pandas for compatibility with existing preview code
+                        df = df_polars.to_pandas()
+                        logger.info("Successfully loaded Excel file using Polars with openpyxl engine")
+                    except Exception as polars_error:
+                        logger.warning(
+                            f"Polars Excel reading failed: {polars_error}. Falling back to pandas read_excel."
+                        )
+                        # Fallback to pandas if Polars fails
+                        uploaded_file.seek(0)  # Reset for pandas
+                        df = pd.read_excel(uploaded_file)
+                        logger.info("Successfully loaded Excel file using pandas fallback")
                 elif file_ext == ".sav":
                     import pyreadstat
 

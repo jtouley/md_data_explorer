@@ -27,7 +27,30 @@ def _ensure_polars(df: Any) -> pl.DataFrame:
     if isinstance(df, pl.DataFrame):
         return df
     # Assume pandas DataFrame - convert at boundary
-    return pl.from_pandas(df)
+    try:
+        return pl.from_pandas(df)
+    except Exception as e:
+        # Handle type conversion errors (e.g., numeric columns with string values)
+        # This can happen when Excel files have mixed types in columns
+        if "ArrowInvalid" in str(type(e).__name__) or "Could not convert" in str(e):
+            logger.warning(
+                f"Type conversion error during pandas->polars conversion: {e}. "
+                "Attempting to fix by converting problematic columns to string."
+            )
+            # Convert all columns to string first, then let Polars infer types
+            # This is safer but less efficient - we'll optimize later if needed
+            df_str = df.astype(str)
+            # Replace 'nan' strings with actual nulls
+            df_str = df_str.replace("nan", None)
+            df_str = df_str.replace("", None)
+            # Convert to polars
+            result = pl.from_pandas(df_str)
+            # Try to infer better types where possible
+            # (Polars will handle this automatically, but we can be explicit)
+            return result
+        else:
+            # Re-raise if it's a different error
+            raise
 
 
 class DataQualityValidator:

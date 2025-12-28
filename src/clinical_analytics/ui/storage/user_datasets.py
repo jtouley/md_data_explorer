@@ -395,7 +395,20 @@ class UserDatasetStorage:
                         progress_cb(35, "Reading Excel file...")
                     except Exception:
                         pass  # Best-effort
-                df = pd.read_excel(io.BytesIO(file_bytes))
+                # Use Polars native Excel reader to handle mixed types better
+                try:
+                    df_polars = pl.read_excel(
+                        io.BytesIO(file_bytes),
+                        engine="openpyxl",  # Use openpyxl instead of fastexcel
+                    )
+                    # Convert to pandas for CSV writing
+                    df = df_polars.to_pandas()
+                    logger.info("Successfully loaded Excel file using Polars with openpyxl engine")
+                except Exception as polars_error:
+                    logger.warning(f"Polars Excel reading failed: {polars_error}. Falling back to pandas read_excel.")
+                    # Fallback to pandas if Polars fails
+                    df = pd.read_excel(io.BytesIO(file_bytes))
+                    logger.info("Successfully loaded Excel file using pandas fallback")
 
                 if progress_cb:
                     try:

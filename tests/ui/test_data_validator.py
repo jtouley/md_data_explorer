@@ -222,3 +222,52 @@ class TestVariableTypeDetector:
 
         # Should suggest hospitalized as outcome (binary)
         assert suggestions["outcome"] == "hospitalized"
+
+
+class TestEnsurePolars:
+    """Tests for _ensure_polars conversion function."""
+
+    def test_ensure_polars_with_polars_dataframe(self):
+        """Test that Polars DataFrames pass through unchanged."""
+        from clinical_analytics.ui.components.data_validator import _ensure_polars
+
+        df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+
+        result = _ensure_polars(df)
+
+        assert isinstance(result, pl.DataFrame)
+        assert result.height == 3
+
+    def test_ensure_polars_with_normal_pandas(self):
+        """Test that normal pandas DataFrames convert successfully."""
+        import pandas as pd
+
+        from clinical_analytics.ui.components.data_validator import _ensure_polars
+
+        df_pandas = pd.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+
+        result = _ensure_polars(df_pandas)
+
+        assert isinstance(result, pl.DataFrame)
+        assert result.height == 3
+        assert result.width == 2
+
+    def test_ensure_polars_handles_mixed_types(self):
+        """Test that mixed types in pandas DataFrame are handled gracefully."""
+        import pandas as pd
+
+        from clinical_analytics.ui.components.data_validator import _ensure_polars
+
+        # Create DataFrame with mixed types that could cause conversion issues
+        df_pandas = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "value": ["100", " ", "20"],  # Mixed: string, space, string
+            }
+        )
+
+        # Should handle conversion without error
+        result = _ensure_polars(df_pandas)
+
+        assert isinstance(result, pl.DataFrame)
+        assert result.height == 3
