@@ -453,24 +453,39 @@ class UserDatasetStorage:
 
                         cohort_df[UnifiedCohort.TIME_ZERO] = dt.now()
 
-                    # Validate the cohort schema
-                    is_valid, errors = validate_unified_cohort_schema(cohort_df)
+                    # Validate the cohort schema using complete validator
+                    from clinical_analytics.ui.components.data_validator import DataQualityValidator
+
+                    # Run complete validation (schema-first, granularity unknown by default)
+                    validation_result = DataQualityValidator.validate_complete(
+                        cohort_df,
+                        id_column=patient_id_col,
+                        outcome_column=outcome_col,
+                        granularity="unknown",  # Default granularity
+                    )
+
                     schema_validation_result = {
-                        "is_valid": is_valid,
-                        "errors": errors,
+                        "is_valid": validation_result["is_valid"],
+                        "errors": validation_result["schema_errors"],
                     }
 
-                    if not is_valid:
+                    if not validation_result["is_valid"]:
                         # Log validation errors but don't fail - warn user
                         logger.warning(
                             "Schema validation warnings for upload %s: %s",
                             upload_id,
-                            errors,
+                            validation_result["schema_errors"],
                         )
 
             # Save metadata
             if progress_cb:
                 progress_cb(80, "Saving metadata...")
+
+            # Store canonical quality warnings at validation.quality_warnings
+            # Use pop() to avoid duplicates if validation_result was already stored
+            quality_warnings = []
+            if schema_validation_result:
+                quality_warnings = validation_result.get("quality_warnings", [])
 
             full_metadata = {
                 "upload_id": upload_id,
@@ -485,6 +500,9 @@ class UserDatasetStorage:
                 "column_count": len(df.columns),
                 "columns": list(df.columns),
                 "schema_validation": schema_validation_result,
+                "validation": {
+                    "quality_warnings": quality_warnings,
+                },
                 **metadata,
             }
 

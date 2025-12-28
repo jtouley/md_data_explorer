@@ -263,7 +263,11 @@ class DataQualityValidator:
 
     @classmethod
     def validate_complete(
-        cls, df: pd.DataFrame, id_column: str | None = None, outcome_column: str | None = None
+        cls,
+        df: pd.DataFrame,
+        id_column: str | None = None,
+        outcome_column: str | None = None,
+        granularity: str = "unknown",
     ) -> dict[str, any]:
         """
         Run complete validation suite.
@@ -272,21 +276,29 @@ class DataQualityValidator:
             df: DataFrame to validate
             id_column: Patient ID column (optional)
             outcome_column: Outcome column (optional)
+            granularity: Data granularity level ("patient_level", "admission_level", "event_level", "unknown")
+                        Default: "unknown"
 
         Returns:
             Validation results dictionary with:
             {
                 'is_valid': bool,
-                'issues': list of issues,
+                'schema_errors': list of schema validation errors (strings),
+                'quality_warnings': list of quality warning issues (dicts),
+                'issues': combined list of all issues (schema + quality),
                 'summary': summary statistics
             }
         """
+        schema_errors = []
+        quality_warnings = []
         all_issues = []
 
         # Basic structure validation
         if len(df) == 0:
             return {
                 "is_valid": False,
+                "schema_errors": ["Dataset is empty (no rows)"],
+                "quality_warnings": [],
                 "issues": [
                     {
                         "severity": "error",
@@ -300,22 +312,67 @@ class DataQualityValidator:
         if len(df.columns) == 0:
             return {
                 "is_valid": False,
+                "schema_errors": ["Dataset has no columns"],
+                "quality_warnings": [],
                 "issues": [{"severity": "error", "type": "no_columns", "message": "Dataset has no columns"}],
                 "summary": None,
             }
 
+        # Schema validation first (schema-first approach)
+        from clinical_analytics.core.schema import validate_unified_cohort_schema
+
+        try:
+            schema_valid, schema_error_list = validate_unified_cohort_schema(df, strict=False)
+            if not schema_valid:
+                schema_errors.extend(schema_error_list)
+                # Add to all_issues for compatibility
+                for error in schema_error_list:
+                    all_issues.append({"severity": "error", "type": "schema_error", "message": error})
+        except Exception as e:
+            schema_errors.append(f"Schema validation failed: {str(e)}")
+            all_issues.append({"severity": "error", "type": "schema_error", "message": f"Schema validation failed: {str(e)}"})
+
+        # Quality validation
+
         # Validate patient ID if provided
         if id_column:
             id_valid, id_issues = cls.validate_patient_id(df, id_column)
+
+            # Duplicate ID check: only warn if granularity != "patient_level"
+            for issue in id_issues:
+                if issue["type"] == "duplicate_ids" and granularity != "patient_level":
+                    # Convert to warning instead of error for non-patient-level granularity
+                    issue["severity"] = "warning"
+                    issue["message"] = (
+                        f"{issue['count']} duplicate patient IDs found. "
+                        f"This is expected for {granularity} granularity."
+                    )
+                    quality_warnings.append(issue)
+                elif issue["severity"] == "warning":
+                    quality_warnings.append(issue)
+                else:
+                    # Keep errors as schema errors
+                    schema_errors.append(issue["message"])
+
             all_issues.extend(id_issues)
 
         # Validate missing data
         missing_ok, missing_issues = cls.validate_missing_data(df)
+        for issue in missing_issues:
+            if issue["severity"] == "warning":
+                quality_warnings.append(issue)
+            else:
+                schema_errors.append(issue["message"])
         all_issues.extend(missing_issues)
 
         # Validate outcome if provided
         if outcome_column:
             outcome_valid, outcome_issues = cls.validate_outcome_column(df, outcome_column)
+            for issue in outcome_issues:
+                if issue["severity"] == "warning":
+                    quality_warnings.append(issue)
+                else:
+                    schema_errors.append(issue["message"])
             all_issues.extend(outcome_issues)
 
         # Calculate summary statistics
@@ -332,4 +389,10 @@ class DataQualityValidator:
         # Overall validity
         is_valid = summary["errors"] == 0
 
-        return {"is_valid": is_valid, "issues": all_issues, "summary": summary}
+        return {
+            "is_valid": is_valid,
+            "schema_errors": schema_errors,
+            "quality_warnings": quality_warnings,
+            "issues": all_issues,
+            "summary": summary,
+        }
