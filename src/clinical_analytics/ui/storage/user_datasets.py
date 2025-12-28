@@ -6,6 +6,9 @@ Handles secure storage, metadata management, and persistence of uploaded dataset
 
 import hashlib
 import json
+import logging
+import uuid
+import zipfile
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +16,116 @@ from typing import Any
 
 import pandas as pd
 import polars as pl
+
+from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
+
+logger = logging.getLogger(__name__)
+
+
+class SecurityError(Exception):
+    """Security-related error (path traversal, symlinks, etc.)."""
+
+    pass
+
+
+def _safe_store_upload(
+    file_bytes: bytes,
+    base_dir: Path,
+    original_filename: str,
+) -> Path:
+    """
+    Safely store upload using UUID, ignoring original filename.
+
+    Args:
+        file_bytes: File content
+        base_dir: Base upload directory (enforced)
+        original_filename: Original name (logged only, not used for path)
+
+    Returns:
+        Path to stored file (UUID-based)
+
+    Raises:
+        SecurityError: If path traversal or symlink detected
+    """
+    # Generate UUID-based filename with original extension only
+    upload_id = str(uuid.uuid4())
+    # Sanitize extension: only allow known safe extensions
+    original_ext = Path(original_filename).suffix.lower()
+    safe_extensions = {".csv", ".xlsx", ".xls", ".sav", ".zip", ".parquet"}
+    if original_ext not in safe_extensions:
+        original_ext = ".csv"  # Default to CSV if unknown
+
+    safe_path = (base_dir / upload_id).with_suffix(original_ext)
+
+    # Ensure base_dir exists and is absolute
+    base_dir = base_dir.resolve()
+    safe_path = safe_path.resolve()
+
+    # Enforce: must be within base_dir
+    if not safe_path.is_relative_to(base_dir):
+        raise SecurityError(f"Path traversal detected: {safe_path}")
+
+    # No symlinks allowed
+    if base_dir.is_symlink():
+        raise SecurityError("Symlinks not allowed in upload directory")
+
+    # Write file
+    safe_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_path.write_bytes(file_bytes)
+
+    logger.info(
+        "Stored upload securely",
+        extra={
+            "upload_id": upload_id,
+            "original_filename": original_filename,
+            "stored_path": str(safe_path),
+        },
+    )
+
+    return safe_path
+
+
+def _safe_extract_zip_member(
+    zip_file: zipfile.ZipFile,
+    member: str,
+    extract_to: Path,
+) -> Path:
+    """
+    Safely extract ZIP member, preventing path traversal.
+
+    Args:
+        zip_file: Open ZipFile object
+        member: Member name to extract
+        extract_to: Base directory to extract to
+
+    Returns:
+        Path to extracted file
+
+    Raises:
+        SecurityError: If path traversal or symlink detected
+    """
+    # Resolve to absolute paths
+    extract_to = extract_to.resolve()
+    target_path = (extract_to / member).resolve()
+
+    # Must be within extract directory
+    if not target_path.is_relative_to(extract_to):
+        raise SecurityError(f"Path traversal detected in ZIP member: {member}")
+
+    # No parent traversal in member name
+    if ".." in member or member.startswith("/"):
+        raise SecurityError(f"Invalid ZIP member path: {member}")
+
+    # Extract and check for symlinks
+    extracted = Path(zip_file.extract(member, extract_to))
+
+    # Post-extraction symlink check
+    if extracted.is_symlink():
+        # Remove the symlink immediately
+        extracted.unlink()
+        raise SecurityError(f"Symlinks not allowed in ZIP: {member}")
+
+    return extracted
 
 
 class UploadSecurityValidator:
@@ -176,7 +289,11 @@ class UserDatasetStorage:
         return f"user_upload_{timestamp}_{file_hash}"
 
     def save_upload(
-        self, file_bytes: bytes, original_filename: str, metadata: dict[str, Any]
+        self,
+        file_bytes: bytes,
+        original_filename: str,
+        metadata: dict[str, Any],
+        progress_cb: Callable[[int, str], None] | None = None,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded file with security validation.
@@ -185,28 +302,61 @@ class UserDatasetStorage:
             file_bytes: File content
             original_filename: Original filename
             metadata: Upload metadata (variable types, mappings, etc.)
+            progress_cb: Optional callback(progress: int, message: str) for UI updates (0-100, not 0.0-1.0)
 
         Returns:
             Tuple of (success, message, upload_id)
         """
         # Security validation
+        if progress_cb:
+            progress_cb(10, "Validating file security...")
+
         valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
         if not valid:
+            if progress_cb:
+                progress_cb(100, f"Validation failed: {error}")
             return False, error, None
 
         # Generate upload ID
+        if progress_cb:
+            progress_cb(20, "Preparing upload...")
+
         upload_id = self.generate_upload_id(original_filename)
 
         try:
             # Sanitize filename
             safe_filename = UploadSecurityValidator.sanitize_filename(original_filename)
 
+            # Extract dataset_name from metadata (user-provided friendly name)
+            dataset_name = metadata.get("dataset_name")
+            if not dataset_name:
+                # Fallback to sanitized original filename (without extension)
+                dataset_name = UploadSecurityValidator.sanitize_filename(original_filename)
+                dataset_name = Path(dataset_name).stem  # Remove extension
+
+            # Sanitize the friendly name for filesystem safety
+            safe_dataset_name = UploadSecurityValidator.sanitize_filename(dataset_name)
+            # Ensure it's not empty and doesn't conflict
+            if not safe_dataset_name or safe_dataset_name == ".":
+                safe_dataset_name = "dataset"
+
             # Convert to CSV format (normalize all uploads to CSV)
             file_ext = Path(original_filename).suffix.lower()
 
+            if progress_cb:
+                progress_cb(30, "Reading file...")
+
             if file_ext == ".csv":
-                # Already CSV, save directly
-                csv_path = self.raw_dir / f"{upload_id}.csv"
+                # Already CSV, save with friendly name
+                csv_filename = f"{safe_dataset_name}.csv"
+                csv_path = self.raw_dir / csv_filename
+
+                # Handle filename conflicts (if user re-uploads same name)
+                if csv_path.exists():
+                    # Append upload_id suffix to make unique
+                    csv_filename = f"{safe_dataset_name}_{upload_id}.csv"
+                    csv_path = self.raw_dir / csv_filename
+
                 csv_path.write_bytes(file_bytes)
                 df = pd.read_csv(csv_path)
 
@@ -215,7 +365,18 @@ class UserDatasetStorage:
                 import io
 
                 df = pd.read_excel(io.BytesIO(file_bytes))
-                csv_path = self.raw_dir / f"{upload_id}.csv"
+
+                if progress_cb:
+                    progress_cb(50, "Converting file format...")
+
+                csv_filename = f"{safe_dataset_name}.csv"
+                csv_path = self.raw_dir / csv_filename
+
+                # Handle filename conflicts
+                if csv_path.exists():
+                    csv_filename = f"{safe_dataset_name}_{upload_id}.csv"
+                    csv_path = self.raw_dir / csv_filename
+
                 df.to_csv(csv_path, index=False)
 
             elif file_ext == ".sav":
@@ -225,22 +386,105 @@ class UserDatasetStorage:
                 import pyreadstat
 
                 df, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
-                csv_path = self.raw_dir / f"{upload_id}.csv"
+
+                if progress_cb:
+                    progress_cb(50, "Converting file format...")
+
+                csv_filename = f"{safe_dataset_name}.csv"
+                csv_path = self.raw_dir / csv_filename
+
+                # Handle filename conflicts
+                if csv_path.exists():
+                    csv_filename = f"{safe_dataset_name}_{upload_id}.csv"
+                    csv_path = self.raw_dir / csv_filename
+
                 df.to_csv(csv_path, index=False)
 
             else:
                 return False, f"Unsupported file type: {file_ext}", None
 
+            # Validate schema if variable mapping is provided
+            # This enforces the UnifiedCohort schema contract at save-time
+            if progress_cb:
+                progress_cb(60, "Validating schema contract...")
+
+            variable_mapping = metadata.get("variable_mapping", {})
+            schema_validation_result = None
+
+            if variable_mapping:
+                # Check if the mapped columns exist and validate schema
+                from clinical_analytics.core.schema import (
+                    UnifiedCohort,
+                    validate_unified_cohort_schema,
+                )
+
+                # Create a view with renamed columns to validate schema
+                cohort_df = df.copy()
+
+                # Apply column mapping if patient_id is mapped
+                patient_id_col = variable_mapping.get("patient_id")
+                outcome_col = variable_mapping.get("outcome")
+
+                # Rename columns to UnifiedCohort schema
+                rename_map = {}
+                if patient_id_col and patient_id_col in cohort_df.columns:
+                    rename_map[patient_id_col] = UnifiedCohort.PATIENT_ID
+
+                if outcome_col and outcome_col in cohort_df.columns:
+                    rename_map[outcome_col] = UnifiedCohort.OUTCOME
+
+                # Add time_zero if specified
+                time_vars = variable_mapping.get("time_variables", {})
+                if time_vars:
+                    time_zero_col = time_vars.get("time_zero")
+                    if time_zero_col and time_zero_col in cohort_df.columns:
+                        rename_map[time_zero_col] = UnifiedCohort.TIME_ZERO
+
+                if rename_map:
+                    cohort_df = cohort_df.rename(columns=rename_map)
+
+                    # Add outcome_label if not present
+                    if UnifiedCohort.OUTCOME_LABEL not in cohort_df.columns:
+                        cohort_df[UnifiedCohort.OUTCOME_LABEL] = outcome_col or "outcome"
+
+                    # Add time_zero placeholder if not present
+                    if UnifiedCohort.TIME_ZERO not in cohort_df.columns:
+                        from datetime import datetime as dt
+
+                        cohort_df[UnifiedCohort.TIME_ZERO] = dt.now()
+
+                    # Validate the cohort schema
+                    is_valid, errors = validate_unified_cohort_schema(cohort_df)
+                    schema_validation_result = {
+                        "is_valid": is_valid,
+                        "errors": errors,
+                    }
+
+                    if not is_valid:
+                        # Log validation errors but don't fail - warn user
+                        logger.warning(
+                            "Schema validation warnings for upload %s: %s",
+                            upload_id,
+                            errors,
+                        )
+
             # Save metadata
+            if progress_cb:
+                progress_cb(80, "Saving metadata...")
+
             full_metadata = {
                 "upload_id": upload_id,
                 "original_filename": safe_filename,
+                "stored_filename": csv_filename,  # Friendly name (may change with collisions)
+                "stored_relpath": str(csv_path.relative_to(self.raw_dir)),  # Stable relative path pointer
+                "dataset_name": dataset_name,  # User-provided friendly name
                 "upload_timestamp": datetime.now().isoformat(),
                 "file_size_bytes": len(file_bytes),
                 "file_format": file_ext.lstrip("."),
                 "row_count": len(df),
                 "column_count": len(df.columns),
                 "columns": list(df.columns),
+                "schema_validation": schema_validation_result,
                 **metadata,
             }
 
@@ -248,9 +492,14 @@ class UserDatasetStorage:
             with open(metadata_path, "w") as f:
                 json.dump(full_metadata, f, indent=2)
 
+            if progress_cb:
+                progress_cb(100, "Upload complete!")
+
             return True, f"Upload successful: {upload_id}", upload_id
 
         except Exception as e:
+            if progress_cb:
+                progress_cb(100, f"Error: {str(e)}")
             return False, f"Error saving upload: {str(e)}", None
 
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
@@ -275,13 +524,28 @@ class UserDatasetStorage:
         """
         Load uploaded dataset.
 
+        Uses friendly filename from metadata if available, falls back to upload_id.
+
         Args:
             upload_id: Upload identifier
 
         Returns:
             DataFrame or None if not found
         """
-        csv_path = self.raw_dir / f"{upload_id}.csv"
+        # Get metadata to check for friendly filename
+        # Use stored_relpath (stable pointer) if available, else stored_filename, else fallback
+        metadata = self.get_upload_metadata(upload_id)
+        if metadata:
+            if "stored_relpath" in metadata:
+                csv_path = self.raw_dir / metadata["stored_relpath"]
+            elif "stored_filename" in metadata:
+                csv_path = self.raw_dir / metadata["stored_filename"]
+            else:
+                # Fallback to old naming convention (for backward compatibility)
+                csv_path = self.raw_dir / f"{upload_id}.csv"
+        else:
+            # No metadata - fallback to old naming convention
+            csv_path = self.raw_dir / f"{upload_id}.csv"
 
         if not csv_path.exists():
             return None
@@ -394,6 +658,15 @@ class UserDatasetStorage:
         Returns:
             Tuple of (success, message, upload_id)
         """
+        # Gate on feature flag - multi-table support is deferred to V2
+        if not MULTI_TABLE_ENABLED:
+            return (
+                False,
+                "Multi-table (ZIP) uploads are disabled in V1. "
+                "Set MULTI_TABLE_ENABLED=true in environment to enable (experimental).",
+                None,
+            )
+
         import io
         import zipfile
 

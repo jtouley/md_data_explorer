@@ -58,7 +58,15 @@ class UploadedDataset(ClinicalDataset):
         Returns:
             True if data is accessible
         """
-        csv_path = self.storage.raw_dir / f"{self.upload_id}.csv"
+        # Use stored_relpath (stable pointer) if available, else stored_filename, else fallback
+        if "stored_relpath" in self.metadata:
+            csv_path = self.storage.raw_dir / self.metadata["stored_relpath"]
+        elif "stored_filename" in self.metadata:
+            csv_path = self.storage.raw_dir / self.metadata["stored_filename"]
+        else:
+            # Fallback to old naming convention (for backward compatibility)
+            csv_path = self.storage.raw_dir / f"{self.upload_id}.csv"
+
         return csv_path.exists()
 
     def load(self) -> None:

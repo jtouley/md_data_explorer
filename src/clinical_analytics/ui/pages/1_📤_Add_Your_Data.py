@@ -446,44 +446,73 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         can_save = validation_result["summary"]["errors"] == 0 and dataset_name.strip()
 
         if st.button("💾 Save Dataset", disabled=not can_save, type="primary"):
-            # Prepare metadata
-            metadata = {
-                "dataset_name": dataset_name,
-                "variable_types": variable_info,
-                "variable_mapping": mapping,
-                "validation_result": validation_result,
-            }
+            # Create progress tracking UI elements
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            log_expander = st.expander("📋 Processing Log", expanded=True)
+            log_container = log_expander.container()
 
-            # Save upload
-            success, message, upload_id = storage.save_upload(
-                file_bytes=st.session_state["uploaded_bytes"],
-                original_filename=st.session_state["uploaded_filename"],
-                metadata=metadata,
-            )
+            def progress_callback(progress: int, message: str) -> None:
+                """Update progress UI with real-time status."""
+                # st.progress() expects int 0-100, not float 0.0-1.0
+                progress_bar.progress(progress)
+                status_text.info(f"🔄 {message}")
+                with log_container:
+                    st.text(f"→ {message}")
 
-            if success:
-                st.success(f"✅ {message}")
-                st.balloons()
+            try:
+                # Prepare metadata
+                metadata = {
+                    "dataset_name": dataset_name,
+                    "variable_types": variable_info,
+                    "variable_mapping": mapping,
+                    "validation_result": validation_result,
+                }
 
-                st.markdown(f"""
-                **Dataset saved successfully!**
+                # Pass callback to get real progress updates
+                success, message, upload_id = storage.save_upload(
+                    file_bytes=st.session_state["uploaded_bytes"],
+                    original_filename=st.session_state["uploaded_filename"],
+                    metadata=metadata,
+                    progress_cb=progress_callback,  # Real progress, not staged
+                )
 
-                - **Upload ID:** `{upload_id}`
-                - **Name:** {dataset_name}
-                - **Rows:** {len(df):,}
-                - **Variables:** {len(mapping["predictors"]) + 1}
+                if success:
+                    status_text.success("✅ Dataset saved successfully!")
+                    with log_container:
+                        st.success("✅ Processing complete!")
+                    st.balloons()
 
-                You can now use this dataset in the main analysis interface.
-                """)
+                    st.markdown(f"""
+                    **Dataset saved successfully!**
 
-                # Clear session state
-                if st.button("Upload Another Dataset"):
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("upload"):
-                            del st.session_state[key]
-                    st.rerun()
-            else:
-                st.error(f"❌ {message}")
+                    - **Upload ID:** `{upload_id}`
+                    - **Name:** {dataset_name}
+                    - **Rows:** {len(df):,}
+                    - **Variables:** {len(mapping["predictors"]) + 1}
+
+                    You can now use this dataset in the main analysis interface.
+                    """)
+
+                    # Clear session state
+                    if st.button("Upload Another Dataset"):
+                        for key in list(st.session_state.keys()):
+                            if key.startswith("upload"):
+                                del st.session_state[key]
+                        st.rerun()
+                else:
+                    status_text.error(f"❌ {message}")
+                    with log_container:
+                        st.error(f"❌ Save failed: {message}")
+
+            except Exception as e:
+                import traceback
+
+                progress_bar.progress(100)  # Use int, not float
+                status_text.error(f"❌ Error: {str(e)}")
+                with log_container:
+                    st.error(f"❌ Error during processing: {str(e)}")
+                    st.code(traceback.format_exc())
 
 
 def render_zip_review_step():
