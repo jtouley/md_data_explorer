@@ -304,35 +304,35 @@ class UserDatasetStorage:
             metadata: Upload metadata (variable types, mappings, etc.)
             progress_cb: Optional callback(progress: int, message: str) for UI updates (0-100, not 0.0-1.0)
                 NOTE: This couples storage to UI (technical debt). Future: emit structured events instead.
-
-        Returns:
-            Tuple of (success, message, upload_id)
-        """
-        """
-        Save uploaded file with security validation.
-
-        Args:
-            file_bytes: File content
-            original_filename: Original filename
-            metadata: Upload metadata (variable types, mappings, etc.)
-            progress_cb: Optional callback(progress: int, message: str) for UI updates (0-100, not 0.0-1.0)
+                Progress callbacks are best-effort: exceptions are caught and ignored to prevent UI errors
+                from breaking storage operations.
 
         Returns:
             Tuple of (success, message, upload_id)
         """
         # Security validation
+        # Progress callback is best-effort: don't let UI errors break storage
         if progress_cb:
-            progress_cb(10, "Validating file security...")
+            try:
+                progress_cb(10, "Validating file security...")
+            except Exception:
+                pass  # Best-effort: continue even if callback fails
 
         valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
         if not valid:
             if progress_cb:
-                progress_cb(100, f"Validation failed: {error}")
+                try:
+                    progress_cb(100, f"Validation failed: {error}")
+                except Exception:
+                    pass  # Best-effort
             return False, error, None
 
         # Generate upload ID
         if progress_cb:
-            progress_cb(20, "Preparing upload...")
+            try:
+                progress_cb(20, "Preparing upload...")
+            except Exception:
+                pass  # Best-effort
 
         upload_id = self.generate_upload_id(original_filename)
 
@@ -352,7 +352,10 @@ class UserDatasetStorage:
             file_ext = Path(original_filename).suffix.lower()
 
             if progress_cb:
-                progress_cb(30, "Reading file...")
+                try:
+                    progress_cb(30, "Reading file...")
+                except Exception:
+                    pass  # Best-effort
 
             # Always use upload_id as immutable storage key (avoids collisions, rename issues)
             csv_filename = f"{upload_id}.csv"
@@ -375,7 +378,10 @@ class UserDatasetStorage:
                 df = pd.read_excel(io.BytesIO(file_bytes))
 
                 if progress_cb:
-                    progress_cb(50, "Converting file format...")
+                    try:
+                        progress_cb(50, "Converting file format...")
+                    except Exception:
+                        pass  # Best-effort
 
                 # Write to temp file first
                 df.to_csv(temp_path, index=False)
@@ -389,7 +395,10 @@ class UserDatasetStorage:
                 df, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
 
                 if progress_cb:
-                    progress_cb(50, "Converting file format...")
+                    try:
+                        progress_cb(50, "Converting file format...")
+                    except Exception:
+                        pass  # Best-effort
 
                 # Write to temp file first
                 df.to_csv(temp_path, index=False)
@@ -404,7 +413,10 @@ class UserDatasetStorage:
             # Validate schema if variable mapping is provided
             # This enforces the UnifiedCohort schema contract at save-time
             if progress_cb:
-                progress_cb(60, "Validating schema contract...")
+                try:
+                    progress_cb(60, "Validating schema contract...")
+                except Exception:
+                    pass  # Best-effort
 
             variable_mapping = metadata.get("variable_mapping", {})
             schema_validation_result = None
@@ -480,7 +492,10 @@ class UserDatasetStorage:
 
             # Save metadata
             if progress_cb:
-                progress_cb(80, "Saving metadata...")
+                try:
+                    progress_cb(80, "Saving metadata...")
+                except Exception:
+                    pass  # Best-effort
 
             # Extract validation_result from metadata BEFORE merging
             # This prevents duplication - canonical location is metadata["validation"]
@@ -521,13 +536,19 @@ class UserDatasetStorage:
                 json.dump(full_metadata, f, indent=2)
 
             if progress_cb:
-                progress_cb(100, "Upload complete!")
+                try:
+                    progress_cb(100, "Upload complete!")
+                except Exception:
+                    pass  # Best-effort
 
             return True, f"Upload successful: {upload_id}", upload_id
 
         except Exception as e:
             if progress_cb:
-                progress_cb(100, f"Error: {str(e)}")
+                try:
+                    progress_cb(100, f"Error: {str(e)}")
+                except Exception:
+                    pass  # Best-effort
             return False, f"Error saving upload: {str(e)}", None
 
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
