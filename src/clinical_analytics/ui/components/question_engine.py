@@ -53,6 +53,7 @@ class AnalysisContext:
 
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
+    match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
 
     def is_complete_for_intent(self) -> bool:
         """Check if we have enough information for the inferred analysis."""
@@ -365,7 +366,9 @@ class QuestionEngine:
             st.success("✅ I have everything I need to run the analysis!")
 
     @staticmethod
-    def ask_free_form_question(semantic_layer) -> AnalysisContext | None:
+    def ask_free_form_question(
+        semantic_layer, dataset_id: str | None = None, upload_id: str | None = None
+    ) -> AnalysisContext | None:
         """
         Ask user to type their question in natural language.
 
@@ -374,6 +377,8 @@ class QuestionEngine:
 
         Args:
             semantic_layer: SemanticLayer instance for NL parsing
+            dataset_id: Optional dataset identifier for logging
+            upload_id: Optional upload identifier for logging
 
         Returns:
             AnalysisContext if query successfully parsed, None otherwise
@@ -409,8 +414,11 @@ class QuestionEngine:
                 # Initialize NL query engine
                 nl_engine = NLQueryEngine(semantic_layer)
 
-                # Parse query
-                query_intent = nl_engine.parse_query(query)
+                # Parse query with structured logging context
+                query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
+
+                # Extract variables with collision suggestions
+                matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
 
                 # Show confidence
                 if query_intent.confidence > 0.75:
@@ -478,6 +486,9 @@ class QuestionEngine:
                 context.predictor_variables = query_intent.predictor_variables
                 context.time_variable = query_intent.time_variable
                 context.event_variable = query_intent.event_variable
+
+                # Propagate collision suggestions to context
+                context.match_suggestions = collision_suggestions
 
                 # Set flags based on intent
                 context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"

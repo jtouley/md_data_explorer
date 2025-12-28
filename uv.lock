@@ -383,6 +383,7 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "statsmodels" },
     { name = "streamlit" },
+    { name = "structlog" },
 ]
 
 [package.optional-dependencies]
@@ -425,6 +426,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=5.2.0" },
     { name = "statsmodels", specifier = ">=0.14.0" },
     { name = "streamlit", specifier = ">=1.28.0" },
+    { name = "structlog", specifier = ">=24.0.0" },
 ]
 provides-extras = ["dev"]
 
@@ -3750,6 +3752,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6f/ec/66ca1578587bbaaea5757a7f074d3f762fff8d782ffb4497a83c5722aa44/streamlit-1.52.1.tar.gz", hash = "sha256:b036a71866b893c97fdebaa2a2ebd21ebf2af7daea4b3abe783a57b26f55b3ca", size = 8582829, upload-time = "2025-12-05T18:55:42.006Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/d4/cdafd4cc940937410f465ca7a77dd34237182c2ddece624e08db959496f8/streamlit-1.52.1-py3-none-any.whl", hash = "sha256:97fee2c3421d350fd65548e45a20f506ec1b651d78f95ecacbc0c2f9f838081c", size = 9024748, upload-time = "2025-12-05T18:55:39.713Z" },
+]
+
+[[package]]
+name = "structlog"
+version = "25.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
 ]
 
 [[package]]

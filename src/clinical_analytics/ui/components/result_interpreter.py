@@ -69,7 +69,13 @@ class ResultInterpreter:
 
     @staticmethod
     def interpret_odds_ratio(
-        or_value: float, ci_lower: float, ci_upper: float, p_value: float, variable_name: str
+        or_value: float,
+        ci_lower: float,
+        ci_upper: float,
+        p_value: float,
+        variable_name: str,
+        value_mapping: dict[str, str] | None = None,
+        sample_size: int | None = None,
     ) -> str:
         """
         Interpret an odds ratio in clinical terms.
@@ -80,19 +86,43 @@ class ResultInterpreter:
             ci_upper: Upper 95% CI
             p_value: P-value
             variable_name: Name of variable
+            value_mapping: Optional mapping of codes to labels (e.g., {'1': 'Yes', '2': 'No'})
+            sample_size: Optional sample size for warnings
 
         Returns:
             Plain-language interpretation
         """
         p_interp = ResultInterpreter.interpret_p_value(p_value)
 
+        # Check if CI crosses 1 (uncertainty warning)
+        ci_crosses_one = ci_lower < 1 < ci_upper
+
+        # Sample size warning
+        sample_warning = ""
+        if sample_size is not None:
+            if sample_size < 30:
+                sample_warning = (
+                    f"\n⚠️ **Warning**: Small sample size (n={sample_size}). Results should be interpreted with caution."
+                )
+            elif sample_size < 100:
+                sample_warning = (
+                    f"\nℹ️ **Note**: Moderate sample size (n={sample_size}). Consider larger studies for confirmation."
+                )
+
         if not p_interp["is_significant"]:
-            return f"""
+            interpretation = f"""
 **{variable_name}**: Not significantly associated with outcome (p={p_value:.3f})
 
 The odds ratio is {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}),
 but this could be due to chance.
 """
+            if ci_crosses_one:
+                interpretation += (
+                    "\n⚠️ **Note**: The confidence interval crosses 1, "
+                    "indicating uncertainty about the direction of the association."
+                )
+            interpretation += sample_warning
+            return interpretation
 
         if or_value > 1:
             if or_value >= 2:
@@ -108,10 +138,16 @@ but this could be due to chance.
 **{variable_name}**: {magnitude} the odds of the outcome {p_interp["emoji"]}
 
 - **Odds Ratio**: {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
-- **Interpretation**: Having this characteristic increases the odds of the outcome by
+- **Interpretation**: {variable_name} is **associated with** increased odds of the outcome by
   approximately **{pct_increase:.0f}%**
 - **Statistical Significance**: {p_interp["interpretation"]}
 """
+            if ci_crosses_one:
+                interpretation += (
+                    "\n⚠️ **Note**: The confidence interval crosses 1, "
+                    "indicating some uncertainty about the strength of this association."
+                )
+            interpretation += sample_warning
 
         elif or_value < 1:
             if or_value <= 0.5:
@@ -127,18 +163,25 @@ but this could be due to chance.
 **{variable_name}**: {magnitude} the odds of the outcome {p_interp["emoji"]}
 
 - **Odds Ratio**: {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
-- **Interpretation**: Having this characteristic decreases the odds of the outcome by
+- **Interpretation**: {variable_name} is **associated with** decreased odds of the outcome by
   approximately **{pct_decrease:.0f}%**
 - **Statistical Significance**: {p_interp["interpretation"]}
 """
+            if ci_crosses_one:
+                interpretation += (
+                    "\n⚠️ **Note**: The confidence interval crosses 1, "
+                    "indicating some uncertainty about the strength of this association."
+                )
+            interpretation += sample_warning
 
         else:  # OR ≈ 1
             interpretation = f"""
 **{variable_name}**: No meaningful association with outcome
 
 - **Odds Ratio**: {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
-- **Interpretation**: This variable doesn't appear to affect the outcome
+- **Interpretation**: {variable_name} is not significantly **associated with** the outcome
 """
+            interpretation += sample_warning
 
         return interpretation
 
