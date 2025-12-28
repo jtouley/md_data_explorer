@@ -14,9 +14,10 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.core.registry import DatasetRegistry
+# Keep only lightweight imports at module scope
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+
+# Heavy imports moved inside main() after gate
 
 # Page config
 st.set_page_config(page_title="Descriptive Statistics | Clinical Analytics", page_icon="📊", layout="wide")
@@ -128,6 +129,28 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFram
 
 
 def main():
+    # Gate: V1 MVP mode disables legacy pages
+    # MUST run before any expensive operations
+    from clinical_analytics.ui.config import V1_MVP_MODE
+
+    if V1_MVP_MODE:
+        st.info("🚧 This page is disabled in V1 MVP mode. Use the **Ask Questions** page for all analysis.")
+        st.markdown("""
+        **V1 MVP focuses on:**
+        - Upload your data
+        - Ask questions in natural language
+        - Get answers with SQL preview
+
+        All analysis is available through the Chat interface on the Ask Questions page.
+        """)
+        if st.button("Go to Ask Questions Page"):
+            st.switch_page("pages/3_💬_Ask_Questions.py")
+        st.stop()
+
+    # NOW do heavy imports (after gate)
+    from clinical_analytics.core.registry import DatasetRegistry
+    from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+
     st.title("📊 Descriptive Statistics")
     st.markdown("""
     Create **Table 1** with patient characteristics - the foundation of any research paper.

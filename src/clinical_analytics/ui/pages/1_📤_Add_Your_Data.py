@@ -17,10 +17,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from clinical_analytics.ui.components.data_validator import DataQualityValidator
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 from clinical_analytics.ui.components.variable_mapper import VariableMappingWizard
+from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 from clinical_analytics.ui.storage.user_datasets import UploadSecurityValidator, UserDatasetStorage
 
 # Page configuration
-st.set_page_config(page_title="Upload Data | Clinical Analytics", page_icon="📤", layout="wide")
+st.set_page_config(page_title="Add Your Data | Clinical Analytics", page_icon="📤", layout="wide")
 
 # Initialize storage
 storage = UserDatasetStorage()
@@ -29,7 +30,11 @@ storage = UserDatasetStorage()
 def render_upload_step():
     """Step 1: File Upload"""
     st.markdown("## 📤 Upload Your Data")
-    st.markdown("""
+
+    # Determine allowed file types based on feature flag
+    if MULTI_TABLE_ENABLED:
+        allowed_types = ["csv", "xlsx", "xls", "sav", "zip"]
+        format_help = """
     Upload your clinical dataset in CSV, Excel, SPSS, or ZIP format.
 
     **Supported formats:**
@@ -47,12 +52,31 @@ def render_upload_step():
     - ZIP file containing multiple CSV files
     - Tables will be automatically joined (e.g., MIMIC-IV demo)
     - Relationships detected via foreign keys
-    """)
+    """
+        uploader_help = "Maximum file size: 100MB. ZIP files for multi-table datasets."
+    else:
+        allowed_types = ["csv", "xlsx", "xls", "sav"]
+        format_help = """
+    Upload your clinical dataset in CSV, Excel, or SPSS format.
+
+    **Supported formats:**
+    - CSV (`.csv`) - Comma-separated values
+    - Excel (`.xlsx`, `.xls`) - Microsoft Excel
+    - SPSS (`.sav`) - Statistical software format
+
+    **Requirements:**
+    - File size: 1KB - 100MB
+    - Must include patient ID column
+    - Must include outcome variable
+    """
+        uploader_help = "Maximum file size: 100MB."
+
+    st.markdown(format_help)
 
     uploaded_file = st.file_uploader(
         "Choose a file",
-        type=["csv", "xlsx", "xls", "sav", "zip"],
-        help="Maximum file size: 100MB. ZIP files for multi-table datasets.",
+        type=allowed_types,
+        help=uploader_help,
         key="file_uploader",
     )
 
@@ -82,6 +106,17 @@ def render_upload_step():
         file_ext = Path(uploaded_file.name).suffix.lower()
 
         if file_ext == ".zip":
+            # Multi-table feature gated by config flag
+            if not MULTI_TABLE_ENABLED:
+                st.error(
+                    "❌ Multi-table (ZIP) uploads are disabled in V1. Please upload a single CSV, Excel, or SPSS file."
+                )
+                st.info(
+                    "💡 Multi-table support is planned for a future release. "
+                    "Set MULTI_TABLE_ENABLED=true in environment to enable (experimental)."
+                )
+                return None
+
             # Handle multi-table ZIP upload
             st.info("🗂️ **Multi-table dataset detected!** ZIP file validated.")
 
@@ -612,8 +647,8 @@ def render_zip_review_step():
 
 def main():
     """Main upload page logic"""
-    st.title("📤 Upload Clinical Data")
-    st.markdown("Self-service data upload - no coding required!")
+    st.title("📤 Add Your Data")
+    st.markdown("Upload your clinical dataset - no coding required!")
 
     # Initialize session state
     if "upload_step" not in st.session_state:
