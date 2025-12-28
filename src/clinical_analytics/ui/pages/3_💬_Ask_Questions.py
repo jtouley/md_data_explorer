@@ -30,9 +30,10 @@ from clinical_analytics.ui.components.question_engine import (
     QuestionEngine,
 )
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
 # Page config
-st.set_page_config(page_title="Analyze | Clinical Analytics", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="Ask Questions | Clinical Analytics", page_icon="💬", layout="wide")
 
 
 def run_descriptive_analysis(df: pd.DataFrame, context: AnalysisContext):
@@ -354,10 +355,9 @@ def run_relationship_analysis(df: pd.DataFrame, context: AnalysisContext):
 
 
 def main():
-    st.title("🔬 Analyze Your Data")
+    st.title("💬 Ask Questions")
     st.markdown("""
-    Just tell me what you want to know. I'll figure out the right analysis and explain the results.
-    No statistical jargon - just questions and answers.
+    Ask questions about your data in plain English. I'll figure out the right analysis and explain the results.
     """)
 
     # Dataset selection
@@ -407,7 +407,36 @@ def main():
             cohort = dataset.get_cohort()
         except Exception as e:
             st.error(f"Error loading dataset: {e}")
-            return
+            st.stop()
+
+    # Show Semantic Scope in sidebar
+    with st.sidebar.expander("🔍 Semantic Scope", expanded=False):
+        st.markdown("**V1 Cohort-First Mode**")
+
+        # Cohort table status
+        st.markdown(f"✅ **Cohort Table**: {len(cohort):,} rows")
+
+        # Multi-table status
+        if MULTI_TABLE_ENABLED:
+            st.markdown("⚠️ **Multi-Table**: Experimental")
+        else:
+            st.markdown("⏸️ **Multi-Table**: Disabled (V2)")
+
+        # Detected grain
+        grain = "patient_level"  # Default for V1
+        st.markdown(f"📊 **Grain**: {grain}")
+
+        # Outcome column (if detected)
+        outcome_cols = [
+            c for c in cohort.columns if "outcome" in c.lower() or "death" in c.lower() or "mortality" in c.lower()
+        ]
+        if outcome_cols:
+            st.markdown(f"🎯 **Outcome**: `{outcome_cols[0]}`")
+        else:
+            st.markdown("🎯 **Outcome**: Not specified")
+
+        # Show column count
+        st.caption(f"{len(cohort.columns)} columns available")
 
     st.divider()
 

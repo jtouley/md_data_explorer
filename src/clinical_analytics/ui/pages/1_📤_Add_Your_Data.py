@@ -17,10 +17,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from clinical_analytics.ui.components.data_validator import DataQualityValidator
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 from clinical_analytics.ui.components.variable_mapper import VariableMappingWizard
+from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 from clinical_analytics.ui.storage.user_datasets import UploadSecurityValidator, UserDatasetStorage
 
 # Page configuration
-st.set_page_config(page_title="Upload Data | Clinical Analytics", page_icon="📤", layout="wide")
+st.set_page_config(page_title="Add Your Data | Clinical Analytics", page_icon="📤", layout="wide")
 
 # Initialize storage
 storage = UserDatasetStorage()
@@ -29,7 +30,11 @@ storage = UserDatasetStorage()
 def render_upload_step():
     """Step 1: File Upload"""
     st.markdown("## 📤 Upload Your Data")
-    st.markdown("""
+
+    # Determine allowed file types based on feature flag
+    if MULTI_TABLE_ENABLED:
+        allowed_types = ["csv", "xlsx", "xls", "sav", "zip"]
+        format_help = """
     Upload your clinical dataset in CSV, Excel, SPSS, or ZIP format.
 
     **Supported formats:**
@@ -47,12 +52,31 @@ def render_upload_step():
     - ZIP file containing multiple CSV files
     - Tables will be automatically joined (e.g., MIMIC-IV demo)
     - Relationships detected via foreign keys
-    """)
+    """
+        uploader_help = "Maximum file size: 100MB. ZIP files for multi-table datasets."
+    else:
+        allowed_types = ["csv", "xlsx", "xls", "sav"]
+        format_help = """
+    Upload your clinical dataset in CSV, Excel, or SPSS format.
+
+    **Supported formats:**
+    - CSV (`.csv`) - Comma-separated values
+    - Excel (`.xlsx`, `.xls`) - Microsoft Excel
+    - SPSS (`.sav`) - Statistical software format
+
+    **Requirements:**
+    - File size: 1KB - 100MB
+    - Must include patient ID column
+    - Must include outcome variable
+    """
+        uploader_help = "Maximum file size: 100MB."
+
+    st.markdown(format_help)
 
     uploaded_file = st.file_uploader(
         "Choose a file",
-        type=["csv", "xlsx", "xls", "sav", "zip"],
-        help="Maximum file size: 100MB. ZIP files for multi-table datasets.",
+        type=allowed_types,
+        help=uploader_help,
         key="file_uploader",
     )
 
@@ -82,6 +106,17 @@ def render_upload_step():
         file_ext = Path(uploaded_file.name).suffix.lower()
 
         if file_ext == ".zip":
+            # Multi-table feature gated by config flag
+            if not MULTI_TABLE_ENABLED:
+                st.error(
+                    "❌ Multi-table (ZIP) uploads are disabled in V1. Please upload a single CSV, Excel, or SPSS file."
+                )
+                st.info(
+                    "💡 Multi-table support is planned for a future release. "
+                    "Set MULTI_TABLE_ENABLED=true in environment to enable (experimental)."
+                )
+                return None
+
             # Handle multi-table ZIP upload
             st.info("🗂️ **Multi-table dataset detected!** ZIP file validated.")
 
@@ -356,19 +391,56 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
     patient_id_col = mapping["patient_id"]
     outcome_col = mapping["outcome"]
 
-    validation_result = DataQualityValidator.validate_complete(df, id_column=patient_id_col, outcome_column=outcome_col)
+    # Get inferred granularity from variable detection (default to unknown for V1)
+    granularity = "unknown"  # Default for V1 MVP - duplicates are warnings unless explicitly patient-level
+    # TODO: Extract from variable_info or mapping if user explicitly selects granularity
 
-    # Show validation results
+    # Run final validation with mapping and granularity
+    validation_result = DataQualityValidator.validate_complete(
+        df, id_column=patient_id_col, outcome_column=outcome_col, granularity=granularity
+    )
+
+    # Show validation results (schema-first approach)
     if validation_result["is_valid"]:
-        st.success("✅ All validation checks passed! Dataset is ready to use.")
+        st.success("✅ Schema contract validated! Dataset is ready to use.")
+        if validation_result["summary"]["warnings"] > 0:
+            st.info(
+                f"ℹ️ {validation_result['summary']['warnings']} data quality warning(s) found. "
+                "You can proceed, but review warnings below."
+            )
     else:
-        error_count = validation_result["summary"]["errors"]
-        warning_count = validation_result["summary"]["warnings"]
+        st.error(f"❌ {validation_result['summary']['errors']} schema error(s) found. Please fix before saving.")
 
-        if error_count > 0:
-            st.error(f"❌ {error_count} critical error(s) found. Please fix before saving.")
-        else:
-            st.warning(f"⚠️ {warning_count} warning(s) found. You can proceed, but be aware of these issues.")
+    # Show schema errors (blocking) - NEW
+    if validation_result.get("schema_errors"):
+        with st.expander(f"❌ Schema Errors ({len(validation_result['schema_errors'])})", expanded=True):
+            for error in validation_result["schema_errors"]:
+                # Handle both string errors and dict errors
+                if isinstance(error, str):
+                    st.error(f"**Schema Error**: {error}")
+                else:
+                    st.error(f"**{error.get('type', 'error')}**: {error.get('message', str(error))}")
+                st.caption("💡 This can be fixed by mapping a different column or cleaning your data.")
+
+    # Show quality warnings (non-blocking) - NEW
+    if validation_result.get("quality_warnings"):
+        with st.expander(f"⚠️ Data Quality Warnings ({len(validation_result['quality_warnings'])})", expanded=False):
+            for warning in validation_result["quality_warnings"]:
+                st.warning(f"**{warning.get('type', 'warning')}**: {warning.get('message', str(warning))}")
+                if warning.get("actionable"):
+                    st.caption("💡 You can exclude this column in the mapping step or proceed anyway.")
+
+    # Keep existing issues display for backward compatibility (if new format not available)
+    if validation_result.get("issues") and not (
+        validation_result.get("schema_errors") or validation_result.get("quality_warnings")
+    ):
+        with st.expander(f"View Issues ({len(validation_result['issues'])})"):
+            for issue in validation_result["issues"]:
+                severity = issue["severity"]
+                if severity == "error":
+                    st.error(f"❌ **{issue['type']}**: {issue['message']}")
+                else:
+                    st.warning(f"⚠️ **{issue['type']}**: {issue['message']}")
 
     # Show final summary
     col1, col2, col3 = st.columns(3)
@@ -392,13 +464,6 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         help="This name will be used to identify your dataset in the analysis interface",
     )
 
-    # Show issues if any
-    if validation_result["issues"]:
-        with st.expander(f"⚠️ View Validation Issues ({len(validation_result['issues'])})"):
-            for issue in validation_result["issues"]:
-                severity_emoji = "❌" if issue["severity"] == "error" else "⚠️"
-                st.markdown(f"{severity_emoji} **{issue['type']}**: {issue['message']}")
-
     # Navigation and save
     col1, col2 = st.columns([1, 1])
     with col1:
@@ -411,44 +476,90 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         can_save = validation_result["summary"]["errors"] == 0 and dataset_name.strip()
 
         if st.button("💾 Save Dataset", disabled=not can_save, type="primary"):
-            # Prepare metadata
-            metadata = {
-                "dataset_name": dataset_name,
-                "variable_types": variable_info,
-                "variable_mapping": mapping,
-                "validation_result": validation_result,
-            }
+            # Create progress tracking UI elements
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            log_expander = st.expander("📋 Processing Log", expanded=True)
 
-            # Save upload
-            success, message, upload_id = storage.save_upload(
-                file_bytes=st.session_state["uploaded_bytes"],
-                original_filename=st.session_state["uploaded_filename"],
-                metadata=metadata,
-            )
+            # Store messages in session_state to avoid unbounded DOM growth
+            if "upload_log_messages" not in st.session_state:
+                st.session_state["upload_log_messages"] = []
 
-            if success:
-                st.success(f"✅ {message}")
-                st.balloons()
+            def progress_callback(progress: int, message: str) -> None:
+                """Update progress UI with real-time status."""
+                # st.progress() expects int 0-100, not float 0.0-1.0
+                progress_bar.progress(progress)
+                status_text.info(f"🔄 {message}")
+                # Store message in session_state (bounded list)
+                st.session_state["upload_log_messages"].append(message)
+                # Keep only last 50 messages to prevent unbounded growth
+                if len(st.session_state["upload_log_messages"]) > 50:
+                    st.session_state["upload_log_messages"] = st.session_state["upload_log_messages"][-50:]
 
-                st.markdown(f"""
-                **Dataset saved successfully!**
+            try:
+                # Prepare metadata
+                metadata = {
+                    "dataset_name": dataset_name,
+                    "variable_types": variable_info,
+                    "variable_mapping": mapping,
+                    "validation_result": validation_result,
+                }
 
-                - **Upload ID:** `{upload_id}`
-                - **Name:** {dataset_name}
-                - **Rows:** {len(df):,}
-                - **Variables:** {len(mapping["predictors"]) + 1}
+                # Pass callback to get real progress updates
+                success, message, upload_id = storage.save_upload(
+                    file_bytes=st.session_state["uploaded_bytes"],
+                    original_filename=st.session_state["uploaded_filename"],
+                    metadata=metadata,
+                    progress_cb=progress_callback,  # Real progress, not staged
+                )
 
-                You can now use this dataset in the main analysis interface.
-                """)
+                if success:
+                    status_text.success("✅ Dataset saved successfully!")
+                    # Render all log messages from session_state
+                    with log_expander:
+                        for msg in st.session_state.get("upload_log_messages", []):
+                            st.text(f"→ {msg}")
+                        st.success("✅ Processing complete!")
+                    st.balloons()
+                    # Clear log messages after successful upload
+                    st.session_state["upload_log_messages"] = []
 
-                # Clear session state
-                if st.button("Upload Another Dataset"):
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("upload"):
-                            del st.session_state[key]
-                    st.rerun()
-            else:
-                st.error(f"❌ {message}")
+                    st.markdown(f"""
+                    **Dataset saved successfully!**
+
+                    - **Upload ID:** `{upload_id}`
+                    - **Name:** {dataset_name}
+                    - **Rows:** {len(df):,}
+                    - **Variables:** {len(mapping["predictors"]) + 1}
+
+                    You can now use this dataset in the main analysis interface.
+                    """)
+
+                    # Clear session state
+                    if st.button("Upload Another Dataset"):
+                        for key in list(st.session_state.keys()):
+                            if key.startswith("upload"):
+                                del st.session_state[key]
+                        st.rerun()
+                else:
+                    status_text.error(f"❌ {message}")
+                    # Render log messages from session_state
+                    with log_expander:
+                        for msg in st.session_state.get("upload_log_messages", []):
+                            st.text(f"→ {msg}")
+                        st.error(f"❌ Save failed: {message}")
+
+            except Exception as e:
+                import traceback
+
+                progress_bar.progress(100)  # Use int, not float
+                status_text.error(f"❌ Error: {str(e)}")
+                # Render log messages from session_state
+                with log_expander:
+                    for msg in st.session_state.get("upload_log_messages", []):
+                        st.text(f"→ {msg}")
+                    st.error(f"❌ Error during processing: {str(e)}")
+                    st.code(traceback.format_exc())
 
 
 def render_zip_review_step():
@@ -470,7 +581,10 @@ def render_zip_review_step():
         progress_bar = st.progress(0)
         status_text = st.empty()
         log_expander = st.expander("📋 Processing Log", expanded=True)
-        log_container = log_expander.container()
+
+        # Store messages in session_state to avoid unbounded DOM growth
+        if "upload_log_messages" not in st.session_state:
+            st.session_state["upload_log_messages"] = []
 
         def progress_callback(step, total_steps, message, details):
             """Update progress UI with current step information."""
@@ -478,37 +592,29 @@ def render_zip_review_step():
             progress_bar.progress(progress)
             status_text.info(f"🔄 {message}")
 
-            # Add to log
-            with log_container:
-                if details:
-                    if "table_name" in details:
-                        table_info = f"**{details['table_name']}**"
-                        if "rows" in details:
-                            table_info += f" - {details['rows']:,} rows, {details['cols']} cols"
-                        if "progress" in details:
-                            table_info += f" ({details['progress']})"
-                        st.text(f"✓ {table_info}")
-                    elif "tables_found" in details:
-                        st.text(f"📦 Found {details['tables_found']} tables in ZIP")
-                        if "table_names" in details:
-                            st.text(
-                                f"   Tables: {', '.join(details['table_names'][:5])}"
-                                + (
-                                    f" ... and {len(details['table_names']) - 5} more"
-                                    if len(details["table_names"]) > 5
-                                    else ""
-                                )
-                            )
-                    elif "relationships" in details:
-                        st.text(f"🔗 Detected {len(details['relationships'])} relationships")
-                        for rel in details["relationships"][:3]:  # Show first 3
-                            st.text(f"   • {rel}")
-                        if len(details["relationships"]) > 3:
-                            st.text(f"   ... and {len(details['relationships']) - 3} more")
-                    else:
-                        st.text(f"→ {message}")
+            # Store message in session_state (bounded list)
+            log_msg = message
+            if details:
+                if "table_name" in details:
+                    table_info = f"**{details['table_name']}**"
+                    if "rows" in details:
+                        table_info += f" - {details['rows']:,} rows, {details['cols']} cols"
+                    if "progress" in details:
+                        table_info += f" ({details['progress']})"
+                    log_msg = f"✓ {table_info}"
+                elif "tables_found" in details:
+                    log_msg = f"📦 Found {details['tables_found']} tables in ZIP"
+                elif "relationships" in details:
+                    log_msg = f"🔗 Detected {len(details['relationships'])} relationships"
                 else:
-                    st.text(f"→ {message}")
+                    log_msg = f"→ {message}"
+            else:
+                log_msg = f"→ {message}"
+
+            st.session_state["upload_log_messages"].append(log_msg)
+            # Keep only last 50 messages to prevent unbounded growth
+            if len(st.session_state["upload_log_messages"]) > 50:
+                st.session_state["upload_log_messages"] = st.session_state["upload_log_messages"][-50:]
 
         # Prepare metadata
         metadata = {"dataset_name": dataset_name}
@@ -524,7 +630,10 @@ def render_zip_review_step():
         except Exception as e:
             import traceback
 
-            with log_container:
+            # Render log messages from session_state
+            with log_expander:
+                for msg in st.session_state.get("upload_log_messages", []):
+                    st.text(msg)
                 st.error(f"❌ Error during processing: {str(e)}")
                 st.code(traceback.format_exc())
             status_text.error(f"❌ Processing failed: {str(e)}")
@@ -535,9 +644,14 @@ def render_zip_review_step():
         if success:
             progress_bar.progress(1.0)
             status_text.success(f"✅ {message}")
-            with log_container:
+            # Render all log messages from session_state
+            with log_expander:
+                for msg in st.session_state.get("upload_log_messages", []):
+                    st.text(msg)
                 st.success("✅ Processing complete!")
             st.balloons()
+            # Clear log messages after successful upload
+            st.session_state["upload_log_messages"] = []
 
             # Load metadata to show details
             upload_metadata = storage.get_upload_metadata(upload_id)
@@ -612,8 +726,8 @@ def render_zip_review_step():
 
 def main():
     """Main upload page logic"""
-    st.title("📤 Upload Clinical Data")
-    st.markdown("Self-service data upload - no coding required!")
+    st.title("📤 Add Your Data")
+    st.markdown("Upload your clinical dataset - no coding required!")
 
     # Initialize session state
     if "upload_step" not in st.session_state:

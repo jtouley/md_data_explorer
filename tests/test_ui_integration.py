@@ -90,6 +90,10 @@ class TestUIDatasetIntegration:
                 # Skip MIMIC3 as it requires database connection
                 continue
 
+            if dataset_name == "uploaded":
+                # Skip uploaded as it requires upload_id parameter
+                continue
+
             # Create dataset instance
             dataset = DatasetRegistry.get_dataset(dataset_name)
 

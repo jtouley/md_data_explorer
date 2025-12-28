@@ -55,6 +55,44 @@ def _safe_identifier(name: str, max_len: int = 50) -> str:
     return f"{base}_{h}"
 
 
+# SQL identifier validation pattern: must start with letter or underscore,
+# followed by letters, digits, or underscores
+_SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_table_identifier(name: str) -> str:
+    """
+    Validate table identifier against SQL identifier pattern. Fail closed.
+
+    This is a security function - if the identifier doesn't match the allowlist
+    pattern, we reject it entirely rather than trying to sanitize.
+
+    Args:
+        name: Table identifier to validate
+
+    Returns:
+        The validated name (unchanged if valid)
+
+    Raises:
+        ValueError: If identifier is invalid (contains special chars, etc.)
+    """
+    if not name:
+        raise ValueError("Table identifier cannot be empty")
+
+    if not _SQL_IDENTIFIER_PATTERN.match(name):
+        raise ValueError(
+            f"Invalid table identifier: '{name}'. "
+            f"Must match pattern: ^[A-Za-z_][A-Za-z0-9_]*$ "
+            f"(start with letter or underscore, contain only letters, digits, underscores)"
+        )
+
+    # Additional safety: check length (DuckDB has limits)
+    if len(name) > 255:
+        raise ValueError(f"Table identifier too long: {len(name)} chars (max 255)")
+
+    return name
+
+
 class SemanticLayer:
     """
     Base semantic layer class that generates SQL dynamically from config.
@@ -200,26 +238,34 @@ class SemanticLayer:
                 # Get underlying DuckDB connection
                 duckdb_con = self.con.con
 
-                # Use parameter binding to prevent SQL injection
+                # SECURITY: Validate identifier before SQL interpolation
+                # table_name comes from _safe_identifier which already produces valid
+                # identifiers, but we validate as defense-in-depth
+                validated_name = _validate_table_identifier(table_name)
+
+                # Use quoted identifiers for extra safety + parameter binding for file path
                 # DuckDB supports ? placeholders for parameterized queries
+                quoted_table = f'"{validated_name}"'
                 duckdb_con.execute(
-                    f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto(?)",
+                    f"CREATE OR REPLACE TABLE {quoted_table} AS SELECT * FROM read_csv_auto(?)",
                     [abs_path],
                 )
 
                 # Now reference it via Ibis
-                self.raw = self.con.table(table_name)
-                logger.info(f"Successfully registered source table '{table_name}' from {abs_path}")
+                self.raw = self.con.table(validated_name)
+                logger.info(f"Successfully registered source table '{validated_name}' from {abs_path}")
 
         elif "db_table" in init_params:
             # Database table source (already registered)
-            # Note: db_table must be a valid DuckDB identifier (no special chars, or quoted)
-            # If user provides a table name with special characters, they must quote it
-            # or use a sanitized identifier. Ibis con.table() handles quoted identifiers.
+            # SECURITY: db_table could come from config which may be user-influenced
+            # Validate the identifier before using it
             table_name = init_params["db_table"]
-            logger.debug(f"Using database table source: {table_name}")
-            self.raw = self.con.table(table_name)
-            logger.info(f"Successfully registered database table '{table_name}'")
+
+            # Validate: fail closed if identifier is not safe
+            validated_name = _validate_table_identifier(table_name)
+            logger.debug(f"Using database table source: {validated_name}")
+            self.raw = self.con.table(validated_name)
+            logger.info(f"Successfully registered database table '{validated_name}'")
         else:
             raise ValueError(f"No valid source found in config for {self.dataset_name}")
 
@@ -436,6 +482,20 @@ class SemanticLayer:
             if target == target_col:
                 return source
         return target_col  # Fallback: assume same name
+
+    def get_data_quality_warnings(self) -> list[dict]:
+        """
+        Get data quality warnings from config.
+
+        Reads from self.config only (not from metadata or external sources).
+        Canonical warnings should be stored at config["validation"]["quality_warnings"].
+
+        Returns:
+            List of quality warning dictionaries
+        """
+        validation = self.config.get("validation", {})
+        quality_warnings = validation.get("quality_warnings", [])
+        return quality_warnings
 
     def get_cohort(
         self,

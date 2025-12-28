@@ -332,7 +332,7 @@ class TestSemanticLayerGranularity:
             "init_params": {"source_path": "data/raw/test_dataset/test_data.csv"},
             "column_mapping": {"id": "patient_id"},
             "time_zero": {"value": "2024-01-01"},
-            "outcomes": {"outcome": {"label": "Test Outcome"}},
+            "outcomes": {"outcome": {"source_column": "outcome", "label": "Test Outcome"}},
             "analysis": {"default_outcome": "outcome"},
         }
 
