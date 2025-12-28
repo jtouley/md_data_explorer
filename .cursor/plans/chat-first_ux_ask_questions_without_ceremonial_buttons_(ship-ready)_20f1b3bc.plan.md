@@ -133,8 +133,6 @@ def compute_descriptive_analysis(df: pd.DataFrame, context: AnalysisContext) -> 
     return {"summary_stats": summary_stats.to_dict()}
 ```
 
-
-
 ### Test-Driven Development
 
 **Workflow**: Test-first development (Red-Green-Refactor)
@@ -719,14 +717,22 @@ comparison_df = comparison_df.astype(result["schema"], errors="ignore")st.datafr
 
 **CRITICAL RULE: Always run tests after writing them. Never mark work as "done" without running tests.**
 
-**MANDATORY: Commit after each phase completion**
+**MANDATORY: Testing and Commit after each phase completion**
 
 Before starting the next phase, you MUST:
-1. Run `make check` to ensure all quality gates pass (format, lint, type-check, test)
-2. Commit all changes for the completed phase with a descriptive commit message
-3. Verify the commit includes all relevant files for that phase
+1. **Write tests for the phase** - Create test files covering all new functionality
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all changes** - Include both implementation AND tests in the commit
+6. **Verify commit includes** - All relevant files for that phase (source code + test files)
 
-**Never start a new phase without committing the previous phase.**
+**CRITICAL RULE: Never commit code without tests. Never commit tests without running them.**
+
+**Never start a new phase without:**
+- Tests written and passing
+- All quality gates passing
+- Previous phase committed
 
 **Test Structure** (per `.cursor/rules/101-testing-hygiene.mdc`):
 
@@ -850,11 +856,18 @@ def test_run_key_generation_whitespace_normalization_produces_same_key():
 - [ ] No duplicate imports in test files
 - [ ] All tests pass (`make test-fast`) - **MUST run tests after writing them**
 
-**MANDATORY: Commit Phase 1 before starting Phase 2**Before moving to Phase 2, you MUST:
+**MANDATORY: Testing and Commit Phase 1 before starting Phase 2**
 
-1. Run `make check` to ensure all quality gates pass
-2. Commit all Phase 1 changes with a descriptive commit message
-3. Verify commit includes: compute.py, updated Ask Questions page, all test files, pyproject.toml (structlog dependency)
+Before moving to Phase 2, you MUST:
+
+1. **Write tests for Phase 1** - Create all test files listed in Test Structure section
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all Phase 1 changes** - Include both implementation AND tests in commit
+6. **Verify commit includes**: compute.py, updated Ask Questions page, all test files, pyproject.toml (structlog dependency)
+
+**CRITICAL: Phase 1 commit must include test files. Do not commit without tests.**
 
 **Example commit message:**
 
@@ -872,8 +885,6 @@ feat: Phase 1 - Chat-first UX with idempotency and lifecycle management
 
 All tests passing: 15/15
 ```
-
-
 
 ### Phase 2: Column Intelligence + Alias Collision Handling (P0)
 
@@ -936,10 +947,17 @@ All tests passing: 15/15
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Commit Phase 3 before starting Phase 4**Before moving to Phase 4, you MUST:
+**MANDATORY: Testing and Commit Phase 3 before starting Phase 4**
 
-1. Run `make check` to ensure all quality gates pass
-2. Commit all Phase 3 changes with a descriptive commit message
+Before moving to Phase 4, you MUST:
+
+1. **Write tests for Phase 3** - Create test files for caching patterns and invalidation
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all Phase 3 changes** - Include both implementation AND tests in commit
+
+**CRITICAL: Phase 3 commit must include test files. Do not commit without tests.**
 
 ### Phase 4: Low-Confidence Feedback (P0)
 
@@ -963,10 +981,17 @@ All tests passing: 15/15
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Commit Phase 4 before starting Phase 5**Before moving to Phase 5, you MUST:
+**MANDATORY: Testing and Commit Phase 4 before starting Phase 5**
 
-1. Run `make check` to ensure all quality gates pass
-2. Commit all Phase 4 changes with a descriptive commit message
+Before moving to Phase 5, you MUST:
+
+1. **Write tests for Phase 4** - Create test files for low-confidence feedback UI
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all Phase 4 changes** - Include both implementation AND tests in commit
+
+**CRITICAL: Phase 4 commit must include test files. Do not commit without tests.**
 
 ### Phase 5: Result Interpretation (P1)
 
@@ -987,10 +1012,17 @@ All tests passing: 15/15
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Commit Phase 5 before starting Phase 6**Before moving to Phase 6, you MUST:
+**MANDATORY: Testing and Commit Phase 5 before starting Phase 6**
 
-1. Run `make check` to ensure all quality gates pass
-2. Commit all Phase 5 changes with a descriptive commit message
+Before moving to Phase 6, you MUST:
+
+1. **Write tests for Phase 5** - Create test files for result interpretation enhancements
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all Phase 5 changes** - Include both implementation AND tests in commit
+
+**CRITICAL: Phase 5 commit must include test files. Do not commit without tests.**
 
 ### Phase 6: Structured Logging (P1)
 
@@ -1008,10 +1040,17 @@ All tests passing: 15/15
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Commit Phase 6 before starting Phase 7**Before moving to Phase 7, you MUST:
+**MANDATORY: Testing and Commit Phase 6 before starting Phase 7**
 
-1. Run `make check` to ensure all quality gates pass
-2. Commit all Phase 6 changes with a descriptive commit message
+Before moving to Phase 7, you MUST:
+
+1. **Write tests for Phase 6** - Create test files for structured logging
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all Phase 6 changes** - Include both implementation AND tests in commit
+
+**CRITICAL: Phase 6 commit must include test files. Do not commit without tests.**
 
 ### Phase 7: Quick Wins (P2-P3)
 
@@ -1019,11 +1058,18 @@ All tests passing: 15/15
 - Remove unused imports
 - Simple message constants
 
-**MANDATORY: Commit Phase 7 before marking plan complete**Before marking the plan as complete, you MUST:
+**MANDATORY: Testing and Commit Phase 7 before marking plan complete**
 
-1. Run `make check` to ensure all quality gates pass
-2. Commit all Phase 7 changes with a descriptive commit message
-3. Verify all phases have been committed separately
+Before marking the plan as complete, you MUST:
+
+1. **Write tests for Phase 7** - Create test files for quick wins (vectorization, cleanup)
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all Phase 7 changes** - Include both implementation AND tests in commit
+6. **Verify all phases committed** - Each phase must have its own commit with tests
+
+**CRITICAL: Phase 7 commit must include test files. Do not commit without tests.**
 
 ## Success Criteria
 
