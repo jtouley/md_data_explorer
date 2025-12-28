@@ -1208,6 +1208,3 @@ All tests passing: 15/15
 ### Quality Gates
 
 **Before marking any work as "done":**
-
-1. ✅ Tests written and passing (`make test-fast`)
-2. ✅ Code quality checks pass (`make lint-fix`, `make format`)

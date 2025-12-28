@@ -64,7 +64,7 @@ AUTO_EXECUTE_CONFIDENCE_THRESHOLD = 0.75
 
 def generate_run_key(
     dataset_version: str,
-    query_text: str,
+    query_text: str | None,
     context: AnalysisContext,
 ) -> str:
     """
@@ -73,6 +73,9 @@ def generate_run_key(
     Canonicalizes inputs to ensure same query + variables = same key.
     """
     # Normalize query text (collapse whitespace)
+    # Handle None query_text (default to empty string)
+    if query_text is None:
+        query_text = ""
     normalized_query = " ".join(query_text.strip().split())
 
     # Canonicalize variables

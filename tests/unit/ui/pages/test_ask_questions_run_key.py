@@ -191,3 +191,52 @@ def test_run_key_generation_canonicalized_json_structure(ask_questions_page):
 
     # Assert: Keys match
     assert run_key == expected_key
+
+
+def test_run_key_generation_none_query_text_handled(ask_questions_page):
+    """
+    Test that None query_text is handled gracefully (defaults to empty string).
+
+    Test name: test_unit_scenario_expectedBehavior
+    """
+    # Arrange: Context with None query_text
+    dataset_version = "test_dataset_v1"
+    query_text = None
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.DESCRIBE,
+        primary_variable="outcome",
+    )
+    context.confidence = 0.9
+
+    # Act: Generate run_key (should not raise AttributeError)
+    run_key = ask_questions_page.generate_run_key(dataset_version, query_text, context)
+
+    # Assert: Key is generated successfully
+    assert len(run_key) == 64
+    assert all(c in "0123456789abcdef" for c in run_key)
+
+    # Verify None query_text produces same key as empty string
+    empty_query_key = ask_questions_page.generate_run_key(dataset_version, "", context)
+    assert run_key == empty_query_key
+
+
+def test_run_key_generation_none_vs_empty_string_query_text(ask_questions_page):
+    """
+    Test that None and empty string query_text produce same run_key.
+
+    Test name: test_unit_scenario_expectedBehavior
+    """
+    # Arrange: Same context, different query_text (None vs empty string)
+    dataset_version = "test_dataset_v1"
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.DESCRIBE,
+        primary_variable="outcome",
+    )
+    context.confidence = 0.9
+
+    # Act: Generate run_keys with None and empty string
+    key_none = ask_questions_page.generate_run_key(dataset_version, None, context)
+    key_empty = ask_questions_page.generate_run_key(dataset_version, "", context)
+
+    # Assert: Keys are identical (both normalized to empty string)
+    assert key_none == key_empty
