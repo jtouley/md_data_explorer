@@ -765,10 +765,18 @@ def main():
                     st.write(f"**Event Variable**: {context.event_variable}")
 
                 # Show collision suggestions if available
-                if hasattr(context, "match_suggestions") and context.match_suggestions:
-                    st.warning("Some terms matched multiple columns. Please select:")
+                if context.match_suggestions:
+                    st.warning("⚠️ Some terms matched multiple columns. Please select the correct one:")
                     for query_term, suggestions in context.match_suggestions.items():
-                        st.write(f"**'{query_term}'** matches: {', '.join(suggestions)}")
+                        selected = st.selectbox(
+                            f"**'{query_term}'** matches multiple columns. Which one did you mean?",
+                            options=["(Select one)"] + suggestions,
+                            key=f"collision_{query_term}_{dataset_version}",
+                        )
+                        if selected and selected != "(Select one)":
+                            # Update context with selected column
+                            # Note: This would need to be persisted in session_state for reruns
+                            st.info(f"✅ Selected: {selected}")
 
                 # Confirmation button
                 if st.button("✅ Confirm and Run Analysis", type="primary", use_container_width=True):

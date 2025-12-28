@@ -53,6 +53,7 @@ class AnalysisContext:
 
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
+    match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
 
     def is_complete_for_intent(self) -> bool:
         """Check if we have enough information for the inferred analysis."""
@@ -412,6 +413,9 @@ class QuestionEngine:
                 # Parse query
                 query_intent = nl_engine.parse_query(query)
 
+                # Extract variables with collision suggestions
+                matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
+
                 # Show confidence
                 if query_intent.confidence > 0.75:
                     st.success(f"✅ I understand! (Confidence: {query_intent.confidence:.0%})")
@@ -478,6 +482,9 @@ class QuestionEngine:
                 context.predictor_variables = query_intent.predictor_variables
                 context.time_variable = query_intent.time_variable
                 context.event_variable = query_intent.event_variable
+
+                # Propagate collision suggestions to context
+                context.match_suggestions = collision_suggestions
 
                 # Set flags based on intent
                 context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"

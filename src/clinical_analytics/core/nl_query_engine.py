@@ -186,8 +186,8 @@ class NLQueryEngine:
         # Pattern: "compare X by Y" or "compare X between Y"
         match = re.search(r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)", query_lower)
         if match:
-            primary_var = self._fuzzy_match_variable(match.group(1))
-            group_var = self._fuzzy_match_variable(match.group(2))
+            primary_var, _, _ = self._fuzzy_match_variable(match.group(1))
+            group_var, _, _ = self._fuzzy_match_variable(match.group(2))
 
             if primary_var and group_var:
                 return QueryIntent(
@@ -200,7 +200,7 @@ class NLQueryEngine:
         # Pattern: "what predicts X" or "predictors of X"
         match = re.search(r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)", query_lower)
         if match:
-            outcome_var = self._fuzzy_match_variable(match.group(1))
+            outcome_var, _, _ = self._fuzzy_match_variable(match.group(1))
 
             if outcome_var:
                 return QueryIntent(intent_type="FIND_PREDICTORS", primary_variable=outcome_var, confidence=0.95)
@@ -212,7 +212,7 @@ class NLQueryEngine:
         # Pattern: "correlation" or "relationship"
         if re.search(r"\b(correlat|relationship|associat)\b", query_lower):
             # Try to extract two variables
-            variables = self._extract_variables_from_query(query)
+            variables, _ = self._extract_variables_from_query(query)
             if len(variables) >= 2:
                 return QueryIntent(
                     intent_type="CORRELATIONS",
@@ -230,8 +230,8 @@ class NLQueryEngine:
         # Pattern: "difference" implies comparison
         match = re.search(r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)", query_lower)
         if match:
-            primary_var = self._fuzzy_match_variable(match.group(1))
-            group_var = self._fuzzy_match_variable(match.group(2))
+            primary_var, _, _ = self._fuzzy_match_variable(match.group(1))
+            group_var, _, _ = self._fuzzy_match_variable(match.group(2))
 
             if primary_var and group_var:
                 return QueryIntent(
@@ -325,89 +325,96 @@ class NLQueryEngine:
         # This triggers the "ask clarifying questions" flow in the UI
         return QueryIntent(intent_type="DESCRIBE", confidence=0.3)
 
-    def _fuzzy_match_variable(self, query_term: str) -> str | None:
+    def _extract_variables_from_query(self, query: str) -> tuple[list[str], dict[str, list[str]]]:
         """
-        Fuzzy match query term to actual column name in dataset.
-
-        Handles:
-        - Synonyms (e.g., "age" → "age_years", "died" → "mortality")
-        - Partial matches (e.g., "treat" → "treatment_arm")
-        - Case insensitivity
-
-        Args:
-            query_term: Term from user's query
-
-        Returns:
-            Matched column name, or None if no good match
-
-        Example:
-            >>> engine._fuzzy_match_variable("age")
-            'age_years'
-        """
-        # Get all columns from semantic layer
-        view = self.semantic_layer.get_base_view()
-        available_columns = view.columns
-
-        # Direct match (case-insensitive)
-        for col in available_columns:
-            if col.lower() == query_term.lower():
-                return col
-
-        # Check synonyms
-        synonyms = {
-            "age": ["age_years", "patient_age", "age_at_admission"],
-            "mortality": ["died", "death", "deceased", "expired", "dead"],
-            "treatment": ["tx", "therapy", "intervention", "treatment_arm"],
-            "outcome": ["result", "endpoint", "event"],
-            "icu": ["intensive_care", "icu_admission"],
-            "hospital": ["hospitalized", "hospitalization", "hosp"],
-        }
-
-        query_term_lower = query_term.lower()
-        for canonical, synonym_list in synonyms.items():
-            if query_term_lower == canonical or query_term_lower in synonym_list:
-                # Find any column matching canonical or synonyms
-                for col in available_columns:
-                    col_lower = col.lower()
-                    if canonical in col_lower or any(syn in col_lower for syn in synonym_list):
-                        return col
-
-        # Fuzzy match
-        matches = get_close_matches(query_term.lower(), [c.lower() for c in available_columns], n=1, cutoff=0.6)
-
-        if matches:
-            # Find original casing
-            for col in available_columns:
-                if col.lower() == matches[0]:
-                    return col
-
-        return None
-
-    def _extract_variables_from_query(self, query: str) -> list[str]:
-        """
-        Extract all potential variable names from query.
+        Extract variables with collision suggestions using n-gram matching.
 
         Args:
             query: User's question
 
         Returns:
-            List of matched column names
+            Tuple of (matched_variables, collision_suggestions)
+            - matched_variables: List of matched column names
+            - collision_suggestions: Dict mapping query_term -> list of canonical_names
 
         Example:
-            >>> engine._extract_variables_from_query("compare age by treatment")
-            ['age_years', 'treatment_arm']
+            >>> vars, suggestions = engine._extract_variables_from_query("compare dexa scan by treatment")
+            >>> vars
+            ['dexa_scan_result', 'treatment_arm']
+            >>> suggestions
+            {'dexa': ['dexa_scan_result', 'dexa_bone_density']}  # If collision detected
         """
         words = query.lower().split()
-
-        # Match against all available columns
         matched_vars = []
-        for word in words:
-            # Remove punctuation
-            word_clean = word.strip(",.?!")
+        collision_suggestions: dict[str, list[str]] = {}
 
-            # Check if word is a column name (fuzzy)
-            matched = self._fuzzy_match_variable(word_clean)
-            if matched and matched not in matched_vars:
-                matched_vars.append(matched)
+        # Try n-grams (3-word, 2-word, 1-word) in order
+        for n in [3, 2, 1]:
+            for i in range(len(words) - n + 1):
+                phrase = " ".join(words[i : i + n])
 
-        return matched_vars
+                # Skip if phrase contains _USED_ marker (already matched)
+                if "_USED_" in phrase:
+                    continue
+
+                # Match phrase (returns canonical_name, confidence, suggestions)
+                matched, conf, suggestions = self._fuzzy_match_variable(phrase)
+
+                if matched and matched not in matched_vars:
+                    matched_vars.append(matched)
+                    # Mark words as used
+                    words[i : i + n] = ["_USED_"] * n
+
+                # Store collision suggestions
+                if suggestions:
+                    collision_suggestions[phrase] = suggestions
+
+        return matched_vars, collision_suggestions
+
+    def _fuzzy_match_variable(self, query_term: str) -> tuple[str | None, float, list[str] | None]:
+        """
+        Match variable with collision awareness.
+
+        Args:
+            query_term: Single term or phrase (not entire query)
+
+        Returns:
+            Tuple of (matched_canonical_name, confidence, suggestions)
+            - matched_canonical_name: Canonical column name if matched, None otherwise
+            - confidence: Confidence score 0.0-1.0
+            - suggestions: List of canonical names if collision detected, None otherwise
+        """
+        # Get alias index from semantic layer
+        alias_index = self.semantic_layer.get_column_alias_index()
+        normalized_query = self.semantic_layer._normalize_alias(query_term)
+
+        # Check if this alias was dropped due to collision
+        suggestions = self.semantic_layer.get_collision_suggestions(query_term)
+        if suggestions:
+            # Collision detected - return suggestions
+            return None, 0.2, suggestions
+
+        # Direct match
+        if normalized_query in alias_index:
+            collisions = self.semantic_layer.get_collision_warnings()
+            if normalized_query in collisions:
+                # Collision warning (shouldn't happen if we dropped it, but check anyway)
+                return alias_index[normalized_query], 0.4, None
+            return alias_index[normalized_query], 0.9, None
+
+        # Fuzzy match using difflib
+        matches = get_close_matches(
+            normalized_query,
+            alias_index.keys(),
+            n=1,
+            cutoff=0.7,
+        )
+
+        if matches:
+            matched_alias = matches[0]
+            collisions = self.semantic_layer.get_collision_warnings()
+            if matched_alias in collisions:
+                return alias_index[matched_alias], 0.4, None
+            return alias_index[matched_alias], 0.7, None
+
+        return None, 0.0, None
