@@ -20,6 +20,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "langchain>=1.2.0",
     "langchain-community>=0.4.1",
+    "structlog>=24.0.0",
 ]
 
 [project.optional-dependencies]

@@ -65,3 +65,27 @@ def sample_sepsis_path(test_data_dir):
     """Return path to Sepsis test data if available."""
     path = test_data_dir / "sepsis"
     return path if path.exists() else None
+
+
+@pytest.fixture(scope="module")
+def ask_questions_page():
+    """
+    Import the Ask Questions page module.
+
+    Uses importlib because the filename contains an emoji.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    # Add src to path
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root / "src"))
+
+    # Import from the page file (has emoji in name, so use importlib)
+    page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "3_💬_Ask_Questions.py"
+    spec = importlib.util.spec_from_file_location("ask_questions_page", page_path)
+    ask_questions_page = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ask_questions_page)
+
+    return ask_questions_page
