@@ -19,9 +19,7 @@ def load_patient_file(path: Path) -> pl.DataFrame:
     return pl.read_csv(path, separator="|")
 
 
-def load_and_aggregate(
-    root_path: Path, mapper: ColumnMapper | None = None, limit: int | None = None
-) -> pl.DataFrame:
+def load_and_aggregate(root_path: Path, mapper: ColumnMapper | None = None, limit: int | None = None) -> pl.DataFrame:
     """
     Load sepsis data from PSV files using Polars for efficient aggregation.
 
@@ -77,9 +75,7 @@ def load_and_aggregate(
         # Fallback to basic aggregation if no mapper provided
         aggregated_df = combined_df.group_by("patient_id").agg(
             [
-                pl.col("Age").first().alias("age")
-                if "Age" in combined_df.columns
-                else pl.lit(None).alias("age"),
+                pl.col("Age").first().alias("age") if "Age" in combined_df.columns else pl.lit(None).alias("age"),
                 pl.col("Gender").first().alias("gender")
                 if "Gender" in combined_df.columns
                 else pl.lit(None).alias("gender"),

@@ -92,7 +92,8 @@ def render_upload_step():
 
             st.success("✅ ZIP file ready for processing")
             st.info(
-                "💡 **Next:** Click 'Continue to Review' to process tables, detect relationships, and build unified cohort."
+                "💡 **Next:** Click 'Continue to Review' to process tables, "
+                "detect relationships, and build unified cohort."
             )
 
             # Button to proceed to review step
@@ -163,7 +164,8 @@ def render_preview_step(df: pd.DataFrame):
         st.success("✅ Data quality check passed!")
     else:
         st.warning(
-            f"⚠️ Found {validation_result['summary']['errors']} error(s) and {validation_result['summary']['warnings']} warning(s)"
+            f"⚠️ Found {validation_result['summary']['errors']} error(s) and "
+            f"{validation_result['summary']['warnings']} warning(s)"
         )
 
     # Show issues
@@ -231,9 +233,7 @@ def render_variable_detection_step(df: pd.DataFrame):
     }
 
     for var_type, cols_info in type_groups.items():
-        with st.expander(
-            f"{type_emojis.get(var_type, '📌')} {var_type.upper()} Variables ({len(cols_info)})"
-        ):
+        with st.expander(f"{type_emojis.get(var_type, '📌')} {var_type.upper()} Variables ({len(cols_info)})"):
             for col, info in cols_info:
                 st.markdown(f"**{col}**")
 
@@ -317,10 +317,7 @@ def render_mapping_step(df: pd.DataFrame, variable_info: dict, suggestions: dict
 
             st.markdown(f"**Predictors:** {len(mapping['predictors'])} variables")
             if mapping["predictors"]:
-                st.caption(
-                    ", ".join(mapping["predictors"][:10])
-                    + ("..." if len(mapping["predictors"]) > 10 else "")
-                )
+                st.caption(", ".join(mapping["predictors"][:10]) + ("..." if len(mapping["predictors"]) > 10 else ""))
 
             if mapping["excluded"]:
                 st.markdown(f"**Excluded:** {len(mapping['excluded'])} variables")
@@ -359,9 +356,7 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
     patient_id_col = mapping["patient_id"]
     outcome_col = mapping["outcome"]
 
-    validation_result = DataQualityValidator.validate_complete(
-        df, id_column=patient_id_col, outcome_column=outcome_col
-    )
+    validation_result = DataQualityValidator.validate_complete(df, id_column=patient_id_col, outcome_column=outcome_col)
 
     # Show validation results
     if validation_result["is_valid"]:
@@ -373,9 +368,7 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         if error_count > 0:
             st.error(f"❌ {error_count} critical error(s) found. Please fix before saving.")
         else:
-            st.warning(
-                f"⚠️ {warning_count} warning(s) found. You can proceed, but be aware of these issues."
-            )
+            st.warning(f"⚠️ {warning_count} warning(s) found. You can proceed, but be aware of these issues.")
 
     # Show final summary
     col1, col2, col3 = st.columns(3)
@@ -472,9 +465,7 @@ def render_zip_review_step():
     )
 
     # Process ZIP file
-    if st.button(
-        "🚀 Process & Save Multi-Table Dataset", type="primary", disabled=not dataset_name.strip()
-    ):
+    if st.button("🚀 Process & Save Multi-Table Dataset", type="primary", disabled=not dataset_name.strip()):
         # Create progress tracking UI elements
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -557,9 +548,7 @@ def render_zip_review_step():
                 with col1:
                     st.metric(
                         "Tables Joined",
-                        upload_metadata.get("tables", [])
-                        and len(upload_metadata.get("tables", []))
-                        or 0,
+                        upload_metadata.get("tables", []) and len(upload_metadata.get("tables", [])) or 0,
                     )
                 with col2:
                     st.metric("Unified Rows", upload_metadata.get("row_count", 0))
@@ -685,9 +674,7 @@ def main():
         if is_zip:
             # For ZIP files, go directly to review (skip preview/detection/mapping)
             render_review_step()
-        elif all(
-            k in st.session_state for k in ["uploaded_df", "variable_mapping", "variable_info"]
-        ):
+        elif all(k in st.session_state for k in ["uploaded_df", "variable_mapping", "variable_info"]):
             render_review_step(
                 st.session_state["uploaded_df"],
                 st.session_state["variable_mapping"],

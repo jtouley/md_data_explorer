@@ -62,8 +62,7 @@ class CovidMSDataset(ClinicalDataset):
         # Validate: single-table datasets only support patient_level
         if granularity != "patient_level":
             raise ValueError(
-                f"{self.__class__.__name__} only supports patient_level granularity. "
-                f"Requested: {granularity}"
+                f"{self.__class__.__name__} only supports patient_level granularity. Requested: {granularity}"
             )
 
         # Extract outcome override if provided

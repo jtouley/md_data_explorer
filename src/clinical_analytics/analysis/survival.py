@@ -132,9 +132,7 @@ def run_cox_regression(
     summary_df["hr_ci_upper"] = np.exp(summary_df["coef upper 95%"])
 
     # Reorder columns for clarity
-    summary_df = summary_df[
-        ["hazard_ratio", "hr_ci_lower", "hr_ci_upper", "p", "coef", "se(coef)", "z"]
-    ]
+    summary_df = summary_df[["hazard_ratio", "hr_ci_lower", "hr_ci_upper", "p", "coef", "se(coef)", "z"]]
 
     summary_df = summary_df.round(4)
 

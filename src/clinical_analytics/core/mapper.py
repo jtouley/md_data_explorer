@@ -45,9 +45,7 @@ class ColumnMapper:
             ColumnMapper instance
         """
         if config_path is None:
-            config_path = (
-                Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
-            )
+            config_path = Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
 
         with open(config_path) as f:
             all_configs = yaml.safe_load(f)
@@ -86,9 +84,7 @@ class ColumnMapper:
                         # String key: convert to lowercase for comparison
                         # Handle case where source column might be string or boolean
                         expr = (
-                            pl.when(
-                                pl.col(source_col).cast(pl.Utf8).str.to_lowercase() == key.lower()
-                            )
+                            pl.when(pl.col(source_col).cast(pl.Utf8).str.to_lowercase() == key.lower())
                             .then(value)
                             .otherwise(expr)
                         )
@@ -192,11 +188,11 @@ class ColumnMapper:
 
                         logger = logging.getLogger(__name__)
                         logger.error(
-                            f"Error in 'in' filter for column {column} (dtype={col_dtype}): {type(e).__name__}: {str(e)}"
+                            f"Error in 'in' filter for column {column} (dtype={col_dtype}): "
+                            f"{type(e).__name__}: {str(e)}"
                         )
-                        logger.error(
-                            f"Filter values: {filter_value[:10]}... (type: {type(filter_value[0]) if filter_value else 'empty'})"
-                        )
+                        filter_type = type(filter_value[0]) if filter_value else "empty"
+                        logger.error(f"Filter values: {filter_value[:10]}... (type: {filter_type})")
                         raise
 
             elif filter_type == "range":
@@ -288,9 +284,7 @@ class ColumnMapper:
                     agg_exprs.append(pl.col(source_col).mean().alias(target_col))
 
         # Add count of records if not already included
-        if "num_hours" not in [
-            expr.meta.output_name() if hasattr(expr, "meta") else None for expr in agg_exprs
-        ]:
+        if "num_hours" not in [expr.meta.output_name() if hasattr(expr, "meta") else None for expr in agg_exprs]:
             agg_exprs.append(pl.len().alias("num_hours"))
 
         # Group by and aggregate
@@ -336,11 +330,7 @@ class ColumnMapper:
             elif target_col == UnifiedCohort.TIME_ZERO:
                 # Time zero - use provided value or find in mapping
                 if time_zero_value:
-                    select_exprs.append(
-                        pl.lit(time_zero_value)
-                        .str.strptime(pl.Datetime, "%Y-%m-%d")
-                        .alias(target_col)
-                    )
+                    select_exprs.append(pl.lit(time_zero_value).str.strptime(pl.Datetime, "%Y-%m-%d").alias(target_col))
                 else:
                     source_col = self._find_source_column(target_col)
                     if source_col and source_col in df.columns:
@@ -454,9 +444,7 @@ def load_dataset_config(dataset_name: str, config_path: Path | None = None) -> d
         Dataset configuration dictionary
     """
     if config_path is None:
-        config_path = (
-            Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
-        )
+        config_path = Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
 
     with open(config_path) as f:
         all_configs = yaml.safe_load(f)
@@ -478,9 +466,7 @@ def get_global_config(config_path: Path | None = None) -> dict:
         Global configuration dictionary
     """
     if config_path is None:
-        config_path = (
-            Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
-        )
+        config_path = Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
 
     with open(config_path) as f:
         all_configs = yaml.safe_load(f)

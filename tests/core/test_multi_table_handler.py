@@ -114,9 +114,9 @@ class TestTableClassification:
             .with_columns(
                 [
                     pl.col("idx").alias("id"),  # Int64: 8 bytes/row
-                    pl.concat_str(
-                        [pl.lit("Name_"), pl.col("idx").cast(pl.Utf8).str.zfill(4)]
-                    ).alias("name"),  # Utf8: ~9 chars = 9 bytes/row
+                    pl.concat_str([pl.lit("Name_"), pl.col("idx").cast(pl.Utf8).str.zfill(4)]).alias(
+                        "name"
+                    ),  # Utf8: ~9 chars = 9 bytes/row
                     (pl.col("idx") * 1.5).cast(pl.Float64).alias("value"),  # Float64: 8 bytes/row
                 ]
             )
@@ -135,15 +135,12 @@ class TestTableClassification:
         theoretical_max = theoretical_min * 2  # Allow 2x overhead
 
         assert theoretical_min <= estimated_bytes <= theoretical_max, (
-            f"Byte estimate {estimated_bytes:,} outside sane range "
-            f"[{theoretical_min:,}, {theoretical_max:,}]"
+            f"Byte estimate {estimated_bytes:,} outside sane range [{theoretical_min:,}, {theoretical_max:,}]"
         )
 
         # Verify estimate is reasonable per row
         bytes_per_row = estimated_bytes / num_rows
-        assert 20 <= bytes_per_row <= 50, (
-            f"Bytes per row {bytes_per_row:.1f} outside expected range [20, 50]"
-        )
+        assert 20 <= bytes_per_row <= 50, f"Bytes per row {bytes_per_row:.1f} outside expected range [20, 50]"
 
         handler.close()
 
@@ -185,9 +182,7 @@ class TestTableClassification:
             f"Same DataFrame should return same grain key: {grain_key_1} != {grain_key_2}"
         )
 
-        assert grain_key_1 == grain_key_3, (
-            f"Column order should not affect grain key: {grain_key_1} != {grain_key_3}"
-        )
+        assert grain_key_1 == grain_key_3, f"Column order should not affect grain key: {grain_key_1} != {grain_key_3}"
 
         # Verify grain key follows priority rules (patient_id should be chosen)
         assert grain_key_1 == "patient_id", f"patient_id should be prioritized, got {grain_key_1}"
@@ -231,9 +226,7 @@ class TestTableClassification:
         df_no_time = pl.DataFrame({"id": [1, 2, 3], "value": [100, 200, 300]})
 
         # DataFrame with constant time column (should not detect)
-        df_constant_time = pl.DataFrame(
-            {"id": [1, 2, 3], "timestamp": ["2024-01-01", "2024-01-01", "2024-01-01"]}
-        )
+        df_constant_time = pl.DataFrame({"id": [1, 2, 3], "timestamp": ["2024-01-01", "2024-01-01", "2024-01-01"]})
 
         tables = {"dummy": pl.DataFrame({"id": [1]})}
         handler = MultiTableHandler(tables)
@@ -265,12 +258,10 @@ class TestTableClassification:
             pl.select(idx=pl.int_range(0, num_vitals_rows))
             .with_columns(
                 [
-                    pl.concat_str([pl.lit("P"), (pl.col("idx") % 100).cast(pl.Utf8)]).alias(
-                        "patient_id"
+                    pl.concat_str([pl.lit("P"), (pl.col("idx") % 100).cast(pl.Utf8)]).alias("patient_id"),
+                    pl.concat_str([pl.lit("2024-01-"), ((pl.col("idx") % 30) + 1).cast(pl.Utf8).str.zfill(2)]).alias(
+                        "charttime"
                     ),
-                    pl.concat_str(
-                        [pl.lit("2024-01-"), ((pl.col("idx") % 30) + 1).cast(pl.Utf8).str.zfill(2)]
-                    ).alias("charttime"),
                     (70 + (pl.col("idx") % 30)).alias("heart_rate"),
                 ]
             )
@@ -305,9 +296,7 @@ class TestTableClassification:
     def test_null_rate_calculation(self):
         """Test null rate calculation in grain key."""
         # Arrange: DataFrame with NULLs in grain key
-        df_with_nulls = pl.DataFrame(
-            {"patient_id": ["P1", "P2", None, "P3", None], "value": [100, 200, 300, 400, 500]}
-        )
+        df_with_nulls = pl.DataFrame({"patient_id": ["P1", "P2", None, "P3", None], "value": [100, 200, 300, 400, 500]})
 
         tables = {"test": df_with_nulls}
 
@@ -330,9 +319,7 @@ class TestTableClassificationEdgeCases:
     def test_empty_dataframe(self):
         """Test classification with empty DataFrame."""
         # Arrange
-        empty_df = pl.DataFrame(
-            {"patient_id": pl.Series([], dtype=pl.Utf8), "value": pl.Series([], dtype=pl.Int64)}
-        )
+        empty_df = pl.DataFrame({"patient_id": pl.Series([], dtype=pl.Utf8), "value": pl.Series([], dtype=pl.Int64)})
 
         tables = {"empty": empty_df}
 
@@ -388,9 +375,11 @@ class TestPerformanceOptimizations:
 
     def test_grain_key_fallback_prefers_patient_over_event(self):
         """
-        Acceptance: Table with patient_id and event_id picks patient_id even if event_id is more unique.
+        Acceptance: Table with patient_id and event_id picks patient_id even if
+        event_id is more unique.
 
-        This tests the explicit scoring formula that penalizes row-level IDs (event_id, row_id, uuid).
+        This tests the explicit scoring formula that penalizes row-level IDs
+        (event_id, row_id, uuid).
         """
         # Arrange: event_id is perfectly unique (row-level ID), patient_id has duplicates
         df = pl.DataFrame(
@@ -455,9 +444,7 @@ class TestPerformanceOptimizations:
             pl.select(idx=pl.int_range(0, n))
             .with_columns(
                 [
-                    pl.concat_str([pl.lit("P"), (pl.col("idx") % 1000).cast(pl.Utf8)]).alias(
-                        "patient_id"
-                    ),
+                    pl.concat_str([pl.lit("P"), (pl.col("idx") % 1000).cast(pl.Utf8)]).alias("patient_id"),
                     pl.col("idx").alias("value"),
                 ]
             )
@@ -479,15 +466,11 @@ class TestPerformanceOptimizations:
         handler.classify_tables()
 
         # Assert: _sample_df() was called (proving we're using sampling)
-        assert len(sample_df_calls) > 0, (
-            "Classification should use _sample_df() for all uniqueness checks"
-        )
+        assert len(sample_df_calls) > 0, "Classification should use _sample_df() for all uniqueness checks"
 
         # Verify all samples are bounded
         for df_height, sample_size in sample_df_calls:
-            assert sample_size <= 10_000, (
-                f"Sample size {sample_size} exceeds bound (df_height={df_height})"
-            )
+            assert sample_size <= 10_000, f"Sample size {sample_size} exceeds bound (df_height={df_height})"
 
         handler.close()
 
@@ -526,8 +509,7 @@ class TestPerformanceOptimizations:
 
         # Assert: Must complete within 3 seconds
         assert elapsed < 3.0, (
-            f"Classification of 1M-row table took {elapsed:.3f}s, "
-            f"exceeds 3s bound (sampling may not be working)"
+            f"Classification of 1M-row table took {elapsed:.3f}s, exceeds 3s bound (sampling may not be working)"
         )
 
         # Verify classification worked correctly
@@ -564,12 +546,10 @@ class TestAnchorSelection:
             pl.select(idx=pl.int_range(0, num_vitals))
             .with_columns(
                 [
-                    pl.concat_str([pl.lit("P"), ((pl.col("idx") % 3) + 1).cast(pl.Utf8)]).alias(
-                        "patient_id"
+                    pl.concat_str([pl.lit("P"), ((pl.col("idx") % 3) + 1).cast(pl.Utf8)]).alias("patient_id"),
+                    pl.concat_str([pl.lit("2024-01-"), ((pl.col("idx") % 30) + 1).cast(pl.Utf8).str.zfill(2)]).alias(
+                        "charttime"
                     ),
-                    pl.concat_str(
-                        [pl.lit("2024-01-"), ((pl.col("idx") % 30) + 1).cast(pl.Utf8).str.zfill(2)]
-                    ).alias("charttime"),
                     (70 + (pl.col("idx") % 30)).alias("heart_rate"),
                 ]
             )
@@ -674,9 +654,7 @@ class TestAnchorSelection:
         dim_a = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "value_a": [100, 200, 300]})
 
         # dim_b: 20% nulls (1 out of 5), smaller bytes
-        dim_b = pl.DataFrame(
-            {"patient_id": ["P1", "P2", None, "P4", "P5"], "value_b": [10, 20, 30, 40, 50]}
-        )
+        dim_b = pl.DataFrame({"patient_id": ["P1", "P2", None, "P4", "P5"], "value_b": [10, 20, 30, 40, 50]})
 
         # dim_c: 0% nulls, larger size (more columns and longer strings)
         dim_c = pl.DataFrame(
@@ -797,9 +775,7 @@ class TestDimensionMart:
         mart = mart_lazy.collect()
 
         # Assert: Mart should have same row count as anchor
-        assert mart.height == patients.height, (
-            f"Mart rowcount {mart.height} != anchor rowcount {patients.height}"
-        )
+        assert mart.height == patients.height, f"Mart rowcount {mart.height} != anchor rowcount {patients.height}"
 
         assert mart.height == 3, "Mart should have 3 rows (one per unique patient)"
 
@@ -892,25 +868,17 @@ class TestFactAggregation:
 
         vitals = pl.DataFrame(
             {
-                "patient_id": [
-                    f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "diagnosis_code": [
                     100 + (i % 100) for i in range(n_patients * n_vitals_per_patient)
                 ],  # Numeric code column (matches *_code pattern)
-                "heart_rate": [
-                    72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)
-                ],  # Numeric value
+                "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],  # Numeric value
                 # Add many extra columns to exceed 10 MB threshold
                 "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
                 "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
                 "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
-                "respiration_rate": [
-                    16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)
-                ],
-                "temperature": [
-                    98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+                "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
                 "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
                 "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
             }
@@ -956,21 +924,15 @@ class TestFactAggregation:
 
         vitals = pl.DataFrame(
             {
-                "patient_id": [
-                    f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "icd_code": [f"I{i % 100}" for i in range(n_patients * n_vitals_per_patient)],
                 "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
                 # Add many extra columns to exceed 10 MB threshold
                 "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
                 "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
                 "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
-                "respiration_rate": [
-                    16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)
-                ],
-                "temperature": [
-                    98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+                "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
                 "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
                 "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
             }
@@ -981,9 +943,7 @@ class TestFactAggregation:
 
         # Act: Use default policy (allow_mean=False)
         default_policy = AggregationPolicy()
-        feature_tables = handler._aggregate_fact_tables(
-            grain_key="patient_id", policy=default_policy
-        )
+        feature_tables = handler._aggregate_fact_tables(grain_key="patient_id", policy=default_policy)
 
         # Assert: No mean columns should be generated
         assert "vitals_features" in feature_tables
@@ -992,9 +952,7 @@ class TestFactAggregation:
 
         # Check that no mean columns exist
         mean_columns = [col for col in vitals_features.columns if "mean" in col]
-        assert len(mean_columns) == 0, (
-            f"Default policy should not generate mean columns, found: {mean_columns}"
-        )
+        assert len(mean_columns) == 0, f"Default policy should not generate mean columns, found: {mean_columns}"
 
         # Verify safe aggregations exist (min, max, count_distinct)
         assert "heart_rate_min" in vitals_features.columns
@@ -1024,25 +982,17 @@ class TestFactAggregation:
 
         vitals = pl.DataFrame(
             {
-                "patient_id": [
-                    f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "measurement_id": [
                     f"M{i}" for i in range(n_patients * n_vitals_per_patient)
                 ],  # Matches *_id pattern (code)
-                "heart_rate": [
-                    72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)
-                ],  # Numeric, not a code
+                "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],  # Numeric, not a code
                 # Add many extra columns to exceed 10 MB threshold
                 "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
                 "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
                 "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
-                "respiration_rate": [
-                    16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)
-                ],
-                "temperature": [
-                    98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+                "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
                 "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
                 "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
             }
@@ -1092,20 +1042,14 @@ class TestFactAggregation:
 
         vitals = pl.DataFrame(
             {
-                "patient_id": [
-                    f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
                 # Add many extra columns to exceed 10 MB threshold
                 "systolic_bp": [120 + (i % 40) for i in range(n_patients * n_vitals_per_patient)],
                 "diastolic_bp": [80 + (i % 20) for i in range(n_patients * n_vitals_per_patient)],
                 "oxygen_sat": [95 + (i % 5) for i in range(n_patients * n_vitals_per_patient)],
-                "respiration_rate": [
-                    16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)
-                ],
-                "temperature": [
-                    98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)
-                ],
+                "respiration_rate": [16 + (i % 8) for i in range(n_patients * n_vitals_per_patient)],
+                "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_patients * n_vitals_per_patient)],
                 "glucose": [100 + (i % 50) for i in range(n_patients * n_vitals_per_patient)],
                 "weight_kg": [70 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
             }
@@ -1152,9 +1096,7 @@ class TestFactAggregation:
                 "patient_id": [f"P{i % n_patients}" for i in range(n_total)],
                 "heart_rate": [72 + (i % 30) for i in range(n_total)],
                 "temperature": [98.0 + (i % 10) * 0.1 for i in range(n_total)],
-                "measurement_time": [
-                    datetime(2024, 1, 1) + timedelta(hours=i) for i in range(n_total)
-                ],
+                "measurement_time": [datetime(2024, 1, 1) + timedelta(hours=i) for i in range(n_total)],
                 # Add extra columns to exceed 10 MB threshold
                 "systolic_bp": [120 + (i % 40) for i in range(n_total)],
                 "diastolic_bp": [80 + (i % 20) for i in range(n_total)],
@@ -1214,9 +1156,7 @@ class TestFactAggregation:
             }
         )
 
-        handler = MultiTableHandler(
-            {"patients": patients, "demographics": demographics, "vitals": vitals}
-        )
+        handler = MultiTableHandler({"patients": patients, "demographics": demographics, "vitals": vitals})
 
         # Classify tables
         handler.classify_tables()
@@ -1230,12 +1170,8 @@ class TestFactAggregation:
         feature_tables = handler._aggregate_fact_tables(grain_key="patient_id")
 
         # Assert: Only fact/event tables should be in feature_tables
-        assert "patients_features" not in feature_tables, (
-            "Dimension table 'patients' should not be aggregated"
-        )
-        assert "demographics_features" not in feature_tables, (
-            "Dimension table 'demographics' should not be aggregated"
-        )
+        assert "patients_features" not in feature_tables, "Dimension table 'patients' should not be aggregated"
+        assert "demographics_features" not in feature_tables, "Dimension table 'demographics' should not be aggregated"
 
         # vitals should be aggregated (it's a fact/event table)
         # Note: vitals might be classified as "reference" if too small, let's check
@@ -1317,8 +1253,7 @@ class TestBuildUnifiedCohort:
 
         # Assert
         assert result.height == mart_height, (
-            f"Row count changed: {mart_height} -> {result.height}. "
-            f"Feature joins may have caused row explosion."
+            f"Row count changed: {mart_height} -> {result.height}. Feature joins may have caused row explosion."
         )
 
         handler.close()
@@ -1581,7 +1516,7 @@ class TestMaterializeMart:
         handler.classify_tables()
 
         output_path = tmp_path / "marts"
-        metadata = handler.materialize_mart(output_path=output_path, grain="patient")
+        handler.materialize_mart(output_path=output_path, grain="patient")
 
         # Act: Get connection multiple times
         con1 = handler._get_ibis_connection()
@@ -1776,7 +1711,7 @@ class TestPlanMart:
         metadata = handler.materialize_mart(output_path=output_path, grain="patient")
 
         # Act
-        plan = handler.plan_mart(metadata=metadata)
+        handler.plan_mart(metadata=metadata)
 
         # Assert: Connection should be DuckDB (check by trying to use it)
 
@@ -1789,11 +1724,11 @@ class TestPlanMart:
         handler.close()
 
     def test_plan_mart_handles_partitioned_directories(self, tmp_path):
-        """Verify plan_mart() handles partitioned directories (simulated with patient grain but partitioned structure)."""
+        """Verify plan_mart() handles partitioned directories (simulated with
+        patient grain but partitioned structure)."""
         pytest.importorskip("ibis")
 
         # Arrange: Create a scenario where we can test partitioned reading
-        # For now, test that plan_mart can read a single file (partitioned dir test requires event grain which needs proper setup)
         patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
 
         vitals = pl.DataFrame(

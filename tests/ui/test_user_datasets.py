@@ -86,13 +86,9 @@ class TestUserDatasetStorage:
         """Test saving a dataset."""
         storage = UserDatasetStorage(base_dir=tmp_path)
 
-        df = pd.DataFrame(
-            {"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]}
-        )
+        df = pd.DataFrame({"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]})
 
-        dataset_id = storage.save_dataset(
-            df, dataset_name="test_dataset", metadata={"description": "Test dataset"}
-        )
+        dataset_id = storage.save_dataset(df, dataset_name="test_dataset", metadata={"description": "Test dataset"})
 
         assert dataset_id is not None
         assert (tmp_path / "raw" / f"{dataset_id}.csv").exists()

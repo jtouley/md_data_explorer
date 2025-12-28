@@ -120,16 +120,10 @@ def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
                 mean_diff=mean_diff,
                 ci_lower=mean_diff
                 - 1.96
-                * np.sqrt(
-                    (group1_data.std() ** 2 / len(group1_data))
-                    + (group2_data.std() ** 2 / len(group2_data))
-                ),
+                * np.sqrt((group1_data.std() ** 2 / len(group1_data)) + (group2_data.std() ** 2 / len(group2_data))),
                 ci_upper=mean_diff
                 + 1.96
-                * np.sqrt(
-                    (group1_data.std() ** 2 / len(group1_data))
-                    + (group2_data.std() ** 2 / len(group2_data))
-                ),
+                * np.sqrt((group1_data.std() ** 2 / len(group1_data)) + (group2_data.std() ** 2 / len(group2_data))),
                 p_value=p_value,
                 group1=str(groups[0]),
                 group2=str(groups[1]),
@@ -172,9 +166,7 @@ def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
         st.dataframe(contingency)
 
         if p_interp["is_significant"]:
-            st.success(
-                f"✅ {outcome_col} distribution differs significantly across {group_col} groups"
-            )
+            st.success(f"✅ {outcome_col} distribution differs significantly across {group_col} groups")
         else:
             st.info(f"ℹ️ {outcome_col} distribution is similar across groups")
 
@@ -195,9 +187,7 @@ def run_predictor_analysis(df: pd.DataFrame, context: AnalysisContext):
     n_unique = outcome_data.nunique()
 
     if n_unique != 2:
-        st.warning(
-            f"Outcome has {n_unique} unique values. For now, only binary outcomes are supported."
-        )
+        st.warning(f"Outcome has {n_unique} unique values. For now, only binary outcomes are supported.")
         return
 
     # Handle categorical predictors
@@ -357,9 +347,7 @@ def run_relationship_analysis(df: pd.DataFrame, context: AnalysisContext):
                     found_strong = True
                     direction = "positive" if corr_val > 0 else "negative"
                     strength = "strong" if abs(corr_val) >= 0.7 else "moderate"
-                    st.markdown(
-                        f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})"
-                    )
+                    st.markdown(f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})")
 
     if not found_strong:
         st.info("ℹ️ No strong correlations found (|r| >= 0.5)")
@@ -394,16 +382,14 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
-    except:
+    except Exception:
         pass
 
     if not dataset_display_names:
         st.error("No datasets available. Please upload data first.")
         return
 
-    dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset", list(dataset_display_names.keys())
-    )
+    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
     is_uploaded = dataset_choice in uploaded_datasets
 
@@ -448,9 +434,7 @@ def main():
 
             except ValueError:
                 # Semantic layer not available
-                st.info(
-                    "Natural language queries are only available for datasets with semantic layers."
-                )
+                st.info("Natural language queries are only available for datasets with semantic layers.")
                 st.session_state["use_nl_query"] = False
                 st.rerun()
                 return
@@ -461,9 +445,7 @@ def main():
             # Show option to use structured questions instead
             st.divider()
             st.markdown("### Or use structured questions")
-            if st.button(
-                "💬 Use structured questions instead", help="Choose from predefined question types"
-            ):
+            if st.button("💬 Use structured questions instead", help="Choose from predefined question types"):
                 st.session_state["use_nl_query"] = False
                 st.rerun()
 
@@ -485,9 +467,7 @@ def main():
                         intent_signal = "describe"
 
                 st.session_state["intent_signal"] = intent_signal
-                st.session_state["analysis_context"] = QuestionEngine.build_context_from_intent(
-                    intent_signal, cohort
-                )
+                st.session_state["analysis_context"] = QuestionEngine.build_context_from_intent(intent_signal, cohort)
                 st.rerun()
 
             # Show option to go back to NL query
@@ -531,15 +511,11 @@ def main():
 
         elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
             if not context.time_variable or not context.event_variable:
-                context.time_variable, context.event_variable = (
-                    QuestionEngine.select_time_variables(cohort)
-                )
+                context.time_variable, context.event_variable = QuestionEngine.select_time_variables(cohort)
 
         elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             if len(context.predictor_variables) < 2:
-                context.predictor_variables = QuestionEngine.select_predictor_variables(
-                    cohort, exclude=[], min_vars=2
-                )
+                context.predictor_variables = QuestionEngine.select_predictor_variables(cohort, exclude=[], min_vars=2)
 
         # Update context in session state
         st.session_state["analysis_context"] = context

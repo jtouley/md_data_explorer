@@ -55,16 +55,14 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
-    except:
+    except Exception:
         pass
 
     if not dataset_display_names:
         st.error("No datasets available. Please upload data first.")
         return
 
-    dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset", list(dataset_display_names.keys())
-    )
+    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
     is_uploaded = dataset_choice in uploaded_datasets
 
@@ -90,9 +88,7 @@ def main():
     # Configuration
     st.markdown("## 🔧 Configure Analysis")
 
-    available_cols = [
-        c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]
-    ]
+    available_cols = [c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]]
 
     col1, col2 = st.columns(2)
 
@@ -109,9 +105,7 @@ def main():
         outcome_col = st.selectbox(
             "Outcome Variable",
             available_cols,
-            index=available_cols.index(default_outcome)
-            if default_outcome and default_outcome in available_cols
-            else 0,
+            index=available_cols.index(default_outcome) if default_outcome and default_outcome in available_cols else 0,
             help="The outcome you want to predict (must be binary for logistic regression)",
         )
 
@@ -121,17 +115,13 @@ def main():
             n_unique = outcome_data.nunique()
 
             if n_unique == 2:
-                st.success(
-                    f"✅ Binary outcome detected ({n_unique} values) - will use **Logistic Regression**"
-                )
+                st.success(f"✅ Binary outcome detected ({n_unique} values) - will use **Logistic Regression**")
                 regression_type = "logistic"
             elif n_unique <= 10:
                 st.warning(f"⚠️ Outcome has {n_unique} values. Consider if this should be binary.")
                 regression_type = "logistic"
             else:
-                st.info(
-                    "ℹ️ Continuous outcome detected - would use Linear Regression (not yet implemented)"
-                )
+                st.info("ℹ️ Continuous outcome detected - would use Linear Regression (not yet implemented)")
                 regression_type = "linear"
 
     with col2:
@@ -184,19 +174,13 @@ def main():
                 analysis_df = cohort[analysis_cols].copy()
 
                 # Handle categorical variables
-                categorical_cols = analysis_df.select_dtypes(
-                    include=["object", "category"]
-                ).columns.tolist()
+                categorical_cols = analysis_df.select_dtypes(include=["object", "category"]).columns.tolist()
                 if outcome_col in categorical_cols:
                     categorical_cols.remove(outcome_col)
 
                 if categorical_cols:
-                    st.info(
-                        f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}"
-                    )
-                    analysis_df = pd.get_dummies(
-                        analysis_df, columns=categorical_cols, drop_first=True
-                    )
+                    st.info(f"Converting categorical variables to dummy variables: {', '.join(categorical_cols)}")
+                    analysis_df = pd.get_dummies(analysis_df, columns=categorical_cols, drop_first=True)
 
                     # Update predictor list with dummy variable names
                     new_predictors = [c for c in analysis_df.columns if c != outcome_col]
@@ -210,7 +194,8 @@ def main():
 
                 if final_n < initial_n:
                     st.warning(
-                        f"Dropped {initial_n - final_n} rows with missing data ({(initial_n - final_n) / initial_n * 100:.1f}%)"
+                        f"Dropped {initial_n - final_n} rows with missing data "
+                        f"({(initial_n - final_n) / initial_n * 100:.1f}%)"
                     )
 
                 if final_n < 10:
@@ -218,9 +203,7 @@ def main():
                     return
 
                 # Run regression
-                model, summary_df = run_logistic_regression(
-                    analysis_df, outcome_col, new_predictors
-                )
+                model, summary_df = run_logistic_regression(analysis_df, outcome_col, new_predictors)
 
                 st.success("✅ Analysis complete!")
 

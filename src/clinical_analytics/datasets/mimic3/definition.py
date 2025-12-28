@@ -82,9 +82,7 @@ class Mimic3Dataset(ClinicalDataset):
         """
         # Validate: MIMIC-III is patient-level only (for now)
         if granularity != "patient_level":
-            raise ValueError(
-                f"Mimic3Dataset only supports patient_level granularity. Requested: {granularity}"
-            )
+            raise ValueError(f"Mimic3Dataset only supports patient_level granularity. Requested: {granularity}")
 
         if not self.validate():
             # Return empty DataFrame with correct schema
@@ -94,6 +92,4 @@ class Mimic3Dataset(ClinicalDataset):
         outcome_col = filters.get("target_outcome")
         filter_only = {k: v for k, v in filters.items() if k != "target_outcome"}
 
-        return self.semantic.get_cohort(
-            granularity=granularity, outcome_col=outcome_col, filters=filter_only
-        )
+        return self.semantic.get_cohort(granularity=granularity, outcome_col=outcome_col, filters=filter_only)

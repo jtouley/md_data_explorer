@@ -24,9 +24,7 @@ from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFacto
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 
 # Page config
-st.set_page_config(
-    page_title="Correlation Analysis | Clinical Analytics", page_icon="🔗", layout="wide"
-)
+st.set_page_config(page_title="Correlation Analysis | Clinical Analytics", page_icon="🔗", layout="wide")
 
 
 def calculate_correlations(df: pd.DataFrame, method: str = "pearson") -> tuple:
@@ -137,7 +135,8 @@ def main():
     st.title("🔗 Explore Relationships")
     st.markdown("""
     Discover how variables relate to each other using **correlation analysis**.
-    See which variables move together (positive correlation) or in opposite directions (negative correlation).
+    See which variables move together (positive correlation) or in opposite directions 
+    (negative correlation).
     """)
 
     # Dataset selection
@@ -162,16 +161,14 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
-    except:
+    except Exception:
         pass
 
     if not dataset_display_names:
         st.error("No datasets available. Please upload data first.")
         return
 
-    dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset", list(dataset_display_names.keys())
-    )
+    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
     is_uploaded = dataset_choice in uploaded_datasets
 
@@ -195,16 +192,12 @@ def main():
     st.markdown("## 🔧 Configure Analysis")
 
     # Get numeric columns
-    numeric_cols = cohort.select_dtypes(
-        include=["int64", "float64", "int32", "float32"]
-    ).columns.tolist()
+    numeric_cols = cohort.select_dtypes(include=["int64", "float64", "int32", "float32"]).columns.tolist()
     numeric_cols = [c for c in numeric_cols if c not in [UnifiedCohort.PATIENT_ID]]
 
     if len(numeric_cols) < 2:
         st.error("Need at least 2 numeric variables for correlation analysis.")
-        st.info(
-            f"Found {len(numeric_cols)} numeric variable(s). Please upload data with more numeric variables."
-        )
+        st.info(f"Found {len(numeric_cols)} numeric variable(s). Please upload data with more numeric variables.")
         return
 
     col1, col2 = st.columns(2)
@@ -228,7 +221,10 @@ def main():
         corr_method = st.radio(
             "Choose method:",
             ["Pearson (for linear relationships)", "Spearman (for monotonic relationships)"],
-            help="Pearson: measures linear relationships. Spearman: measures monotonic relationships (more robust to outliers)",
+            help=(
+                "Pearson: measures linear relationships. Spearman: measures monotonic "
+                "relationships (more robust to outliers)"
+            ),
         )
 
         method = "pearson" if "Pearson" in corr_method else "spearman"
@@ -238,7 +234,7 @@ def main():
             "Alpha level:",
             options=[0.01, 0.05, 0.10],
             value=0.05,
-            format_func=lambda x: f"{x} ({'99%' if x == 0.01 else '95%' if x == 0.05 else '90%'} confidence)",
+            format_func=lambda x: (f"{x} ({'99%' if x == 0.01 else '95%' if x == 0.05 else '90%'} confidence)"),
         )
 
     # Data preview
@@ -252,9 +248,7 @@ def main():
             with col2:
                 st.metric("Variables", len(selected_vars))
             with col3:
-                missing_pct = (
-                    cohort[selected_vars].isna().sum().sum() / cohort[selected_vars].size
-                ) * 100
+                missing_pct = (cohort[selected_vars].isna().sum().sum() / cohort[selected_vars].size) * 100
                 st.metric("Missing Data", f"{missing_pct:.1f}%")
 
             st.dataframe(preview_df.head(10))
@@ -277,7 +271,8 @@ def main():
 
                 if final_n < initial_n:
                     st.warning(
-                        f"Dropped {initial_n - final_n} rows with missing data ({(initial_n - final_n) / initial_n * 100:.1f}%)"
+                        f"Dropped {initial_n - final_n} rows with missing data "
+                        f"({(initial_n - final_n) / initial_n * 100:.1f}%)"
                     )
 
                 if final_n < 3:
@@ -339,9 +334,7 @@ def main():
                 details_df = pd.DataFrame(correlation_details)
                 details_df = details_df.sort_values("Correlation", key=abs, ascending=False)
 
-                st.dataframe(
-                    details_df.style.format({"Correlation": "{:.3f}", "P-Value": "{:.4f}"})
-                )
+                st.dataframe(details_df.style.format({"Correlation": "{:.3f}", "P-Value": "{:.4f}"}))
 
                 # Highlight significant correlations
                 st.markdown("### 🔍 Significant Correlations")

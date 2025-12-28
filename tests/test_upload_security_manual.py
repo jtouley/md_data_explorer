@@ -26,9 +26,7 @@ def test_file_type_validation():
 
     # Invalid types
     assert not UploadSecurityValidator.validate_file_type("data.exe")[0], "EXE should be invalid"
-    assert not UploadSecurityValidator.validate_file_type("data")[0], (
-        "No extension should be invalid"
-    )
+    assert not UploadSecurityValidator.validate_file_type("data")[0], "No extension should be invalid"
 
     print("✅ File type validation tests passed")
 
@@ -47,21 +45,15 @@ def test_file_size_validation():
 
     # Too large (101MB)
     file_101mb = b"x" * (101 * 1024 * 1024)
-    assert not UploadSecurityValidator.validate_file_size(file_101mb)[0], (
-        "101MB file should be invalid"
-    )
+    assert not UploadSecurityValidator.validate_file_size(file_101mb)[0], "101MB file should be invalid"
 
     # Too small (500 bytes)
     file_500b = b"x" * 500
-    assert not UploadSecurityValidator.validate_file_size(file_500b)[0], (
-        "500 byte file should be invalid"
-    )
+    assert not UploadSecurityValidator.validate_file_size(file_500b)[0], "500 byte file should be invalid"
 
     # Empty
     empty_file = b""
-    assert not UploadSecurityValidator.validate_file_size(empty_file)[0], (
-        "Empty file should be invalid"
-    )
+    assert not UploadSecurityValidator.validate_file_size(empty_file)[0], "Empty file should be invalid"
 
     print("✅ File size validation tests passed")
 

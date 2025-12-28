@@ -19,9 +19,7 @@ from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
 # Page config
-st.set_page_config(
-    page_title="Descriptive Statistics | Clinical Analytics", page_icon="📊", layout="wide"
-)
+st.set_page_config(page_title="Descriptive Statistics | Clinical Analytics", page_icon="📊", layout="wide")
 
 
 def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFrame:
@@ -169,9 +167,7 @@ def main():
         st.error("No datasets available. Please upload data first.")
         return
 
-    dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset", list(dataset_display_names.keys())
-    )
+    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
 
     dataset_choice = dataset_display_names[dataset_choice_display]
 
@@ -180,9 +176,7 @@ def main():
     # Method 2: Check if display name starts with 📤
     # Method 3: Check if dataset_choice is an upload_id (UUID-like or matches upload pattern)
     is_uploaded = (
-        dataset_choice in uploaded_datasets
-        or dataset_choice_display.startswith("📤")
-        or dataset_choice in uploaded_ids
+        dataset_choice in uploaded_datasets or dataset_choice_display.startswith("📤") or dataset_choice in uploaded_ids
     )
 
     # Load dataset
@@ -207,11 +201,9 @@ def main():
                         return
                     dataset.load()
                 except KeyError:
-                    # Dataset not found in registry - might be an uploaded dataset that wasn't detected
+                    # Dataset not found in registry - might be an uploaded dataset
                     st.error(f"Dataset '{dataset_choice}' not found in registry.")
-                    st.info(
-                        "💡 If this is an uploaded dataset, please refresh the page or check the upload status."
-                    )
+                    st.info("💡 If this is an uploaded dataset, please refresh the page or check the upload status.")
                     return
                 except Exception as e:
                     st.error(f"Error loading dataset: {str(e)}")
@@ -248,11 +240,7 @@ def main():
 
     with col1:
         # Select variables to include
-        available_vars = [
-            c
-            for c in cohort.columns
-            if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]
-        ]
+        available_vars = [c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]]
 
         selected_vars = st.multiselect(
             "Variables to Include",
@@ -346,7 +334,9 @@ def main():
                 methods_text = """
 **Statistical Analysis**
 
-Descriptive statistics were calculated for all variables. Continuous variables are presented as mean ± standard deviation. Categorical variables are presented as frequencies and percentages.
+Descriptive statistics were calculated for all variables. Continuous variables are 
+presented as mean ± standard deviation. Categorical variables are presented as 
+frequencies and percentages.
 """
                 if stratify_by:
                     methods_text += f" Data are stratified by {stratify_by}."
@@ -367,7 +357,8 @@ Descriptive statistics were calculated for all variables. Continuous variables a
                 st.markdown("""
                 **Continuous Variables** (e.g., Age, Weight):
                 - Shown as: Mean ± Standard Deviation
-                - Example: "45.3 ± 12.1" means average age is 45.3 years, with most patients between 33.2 and 57.4 years
+                - Example: "45.3 ± 12.1" means average age is 45.3 years, 
+                  with most patients between 33.2 and 57.4 years
 
                 **Categorical Variables** (e.g., Sex, Treatment):
                 - Shown as: Count (Percentage)

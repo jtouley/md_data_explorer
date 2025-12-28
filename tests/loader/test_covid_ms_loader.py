@@ -18,9 +18,7 @@ class TestCOVIDMSLoader:
         """Test loading raw CSV data."""
         # Create test CSV file
         test_file = tmp_path / "test_data.csv"
-        test_data = pl.DataFrame(
-            {"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "sex": ["M", "F", "M"]}
-        )
+        test_data = pl.DataFrame({"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "sex": ["M", "F", "M"]})
         test_data.write_csv(test_file)
 
         df = load_raw_data(test_file)

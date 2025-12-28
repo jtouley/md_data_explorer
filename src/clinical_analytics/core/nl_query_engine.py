@@ -198,16 +198,12 @@ class NLQueryEngine:
                 )
 
         # Pattern: "what predicts X" or "predictors of X"
-        match = re.search(
-            r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)", query_lower
-        )
+        match = re.search(r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)", query_lower)
         if match:
             outcome_var = self._fuzzy_match_variable(match.group(1))
 
             if outcome_var:
-                return QueryIntent(
-                    intent_type="FIND_PREDICTORS", primary_variable=outcome_var, confidence=0.95
-                )
+                return QueryIntent(intent_type="FIND_PREDICTORS", primary_variable=outcome_var, confidence=0.95)
 
         # Pattern: "survival" or "time to event"
         if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
@@ -285,9 +281,7 @@ class NLQueryEngine:
                 best_template = self.query_templates[best_idx]
 
                 # Extract slot values using fuzzy matching
-                intent = QueryIntent(
-                    intent_type=best_template["intent"], confidence=float(best_score)
-                )
+                intent = QueryIntent(intent_type=best_template["intent"], confidence=float(best_score))
 
                 # Extract variables mentioned in query
                 variables = self._extract_variables_from_query(query)
@@ -379,9 +373,7 @@ class NLQueryEngine:
                         return col
 
         # Fuzzy match
-        matches = get_close_matches(
-            query_term.lower(), [c.lower() for c in available_columns], n=1, cutoff=0.6
-        )
+        matches = get_close_matches(query_term.lower(), [c.lower() for c in available_columns], n=1, cutoff=0.6)
 
         if matches:
             # Find original casing
@@ -408,9 +400,6 @@ class NLQueryEngine:
         words = query.lower().split()
 
         # Match against all available columns
-        view = self.semantic_layer.get_base_view()
-        available_columns = view.columns
-
         matched_vars = []
         for word in words:
             # Remove punctuation

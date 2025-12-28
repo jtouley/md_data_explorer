@@ -62,9 +62,7 @@ class DataProfiler:
         missing_counts = self.data.isnull().sum()
         missing_pct = (missing_counts / len(self.data) * 100).round(2)
 
-        missing_summary = pd.DataFrame(
-            {"missing_count": missing_counts, "missing_pct": missing_pct}
-        )
+        missing_summary = pd.DataFrame({"missing_count": missing_counts, "missing_pct": missing_pct})
 
         # Filter to only columns with missing data
         missing_summary = missing_summary[missing_summary["missing_count"] > 0]
@@ -78,9 +76,7 @@ class DataProfiler:
             ),
             "columns_with_missing": missing_summary.to_dict("index"),
             "complete_rows": int((~self.data.isnull().any(axis=1)).sum()),
-            "pct_complete_rows": round(
-                ((~self.data.isnull().any(axis=1)).sum() / len(self.data) * 100), 2
-            ),
+            "pct_complete_rows": round(((~self.data.isnull().any(axis=1)).sum() / len(self.data) * 100), 2),
         }
 
     def _profile_numeric_features(self) -> dict[str, Any]:
@@ -134,9 +130,7 @@ class DataProfiler:
                 "n_unique": int(col_data.nunique()),
                 "mode": str(col_data.mode()[0]) if len(col_data.mode()) > 0 else None,
                 "top_values": value_counts.head(10).to_dict(),
-                "pct_mode": round((value_counts.iloc[0] / len(col_data) * 100), 2)
-                if len(value_counts) > 0
-                else 0,
+                "pct_mode": round((value_counts.iloc[0] / len(col_data) * 100), 2) if len(value_counts) > 0 else 0,
             }
 
         return categorical_profile
@@ -202,9 +196,7 @@ class DataProfiler:
         - Consistency (appropriate data types)
         """
         # Completeness score (0-40 points)
-        completeness = (
-            1 - (self.data.isnull().sum().sum() / (len(self.data) * len(self.data.columns)))
-        ) * 40
+        completeness = (1 - (self.data.isnull().sum().sum() / (len(self.data) * len(self.data.columns)))) * 40
 
         # Uniqueness score (0-30 points)
         uniqueness = (1 - (self.data.duplicated().sum() / len(self.data))) * 30

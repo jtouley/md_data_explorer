@@ -17,12 +17,8 @@ class TestZipUploadProgress:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             # Create larger CSV files to meet 1KB minimum
-            patients_data = "patient_id,age\n" + "\n".join(
-                [f"P{i:03d},{20 + i}" for i in range(50)]
-            )
-            admissions_data = "patient_id,date\n" + "\n".join(
-                [f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)]
-            )
+            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(50)])
+            admissions_data = "patient_id,date\n" + "\n".join([f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)])
             zip_file.writestr("patients.csv", patients_data)
             zip_file.writestr("admissions.csv", admissions_data)
 
@@ -33,9 +29,7 @@ class TestZipUploadProgress:
         progress_calls = []
 
         def progress_callback(step: int, total_steps: int, message: str, details: dict):
-            progress_calls.append(
-                {"step": step, "total_steps": total_steps, "message": message, "details": details}
-            )
+            progress_calls.append({"step": step, "total_steps": total_steps, "message": message, "details": details})
 
         storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
@@ -58,12 +52,8 @@ class TestZipUploadProgress:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             # Create larger CSV files to meet 1KB minimum
-            patients_data = "patient_id,age\n" + "\n".join(
-                [f"P{i:03d},{20 + i}" for i in range(50)]
-            )
-            admissions_data = "patient_id,date\n" + "\n".join(
-                [f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)]
-            )
+            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(50)])
+            admissions_data = "patient_id,date\n" + "\n".join([f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)])
             diagnoses_data = "patient_id,code\n" + "\n".join([f"P{i:03d},E11.9" for i in range(50)])
             zip_file.writestr("patients.csv", patients_data)
             zip_file.writestr("admissions.csv", admissions_data)
@@ -108,12 +98,8 @@ class TestZipUploadProgress:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             # Create larger CSV files to meet 1KB minimum
-            patients_data = "patient_id,age\n" + "\n".join(
-                [f"P{i:03d},{20 + i}" for i in range(50)]
-            )
-            admissions_data = "patient_id,date\n" + "\n".join(
-                [f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)]
-            )
+            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(50)])
+            admissions_data = "patient_id,date\n" + "\n".join([f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)])
             zip_file.writestr("patients.csv", patients_data)
             zip_file.writestr("admissions.csv", admissions_data)
 
@@ -124,9 +110,7 @@ class TestZipUploadProgress:
 
         def progress_callback(step: int, total_steps: int, message: str, details: dict):
             if "relationships" in details:
-                relationship_calls.append(
-                    {"relationships": details["relationships"], "message": message}
-                )
+                relationship_calls.append({"relationships": details["relationships"], "message": message})
 
         storage = UserDatasetStorage(upload_dir=tmp_path)
         success, _, _ = storage.save_zip_upload(
@@ -146,9 +130,7 @@ class TestZipUploadProgress:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             # Create larger CSV file to meet 1KB minimum (need more rows)
-            patients_data = "patient_id,age\n" + "\n".join(
-                [f"P{i:03d},{20 + i}" for i in range(150)]
-            )
+            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(150)])
             zip_file.writestr("patients.csv", patients_data)
 
         zip_buffer.seek(0)
@@ -172,12 +154,8 @@ class TestZipUploadProgress:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             # Create larger CSV files to meet 1KB minimum
-            patients_data = "patient_id,age\n" + "\n".join(
-                [f"P{i:03d},{20 + i}" for i in range(50)]
-            )
-            admissions_data = "patient_id,date\n" + "\n".join(
-                [f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)]
-            )
+            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(50)])
+            admissions_data = "patient_id,date\n" + "\n".join([f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)])
             zip_file.writestr("patients.csv", patients_data)
             zip_file.writestr("admissions.csv", admissions_data)
 

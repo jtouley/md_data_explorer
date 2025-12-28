@@ -105,9 +105,7 @@ class TestUIDatasetIntegration:
 
             # Check schema compliance
             for col in UnifiedCohort.REQUIRED_COLUMNS:
-                assert col in cohort.columns, (
-                    f"Dataset {dataset_name} missing required column: {col}"
-                )
+                assert col in cohort.columns, f"Dataset {dataset_name} missing required column: {col}"
 
     def test_boolean_filter_type_safety(self):
         """Regression test: Ensure boolean filters work with different column types."""

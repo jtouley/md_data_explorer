@@ -38,9 +38,7 @@ class VariableTypeDetector:
     }
 
     @classmethod
-    def detect_variable_type(
-        cls, series: pd.Series, column_name: str
-    ) -> tuple[str, dict[str, any]]:
+    def detect_variable_type(cls, series: pd.Series, column_name: str) -> tuple[str, dict[str, any]]:
         """
         Detect variable type for a single column.
 
@@ -71,7 +69,7 @@ class VariableTypeDetector:
             try:
                 pd.to_datetime(series.dropna(), errors="coerce")
                 return "datetime", {"format": "auto-detected", "requires_parsing": True}
-            except:
+            except (ValueError, TypeError):
                 pass
 
         # Explicit datetime type
@@ -200,23 +198,17 @@ class VariableTypeDetector:
         suggestions = {"patient_id": None, "outcome": None, "time_zero": None}
 
         # Find patient ID candidate
-        id_candidates = [
-            col for col, info in variable_info.items() if info["suggested_role"] == "patient_id"
-        ]
+        id_candidates = [col for col, info in variable_info.items() if info["suggested_role"] == "patient_id"]
         if id_candidates:
             suggestions["patient_id"] = id_candidates[0]
 
         # Find outcome candidate
-        outcome_candidates = [
-            col for col, info in variable_info.items() if info["suggested_role"] == "outcome"
-        ]
+        outcome_candidates = [col for col, info in variable_info.items() if info["suggested_role"] == "outcome"]
         if outcome_candidates:
             suggestions["outcome"] = outcome_candidates[0]
 
         # Find time variable candidate
-        time_candidates = [
-            col for col, info in variable_info.items() if info["suggested_role"] == "time_variable"
-        ]
+        time_candidates = [col for col, info in variable_info.items() if info["suggested_role"] == "time_variable"]
         if time_candidates:
             suggestions["time_zero"] = time_candidates[0]
 
