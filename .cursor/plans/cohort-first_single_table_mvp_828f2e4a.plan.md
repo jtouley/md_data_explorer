@@ -358,8 +358,3 @@ V1 MVP succeeds when:
 - [ ] Summary page shows semantic scope
 - [ ] Wife's dataset test passes (upload < 5min, chat works, SQL preview, schema validated)
 - [ ] Multi-table plans marked as DEFERRED_TO_V2
-
-## Notes
-
-- **M8 was completed separately** - This was a small API consistency fix that prevents future tech debt
-- **Security fixes are critical** - Must be done before any production deployment

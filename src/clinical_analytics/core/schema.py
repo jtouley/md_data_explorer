@@ -57,6 +57,7 @@ class SchemaValidationError(Exception):
 def validate_unified_cohort_schema(
     df: pd.DataFrame,
     strict: bool = False,
+    validate_at_upload: bool = False,
 ) -> tuple[bool, list[str]]:
     """
     Validate DataFrame conforms to UnifiedCohort schema contract.
@@ -65,6 +66,10 @@ def validate_unified_cohort_schema(
         df: DataFrame to validate
         strict: If True, raise SchemaValidationError on failure.
                 If False (default), return (is_valid, errors) tuple.
+        validate_at_upload: If True, only validate upload requirements (patient_id).
+                           If False, validate full unified schema (for query-time validation).
+                           The semantic layer handles mapping user columns to unified schema,
+                           so we don't require outcome/time_zero at upload time.
 
     Returns:
         Tuple of (is_valid, list_of_errors)
@@ -72,14 +77,34 @@ def validate_unified_cohort_schema(
     Raises:
         SchemaValidationError: If strict=True and validation fails
     """
+    import logging
+
     import pandas as pd_module
+
+    logger = logging.getLogger(__name__)
 
     errors: list[str] = []
 
-    # Check required columns exist
-    missing = set(UnifiedCohort.REQUIRED_COLUMNS) - set(df.columns)
-    if missing:
-        errors.append(f"Missing required columns: {sorted(missing)}")
+    # Debug logging
+    logger.debug(
+        f"validate_unified_cohort_schema called: "
+        f"validate_at_upload={validate_at_upload}, "
+        f"columns={list(df.columns)[:10]}{'...' if len(df.columns) > 10 else ''}"
+    )
+
+    if validate_at_upload:
+        # At upload time: only validate that patient_id exists (after user mapping)
+        # The semantic layer will handle mapping other columns (outcome, time_zero) later
+        if UnifiedCohort.PATIENT_ID not in df.columns:
+            logger.warning(
+                f"Schema validation failed: patient_id not in columns. Available columns: {list(df.columns)}"
+            )
+            errors.append(f"Missing required column: {UnifiedCohort.PATIENT_ID}")
+    else:
+        # At query time: validate full unified schema (after semantic layer mapping)
+        missing = set(UnifiedCohort.REQUIRED_COLUMNS) - set(df.columns)
+        if missing:
+            errors.append(f"Missing required columns: {sorted(missing)}")
 
     # Check PATIENT_ID column
     if UnifiedCohort.PATIENT_ID in df.columns:

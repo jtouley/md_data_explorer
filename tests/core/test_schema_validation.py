@@ -45,7 +45,7 @@ class TestValidateUnifiedCohortSchema:
         assert errors == []
 
     def test_schema_validation_missing_columns_returns_error(self) -> None:
-        """Test that missing required columns are detected."""
+        """Test that missing required columns are detected at query time."""
         # Arrange
         df = pd.DataFrame(
             {
@@ -54,13 +54,48 @@ class TestValidateUnifiedCohortSchema:
             }
         )
 
-        # Act
-        is_valid, errors = validate_unified_cohort_schema(df)
+        # Act - query-time validation (default)
+        is_valid, errors = validate_unified_cohort_schema(df, validate_at_upload=False)
 
         # Assert
         assert is_valid is False
         assert len(errors) >= 1
         assert any("Missing required columns" in e for e in errors)
+
+    def test_schema_validation_upload_time_only_requires_patient_id(self) -> None:
+        """Test that upload-time validation only requires patient_id."""
+        # Arrange
+        df = pd.DataFrame(
+            {
+                UnifiedCohort.PATIENT_ID: ["P001", "P002"],
+                # Missing: TIME_ZERO, OUTCOME, OUTCOME_LABEL - but OK at upload time
+            }
+        )
+
+        # Act - upload-time validation
+        is_valid, errors = validate_unified_cohort_schema(df, validate_at_upload=True)
+
+        # Assert - should pass (only patient_id required)
+        assert is_valid is True
+        assert errors == []
+
+    def test_schema_validation_upload_time_missing_patient_id_returns_error(self) -> None:
+        """Test that upload-time validation still requires patient_id."""
+        # Arrange
+        df = pd.DataFrame(
+            {
+                # Missing patient_id - should fail even at upload time
+                "some_other_col": [1, 2],
+            }
+        )
+
+        # Act - upload-time validation
+        is_valid, errors = validate_unified_cohort_schema(df, validate_at_upload=True)
+
+        # Assert - should fail (patient_id is required)
+        assert is_valid is False
+        assert len(errors) >= 1
+        assert any("patient_id" in e.lower() for e in errors)
 
     def test_schema_validation_null_patient_id_returns_error(self) -> None:
         """Test that NULL patient IDs are detected."""
