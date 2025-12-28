@@ -444,6 +444,36 @@ class UserDatasetStorage:
             else:
                 return False, f"Unsupported file type: {file_ext}", None
 
+            # Automatically ensure patient_id exists (transparent to user)
+            from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
+
+            logger.info(f"Ensuring patient_id exists for upload {upload_id}")
+            # Convert to Polars for processing
+            df_polars = pl.from_pandas(df) if isinstance(df, pd.DataFrame) else df
+            df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_polars)
+
+            logger.info(
+                f"Patient ID creation result: source={id_metadata['patient_id_source']}, "
+                f"columns={id_metadata.get('patient_id_columns')}, "
+                f"has_patient_id={'patient_id' in df_with_id.columns}"
+            )
+
+            # Store metadata about how patient_id was created
+            if "synthetic_id_metadata" not in metadata:
+                metadata["synthetic_id_metadata"] = {}
+            metadata["synthetic_id_metadata"]["patient_id"] = id_metadata
+
+            # Convert back to pandas for CSV writing
+            df = df_with_id.to_pandas() if isinstance(df, pd.DataFrame) else df_with_id
+
+            # Verify patient_id exists before saving
+            if "patient_id" not in df.columns:
+                logger.error(f"patient_id column missing after ensure_patient_id! Columns: {list(df.columns)}")
+                raise ValueError("Failed to create patient_id column")
+            logger.info(
+                f"Successfully ensured patient_id exists. DataFrame shape: {df.shape}, columns: {list(df.columns)}"
+            )
+
             # Atomic rename: temp file → final file (single filesystem operation)
             # This eliminates TOCTOU race window between exists() check and write
             if progress_cb:

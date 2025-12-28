@@ -216,7 +216,7 @@ def render_preview_step(df: pd.DataFrame):
 
     # Show data preview
     st.markdown("### First 10 Rows")
-    st.dataframe(df.head(10), use_container_width=True)
+    st.dataframe(df.head(10), width="stretch")
 
     # Data quality validation
     st.markdown("### 🔍 Data Quality Check")

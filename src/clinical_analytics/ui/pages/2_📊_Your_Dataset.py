@@ -164,7 +164,7 @@ def main():
         numeric_cols = cohort.select_dtypes(include=["number"]).columns.tolist()
         if numeric_cols:
             desc_stats = cohort[numeric_cols].describe().T
-            st.dataframe(desc_stats, use_container_width=True)
+            st.dataframe(desc_stats, width="stretch")
         else:
             st.info("No numeric variables found")
 
@@ -184,7 +184,7 @@ def main():
     # Data preview
     st.divider()
     st.markdown("## 🔍 Data Preview")
-    st.dataframe(cohort.head(20), use_container_width=True)
+    st.dataframe(cohort.head(20), width="stretch")
 
 
 if __name__ == "__main__":
