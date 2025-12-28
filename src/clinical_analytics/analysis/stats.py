@@ -39,9 +39,9 @@ def run_logistic_regression(df: pd.DataFrame, outcome_col: str, predictors: list
     conf.columns = ["CI Lower", "CI Upper"]
     pvalues = model.pvalues
 
-    # Calculate Odds Ratios
-    odds_ratios = params.apply(lambda x: np.exp(x))
-    conf_or = conf.apply(lambda x: np.exp(x))
+    # Calculate Odds Ratios (vectorized)
+    odds_ratios = np.exp(params)
+    conf_or = np.exp(conf)
 
     # Combine into summary
     summary_df = pd.DataFrame(

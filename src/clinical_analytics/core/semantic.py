@@ -136,6 +136,11 @@ class SemanticLayer:
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
 
+        # Alias index (lazy initialization)
+        self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
+        self._alias_to_canonicals: dict[str, set[str]] | None = None  # For collision detection
+        self._collision_warnings: set[str] | None = None  # Aliases that map to multiple canonicals
+
     def _detect_workspace_root(self, provided_root: Path | None = None) -> Path:
         """
         Detect workspace root using priority order:
@@ -708,3 +713,173 @@ class SemanticLayer:
             print(f"Generated SQL:\n{sql}\n")
 
         return result.execute()
+
+    def _normalize_alias(self, text: str) -> str:
+        """
+        Normalize text for alias matching.
+
+        Args:
+            text: Text to normalize
+
+        Returns:
+            Normalized string (lowercase, punctuation removed, whitespace collapsed)
+        """
+        # Lowercase
+        normalized = text.lower()
+
+        # Remove punctuation (keep alphanumeric and spaces)
+        normalized = re.sub(r"[^\w\s]", "", normalized)
+
+        # Collapse whitespace
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
+        return normalized
+
+    def _build_alias_index(self) -> None:
+        """
+        Build alias index for column matching.
+
+        Builds:
+        - _alias_index: normalized_alias -> canonical_name (single mapping, collisions dropped)
+        - _alias_to_canonicals: normalized_alias -> set[canonical_names] (for collision detection)
+        - _collision_warnings: set of aliases that map to multiple canonicals
+
+        Strategy:
+        1. Always index full normalized display_name
+        2. Index selected aliases (domain terms, acronyms)
+        3. Build word frequency FIRST
+        4. Conditionally index single words only if rare (appears in < 3 columns)
+        """
+        from clinical_analytics.core.column_parser import parse_column_name
+
+        if self._alias_index is not None:
+            return  # Already built
+
+        view = self.get_base_view()
+        columns = view.columns
+
+        # Initialize structures
+        alias_index: dict[str, str] = {}  # normalized_alias -> canonical_name (single mapping)
+        alias_to_canonicals: dict[str, set[str]] = {}  # normalized_alias -> set[canonical_names]
+
+        # Step 1: Parse all columns and build word frequency
+        column_metadata = {}
+        word_frequency: dict[str, int] = {}  # word -> count across columns
+
+        for col in columns:
+            meta = parse_column_name(col)
+            column_metadata[col] = meta
+
+            # Extract words from display_name for frequency counting
+            display_normalized = self._normalize_alias(meta.display_name)
+            words = display_normalized.split()
+
+            for word in words:
+                if len(word) > 2:  # Skip very short words
+                    word_frequency[word] = word_frequency.get(word, 0) + 1
+
+        # Step 2: Index full normalized display_name (always)
+        for canonical, meta in column_metadata.items():
+            display_normalized = self._normalize_alias(meta.display_name)
+
+            # Add to alias_to_canonicals (for collision detection)
+            if display_normalized not in alias_to_canonicals:
+                alias_to_canonicals[display_normalized] = set()
+            alias_to_canonicals[display_normalized].add(canonical)
+
+            # Add to alias_index (single mapping, last write wins for now)
+            alias_index[display_normalized] = canonical
+
+        # Step 3: Index selected aliases (domain terms, acronyms)
+        # Extract acronyms (all uppercase words > 1 char)
+        for canonical, meta in column_metadata.items():
+            display_words = meta.display_name.split()
+            for word in display_words:
+                if word.isupper() and len(word) > 1:
+                    # Acronym (e.g., "DEXA", "CD4")
+                    alias_normalized = self._normalize_alias(word)
+                    if alias_normalized not in alias_to_canonicals:
+                        alias_to_canonicals[alias_normalized] = set()
+                    alias_to_canonicals[alias_normalized].add(canonical)
+                    alias_index[alias_normalized] = canonical
+
+        # Step 4: Conditionally index single words (only if rare)
+        for canonical, meta in column_metadata.items():
+            display_normalized = self._normalize_alias(meta.display_name)
+            words = display_normalized.split()
+
+            for word in words:
+                if len(word) > 2:  # Skip very short words
+                    # Only index if word appears in < 3 columns (rare)
+                    if word_frequency.get(word, 0) < 3:
+                        if word not in alias_to_canonicals:
+                            alias_to_canonicals[word] = set()
+                        alias_to_canonicals[word].add(canonical)
+                        # Only add to alias_index if not already there (avoid overwriting)
+                        if word not in alias_index:
+                            alias_index[word] = canonical
+
+        # Step 5: Detect collisions and drop ambiguous aliases
+        collision_warnings: set[str] = set()
+        for alias, canonicals in alias_to_canonicals.items():
+            if len(canonicals) > 1:
+                # Collision detected
+                collision_warnings.add(alias)
+                # Drop from alias_index (ambiguous)
+                if alias in alias_index:
+                    del alias_index[alias]
+
+        # Store results
+        self._alias_index = alias_index
+        self._alias_to_canonicals = alias_to_canonicals
+        self._collision_warnings = collision_warnings
+
+        logger.info(
+            f"Built alias index: {len(alias_index)} unique aliases, {len(collision_warnings)} collisions detected"
+        )
+
+    def get_column_alias_index(self) -> dict[str, str]:
+        """
+        Get alias index for column matching.
+
+        Returns:
+            Dict mapping normalized_alias -> canonical_name
+            (collisions are dropped, so each alias maps to at most one canonical)
+
+        Note:
+            This is a pure function (no Streamlit dependencies).
+            Index is built lazily on first call.
+        """
+        self._build_alias_index()
+        return self._alias_index.copy() if self._alias_index else {}
+
+    def get_collision_warnings(self) -> set[str]:
+        """
+        Get set of aliases that map to multiple canonical names.
+
+        Returns:
+            Set of normalized aliases that have collisions
+        """
+        self._build_alias_index()
+        return self._collision_warnings.copy() if self._collision_warnings else set()
+
+    def get_collision_suggestions(self, query_term: str) -> list[str] | None:
+        """
+        Get collision suggestions for a query term.
+
+        If the normalized query term matches a dropped alias (collision),
+        return list of canonical names that could match.
+
+        Args:
+            query_term: Query term from user
+
+        Returns:
+            List of canonical names if collision detected, None otherwise
+        """
+        self._build_alias_index()
+        normalized = self._normalize_alias(query_term)
+
+        if normalized in self._collision_warnings and self._alias_to_canonicals:
+            # Return all canonical names that match this alias
+            return sorted(list(self._alias_to_canonicals.get(normalized, set())))
+        return None

@@ -201,3 +201,60 @@ class TestUploadedDatasetPatientId:
         # get_cohort should raise KeyError for wrong column name (not patient_id)
         with pytest.raises(KeyError, match="nonexistent_column"):
             dataset.get_cohort()
+
+    def test_get_cohort_with_renamed_patient_id_column_uses_patient_id(self, tmp_path):
+        """
+        Test that get_cohort uses 'patient_id' if mapped column name not found but 'patient_id' exists.
+
+        This handles the case where ensure_patient_id() renamed the column to 'patient_id'
+        during ingestion, but metadata still references the original column name (e.g., 'secret_name').
+        """
+        # Create storage
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Create test data with 'patient_id' (renamed during ingestion)
+        # but metadata says it should be 'secret_name'
+        test_data = pd.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003"],  # Column was renamed to patient_id
+                "race": ["A", "B", "C"],
+                "age": [50, 60, 70],
+            }
+        )
+
+        # Create upload metadata with original column name in mapping
+        upload_id = "test_upload_renamed"
+        metadata = {
+            "upload_id": upload_id,
+            "upload_timestamp": "2024-01-01T00:00:00",
+            "variable_mapping": {
+                "patient_id": "secret_name",  # Metadata says 'secret_name' but CSV has 'patient_id'
+                "outcome": None,
+                "predictors": ["race", "age"],
+            },
+            "synthetic_id_metadata": {
+                "patient_id": {
+                    "patient_id_source": "single_column",
+                    "patient_id_columns": ["secret_name"],  # Original column name
+                }
+            },
+        }
+
+        # Save data with 'patient_id' column (as it would be after ingestion)
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        test_data.to_csv(csv_path, index=False)
+
+        # Save metadata
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        metadata_path.write_text(json.dumps(metadata))
+
+        # Create dataset and load
+        dataset = UploadedDataset(upload_id=upload_id, storage=storage)
+        dataset.load()
+
+        # get_cohort should use 'patient_id' even though metadata says 'secret_name'
+        cohort = dataset.get_cohort()
+
+        # Should have patient_id and use the values from the CSV
+        assert UnifiedCohort.PATIENT_ID in cohort.columns
+        assert cohort[UnifiedCohort.PATIENT_ID].tolist() == ["P001", "P002", "P003"]

@@ -536,13 +536,22 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
     with col1:
         st.metric("Total Patients", len(df))
     with col2:
-        st.metric("Analysis Variables", len(mapping["predictors"]) + 1)  # +1 for outcome
+        # Count predictors + outcome (if outcome exists)
+        var_count = len(mapping["predictors"])
+        if outcome_col:
+            var_count += 1
+        st.metric("Analysis Variables", var_count)
     with col3:
-        outcome_series = df[outcome_col].dropna()
-        if len(outcome_series) > 0:
-            if len(outcome_series.unique()) == 2:
-                outcome_rate = (outcome_series.value_counts().iloc[0] / len(outcome_series)) * 100
-                st.metric("Outcome Rate", f"{outcome_rate:.1f}%")
+        if outcome_col:
+            outcome_series = df[outcome_col].dropna()
+            if len(outcome_series) > 0:
+                if len(outcome_series.unique()) == 2:
+                    outcome_rate = (outcome_series.value_counts().iloc[0] / len(outcome_series)) * 100
+                    st.metric("Outcome Rate", f"{outcome_rate:.1f}%")
+                else:
+                    st.metric("Outcome Rate", "N/A")
+        else:
+            st.metric("Outcome Rate", "Not set")
 
     # Dataset name input
     st.markdown("### 📝 Dataset Name")

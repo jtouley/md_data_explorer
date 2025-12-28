@@ -377,14 +377,15 @@ class UserDatasetStorage:
             temp_path = self.raw_dir / f".{upload_id}.tmp"
 
             if file_ext == ".csv":
-                # Already CSV - write directly to temp then atomic rename
-                temp_path.write_bytes(file_bytes)
+                # Already CSV - read from bytes (will add patient_id before writing)
+                import io
+
                 if progress_cb:
                     try:
                         progress_cb(40, "Parsing CSV data...")
                     except Exception:
                         pass  # Best-effort
-                df = pd.read_csv(temp_path)
+                df = pd.read_csv(io.BytesIO(file_bytes))
 
             elif file_ext in {".xlsx", ".xls"}:
                 # Excel file - convert to CSV
@@ -401,7 +402,7 @@ class UserDatasetStorage:
                         io.BytesIO(file_bytes),
                         engine="openpyxl",  # Use openpyxl instead of fastexcel
                     )
-                    # Convert to pandas for CSV writing
+                    # Convert to pandas for processing
                     df = df_polars.to_pandas()
                     logger.info("Successfully loaded Excel file using Polars with openpyxl engine")
                 except Exception as polars_error:
@@ -409,15 +410,6 @@ class UserDatasetStorage:
                     # Fallback to pandas if Polars fails
                     df = pd.read_excel(io.BytesIO(file_bytes))
                     logger.info("Successfully loaded Excel file using pandas fallback")
-
-                if progress_cb:
-                    try:
-                        progress_cb(50, f"Converting to CSV format ({len(df):,} rows, {len(df.columns)} columns)...")
-                    except Exception:
-                        pass  # Best-effort
-
-                # Write to temp file first
-                df.to_csv(temp_path, index=False)
 
             elif file_ext == ".sav":
                 # SPSS file - convert to CSV
@@ -431,15 +423,6 @@ class UserDatasetStorage:
                     except Exception:
                         pass  # Best-effort
                 df, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
-
-                if progress_cb:
-                    try:
-                        progress_cb(50, f"Converting to CSV format ({len(df):,} rows, {len(df.columns)} columns)...")
-                    except Exception:
-                        pass  # Best-effort
-
-                # Write to temp file first
-                df.to_csv(temp_path, index=False)
 
             else:
                 return False, f"Unsupported file type: {file_ext}", None
@@ -474,13 +457,17 @@ class UserDatasetStorage:
                 f"Successfully ensured patient_id exists. DataFrame shape: {df.shape}, columns: {list(df.columns)}"
             )
 
-            # Atomic rename: temp file → final file (single filesystem operation)
-            # This eliminates TOCTOU race window between exists() check and write
+            # Write CSV with patient_id included
             if progress_cb:
                 try:
                     progress_cb(60, f"Saving data file ({len(df):,} rows, {len(df.columns)} columns)...")
                 except Exception:
                     pass  # Best-effort
+            # Write DataFrame with patient_id to temp file
+            df.to_csv(temp_path, index=False)
+
+            # Atomic rename: temp file → final file (single filesystem operation)
+            # This eliminates TOCTOU race window between exists() check and write
             temp_path.replace(csv_path)
 
             # Validate schema if variable mapping is provided

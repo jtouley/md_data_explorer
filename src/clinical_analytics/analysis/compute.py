@@ -1,0 +1,368 @@
+"""
+Pure compute functions for analysis - Polars-first, return serializable dicts.
+
+These functions have no UI dependencies and can be tested independently.
+"""
+
+from typing import Any
+
+import numpy as np
+import polars as pl
+from scipy import stats
+
+from clinical_analytics.ui.components.question_engine import AnalysisContext
+
+
+def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Compute descriptive analysis using Polars-native operations.
+
+    Returns serializable dict (no Polars objects).
+    """
+    # Overall metrics
+    row_count = df.height
+    col_count = df.width
+    total_cells = row_count * col_count
+    null_count = df.null_count().sum_horizontal().item()
+    missing_pct = (null_count / total_cells * 100) if total_cells > 0 else 0.0
+
+    # Summary statistics for numeric columns
+    numeric_cols = [col for col in df.columns if df[col].dtype in (pl.Int64, pl.Float64)]
+    desc_stats_dict = []
+    if numeric_cols:
+        desc_stats = df.select(numeric_cols).describe()
+        desc_stats_dict = desc_stats.to_dicts()
+
+    # Categorical summary (first 10 columns)
+    categorical_cols = [col for col in df.columns if df[col].dtype == pl.Utf8][:10]
+    categorical_summary = {}
+    for col in categorical_cols:
+        value_counts = df[col].value_counts().sort("count", descending=True).head(5)
+        categorical_summary[col] = value_counts.to_dicts()
+
+    return {
+        "type": "descriptive",
+        "row_count": row_count,
+        "column_count": col_count,
+        "missing_pct": missing_pct,
+        "summary_stats": desc_stats_dict,
+        "categorical_summary": categorical_summary,
+    }
+
+
+def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Compute comparison analysis using Polars-native operations.
+
+    Returns serializable dict (no Polars objects).
+    """
+    outcome_col = context.primary_variable
+    group_col = context.grouping_variable
+
+    # Clean data
+    analysis_df = df.select([outcome_col, group_col]).drop_nulls()
+
+    if analysis_df.height < 2:
+        return {"type": "comparison", "error": "Not enough data for comparison"}
+
+    # Determine appropriate test
+    outcome_dtype = analysis_df[outcome_col].dtype
+    outcome_numeric = outcome_dtype in (pl.Int64, pl.Float64)
+
+    groups = analysis_df[group_col].unique().to_list()
+    n_groups = len(groups)
+
+    if n_groups < 2:
+        return {"type": "comparison", "error": "Need at least 2 groups for comparison"}
+
+    # Run appropriate test
+    if outcome_numeric:
+        if n_groups == 2:
+            # T-test
+            group1_data = analysis_df.filter(pl.col(group_col) == groups[0])[outcome_col].to_numpy()
+            group2_data = analysis_df.filter(pl.col(group_col) == groups[1])[outcome_col].to_numpy()
+
+            statistic, p_value = stats.ttest_ind(group1_data, group2_data)
+
+            # Compute means and std for interpretation
+            mean1 = float(np.mean(group1_data))
+            mean2 = float(np.mean(group2_data))
+            std1 = float(np.std(group1_data, ddof=1))
+            std2 = float(np.std(group2_data, ddof=1))
+            n1 = len(group1_data)
+            n2 = len(group2_data)
+
+            mean_diff = mean1 - mean2
+            se_diff = np.sqrt((std1**2 / n1) + (std2**2 / n2))
+            ci_lower = mean_diff - 1.96 * se_diff
+            ci_upper = mean_diff + 1.96 * se_diff
+
+            return {
+                "type": "comparison",
+                "test_type": "t_test",
+                "outcome_col": outcome_col,
+                "group_col": group_col,
+                "groups": groups,
+                "statistic": float(statistic),
+                "p_value": float(p_value),
+                "group1_mean": mean1,
+                "group2_mean": mean2,
+                "mean_diff": float(mean_diff),
+                "ci_lower": float(ci_lower),
+                "ci_upper": float(ci_upper),
+            }
+
+        else:
+            # ANOVA
+            group_data = [analysis_df.filter(pl.col(group_col) == g)[outcome_col].to_numpy() for g in groups]
+            statistic, p_value = stats.f_oneway(*group_data)
+
+            # Group means
+            group_means = {
+                str(g): float(analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()) for g in groups
+            }
+
+            return {
+                "type": "comparison",
+                "test_type": "anova",
+                "outcome_col": outcome_col,
+                "group_col": group_col,
+                "groups": groups,
+                "n_groups": n_groups,
+                "statistic": float(statistic),
+                "p_value": float(p_value),
+                "group_means": group_means,
+            }
+
+    else:
+        # Chi-square test for categorical outcome
+        # Build contingency table using Polars
+        contingency = (
+            analysis_df.group_by([outcome_col, group_col])
+            .agg(pl.len().alias("count"))
+            .pivot(index=outcome_col, columns=group_col, values="count", aggregate_function="sum")
+            .fill_null(0)
+        )
+
+        # Convert to numpy for scipy
+        contingency_np = contingency.select([c for c in contingency.columns if c != outcome_col]).to_numpy()
+
+        chi2, p_value, dof, expected = stats.chi2_contingency(contingency_np)
+
+        # Store contingency as dict for serialization
+        contingency_dict = contingency.to_dicts()
+
+        return {
+            "type": "comparison",
+            "test_type": "chi_square",
+            "outcome_col": outcome_col,
+            "group_col": group_col,
+            "chi2": float(chi2),
+            "p_value": float(p_value),
+            "dof": int(dof),
+            "contingency": contingency_dict,
+            "contingency_index_col": outcome_col,
+        }
+
+
+def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Route to appropriate compute function based on intent.
+
+    Args:
+        df: Polars DataFrame (cohort data)
+        context: AnalysisContext with intent and variables
+
+    Returns:
+        Serializable dict with analysis results
+    """
+    from clinical_analytics.ui.components.question_engine import AnalysisIntent
+
+    if context.inferred_intent == AnalysisIntent.DESCRIBE:
+        return compute_descriptive_analysis(df, context)
+    elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
+        return compute_comparison_analysis(df, context)
+    elif context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
+        return compute_predictor_analysis(df, context)
+    elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
+        return compute_survival_analysis(df, context)
+    elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
+        return compute_relationship_analysis(df, context)
+    else:
+        return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
+
+
+def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Compute predictor analysis (logistic regression).
+
+    Returns serializable dict (no Polars objects).
+    """
+    import pandas as pd  # Only for legacy run_logistic_regression
+
+    outcome_col = context.primary_variable
+    predictors = context.predictor_variables
+
+    # Prepare data
+    analysis_cols = [outcome_col] + predictors
+    analysis_df = df.select(analysis_cols).drop_nulls()
+
+    if analysis_df.height < 10:
+        return {"type": "predictor", "error": "Need at least 10 complete observations"}
+
+    # Check outcome type
+    outcome_data = analysis_df[outcome_col].drop_nulls()
+    n_unique = outcome_data.n_unique()
+
+    if n_unique != 2:
+        return {
+            "type": "predictor",
+            "error": f"Outcome has {n_unique} unique values. Only binary outcomes are supported.",
+        }
+
+    # Convert to pandas for legacy function (PANDAS EXCEPTION)
+    # TODO: Refactor run_logistic_regression to use Polars
+    analysis_df_pd = analysis_df.to_pandas()
+
+    # Handle categorical predictors
+    categorical_cols = analysis_df_pd.select_dtypes(include=["object", "category"]).columns.tolist()
+    if outcome_col in categorical_cols:
+        categorical_cols.remove(outcome_col)
+
+    if categorical_cols:
+        analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical_cols, drop_first=True)
+        new_predictors = [c for c in analysis_df_pd.columns if c != outcome_col]
+    else:
+        new_predictors = predictors
+
+    # Run logistic regression (legacy function)
+    from clinical_analytics.analysis.stats import run_logistic_regression
+
+    model, summary_df = run_logistic_regression(analysis_df_pd, outcome_col, new_predictors)
+
+    # Convert summary to serializable format
+    summary_dict = summary_df.to_dict(orient="index")
+
+    # Extract significant predictors
+    significant = summary_df[summary_df["P-Value"] < 0.05]
+    significant_predictors = [
+        {
+            "variable": var,
+            "odds_ratio": float(summary_df.loc[var, "Odds Ratio"]),
+            "p_value": float(summary_df.loc[var, "P-Value"]),
+            "ci_lower": float(summary_df.loc[var, "CI Lower"]),
+            "ci_upper": float(summary_df.loc[var, "CI Upper"]),
+        }
+        for var in significant.index
+        if var != "Intercept"
+    ]
+
+    return {
+        "type": "predictor",
+        "outcome_col": outcome_col,
+        "summary": summary_dict,
+        "significant_predictors": significant_predictors,
+        "schema": {col: str(dtype) for col, dtype in summary_df.dtypes.items()},
+    }
+
+
+def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Compute survival analysis.
+
+    Returns serializable dict (no Polars objects).
+    """
+
+    time_col = context.time_variable
+    event_col = context.event_variable
+
+    # Prepare data
+    analysis_df = df.select([time_col, event_col]).drop_nulls()
+
+    if analysis_df.height < 10:
+        return {"type": "survival", "error": "Need at least 10 complete observations"}
+
+    # Get unique event values
+    unique_vals = sorted(analysis_df[event_col].unique().to_list())
+
+    if len(unique_vals) != 2:
+        return {
+            "type": "survival",
+            "error": f"Event variable must be binary (has {len(unique_vals)} values)",
+            "unique_values": unique_vals,
+        }
+
+    # Convert to pandas for legacy function (PANDAS EXCEPTION)
+    # TODO: Refactor run_kaplan_meier to use Polars
+    analysis_df_pd = analysis_df.to_pandas()
+
+    # Run Kaplan-Meier (legacy function)
+    from clinical_analytics.analysis.survival import run_kaplan_meier
+
+    kmf, summary_df = run_kaplan_meier(
+        analysis_df_pd,
+        duration_col=time_col,
+        event_col=event_col,
+        group_col=context.grouping_variable,
+    )
+
+    # Convert summary to serializable format
+    summary_dict = summary_df.to_dict(orient="records")
+
+    # Median survival
+    median_survival = float(kmf.median_survival_time_) if not np.isnan(kmf.median_survival_time_) else None
+
+    return {
+        "type": "survival",
+        "time_col": time_col,
+        "event_col": event_col,
+        "summary": summary_dict,
+        "median_survival": median_survival,
+        "unique_values": unique_vals,
+    }
+
+
+def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Compute relationship analysis (correlations).
+
+    Returns serializable dict (no Polars objects).
+    """
+    variables = context.predictor_variables
+
+    if len(variables) < 2:
+        return {"type": "relationship", "error": "Need at least 2 variables to examine relationships"}
+
+    # Calculate correlations
+    analysis_df = df.select(variables).drop_nulls()
+
+    if analysis_df.height < 3:
+        return {"type": "relationship", "error": "Need at least 3 observations"}
+
+    # Cast to numeric for correlation
+    numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in variables])
+
+    # Compute correlation matrix using Polars
+    corr_data = []
+    for i, var1 in enumerate(variables):
+        for j, var2 in enumerate(variables):
+            if i <= j:
+                if i == j:
+                    corr_val = 1.0
+                else:
+                    # Compute correlation using Polars
+                    corr_result = numeric_df.select(pl.corr(var1, var2))
+                    corr_val = float(corr_result.item()) if corr_result.height > 0 else 0.0
+                corr_data.append({"var1": var1, "var2": var2, "correlation": corr_val})
+
+    # Find strong correlations
+    strong_correlations = [
+        item for item in corr_data if item["var1"] != item["var2"] and abs(item["correlation"]) >= 0.5
+    ]
+
+    return {
+        "type": "relationship",
+        "variables": variables,
+        "correlations": corr_data,
+        "strong_correlations": strong_correlations,
+    }

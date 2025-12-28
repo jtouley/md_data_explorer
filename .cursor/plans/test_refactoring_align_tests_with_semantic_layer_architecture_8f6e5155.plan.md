@@ -164,5 +164,3 @@ def test_registry_discovers_all_datasets():
 3. `tests/test_registry.py` (MODIFY)
 4. `tests/core/test_registry.py` (MODIFY)
 5. `tests/test_mapper.py` (MODIFY)
-6. `tests/loader/test_covid_ms_loader.py` (MODIFY)
-7. `tests/loader/test_sepsis_loader.py` (MODIFY)

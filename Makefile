@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv
+.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff
 
 # Default target
 .DEFAULT_GOAL := help
@@ -157,4 +157,24 @@ ci: ## Run CI checks (for GitHub Actions)
 	@$(MAKE) format-check
 	@$(MAKE) type-check
 	@$(MAKE) test-cov-term
+
+diff: ## Generate diff files for tracking changes
+	@echo "$(GREEN)📝 Generating diff files...$(NC)"
+	@mkdir -p .context/diffs
+	@echo "  - Unstaged changes (working dir vs staged/HEAD)..."
+	@git diff > .context/diffs/unstaged.diff || true
+	@echo "  - Staged changes only..."
+	@git diff --cached > .context/diffs/staged.diff || true
+	@echo "  - Both unstaged + staged (working dir vs HEAD)..."
+	@git diff HEAD > .context/diffs/lastcommit.diff || true
+	@echo "  - Current branch vs main (committed only)..."
+	@git diff main...HEAD > .context/diffs/currentbranch.diff || true
+	@echo "  - Current state vs main (including uncommitted)..."
+	@git diff main > .context/diffs/current.diff || true
+	@echo "$(GREEN)✅ Diff files generated in .context/diffs/$(NC)"
+	@echo "   - unstaged.diff: Unstaged changes"
+	@echo "   - staged.diff: Staged changes only"
+	@echo "   - lastcommit.diff: All uncommitted changes vs HEAD"
+	@echo "   - currentbranch.diff: Current branch vs main (committed only)"
+	@echo "   - current.diff: Current state vs main (including uncommitted)"
 

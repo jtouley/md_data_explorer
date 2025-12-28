@@ -4,24 +4,25 @@ Dynamic Analysis Page - Question-Driven Analytics
 Ask questions, get answers. No statistical jargon - just tell me what you want to know.
 """
 
+import hashlib
+import json
 import sys
+from collections import deque
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
+import polars as pl
 import streamlit as st
+import structlog
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from scipy import stats
 
-# Import analysis functions
-from clinical_analytics.analysis.stats import run_logistic_regression
-from clinical_analytics.analysis.survival import (
-    run_kaplan_meier,
-)
+# Import analysis compute functions (pure, no UI dependencies)
+from clinical_analytics.analysis.compute import compute_analysis_by_type
+from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.components.question_engine import (
@@ -31,131 +32,274 @@ from clinical_analytics.ui.components.question_engine import (
 )
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
+from clinical_analytics.ui.messages import (
+    CLEAR_RESULTS,
+    COLLISION_SUGGESTION_WARNING,
+    CONFIRM_AND_RUN,
+    LOW_CONFIDENCE_WARNING,
+    NO_DATASETS_AVAILABLE,
+    RESULTS_CLEARED,
+    SEMANTIC_LAYER_NOT_READY,
+    START_OVER,
+)
 
 # Page config
 st.set_page_config(page_title="Ask Questions | Clinical Analytics", page_icon="💬", layout="wide")
 
+# Structured logging
+logger = structlog.get_logger()
 
-def run_descriptive_analysis(df: pd.DataFrame, context: AnalysisContext):
-    """Generate descriptive statistics."""
+# Constants
+MAX_STORED_RESULTS_PER_DATASET = 5
+AUTO_EXECUTE_CONFIDENCE_THRESHOLD = 0.75
+
+
+# Caching Strategy (Phase 3):
+# - Cohorts: NOT cached via st.cache_data (handled via session_state with lifecycle management)
+# - Alias index: Already lazy in SemanticLayer (built once per instance)
+# - Small intermediates: Can be cached with @st.cache_data if needed (profiling, metadata)
+# - Cache keys: Must include dataset_version (upload_id/file_hash) as explicit function arguments
+# - Do NOT access st.session_state inside cached functions
+
+
+def generate_run_key(
+    dataset_version: str,
+    query_text: str | None,
+    context: AnalysisContext,
+) -> str:
+    """
+    Generate stable run key for idempotency.
+
+    Canonicalizes inputs to ensure same query + variables = same key.
+    """
+    # Normalize query text (collapse whitespace)
+    # Handle None query_text (default to empty string)
+    if query_text is None:
+        query_text = ""
+    normalized_query = " ".join(query_text.strip().split())
+
+    # Canonicalize variables
+    payload = {
+        "dataset_version": dataset_version,
+        "query": normalized_query,
+        "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
+        "vars": {
+            "primary": context.primary_variable or "",
+            "grouping": context.grouping_variable or "",
+            "predictors": sorted(context.predictor_variables or []),
+            "time": context.time_variable or "",
+            "event": context.event_variable or "",
+        },
+    }
+
+    # Stable JSON serialization
+    payload_str = json.dumps(payload, sort_keys=True)
+    run_key = hashlib.sha256(payload_str.encode()).hexdigest()
+
+    return run_key
+
+
+def remember_run(dataset_version: str, run_key: str) -> None:
+    """
+    Remember this run in history for dataset version.
+
+    O(1) eviction: Proactively delete evicted result when deque reaches maxlen,
+    instead of scanning all session_state keys.
+
+    Note: Store history as list[str] (not deque) to avoid serialization quirks.
+    Convert to deque locally for LRU logic.
+    """
+    hist_key = f"run_history_{dataset_version}"
+    hist_list = st.session_state.get(hist_key, [])
+
+    # Convert to deque for LRU logic (local only, not stored)
+    hist = deque(hist_list, maxlen=MAX_STORED_RESULTS_PER_DATASET)
+
+    # Capture what will be evicted BEFORE any modifications
+    evicted_key = None
+    if len(hist) == MAX_STORED_RESULTS_PER_DATASET and run_key not in hist:
+        evicted_key = hist[0]  # Oldest will be evicted
+
+    # De-dupe: move existing key to end (LRU behavior)
+    if run_key in hist:
+        hist.remove(run_key)
+    hist.append(run_key)
+
+    # Store back as list (deque not serializable in session_state)
+    st.session_state[hist_key] = list(hist)
+
+    # Delete evicted result immediately (O(1) instead of O(n) scan)
+    if evicted_key:
+        result_key = f"analysis_result:{dataset_version}:{evicted_key}"
+        if result_key in st.session_state:
+            del st.session_state[result_key]
+            logger.info(
+                "evicted_old_result",
+                dataset_version=dataset_version,
+                evicted_run_key=evicted_key,
+            )
+
+
+def cleanup_old_results(dataset_version: str) -> None:
+    """
+    Safety net: Remove any orphaned results not in history.
+
+    Note: Most cleanup happens proactively in remember_run() (O(1)).
+    This function is a safety net for edge cases (e.g., manual deletions).
+    """
+    hist_key = f"run_history_{dataset_version}"
+    hist_list = st.session_state.get(hist_key, [])
+
+    if not hist_list:
+        return
+
+    # Keep only results in history (using dataset-scoped keys)
+    keep_keys = {f"analysis_result:{dataset_version}:{rk}" for rk in hist_list}
+
+    # Remove any dataset-scoped result keys not in keep set
+    result_prefix = f"analysis_result:{dataset_version}:"
+    keys_to_remove = [key for key in st.session_state.keys() if key.startswith(result_prefix) and key not in keep_keys]
+
+    for key in keys_to_remove:
+        del st.session_state[key]
+
+    if keys_to_remove:
+        logger.info(
+            "cleaned_orphaned_results",
+            dataset_version=dataset_version,
+            count=len(keys_to_remove),
+        )
+
+
+def clear_all_results(dataset_version: str) -> None:
+    """
+    Clear all results and history for this dataset version.
+
+    Dataset-scoped: Only clears results for this specific dataset_version,
+    not global results. Uses dataset-scoped result keys for trivial cleanup.
+    """
+    hist_key = f"run_history_{dataset_version}"
+
+    # Clear history
+    if hist_key in st.session_state:
+        del st.session_state[hist_key]
+
+    # Clear all dataset-scoped results (trivial with scoped keys)
+    result_prefix = f"analysis_result:{dataset_version}:"
+    keys_to_remove = [key for key in st.session_state.keys() if key.startswith(result_prefix)]
+
+    for key in keys_to_remove:
+        del st.session_state[key]
+
+    # Clear dataset-scoped last_run_key
+    dataset_last_run_key = f"last_run_key:{dataset_version}"
+    if dataset_last_run_key in st.session_state:
+        del st.session_state[dataset_last_run_key]
+
+    logger.info(
+        "cleared_all_results",
+        dataset_version=dataset_version,
+        result_count=len(keys_to_remove),
+    )
+
+
+# PANDAS EXCEPTION: Required for Streamlit st.dataframe display
+# TODO: Remove when Streamlit supports Polars natively
+def render_descriptive_analysis(result: dict) -> None:
+    """Render descriptive analysis from serializable dict."""
     st.markdown("## 📊 Your Data at a Glance")
 
     # Overall metrics
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Total Patients", f"{len(df):,}")
+        st.metric("Total Patients", f"{result['row_count']:,}")
     with col2:
-        st.metric("Variables", len(df.columns))
+        st.metric("Variables", result["column_count"])
     with col3:
-        missing_pct = (df.isna().sum().sum() / df.size) * 100
-        st.metric("Data Completeness", f"{100 - missing_pct:.1f}%")
+        st.metric("Data Completeness", f"{100 - result['missing_pct']:.1f}%")
 
     # Summary statistics
     st.markdown("### Summary Statistics")
 
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    categorical_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-
-    if numeric_cols:
+    if result["summary_stats"]:
         st.markdown("**Numeric Variables:**")
-        desc_stats = df[numeric_cols].describe().T
-        st.dataframe(desc_stats)
+        # Convert to pandas for display
+        summary_df = pd.DataFrame(result["summary_stats"])
+        st.dataframe(summary_df)
 
-    if categorical_cols:
+    if result["categorical_summary"]:
         st.markdown("**Categorical Variables:**")
-        for col in categorical_cols[:10]:  # Limit to first 10
-            value_counts = df[col].value_counts()
+        for col, value_counts in result["categorical_summary"].items():
             st.markdown(f"**{col}:**")
-            for value, count in value_counts.head(5).items():
-                pct = count / len(df) * 100
+            for item in value_counts:
+                value = item[col]
+                count = item["count"]
+                pct = (count / result["row_count"]) * 100 if result["row_count"] > 0 else 0.0
                 st.write(f"  - {value}: {count} ({pct:.1f}%)")
 
 
-def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
-    """Run group comparison based on variable types."""
+# PANDAS EXCEPTION: Required for Streamlit st.dataframe display
+# TODO: Remove when Streamlit supports Polars natively
+def render_comparison_analysis(result: dict) -> None:
+    """Render comparison analysis from serializable dict."""
+    if "error" in result:
+        st.error(result["error"])
+        return
+
     st.markdown("## 📈 Group Comparison")
 
-    outcome_col = context.primary_variable
-    group_col = context.grouping_variable
+    outcome_col = result["outcome_col"]
+    group_col = result["group_col"]
+    test_type = result["test_type"]
 
-    # Clean data
-    analysis_df = df[[outcome_col, group_col]].dropna()
+    if test_type == "t_test":
+        groups = result["groups"]
+        p_value = result["p_value"]
 
-    if len(analysis_df) < 2:
-        st.error("Not enough data for comparison")
-        return
+        st.markdown("### Results")
+        st.markdown(f"**Comparing {outcome_col} between {groups[0]} and {groups[1]}**")
 
-    # Determine appropriate test
-    outcome_numeric = pd.api.types.is_numeric_dtype(analysis_df[outcome_col])
-    groups = analysis_df[group_col].unique()
-    n_groups = len(groups)
-
-    if n_groups < 2:
-        st.error("Need at least 2 groups for comparison")
-        return
-
-    # Run appropriate test
-    if outcome_numeric:
-        if n_groups == 2:
-            # T-test
-            group1_data = analysis_df[analysis_df[group_col] == groups[0]][outcome_col]
-            group2_data = analysis_df[analysis_df[group_col] == groups[1]][outcome_col]
-
-            statistic, p_value = stats.ttest_ind(group1_data, group2_data)
-
-            st.markdown("### Results")
-            st.markdown(f"**Comparing {outcome_col} between {groups[0]} and {groups[1]}**")
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(f"{groups[0]} Average", f"{group1_data.mean():.2f}")
-            with col2:
-                st.metric(f"{groups[1]} Average", f"{group2_data.mean():.2f}")
-            with col3:
-                p_interp = ResultInterpreter.interpret_p_value(p_value)
-                st.metric("Difference", f"{p_interp['significance']} {p_interp['emoji']}")
-
-            st.markdown("### What does this mean?")
-            mean_diff = group1_data.mean() - group2_data.mean()
-            interpretation = ResultInterpreter.interpret_mean_difference(
-                mean_diff=mean_diff,
-                ci_lower=mean_diff
-                - 1.96
-                * np.sqrt((group1_data.std() ** 2 / len(group1_data)) + (group2_data.std() ** 2 / len(group2_data))),
-                ci_upper=mean_diff
-                + 1.96
-                * np.sqrt((group1_data.std() ** 2 / len(group1_data)) + (group2_data.std() ** 2 / len(group2_data))),
-                p_value=p_value,
-                group1=str(groups[0]),
-                group2=str(groups[1]),
-                outcome_name=outcome_col,
-            )
-            st.markdown(interpretation)
-
-        else:
-            # ANOVA
-            group_data = [analysis_df[analysis_df[group_col] == g][outcome_col] for g in groups]
-            statistic, p_value = stats.f_oneway(*group_data)
-
-            st.markdown("### Results")
-            st.markdown(f"**Comparing {outcome_col} across {n_groups} groups**")
-
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(f"{groups[0]} Average", f"{result['group1_mean']:.2f}")
+        with col2:
+            st.metric(f"{groups[1]} Average", f"{result['group2_mean']:.2f}")
+        with col3:
             p_interp = ResultInterpreter.interpret_p_value(p_value)
-            st.metric("Result", f"{p_interp['significance']} {p_interp['emoji']}")
+            st.metric("Difference", f"{p_interp['significance']} {p_interp['emoji']}")
 
-            if p_interp["is_significant"]:
-                st.success("✅ The groups differ significantly")
-                st.markdown("**Group Averages:**")
-                for g in groups:
-                    g_mean = analysis_df[analysis_df[group_col] == g][outcome_col].mean()
-                    st.write(f"- {g}: {g_mean:.2f}")
-            else:
-                st.info("ℹ️ No significant difference between groups")
+        st.markdown("### What does this mean?")
+        interpretation = ResultInterpreter.interpret_mean_difference(
+            mean_diff=result["mean_diff"],
+            ci_lower=result["ci_lower"],
+            ci_upper=result["ci_upper"],
+            p_value=p_value,
+            group1=str(groups[0]),
+            group2=str(groups[1]),
+            outcome_name=outcome_col,
+        )
+        st.markdown(interpretation)
 
-    else:
-        # Chi-square test for categorical outcome
-        contingency = pd.crosstab(analysis_df[outcome_col], analysis_df[group_col])
-        chi2, p_value, dof, expected = stats.chi2_contingency(contingency)
+    elif test_type == "anova":
+        n_groups = result["n_groups"]
+        p_value = result["p_value"]
+
+        st.markdown("### Results")
+        st.markdown(f"**Comparing {outcome_col} across {n_groups} groups**")
+
+        p_interp = ResultInterpreter.interpret_p_value(p_value)
+        st.metric("Result", f"{p_interp['significance']} {p_interp['emoji']}")
+
+        if p_interp["is_significant"]:
+            st.success("✅ The groups differ significantly")
+            st.markdown("**Group Averages:**")
+            for g, mean_val in result["group_means"].items():
+                st.write(f"- {g}: {mean_val:.2f}")
+        else:
+            st.info("ℹ️ No significant difference between groups")
+
+    elif test_type == "chi_square":
+        p_value = result["p_value"]
 
         st.markdown("### Results")
         st.markdown(f"**Association between {outcome_col} and {group_col}**")
@@ -164,7 +308,12 @@ def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
         st.metric("Result", f"{p_interp['significance']} {p_interp['emoji']}")
 
         st.markdown("### Distribution")
-        st.dataframe(contingency)
+        # Reconstruct contingency table for display
+        contingency_list = result["contingency"]
+        index_col = result["contingency_index_col"]
+        contingency_df = pd.DataFrame(contingency_list)
+        contingency_df = contingency_df.set_index(index_col)
+        st.dataframe(contingency_df)
 
         if p_interp["is_significant"]:
             st.success(f"✅ {outcome_col} distribution differs significantly across {group_col} groups")
@@ -172,77 +321,65 @@ def run_comparison_analysis(df: pd.DataFrame, context: AnalysisContext):
             st.info(f"ℹ️ {outcome_col} distribution is similar across groups")
 
 
-def run_predictor_analysis(df: pd.DataFrame, context: AnalysisContext):
-    """Run regression to find predictors."""
+# PANDAS EXCEPTION: Required for Streamlit st.dataframe display
+# TODO: Remove when Streamlit supports Polars natively
+def render_predictor_analysis(result: dict) -> None:
+    """Render predictor analysis from serializable dict."""
+    if "error" in result:
+        st.error(result["error"])
+        return
+
     st.markdown("## 🎯 Finding Predictors")
 
-    outcome_col = context.primary_variable
-    predictors = context.predictor_variables
-
-    # Prepare data
-    analysis_cols = [outcome_col] + predictors
-    analysis_df = df[analysis_cols].copy()
-
-    # Check outcome type
-    outcome_data = analysis_df[outcome_col].dropna()
-    n_unique = outcome_data.nunique()
-
-    if n_unique != 2:
-        st.warning(f"Outcome has {n_unique} unique values. For now, only binary outcomes are supported.")
-        return
-
-    # Handle categorical predictors
-    categorical_cols = analysis_df.select_dtypes(include=["object", "category"]).columns.tolist()
-    if outcome_col in categorical_cols:
-        categorical_cols.remove(outcome_col)
-
-    if categorical_cols:
-        st.info(f"Converting categorical variables: {', '.join(categorical_cols)}")
-        analysis_df = pd.get_dummies(analysis_df, columns=categorical_cols, drop_first=True)
-        new_predictors = [c for c in analysis_df.columns if c != outcome_col]
-    else:
-        new_predictors = predictors
-
-    # Drop missing
-    analysis_df = analysis_df.dropna()
-
-    if len(analysis_df) < 10:
-        st.error("Need at least 10 complete observations")
-        return
-
-    # Run logistic regression
-    model, summary_df = run_logistic_regression(analysis_df, outcome_col, new_predictors)
-
+    outcome_col = result["outcome_col"]
     st.markdown("### Results")
     st.markdown(f"**What predicts {outcome_col}?**")
 
-    # Show significant predictors
-    significant = summary_df[summary_df["P-Value"] < 0.05]
+    # Show significant predictors with enhanced interpretation
+    significant = result["significant_predictors"]
+    sample_size = result.get("sample_size")
 
     if len(significant) > 0:
         st.success(f"✅ Found {len(significant)} significant predictor(s)")
 
-        for var in significant.index:
-            if var == "Intercept":
-                continue
+        st.markdown("### 📖 What does this mean?")
+        for pred in significant:
+            var = pred["variable"]
+            or_val = pred["odds_ratio"]
+            ci_lower = pred.get("ci_lower", 0.0)
+            ci_upper = pred.get("ci_upper", 0.0)
+            p_val = pred["p_value"]
 
-            or_val = summary_df.loc[var, "Odds Ratio"]
-            p_val = summary_df.loc[var, "P-Value"]
+            # Get value mapping if available (from column metadata)
+            value_mapping = None
+            try:
+                meta = parse_column_name(var)
+                if meta.value_mapping:
+                    value_mapping = meta.value_mapping
+            except Exception:
+                pass
 
-            if or_val > 1:
-                direction = "increases"
-                pct = (or_val - 1) * 100
-            else:
-                direction = "decreases"
-                pct = (1 - or_val) * 100
-
-            st.markdown(f"**{var}** {direction} the odds by ~{pct:.0f}% (p={p_val:.4f})")
+            # Use enhanced interpretation with value mapping and warnings
+            interpretation = ResultInterpreter.interpret_odds_ratio(
+                or_value=or_val,
+                ci_lower=ci_lower,
+                ci_upper=ci_upper,
+                p_value=p_val,
+                variable_name=var,
+                value_mapping=value_mapping,
+                sample_size=sample_size,
+            )
+            st.markdown(interpretation)
+            st.divider()
 
     else:
         st.info("ℹ️ No significant predictors found at p<0.05")
 
     # Full results in expander
     with st.expander("📊 Detailed Results"):
+        # Reconstruct summary DataFrame for display
+        summary_df = pd.DataFrame.from_dict(result["summary"], orient="index")
+        summary_df = summary_df.astype(result["schema"], errors="ignore")
         st.dataframe(
             summary_df.style.format(
                 {
@@ -255,39 +392,22 @@ def run_predictor_analysis(df: pd.DataFrame, context: AnalysisContext):
         )
 
 
-def run_survival_analysis(df: pd.DataFrame, context: AnalysisContext):
-    """Run survival analysis."""
+# PANDAS EXCEPTION: Required for Streamlit st.dataframe display and matplotlib
+# TODO: Remove when Streamlit supports Polars natively
+def render_survival_analysis(result: dict) -> None:
+    """Render survival analysis from serializable dict."""
+    if "error" in result:
+        st.error(result["error"])
+        if "unique_values" in result:
+            st.info(f"Event values found: {result['unique_values']}")
+        return
+
     st.markdown("## ⏱️ Survival Analysis")
 
-    time_col = context.time_variable
-    event_col = context.event_variable
-
-    # Need to know which value means event occurred
-    event_data = df[event_col].dropna()
-    unique_vals = sorted(event_data.unique())
-
-    if len(unique_vals) != 2:
-        st.error(f"Event variable must be binary (has {len(unique_vals)} values)")
-        return
-
-    st.info(f"ℹ️ Event values: {unique_vals}")
-    event_value = st.radio("Which value means the event occurred?", unique_vals, horizontal=True)
-
-    # Prepare data
-    analysis_df = df[[time_col, event_col]].copy()
-    analysis_df[event_col] = (analysis_df[event_col] == event_value).astype(int)
-    analysis_df = analysis_df.dropna()
-
-    if len(analysis_df) < 10:
-        st.error("Need at least 10 complete observations")
-        return
-
-    # Run Kaplan-Meier
-    kmf, summary_df = run_kaplan_meier(
-        analysis_df, duration_col=time_col, event_col=event_col, group_col=context.grouping_variable
-    )
-
     st.markdown("### Results")
+
+    # Reconstruct summary DataFrame for plotting
+    summary_df = pd.DataFrame(result["summary"])
 
     # Plot
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -300,33 +420,34 @@ def run_survival_analysis(df: pd.DataFrame, context: AnalysisContext):
     st.pyplot(fig)
 
     # Median survival
-    median_survival = kmf.median_survival_time_
+    median_survival = result["median_survival"]
     st.metric(
         "Median Survival Time",
-        f"{median_survival:.1f}" if not np.isnan(median_survival) else "Not reached",
+        f"{median_survival:.1f}" if median_survival is not None else "Not reached",
     )
 
 
-def run_relationship_analysis(df: pd.DataFrame, context: AnalysisContext):
-    """Explore relationships between variables."""
+# PANDAS EXCEPTION: Required for Streamlit st.dataframe display and seaborn
+# TODO: Remove when Streamlit supports Polars natively
+def render_relationship_analysis(result: dict) -> None:
+    """Render relationship analysis from serializable dict."""
+    if "error" in result:
+        st.error(result["error"])
+        return
+
     st.markdown("## 🔗 Relationships Between Variables")
 
-    variables = context.predictor_variables
-
-    if len(variables) < 2:
-        st.warning("Need at least 2 variables to examine relationships")
-        return
-
-    # Calculate correlations
-    analysis_df = df[variables].dropna()
-
-    if len(analysis_df) < 3:
-        st.error("Need at least 3 observations")
-        return
-
-    corr_matrix = analysis_df.corr()
+    variables = result["variables"]
 
     st.markdown("### Correlation Heatmap")
+
+    # Reconstruct correlation matrix for heatmap
+    corr_data = result["correlations"]
+    corr_matrix = pd.DataFrame(index=variables, columns=variables)
+    for item in corr_data:
+        corr_matrix.loc[item["var1"], item["var2"]] = item["correlation"]
+        corr_matrix.loc[item["var2"], item["var1"]] = item["correlation"]  # Symmetric
+    corr_matrix = corr_matrix.astype(float)
 
     # Simple heatmap
     fig, ax = plt.subplots(figsize=(10, 8))
@@ -339,19 +460,96 @@ def run_relationship_analysis(df: pd.DataFrame, context: AnalysisContext):
     # Highlight strong correlations
     st.markdown("### Strong Relationships")
 
-    found_strong = False
-    for i, var1 in enumerate(variables):
-        for j, var2 in enumerate(variables):
-            if i < j:
-                corr_val = corr_matrix.loc[var1, var2]
-                if abs(corr_val) >= 0.5:
-                    found_strong = True
-                    direction = "positive" if corr_val > 0 else "negative"
-                    strength = "strong" if abs(corr_val) >= 0.7 else "moderate"
-                    st.markdown(f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})")
+    strong_correlations = result["strong_correlations"]
 
-    if not found_strong:
+    if strong_correlations:
+        for item in strong_correlations:
+            var1 = item["var1"]
+            var2 = item["var2"]
+            corr_val = item["correlation"]
+            direction = "positive" if corr_val > 0 else "negative"
+            strength = "strong" if abs(corr_val) >= 0.7 else "moderate"
+            st.markdown(f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})")
+    else:
         st.info("ℹ️ No strong correlations found (|r| >= 0.5)")
+
+
+def render_analysis_by_type(result: dict, intent: AnalysisIntent) -> None:
+    """Route to appropriate render function based on result type."""
+    result_type = result.get("type")
+
+    if result_type == "descriptive":
+        render_descriptive_analysis(result)
+    elif result_type == "comparison":
+        render_comparison_analysis(result)
+    elif result_type == "predictor":
+        render_predictor_analysis(result)
+    elif result_type == "survival":
+        render_survival_analysis(result)
+    elif result_type == "relationship":
+        render_relationship_analysis(result)
+    else:
+        st.error(f"Unknown result type: {result_type}")
+        if "error" in result:
+            st.error(result["error"])
+
+
+def execute_analysis_with_idempotency(
+    cohort: pl.DataFrame,
+    context: AnalysisContext,
+    run_key: str,
+    dataset_version: str,
+    query_text: str,
+) -> None:
+    """
+    Execute analysis with idempotency guard and result persistence.
+
+    Checks if result already exists in session_state. If yes, renders from cache.
+    If no, computes, stores, and renders.
+    """
+    # Use dataset-scoped result key for trivial cleanup
+    result_key = f"analysis_result:{dataset_version}:{run_key}"
+
+    # Check if already computed
+    if result_key in st.session_state:
+        render_analysis_by_type(st.session_state[result_key], context.inferred_intent)
+        return
+
+    # Not computed - compute and store
+    with st.spinner("Running analysis..."):
+        # Convert cohort to Polars if needed (defensive)
+        if isinstance(cohort, pd.DataFrame):
+            cohort_pl = pl.from_pandas(cohort)
+        else:
+            cohort_pl = cohort
+
+        # Compute analysis (pure function, no UI dependencies)
+        result = compute_analysis_by_type(cohort_pl, context)
+
+        # Store result (serializable format)
+        st.session_state[result_key] = result
+        st.session_state[f"last_run_key:{dataset_version}"] = run_key
+
+        # Remember this run in history (O(1) eviction happens here)
+        remember_run(dataset_version, run_key)
+
+        # Render
+        render_analysis_by_type(result, context.inferred_intent)
+
+
+def get_dataset_version(dataset, is_uploaded: bool, dataset_choice: str) -> str:
+    """
+    Get stable dataset version identifier for caching and lifecycle management.
+
+    For uploaded datasets: use upload_id
+    For built-in datasets: use dataset name + config hash (if available)
+    """
+    if is_uploaded:
+        # Uploaded datasets: use upload_id as version
+        return dataset_choice  # This is the upload_id
+    else:
+        # Built-in datasets: use dataset name (could be enhanced with config hash)
+        return dataset_choice
 
 
 def main():
@@ -386,7 +584,7 @@ def main():
         pass
 
     if not dataset_display_names:
-        st.error("No datasets available. Please upload data first.")
+        st.error(NO_DATASETS_AVAILABLE)
         return
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
@@ -411,17 +609,23 @@ def main():
                 dataset.validate()
                 dataset.load()
 
-            cohort = dataset.get_cohort()
+            cohort_pd = dataset.get_cohort()
         except Exception as e:
             st.error(f"Error loading dataset: {e}")
             st.stop()
+
+    # Convert to Polars for compute functions
+    cohort = pl.from_pandas(cohort_pd)
+
+    # Get dataset version for lifecycle management
+    dataset_version = get_dataset_version(dataset, is_uploaded, dataset_choice)
 
     # Show Semantic Scope in sidebar
     with st.sidebar.expander("🔍 Semantic Scope", expanded=False):
         st.markdown("**V1 Cohort-First Mode**")
 
         # Cohort table status
-        st.markdown(f"✅ **Cohort Table**: {len(cohort):,} rows")
+        st.markdown(f"✅ **Cohort Table**: {cohort.height:,} rows")
 
         # Multi-table status
         if MULTI_TABLE_ENABLED:
@@ -443,7 +647,7 @@ def main():
             st.markdown("🎯 **Outcome**: Not specified")
 
         # Show column count
-        st.caption(f"{len(cohort.columns)} columns available")
+        st.caption(f"{cohort.width} columns available")
 
     st.divider()
 
@@ -460,7 +664,14 @@ def main():
             try:
                 # Get semantic layer using contract pattern
                 semantic_layer = dataset.get_semantic_layer()
-                context = QuestionEngine.ask_free_form_question(semantic_layer)
+
+                # Get dataset identifiers for structured logging
+                dataset_id = dataset.name if hasattr(dataset, "name") else None
+                upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+
+                context = QuestionEngine.ask_free_form_question(
+                    semantic_layer, dataset_id=dataset_id, upload_id=upload_id
+                )
 
                 if context:
                     # Successfully parsed NL query
@@ -560,33 +771,197 @@ def main():
         st.divider()
         QuestionEngine.render_progress_indicator(context)
 
-        # If complete, show run button
+        # If complete, auto-execute or show confirmation
         if context.is_complete_for_intent():
-            if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
+            # Get confidence (default to 0.0 if missing - fail closed)
+            confidence = getattr(context, "confidence", 0.0)
+
+            # Get query text for run_key generation
+            query_text = getattr(context, "research_question", "")
+
+            # Generate stable run_key
+            run_key = generate_run_key(dataset_version, query_text, context)
+
+            # Check if user has confirmed (for low confidence cases)
+            confirmation_key = f"confirmed_analysis:{dataset_version}:{run_key}"
+            user_confirmed = st.session_state.get(confirmation_key, False)
+
+            # Auto-execute if high confidence OR user confirmed
+            should_auto_execute = confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD or user_confirmed
+
+            if should_auto_execute:
+                # Auto-execute with idempotency guard
                 st.divider()
+                execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text)
 
-                with st.spinner("Analyzing..."):
-                    # Run appropriate analysis
-                    if context.inferred_intent == AnalysisIntent.DESCRIBE:
-                        run_descriptive_analysis(cohort, context)
+            else:
+                # Low confidence: show detected variables with display names and allow editing
+                st.warning(LOW_CONFIDENCE_WARNING)
 
-                    elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
-                        run_comparison_analysis(cohort, context)
+                # Ensure semantic_layer is ready before showing variables
+                try:
+                    semantic_layer = dataset.semantic
+                except (ValueError, AttributeError):
+                    st.error(SEMANTIC_LAYER_NOT_READY)
+                    st.stop()
 
-                    elif context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
-                        run_predictor_analysis(cohort, context)
+                # Helper to get display name for a column
+                def get_display_name(canonical_name: str) -> str:
+                    """Get display name for a column, falling back to canonical if parsing fails."""
+                    try:
+                        meta = parse_column_name(canonical_name)
+                        return meta.display_name
+                    except Exception:
+                        return canonical_name
 
-                    elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
-                        run_survival_analysis(cohort, context)
+                # Show detected variables with display names and editable selectors
+                st.markdown("### Detected Variables")
 
-                    elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
-                        run_relationship_analysis(cohort, context)
+                available_cols = [c for c in cohort.columns if c not in ["patient_id", "time_zero"]]
 
-        # Reset button
-        if st.button("🔄 Start Over", use_container_width=True):
-            st.session_state["analysis_context"] = None
-            st.session_state["intent_signal"] = None
-            st.rerun()
+                # Primary variable
+                if context.inferred_intent in [AnalysisIntent.COMPARE_GROUPS, AnalysisIntent.FIND_PREDICTORS]:
+                    primary_display = get_display_name(context.primary_variable) if context.primary_variable else None
+                    primary_index = (
+                        available_cols.index(context.primary_variable)
+                        if context.primary_variable in available_cols
+                        else 0
+                    )
+                    selected_primary = st.selectbox(
+                        "**Primary Variable** (what you want to measure/compare):",
+                        options=available_cols,
+                        index=primary_index if primary_index < len(available_cols) else 0,
+                        key=f"low_conf_primary_{dataset_version}",
+                        help=f"Detected: {primary_display or context.primary_variable}"
+                        if context.primary_variable
+                        else None,
+                    )
+                    context.primary_variable = selected_primary
+
+                # Grouping variable (for comparisons)
+                if context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
+                    grouping_display = (
+                        get_display_name(context.grouping_variable) if context.grouping_variable else None
+                    )
+                    grouping_index = (
+                        available_cols.index(context.grouping_variable)
+                        if context.grouping_variable in available_cols
+                        else 0
+                    )
+                    exclude_primary = [context.primary_variable] if context.primary_variable else []
+                    grouping_options = [c for c in available_cols if c not in exclude_primary]
+                    selected_grouping = st.selectbox(
+                        "**Grouping Variable** (groups to compare):",
+                        options=grouping_options,
+                        index=min(grouping_index, len(grouping_options) - 1)
+                        if context.grouping_variable in grouping_options
+                        else 0,
+                        key=f"low_conf_grouping_{dataset_version}",
+                        help=f"Detected: {grouping_display or context.grouping_variable}"
+                        if context.grouping_variable
+                        else None,
+                    )
+                    context.grouping_variable = selected_grouping
+
+                # Predictor variables (for regression)
+                if context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
+                    predictor_display = (
+                        [get_display_name(p) for p in context.predictor_variables]
+                        if context.predictor_variables
+                        else []
+                    )
+                    exclude_primary = [context.primary_variable] if context.primary_variable else []
+                    predictor_options = [c for c in available_cols if c not in exclude_primary]
+                    selected_predictors = st.multiselect(
+                        "**Predictor Variables** (what might affect the outcome):",
+                        options=predictor_options,
+                        default=context.predictor_variables if context.predictor_variables else [],
+                        key=f"low_conf_predictors_{dataset_version}",
+                        help=f"Detected: {', '.join(predictor_display) if predictor_display else 'None'}",
+                    )
+                    context.predictor_variables = selected_predictors
+
+                # Time and event variables (for survival)
+                if context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        time_display = get_display_name(context.time_variable) if context.time_variable else None
+                        time_index = (
+                            available_cols.index(context.time_variable)
+                            if context.time_variable in available_cols
+                            else 0
+                        )
+                        selected_time = st.selectbox(
+                            "**Time Variable**:",
+                            options=available_cols,
+                            index=time_index if time_index < len(available_cols) else 0,
+                            key=f"low_conf_time_{dataset_version}",
+                            help=f"Detected: {time_display or context.time_variable}"
+                            if context.time_variable
+                            else None,
+                        )
+                        context.time_variable = selected_time
+                    with col2:
+                        event_options = [c for c in available_cols if c != context.time_variable]
+                        event_display = get_display_name(context.event_variable) if context.event_variable else None
+                        event_index = (
+                            event_options.index(context.event_variable)
+                            if context.event_variable in event_options
+                            else 0
+                        )
+                        selected_event = st.selectbox(
+                            "**Event Variable**:",
+                            options=event_options,
+                            index=event_index if event_index < len(event_options) else 0,
+                            key=f"low_conf_event_{dataset_version}",
+                            help=f"Detected: {event_display or context.event_variable}"
+                            if context.event_variable
+                            else None,
+                        )
+                        context.event_variable = selected_event
+
+                # Show collision suggestions if available
+                if context.match_suggestions:
+                    st.warning(COLLISION_SUGGESTION_WARNING)
+                    for query_term, suggestions in context.match_suggestions.items():
+                        suggestion_display = [get_display_name(s) for s in suggestions]
+                        selected = st.selectbox(
+                            f"**'{query_term}'** matches multiple columns. Which one did you mean?",
+                            options=["(Select one)"] + suggestions,
+                            key=f"collision_{query_term}_{dataset_version}",
+                            help=f"Options: {', '.join(suggestion_display)}",
+                        )
+                        if selected and selected != "(Select one)":
+                            # Update context with selected column based on intent
+                            if not context.primary_variable:
+                                context.primary_variable = selected
+                            elif (
+                                context.inferred_intent == AnalysisIntent.COMPARE_GROUPS
+                                and not context.grouping_variable
+                            ):
+                                context.grouping_variable = selected
+                            st.info(f"✅ Selected: {get_display_name(selected)}")
+
+                # Update context in session state after edits
+                st.session_state["analysis_context"] = context
+
+                # Confirmation button
+                if st.button(CONFIRM_AND_RUN, type="primary", use_container_width=True):
+                    st.session_state[confirmation_key] = True
+                    st.rerun()
+
+        # Action buttons
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(START_OVER, use_container_width=True):
+                st.session_state["analysis_context"] = None
+                st.session_state["intent_signal"] = None
+                st.rerun()
+        with col2:
+            if st.button(CLEAR_RESULTS, use_container_width=True):
+                clear_all_results(dataset_version)
+                st.success(RESULTS_CLEARED)
+                st.rerun()
 
 
 if __name__ == "__main__":
