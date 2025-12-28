@@ -94,13 +94,6 @@ class ResultInterpreter:
         """
         p_interp = ResultInterpreter.interpret_p_value(p_value)
 
-        # Helper to get readable label from value mapping
-        def get_label(value: str) -> str:
-            """Get readable label from value mapping if available."""
-            if value_mapping and value in value_mapping:
-                return value_mapping[value]
-            return value
-
         # Check if CI crosses 1 (uncertainty warning)
         ci_crosses_one = ci_lower < 1 < ci_upper
 
