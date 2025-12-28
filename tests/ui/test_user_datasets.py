@@ -109,8 +109,8 @@ class TestUserDatasetStorage:
             print(f"Upload failed: {message}")
         assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
-        # Check that CSV file exists with friendly name
-        assert (tmp_path / "raw" / "test_dataset.csv").exists()
+        # Check that CSV file exists with upload_id as filename
+        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()
 
     def test_get_upload_data(self, tmp_path):
         """Test loading an upload."""
@@ -210,3 +210,73 @@ class TestUserDatasetStorage:
         assert success is True, f"Delete failed: {message}"
         # Upload data should no longer exist
         assert storage.get_upload_data(upload_id) is None
+
+    def test_duplicate_dataset_name_rejected(self, tmp_path):
+        """Test that uploading a dataset with the same name is rejected."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Create larger DataFrame to meet 1KB minimum
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "name": [f"Patient_{i}" for i in range(100)],
+                "age": [20 + i for i in range(100)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload should succeed
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+        )
+        assert success1 is True, f"First upload failed: {msg1}"
+        assert id1 is not None
+
+        # Second upload with same dataset_name should fail
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset2.csv",
+            metadata={"dataset_name": "my_dataset"},  # Same name!
+        )
+        assert success2 is False
+        assert "already exists" in msg2
+        assert id2 is None
+
+        # Verify only one upload exists
+        uploads = storage.list_uploads()
+        assert len(uploads) == 1
+
+    def test_different_dataset_names_allowed(self, tmp_path):
+        """Test that datasets with different names can be uploaded."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "name": [f"Patient_{i}" for i in range(100)],
+                "age": [20 + i for i in range(100)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset1.csv",
+            metadata={"dataset_name": "dataset_one"},
+        )
+        assert success1 is True
+
+        # Second upload with different name should succeed
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset2.csv",
+            metadata={"dataset_name": "dataset_two"},  # Different name
+        )
+        assert success2 is True
+
+        # Both uploads should exist
+        uploads = storage.list_uploads()
+        assert len(uploads) == 2

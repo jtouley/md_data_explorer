@@ -4,23 +4,23 @@ globs: []
 alwaysApply: true
 ---
 
-# Active Session: multi-table-semantic-layer-fix
+# Active Session: test-consolidation-patient-id
 
 ## Session File
-.context/sessions/multi-table-semantic-layer-fix.yaml
+.context/sessions/test-consolidation-patient-id.yaml
 
 ## Resume Prompt
-Resume session: multi-table-semantic-layer-fix
+Resume session: test-consolidation-patient-id
 
-Problem: When uploading multi-table ZIP files (e.g., MIMIC-IV), only the unified cohort table was being registered in the semantic layer, not the individual tables.
+Context: Consolidated duplicate patient_id tests and fixed test failures. Tests are now properly
+separated into unit tests (test_composite_identifier.py) and integration tests 
+(test_uploaded_dataset_patient_id.py). All 5 tests passing.
 
-Completed:
-1. Modified save_zip_upload() in user_datasets.py to save individual tables to {upload_id}_tables/ directory
-2. Modified _maybe_init_semantic() in uploaded/definition.py to register all individual tables in DuckDB
+Current status:
+- Test files committed (ab3d917)
+- Source code changes in src/ are uncommitted and should be included in the same commit
 
-Remaining:
-1. Fix list_uploads() to deduplicate by dataset_name (keep most recent upload)
-   - Current issue: When re-uploading with same dataset_name, old upload is used because dictionary overwrites with oldest entry
-   - Solution: Add deduplication logic to list_uploads() method
-
-Apply the deduplication fix to list_uploads() in src/clinical_analytics/ui/storage/user_datasets.py
+Next steps:
+1. Review uncommitted source changes in src/
+2. Amend commit to include source changes: `git add src/ && git commit --amend --no-edit`
+3. Verify all tests still pass after including source changes

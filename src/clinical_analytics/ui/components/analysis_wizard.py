@@ -206,7 +206,7 @@ class AnalysisWizard:
                         f"Start {analysis.name}",
                         key=f"select_{analysis.id}",
                         type="primary" if idx == 0 else "secondary",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         return analysis.id
 
@@ -225,7 +225,7 @@ class AnalysisWizard:
                     if st.button(
                         f"Start {analysis.name}",
                         key=f"select_other_{analysis.id}",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         return analysis.id
 

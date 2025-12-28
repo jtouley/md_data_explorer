@@ -292,7 +292,7 @@ def main():
             # Display table
             st.markdown("## 📄 Table 1: Patient Characteristics")
 
-            st.dataframe(table_one, use_container_width=True, hide_index=True)
+            st.dataframe(table_one, width="stretch", hide_index=True)
 
             # Export options
             st.markdown("### 📥 Export Options")

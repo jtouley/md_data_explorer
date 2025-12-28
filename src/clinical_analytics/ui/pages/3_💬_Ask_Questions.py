@@ -391,15 +391,22 @@ def main():
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
-    is_uploaded = dataset_choice in uploaded_datasets
+    # Check if this is an uploaded dataset (multiple checks for robustness)
+    is_uploaded = (
+        dataset_choice in uploaded_datasets
+        or dataset_choice_display.startswith("📤")
+        or dataset_choice not in available_datasets
+    )
 
     # Load dataset
     with st.spinner(f"Loading {dataset_choice_display}..."):
         try:
             if is_uploaded:
+                # For uploaded datasets, use the factory (requires upload_id)
                 dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
                 dataset.load()
             else:
+                # For built-in datasets, use the registry
                 dataset = DatasetRegistry.get_dataset(dataset_choice)
                 dataset.validate()
                 dataset.load()

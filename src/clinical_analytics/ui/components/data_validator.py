@@ -1,399 +1,448 @@
 """
 Data Quality Validator
 
-Validates uploaded data for common quality issues:
-- Duplicate patient IDs
-- Excessive missing data
-- Invalid values
-- Data type mismatches
+Observes data quality characteristics for uploaded datasets.
+All observations are NON-BLOCKING - they are stored as metadata for the
+semantic layer to surface at query time when relevant.
+
+Philosophy:
+- Accept data as-is at upload time
+- Record quality observations as metadata
+- Surface warnings at query time when user tries to use problematic columns
+- Let users make informed decisions about their data
 """
 
-import pandas as pd
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import polars as pl
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_polars(df: Any) -> pl.DataFrame:
+    """Convert pandas DataFrame to polars if needed."""
+    if isinstance(df, pl.DataFrame):
+        return df
+    # Assume pandas DataFrame - convert at boundary
+    try:
+        return pl.from_pandas(df)
+    except Exception as e:
+        # Handle type conversion errors (e.g., numeric columns with string values)
+        # This can happen when Excel files have mixed types in columns
+        if "ArrowInvalid" in str(type(e).__name__) or "Could not convert" in str(e):
+            logger.warning(
+                f"Type conversion error during pandas->polars conversion: {e}. "
+                "Attempting to fix by converting problematic columns to string."
+            )
+            # Convert all columns to string first, then let Polars infer types
+            # This is safer but less efficient - we'll optimize later if needed
+            df_str = df.astype(str)
+            # Replace 'nan' strings with actual nulls
+            df_str = df_str.replace("nan", None)
+            df_str = df_str.replace("", None)
+            # Convert to polars
+            result = pl.from_pandas(df_str)
+            # Try to infer better types where possible
+            # (Polars will handle this automatically, but we can be explicit)
+            return result
+        else:
+            # Re-raise if it's a different error
+            raise
 
 
 class DataQualityValidator:
     """
-    Validate data quality for uploaded datasets.
+    Observe data quality characteristics for uploaded datasets.
 
-    Performs checks for:
-    - Duplicate IDs
-    - Missing data patterns
-    - Value range validation
-    - Required columns
+    All quality issues are WARNINGS, not blocking errors.
+    Only structural issues (empty dataset, no columns) are errors.
+
+    Quality observations are stored as metadata and surfaced by the
+    semantic layer at query time.
     """
 
-    # Thresholds for quality warnings
-    MISSING_DATA_WARNING_THRESHOLD = 30  # % missing per column
-    MISSING_DATA_ERROR_THRESHOLD = 80  # % missing per column
+    # Thresholds for quality observations (configurable via class attributes)
+    HIGH_MISSING_THRESHOLD = 30  # % missing per column - flag for attention
+    VERY_HIGH_MISSING_THRESHOLD = 80  # % missing per column - likely unusable
 
     @classmethod
-    def validate_patient_id(cls, df: pd.DataFrame, id_column: str) -> tuple[bool, list[dict[str, any]]]:
+    def observe_id_column(cls, df: pl.DataFrame, id_column: str) -> list[dict]:
         """
-        Validate patient ID column.
+        Observe characteristics of a patient ID column.
 
-        Checks:
-        - No duplicates
-        - No missing values
-        - Adequate uniqueness
+        All observations are warnings - user decides how to handle.
 
         Args:
-            df: DataFrame
+            df: Polars DataFrame
             id_column: Name of ID column
 
         Returns:
-            Tuple of (is_valid, list of issues)
+            List of quality observations (all warnings)
         """
-        issues = []
+        observations = []
 
         if id_column not in df.columns:
-            issues.append(
+            observations.append(
                 {
-                    "severity": "error",
-                    "type": "missing_column",
-                    "message": f"ID column '{id_column}' not found in data",
+                    "severity": "warning",
+                    "type": "column_not_found",
+                    "message": f"Column '{id_column}' not found in data",
+                    "column": id_column,
                 }
             )
-            return False, issues
+            return observations
 
         id_series = df[id_column]
+        n_rows = df.height
 
-        # Check for missing IDs
-        n_missing = id_series.isna().sum()
+        # Observe missing IDs
+        n_missing = id_series.null_count()
         if n_missing > 0:
-            issues.append(
+            observations.append(
                 {
-                    "severity": "error",
+                    "severity": "warning",
                     "type": "missing_ids",
-                    "message": f"{n_missing} missing patient IDs found. Every row must have an ID.",
+                    "message": f"{n_missing} missing values in ID column '{id_column}'",
+                    "column": id_column,
                     "count": int(n_missing),
+                    "pct": float(n_missing / n_rows * 100) if n_rows > 0 else 0,
                 }
             )
 
-        # Check for duplicate IDs
-        duplicates = id_series.duplicated()
-        n_duplicates = duplicates.sum()
+        # Observe duplicates
+        n_unique = id_series.n_unique()
+        n_duplicates = n_rows - n_unique
         if n_duplicates > 0:
-            duplicate_ids = id_series[duplicates].unique()[:5]  # Sample
-            issues.append(
+            # Get sample of duplicates
+            duplicate_counts = df.group_by(id_column).len().filter(pl.col("len") > 1)
+            sample_ids = duplicate_counts.head(5)[id_column].to_list()
+            observations.append(
                 {
-                    "severity": "error",
+                    "severity": "warning",
                     "type": "duplicate_ids",
-                    "message": f"{n_duplicates} duplicate patient IDs found. Each patient must have unique ID.",
+                    "message": (
+                        f"{n_duplicates} duplicate values in '{id_column}' (may indicate multi-row-per-patient data)"
+                    ),
+                    "column": id_column,
                     "count": int(n_duplicates),
-                    "examples": list(duplicate_ids),
+                    "examples": sample_ids,
                 }
             )
 
-        # Check uniqueness ratio
-        n_unique = id_series.dropna().nunique()
-        n_total = len(id_series.dropna())
-        if n_total > 0:
-            uniqueness_ratio = n_unique / n_total
-            if uniqueness_ratio < 0.95:
-                issues.append(
-                    {
-                        "severity": "warning",
-                        "type": "low_uniqueness",
-                        "message": (
-                            f"ID column only {uniqueness_ratio * 100:.1f}% unique. Expected >95% for patient IDs."
-                        ),
-                        "uniqueness": uniqueness_ratio,
-                    }
-                )
+        # Observe uniqueness ratio
+        n_non_null = n_rows - n_missing
+        if n_non_null > 0:
+            uniqueness_ratio = n_unique / n_non_null
+            observations.append(
+                {
+                    "severity": "info",
+                    "type": "id_uniqueness",
+                    "message": f"ID column '{id_column}' is {uniqueness_ratio * 100:.1f}% unique",
+                    "column": id_column,
+                    "uniqueness": float(uniqueness_ratio),
+                    "unique_count": int(n_unique),
+                    "total_count": int(n_non_null),
+                }
+            )
 
-        is_valid = not any(issue["severity"] == "error" for issue in issues)
-        return is_valid, issues
+        return observations
 
     @classmethod
-    def validate_missing_data(cls, df: pd.DataFrame) -> tuple[bool, list[dict[str, any]]]:
+    def observe_missing_data(cls, df: pl.DataFrame) -> list[dict]:
         """
-        Validate missing data patterns.
+        Observe missing data patterns across all columns.
 
-        Checks:
-        - Per-column missing data rates
-        - Overall missing data
-        - Suspicious patterns
+        All observations are warnings - user decides how to handle.
 
         Args:
-            df: DataFrame
+            df: Polars DataFrame
 
         Returns:
-            Tuple of (is_acceptable, list of issues)
+            List of quality observations (all warnings)
         """
-        issues = []
+        observations = []
+        column_stats = []
+        n_rows = df.height
 
-        # Check each column
         for col in df.columns:
-            n_missing = df[col].isna().sum()
-            pct_missing = (n_missing / len(df)) * 100
+            n_missing = df[col].null_count()
+            pct_missing = (n_missing / n_rows * 100) if n_rows > 0 else 0
 
-            if pct_missing >= cls.MISSING_DATA_ERROR_THRESHOLD:
-                issues.append(
+            column_stats.append(
+                {
+                    "column": col,
+                    "missing_count": int(n_missing),
+                    "missing_pct": float(pct_missing),
+                }
+            )
+
+            if pct_missing >= cls.VERY_HIGH_MISSING_THRESHOLD:
+                observations.append(
                     {
-                        "severity": "error",
-                        "type": "excessive_missing",
-                        "message": (
-                            f"Column '{col}' has {pct_missing:.1f}% missing data. Consider removing this variable."
-                        ),
+                        "severity": "warning",
+                        "type": "very_high_missing",
+                        "message": (f"Column '{col}' has {pct_missing:.1f}% missing - may be unreliable for analysis"),
                         "column": col,
                         "missing_count": int(n_missing),
-                        "missing_pct": pct_missing,
+                        "missing_pct": float(pct_missing),
                     }
                 )
-
-            elif pct_missing >= cls.MISSING_DATA_WARNING_THRESHOLD:
-                issues.append(
+            elif pct_missing >= cls.HIGH_MISSING_THRESHOLD:
+                observations.append(
                     {
                         "severity": "warning",
                         "type": "high_missing",
-                        "message": f"Column '{col}' has {pct_missing:.1f}% missing data.",
+                        "message": f"Column '{col}' has {pct_missing:.1f}% missing data",
                         "column": col,
                         "missing_count": int(n_missing),
-                        "missing_pct": pct_missing,
+                        "missing_pct": float(pct_missing),
                     }
                 )
 
-        # Overall missing data
-        total_cells = df.size
-        missing_cells = df.isna().sum().sum()
-        overall_missing_pct = (missing_cells / total_cells) * 100
+        # Overall missing data observation
+        total_cells = df.height * df.width
+        missing_cells = sum(df[col].null_count() for col in df.columns)
+        overall_missing_pct = (missing_cells / total_cells * 100) if total_cells > 0 else 0
 
-        if overall_missing_pct >= 50:
-            issues.append(
-                {
-                    "severity": "error",
-                    "type": "overall_missing",
-                    "message": f"Dataset has {overall_missing_pct:.1f}% missing values overall. Data quality too poor.",
-                    "missing_pct": overall_missing_pct,
-                }
-            )
-        elif overall_missing_pct >= 25:
-            issues.append(
-                {
-                    "severity": "warning",
-                    "type": "overall_missing",
-                    "message": f"Dataset has {overall_missing_pct:.1f}% missing values overall.",
-                    "missing_pct": overall_missing_pct,
-                }
-            )
+        observations.append(
+            {
+                "severity": "info",
+                "type": "overall_missing",
+                "message": f"Dataset has {overall_missing_pct:.1f}% missing values overall",
+                "missing_pct": float(overall_missing_pct),
+                "missing_cells": int(missing_cells),
+                "total_cells": int(total_cells),
+                "column_stats": column_stats,
+            }
+        )
 
-        is_acceptable = not any(issue["severity"] == "error" for issue in issues)
-        return is_acceptable, issues
+        return observations
 
     @classmethod
-    def validate_outcome_column(cls, df: pd.DataFrame, outcome_column: str) -> tuple[bool, list[dict[str, any]]]:
+    def observe_outcome_column(cls, df: pl.DataFrame, outcome_column: str) -> list[dict]:
         """
-        Validate outcome column.
+        Observe characteristics of an outcome column.
 
-        Checks:
-        - Column exists
-        - Has valid values (for binary outcomes)
-        - Sufficient variation
-        - Not too many missing values
+        All observations are warnings - user decides how to handle.
 
         Args:
-            df: DataFrame
+            df: Polars DataFrame
             outcome_column: Name of outcome column
 
         Returns:
-            Tuple of (is_valid, list of issues)
+            List of quality observations (all warnings)
         """
-        issues = []
+        observations = []
 
         if outcome_column not in df.columns:
-            issues.append(
+            observations.append(
                 {
-                    "severity": "error",
-                    "type": "missing_column",
+                    "severity": "warning",
+                    "type": "column_not_found",
                     "message": f"Outcome column '{outcome_column}' not found in data",
+                    "column": outcome_column,
                 }
             )
-            return False, issues
+            return observations
 
-        outcome_series = df[outcome_column].dropna()
+        outcome_series = df[outcome_column]
+        n_rows = df.height
 
-        # Check for missing outcomes
-        n_missing = df[outcome_column].isna().sum()
-        pct_missing = (n_missing / len(df)) * 100
+        # Observe missing outcomes
+        n_missing = outcome_series.null_count()
+        pct_missing = (n_missing / n_rows * 100) if n_rows > 0 else 0
 
-        if pct_missing > 20:
-            issues.append(
+        if n_missing > 0:
+            observations.append(
                 {
-                    "severity": "error",
+                    "severity": "warning" if pct_missing > 20 else "info",
                     "type": "missing_outcome",
-                    "message": f"Outcome has {pct_missing:.1f}% missing values. Too many to analyze.",
+                    "message": f"Outcome has {pct_missing:.1f}% missing values",
+                    "column": outcome_column,
                     "missing_count": int(n_missing),
-                    "missing_pct": pct_missing,
+                    "missing_pct": float(pct_missing),
                 }
             )
 
-        # Check for variation
-        n_unique = outcome_series.nunique()
+        # Observe variation
+        n_unique = outcome_series.n_unique()
+        observations.append(
+            {
+                "severity": "info",
+                "type": "outcome_distribution",
+                "message": f"Outcome has {n_unique} unique value(s)",
+                "column": outcome_column,
+                "unique_count": int(n_unique),
+            }
+        )
 
         if n_unique < 2:
-            issues.append(
+            observations.append(
                 {
-                    "severity": "error",
+                    "severity": "warning",
                     "type": "no_variation",
-                    "message": f"Outcome has only {n_unique} unique value(s). Need variation for analysis.",
-                    "unique_count": n_unique,
+                    "message": f"Outcome has only {n_unique} unique value(s) - no variation for analysis",
+                    "column": outcome_column,
+                    "unique_count": int(n_unique),
                 }
             )
 
-        # For binary outcomes, check balance
-        if n_unique == 2:
-            value_counts = outcome_series.value_counts()
-            minority_pct = (value_counts.min() / len(outcome_series)) * 100
+        # For binary outcomes, observe balance
+        n_non_null = n_rows - n_missing
+        if n_unique == 2 and n_non_null > 0:
+            value_counts = outcome_series.drop_nulls().value_counts()
+            min_count = value_counts["count"].min()
+            minority_pct = (min_count / n_non_null * 100) if n_non_null > 0 else 0
 
             if minority_pct < 5:
-                issues.append(
+                observations.append(
                     {
                         "severity": "warning",
                         "type": "imbalanced_outcome",
-                        "message": (
-                            f"Outcome is very imbalanced ({minority_pct:.1f}% minority class). May affect analysis."
-                        ),
-                        "minority_pct": minority_pct,
-                        "distribution": value_counts.to_dict(),
+                        "message": f"Outcome is very imbalanced ({minority_pct:.1f}% minority class)",
+                        "column": outcome_column,
+                        "minority_pct": float(minority_pct),
                     }
                 )
 
-        is_valid = not any(issue["severity"] == "error" for issue in issues)
-        return is_valid, issues
+        return observations
 
     @classmethod
     def validate_complete(
         cls,
-        df: pd.DataFrame,
+        df: Any,
         id_column: str | None = None,
         outcome_column: str | None = None,
         granularity: str = "unknown",
-    ) -> dict[str, any]:
+    ) -> dict:
         """
-        Run complete validation suite.
+        Run complete data quality observation.
+
+        Philosophy: Accept data, observe quality, store metadata.
+        Only structural issues (empty dataset) are blocking errors.
+        All quality issues are warnings for the semantic layer.
 
         Args:
-            df: DataFrame to validate
-            id_column: Patient ID column (optional)
-            outcome_column: Outcome column (optional)
-            granularity: Data granularity level ("patient_level", "admission_level", "event_level", "unknown")
-                        Default: "unknown"
+            df: DataFrame to observe (pandas or polars - converted internally)
+            id_column: Patient ID column (optional - from user mapping)
+            outcome_column: Outcome column (optional - from user mapping)
+            granularity: Data granularity hint (for context)
 
         Returns:
-            Validation results dictionary with:
+            Observation results dictionary with:
             {
-                'is_valid': bool,
-                'schema_errors': list of schema validation errors (strings),
-                'quality_warnings': list of quality warning issues (dicts),
-                'issues': combined list of all issues (schema + quality),
-                'summary': summary statistics
+                'is_valid': bool (True unless structurally broken),
+                'schema_errors': list (only structural errors),
+                'quality_warnings': list (all quality observations),
+                'quality_metadata': dict (for semantic layer to use),
+                'issues': list (combined for UI display),
+                'summary': dict (summary statistics)
             }
         """
+        # Convert pandas to polars at boundary
+        df = _ensure_polars(df)
+
         schema_errors = []
         quality_warnings = []
         all_issues = []
 
-        # Basic structure validation
-        if len(df) == 0:
+        logger.info(
+            f"DataQualityValidator.validate_complete: "
+            f"id_column={id_column}, outcome_column={outcome_column}, "
+            f"df.shape={df.shape}, granularity={granularity}"
+        )
+
+        # === STRUCTURAL VALIDATION (blocking errors) ===
+        if df.height == 0:
             return {
                 "is_valid": False,
                 "schema_errors": ["Dataset is empty (no rows)"],
                 "quality_warnings": [],
-                "issues": [
-                    {
-                        "severity": "error",
-                        "type": "empty_dataset",
-                        "message": "Dataset is empty (no rows)",
-                    }
-                ],
-                "summary": None,
+                "quality_metadata": {},
+                "issues": [{"severity": "error", "type": "empty_dataset", "message": "Dataset is empty (no rows)"}],
+                "summary": {"total_rows": 0, "total_columns": 0, "errors": 1, "warnings": 0},
             }
 
-        if len(df.columns) == 0:
+        if df.width == 0:
             return {
                 "is_valid": False,
                 "schema_errors": ["Dataset has no columns"],
                 "quality_warnings": [],
+                "quality_metadata": {},
                 "issues": [{"severity": "error", "type": "no_columns", "message": "Dataset has no columns"}],
-                "summary": None,
+                "summary": {"total_rows": df.height, "total_columns": 0, "errors": 1, "warnings": 0},
             }
 
-        # Schema validation first (schema-first approach)
-        from clinical_analytics.core.schema import validate_unified_cohort_schema
+        # === QUALITY OBSERVATIONS (non-blocking warnings) ===
 
-        try:
-            schema_valid, schema_error_list = validate_unified_cohort_schema(df, strict=False)
-            if not schema_valid:
-                schema_errors.extend(schema_error_list)
-                # Add to all_issues for compatibility
-                for error in schema_error_list:
-                    all_issues.append({"severity": "error", "type": "schema_error", "message": error})
-        except Exception as e:
-            schema_errors.append(f"Schema validation failed: {str(e)}")
-            all_issues.append(
-                {"severity": "error", "type": "schema_error", "message": f"Schema validation failed: {str(e)}"}
-            )
-
-        # Quality validation
-
-        # Validate patient ID if provided
+        # Observe ID column if user has mapped one
         if id_column:
-            id_valid, id_issues = cls.validate_patient_id(df, id_column)
+            id_observations = cls.observe_id_column(df, id_column)
+            for obs in id_observations:
+                if obs["severity"] in ("warning", "info"):
+                    quality_warnings.append(obs)
+                all_issues.append(obs)
 
-            # Duplicate ID check: only warn if granularity != "patient_level"
-            for issue in id_issues:
-                if issue["type"] == "duplicate_ids" and granularity != "patient_level":
-                    # Convert to warning instead of error for non-patient-level granularity
-                    issue["severity"] = "warning"
-                    issue["message"] = (
-                        f"{issue['count']} duplicate patient IDs found. This is expected for {granularity} granularity."
-                    )
-                    quality_warnings.append(issue)
-                elif issue["severity"] == "warning":
-                    quality_warnings.append(issue)
-                else:
-                    # Keep errors as schema errors
-                    schema_errors.append(issue["message"])
+        # Observe missing data patterns
+        missing_observations = cls.observe_missing_data(df)
+        for obs in missing_observations:
+            if obs["severity"] in ("warning", "info"):
+                quality_warnings.append(obs)
+            all_issues.append(obs)
 
-            all_issues.extend(id_issues)
-
-        # Validate missing data
-        missing_ok, missing_issues = cls.validate_missing_data(df)
-        for issue in missing_issues:
-            if issue["severity"] == "warning":
-                quality_warnings.append(issue)
-            else:
-                schema_errors.append(issue["message"])
-        all_issues.extend(missing_issues)
-
-        # Validate outcome if provided
+        # Observe outcome column if user has mapped one
         if outcome_column:
-            outcome_valid, outcome_issues = cls.validate_outcome_column(df, outcome_column)
-            for issue in outcome_issues:
-                if issue["severity"] == "warning":
-                    quality_warnings.append(issue)
-                else:
-                    schema_errors.append(issue["message"])
-            all_issues.extend(outcome_issues)
+            outcome_observations = cls.observe_outcome_column(df, outcome_column)
+            for obs in outcome_observations:
+                if obs["severity"] in ("warning", "info"):
+                    quality_warnings.append(obs)
+                all_issues.append(obs)
 
-        # Calculate summary statistics
-        summary = {
-            "total_rows": len(df),
-            "total_columns": len(df.columns),
-            "total_cells": df.size,
-            "missing_cells": int(df.isna().sum().sum()),
-            "missing_pct": float((df.isna().sum().sum() / df.size) * 100),
-            "errors": sum(1 for issue in all_issues if issue["severity"] == "error"),
-            "warnings": sum(1 for issue in all_issues if issue["severity"] == "warning"),
+        # === BUILD QUALITY METADATA (for semantic layer) ===
+        quality_metadata = {
+            "columns_with_high_missing": [
+                obs["column"] for obs in quality_warnings if obs.get("type") in ("high_missing", "very_high_missing")
+            ],
+            "id_column_observations": [obs for obs in quality_warnings if obs.get("column") == id_column]
+            if id_column
+            else [],
+            "outcome_observations": [obs for obs in quality_warnings if obs.get("column") == outcome_column]
+            if outcome_column
+            else [],
+            "overall_missing_pct": next(
+                (obs["missing_pct"] for obs in missing_observations if obs["type"] == "overall_missing"), 0.0
+            ),
         }
 
-        # Overall validity
-        is_valid = summary["errors"] == 0
+        # === SUMMARY ===
+        total_cells = df.height * df.width
+        missing_cells = sum(df[col].null_count() for col in df.columns)
+
+        summary = {
+            "total_rows": df.height,
+            "total_columns": df.width,
+            "total_cells": total_cells,
+            "missing_cells": int(missing_cells),
+            "missing_pct": float(missing_cells / total_cells * 100) if total_cells > 0 else 0,
+            "errors": len(schema_errors),
+            "warnings": len([w for w in quality_warnings if w["severity"] == "warning"]),
+        }
+
+        # is_valid = True unless structural errors
+        is_valid = len(schema_errors) == 0
+
+        logger.info(
+            f"Validation complete: is_valid={is_valid}, errors={len(schema_errors)}, warnings={len(quality_warnings)}"
+        )
 
         return {
             "is_valid": is_valid,
             "schema_errors": schema_errors,
             "quality_warnings": quality_warnings,
+            "quality_metadata": quality_metadata,
             "issues": all_issues,
             "summary": summary,
         }

@@ -446,9 +446,14 @@ class SemanticLayer:
         selects = {}
 
         # Required columns
-        patient_id_col = self._find_mapped_column(UnifiedCohort.PATIENT_ID)
-        if patient_id_col and patient_id_col in view.columns:
-            selects[UnifiedCohort.PATIENT_ID] = _[patient_id_col]
+        # Check if patient_id is already in view (after column mapping in get_base_view)
+        if UnifiedCohort.PATIENT_ID in view.columns:
+            selects[UnifiedCohort.PATIENT_ID] = _[UnifiedCohort.PATIENT_ID]
+        else:
+            # Fallback: find source column from mapping
+            patient_id_col = self._find_mapped_column(UnifiedCohort.PATIENT_ID)
+            if patient_id_col and patient_id_col in view.columns:
+                selects[UnifiedCohort.PATIENT_ID] = _[patient_id_col]
 
         if UnifiedCohort.TIME_ZERO in view.columns:
             selects[UnifiedCohort.TIME_ZERO] = _[UnifiedCohort.TIME_ZERO]

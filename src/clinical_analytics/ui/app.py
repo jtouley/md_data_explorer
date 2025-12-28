@@ -484,7 +484,7 @@ def display_query_builder(dataset, dataset_name: str):
                 st.success(f"Query executed successfully! Returned {len(results)} rows")
 
                 # Display results
-                st.dataframe(results, use_container_width=True)
+                st.dataframe(results, width="stretch")
 
                 # Export results
                 col1, col2 = st.columns(2)
