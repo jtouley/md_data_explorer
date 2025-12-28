@@ -14,9 +14,10 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.core.registry import DatasetRegistry
+# Keep only lightweight imports at module scope
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+
+# Heavy imports moved inside main() after gate
 
 # Page config
 st.set_page_config(page_title="Descriptive Statistics | Clinical Analytics", page_icon="📊", layout="wide")
@@ -128,6 +129,16 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFram
 
 
 def main():
+    # Gate: V1 MVP mode disables legacy pages
+    # MUST run before any expensive operations
+    from clinical_analytics.ui.helpers import gate_v1_mvp_legacy_page
+
+    gate_v1_mvp_legacy_page()  # Stops execution if gated
+
+    # NOW do heavy imports (after gate)
+    from clinical_analytics.core.registry import DatasetRegistry
+    from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+
     st.title("📊 Descriptive Statistics")
     st.markdown("""
     Create **Table 1** with patient characteristics - the foundation of any research paper.
@@ -334,8 +345,8 @@ def main():
                 methods_text = """
 **Statistical Analysis**
 
-Descriptive statistics were calculated for all variables. Continuous variables are 
-presented as mean ± standard deviation. Categorical variables are presented as 
+Descriptive statistics were calculated for all variables. Continuous variables are
+presented as mean ± standard deviation. Categorical variables are presented as
 frequencies and percentages.
 """
                 if stratify_by:
@@ -357,7 +368,7 @@ frequencies and percentages.
                 st.markdown("""
                 **Continuous Variables** (e.g., Age, Weight):
                 - Shown as: Mean ± Standard Deviation
-                - Example: "45.3 ± 12.1" means average age is 45.3 years, 
+                - Example: "45.3 ± 12.1" means average age is 45.3 years,
                   with most patients between 33.2 and 57.4 years
 
                 **Categorical Variables** (e.g., Sex, Treatment):

@@ -1,27 +1,40 @@
 """
-UI helper functions for common checks and validations.
+UI Helper Functions
+
+Shared utilities for Streamlit pages.
 """
 
-import pandas as pd
 import streamlit as st
 
-from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.ui.config import ASK_QUESTIONS_PAGE, V1_MVP_MODE
 
 
-def require_outcome(cohort: pd.DataFrame, analysis_name: str = "This analysis") -> None:
+def gate_v1_mvp_legacy_page() -> bool:
     """
-    Require outcome column in cohort, show error and stop execution if missing.
+    Gate legacy analysis pages in V1 MVP mode.
 
-    Args:
-        cohort: Cohort DataFrame
-        analysis_name: Name of analysis requiring outcome (for error message)
+    Shows redirect message and stops execution if V1_MVP_MODE is enabled.
+    MUST be called at the start of main() before any expensive operations.
 
-    Raises:
-        SystemExit: If outcome is missing (stops page execution via st.stop())
+    Returns:
+        True if gated (execution should stop), False if allowed to proceed
     """
-    if UnifiedCohort.OUTCOME not in cohort.columns:
-        st.error(
-            f"{analysis_name} requires an outcome variable, but none was found in the dataset. "
-            "Please upload data with outcome mapping or select a dataset that includes outcomes."
-        )
-        st.stop()
+    if not V1_MVP_MODE:
+        return False
+
+    st.info("🚧 This page is disabled in V1 MVP mode. Use the **Ask Questions** page for all analysis.")
+    st.markdown(
+        """
+        **V1 MVP focuses on:**
+        - Upload your data
+        - Ask questions in natural language
+        - Get answers with SQL preview
+
+        All analysis is available through the Chat interface on the Ask Questions page.
+        """
+    )
+    if st.button("Go to Ask Questions Page"):
+        st.switch_page(ASK_QUESTIONS_PAGE)
+    st.stop()
+
+    return True  # Unreachable, but makes type checker happy

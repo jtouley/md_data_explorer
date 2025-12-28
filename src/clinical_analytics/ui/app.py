@@ -24,6 +24,7 @@ from clinical_analytics.core.profiling import DataProfiler  # noqa: E402
 from clinical_analytics.core.registry import DatasetRegistry  # noqa: E402
 from clinical_analytics.core.schema import UnifiedCohort  # noqa: E402
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory  # noqa: E402
+from clinical_analytics.ui.config import V1_MVP_MODE  # noqa: E402
 from clinical_analytics.ui.helpers import require_outcome  # noqa: E402
 
 
@@ -200,6 +201,12 @@ def display_statistical_analysis(cohort: pd.DataFrame, dataset_name: str):
 def main():
     st.set_page_config(page_title="Clinical Analytics Platform", page_icon="🏥", layout="wide")
 
+    # V1 MVP: Redirect to Upload page (landing page)
+    if V1_MVP_MODE:
+        st.switch_page("pages/1_📤_Add_Your_Data.py")
+        return
+
+    # Development/testing mode: Keep existing dataset selection
     st.title("🏥 Clinical Analytics Platform")
     st.markdown("Multi-dataset clinical analytics with unified schema")
 
@@ -441,7 +448,7 @@ def display_query_builder(dataset, dataset_name: str):
     # Filters
     st.markdown("### Filters")
     filter_values = {}
-    if filters:
+    if filters and len(filters) > 0:
         filter_cols = st.columns(min(3, len(filters)))
         for idx, (filter_name, filter_def) in enumerate(filters.items()):
             with filter_cols[idx % len(filter_cols)]:

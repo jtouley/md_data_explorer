@@ -1,5 +1,5 @@
 # Taskmaster Configuration for Clinical Analytics Platform
-# Agent orchestration configuration - Polars-Optimized Implementation
+# Agent orchestration configuration - Polars-Optimized Implementation with NL Query Engine
 
 agents:
   data_loader:
@@ -8,6 +8,9 @@ agents:
     tasks:
       - "Load COVID-MS dataset from CSV using pl.read_csv()"
       - "Load Sepsis dataset from PSV files using pl.read_csv(separator='|')"
+      - "Load MIMIC-III from DuckDB/Postgres connections"
+      - "Handle multi-table ZIP uploads (e.g., MIMIC-IV)"
+      - "Support CSV, Excel (.xlsx, .xls), SPSS (.sav) file formats"
       - "Validate data schema and quality"
       - "Perform initial data profiling"
     performance:
@@ -15,49 +18,76 @@ agents:
       - "Lazy evaluation reduces memory footprint"
 
   data_processor:
-    description: "Processes and harmonizes clinical data using Polars expressions"
-    implementation: "Polars select(), with_columns(), filter() for efficient transformations"
+    description: "Processes and harmonizes clinical data using Polars expressions and Ibis semantic layer"
+    implementation: "Polars select(), with_columns(), filter() for efficient transformations; Ibis for SQL generation"
     tasks:
       - "Map dataset-specific fields to unified schema using pl.col().alias()"
       - "Handle missing data with pl.fill_null()"
       - "Create unified cohorts with schema compliance checks"
+      - "Process multi-table datasets with automatic join detection"
+      - "Generate SQL queries via Ibis semantic layer for DuckDB execution"
       - "Convert to Pandas for statsmodels compatibility via .to_pandas()"
     optimizations:
       - "Vectorized operations with Polars expressions"
       - "Zero-copy conversions where possible"
+      - "Lazy SQL generation via Ibis (no execution until collect)"
 
   analyzer:
-    description: "Performs statistical analysis on cohorts using statsmodels"
+    description: "Performs statistical analysis on cohorts using statsmodels and lifelines"
     implementation: "Pandas-based analysis after Polars ETL"
     tasks:
       - "Run logistic regression models using statsmodels.formula.api"
+      - "Run survival analysis (Kaplan-Meier, Cox regression) using lifelines"
+      - "Perform group comparisons (t-test, ANOVA, Chi-square)"
+      - "Compute correlation analysis (Pearson, Spearman)"
       - "Generate statistical summaries with confidence intervals"
-      - "Compute odds ratios and risk metrics"
+      - "Compute odds ratios, hazard ratios, and risk metrics"
       - "Handle categorical variables with dummy encoding"
     inputs:
       - "UnifiedCohort-compliant Pandas DataFrames"
 
   ui_manager:
-    description: "Manages Streamlit UI interactions"
-    implementation: "Streamlit-based interactive dashboard with tabs and export"
+    description: "Manages Streamlit UI interactions with question-driven and menu-driven interfaces"
+    implementation: "Streamlit-based multi-page dashboard with NL query engine integration"
     tasks:
       - "Handle dataset selection via registry auto-discovery"
+      - "Support user data uploads (CSV, Excel, SPSS, ZIP)"
+      - "Provide question-driven analysis interface (natural language queries)"
+      - "Provide menu-driven analysis pages (Descriptive Stats, Compare Groups, Risk Factors, Survival, Correlations)"
       - "Display data previews and statistics"
-      - "Run interactive logistic regression analysis"
-      - "Visualize results with tables and metrics"
+      - "Run interactive statistical analyses (regression, survival, comparisons)"
+      - "Visualize results with tables, metrics, and charts"
       - "Manage user interactions and filters"
-      - "Provide data export (CSV, JSON)"
+      - "Provide data export (CSV, JSON, Word, PNG)"
       - "Display data profiling reports"
+      - "Variable mapping wizard for uploaded datasets"
+
+  nl_query_engine:
+    description: "Processes natural language queries and converts to structured analysis requests"
+    implementation: "Three-tier query understanding: pattern matching, semantic embeddings, LLM fallback"
+    tasks:
+      - "Parse natural language questions into QueryIntent objects"
+      - "Extract variables from queries using fuzzy matching"
+      - "Classify analysis intent (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, SURVIVAL, CORRELATIONS)"
+      - "Match query terms to column names with synonym handling"
+      - "Generate confidence scores for query interpretation"
+      - "Convert QueryIntent to AnalysisContext for execution"
+    tiers:
+      - "Tier 1: Fast regex-based pattern matching for common queries"
+      - "Tier 2: Semantic embeddings using sentence-transformers"
+      - "Tier 3: LLM fallback for complex/ambiguous queries (optional)"
 
   qa_validator:
     description: "Validates code quality, tests, and configuration"
     implementation: "pytest-based test suite with coverage tracking"
     tasks:
-      - "Run unit tests for mapper, registry, datasets"
+      - "Run unit tests for mapper, registry, datasets, semantic layer"
       - "Run integration tests for UI workflows"
       - "Verify config-driven architecture (no hardcoding)"
       - "Check idempotency of transformations"
       - "Validate type safety in filters"
+      - "Test semantic layer SQL generation"
+      - "Test NL query engine parsing accuracy"
 
 workflows:
   covid_ms_analysis:
@@ -96,17 +126,97 @@ workflows:
         action: "Display results in Streamlit"
 
   mimic_iii_analysis:
-    description: "Future workflow for MIMIC-III dataset (DuckDB-based)"
-    status: "planned"
+    description: "Workflow for MIMIC-III dataset (DuckDB-based)"
+    status: "implemented"
     steps:
       - agent: data_loader
         action: "Connect to DuckDB or Postgres"
+        implementation: "MIMIC3Loader connects to database"
       - agent: data_processor
-        action: "SQL-based cohort extraction"
+        action: "SQL-based cohort extraction via semantic layer"
+        implementation: "Ibis generates SQL, DuckDB executes"
       - agent: analyzer
         action: "Mortality and resistance analysis"
       - agent: ui_manager
-        action: "Display results"
+        action: "Display results in Streamlit"
+
+  user_upload_workflow:
+    description: "Complete workflow for user-uploaded datasets"
+    steps:
+      - agent: ui_manager
+        action: "User uploads file (CSV, Excel, SPSS, or ZIP)"
+        validation: "Security validation (file type, size, path traversal checks)"
+      - agent: data_loader
+        action: "Load and convert to standardized CSV format"
+        formats:
+          - "CSV: Direct save"
+          - "Excel: Convert via pandas.read_excel()"
+          - "SPSS: Convert via pyreadstat.read_sav()"
+          - "ZIP: Extract multiple tables"
+      - agent: ui_manager
+        action: "Variable mapping wizard"
+        features:
+          - "Auto-detect patient ID, outcomes, time variables"
+          - "Variable type detection (categorical vs continuous)"
+          - "Manual override for mappings"
+      - agent: data_processor
+        action: "Register with semantic layer (DuckDB)"
+        implementation: "UploadedDatasetFactory creates dataset with semantic layer"
+      - agent: ui_manager
+        action: "Dataset available for analysis"
+
+  multi_table_upload_workflow:
+    description: "Workflow for multi-table datasets (e.g., MIMIC-IV ZIP uploads)"
+    steps:
+      - agent: ui_manager
+        action: "User uploads ZIP file containing multiple CSV tables"
+      - agent: data_loader
+        action: "Extract and save individual tables to {upload_id}_tables/ directory"
+      - agent: data_processor
+        action: "MultiTableHandler processes relationships"
+        features:
+          - "Auto-detect foreign key relationships"
+          - "Detect primary keys and join keys"
+          - "Create unified cohort view"
+      - agent: data_processor
+        action: "Register all individual tables in DuckDB semantic layer"
+        implementation: "_maybe_init_semantic() registers each table separately"
+      - agent: ui_manager
+        action: "Multi-table dataset available with join capabilities"
+
+  nl_query_analysis:
+    description: "Question-driven analysis workflow using natural language queries"
+    steps:
+      - agent: ui_manager
+        action: "User types natural language question"
+        examples:
+          - "Compare survival by treatment arm"
+          - "What predicts mortality?"
+          - "Show correlation between age and outcome"
+      - agent: nl_query_engine
+        action: "Parse query into QueryIntent"
+        tiers:
+          - "Tier 1: Pattern matching (regex)"
+          - "Tier 2: Semantic embeddings (sentence-transformers)"
+          - "Tier 3: LLM fallback (if needed)"
+      - agent: nl_query_engine
+        action: "Extract variables and match to columns"
+        features:
+          - "Fuzzy matching for column names"
+          - "Synonym handling (age → age_years, died → mortality)"
+          - "Confidence scoring"
+      - agent: data_processor
+        action: "Generate SQL query via semantic layer"
+        implementation: "Ibis compiles QueryIntent to SQL"
+      - agent: analyzer
+        action: "Run appropriate statistical test based on intent"
+        tests:
+          - "COMPARE_GROUPS: t-test, ANOVA, Chi-square"
+          - "FIND_PREDICTORS: Logistic regression"
+          - "SURVIVAL: Kaplan-Meier, Cox regression"
+          - "CORRELATIONS: Pearson, Spearman"
+      - agent: ui_manager
+        action: "Display results with interpretation"
 
   qa_full_validation:
     description: "Complete QA validation workflow"
@@ -157,8 +267,20 @@ settings:
   timeout_seconds: 300
   backend:
     etl_engine: "polars"
+    semantic_layer: "ibis-framework[duckdb]"
+    query_engine: "duckdb"
     analysis_engine: "statsmodels"
+    survival_engine: "lifelines"
     ui_framework: "streamlit"
+    nl_query_engine: "sentence-transformers (local), langchain (optional LLM)"
   performance:
     enable_lazy_evaluation: true
     polars_string_cache: true
+    ibis_lazy_sql: true
+    duckdb_in_memory: true
+  features:
+    multi_table_support: true
+    user_uploads: true
+    nl_queries: true
+    question_driven_analysis: true
+    menu_driven_analysis: true

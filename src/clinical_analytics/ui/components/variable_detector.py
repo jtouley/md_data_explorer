@@ -95,9 +95,19 @@ class VariableTypeDetector:
             is_outcome = any(pattern in col_lower for pattern in cls.OUTCOME_PATTERNS)
 
             return "binary", {
+                "unique_count": n_unique,
                 "values": list(unique_values),
                 "pattern": binary_type or "custom",
                 "suggested_as_outcome": is_outcome,
+            }
+
+        # Check for continuous (numeric) - float types are always continuous
+        if pd.api.types.is_float_dtype(series):
+            return "continuous", {
+                "min": float(series.min()),
+                "max": float(series.max()),
+                "mean": float(series.mean()),
+                "std": float(series.std()),
             }
 
         # Check for categorical (limited unique values)
@@ -118,7 +128,7 @@ class VariableTypeDetector:
                 "numeric_categorical": False,
             }
 
-        # Check for continuous (numeric)
+        # Check for continuous (numeric with high cardinality)
         if pd.api.types.is_numeric_dtype(series):
             return "continuous", {
                 "min": float(series.min()),

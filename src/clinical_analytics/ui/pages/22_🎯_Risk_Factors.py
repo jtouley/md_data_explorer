@@ -14,19 +14,30 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.analysis.stats import run_logistic_regression
-from clinical_analytics.core.registry import DatasetRegistry
+# Keep only lightweight imports at module scope
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
-from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
-from clinical_analytics.ui.helpers import require_outcome
+
+# Heavy imports moved inside main() after gate
 
 # Page config
 st.set_page_config(page_title="Risk Factors | Clinical Analytics", page_icon="🎯", layout="wide")
 
 
 def main():
+    # Gate: V1 MVP mode disables legacy pages
+    # MUST run before any expensive operations
+    from clinical_analytics.ui.helpers import gate_v1_mvp_legacy_page
+
+    gate_v1_mvp_legacy_page()  # Stops execution if gated
+
+    # NOW do heavy imports (after gate)
+    from clinical_analytics.analysis.stats import run_logistic_regression
+    from clinical_analytics.core.registry import DatasetRegistry
+    from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+    from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
+    from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+    from clinical_analytics.ui.helpers import require_outcome
+
     st.title("🎯 Identify Risk Factors")
     st.markdown("""
     Find which variables predict an outcome. We'll use **regression analysis** to identify

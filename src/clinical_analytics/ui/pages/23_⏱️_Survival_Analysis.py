@@ -15,17 +15,10 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.analysis.survival import (
-    calculate_median_survival,
-    run_cox_regression,
-    run_kaplan_meier,
-    run_logrank_test,
-)
-from clinical_analytics.core.registry import DatasetRegistry
+# Keep only lightweight imports at module scope
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
-from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+
+# Heavy imports moved inside main() after gate
 
 # Page config
 st.set_page_config(page_title="Survival Analysis | Clinical Analytics", page_icon="⏱️", layout="wide")
@@ -69,6 +62,24 @@ def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str = None):
 
 
 def main():
+    # Gate: V1 MVP mode disables legacy pages
+    # MUST run before any expensive operations
+    from clinical_analytics.ui.helpers import gate_v1_mvp_legacy_page
+
+    gate_v1_mvp_legacy_page()  # Stops execution if gated
+
+    # NOW do heavy imports (after gate)
+    from clinical_analytics.analysis.survival import (
+        calculate_median_survival,
+        run_cox_regression,
+        run_kaplan_meier,
+        run_logrank_test,
+    )
+    from clinical_analytics.core.registry import DatasetRegistry
+    from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+    from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
+    from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+
     st.title("⏱️ Survival Analysis")
     st.markdown("""
     Analyze **time-to-event** data. How long do patients survive? How quickly do events occur?
@@ -320,7 +331,7 @@ def main():
                             st.markdown(f"""
 **Significant difference in survival** {p_interp["emoji"]}
 
-The log-rank test shows that survival curves differ significantly between groups 
+The log-rank test shows that survival curves differ significantly between groups
 (p={logrank_results["p_value"]:.4f}).
 
 **Clinical Interpretation**: The {group_col} groups have different survival patterns.
@@ -330,7 +341,7 @@ Look at the survival curves and median survival times to see which group has bet
                             st.markdown(f"""
 **No significant difference in survival** ❌
 
-The log-rank test shows no significant difference in survival between groups 
+The log-rank test shows no significant difference in survival between groups
 (p={logrank_results["p_value"]:.4f}).
 
 **Clinical Interpretation**: The {group_col} groups have similar survival patterns.

@@ -90,7 +90,7 @@ class ResultInterpreter:
             return f"""
 **{variable_name}**: Not significantly associated with outcome (p={p_value:.3f})
 
-The odds ratio is {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), 
+The odds ratio is {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}),
 but this could be due to chance.
 """
 
@@ -108,7 +108,7 @@ but this could be due to chance.
 **{variable_name}**: {magnitude} the odds of the outcome {p_interp["emoji"]}
 
 - **Odds Ratio**: {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
-- **Interpretation**: Having this characteristic increases the odds of the outcome by 
+- **Interpretation**: Having this characteristic increases the odds of the outcome by
   approximately **{pct_increase:.0f}%**
 - **Statistical Significance**: {p_interp["interpretation"]}
 """
@@ -127,7 +127,7 @@ but this could be due to chance.
 **{variable_name}**: {magnitude} the odds of the outcome {p_interp["emoji"]}
 
 - **Odds Ratio**: {or_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
-- **Interpretation**: Having this characteristic decreases the odds of the outcome by 
+- **Interpretation**: Having this characteristic decreases the odds of the outcome by
   approximately **{pct_decrease:.0f}%**
 - **Statistical Significance**: {p_interp["interpretation"]}
 """
@@ -176,7 +176,7 @@ but this could be due to chance.
             return f"""
 **No significant difference** between {group1} and {group2} (p={p_value:.3f}) ❌
 
-The difference in {outcome_name} is {mean_diff:.2f}{units_str} 
+The difference in {outcome_name} is {mean_diff:.2f}{units_str}
 (95% CI: {ci_lower:.2f} to {ci_upper:.2f}), but this could easily be due to chance.
 """
 
@@ -219,7 +219,7 @@ The difference in {outcome_name} is {mean_diff:.2f}{units_str}
             return f"""
 **{variable_name}**: Not significantly associated with outcome (p={p_value:.3f})
 
-The hazard ratio is {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}), 
+The hazard ratio is {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f}),
 but this could be due to chance.
 """
 
@@ -237,7 +237,7 @@ but this could be due to chance.
 **{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp["emoji"]}
 
 - **Hazard Ratio**: {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
-- **Interpretation**: Having this characteristic increases the hazard by approximately 
+- **Interpretation**: Having this characteristic increases the hazard by approximately
   **{pct_increase:.0f}%** (faster time to event)
 - **Statistical Significance**: {p_interp["interpretation"]}
 """
@@ -256,7 +256,7 @@ but this could be due to chance.
 **{variable_name}**: {magnitude} the hazard (risk) of the event {p_interp["emoji"]}
 
 - **Hazard Ratio**: {hr_value:.2f} (95% CI: {ci_lower:.2f}-{ci_upper:.2f})
-- **Interpretation**: Having this characteristic decreases the hazard by approximately 
+- **Interpretation**: Having this characteristic decreases the hazard by approximately
   **{pct_decrease:.0f}%** (slower time to event)
 - **Statistical Significance**: {p_interp["interpretation"]}
 """
@@ -394,34 +394,34 @@ The correlation is {correlation:.3f}, but this could be due to chance.
         """
         methods_templates = {
             "descriptive": """
-Descriptive statistics were calculated for all variables. Continuous variables are 
-presented as mean ± standard deviation or median (interquartile range) as appropriate. 
-Categorical variables are presented as frequencies and percentages. 
+Descriptive statistics were calculated for all variables. Continuous variables are
+presented as mean ± standard deviation or median (interquartile range) as appropriate.
+Categorical variables are presented as frequencies and percentages.
 All analyses were performed using {software}.
 """,
             "group_comparison": """
-{test_name} was used to compare {outcome} between {groups}. For continuous variables, 
-results are reported as mean difference with 95% confidence intervals. 
+{test_name} was used to compare {outcome} between {groups}. For continuous variables,
+results are reported as mean difference with 95% confidence intervals.
 For categorical variables, results are reported as proportions.
-Statistical significance was defined as p<0.05 (two-tailed). 
+Statistical significance was defined as p<0.05 (two-tailed).
 All analyses were performed using {software}.
 """,
             "regression": """
-{test_name} was performed to identify predictors of {outcome}. Results are reported as 
-odds ratios (OR) with 95% confidence intervals (CI). Variables with p<0.05 were considered 
-statistically significant. Model fit was assessed using pseudo-R² and likelihood ratio tests. 
+{test_name} was performed to identify predictors of {outcome}. Results are reported as
+odds ratios (OR) with 95% confidence intervals (CI). Variables with p<0.05 were considered
+statistically significant. Model fit was assessed using pseudo-R² and likelihood ratio tests.
 All analyses were performed using {software}.
 """,
             "survival": """
 {test_name} was used to analyze time to {event}. Survival curves were compared using the log-rank test.
-Hazard ratios (HR) with 95% confidence intervals were calculated. 
-Censoring was handled using the Kaplan-Meier method. 
+Hazard ratios (HR) with 95% confidence intervals were calculated.
+Censoring was handled using the Kaplan-Meier method.
 Statistical significance was defined as p<0.05. All analyses were performed using {software}.
 """,
             "correlation": """
 Pearson correlation coefficients were calculated to assess relationships between continuous variables.
 Correlation strength was interpreted as weak (|r|<0.3), moderate (0.3≤|r|<0.7), or strong (|r|≥0.7).
-Statistical significance was defined as p<0.05 (two-tailed). 
+Statistical significance was defined as p<0.05 (two-tailed).
 All analyses were performed using {software}.
 """,
         }

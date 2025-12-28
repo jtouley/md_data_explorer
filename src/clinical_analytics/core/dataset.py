@@ -28,9 +28,6 @@ class ClinicalDataset(ABC):
     }
     VALID_GRANULARITIES: ClassVar[frozenset[str]] = frozenset(GRANULARITY_TO_GRAIN.keys())
 
-    # Class attribute - exists regardless of __init__() being called
-    semantic: SemanticLayer | None = None
-
     def __init__(self, name: str, source_path: str | Path | None = None, db_connection: Any = None):
         """
         Initialize the clinical dataset.
@@ -43,7 +40,31 @@ class ClinicalDataset(ABC):
         self.name = name
         self.source_path = Path(source_path) if source_path else None
         self.db_connection = db_connection
-        # Note: semantic is a class attribute, not set here
+        # Instance attribute for semantic layer - NOT shared across instances
+        self._semantic: SemanticLayer | None = None
+
+    @property
+    def semantic(self) -> SemanticLayer:
+        """
+        Lazy-initialized semantic layer for this dataset.
+
+        Returns:
+            SemanticLayer instance
+
+        Raises:
+            ValueError: If semantic layer not initialized (call load() first)
+        """
+        if self._semantic is None:
+            raise ValueError(
+                f"Semantic layer not initialized for dataset '{self.name}'. "
+                "Call load() first to initialize the semantic layer."
+            )
+        return self._semantic
+
+    @semantic.setter
+    def semantic(self, value: SemanticLayer | None) -> None:
+        """Set the semantic layer (used during load())."""
+        self._semantic = value
 
     @abstractmethod
     def validate(self) -> bool:
@@ -119,10 +140,10 @@ class ClinicalDataset(ABC):
         Raises:
             ValueError: If semantic layer is not available for this dataset
         """
-        if self.semantic is None:
+        if self._semantic is None:
             raise ValueError(
                 f"Dataset '{self.name}' does not support semantic layer features "
                 "(natural language queries, SQL preview, query builder). "
                 "This is typically only available for registry datasets with config-driven semantic layers."
             )
-        return self.semantic
+        return self._semantic

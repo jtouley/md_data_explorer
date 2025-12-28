@@ -17,11 +17,10 @@ from scipy import stats
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.core.registry import DatasetRegistry
+# Keep only lightweight imports at module scope
 from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
-from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+
+# Heavy imports moved inside main() after gate
 
 # Page config
 st.set_page_config(page_title="Compare Groups | Clinical Analytics", page_icon="📈", layout="wide")
@@ -149,6 +148,18 @@ def perform_comparison(df: pd.DataFrame, outcome_col: str, group_col: str) -> di
 
 
 def main():
+    # Gate: V1 MVP mode disables legacy pages
+    # MUST run before any expensive operations
+    from clinical_analytics.ui.helpers import gate_v1_mvp_legacy_page
+
+    gate_v1_mvp_legacy_page()  # Stops execution if gated
+
+    # NOW do heavy imports (after gate)
+    from clinical_analytics.core.registry import DatasetRegistry
+    from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+    from clinical_analytics.ui.components.analysis_wizard import AnalysisWizard
+    from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
+
     st.title("📈 Compare Groups")
     st.markdown("""
     Compare outcomes or characteristics between groups.
@@ -326,17 +337,17 @@ def main():
                     st.markdown(f"""
 **Significant difference found** {p_interp["emoji"]}
 
-The ANOVA test shows that at least one group differs significantly from the others 
+The ANOVA test shows that at least one group differs significantly from the others
 (p={results["p_value"]:.4f}).
 
-**Next steps**: Perform post-hoc tests (e.g., Tukey's HSD) to identify which specific 
+**Next steps**: Perform post-hoc tests (e.g., Tukey's HSD) to identify which specific
 groups differ from each other.
 """)
                 else:
                     st.markdown(f"""
 **No significant difference** ❌
 
-The ANOVA test shows no significant difference in {outcome_col} across groups 
+The ANOVA test shows no significant difference in {outcome_col} across groups
 (p={results["p_value"]:.4f}).
 All groups appear similar on this measure.
 """)
@@ -372,7 +383,7 @@ All groups appear similar on this measure.
                     st.markdown(f"""
 **Significant association found** {p_interp["emoji"]}
 
-The chi-square test shows a significant association between {group_col} and {outcome_col} 
+The chi-square test shows a significant association between {group_col} and {outcome_col}
 (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} differs significantly across {group_col} groups.
@@ -381,7 +392,7 @@ The distribution of {outcome_col} differs significantly across {group_col} group
                     st.markdown(f"""
 **No significant association** ❌
 
-The chi-square test shows no significant association between {group_col} and {outcome_col} 
+The chi-square test shows no significant association between {group_col} and {outcome_col}
 (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} is similar across groups.
