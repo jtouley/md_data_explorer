@@ -79,69 +79,135 @@ class TestUserDatasetStorage:
 
     def test_storage_initialization(self, tmp_path):
         """Test storage initialization."""
-        storage = UserDatasetStorage(base_dir=tmp_path)
-        assert storage.base_dir == tmp_path
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        assert storage.upload_dir == tmp_path
+        assert storage.raw_dir == tmp_path / "raw"
+        assert storage.metadata_dir == tmp_path / "metadata"
 
-    def test_save_dataset(self, tmp_path):
-        """Test saving a dataset."""
-        storage = UserDatasetStorage(base_dir=tmp_path)
+    def test_save_upload(self, tmp_path):
+        """Test saving an upload."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
 
-        df = pd.DataFrame({"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]})
+        # Create larger DataFrame to meet 1KB minimum (need ~150 rows to be safe)
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
 
-        dataset_id = storage.save_dataset(df, dataset_name="test_dataset", metadata={"description": "Test dataset"})
+        # Convert DataFrame to CSV bytes
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
 
-        assert dataset_id is not None
-        assert (tmp_path / "raw" / f"{dataset_id}.csv").exists()
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset", "description": "Test dataset"},
+        )
 
-    def test_load_dataset(self, tmp_path):
-        """Test loading a dataset."""
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        if not success:
+            print(f"Upload failed: {message}")
+        assert success is True, f"Upload failed: {message}"
+        assert upload_id is not None
+        # Check that CSV file exists with friendly name
+        assert (tmp_path / "raw" / "test_dataset.csv").exists()
 
-        df = pd.DataFrame({"patient_id": ["P001", "P002"], "age": [45, 62]})
+    def test_get_upload_data(self, tmp_path):
+        """Test loading an upload."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
 
-        dataset_id = storage.save_dataset(df, dataset_name="test")
-        loaded_df = storage.load_dataset(dataset_id)
+        # Create larger DataFrame to meet 1KB minimum
+        df = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes, original_filename="test.csv", metadata={"dataset_name": "test"}
+        )
+        loaded_df = storage.get_upload_data(upload_id)
 
         assert isinstance(loaded_df, pd.DataFrame)
-        assert len(loaded_df) == 2
+        assert len(loaded_df) == 150
         assert "patient_id" in loaded_df.columns
 
-    def test_list_datasets(self, tmp_path):
-        """Test listing all datasets."""
-        storage = UserDatasetStorage(base_dir=tmp_path)
+    def test_list_uploads(self, tmp_path):
+        """Test listing all uploads."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
 
-        df = pd.DataFrame({"col": [1, 2, 3]})
-        storage.save_dataset(df, dataset_name="dataset1")
-        storage.save_dataset(df, dataset_name="dataset2")
+        # Create larger DataFrame to meet 1KB minimum - need multiple columns with more data
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "name": [f"Patient_{i}" for i in range(100)],
+                "age": [20 + i for i in range(100)],
+                "diagnosis": [f"Diagnosis_{i}" for i in range(100)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
 
-        datasets = storage.list_datasets()
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes, original_filename="dataset1.csv", metadata={"dataset_name": "dataset1"}
+        )
+        assert success1 is True, f"First upload failed: {msg1}"
 
-        assert len(datasets) == 2
-        assert all("id" in d for d in datasets)
-        assert all("name" in d for d in datasets)
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes, original_filename="dataset2.csv", metadata={"dataset_name": "dataset2"}
+        )
+        assert success2 is True, f"Second upload failed: {msg2}"
 
-    def test_get_dataset_metadata(self, tmp_path):
-        """Test getting dataset metadata."""
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        uploads = storage.list_uploads()
 
-        df = pd.DataFrame({"col": [1, 2, 3]})
-        metadata = {"description": "Test", "source": "Manual upload"}
-        dataset_id = storage.save_dataset(df, dataset_name="test", metadata=metadata)
+        assert len(uploads) == 2
+        assert all("upload_id" in u for u in uploads)
+        assert all("dataset_name" in u for u in uploads)
 
-        retrieved_metadata = storage.get_dataset_metadata(dataset_id)
+    def test_get_upload_metadata(self, tmp_path):
+        """Test getting upload metadata."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
 
+        # Create larger DataFrame to meet 1KB minimum
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "name": [f"Patient_{i}" for i in range(100)],
+                "age": [20 + i for i in range(100)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        metadata = {"dataset_name": "test", "description": "Test", "source": "Manual upload"}
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes, original_filename="test.csv", metadata=metadata
+        )
+        assert success is True, f"Upload failed: {message}"
+
+        retrieved_metadata = storage.get_upload_metadata(upload_id)
+
+        assert retrieved_metadata is not None, "Metadata should not be None"
         assert retrieved_metadata["description"] == "Test"
         assert retrieved_metadata["source"] == "Manual upload"
 
-    def test_delete_dataset(self, tmp_path):
-        """Test deleting a dataset."""
-        storage = UserDatasetStorage(base_dir=tmp_path)
+    def test_delete_upload(self, tmp_path):
+        """Test deleting an upload."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
 
-        df = pd.DataFrame({"col": [1, 2, 3]})
-        dataset_id = storage.save_dataset(df, dataset_name="test")
+        # Create larger DataFrame to meet 1KB minimum
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "name": [f"Patient_{i}" for i in range(100)],
+                "age": [20 + i for i in range(100)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
 
-        storage.delete_dataset(dataset_id)
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes, original_filename="test.csv", metadata={"dataset_name": "test"}
+        )
+        assert success is True, f"Upload failed: {message}"
 
-        # Dataset should no longer exist
-        with pytest.raises(FileNotFoundError):
-            storage.load_dataset(dataset_id)
+        success, message = storage.delete_upload(upload_id)
+
+        assert success is True, f"Delete failed: {message}"
+        # Upload data should no longer exist
+        assert storage.get_upload_data(upload_id) is None
