@@ -651,7 +651,14 @@ def main():
             try:
                 # Get semantic layer using contract pattern
                 semantic_layer = dataset.get_semantic_layer()
-                context = QuestionEngine.ask_free_form_question(semantic_layer)
+
+                # Get dataset identifiers for structured logging
+                dataset_id = dataset.name if hasattr(dataset, "name") else None
+                upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+
+                context = QuestionEngine.ask_free_form_question(
+                    semantic_layer, dataset_id=dataset_id, upload_id=upload_id
+                )
 
                 if context:
                     # Successfully parsed NL query

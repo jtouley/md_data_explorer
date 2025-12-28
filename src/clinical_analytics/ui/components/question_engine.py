@@ -366,7 +366,9 @@ class QuestionEngine:
             st.success("✅ I have everything I need to run the analysis!")
 
     @staticmethod
-    def ask_free_form_question(semantic_layer) -> AnalysisContext | None:
+    def ask_free_form_question(
+        semantic_layer, dataset_id: str | None = None, upload_id: str | None = None
+    ) -> AnalysisContext | None:
         """
         Ask user to type their question in natural language.
 
@@ -375,6 +377,8 @@ class QuestionEngine:
 
         Args:
             semantic_layer: SemanticLayer instance for NL parsing
+            dataset_id: Optional dataset identifier for logging
+            upload_id: Optional upload identifier for logging
 
         Returns:
             AnalysisContext if query successfully parsed, None otherwise
@@ -410,8 +414,8 @@ class QuestionEngine:
                 # Initialize NL query engine
                 nl_engine = NLQueryEngine(semantic_layer)
 
-                # Parse query
-                query_intent = nl_engine.parse_query(query)
+                # Parse query with structured logging context
+                query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
 
                 # Extract variables with collision suggestions
                 matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)

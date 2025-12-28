@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from difflib import get_close_matches
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger()
+
 
 @dataclass
 class QueryIntent:
@@ -134,12 +138,14 @@ class NLQueryEngine:
             {"template": "describe", "intent": "DESCRIBE", "slots": []},
         ]
 
-    def parse_query(self, query: str) -> QueryIntent:
+    def parse_query(self, query: str, dataset_id: str | None = None, upload_id: str | None = None) -> QueryIntent:
         """
         Parse natural language query into structured intent.
 
         Args:
             query: User's question (e.g., "compare survival by treatment arm")
+            dataset_id: Optional dataset identifier for logging
+            upload_id: Optional upload identifier for logging
 
         Returns:
             QueryIntent with extracted intent type and variables
@@ -153,23 +159,90 @@ class NLQueryEngine:
             >>> assert intent.confidence > 0.9
         """
         if not query or not query.strip():
+            logger.error(
+                "query_parse_failed",
+                error_type="empty_query",
+                query=query,
+                dataset_id=dataset_id,
+                upload_id=upload_id,
+            )
             raise ValueError("Query cannot be empty")
 
         query = query.strip()
 
+        # Log query parsing start
+        log_context = {
+            "query": query,
+            "dataset_id": dataset_id,
+            "upload_id": upload_id,
+        }
+        logger.info("query_parse_start", **log_context)
+
         # Tier 1: Pattern matching
         intent = self._pattern_match(query)
         if intent and intent.confidence > 0.9:
+            matched_vars = self._get_matched_variables(intent)
+            logger.info(
+                "query_parse_success",
+                intent=intent.intent_type,
+                confidence=intent.confidence,
+                matched_vars=matched_vars,
+                tier="pattern_match",
+                **log_context,
+            )
             return intent
 
         # Tier 2: Semantic embeddings
         intent = self._semantic_match(query)
         if intent and intent.confidence > 0.75:
+            matched_vars = self._get_matched_variables(intent)
+            logger.info(
+                "query_parse_success",
+                intent=intent.intent_type,
+                confidence=intent.confidence,
+                matched_vars=matched_vars,
+                tier="semantic_match",
+                **log_context,
+            )
             return intent
 
         # Tier 3: LLM fallback (stub for now)
         intent = self._llm_parse(query)
+        if intent:
+            matched_vars = self._get_matched_variables(intent)
+            logger.info(
+                "query_parse_success",
+                intent=intent.intent_type,
+                confidence=intent.confidence,
+                matched_vars=matched_vars,
+                tier="llm_fallback",
+                **log_context,
+            )
+        else:
+            logger.warning(
+                "query_parse_failed",
+                error_type="no_intent_found",
+                query=query,
+                dataset_id=dataset_id,
+                upload_id=upload_id,
+            )
+
         return intent
+
+    def _get_matched_variables(self, intent: QueryIntent) -> list[str]:
+        """Extract matched variables from intent for logging."""
+        vars_list = []
+        if intent.primary_variable:
+            vars_list.append(intent.primary_variable)
+        if intent.grouping_variable:
+            vars_list.append(intent.grouping_variable)
+        if intent.predictor_variables:
+            vars_list.extend(intent.predictor_variables)
+        if intent.time_variable:
+            vars_list.append(intent.time_variable)
+        if intent.event_variable:
+            vars_list.append(intent.event_variable)
+        return vars_list
 
     def _pattern_match(self, query: str) -> QueryIntent | None:
         """
@@ -300,7 +373,12 @@ class NLQueryEngine:
 
         except Exception as e:
             # If sentence-transformers fails, fall through to Tier 3
-            print(f"Tier 2 semantic matching failed: {e}")
+            logger.warning(
+                "semantic_match_failed",
+                error_type="semantic_matching_exception",
+                error=str(e),
+                query=query,
+            )
             pass
 
         return None
