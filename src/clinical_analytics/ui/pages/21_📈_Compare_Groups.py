@@ -349,17 +349,17 @@ def main():
                     st.markdown(f"""
 **Significant difference found** {p_interp["emoji"]}
 
-The ANOVA test shows that at least one group differs significantly from the others 
+The ANOVA test shows that at least one group differs significantly from the others
 (p={results["p_value"]:.4f}).
 
-**Next steps**: Perform post-hoc tests (e.g., Tukey's HSD) to identify which specific 
+**Next steps**: Perform post-hoc tests (e.g., Tukey's HSD) to identify which specific
 groups differ from each other.
 """)
                 else:
                     st.markdown(f"""
 **No significant difference** ❌
 
-The ANOVA test shows no significant difference in {outcome_col} across groups 
+The ANOVA test shows no significant difference in {outcome_col} across groups
 (p={results["p_value"]:.4f}).
 All groups appear similar on this measure.
 """)
@@ -395,7 +395,7 @@ All groups appear similar on this measure.
                     st.markdown(f"""
 **Significant association found** {p_interp["emoji"]}
 
-The chi-square test shows a significant association between {group_col} and {outcome_col} 
+The chi-square test shows a significant association between {group_col} and {outcome_col}
 (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} differs significantly across {group_col} groups.
@@ -404,7 +404,7 @@ The distribution of {outcome_col} differs significantly across {group_col} group
                     st.markdown(f"""
 **No significant association** ❌
 
-The chi-square test shows no significant association between {group_col} and {outcome_col} 
+The chi-square test shows no significant association between {group_col} and {outcome_col}
 (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} is similar across groups.

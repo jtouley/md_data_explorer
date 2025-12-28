@@ -343,7 +343,7 @@ def main():
                             st.markdown(f"""
 **Significant difference in survival** {p_interp["emoji"]}
 
-The log-rank test shows that survival curves differ significantly between groups 
+The log-rank test shows that survival curves differ significantly between groups
 (p={logrank_results["p_value"]:.4f}).
 
 **Clinical Interpretation**: The {group_col} groups have different survival patterns.
@@ -353,7 +353,7 @@ Look at the survival curves and median survival times to see which group has bet
                             st.markdown(f"""
 **No significant difference in survival** ❌
 
-The log-rank test shows no significant difference in survival between groups 
+The log-rank test shows no significant difference in survival between groups
 (p={logrank_results["p_value"]:.4f}).
 
 **Clinical Interpretation**: The {group_col} groups have similar survival patterns.

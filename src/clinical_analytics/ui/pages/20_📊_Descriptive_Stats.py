@@ -357,8 +357,8 @@ def main():
                 methods_text = """
 **Statistical Analysis**
 
-Descriptive statistics were calculated for all variables. Continuous variables are 
-presented as mean ± standard deviation. Categorical variables are presented as 
+Descriptive statistics were calculated for all variables. Continuous variables are
+presented as mean ± standard deviation. Categorical variables are presented as
 frequencies and percentages.
 """
                 if stratify_by:
@@ -380,7 +380,7 @@ frequencies and percentages.
                 st.markdown("""
                 **Continuous Variables** (e.g., Age, Weight):
                 - Shown as: Mean ± Standard Deviation
-                - Example: "45.3 ± 12.1" means average age is 45.3 years, 
+                - Example: "45.3 ± 12.1" means average age is 45.3 years,
                   with most patients between 33.2 and 57.4 years
 
                 **Categorical Variables** (e.g., Sex, Treatment):
