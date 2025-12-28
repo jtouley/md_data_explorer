@@ -457,9 +457,7 @@ class UserDatasetStorage:
                         # Handle .csv.gz case where stem gives us "filename.csv"
                         table_name = Path(table_name).stem
 
-                    logger.info(
-                        f"Loading table {idx}/{len(csv_files)}: {table_name} from {csv_filename}"
-                    )
+                    logger.info(f"Loading table {idx}/{len(csv_files)}: {table_name} from {csv_filename}")
 
                     if progress_callback:
                         progress_callback(
@@ -493,9 +491,7 @@ class UserDatasetStorage:
                             try_parse_dates=True,
                         )
                     except Exception as e:
-                        logger.warning(
-                            f"Schema inference failed for {table_name}, falling back to string types: {e}"
-                        )
+                        logger.warning(f"Schema inference failed for {table_name}, falling back to string types: {e}")
                         # Fallback: read with all columns as strings, let DuckDB handle types
                         df = pl.read_csv(
                             io.BytesIO(csv_content),
@@ -559,9 +555,7 @@ class UserDatasetStorage:
                 progress_callback(step_num + 2, total_steps, "Building unified cohort...", {})
 
             unified_df = handler.build_unified_cohort()
-            logger.info(
-                f"Unified cohort created: {unified_df.height:,} rows, {unified_df.width} cols"
-            )
+            logger.info(f"Unified cohort created: {unified_df.height:,} rows, {unified_df.width} cols")
 
             # Save unified cohort as CSV
             csv_path = self.raw_dir / f"{upload_id}.csv"
@@ -625,9 +619,7 @@ class UserDatasetStorage:
                     {"tables": len(tables), "rows": unified_df.height, "cols": unified_df.width},
                 )
 
-            logger.info(
-                f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows"
-            )
+            logger.info(f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows")
             return (
                 True,
                 f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows",

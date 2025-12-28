@@ -5,9 +5,7 @@ import pandas as pd
 import statsmodels.formula.api as smf
 
 
-def run_logistic_regression(
-    df: pd.DataFrame, outcome_col: str, predictors: list[str]
-) -> tuple[Any, pd.DataFrame]:
+def run_logistic_regression(df: pd.DataFrame, outcome_col: str, predictors: list[str]) -> tuple[Any, pd.DataFrame]:
     """
     Run logistic regression on a cohort dataframe.
 

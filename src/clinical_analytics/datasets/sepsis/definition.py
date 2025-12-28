@@ -53,9 +53,7 @@ class SepsisDataset(ClinicalDataset):
         then register the aggregated result with DuckDB for semantic layer querying.
         """
         if not self.validate():
-            logger.warning(
-                f"No PSV files found in {self.source_path}. Sepsis dataset will be empty."
-            )
+            logger.warning(f"No PSV files found in {self.source_path}. Sepsis dataset will be empty.")
             self._aggregated_data = pl.DataFrame()
             return
 
@@ -102,9 +100,7 @@ class SepsisDataset(ClinicalDataset):
         """
         # Validate: Sepsis dataset is patient-level only
         if granularity != "patient_level":
-            raise ValueError(
-                f"SepsisDataset only supports patient_level granularity. Requested: {granularity}"
-            )
+            raise ValueError(f"SepsisDataset only supports patient_level granularity. Requested: {granularity}")
 
         if self._aggregated_data is None:
             self.load()

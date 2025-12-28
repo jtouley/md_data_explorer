@@ -115,13 +115,9 @@ class TestDatasetRegistry:
         DatasetRegistry.reset()
 
         # Create test DataFrame
-        df = pl.DataFrame(
-            {"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]}
-        )
+        df = pl.DataFrame({"patient_id": ["P001", "P002", "P003"], "age": [45, 62, 38], "outcome": [1, 0, 1]})
 
-        config = DatasetRegistry.register_from_dataframe(
-            "test_dataset", df, display_name="Test Dataset"
-        )
+        config = DatasetRegistry.register_from_dataframe("test_dataset", df, display_name="Test Dataset")
 
         assert isinstance(config, dict)
         assert config["name"] == "test_dataset"
@@ -162,7 +158,8 @@ class TestDatasetRegistry:
             assert str(dataset.source_path) == "/custom/path"
 
     def test_registry_filters_unsupported_params(self, caplog):
-        """Test that registry filters out unsupported init params (e.g., db_connection for non-MIMIC datasets)."""
+        """Test that registry filters out unsupported init params
+        (e.g., db_connection for non-MIMIC datasets)."""
         DatasetRegistry.reset()
 
         # Create a config with extra params that CovidMSDataset doesn't accept

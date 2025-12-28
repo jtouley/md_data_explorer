@@ -209,9 +209,7 @@ class TestZipExtraction:
 
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
             zip_file.writestr("patients.csv", "patient_id,age,sex\nP001,45,M\nP002,62,F\n")
-            zip_file.writestr(
-                "admissions.csv", "patient_id,admission_date\nP001,2020-01-01\nP002,2020-02-01\n"
-            )
+            zip_file.writestr("admissions.csv", "patient_id,admission_date\nP001,2020-01-01\nP002,2020-02-01\n")
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()

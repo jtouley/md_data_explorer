@@ -213,9 +213,7 @@ class AnalysisWizard:
                     st.divider()
 
         # Show all other analyses
-        other_analyses = [
-            a for a in AnalysisRecommender.ANALYSIS_TYPES.values() if a.id not in suggested_ids
-        ]
+        other_analyses = [a for a in AnalysisRecommender.ANALYSIS_TYPES.values() if a.id not in suggested_ids]
 
         if other_analyses:
             with st.expander("📚 All Available Analyses"):
@@ -236,9 +234,7 @@ class AnalysisWizard:
         return None
 
     @staticmethod
-    def explain_test_choice(
-        test_name: str, variable_types: dict[str, str], outcome_type: str | None = None
-    ) -> None:
+    def explain_test_choice(test_name: str, variable_types: dict[str, str], outcome_type: str | None = None) -> None:
         """
         Explain why a particular test was chosen.
 

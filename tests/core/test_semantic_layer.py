@@ -181,9 +181,7 @@ class TestSemanticLayerPathResolution:
         workspace, _ = temp_workspace
 
         config = {
-            "init_params": {
-                "source_path": "data/raw/test_dataset/nonexistent.csv"  # Relative path that doesn't exist
-            },
+            "init_params": {"source_path": "data/raw/test_dataset/nonexistent.csv"},
             "column_mapping": {"id": "patient_id"},
             "time_zero": {"value": "2024-01-01"},
             "outcomes": {},
@@ -348,14 +346,16 @@ class TestSemanticLayerGranularity:
         # Should execute successfully
 
     def test_get_cohort_accepts_all_granularity_values(self, semantic_layer):
-        """Test that all three granularity values are accepted without error (permissive behavior)."""
+        """Test that all three granularity values are accepted without error
+        (permissive behavior)."""
         # SemanticLayer is permissive - accepts any valid granularity
         for granularity in ["patient_level", "admission_level", "event_level"]:
             result = semantic_layer.get_cohort(granularity=granularity)
             assert isinstance(result, pd.DataFrame)
 
     def test_get_cohort_backward_compatible_no_granularity(self, semantic_layer):
-        """Test that calling get_cohort() without granularity parameter still works (uses default)."""
+        """Test that calling get_cohort() without granularity parameter still works
+        (uses default)."""
         # Should work with default granularity="patient_level"
         result = semantic_layer.get_cohort()
 
@@ -519,9 +519,7 @@ class TestSemanticLayerSafeIdentifiers:
         df.to_csv(test_csv, index=False)
 
         config = {
-            "init_params": {
-                "source_path": "data/raw/test-dataset.with-special-chars/test_data.csv"
-            },
+            "init_params": {"source_path": "data/raw/test-dataset.with-special-chars/test_data.csv"},
             "column_mapping": {"id": "patient_id"},
             "time_zero": {"value": "2024-01-01"},
             "outcomes": {},
@@ -529,9 +527,7 @@ class TestSemanticLayerSafeIdentifiers:
         }
 
         # Should not raise SQL syntax error from special characters
-        layer = SemanticLayer(
-            "test-dataset.with-special-chars", config=config, workspace_root=workspace
-        )
+        layer = SemanticLayer("test-dataset.with-special-chars", config=config, workspace_root=workspace)
 
         # Should successfully register table with safe identifier
         assert layer.raw is not None

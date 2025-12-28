@@ -50,7 +50,7 @@ class VariableMappingWizard:
             options=["(None)"] + columns,
             index=default_idx + 1 if suggested_column else 0,
             key=f"{key_prefix}_patient_id",
-            help="This column should contain unique values for each patient (e.g., patient_id, mrn, subject_id)",
+            help=("This column should contain unique values for each patient (e.g., patient_id, mrn, subject_id)"),
         )
 
         return None if selected == "(None)" else selected
@@ -77,16 +77,15 @@ class VariableMappingWizard:
         st.markdown("### 2️⃣ Outcome Variable")
         st.markdown("**What is the primary outcome you want to analyze?**")
         st.caption(
-            "This is typically a yes/no, binary, or event indicator (e.g., death, hospitalization, response to treatment)"
+            "This is typically a yes/no, binary, or event indicator "
+            "(e.g., death, hospitalization, response to treatment)"
         )
 
         if suggested_column:
             st.info(f"💡 Suggested: `{suggested_column}` (auto-detected as potential outcome)")
 
         # Filter to likely outcome columns (binary variables)
-        binary_columns = [
-            col for col in columns if variable_info.get(col, {}).get("type") == "binary"
-        ]
+        binary_columns = [col for col in columns if variable_info.get(col, {}).get("type") == "binary"]
 
         if binary_columns:
             st.caption(f"📊 Binary variables found: {', '.join(binary_columns)}")
@@ -101,7 +100,7 @@ class VariableMappingWizard:
             options=["(None)"] + columns,
             index=default_idx + 1 if suggested_column else 0,
             key=f"{key_prefix}_outcome",
-            help="The outcome is your dependent variable - what you're trying to predict or explain",
+            help=("The outcome is your dependent variable - what you're trying to predict or explain"),
         )
 
         # Show outcome details if selected
@@ -143,17 +142,13 @@ class VariableMappingWizard:
         st.caption("For survival analysis, longitudinal studies, or time-dependent analyses")
 
         with st.expander("Add Time Variables"):
-            has_time = st.checkbox(
-                "My data includes time or date variables", key=f"{key_prefix}_has_time"
-            )
+            has_time = st.checkbox("My data includes time or date variables", key=f"{key_prefix}_has_time")
 
             if not has_time:
                 return None
 
             # Show datetime columns if available
-            datetime_columns = [
-                col for col in columns if variable_info.get(col, {}).get("type") == "datetime"
-            ]
+            datetime_columns = [col for col in columns if variable_info.get(col, {}).get("type") == "datetime"]
 
             if datetime_columns:
                 st.info(f"📅 Date/time columns found: {', '.join(datetime_columns)}")
@@ -311,9 +306,7 @@ class VariableMappingWizard:
             if time_config.get("event_time"):
                 excluded_so_far.append(time_config["event_time"])
 
-        variable_roles = cls.render_variable_roles(
-            columns, variable_info, excluded_so_far, key_prefix=key_prefix
-        )
+        variable_roles = cls.render_variable_roles(columns, variable_info, excluded_so_far, key_prefix=key_prefix)
 
         # Build complete mapping
         mapping = {

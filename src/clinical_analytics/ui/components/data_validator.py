@@ -27,9 +27,7 @@ class DataQualityValidator:
     MISSING_DATA_ERROR_THRESHOLD = 80  # % missing per column
 
     @classmethod
-    def validate_patient_id(
-        cls, df: pd.DataFrame, id_column: str
-    ) -> tuple[bool, list[dict[str, any]]]:
+    def validate_patient_id(cls, df: pd.DataFrame, id_column: str) -> tuple[bool, list[dict[str, any]]]:
         """
         Validate patient ID column.
 
@@ -96,7 +94,9 @@ class DataQualityValidator:
                     {
                         "severity": "warning",
                         "type": "low_uniqueness",
-                        "message": f"ID column only {uniqueness_ratio * 100:.1f}% unique. Expected >95% for patient IDs.",
+                        "message": (
+                            f"ID column only {uniqueness_ratio * 100:.1f}% unique. Expected >95% for patient IDs."
+                        ),
                         "uniqueness": uniqueness_ratio,
                     }
                 )
@@ -132,7 +132,9 @@ class DataQualityValidator:
                     {
                         "severity": "error",
                         "type": "excessive_missing",
-                        "message": f"Column '{col}' has {pct_missing:.1f}% missing data. Consider removing this variable.",
+                        "message": (
+                            f"Column '{col}' has {pct_missing:.1f}% missing data. Consider removing this variable."
+                        ),
                         "column": col,
                         "missing_count": int(n_missing),
                         "missing_pct": pct_missing,
@@ -179,9 +181,7 @@ class DataQualityValidator:
         return is_acceptable, issues
 
     @classmethod
-    def validate_outcome_column(
-        cls, df: pd.DataFrame, outcome_column: str
-    ) -> tuple[bool, list[dict[str, any]]]:
+    def validate_outcome_column(cls, df: pd.DataFrame, outcome_column: str) -> tuple[bool, list[dict[str, any]]]:
         """
         Validate outcome column.
 
@@ -250,7 +250,9 @@ class DataQualityValidator:
                     {
                         "severity": "warning",
                         "type": "imbalanced_outcome",
-                        "message": f"Outcome is very imbalanced ({minority_pct:.1f}% minority class). May affect analysis.",
+                        "message": (
+                            f"Outcome is very imbalanced ({minority_pct:.1f}% minority class). May affect analysis."
+                        ),
                         "minority_pct": minority_pct,
                         "distribution": value_counts.to_dict(),
                     }
@@ -261,7 +263,7 @@ class DataQualityValidator:
 
     @classmethod
     def validate_complete(
-        cls, df: pd.DataFrame, id_column: Optional[str] = None, outcome_column: Optional[str] = None
+        cls, df: pd.DataFrame, id_column: str | None = None, outcome_column: str | None = None
     ) -> dict[str, any]:
         """
         Run complete validation suite.
@@ -298,9 +300,7 @@ class DataQualityValidator:
         if len(df.columns) == 0:
             return {
                 "is_valid": False,
-                "issues": [
-                    {"severity": "error", "type": "no_columns", "message": "Dataset has no columns"}
-                ],
+                "issues": [{"severity": "error", "type": "no_columns", "message": "Dataset has no columns"}],
                 "summary": None,
             }
 

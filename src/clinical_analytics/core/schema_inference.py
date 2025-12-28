@@ -132,17 +132,13 @@ class InferredSchema:
             lines.append(f"Patient ID: {self.patient_id_column} (confidence: {conf:.2f})")
 
         if self.outcome_columns:
-            lines.append(
-                f"Outcomes ({len(self.outcome_columns)}): {', '.join(self.outcome_columns)}"
-            )
+            lines.append(f"Outcomes ({len(self.outcome_columns)}): {', '.join(self.outcome_columns)}")
 
         if self.time_columns:
             lines.append(f"Time columns ({len(self.time_columns)}): {', '.join(self.time_columns)}")
 
         if self.event_columns:
-            lines.append(
-                f"Event columns ({len(self.event_columns)}): {', '.join(self.event_columns)}"
-            )
+            lines.append(f"Event columns ({len(self.event_columns)}): {', '.join(self.event_columns)}")
 
         lines.append(f"Categorical: {len(self.categorical_columns)} columns")
         lines.append(f"Continuous: {len(self.continuous_columns)} columns")
@@ -501,9 +497,7 @@ class SchemaInferenceEngine:
         try:
             from langchain_community.document_loaders import PyPDFLoader
         except ImportError:
-            print(
-                "Warning: LangChain not installed. Install with: uv add langchain langchain-community"
-            )
+            print("Warning: LangChain not installed. Install with: uv add langchain langchain-community")
             return None
 
         if not pdf_path.exists():
@@ -523,7 +517,10 @@ class SchemaInferenceEngine:
             pattern1 = r"^([a-z_][a-z0-9_]*)\s*[:\-]\s*(.+)$"
 
             # Pattern 2: "Variable Name: Description" format
-            pattern2 = r"(?:variable|column|field)\s+(?:name|id)?\s*[:\-]?\s*([a-z_][a-z0-9_]*)\s*(?:description|meaning)?[:\-]\s*(.+)$"
+            pattern2 = (
+                r"(?:variable|column|field)\s+(?:name|id)?\s*[:\-]?\s*([a-z_][a-z0-9_]*)\s*"
+                r"(?:description|meaning)?[:\-]\s*(.+)$"
+            )
 
             for line in full_text.split("\n"):
                 line = line.strip()
@@ -574,9 +571,7 @@ class SchemaInferenceEngine:
             print(f"Error parsing PDF dictionary: {e}")
             return None
 
-    def infer_schema_with_dictionary(
-        self, df: pl.DataFrame, dictionary_path: Path | None = None
-    ) -> InferredSchema:
+    def infer_schema_with_dictionary(self, df: pl.DataFrame, dictionary_path: Path | None = None) -> InferredSchema:
         """
         Infer schema from DataFrame and merge with PDF dictionary metadata.
 
@@ -623,9 +618,7 @@ class SchemaInferenceEngine:
                             # Dictionary suggests this is an outcome
                             if df[col].n_unique() == 2:  # Verify it's binary
                                 schema.outcome_columns.append(col)
-                                schema.confidence_scores[f"outcome_{col}"] = (
-                                    0.95  # High confidence from dictionary
-                                )
+                                schema.confidence_scores[f"outcome_{col}"] = 0.95  # High confidence from dictionary
 
                     # Check if dictionary suggests this is a time variable
                     time_keywords = ["time", "date", "duration", "days", "months", "years"]

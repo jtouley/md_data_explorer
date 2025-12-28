@@ -25,9 +25,7 @@ class TestStats:
             }
         )
 
-        model, summary_df = run_logistic_regression(
-            df, outcome_col="outcome", predictors=["predictor1", "predictor2"]
-        )
+        model, summary_df = run_logistic_regression(df, outcome_col="outcome", predictors=["predictor1", "predictor2"])
 
         assert model is not None
         assert isinstance(summary_df, pd.DataFrame)
@@ -56,9 +54,7 @@ class TestStats:
         )
 
         # Should drop rows with nulls
-        model, summary_df = run_logistic_regression(
-            df, outcome_col="outcome", predictors=["predictor1", "predictor2"]
-        )
+        model, summary_df = run_logistic_regression(df, outcome_col="outcome", predictors=["predictor1", "predictor2"])
 
         assert model is not None
         assert isinstance(summary_df, pd.DataFrame)
@@ -87,9 +83,7 @@ class TestStats:
             }
         )
 
-        model, summary_df = run_logistic_regression(
-            df, outcome_col="outcome", predictors=["age", "sex"]
-        )
+        model, summary_df = run_logistic_regression(df, outcome_col="outcome", predictors=["age", "sex"])
 
         # Check all required columns exist
         assert "Odds Ratio" in summary_df.columns

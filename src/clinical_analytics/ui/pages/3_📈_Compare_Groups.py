@@ -7,6 +7,7 @@ Automatically selects the right test based on your data types.
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -26,7 +27,7 @@ from clinical_analytics.ui.components.result_interpreter import ResultInterprete
 st.set_page_config(page_title="Compare Groups | Clinical Analytics", page_icon="📈", layout="wide")
 
 
-def perform_comparison(df: pd.DataFrame, outcome_col: str, group_col: str) -> Dict[str, any]:
+def perform_comparison(df: pd.DataFrame, outcome_col: str, group_col: str) -> dict[str, Any]:
     """
     Perform appropriate statistical comparison based on data types.
 
@@ -176,16 +177,14 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
-    except:
+    except Exception:
         pass
 
     if not dataset_display_names:
         st.error("No datasets available. Please upload data first.")
         return
 
-    dataset_choice_display = st.sidebar.selectbox(
-        "Choose Dataset", list(dataset_display_names.keys())
-    )
+    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
     is_uploaded = dataset_choice in uploaded_datasets
 
@@ -208,9 +207,7 @@ def main():
     # Variable selection
     st.markdown("## 🔧 Configure Comparison")
 
-    available_cols = [
-        c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]
-    ]
+    available_cols = [c for c in cohort.columns if c not in [UnifiedCohort.PATIENT_ID, UnifiedCohort.TIME_ZERO]]
 
     col1, col2 = st.columns(2)
 
@@ -329,15 +326,18 @@ def main():
                     st.markdown(f"""
 **Significant difference found** {p_interp["emoji"]}
 
-The ANOVA test shows that at least one group differs significantly from the others (p={results["p_value"]:.4f}).
+The ANOVA test shows that at least one group differs significantly from the others 
+(p={results["p_value"]:.4f}).
 
-**Next steps**: Perform post-hoc tests (e.g., Tukey's HSD) to identify which specific groups differ from each other.
+**Next steps**: Perform post-hoc tests (e.g., Tukey's HSD) to identify which specific 
+groups differ from each other.
 """)
                 else:
                     st.markdown(f"""
 **No significant difference** ❌
 
-The ANOVA test shows no significant difference in {outcome_col} across groups (p={results["p_value"]:.4f}).
+The ANOVA test shows no significant difference in {outcome_col} across groups 
+(p={results["p_value"]:.4f}).
 All groups appear similar on this measure.
 """)
 
@@ -372,7 +372,8 @@ All groups appear similar on this measure.
                     st.markdown(f"""
 **Significant association found** {p_interp["emoji"]}
 
-The chi-square test shows a significant association between {group_col} and {outcome_col} (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
+The chi-square test shows a significant association between {group_col} and {outcome_col} 
+(χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} differs significantly across {group_col} groups.
 """)
@@ -380,7 +381,8 @@ The distribution of {outcome_col} differs significantly across {group_col} group
                     st.markdown(f"""
 **No significant association** ❌
 
-The chi-square test shows no significant association between {group_col} and {outcome_col} (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
+The chi-square test shows no significant association between {group_col} and {outcome_col} 
+(χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} is similar across groups.
 """)
@@ -416,9 +418,7 @@ The distribution of {outcome_col} is similar across groups.
                     variables={"outcome": outcome_col, "groups": group_col},
                 )
 
-                st.download_button(
-                    "Download Methods Text", methods_text, "methods_comparison.txt", "text/plain"
-                )
+                st.download_button("Download Methods Text", methods_text, "methods_comparison.txt", "text/plain")
 
 
 if __name__ == "__main__":

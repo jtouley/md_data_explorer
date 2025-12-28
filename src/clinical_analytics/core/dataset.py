@@ -104,8 +104,7 @@ class ClinicalDataset(ABC):
         # Use GRANULARITY_TO_GRAIN as single source of truth.
         if granularity not in cls.GRANULARITY_TO_GRAIN:
             raise ValueError(
-                f"Invalid granularity: {granularity!r}. "
-                f"Must be one of: {sorted(cls.GRANULARITY_TO_GRAIN.keys())}"
+                f"Invalid granularity: {granularity!r}. Must be one of: {sorted(cls.GRANULARITY_TO_GRAIN.keys())}"
             )
 
         return cls.GRANULARITY_TO_GRAIN[granularity]
