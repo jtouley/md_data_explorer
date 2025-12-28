@@ -3,9 +3,21 @@ Tests for ZIP upload progress callback functionality.
 """
 
 import io
+import os
 import zipfile
 
+import pytest
+
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+
+@pytest.fixture(autouse=True)
+def enable_multi_table(monkeypatch):
+    """Enable MULTI_TABLE feature flag for these tests."""
+    import clinical_analytics.ui.storage.user_datasets as user_datasets_module
+
+    # Monkeypatch the MULTI_TABLE_ENABLED constant in the user_datasets module
+    monkeypatch.setattr(user_datasets_module, "MULTI_TABLE_ENABLED", True)
 
 
 class TestZipUploadProgress:

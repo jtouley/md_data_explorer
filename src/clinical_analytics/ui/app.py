@@ -448,7 +448,7 @@ def display_query_builder(dataset, dataset_name: str):
     # Filters
     st.markdown("### Filters")
     filter_values = {}
-    if filters:
+    if filters and len(filters) > 0:
         filter_cols = st.columns(min(3, len(filters)))
         for idx, (filter_name, filter_def) in enumerate(filters.items()):
             with filter_cols[idx % len(filter_cols)]:

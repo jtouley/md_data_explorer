@@ -1,3 +1,4 @@
+import os
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -7,6 +8,22 @@ from streamlit.testing.v1 import AppTest
 from clinical_analytics.core.schema import UnifiedCohort
 
 # --- Fixtures ---
+
+
+@pytest.fixture(autouse=True)
+def disable_v1_mvp_mode(monkeypatch):
+    """Disable V1_MVP_MODE for these tests to test original navigation."""
+    import importlib
+
+    import clinical_analytics.ui.app as app_module
+    import clinical_analytics.ui.config as config_module
+
+    # Set environment variable before module reload
+    monkeypatch.setenv("V1_MVP_MODE", "false")
+
+    # Reload modules to pick up the new value
+    importlib.reload(config_module)
+    importlib.reload(app_module)
 
 
 @pytest.fixture
