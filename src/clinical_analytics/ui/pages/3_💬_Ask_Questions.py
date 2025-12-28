@@ -43,6 +43,14 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 AUTO_EXECUTE_CONFIDENCE_THRESHOLD = 0.75
 
 
+# Caching Strategy (Phase 3):
+# - Cohorts: NOT cached via st.cache_data (handled via session_state with lifecycle management)
+# - Alias index: Already lazy in SemanticLayer (built once per instance)
+# - Small intermediates: Can be cached with @st.cache_data if needed (profiling, metadata)
+# - Cache keys: Must include dataset_version (upload_id/file_hash) as explicit function arguments
+# - Do NOT access st.session_state inside cached functions
+
+
 def generate_run_key(
     dataset_version: str,
     query_text: str,
