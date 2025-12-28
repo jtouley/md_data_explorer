@@ -410,12 +410,12 @@ class UserDatasetStorage:
 
             variable_mapping = metadata.get("variable_mapping", {})
             schema_validation_result = None
+            internal_validation_result = None  # Store for quality_warnings extraction
 
             if variable_mapping:
                 # Check if the mapped columns exist and validate schema
                 from clinical_analytics.core.schema import (
                     UnifiedCohort,
-                    validate_unified_cohort_schema,
                 )
 
                 # Create a view with renamed columns to validate schema
@@ -464,6 +464,9 @@ class UserDatasetStorage:
                         granularity="unknown",  # Default granularity
                     )
 
+                    # Store for later use (quality_warnings extraction)
+                    internal_validation_result = validation_result
+
                     schema_validation_result = {
                         "is_valid": validation_result["is_valid"],
                         "errors": validation_result["schema_errors"],
@@ -492,9 +495,9 @@ class UserDatasetStorage:
             if validation_result_from_ui:
                 # UI validation_result is the source of truth
                 quality_warnings = validation_result_from_ui.get("quality_warnings", [])
-            elif schema_validation_result:
+            elif internal_validation_result:
                 # Fallback to internal validation if UI didn't provide it
-                quality_warnings = validation_result.get("quality_warnings", [])
+                quality_warnings = internal_validation_result.get("quality_warnings", [])
 
             full_metadata = {
                 "upload_id": upload_id,
