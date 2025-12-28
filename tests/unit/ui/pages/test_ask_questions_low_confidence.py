@@ -211,8 +211,8 @@ class TestLowConfidenceFeedback:
             # This is what the UI would do - error handling verified
             assert True  # Error handling works correctly
 
-                # In actual UI, this would call st.error and st.stop
-                # We verify the exception handling works
+            # In actual UI, this would call st.error and st.stop
+            # We verify the exception handling works
 
     def test_low_confidence_shows_all_detected_variables(self, sample_cohort, low_confidence_context):
         """Test that all detected variables are shown, not just primary."""

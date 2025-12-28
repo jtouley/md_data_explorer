@@ -32,6 +32,16 @@ from clinical_analytics.ui.components.question_engine import (
 )
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
+from clinical_analytics.ui.messages import (
+    CLEAR_RESULTS,
+    COLLISION_SUGGESTION_WARNING,
+    CONFIRM_AND_RUN,
+    LOW_CONFIDENCE_WARNING,
+    NO_DATASETS_AVAILABLE,
+    RESULTS_CLEARED,
+    SEMANTIC_LAYER_NOT_READY,
+    START_OVER,
+)
 
 # Page config
 st.set_page_config(page_title="Ask Questions | Clinical Analytics", page_icon="💬", layout="wide")
@@ -571,7 +581,7 @@ def main():
         pass
 
     if not dataset_display_names:
-        st.error("No datasets available. Please upload data first.")
+        st.error(NO_DATASETS_AVAILABLE)
         return
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
@@ -783,13 +793,13 @@ def main():
 
             else:
                 # Low confidence: show detected variables with display names and allow editing
-                st.warning("⚠️ I'm not completely sure about this analysis. Please review and confirm:")
+                st.warning(LOW_CONFIDENCE_WARNING)
 
                 # Ensure semantic_layer is ready before showing variables
                 try:
                     semantic_layer = dataset.semantic
                 except (ValueError, AttributeError):
-                    st.error("Semantic layer not ready. Please wait...")
+                    st.error(SEMANTIC_LAYER_NOT_READY)
                     st.stop()
 
                 # Helper to get display name for a column
@@ -909,7 +919,7 @@ def main():
 
                 # Show collision suggestions if available
                 if context.match_suggestions:
-                    st.warning("⚠️ Some terms matched multiple columns. Please select the correct one:")
+                    st.warning(COLLISION_SUGGESTION_WARNING)
                     for query_term, suggestions in context.match_suggestions.items():
                         suggestion_display = [get_display_name(s) for s in suggestions]
                         selected = st.selectbox(
@@ -933,21 +943,21 @@ def main():
                 st.session_state["analysis_context"] = context
 
                 # Confirmation button
-                if st.button("✅ Confirm and Run Analysis", type="primary", use_container_width=True):
+                if st.button(CONFIRM_AND_RUN, type="primary", use_container_width=True):
                     st.session_state[confirmation_key] = True
                     st.rerun()
 
         # Action buttons
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🔄 Start Over", use_container_width=True):
+            if st.button(START_OVER, use_container_width=True):
                 st.session_state["analysis_context"] = None
                 st.session_state["intent_signal"] = None
                 st.rerun()
         with col2:
-            if st.button("🗑️ Clear Results", use_container_width=True):
+            if st.button(CLEAR_RESULTS, use_container_width=True):
                 clear_all_results(dataset_version)
-                st.success("Results cleared!")
+                st.success(RESULTS_CLEARED)
                 st.rerun()
 
 

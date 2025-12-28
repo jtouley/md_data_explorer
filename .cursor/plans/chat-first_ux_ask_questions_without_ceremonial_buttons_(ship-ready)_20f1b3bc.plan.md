@@ -133,6 +133,8 @@ def compute_descriptive_analysis(df: pd.DataFrame, context: AnalysisContext) -> 
     return {"summary_stats": summary_stats.to_dict()}
 ```
 
+
+
 ### Test-Driven Development
 
 **Workflow**: Test-first development (Red-Green-Refactor)
@@ -856,9 +858,7 @@ def test_run_key_generation_whitespace_normalization_produces_same_key():
 - [ ] No duplicate imports in test files
 - [ ] All tests pass (`make test-fast`) - **MUST run tests after writing them**
 
-**MANDATORY: Testing and Commit Phase 1 before starting Phase 2**
-
-Before moving to Phase 2, you MUST:
+**MANDATORY: Testing and Commit Phase 1 before starting Phase 2**Before moving to Phase 2, you MUST:
 
 1. **Write tests for Phase 1** - Create all test files listed in Test Structure section
 2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
@@ -867,9 +867,7 @@ Before moving to Phase 2, you MUST:
 5. **Commit all Phase 1 changes** - Include both implementation AND tests in commit
 6. **Verify commit includes**: compute.py, updated Ask Questions page, all test files, pyproject.toml (structlog dependency)
 
-**CRITICAL: Phase 1 commit must include test files. Do not commit without tests.**
-
-**Example commit message:**
+**CRITICAL: Phase 1 commit must include test files. Do not commit without tests.Example commit message:**
 
 ```javascript
 feat: Phase 1 - Chat-first UX with idempotency and lifecycle management
@@ -885,6 +883,8 @@ feat: Phase 1 - Chat-first UX with idempotency and lifecycle management
 
 All tests passing: 15/15
 ```
+
+
 
 ### Phase 2: Column Intelligence + Alias Collision Handling (P0)
 
@@ -947,9 +947,7 @@ All tests passing: 15/15
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Testing and Commit Phase 3 before starting Phase 4**
-
-Before moving to Phase 4, you MUST:
+**MANDATORY: Testing and Commit Phase 3 before starting Phase 4**Before moving to Phase 4, you MUST:
 
 1. **Write tests for Phase 3** - Create test files for caching patterns and invalidation
 2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
@@ -981,9 +979,7 @@ Before moving to Phase 4, you MUST:
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Testing and Commit Phase 4 before starting Phase 5**
-
-Before moving to Phase 5, you MUST:
+**MANDATORY: Testing and Commit Phase 4 before starting Phase 5**Before moving to Phase 5, you MUST:
 
 1. **Write tests for Phase 4** - Create test files for low-confidence feedback UI
 2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
@@ -1012,9 +1008,7 @@ Before moving to Phase 5, you MUST:
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Testing and Commit Phase 5 before starting Phase 6**
-
-Before moving to Phase 6, you MUST:
+**MANDATORY: Testing and Commit Phase 5 before starting Phase 6**Before moving to Phase 6, you MUST:
 
 1. **Write tests for Phase 5** - Create test files for result interpretation enhancements
 2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
@@ -1040,9 +1034,7 @@ Before moving to Phase 6, you MUST:
 - [ ] All tests use shared fixtures from `conftest.py` (DRY principle)
 - [ ] Tests run immediately after writing (`make test-fast`)
 
-**MANDATORY: Testing and Commit Phase 6 before starting Phase 7**
-
-Before moving to Phase 7, you MUST:
+**MANDATORY: Testing and Commit Phase 6 before starting Phase 7**Before moving to Phase 7, you MUST:
 
 1. **Write tests for Phase 6** - Create test files for structured logging
 2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
@@ -1058,9 +1050,7 @@ Before moving to Phase 7, you MUST:
 - Remove unused imports
 - Simple message constants
 
-**MANDATORY: Testing and Commit Phase 7 before marking plan complete**
-
-Before marking the plan as complete, you MUST:
+**MANDATORY: Testing and Commit Phase 7 before marking plan complete**Before marking the plan as complete, you MUST:
 
 1. **Write tests for Phase 7** - Create test files for quick wins (vectorization, cleanup)
 2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
@@ -1221,4 +1211,3 @@ Before marking the plan as complete, you MUST:
 
 1. ✅ Tests written and passing (`make test-fast`)
 2. ✅ Code quality checks pass (`make lint-fix`, `make format`)
-3. ✅ No duplicate imports or code quality issues
