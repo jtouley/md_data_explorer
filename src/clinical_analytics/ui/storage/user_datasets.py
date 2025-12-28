@@ -314,7 +314,7 @@ class UserDatasetStorage:
         # Progress callback is best-effort: don't let UI errors break storage
         if progress_cb:
             try:
-                progress_cb(10, "Validating file security...")
+                progress_cb(5, "Validating file security and format...")
             except Exception:
                 pass  # Best-effort: continue even if callback fails
 
@@ -322,7 +322,7 @@ class UserDatasetStorage:
         if not valid:
             if progress_cb:
                 try:
-                    progress_cb(100, f"Validation failed: {error}")
+                    progress_cb(100, f"❌ Validation failed: {error}")
                 except Exception:
                     pass  # Best-effort
             return False, error, None
@@ -330,7 +330,7 @@ class UserDatasetStorage:
         # Generate upload ID
         if progress_cb:
             try:
-                progress_cb(20, "Preparing upload...")
+                progress_cb(10, "Generating unique upload identifier...")
             except Exception:
                 pass  # Best-effort
 
@@ -348,12 +348,23 @@ class UserDatasetStorage:
                 dataset_name = UploadSecurityValidator.sanitize_filename(original_filename)
                 dataset_name = Path(dataset_name).stem  # Remove extension
 
+            # Check for existing dataset with same name (prevent duplicates)
+            existing_uploads = self.list_uploads()
+            for existing_meta in existing_uploads:
+                if existing_meta.get("dataset_name") == dataset_name:
+                    return (
+                        False,
+                        f"Dataset '{dataset_name}' already exists. "
+                        "Use a different name or delete the existing dataset.",
+                        None,
+                    )
+
             # Convert to CSV format (normalize all uploads to CSV)
             file_ext = Path(original_filename).suffix.lower()
 
             if progress_cb:
                 try:
-                    progress_cb(30, "Reading file...")
+                    progress_cb(20, f"Reading {file_ext.upper()} file ({len(file_bytes):,} bytes)...")
                 except Exception:
                     pass  # Best-effort
 
@@ -362,24 +373,46 @@ class UserDatasetStorage:
             csv_path = self.raw_dir / csv_filename
 
             # Use atomic write (temp file + rename) to avoid TOCTOU race conditions
-            import tempfile
 
             temp_path = self.raw_dir / f".{upload_id}.tmp"
 
             if file_ext == ".csv":
                 # Already CSV - write directly to temp then atomic rename
                 temp_path.write_bytes(file_bytes)
+                if progress_cb:
+                    try:
+                        progress_cb(40, "Parsing CSV data...")
+                    except Exception:
+                        pass  # Best-effort
                 df = pd.read_csv(temp_path)
 
             elif file_ext in {".xlsx", ".xls"}:
                 # Excel file - convert to CSV
                 import io
 
-                df = pd.read_excel(io.BytesIO(file_bytes))
+                if progress_cb:
+                    try:
+                        progress_cb(35, "Reading Excel file...")
+                    except Exception:
+                        pass  # Best-effort
+                # Use Polars native Excel reader to handle mixed types better
+                try:
+                    df_polars = pl.read_excel(
+                        io.BytesIO(file_bytes),
+                        engine="openpyxl",  # Use openpyxl instead of fastexcel
+                    )
+                    # Convert to pandas for CSV writing
+                    df = df_polars.to_pandas()
+                    logger.info("Successfully loaded Excel file using Polars with openpyxl engine")
+                except Exception as polars_error:
+                    logger.warning(f"Polars Excel reading failed: {polars_error}. Falling back to pandas read_excel.")
+                    # Fallback to pandas if Polars fails
+                    df = pd.read_excel(io.BytesIO(file_bytes))
+                    logger.info("Successfully loaded Excel file using pandas fallback")
 
                 if progress_cb:
                     try:
-                        progress_cb(50, "Converting file format...")
+                        progress_cb(50, f"Converting to CSV format ({len(df):,} rows, {len(df.columns)} columns)...")
                     except Exception:
                         pass  # Best-effort
 
@@ -392,11 +425,16 @@ class UserDatasetStorage:
 
                 import pyreadstat
 
+                if progress_cb:
+                    try:
+                        progress_cb(35, "Reading SPSS file...")
+                    except Exception:
+                        pass  # Best-effort
                 df, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
 
                 if progress_cb:
                     try:
-                        progress_cb(50, "Converting file format...")
+                        progress_cb(50, f"Converting to CSV format ({len(df):,} rows, {len(df.columns)} columns)...")
                     except Exception:
                         pass  # Best-effort
 
@@ -406,15 +444,50 @@ class UserDatasetStorage:
             else:
                 return False, f"Unsupported file type: {file_ext}", None
 
+            # Automatically ensure patient_id exists (transparent to user)
+            from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
+
+            logger.info(f"Ensuring patient_id exists for upload {upload_id}")
+            # Convert to Polars for processing
+            df_polars = pl.from_pandas(df) if isinstance(df, pd.DataFrame) else df
+            df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_polars)
+
+            logger.info(
+                f"Patient ID creation result: source={id_metadata['patient_id_source']}, "
+                f"columns={id_metadata.get('patient_id_columns')}, "
+                f"has_patient_id={'patient_id' in df_with_id.columns}"
+            )
+
+            # Store metadata about how patient_id was created
+            if "synthetic_id_metadata" not in metadata:
+                metadata["synthetic_id_metadata"] = {}
+            metadata["synthetic_id_metadata"]["patient_id"] = id_metadata
+
+            # Convert back to pandas for CSV writing
+            df = df_with_id.to_pandas() if isinstance(df, pd.DataFrame) else df_with_id
+
+            # Verify patient_id exists before saving
+            if "patient_id" not in df.columns:
+                logger.error(f"patient_id column missing after ensure_patient_id! Columns: {list(df.columns)}")
+                raise ValueError("Failed to create patient_id column")
+            logger.info(
+                f"Successfully ensured patient_id exists. DataFrame shape: {df.shape}, columns: {list(df.columns)}"
+            )
+
             # Atomic rename: temp file → final file (single filesystem operation)
             # This eliminates TOCTOU race window between exists() check and write
+            if progress_cb:
+                try:
+                    progress_cb(60, f"Saving data file ({len(df):,} rows, {len(df.columns)} columns)...")
+                except Exception:
+                    pass  # Best-effort
             temp_path.replace(csv_path)
 
             # Validate schema if variable mapping is provided
             # This enforces the UnifiedCohort schema contract at save-time
             if progress_cb:
                 try:
-                    progress_cb(60, "Validating schema contract...")
+                    progress_cb(70, "Validating data schema and quality...")
                 except Exception:
                     pass  # Best-effort
 
@@ -493,7 +566,7 @@ class UserDatasetStorage:
             # Save metadata
             if progress_cb:
                 try:
-                    progress_cb(80, "Saving metadata...")
+                    progress_cb(85, "Saving dataset metadata and configuration...")
                 except Exception:
                     pass  # Best-effort
 
@@ -537,7 +610,13 @@ class UserDatasetStorage:
 
             if progress_cb:
                 try:
-                    progress_cb(100, "Upload complete!")
+                    progress_cb(95, "Finalizing upload...")
+                except Exception:
+                    pass  # Best-effort
+
+            if progress_cb:
+                try:
+                    progress_cb(100, f"✅ Upload complete! Dataset '{dataset_name}' ready to use.")
                 except Exception:
                     pass  # Best-effort
 

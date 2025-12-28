@@ -59,15 +59,22 @@ def main():
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
-    is_uploaded = dataset_choice in uploaded_datasets
+    # Check if this is an uploaded dataset (multiple checks for robustness)
+    is_uploaded = (
+        dataset_choice in uploaded_datasets
+        or dataset_choice_display.startswith("📤")
+        or dataset_choice not in available_datasets
+    )
 
     # Load dataset
     with st.spinner(f"Loading {dataset_choice_display}..."):
         try:
             if is_uploaded:
+                # For uploaded datasets, use the factory (requires upload_id)
                 dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
                 dataset.load()
             else:
+                # For built-in datasets, use the registry
                 dataset = DatasetRegistry.get_dataset(dataset_choice)
                 dataset.validate()
                 dataset.load()
@@ -157,7 +164,7 @@ def main():
         numeric_cols = cohort.select_dtypes(include=["number"]).columns.tolist()
         if numeric_cols:
             desc_stats = cohort[numeric_cols].describe().T
-            st.dataframe(desc_stats, use_container_width=True)
+            st.dataframe(desc_stats, width="stretch")
         else:
             st.info("No numeric variables found")
 
@@ -177,7 +184,7 @@ def main():
     # Data preview
     st.divider()
     st.markdown("## 🔍 Data Preview")
-    st.dataframe(cohort.head(20), use_container_width=True)
+    st.dataframe(cohort.head(20), width="stretch")
 
 
 if __name__ == "__main__":

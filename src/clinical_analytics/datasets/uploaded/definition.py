@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 import pandas as pd
+import polars as pl
 
 from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
@@ -84,7 +85,12 @@ class UploadedDataset(ClinicalDataset):
         self.data = self.storage.get_upload_data(self.upload_id)
 
         if self.data is None:
+            logger.error(f"Failed to load upload data for upload_id: {self.upload_id}")
             raise ValueError(f"Failed to load upload data: {self.upload_id}")
+
+        logger.info(
+            f"Loaded upload data: {self.upload_id}, shape: {self.data.shape}, columns: {list(self.data.columns)}"
+        )
 
     def get_cohort(self, granularity: Granularity = "patient_level", **filters) -> pd.DataFrame:
         """
@@ -136,9 +142,39 @@ class UploadedDataset(ClinicalDataset):
 
         # Map patient ID
         if patient_id_col:
+            # Check if column exists in data
+            if patient_id_col not in self.data.columns:
+                logger.error(
+                    f"Patient ID column '{patient_id_col}' not found in data. "
+                    f"Available columns: {list(self.data.columns)}. "
+                    f"Metadata: {self.metadata.get('synthetic_id_metadata', {})}"
+                )
+                # If patient_id was created synthetically, it should be in the CSV
+                # Check if it exists with different casing or was lost
+                if patient_id_col == "patient_id" and "patient_id" not in self.data.columns:
+                    # Try to regenerate it
+                    logger.warning("Synthetic patient_id not found in loaded data, regenerating...")
+                    from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
+
+                    df_polars = pl.from_pandas(self.data)
+                    df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_polars)
+                    logger.info(
+                        f"Regenerated patient_id: source={id_metadata['patient_id_source']}, "
+                        f"columns={id_metadata.get('patient_id_columns')}"
+                    )
+                    self.data = df_with_id.to_pandas()
+                    if "patient_id" not in self.data.columns:
+                        raise ValueError(f"Failed to create patient_id. Available columns: {list(self.data.columns)}")
+                else:
+                    raise KeyError(
+                        f"Patient ID column '{patient_id_col}' not found in data. "
+                        f"Available columns: {list(self.data.columns)}"
+                    )
+            logger.debug(f"Using patient_id column '{patient_id_col}' with {len(self.data)} rows")
             cohort_data[UnifiedCohort.PATIENT_ID] = self.data[patient_id_col]
         else:
             # Generate sequential IDs if not provided
+            logger.warning("No patient_id column specified, generating sequential IDs")
             cohort_data[UnifiedCohort.PATIENT_ID] = [f"patient_{i}" for i in range(len(self.data))]
 
         # Map outcome (optional - semantic layer pattern)

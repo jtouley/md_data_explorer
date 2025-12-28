@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import polars as pl
 import streamlit as st
 
 # Add src to path
@@ -81,90 +82,118 @@ def render_upload_step():
     )
 
     if uploaded_file is not None:
-        # Show file info
-        file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+        # Only process on step 1 (prevents reprocessing on reruns)
+        if st.session_state.get("upload_step", 1) == 1:
+            # Show file info
+            file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Filename", uploaded_file.name)
-        with col2:
-            st.metric("File Size", f"{file_size_mb:.2f} MB")
-        with col3:
-            st.metric("Type", Path(uploaded_file.name).suffix.upper())
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Filename", uploaded_file.name)
+            with col2:
+                st.metric("File Size", f"{file_size_mb:.2f} MB")
+            with col3:
+                st.metric("Type", Path(uploaded_file.name).suffix.upper())
 
-        # Validate file
-        file_bytes = uploaded_file.getvalue()
-        valid, error_msg = UploadSecurityValidator.validate(uploaded_file.name, file_bytes)
+            # Validate file
+            file_bytes = uploaded_file.getvalue()
+            valid, error_msg = UploadSecurityValidator.validate(uploaded_file.name, file_bytes)
 
-        if not valid:
-            st.error(f"❌ {error_msg}")
-            return None
-
-        st.success("✅ File validation passed")
-
-        # Check if ZIP file (multi-table)
-        file_ext = Path(uploaded_file.name).suffix.lower()
-
-        if file_ext == ".zip":
-            # Multi-table feature gated by config flag
-            if not MULTI_TABLE_ENABLED:
-                st.error(
-                    "❌ Multi-table (ZIP) uploads are disabled in V1. Please upload a single CSV, Excel, or SPSS file."
-                )
-                st.info(
-                    "💡 Multi-table support is planned for a future release. "
-                    "Set MULTI_TABLE_ENABLED=true in environment to enable (experimental)."
-                )
+            if not valid:
+                st.error(f"❌ {error_msg}")
                 return None
 
-            # Handle multi-table ZIP upload
-            st.info("🗂️ **Multi-table dataset detected!** ZIP file validated.")
+            st.success("✅ File validation passed")
 
-            # Store ZIP upload details
-            st.session_state["is_zip_upload"] = True
-            st.session_state["uploaded_filename"] = uploaded_file.name
-            st.session_state["uploaded_bytes"] = file_bytes
+            # Check if ZIP file (multi-table)
+            file_ext = Path(uploaded_file.name).suffix.lower()
 
-            st.success("✅ ZIP file ready for processing")
-            st.info(
-                "💡 **Next:** Click 'Continue to Review' to process tables, "
-                "detect relationships, and build unified cohort."
-            )
+            if file_ext == ".zip":
+                # Multi-table feature gated by config flag
+                if not MULTI_TABLE_ENABLED:
+                    st.error(
+                        "❌ Multi-table (ZIP) uploads are disabled in V1. "
+                        "Please upload a single CSV, Excel, or SPSS file."
+                    )
+                    st.info(
+                        "💡 Multi-table support is planned for a future release. "
+                        "Set MULTI_TABLE_ENABLED=true in environment to enable (experimental)."
+                    )
+                    return None
 
-            # Button to proceed to review step
-            if st.button("Continue to Review ➡️", type="primary"):
-                st.session_state["upload_step"] = 5
+                # Handle multi-table ZIP upload
+                st.info("🗂️ **Multi-table dataset detected!** ZIP file validated.")
+
+                # Store ZIP upload details
+                st.session_state["is_zip_upload"] = True
+                st.session_state["uploaded_filename"] = uploaded_file.name
+                st.session_state["uploaded_bytes"] = file_bytes
+
+                st.success("✅ ZIP file ready for processing")
+                st.info(
+                    "💡 **Next:** Click 'Continue to Review' to process tables, "
+                    "detect relationships, and build unified cohort."
+                )
+
+                # Button to proceed to review step
+                if st.button("Continue to Review ➡️", type="primary", key="zip_upload_continue"):
+                    st.session_state["upload_step"] = 5
+                    st.rerun()
+
+                return uploaded_file
+
+            # Try to load preview for single-table files
+            try:
+                if file_ext == ".csv":
+                    df = pd.read_csv(uploaded_file)
+                elif file_ext in {".xlsx", ".xls"}:
+                    # Use Polars native Excel reader to handle mixed types better
+                    import io
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    file_bytes = uploaded_file.read()
+                    uploaded_file.seek(0)  # Reset for later use
+
+                    try:
+                        # Try with openpyxl engine (already installed)
+                        df_polars = pl.read_excel(
+                            io.BytesIO(file_bytes),
+                            engine="openpyxl",  # Use openpyxl instead of fastexcel
+                        )
+                        # Convert to pandas for compatibility with existing preview code
+                        df = df_polars.to_pandas()
+                        logger.info("Successfully loaded Excel file using Polars with openpyxl engine")
+                    except Exception as polars_error:
+                        logger.warning(
+                            f"Polars Excel reading failed: {polars_error}. Falling back to pandas read_excel."
+                        )
+                        # Fallback to pandas if Polars fails
+                        uploaded_file.seek(0)  # Reset for pandas
+                        df = pd.read_excel(uploaded_file)
+                        logger.info("Successfully loaded Excel file using pandas fallback")
+                elif file_ext == ".sav":
+                    import pyreadstat
+
+                    df, meta = pyreadstat.read_sav(uploaded_file)
+                else:
+                    st.error(f"Unsupported file type: {file_ext}")
+                    return None
+
+                # Store in session state (single-table)
+                st.session_state["is_zip_upload"] = False
+                st.session_state["uploaded_df"] = df
+                st.session_state["uploaded_filename"] = uploaded_file.name
+                st.session_state["uploaded_bytes"] = file_bytes
+                st.session_state["upload_step"] = 2
+
+                # Force immediate rerun to show preview step
                 st.rerun()
 
-            return uploaded_file
-
-        # Try to load preview for single-table files
-        try:
-            if file_ext == ".csv":
-                df = pd.read_csv(uploaded_file)
-            elif file_ext in {".xlsx", ".xls"}:
-                df = pd.read_excel(uploaded_file)
-            elif file_ext == ".sav":
-                import pyreadstat
-
-                df, meta = pyreadstat.read_sav(uploaded_file)
-            else:
-                st.error(f"Unsupported file type: {file_ext}")
+            except Exception as e:
+                st.error(f"❌ Error reading file: {str(e)}")
+                st.exception(e)
                 return None
-
-            # Store in session state (single-table)
-            st.session_state["is_zip_upload"] = False
-            st.session_state["uploaded_df"] = df
-            st.session_state["uploaded_filename"] = uploaded_file.name
-            st.session_state["uploaded_bytes"] = file_bytes
-            st.session_state["upload_step"] = 2
-
-            return df
-
-        except Exception as e:
-            st.error(f"❌ Error reading file: {str(e)}")
-            st.exception(e)
-            return None
 
     return None
 
@@ -187,7 +216,7 @@ def render_preview_step(df: pd.DataFrame):
 
     # Show data preview
     st.markdown("### First 10 Rows")
-    st.dataframe(df.head(10), use_container_width=True)
+    st.dataframe(df.head(10), width="stretch")
 
     # Data quality validation
     st.markdown("### 🔍 Data Quality Check")
@@ -218,14 +247,16 @@ def render_preview_step(df: pd.DataFrame):
     # Navigation buttons
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("⬅️ Back to Upload"):
+        if st.button("⬅️ Back to Upload", key="preview_back"):
             st.session_state["upload_step"] = 1
             st.rerun()
     with col2:
         # Can proceed even with warnings, but not with errors
         can_proceed = validation_result["is_valid"] or validation_result["summary"]["errors"] == 0
 
-        if st.button("Continue to Variable Detection ➡️", disabled=not can_proceed, type="primary"):
+        if st.button(
+            "Continue to Variable Detection ➡️", disabled=not can_proceed, type="primary", key="preview_continue"
+        ):
             st.session_state["upload_step"] = 3
             st.rerun()
 
@@ -239,7 +270,7 @@ def render_variable_detection_step(df: pd.DataFrame):
     st.markdown("Automatically detecting variable types from your data...")
 
     with st.spinner("Analyzing variables..."):
-        # Detect variable types
+        # Detect variable types (components handle pandas->polars conversion internally)
         variable_info = VariableTypeDetector.detect_all_variables(df)
         suggestions = VariableTypeDetector.suggest_schema_mapping(df)
 
@@ -297,30 +328,88 @@ def render_variable_detection_step(df: pd.DataFrame):
 
                 st.divider()
 
-    # Show suggestions
-    if any(suggestions.values()):
-        st.markdown("### 💡 Suggestions")
+    # Auto-apply suggestions (doctors shouldn't have to map columns)
+    # Build mapping automatically from detected types
+    auto_mapping = {
+        "patient_id": suggestions.get("patient_id"),
+        "outcome": suggestions.get("outcome"),
+        "time_variables": {"time_zero": suggestions.get("time_zero")},
+        "predictors": [],
+        "excluded": [],
+    }
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if suggestions.get("patient_id"):
-                st.info(f"**Patient ID:** `{suggestions['patient_id']}`")
-        with col2:
-            if suggestions.get("outcome"):
-                st.info(f"**Outcome:** `{suggestions['outcome']}`")
-        with col3:
-            if suggestions.get("time_zero"):
-                st.info(f"**Time Variable:** `{suggestions['time_zero']}`")
+    # Auto-categorize remaining columns as predictors (excluding ID, outcome, time)
+    reserved_cols = {auto_mapping["patient_id"], auto_mapping["outcome"], suggestions.get("time_zero")}
+    reserved_cols.discard(None)
 
-    # Navigation
+    for col, info in variable_info.items():
+        if col not in reserved_cols:
+            # Include as predictor unless very high missing
+            if info["missing_pct"] < 80:
+                auto_mapping["predictors"].append(col)
+            else:
+                auto_mapping["excluded"].append(col)
+
+    # Store auto-mapping
+    st.session_state["variable_mapping"] = auto_mapping
+
+    # Show auto-detected mapping summary
+    st.markdown("### ✅ Auto-Detected Schema")
+    st.success("We automatically detected your data schema. Review below and continue.")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if auto_mapping["patient_id"]:
+            st.metric("Patient ID", auto_mapping["patient_id"])
+        else:
+            st.warning("⚠️ No ID column detected")
+    with col2:
+        if auto_mapping["outcome"]:
+            st.metric("Outcome", auto_mapping["outcome"])
+        else:
+            st.info("ℹ️ No outcome detected (optional)")
+    with col3:
+        if suggestions.get("time_zero"):
+            st.metric("Time Variable", suggestions["time_zero"])
+        else:
+            st.info("ℹ️ No time column detected (optional)")
+
+    # Show predictors count
+    st.info(f"📊 **{len(auto_mapping['predictors'])}** predictor variables ready for analysis")
+
+    # Optional: Allow override in expander (not mandatory)
+    with st.expander("🔧 Adjust mappings (optional)", expanded=False):
+        st.caption("Override auto-detection if needed")
+
+        # Patient ID override
+        id_options = ["(auto-detect)"] + list(df.columns)
+        current_id_idx = id_options.index(auto_mapping["patient_id"]) if auto_mapping["patient_id"] in id_options else 0
+        new_patient_id = st.selectbox("Patient ID Column", id_options, index=current_id_idx)
+        if new_patient_id != "(auto-detect)" and new_patient_id != auto_mapping["patient_id"]:
+            auto_mapping["patient_id"] = new_patient_id
+            st.session_state["variable_mapping"] = auto_mapping
+
+        # Outcome override
+        outcome_options = ["(none)"] + list(df.columns)
+        current_outcome_idx = (
+            outcome_options.index(auto_mapping["outcome"]) if auto_mapping["outcome"] in outcome_options else 0
+        )
+        new_outcome = st.selectbox("Outcome Column", outcome_options, index=current_outcome_idx)
+        if new_outcome == "(none)":
+            auto_mapping["outcome"] = None
+        elif new_outcome != auto_mapping["outcome"]:
+            auto_mapping["outcome"] = new_outcome
+        st.session_state["variable_mapping"] = auto_mapping
+
+    # Navigation - Skip step 4 (mapping wizard), go directly to review
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("⬅️ Back to Preview"):
+        if st.button("⬅️ Back to Preview", key="detect_back"):
             st.session_state["upload_step"] = 2
             st.rerun()
     with col2:
-        if st.button("Continue to Mapping ➡️", type="primary"):
-            st.session_state["upload_step"] = 4
+        if st.button("Continue to Review ➡️", type="primary", key="detect_continue"):
+            st.session_state["upload_step"] = 5  # Skip step 4, go directly to review
             st.rerun()
 
 
@@ -360,11 +449,11 @@ def render_mapping_step(df: pd.DataFrame, variable_info: dict, suggestions: dict
         # Navigation
         col1, col2 = st.columns([1, 1])
         with col1:
-            if st.button("⬅️ Back to Detection"):
+            if st.button("⬅️ Back to Detection", key="map_back"):
                 st.session_state["upload_step"] = 3
                 st.rerun()
         with col2:
-            if st.button("Continue to Review ➡️", type="primary"):
+            if st.button("Continue to Review ➡️", type="primary", key="map_continue"):
                 st.session_state["upload_step"] = 5
                 st.rerun()
 
@@ -464,102 +553,97 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         help="This name will be used to identify your dataset in the analysis interface",
     )
 
+    # Check if already saved in this session
+    already_saved = st.session_state.get("upload_success") is True
+
+    # Show success state if already saved
+    if already_saved and st.session_state.get("upload_result"):
+        result = st.session_state["upload_result"]
+        st.success(f"""
+        ✅ **Dataset saved successfully!**
+
+        - **Upload ID:** `{result.get("upload_id", "N/A")}`
+        - **Name:** {dataset_name}
+        - **Rows:** {len(df):,}
+        - **Variables:** {len(mapping["predictors"]) + 1}
+
+        You can now use this dataset in the main analysis interface.
+        """)
+
+        # Option to upload another dataset
+        if st.button("📤 Upload Another Dataset", key="success_upload_another"):
+            # Clear all upload-related session state
+            for key in list(st.session_state.keys()):
+                if key.startswith("upload") or key in [
+                    "uploaded_df",
+                    "uploaded_bytes",
+                    "uploaded_filename",
+                    "variable_info",
+                    "suggestions",
+                    "variable_mapping",
+                ]:
+                    st.session_state.pop(key, None)
+            st.session_state["upload_step"] = 1
+            st.rerun()
+
+        return  # Don't show save button again
+
     # Navigation and save
     col1, col2 = st.columns([1, 1])
     with col1:
-        if st.button("⬅️ Back to Mapping"):
-            st.session_state["upload_step"] = 4
+        if st.button("⬅️ Back to Detection", key="review_back"):
+            st.session_state["upload_step"] = 3
             st.rerun()
 
     with col2:
         # Can only save if no critical errors and dataset name provided
         can_save = validation_result["summary"]["errors"] == 0 and dataset_name.strip()
 
-        if st.button("💾 Save Dataset", disabled=not can_save, type="primary"):
-            # Create progress tracking UI elements
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            log_expander = st.expander("📋 Processing Log", expanded=True)
+        if st.button("💾 Save Dataset", disabled=not can_save, type="primary", key="review_save"):
+            # Show spinner during save (Streamlit renders this immediately)
+            with st.spinner("💾 Saving dataset..."):
+                try:
+                    # Prepare metadata
+                    metadata = {
+                        "dataset_name": dataset_name,
+                        "variable_types": variable_info,
+                        "variable_mapping": mapping,
+                        "validation_result": validation_result,
+                    }
 
-            # Store messages in session_state to avoid unbounded DOM growth
-            if "upload_log_messages" not in st.session_state:
-                st.session_state["upload_log_messages"] = []
+                    # Run save
+                    success, message, upload_id = storage.save_upload(
+                        file_bytes=st.session_state["uploaded_bytes"],
+                        original_filename=st.session_state["uploaded_filename"],
+                        metadata=metadata,
+                    )
 
-            def progress_callback(progress: int, message: str) -> None:
-                """Update progress UI with real-time status."""
-                # st.progress() expects int 0-100, not float 0.0-1.0
-                progress_bar.progress(progress)
-                status_text.info(f"🔄 {message}")
-                # Store message in session_state (bounded list)
-                st.session_state["upload_log_messages"].append(message)
-                # Keep only last 50 messages to prevent unbounded growth
-                if len(st.session_state["upload_log_messages"]) > 50:
-                    st.session_state["upload_log_messages"] = st.session_state["upload_log_messages"][-50:]
+                    if success:
+                        # Store success state to prevent re-saves
+                        st.session_state["upload_success"] = True
+                        st.session_state["upload_result"] = {
+                            "success": success,
+                            "message": message,
+                            "upload_id": upload_id,
+                        }
+                        st.balloons()
+                        st.rerun()  # Rerun to show success state
+                    else:
+                        st.error(f"❌ {message}")
 
-            try:
-                # Prepare metadata
-                metadata = {
-                    "dataset_name": dataset_name,
-                    "variable_types": variable_info,
-                    "variable_mapping": mapping,
-                    "validation_result": validation_result,
-                }
+                except Exception as e:
+                    import traceback
 
-                # Pass callback to get real progress updates
-                success, message, upload_id = storage.save_upload(
-                    file_bytes=st.session_state["uploaded_bytes"],
-                    original_filename=st.session_state["uploaded_filename"],
-                    metadata=metadata,
-                    progress_cb=progress_callback,  # Real progress, not staged
-                )
+                    st.error(f"❌ Error saving dataset: {e}")
+                    with st.expander("Error details"):
+                        st.code(traceback.format_exc())
 
-                if success:
-                    status_text.success("✅ Dataset saved successfully!")
-                    # Render all log messages from session_state
-                    with log_expander:
-                        for msg in st.session_state.get("upload_log_messages", []):
-                            st.text(f"→ {msg}")
-                        st.success("✅ Processing complete!")
-                    st.balloons()
-                    # Clear log messages after successful upload
-                    st.session_state["upload_log_messages"] = []
-
-                    st.markdown(f"""
-                    **Dataset saved successfully!**
-
-                    - **Upload ID:** `{upload_id}`
-                    - **Name:** {dataset_name}
-                    - **Rows:** {len(df):,}
-                    - **Variables:** {len(mapping["predictors"]) + 1}
-
-                    You can now use this dataset in the main analysis interface.
-                    """)
-
-                    # Clear session state
-                    if st.button("Upload Another Dataset"):
-                        for key in list(st.session_state.keys()):
-                            if key.startswith("upload"):
-                                del st.session_state[key]
-                        st.rerun()
-                else:
-                    status_text.error(f"❌ {message}")
-                    # Render log messages from session_state
-                    with log_expander:
-                        for msg in st.session_state.get("upload_log_messages", []):
-                            st.text(f"→ {msg}")
-                        st.error(f"❌ Save failed: {message}")
-
-            except Exception as e:
-                import traceback
-
-                progress_bar.progress(100)  # Use int, not float
-                status_text.error(f"❌ Error: {str(e)}")
-                # Render log messages from session_state
-                with log_expander:
-                    for msg in st.session_state.get("upload_log_messages", []):
-                        st.text(f"→ {msg}")
-                    st.error(f"❌ Error during processing: {str(e)}")
-                    st.code(traceback.format_exc())
+        # Clear session state
+        if st.button("Upload Another Dataset", key="error_upload_another"):
+            for key in list(st.session_state.keys()):
+                if key.startswith("upload"):
+                    del st.session_state[key]
+            st.rerun()
 
 
 def render_zip_review_step():
@@ -576,7 +660,9 @@ def render_zip_review_step():
     )
 
     # Process ZIP file
-    if st.button("🚀 Process & Save Multi-Table Dataset", type="primary", disabled=not dataset_name.strip()):
+    if st.button(
+        "🚀 Process & Save Multi-Table Dataset", type="primary", disabled=not dataset_name.strip(), key="zip_process"
+    ):
         # Create progress tracking UI elements
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -710,7 +796,7 @@ def render_zip_review_step():
             """)
 
             # Clear session state
-            if st.button("Upload Another Dataset"):
+            if st.button("Upload Another Dataset", key="zip_success_another"):
                 for key in list(st.session_state.keys()):
                     if key.startswith("upload") or key == "is_zip_upload":
                         del st.session_state[key]
@@ -719,7 +805,7 @@ def render_zip_review_step():
             st.error(f"❌ {message}")
 
     # Back button
-    if st.button("⬅️ Back to Upload"):
+    if st.button("⬅️ Back to Upload", key="zip_back"):
         st.session_state["upload_step"] = 1
         st.rerun()
 
