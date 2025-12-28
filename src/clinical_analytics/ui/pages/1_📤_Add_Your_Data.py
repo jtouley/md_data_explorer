@@ -391,19 +391,56 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
     patient_id_col = mapping["patient_id"]
     outcome_col = mapping["outcome"]
 
-    validation_result = DataQualityValidator.validate_complete(df, id_column=patient_id_col, outcome_column=outcome_col)
+    # Get inferred granularity from variable detection (default to unknown for V1)
+    granularity = "unknown"  # Default for V1 MVP - duplicates are warnings unless explicitly patient-level
+    # TODO: Extract from variable_info or mapping if user explicitly selects granularity
 
-    # Show validation results
+    # Run final validation with mapping and granularity
+    validation_result = DataQualityValidator.validate_complete(
+        df, id_column=patient_id_col, outcome_column=outcome_col, granularity=granularity
+    )
+
+    # Show validation results (schema-first approach)
     if validation_result["is_valid"]:
-        st.success("✅ All validation checks passed! Dataset is ready to use.")
+        st.success("✅ Schema contract validated! Dataset is ready to use.")
+        if validation_result["summary"]["warnings"] > 0:
+            st.info(
+                f"ℹ️ {validation_result['summary']['warnings']} data quality warning(s) found. "
+                "You can proceed, but review warnings below."
+            )
     else:
-        error_count = validation_result["summary"]["errors"]
-        warning_count = validation_result["summary"]["warnings"]
+        st.error(f"❌ {validation_result['summary']['errors']} schema error(s) found. Please fix before saving.")
 
-        if error_count > 0:
-            st.error(f"❌ {error_count} critical error(s) found. Please fix before saving.")
-        else:
-            st.warning(f"⚠️ {warning_count} warning(s) found. You can proceed, but be aware of these issues.")
+    # Show schema errors (blocking) - NEW
+    if validation_result.get("schema_errors"):
+        with st.expander(f"❌ Schema Errors ({len(validation_result['schema_errors'])})", expanded=True):
+            for error in validation_result["schema_errors"]:
+                # Handle both string errors and dict errors
+                if isinstance(error, str):
+                    st.error(f"**Schema Error**: {error}")
+                else:
+                    st.error(f"**{error.get('type', 'error')}**: {error.get('message', str(error))}")
+                st.caption("💡 This can be fixed by mapping a different column or cleaning your data.")
+
+    # Show quality warnings (non-blocking) - NEW
+    if validation_result.get("quality_warnings"):
+        with st.expander(f"⚠️ Data Quality Warnings ({len(validation_result['quality_warnings'])})", expanded=False):
+            for warning in validation_result["quality_warnings"]:
+                st.warning(f"**{warning.get('type', 'warning')}**: {warning.get('message', str(warning))}")
+                if warning.get("actionable"):
+                    st.caption("💡 You can exclude this column in the mapping step or proceed anyway.")
+
+    # Keep existing issues display for backward compatibility (if new format not available)
+    if validation_result.get("issues") and not (
+        validation_result.get("schema_errors") or validation_result.get("quality_warnings")
+    ):
+        with st.expander(f"View Issues ({len(validation_result['issues'])})"):
+            for issue in validation_result["issues"]:
+                severity = issue["severity"]
+                if severity == "error":
+                    st.error(f"❌ **{issue['type']}**: {issue['message']}")
+                else:
+                    st.warning(f"⚠️ **{issue['type']}**: {issue['message']}")
 
     # Show final summary
     col1, col2, col3 = st.columns(3)
@@ -426,13 +463,6 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         value=default_name,
         help="This name will be used to identify your dataset in the analysis interface",
     )
-
-    # Show issues if any
-    if validation_result["issues"]:
-        with st.expander(f"⚠️ View Validation Issues ({len(validation_result['issues'])})"):
-            for issue in validation_result["issues"]:
-                severity_emoji = "❌" if issue["severity"] == "error" else "⚠️"
-                st.markdown(f"{severity_emoji} **{issue['type']}**: {issue['message']}")
 
     # Navigation and save
     col1, col2 = st.columns([1, 1])

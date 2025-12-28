@@ -481,10 +481,19 @@ class UserDatasetStorage:
             if progress_cb:
                 progress_cb(80, "Saving metadata...")
 
+            # Extract validation_result from metadata BEFORE merging
+            # This prevents duplication - canonical location is metadata["validation"]
+            validation_result_from_ui = metadata.pop("validation_result", None)
+
             # Store canonical quality warnings at validation.quality_warnings
-            # Use pop() to avoid duplicates if validation_result was already stored
+            # Use quality_warnings from UI validation_result if available,
+            # otherwise from internal validation
             quality_warnings = []
-            if schema_validation_result:
+            if validation_result_from_ui:
+                # UI validation_result is the source of truth
+                quality_warnings = validation_result_from_ui.get("quality_warnings", [])
+            elif schema_validation_result:
+                # Fallback to internal validation if UI didn't provide it
                 quality_warnings = validation_result.get("quality_warnings", [])
 
             full_metadata = {
