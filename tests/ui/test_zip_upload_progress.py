@@ -3,7 +3,6 @@ Tests for ZIP upload progress callback functionality.
 """
 
 import io
-import os
 import zipfile
 
 import pytest

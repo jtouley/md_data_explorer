@@ -3,7 +3,6 @@ Tests for user dataset storage.
 """
 
 import pandas as pd
-import pytest
 
 from clinical_analytics.ui.storage.user_datasets import UploadSecurityValidator, UserDatasetStorage
 

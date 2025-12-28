@@ -330,7 +330,9 @@ class DataQualityValidator:
                     all_issues.append({"severity": "error", "type": "schema_error", "message": error})
         except Exception as e:
             schema_errors.append(f"Schema validation failed: {str(e)}")
-            all_issues.append({"severity": "error", "type": "schema_error", "message": f"Schema validation failed: {str(e)}"})
+            all_issues.append(
+                {"severity": "error", "type": "schema_error", "message": f"Schema validation failed: {str(e)}"}
+            )
 
         # Quality validation
 
@@ -344,8 +346,7 @@ class DataQualityValidator:
                     # Convert to warning instead of error for non-patient-level granularity
                     issue["severity"] = "warning"
                     issue["message"] = (
-                        f"{issue['count']} duplicate patient IDs found. "
-                        f"This is expected for {granularity} granularity."
+                        f"{issue['count']} duplicate patient IDs found. This is expected for {granularity} granularity."
                     )
                     quality_warnings.append(issue)
                 elif issue["severity"] == "warning":
