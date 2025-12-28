@@ -322,25 +322,42 @@ def render_predictor_analysis(result: dict) -> None:
     st.markdown("### Results")
     st.markdown(f"**What predicts {outcome_col}?**")
 
-    # Show significant predictors
+    # Show significant predictors with enhanced interpretation
     significant = result["significant_predictors"]
+    sample_size = result.get("sample_size")
 
     if len(significant) > 0:
         st.success(f"✅ Found {len(significant)} significant predictor(s)")
 
+        st.markdown("### 📖 What does this mean?")
         for pred in significant:
             var = pred["variable"]
             or_val = pred["odds_ratio"]
+            ci_lower = pred.get("ci_lower", 0.0)
+            ci_upper = pred.get("ci_upper", 0.0)
             p_val = pred["p_value"]
 
-            if or_val > 1:
-                direction = "increases"
-                pct = (or_val - 1) * 100
-            else:
-                direction = "decreases"
-                pct = (1 - or_val) * 100
+            # Get value mapping if available (from column metadata)
+            value_mapping = None
+            try:
+                meta = parse_column_name(var)
+                if meta.value_mapping:
+                    value_mapping = meta.value_mapping
+            except Exception:
+                pass
 
-            st.markdown(f"**{var}** {direction} the odds by ~{pct:.0f}% (p={p_val:.4f})")
+            # Use enhanced interpretation with value mapping and warnings
+            interpretation = ResultInterpreter.interpret_odds_ratio(
+                or_value=or_val,
+                ci_lower=ci_lower,
+                ci_upper=ci_upper,
+                p_value=p_val,
+                variable_name=var,
+                value_mapping=value_mapping,
+                sample_size=sample_size,
+            )
+            st.markdown(interpretation)
+            st.divider()
 
     else:
         st.info("ℹ️ No significant predictors found at p<0.05")
