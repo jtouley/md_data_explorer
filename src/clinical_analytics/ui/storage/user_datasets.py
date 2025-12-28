@@ -303,6 +303,19 @@ class UserDatasetStorage:
             original_filename: Original filename
             metadata: Upload metadata (variable types, mappings, etc.)
             progress_cb: Optional callback(progress: int, message: str) for UI updates (0-100, not 0.0-1.0)
+                NOTE: This couples storage to UI (technical debt). Future: emit structured events instead.
+
+        Returns:
+            Tuple of (success, message, upload_id)
+        """
+        """
+        Save uploaded file with security validation.
+
+        Args:
+            file_bytes: File content
+            original_filename: Original filename
+            metadata: Upload metadata (variable types, mappings, etc.)
+            progress_cb: Optional callback(progress: int, message: str) for UI updates (0-100, not 0.0-1.0)
 
         Returns:
             Tuple of (success, message, upload_id)
@@ -327,18 +340,13 @@ class UserDatasetStorage:
             # Sanitize filename
             safe_filename = UploadSecurityValidator.sanitize_filename(original_filename)
 
-            # Extract dataset_name from metadata (user-provided friendly name)
+            # Extract dataset_name from metadata (user-provided friendly name) - for display only
+            # CRITICAL: upload_id is the immutable storage key, dataset_name is metadata only
             dataset_name = metadata.get("dataset_name")
             if not dataset_name:
                 # Fallback to sanitized original filename (without extension)
                 dataset_name = UploadSecurityValidator.sanitize_filename(original_filename)
                 dataset_name = Path(dataset_name).stem  # Remove extension
-
-            # Sanitize the friendly name for filesystem safety
-            safe_dataset_name = UploadSecurityValidator.sanitize_filename(dataset_name)
-            # Ensure it's not empty and doesn't conflict
-            if not safe_dataset_name or safe_dataset_name == ".":
-                safe_dataset_name = "dataset"
 
             # Convert to CSV format (normalize all uploads to CSV)
             file_ext = Path(original_filename).suffix.lower()
@@ -346,19 +354,19 @@ class UserDatasetStorage:
             if progress_cb:
                 progress_cb(30, "Reading file...")
 
+            # Always use upload_id as immutable storage key (avoids collisions, rename issues)
+            csv_filename = f"{upload_id}.csv"
+            csv_path = self.raw_dir / csv_filename
+
+            # Use atomic write (temp file + rename) to avoid TOCTOU race conditions
+            import tempfile
+
+            temp_path = self.raw_dir / f".{upload_id}.tmp"
+
             if file_ext == ".csv":
-                # Already CSV, save with friendly name
-                csv_filename = f"{safe_dataset_name}.csv"
-                csv_path = self.raw_dir / csv_filename
-
-                # Handle filename conflicts (if user re-uploads same name)
-                if csv_path.exists():
-                    # Append upload_id suffix to make unique
-                    csv_filename = f"{safe_dataset_name}_{upload_id}.csv"
-                    csv_path = self.raw_dir / csv_filename
-
-                csv_path.write_bytes(file_bytes)
-                df = pd.read_csv(csv_path)
+                # Already CSV - write directly to temp then atomic rename
+                temp_path.write_bytes(file_bytes)
+                df = pd.read_csv(temp_path)
 
             elif file_ext in {".xlsx", ".xls"}:
                 # Excel file - convert to CSV
@@ -369,15 +377,8 @@ class UserDatasetStorage:
                 if progress_cb:
                     progress_cb(50, "Converting file format...")
 
-                csv_filename = f"{safe_dataset_name}.csv"
-                csv_path = self.raw_dir / csv_filename
-
-                # Handle filename conflicts
-                if csv_path.exists():
-                    csv_filename = f"{safe_dataset_name}_{upload_id}.csv"
-                    csv_path = self.raw_dir / csv_filename
-
-                df.to_csv(csv_path, index=False)
+                # Write to temp file first
+                df.to_csv(temp_path, index=False)
 
             elif file_ext == ".sav":
                 # SPSS file - convert to CSV
@@ -390,18 +391,15 @@ class UserDatasetStorage:
                 if progress_cb:
                     progress_cb(50, "Converting file format...")
 
-                csv_filename = f"{safe_dataset_name}.csv"
-                csv_path = self.raw_dir / csv_filename
-
-                # Handle filename conflicts
-                if csv_path.exists():
-                    csv_filename = f"{safe_dataset_name}_{upload_id}.csv"
-                    csv_path = self.raw_dir / csv_filename
-
-                df.to_csv(csv_path, index=False)
+                # Write to temp file first
+                df.to_csv(temp_path, index=False)
 
             else:
                 return False, f"Unsupported file type: {file_ext}", None
+
+            # Atomic rename: temp file → final file (single filesystem operation)
+            # This eliminates TOCTOU race window between exists() check and write
+            temp_path.replace(csv_path)
 
             # Validate schema if variable mapping is provided
             # This enforces the UnifiedCohort schema contract at save-time
@@ -502,9 +500,9 @@ class UserDatasetStorage:
             full_metadata = {
                 "upload_id": upload_id,
                 "original_filename": safe_filename,
-                "stored_filename": csv_filename,  # Friendly name (may change with collisions)
-                "stored_relpath": str(csv_path.relative_to(self.raw_dir)),  # Stable relative path pointer
-                "dataset_name": dataset_name,  # User-provided friendly name
+                # CRITICAL: upload_id is the immutable storage key
+                # csv_filename is always {upload_id}.csv (never user-controlled)
+                "dataset_name": dataset_name,  # User-provided friendly name (display metadata only)
                 "upload_timestamp": datetime.now().isoformat(),
                 "file_size_bytes": len(file_bytes),
                 "file_format": file_ext.lstrip("."),
@@ -554,28 +552,31 @@ class UserDatasetStorage:
         """
         Load uploaded dataset.
 
-        Uses friendly filename from metadata if available, falls back to upload_id.
+        Uses upload_id as immutable storage key: always {upload_id}.csv
+        Backward compatibility: checks for old friendly-name files if upload_id.csv doesn't exist.
 
         Args:
-            upload_id: Upload identifier
+            upload_id: Upload identifier (immutable storage key)
 
         Returns:
             DataFrame or None if not found
         """
-        # Get metadata to check for friendly filename
-        # Use stored_relpath (stable pointer) if available, else stored_filename, else fallback
-        metadata = self.get_upload_metadata(upload_id)
-        if metadata:
-            if "stored_relpath" in metadata:
-                csv_path = self.raw_dir / metadata["stored_relpath"]
-            elif "stored_filename" in metadata:
-                csv_path = self.raw_dir / metadata["stored_filename"]
-            else:
-                # Fallback to old naming convention (for backward compatibility)
-                csv_path = self.raw_dir / f"{upload_id}.csv"
-        else:
-            # No metadata - fallback to old naming convention
-            csv_path = self.raw_dir / f"{upload_id}.csv"
+        # Primary: upload_id is the immutable storage key
+        csv_path = self.raw_dir / f"{upload_id}.csv"
+
+        # Backward compatibility: check for old friendly-name files
+        if not csv_path.exists():
+            metadata = self.get_upload_metadata(upload_id)
+            if metadata:
+                # Try old stored_relpath or stored_filename (legacy uploads)
+                if "stored_relpath" in metadata:
+                    legacy_path = self.raw_dir / metadata["stored_relpath"]
+                    if legacy_path.exists():
+                        csv_path = legacy_path
+                elif "stored_filename" in metadata:
+                    legacy_path = self.raw_dir / metadata["stored_filename"]
+                    if legacy_path.exists():
+                        csv_path = legacy_path
 
         if not csv_path.exists():
             return None

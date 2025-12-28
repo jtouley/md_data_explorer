@@ -480,15 +480,21 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
             progress_bar = st.progress(0)
             status_text = st.empty()
             log_expander = st.expander("📋 Processing Log", expanded=True)
-            log_container = log_expander.container()
+
+            # Store messages in session_state to avoid unbounded DOM growth
+            if "upload_log_messages" not in st.session_state:
+                st.session_state["upload_log_messages"] = []
 
             def progress_callback(progress: int, message: str) -> None:
                 """Update progress UI with real-time status."""
                 # st.progress() expects int 0-100, not float 0.0-1.0
                 progress_bar.progress(progress)
                 status_text.info(f"🔄 {message}")
-                with log_container:
-                    st.text(f"→ {message}")
+                # Store message in session_state (bounded list)
+                st.session_state["upload_log_messages"].append(message)
+                # Keep only last 50 messages to prevent unbounded growth
+                if len(st.session_state["upload_log_messages"]) > 50:
+                    st.session_state["upload_log_messages"] = st.session_state["upload_log_messages"][-50:]
 
             try:
                 # Prepare metadata
@@ -509,9 +515,14 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
 
                 if success:
                     status_text.success("✅ Dataset saved successfully!")
-                    with log_container:
+                    # Render all log messages from session_state
+                    with log_expander:
+                        for msg in st.session_state.get("upload_log_messages", []):
+                            st.text(f"→ {msg}")
                         st.success("✅ Processing complete!")
                     st.balloons()
+                    # Clear log messages after successful upload
+                    st.session_state["upload_log_messages"] = []
 
                     st.markdown(f"""
                     **Dataset saved successfully!**
@@ -532,7 +543,10 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
                         st.rerun()
                 else:
                     status_text.error(f"❌ {message}")
-                    with log_container:
+                    # Render log messages from session_state
+                    with log_expander:
+                        for msg in st.session_state.get("upload_log_messages", []):
+                            st.text(f"→ {msg}")
                         st.error(f"❌ Save failed: {message}")
 
             except Exception as e:
@@ -540,7 +554,10 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
 
                 progress_bar.progress(100)  # Use int, not float
                 status_text.error(f"❌ Error: {str(e)}")
-                with log_container:
+                # Render log messages from session_state
+                with log_expander:
+                    for msg in st.session_state.get("upload_log_messages", []):
+                        st.text(f"→ {msg}")
                     st.error(f"❌ Error during processing: {str(e)}")
                     st.code(traceback.format_exc())
 
@@ -564,7 +581,10 @@ def render_zip_review_step():
         progress_bar = st.progress(0)
         status_text = st.empty()
         log_expander = st.expander("📋 Processing Log", expanded=True)
-        log_container = log_expander.container()
+
+        # Store messages in session_state to avoid unbounded DOM growth
+        if "upload_log_messages" not in st.session_state:
+            st.session_state["upload_log_messages"] = []
 
         def progress_callback(step, total_steps, message, details):
             """Update progress UI with current step information."""
@@ -572,37 +592,29 @@ def render_zip_review_step():
             progress_bar.progress(progress)
             status_text.info(f"🔄 {message}")
 
-            # Add to log
-            with log_container:
-                if details:
-                    if "table_name" in details:
-                        table_info = f"**{details['table_name']}**"
-                        if "rows" in details:
-                            table_info += f" - {details['rows']:,} rows, {details['cols']} cols"
-                        if "progress" in details:
-                            table_info += f" ({details['progress']})"
-                        st.text(f"✓ {table_info}")
-                    elif "tables_found" in details:
-                        st.text(f"📦 Found {details['tables_found']} tables in ZIP")
-                        if "table_names" in details:
-                            st.text(
-                                f"   Tables: {', '.join(details['table_names'][:5])}"
-                                + (
-                                    f" ... and {len(details['table_names']) - 5} more"
-                                    if len(details["table_names"]) > 5
-                                    else ""
-                                )
-                            )
-                    elif "relationships" in details:
-                        st.text(f"🔗 Detected {len(details['relationships'])} relationships")
-                        for rel in details["relationships"][:3]:  # Show first 3
-                            st.text(f"   • {rel}")
-                        if len(details["relationships"]) > 3:
-                            st.text(f"   ... and {len(details['relationships']) - 3} more")
-                    else:
-                        st.text(f"→ {message}")
+            # Store message in session_state (bounded list)
+            log_msg = message
+            if details:
+                if "table_name" in details:
+                    table_info = f"**{details['table_name']}**"
+                    if "rows" in details:
+                        table_info += f" - {details['rows']:,} rows, {details['cols']} cols"
+                    if "progress" in details:
+                        table_info += f" ({details['progress']})"
+                    log_msg = f"✓ {table_info}"
+                elif "tables_found" in details:
+                    log_msg = f"📦 Found {details['tables_found']} tables in ZIP"
+                elif "relationships" in details:
+                    log_msg = f"🔗 Detected {len(details['relationships'])} relationships"
                 else:
-                    st.text(f"→ {message}")
+                    log_msg = f"→ {message}"
+            else:
+                log_msg = f"→ {message}"
+
+            st.session_state["upload_log_messages"].append(log_msg)
+            # Keep only last 50 messages to prevent unbounded growth
+            if len(st.session_state["upload_log_messages"]) > 50:
+                st.session_state["upload_log_messages"] = st.session_state["upload_log_messages"][-50:]
 
         # Prepare metadata
         metadata = {"dataset_name": dataset_name}
@@ -618,7 +630,10 @@ def render_zip_review_step():
         except Exception as e:
             import traceback
 
-            with log_container:
+            # Render log messages from session_state
+            with log_expander:
+                for msg in st.session_state.get("upload_log_messages", []):
+                    st.text(msg)
                 st.error(f"❌ Error during processing: {str(e)}")
                 st.code(traceback.format_exc())
             status_text.error(f"❌ Processing failed: {str(e)}")
@@ -629,9 +644,14 @@ def render_zip_review_step():
         if success:
             progress_bar.progress(1.0)
             status_text.success(f"✅ {message}")
-            with log_container:
+            # Render all log messages from session_state
+            with log_expander:
+                for msg in st.session_state.get("upload_log_messages", []):
+                    st.text(msg)
                 st.success("✅ Processing complete!")
             st.balloons()
+            # Clear log messages after successful upload
+            st.session_state["upload_log_messages"] = []
 
             # Load metadata to show details
             upload_metadata = storage.get_upload_metadata(upload_id)
