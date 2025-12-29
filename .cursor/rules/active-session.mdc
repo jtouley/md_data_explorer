@@ -1,30 +1,26 @@
-# Active Session: chat-first-ux-pr-ready
+---
+description: Active development session
+globs: []
+alwaysApply: true
+---
+
+# Active Session: multi-table-semantic-layer-fix
 
 ## Session File
-.context/sessions/chat-first-ux-pr-ready.yaml
+.context/sessions/multi-table-semantic-layer-fix.yaml
 
 ## Resume Prompt
-Resume session: chat-first-ux-pr-ready
+Resume session: multi-table-semantic-layer-fix
 
-Context: Completed all 7 phases of Chat-First UX implementation. PR #9 created and ready for review.
+Problem: When uploading multi-table ZIP files (e.g., MIMIC-IV), only the unified cohort table was being registered in the semantic layer, not the individual tables.
 
-Current status:
-- All phases complete (1-7)
-- 71 new tests, all passing
-- PR #9: https://github.com/jtouley/md_data_explorer/pull/9
-- Branch: feat/chat-first-ux
-- 16 commits ahead of main
+Completed:
+1. Modified save_zip_upload() in user_datasets.py to save individual tables to {upload_id}_tables/ directory
+2. Modified _maybe_init_semantic() in uploaded/definition.py to register all individual tables in DuckDB
 
-Key accomplishments:
-- Chat-first UX with auto-execution and idempotency
-- Column intelligence with alias collision handling
-- Caching with correct invalidation
-- Low-confidence feedback UI
-- Enhanced result interpretation
-- Structured logging
-- Bug fixes (patient_id persistence, None handling, etc.)
+Remaining:
+1. Fix list_uploads() to deduplicate by dataset_name (keep most recent upload)
+   - Current issue: When re-uploading with same dataset_name, old upload is used because dictionary overwrites with oldest entry
+   - Solution: Add deduplication logic to list_uploads() method
 
-Next steps:
-- Await PR review
-- Address any review feedback
-- Monitor for issues after merge
+Apply the deduplication fix to list_uploads() in src/clinical_analytics/ui/storage/user_datasets.py

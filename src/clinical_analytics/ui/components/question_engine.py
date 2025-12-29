@@ -13,6 +13,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from clinical_analytics.core.nl_query_engine import QueryIntent
+
 
 class AnalysisIntent(Enum):
     """Inferred analysis intentions (hidden from user)."""
@@ -54,6 +56,7 @@ class AnalysisContext:
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
     match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
+    confidence: float = 0.0  # Confidence from NL query parsing (for auto-execution logic)
 
     def is_complete_for_intent(self) -> bool:
         """Check if we have enough information for the inferred analysis."""
@@ -366,6 +369,204 @@ class QuestionEngine:
             st.success("✅ I have everything I need to run the analysis!")
 
     @staticmethod
+    def _show_progressive_feedback(nl_engine, query: str) -> QueryIntent | None:
+        """Parse query with progressive feedback showing each tier.
+
+        Uses timeout to prevent long waits on LLM fallback.
+        Uses constants from nl_query_config (not magic values).
+
+        Args:
+            nl_engine: NLQueryEngine instance
+            query: User's query string
+
+        Returns:
+            QueryIntent if parsing succeeds, None otherwise
+        """
+        from contextlib import contextmanager
+
+        from clinical_analytics.core.nl_query_config import (
+            ENABLE_PROGRESSIVE_FEEDBACK,
+            TIER_1_PATTERN_MATCH_THRESHOLD,
+            TIER_2_SEMANTIC_MATCH_THRESHOLD,
+            TIER_TIMEOUT_SECONDS,
+        )
+
+        if not ENABLE_PROGRESSIVE_FEEDBACK:
+            # Fallback to simple parsing without feedback
+            return nl_engine.parse_query(query)
+
+        @contextmanager
+        def timeout_context(seconds: float):
+            """Timeout using threading (cross-platform, thread-safe)."""
+            import threading
+
+            timed_out = {"value": False}
+
+            def set_timeout():
+                timed_out["value"] = True
+
+            timer = threading.Timer(seconds, set_timeout)
+            timer.start()
+            try:
+                yield timed_out
+            finally:
+                timer.cancel()
+
+        import structlog
+
+        logger = structlog.get_logger()
+        parsing_attempts = []
+        final_intent = None  # Don't reuse variable name across tiers
+        best_partial_intent = None  # Track best partial result for fallback
+
+        def track_attempt(tier: str, tier_intent: QueryIntent | None, threshold: float) -> dict:
+            """Track parsing attempt (DRY helper)."""
+            return {
+                "tier": tier,
+                "result": "success" if tier_intent and tier_intent.confidence >= threshold else "failed",
+                "confidence": tier_intent.confidence if tier_intent else 0.0,
+            }
+
+        with st.status("🔍 Analyzing your question...", expanded=True) as status:
+            # Tier 1: Pattern matching (fast, no timeout needed)
+            status.update(label="Trying pattern matching...")
+            try:
+                tier1_intent = nl_engine._pattern_match(query)
+                attempt = track_attempt("pattern_match", tier1_intent, TIER_1_PATTERN_MATCH_THRESHOLD)
+                parsing_attempts.append(attempt)
+
+                if tier1_intent and tier1_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
+                    tier1_intent.parsing_tier = "pattern_match"
+                    tier1_intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via pattern matching (confidence: {tier1_intent.confidence:.0%})")
+                    return tier1_intent
+                elif tier1_intent and tier1_intent.intent_type != "DESCRIBE":
+                    # Save as potential fallback if it's more specific than DESCRIBE
+                    best_partial_intent = tier1_intent
+                    best_partial_intent.parsing_tier = "pattern_match_partial"
+                    logger.debug(
+                        "pattern_match_saved_as_fallback",
+                        intent_type=tier1_intent.intent_type,
+                        confidence=tier1_intent.confidence,
+                    )
+            except Exception as e:
+                logger.warning("pattern_match_failed", error=str(e))
+                parsing_attempts.append({"tier": "pattern_match", "result": "error", "error": str(e)})
+
+            # Tier 2: Semantic search (may be slow, but usually < 1s)
+            status.update(label="Trying semantic search...")
+            try:
+                with timeout_context(TIER_TIMEOUT_SECONDS) as timeout_state:
+                    tier2_intent = nl_engine._semantic_match(query)
+                    if timeout_state["value"]:
+                        raise TimeoutError("Semantic match exceeded timeout")
+                attempt = track_attempt("semantic_match", tier2_intent, TIER_2_SEMANTIC_MATCH_THRESHOLD)
+                parsing_attempts.append(attempt)
+
+                if tier2_intent and tier2_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
+                    tier2_intent.parsing_tier = "semantic_match"
+                    tier2_intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via semantic search (confidence: {tier2_intent.confidence:.0%})")
+                    return tier2_intent
+            except TimeoutError:
+                status.update(label="⏱️ Semantic search timed out, trying advanced parsing...")
+                logger.warning("semantic_match_timeout", query=query)
+                parsing_attempts.append({"tier": "semantic_match", "result": "timeout"})
+            except Exception as e:
+                logger.warning("semantic_match_failed", error=str(e))
+                parsing_attempts.append({"tier": "semantic_match", "result": "error", "error": str(e)})
+
+            # Tier 3: LLM fallback (can be very slow - 3-5s)
+            status.update(label="Trying advanced parsing...")
+            try:
+                with timeout_context(TIER_TIMEOUT_SECONDS) as timeout_state:
+                    tier3_intent = nl_engine._llm_parse(query)
+                    if timeout_state["value"]:
+                        raise TimeoutError("LLM parse exceeded timeout")
+                attempt = track_attempt("llm_fallback", tier3_intent, 0.0)  # LLM has no threshold
+                parsing_attempts.append(attempt)
+
+                if tier3_intent:
+                    tier3_intent.parsing_tier = "llm_fallback"
+                    tier3_intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via advanced parsing (confidence: {tier3_intent.confidence:.0%})")
+                    return tier3_intent
+                final_intent = tier3_intent  # May be None
+            except TimeoutError:
+                status.update(label="❌ Advanced parsing timed out")
+                logger.warning("llm_parse_timeout", query=query)
+                parsing_attempts.append({"tier": "llm_fallback", "result": "timeout"})
+            except Exception as e:
+                logger.warning("llm_parse_failed", error=str(e))
+                parsing_attempts.append({"tier": "llm_fallback", "result": "error", "error": str(e)})
+
+            status.update(label="❌ Could not understand query")
+            # Return intent with diagnostics even if all tiers failed
+            # BUT: Use best partial result if it's more specific than DESCRIBE
+            if best_partial_intent and best_partial_intent.intent_type != "DESCRIBE":
+                # Use the partial pattern match - it's better than nothing
+                best_partial_intent.parsing_attempts = parsing_attempts
+                status.update(
+                    label=f"⚠️ Using partial match: {best_partial_intent.intent_type} "
+                    f"(confidence: {best_partial_intent.confidence:.0%})"
+                )
+                logger.info(
+                    "using_partial_pattern_match",
+                    intent_type=best_partial_intent.intent_type,
+                    confidence=best_partial_intent.confidence,
+                    query=query,
+                )
+                return best_partial_intent
+            elif final_intent is None:
+                # Create a failure intent if all tiers failed
+                from clinical_analytics.core.nl_query_engine import QueryIntent
+
+                final_intent = QueryIntent(
+                    intent_type="DESCRIBE",
+                    confidence=0.0,
+                    parsing_attempts=parsing_attempts,
+                    failure_reason="All parsing tiers failed",
+                    suggestions=nl_engine._generate_suggestions(query),
+                )
+            else:
+                final_intent.parsing_attempts = parsing_attempts
+                final_intent.failure_reason = "All parsing tiers failed"
+                final_intent.suggestions = nl_engine._generate_suggestions(query)
+            return final_intent
+
+    @staticmethod
+    def _format_diagnostic_error(intent: QueryIntent) -> str:
+        """Format structured diagnostics into user-friendly message.
+
+        Engine returns structured diagnostics, UI formats for display.
+        This avoids duplication - single formatting layer.
+
+        Args:
+            intent: QueryIntent with diagnostics (parsing_attempts, failure_reason, suggestions)
+
+        Returns:
+            Formatted error message with actionable suggestions
+        """
+        parts = ["❌ Could not understand your query."]
+
+        if intent.suggestions:
+            parts.append("\n💡 Suggestions:")
+            for suggestion in intent.suggestions:
+                parts.append(f"  • {suggestion}")
+
+        if intent.parsing_attempts:
+            parts.append("\n🔍 What I tried:")
+            for attempt in intent.parsing_attempts:
+                tier_name = attempt.get("tier", "unknown")
+                result = attempt.get("result", "failed")
+                parts.append(f"  • {tier_name}: {result}")
+
+        if intent.failure_reason:
+            parts.append(f"\n⚠️ Reason: {intent.failure_reason}")
+
+        return "\n".join(parts)
+
+    @staticmethod
     def ask_free_form_question(
         semantic_layer, dataset_id: str | None = None, upload_id: str | None = None
     ) -> AnalysisContext | None:
@@ -406,30 +607,129 @@ class QuestionEngine:
         if not query:
             return None
 
+        # Log query entry
+        import structlog
+
+        logger = structlog.get_logger()
+        logger.info(
+            "nl_query_entered",
+            query=query,
+            dataset_id=dataset_id,
+            upload_id=upload_id,
+            query_length=len(query),
+        )
+
         # Parse query with NLQueryEngine
-        with st.spinner("Understanding your question..."):
-            try:
-                from clinical_analytics.core.nl_query_engine import NLQueryEngine
+        try:
+            from clinical_analytics.core.nl_query_config import ENABLE_PROGRESSIVE_FEEDBACK
+            from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-                # Initialize NL query engine
-                nl_engine = NLQueryEngine(semantic_layer)
+            # Initialize NL query engine
+            nl_engine = NLQueryEngine(semantic_layer)
 
-                # Parse query with structured logging context
-                query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
+            logger.debug("nl_query_engine_initialized", dataset_id=dataset_id, upload_id=upload_id)
 
-                # Extract variables with collision suggestions
-                matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
+            # Use progressive feedback if enabled, otherwise simple parsing
+            if ENABLE_PROGRESSIVE_FEEDBACK:
+                query_intent = QuestionEngine._show_progressive_feedback(nl_engine, query)
+            else:
+                # Fallback to simple parsing without progressive feedback
+                with st.spinner("Understanding your question..."):
+                    query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
 
-                # Show confidence
-                if query_intent.confidence > 0.75:
+            # Extract variables with collision suggestions (for collision handling only)
+            # Note: Variables are already extracted and assigned in parse_query() for COMPARE_GROUPS, etc.
+            matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
+
+            logger.info(
+                "variables_extracted",
+                query=query,
+                matched_vars=matched_vars,
+                collision_suggestions=list(collision_suggestions.keys()) if collision_suggestions else [],
+                intent_type=query_intent.intent_type if query_intent else None,
+                confidence=query_intent.confidence if query_intent else 0.0,
+            )
+
+            # Pre-populate primary_variable from matched_vars for DESCRIBE intents
+            # This ensures the clarifying questions use the right default instead of first column
+            if (
+                query_intent
+                and query_intent.intent_type == "DESCRIBE"
+                and not query_intent.primary_variable
+                and matched_vars
+            ):
+                # Find the variable that best matches the query terms
+                # e.g., "what was the average t score" should match "DEXA Score (T score)"
+                query_lower = query.lower()
+                best_match = None
+                best_score = 0
+
+                for var in matched_vars:
+                    var_lower = var.lower()
+                    # Check how many query words appear in the variable name
+                    query_words = query_lower.split()
+                    score = sum(1 for word in query_words if word in var_lower and len(word) > 2)
+
+                    # Also check for compound terms like "tscore" matching "t score"
+                    compound_terms = ["tscore", "zscore", "t-score", "z-score"]
+                    for term in compound_terms:
+                        if term in query_lower.replace(" ", "") and term[0] + " score" in var_lower:
+                            score += 5  # Strong boost for score type matches
+
+                    if score > best_score:
+                        best_score = score
+                        best_match = var
+
+                # Use best match if found, otherwise fall back to first
+                query_intent.primary_variable = best_match or matched_vars[0]
+                logger.info(
+                    "primary_variable_inferred",
+                    query=query,
+                    primary_variable=query_intent.primary_variable,
+                    match_score=best_score,
+                    from_matched_vars=matched_vars,
+                )
+
+            # Ask clarifying questions if confidence is low
+            from clinical_analytics.core.nl_query_config import (
+                CLARIFYING_QUESTIONS_THRESHOLD,
+                ENABLE_CLARIFYING_QUESTIONS,
+            )
+
+            if (
+                query_intent
+                and query_intent.confidence < CLARIFYING_QUESTIONS_THRESHOLD
+                and ENABLE_CLARIFYING_QUESTIONS
+            ):
+                # Get available columns from semantic layer for clarifying questions
+                alias_index = semantic_layer.get_column_alias_index()
+                available_columns = list(alias_index.values()) if alias_index else []
+
+                from clinical_analytics.core.clarifying_questions import ClarifyingQuestionsEngine
+
+                query_intent = ClarifyingQuestionsEngine.ask_clarifying_questions(
+                    query_intent, semantic_layer, available_columns
+                )
+
+            # Show confidence (only if progressive feedback didn't already show it)
+            if not ENABLE_PROGRESSIVE_FEEDBACK:
+                if query_intent and query_intent.confidence > 0.75:
                     st.success(f"✅ I understand! (Confidence: {query_intent.confidence:.0%})")
-                elif query_intent.confidence > 0.5:
+                elif query_intent and query_intent.confidence > 0.5:
                     st.warning(f"⚠️ I think I understand, but please verify (Confidence: {query_intent.confidence:.0%})")
-                else:
-                    st.info("🤔 I'm not sure what you're asking. Let me ask some clarifying questions...")
-                    return None  # Fall back to structured questions
 
-                # Show interpretation
+            # Show diagnostic info if parsing failed
+            if query_intent is None or (query_intent and query_intent.confidence < 0.5 and query_intent.failure_reason):
+                if query_intent:
+                    # Use formatted diagnostic error message
+                    error_message = QuestionEngine._format_diagnostic_error(query_intent)
+                    st.error(error_message)
+                elif query_intent is None:
+                    st.error("❌ Could not understand your query. Please try rephrasing.")
+                return None  # Fall back to structured questions
+
+            # Show interpretation (only if we have a valid intent)
+            if query_intent:
                 with st.expander("🔍 How I interpreted your question", expanded=(query_intent.confidence < 0.85)):
                     intent_names = {
                         "DESCRIBE": "Descriptive Statistics",
@@ -495,9 +795,24 @@ class QuestionEngine:
                 context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
                 context.time_to_event = query_intent.intent_type == "SURVIVAL"
 
+                # Propagate confidence for auto-execution logic
+                context.confidence = query_intent.confidence
+
+                logger.info(
+                    "analysis_context_created",
+                    query=query,
+                    intent_type=context.inferred_intent.value,
+                    primary_variable=context.primary_variable,
+                    grouping_variable=context.grouping_variable,
+                    confidence=context.confidence,
+                    is_complete=context.is_complete_for_intent(),
+                    dataset_id=dataset_id,
+                    upload_id=upload_id,
+                )
+
                 return context
 
-            except Exception as e:
-                st.error(f"❌ Error parsing query: {str(e)}")
-                st.info("💡 Please try using the structured questions below instead.")
-                return None
+        except Exception as e:
+            st.error(f"❌ Error parsing query: {str(e)}")
+            st.info("💡 Please try using the structured questions below instead.")
+            return None

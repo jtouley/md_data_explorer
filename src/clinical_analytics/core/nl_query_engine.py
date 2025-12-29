@@ -23,6 +23,15 @@ import structlog
 
 logger = structlog.get_logger()
 
+# Valid intent types (single source of truth)
+VALID_INTENT_TYPES = [
+    "DESCRIBE",
+    "COMPARE_GROUPS",
+    "FIND_PREDICTORS",
+    "SURVIVAL",
+    "CORRELATIONS",
+]
+
 
 @dataclass
 class QueryIntent:
@@ -48,6 +57,15 @@ class QueryIntent:
     event_variable: str | None = None
     filters: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
+    parsing_tier: str | None = None  # "pattern_match", "semantic_match", "llm_fallback"
+    parsing_attempts: list[dict] = field(default_factory=list)  # What was tried
+    failure_reason: str | None = None  # Why it failed
+    suggestions: list[str] = field(default_factory=list)  # How to improve query
+
+    def __post_init__(self):
+        """Validate intent_type."""
+        if self.intent_type not in VALID_INTENT_TYPES:
+            raise ValueError(f"Invalid intent_type: {self.intent_type}. Must be one of {VALID_INTENT_TYPES}")
 
 
 class NLQueryEngine:
@@ -170,6 +188,12 @@ class NLQueryEngine:
 
         query = query.strip()
 
+        # Import config constants
+        from clinical_analytics.core.nl_query_config import (
+            TIER_1_PATTERN_MATCH_THRESHOLD,
+            TIER_2_SEMANTIC_MATCH_THRESHOLD,
+        )
+
         # Log query parsing start
         log_context = {
             "query": query,
@@ -178,47 +202,123 @@ class NLQueryEngine:
         }
         logger.info("query_parse_start", **log_context)
 
+        # Track parsing attempts for diagnostics
+        parsing_attempts = []
+
         # Tier 1: Pattern matching
-        intent = self._pattern_match(query)
-        if intent and intent.confidence > 0.9:
-            matched_vars = self._get_matched_variables(intent)
+        pattern_intent = self._pattern_match(query)
+        attempt = {
+            "tier": "pattern_match",
+            "result": "success"
+            if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD
+            else "failed",
+            "confidence": pattern_intent.confidence if pattern_intent else 0.0,
+        }
+        parsing_attempts.append(attempt)
+
+        if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
+            pattern_intent.parsing_tier = "pattern_match"
+            pattern_intent.parsing_attempts = parsing_attempts
+            matched_vars = self._get_matched_variables(pattern_intent)
             logger.info(
                 "query_parse_success",
-                intent=intent.intent_type,
-                confidence=intent.confidence,
+                intent=pattern_intent.intent_type,
+                confidence=pattern_intent.confidence,
                 matched_vars=matched_vars,
                 tier="pattern_match",
                 **log_context,
             )
-            return intent
-
-        # Tier 2: Semantic embeddings
-        intent = self._semantic_match(query)
-        if intent and intent.confidence > 0.75:
-            matched_vars = self._get_matched_variables(intent)
-            logger.info(
-                "query_parse_success",
-                intent=intent.intent_type,
-                confidence=intent.confidence,
-                matched_vars=matched_vars,
-                tier="semantic_match",
-                **log_context,
-            )
-            return intent
-
-        # Tier 3: LLM fallback (stub for now)
-        intent = self._llm_parse(query)
-        if intent:
-            matched_vars = self._get_matched_variables(intent)
-            logger.info(
-                "query_parse_success",
-                intent=intent.intent_type,
-                confidence=intent.confidence,
-                matched_vars=matched_vars,
-                tier="llm_fallback",
-                **log_context,
-            )
+            intent = pattern_intent  # Set for post-processing
         else:
+            # Pattern match found something but below threshold - try semantic match
+            # but keep pattern match as fallback if semantic match is worse
+            # Tier 2: Semantic embeddings
+            semantic_intent = self._semantic_match(query)
+            attempt = {
+                "tier": "semantic_match",
+                "result": "success"
+                if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD
+                else "failed",
+                "confidence": semantic_intent.confidence if semantic_intent else 0.0,
+            }
+            parsing_attempts.append(attempt)
+
+            # Choose best intent: prefer semantic if it meets threshold, otherwise use pattern if available
+            if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
+                intent = semantic_intent
+                intent.parsing_tier = "semantic_match"
+                intent.parsing_attempts = parsing_attempts
+                matched_vars = self._get_matched_variables(intent)
+                logger.info(
+                    "query_parse_success",
+                    intent=intent.intent_type,
+                    confidence=intent.confidence,
+                    matched_vars=matched_vars,
+                    tier="semantic_match",
+                    **log_context,
+                )
+            elif pattern_intent and pattern_intent.intent_type != "DESCRIBE":
+                # Use pattern match result even if below threshold, if it's more specific than DESCRIBE
+                # Also prefer pattern match if it's better than semantic match
+                if semantic_intent is None or (
+                    pattern_intent.confidence > semantic_intent.confidence and pattern_intent.intent_type != "DESCRIBE"
+                ):
+                    intent = pattern_intent
+                    intent.parsing_tier = "pattern_match"
+                    intent.parsing_attempts = parsing_attempts
+                    logger.info(
+                        "query_parse_partial_pattern_match",
+                        intent=intent.intent_type,
+                        confidence=intent.confidence,
+                        reason="pattern_match_below_threshold_but_better_than_semantic",
+                        **log_context,
+                    )
+                else:
+                    intent = semantic_intent  # Use semantic if it's better
+            elif semantic_intent:
+                intent = semantic_intent  # Use semantic even if below threshold
+            else:
+                intent = pattern_intent  # Fallback to pattern match if available
+
+        # Tier 3: LLM fallback (stub for now) - only if we don't have a good intent yet
+        if not intent or (intent.confidence < 0.5 and intent.intent_type == "DESCRIBE"):
+            llm_intent = self._llm_parse(query)
+            attempt = {
+                "tier": "llm_fallback",
+                "result": "success" if llm_intent else "failed",
+                "confidence": llm_intent.confidence if llm_intent else 0.0,
+            }
+            parsing_attempts.append(attempt)
+
+            if llm_intent:
+                intent = llm_intent
+                intent.parsing_tier = "llm_fallback"
+                intent.parsing_attempts = parsing_attempts
+                matched_vars = self._get_matched_variables(intent)
+                logger.info(
+                    "query_parse_success",
+                    intent=intent.intent_type,
+                    confidence=intent.confidence,
+                    matched_vars=matched_vars,
+                    tier="llm_fallback",
+                    **log_context,
+                )
+
+        # If we still don't have a good intent, set failure diagnostics
+        if not intent or (intent.confidence < 0.3 and intent.intent_type == "DESCRIBE"):
+            if intent is None:
+                intent = QueryIntent(
+                    intent_type="DESCRIBE",
+                    confidence=0.0,
+                    failure_reason="All parsing tiers failed",
+                    suggestions=self._generate_suggestions(query),
+                    parsing_attempts=parsing_attempts,
+                )
+            else:
+                intent.failure_reason = "All parsing tiers failed"
+                intent.suggestions = self._generate_suggestions(query)
+                intent.parsing_attempts = parsing_attempts
+
             logger.warning(
                 "query_parse_failed",
                 error_type="no_intent_found",
@@ -226,6 +326,112 @@ class NLQueryEngine:
                 dataset_id=dataset_id,
                 upload_id=upload_id,
             )
+
+        # Post-process: Extract and assign variables if missing (runs in src, not UI)
+        if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
+            # Extract variables from query if not already set
+            matched_vars: list[str] = []  # Initialize for logging
+            if not intent.primary_variable or not intent.grouping_variable:
+                # For COMPARE_GROUPS: prioritize pattern-based extraction for "which X had lowest Y"
+                if intent.intent_type == "COMPARE_GROUPS":
+                    # First, try to extract directly from "which X had lowest Y" pattern
+                    match = re.search(
+                        r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had\s+the\s+(lowest|highest)\s+(\w+(?:\s+\w+)*)",
+                        query.lower(),
+                    )
+                    if match:
+                        group_term = match.group(1).strip()
+                        primary_term = match.group(3).strip()
+
+                        # Try fuzzy matching with improved matching
+                        group_var, group_conf, _ = self._fuzzy_match_variable(group_term)
+                        primary_var, primary_conf, _ = self._fuzzy_match_variable(primary_term)
+
+                        if group_var and primary_var:
+                            # Both matched - use them
+                            intent.grouping_variable = group_var
+                            intent.primary_variable = primary_var
+                            logger.info(
+                                "variables_extracted_post_parse",
+                                intent_type=intent.intent_type,
+                                matched_vars=[primary_var, group_var],
+                                primary_variable=intent.primary_variable,
+                                grouping_variable=intent.grouping_variable,
+                            )
+                        elif group_var or primary_var:
+                            # At least one matched - use what we have
+                            if group_var:
+                                intent.grouping_variable = group_var
+                            if primary_var:
+                                intent.primary_variable = primary_var
+                            logger.info(
+                                "variables_extracted_post_parse",
+                                intent_type=intent.intent_type,
+                                matched_vars=[v for v in [primary_var, group_var] if v],
+                                primary_variable=intent.primary_variable,
+                                grouping_variable=intent.grouping_variable,
+                            )
+                        else:
+                            # Pattern extraction failed - fall back to general extraction
+                            matched_vars, _ = self._extract_variables_from_query(query)
+                            if len(matched_vars) >= 2:
+                                # For "which X had lowest Y", X is grouping, Y is primary
+                                # But _extract_variables_from_query might return in different order
+                                # Try to match based on query position
+                                query_lower = query.lower()
+                                first_pos = query_lower.find(matched_vars[0].lower())
+                                second_pos = query_lower.find(matched_vars[1].lower())
+
+                                if first_pos < second_pos:
+                                    # First variable appears first in query - likely the grouping variable
+                                    intent.grouping_variable = matched_vars[0]
+                                    intent.primary_variable = matched_vars[1]
+                                else:
+                                    # Second variable appears first - use reverse order
+                                    intent.grouping_variable = matched_vars[1]
+                                    intent.primary_variable = matched_vars[0]
+                            elif len(matched_vars) == 1:
+                                # Only one variable - try to infer from query structure
+                                match = re.search(r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had", query.lower())
+                                if match:
+                                    group_term = match.group(1).strip()
+                                    group_var, _, _ = self._fuzzy_match_variable(group_term)
+                                    if group_var:
+                                        intent.grouping_variable = group_var
+                                        intent.primary_variable = matched_vars[0]
+                                    else:
+                                        intent.primary_variable = matched_vars[0]
+                                else:
+                                    intent.primary_variable = matched_vars[0]
+                    else:
+                        # No "which X had lowest Y" pattern - use general extraction
+                        matched_vars, _ = self._extract_variables_from_query(query)
+                        if len(matched_vars) >= 2:
+                            intent.grouping_variable = matched_vars[0]
+                            intent.primary_variable = matched_vars[1]
+                        elif len(matched_vars) == 1:
+                            intent.primary_variable = matched_vars[0]
+
+                # For FIND_PREDICTORS: first variable is outcome
+                elif intent.intent_type == "FIND_PREDICTORS":
+                    if not intent.primary_variable and len(matched_vars) >= 1:
+                        intent.primary_variable = matched_vars[0]
+
+                # For CORRELATIONS: assign first two variables
+                elif intent.intent_type == "CORRELATIONS":
+                    if not intent.primary_variable and len(matched_vars) >= 1:
+                        intent.primary_variable = matched_vars[0]
+                    if not intent.grouping_variable and len(matched_vars) >= 2:
+                        intent.grouping_variable = matched_vars[1]
+
+                if matched_vars or (intent.primary_variable or intent.grouping_variable):
+                    logger.info(
+                        "variables_extracted_post_parse",
+                        intent_type=intent.intent_type,
+                        matched_vars=matched_vars,
+                        primary_variable=intent.primary_variable,
+                        grouping_variable=intent.grouping_variable,
+                    )
 
         return intent
 
@@ -312,6 +518,50 @@ class NLQueryEngine:
                     primary_variable=primary_var,
                     grouping_variable=group_var,
                     confidence=0.95,
+                )
+
+        # Pattern: "which X had the lowest/highest Y" or "what X had the lowest/highest Y"
+        match = re.search(
+            r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had\s+the\s+(lowest|highest)\s+(\w+(?:\s+\w+)*)", query_lower
+        )
+        if match:
+            group_term = match.group(1).strip()
+            primary_term = match.group(3).strip()
+
+            group_var, group_conf, _ = self._fuzzy_match_variable(group_term)
+            primary_var, primary_conf, _ = self._fuzzy_match_variable(primary_term)
+
+            # Log for debugging
+            logger.debug(
+                "pattern_match_which_x_had_y",
+                group_term=group_term,
+                primary_term=primary_term,
+                group_var=group_var,
+                primary_var=primary_var,
+                group_conf=group_conf,
+                primary_conf=primary_conf,
+            )
+
+            if group_var and primary_var:
+                return QueryIntent(
+                    intent_type="COMPARE_GROUPS",
+                    primary_variable=primary_var,
+                    grouping_variable=group_var,
+                    confidence=0.95,
+                )
+            # If fuzzy matching failed, still return COMPARE_GROUPS but with lower confidence
+            # Variables will be extracted later via _extract_variables_from_query
+            elif group_term or primary_term:
+                logger.info(
+                    "pattern_match_partial",
+                    group_term=group_term,
+                    primary_term=primary_term,
+                    reason="fuzzy_match_failed_but_terms_extracted",
+                )
+                # Return COMPARE_GROUPS intent - variables will be filled by semantic extraction
+                return QueryIntent(
+                    intent_type="COMPARE_GROUPS",
+                    confidence=0.85,  # Lower confidence since variables not matched yet
                 )
 
         return None
@@ -464,7 +714,16 @@ class NLQueryEngine:
         """
         # Get alias index from semantic layer
         alias_index = self.semantic_layer.get_column_alias_index()
+
+        # Try multiple normalization strategies for better matching
+        # Strategy 1: Standard normalization (spaces preserved)
         normalized_query = self.semantic_layer._normalize_alias(query_term)
+
+        # Strategy 2: Replace spaces with underscores (common in aliases)
+        normalized_query_underscore = normalized_query.replace(" ", "_")
+
+        # Strategy 3: Just lowercase (for exact matches)
+        normalized_query_lower = query_term.lower().strip()
 
         # Check if this alias was dropped due to collision
         suggestions = self.semantic_layer.get_collision_suggestions(query_term)
@@ -472,27 +731,76 @@ class NLQueryEngine:
             # Collision detected - return suggestions
             return None, 0.2, suggestions
 
-        # Direct match
-        if normalized_query in alias_index:
-            collisions = self.semantic_layer.get_collision_warnings()
-            if normalized_query in collisions:
-                # Collision warning (shouldn't happen if we dropped it, but check anyway)
-                return alias_index[normalized_query], 0.4, None
-            return alias_index[normalized_query], 0.9, None
+        # Try direct matches with all normalization strategies
+        for norm_query in [normalized_query, normalized_query_underscore, normalized_query_lower]:
+            if norm_query in alias_index:
+                collisions = self.semantic_layer.get_collision_warnings()
+                if norm_query in collisions:
+                    # Collision warning (shouldn't happen if we dropped it, but check anyway)
+                    return alias_index[norm_query], 0.4, None
+                return alias_index[norm_query], 0.9, None
 
-        # Fuzzy match using difflib
-        matches = get_close_matches(
-            normalized_query,
-            alias_index.keys(),
-            n=1,
-            cutoff=0.7,
-        )
+        # Fuzzy match using difflib - try all normalization strategies
+        for norm_query in [normalized_query, normalized_query_underscore, normalized_query_lower]:
+            matches = get_close_matches(
+                norm_query,
+                alias_index.keys(),
+                n=1,
+                cutoff=0.6,  # Lower cutoff for better matching
+            )
 
-        if matches:
-            matched_alias = matches[0]
-            collisions = self.semantic_layer.get_collision_warnings()
-            if matched_alias in collisions:
-                return alias_index[matched_alias], 0.4, None
-            return alias_index[matched_alias], 0.7, None
+            if matches:
+                matched_alias = matches[0]
+                collisions = self.semantic_layer.get_collision_warnings()
+                if matched_alias in collisions:
+                    return alias_index[matched_alias], 0.4, None
+                return alias_index[matched_alias], 0.7, None
+
+        # Last resort: Try substring matching on canonical names
+        # This helps with columns like "Current Regimen     1: Biktarvy..." matching "current regimen"
+        query_lower = query_term.lower().strip()
+        for alias, canonical in alias_index.items():
+            # Check if query is a substring of the alias or vice versa
+            if query_lower in alias.lower() or alias.lower() in query_lower:
+                # Prefer longer matches
+                if len(query_lower) >= 3 and len(alias.lower()) >= 3:
+                    collisions = self.semantic_layer.get_collision_warnings()
+                    if alias in collisions:
+                        return canonical, 0.5, None
+                    return canonical, 0.6, None
 
         return None, 0.0, None
+
+    def _generate_suggestions(self, query: str) -> list[str]:
+        """
+        Generate suggestions for improving query when all tiers fail.
+
+        Args:
+            query: User's query that failed to parse
+
+        Returns:
+            List of suggestion strings
+        """
+        suggestions = []
+
+        # Query length suggestions
+        if len(query.split()) < 3:
+            suggestions.append("Try adding more details to your question")
+        elif len(query.split()) > 20:
+            suggestions.append("Try simplifying your question")
+
+        # Suggest available columns if semantic layer has them
+        try:
+            alias_index = self.semantic_layer.get_column_alias_index()
+            if alias_index:
+                sample_columns = list(alias_index.keys())[:5]
+                suggestions.append(f"Try mentioning specific variable names (e.g., {', '.join(sample_columns)})")
+        except Exception:
+            pass  # If semantic layer unavailable, skip this suggestion
+
+        # Generic suggestions
+        if not suggestions:
+            suggestions.append("Try using phrases like 'compare X by Y' or 'what predicts X'")
+            suggestions.append("Mention specific variable names from your dataset")
+
+        return suggestions

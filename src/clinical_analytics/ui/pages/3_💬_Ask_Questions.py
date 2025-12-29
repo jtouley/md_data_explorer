@@ -19,10 +19,11 @@ import structlog
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-
+# Import from config (single source of truth)
 # Import analysis compute functions (pure, no UI dependencies)
 from clinical_analytics.analysis.compute import compute_analysis_by_type
 from clinical_analytics.core.column_parser import parse_column_name
+from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.components.question_engine import (
@@ -39,7 +40,6 @@ from clinical_analytics.ui.messages import (
     LOW_CONFIDENCE_WARNING,
     NO_DATASETS_AVAILABLE,
     RESULTS_CLEARED,
-    SEMANTIC_LAYER_NOT_READY,
     START_OVER,
 )
 
@@ -51,8 +51,6 @@ logger = structlog.get_logger()
 
 # Constants
 MAX_STORED_RESULTS_PER_DATASET = 5
-AUTO_EXECUTE_CONFIDENCE_THRESHOLD = 0.75
-
 
 # Caching Strategy (Phase 3):
 # - Cohorts: NOT cached via st.cache_data (handled via session_state with lifecycle management)
@@ -207,6 +205,23 @@ def clear_all_results(dataset_version: str) -> None:
 # TODO: Remove when Streamlit supports Polars natively
 def render_descriptive_analysis(result: dict) -> None:
     """Render descriptive analysis from serializable dict."""
+    # Check for error results first
+    if "error" in result:
+        st.error(f"❌ **Analysis Error**: {result['error']}")
+        if "available_columns" in result:
+            cols_preview = result["available_columns"][:20]
+            cols_str = ", ".join(cols_preview)
+            if len(result["available_columns"]) > 20:
+                cols_str += "..."
+            st.info(f"💡 **Available columns**: {cols_str}")
+        return
+
+    # Check if this is a focused single-variable analysis
+    if "focused_variable" in result:
+        _render_focused_descriptive(result)
+        return
+
+    # Full dataset analysis
     st.markdown("## 📊 Your Data at a Glance")
 
     # Overall metrics
@@ -238,6 +253,50 @@ def render_descriptive_analysis(result: dict) -> None:
                 st.write(f"  - {value}: {count} ({pct:.1f}%)")
 
 
+def _render_focused_descriptive(result: dict) -> None:
+    """Render focused single-variable descriptive analysis."""
+    var_name = result["focused_variable"]
+
+    # Headline answer first!
+    if "headline" in result:
+        st.info(f"📋 **Answer:** {result['headline']}")
+
+    st.markdown(f"## 📊 Analysis: {var_name}")
+
+    # Data quality metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Records", f"{result['row_count']:,}")
+    with col2:
+        st.metric("Valid Values", f"{result['non_null_count']:,}")
+    with col3:
+        st.metric("Missing", f"{result['null_pct']:.1f}%")
+
+    if result.get("is_numeric"):
+        # Numeric variable stats
+        st.markdown("### Statistics")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("Mean", f"{result.get('mean', 0):.2f}")
+        with col2:
+            st.metric("Median", f"{result.get('median', 0):.2f}")
+        with col3:
+            st.metric("Std Dev", f"{result.get('std', 0):.2f}")
+        with col4:
+            st.metric("Min", f"{result.get('min', 0):.2f}")
+        with col5:
+            st.metric("Max", f"{result.get('max', 0):.2f}")
+    else:
+        # Categorical variable - show value distribution
+        st.markdown("### Value Distribution")
+        if result.get("value_counts"):
+            for item in result["value_counts"]:
+                value = item[var_name]
+                count = item["count"]
+                pct = (count / result["row_count"]) * 100 if result["row_count"] > 0 else 0.0
+                st.write(f"  - **{value}**: {count} ({pct:.1f}%)")
+
+
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
 # TODO: Remove when Streamlit supports Polars natively
 def render_comparison_analysis(result: dict) -> None:
@@ -251,6 +310,11 @@ def render_comparison_analysis(result: dict) -> None:
     outcome_col = result["outcome_col"]
     group_col = result["group_col"]
     test_type = result["test_type"]
+
+    # Show headline answer if available (direct answer to the user's question)
+    if "headline_text" in result:
+        st.markdown("### 📋 Answer")
+        st.info(result["headline_text"])
 
     if test_type == "t_test":
         groups = result["groups"]
@@ -306,6 +370,14 @@ def render_comparison_analysis(result: dict) -> None:
 
         p_interp = ResultInterpreter.interpret_p_value(p_value)
         st.metric("Result", f"{p_interp['significance']} {p_interp['emoji']}")
+
+        # Show group means if available (for pseudo-numeric categorical data)
+        if result.get("group_means"):
+            st.markdown("### Group Averages")
+            cols = st.columns(min(len(result["group_means"]), 4))
+            for idx, (group, mean_val) in enumerate(sorted(result["group_means"].items(), key=lambda x: x[1])):
+                with cols[idx % len(cols)]:
+                    st.metric(group, f"{mean_val:.1f}")
 
         st.markdown("### Distribution")
         # Reconstruct contingency table for display
@@ -512,11 +584,28 @@ def execute_analysis_with_idempotency(
 
     # Check if already computed
     if result_key in st.session_state:
+        logger.info(
+            "analysis_result_cached",
+            run_key=run_key,
+            dataset_version=dataset_version,
+            intent_type=context.inferred_intent.value,
+        )
         render_analysis_by_type(st.session_state[result_key], context.inferred_intent)
         return
 
     # Not computed - compute and store
     with st.spinner("Running analysis..."):
+        # Log execution start for observability (logger already defined at module level)
+        logger.info(
+            "analysis_execution_start",
+            intent=context.inferred_intent.value,
+            primary_variable=context.primary_variable,
+            grouping_variable=context.grouping_variable,
+            predictor_variables=context.predictor_variables,
+            dataset_version=dataset_version,
+            confidence=getattr(context, "confidence", 0.0),
+        )
+
         # Convert cohort to Polars if needed (defensive)
         if isinstance(cohort, pd.DataFrame):
             cohort_pl = pl.from_pandas(cohort)
@@ -524,7 +613,21 @@ def execute_analysis_with_idempotency(
             cohort_pl = cohort
 
         # Compute analysis (pure function, no UI dependencies)
+        logger.debug(
+            "analysis_computation_start",
+            run_key=run_key,
+            cohort_shape=(cohort_pl.height, cohort_pl.width),
+            intent_type=context.inferred_intent.value,
+        )
         result = compute_analysis_by_type(cohort_pl, context)
+
+        logger.info(
+            "analysis_computation_complete",
+            run_key=run_key,
+            result_type=result.get("type", "unknown"),
+            has_error="error" in result,
+            dataset_version=dataset_version,
+        )
 
         # Store result (serializable format)
         st.session_state[result_key] = result
@@ -533,8 +636,16 @@ def execute_analysis_with_idempotency(
         # Remember this run in history (O(1) eviction happens here)
         remember_run(dataset_version, run_key)
 
+        logger.info(
+            "analysis_result_stored",
+            run_key=run_key,
+            dataset_version=dataset_version,
+        )
+
         # Render
+        logger.debug("analysis_rendering_start", run_key=run_key)
         render_analysis_by_type(result, context.inferred_intent)
+        logger.info("analysis_rendering_complete", run_key=run_key)
 
 
 def get_dataset_version(dataset, is_uploaded: bool, dataset_choice: str) -> str:
@@ -669,14 +780,32 @@ def main():
                 dataset_id = dataset.name if hasattr(dataset, "name") else None
                 upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
 
+                logger.info(
+                    "page_render_query_input",
+                    dataset_id=dataset_id,
+                    upload_id=upload_id,
+                    dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
+                    use_nl_query=True,
+                )
+
                 context = QuestionEngine.ask_free_form_question(
                     semantic_layer, dataset_id=dataset_id, upload_id=upload_id
                 )
 
                 if context:
                     # Successfully parsed NL query
+                    logger.info(
+                        "nl_query_parsed_successfully",
+                        query=getattr(context, "research_question", ""),
+                        intent_type=context.inferred_intent.value,
+                        confidence=context.confidence,
+                        is_complete=context.is_complete_for_intent(),
+                        dataset_id=dataset_id,
+                        upload_id=upload_id,
+                    )
                     st.session_state["analysis_context"] = context
                     st.session_state["intent_signal"] = "nl_parsed"
+                    logger.debug("page_rerun_triggered", reason="nl_query_parsed")
                     st.rerun()
 
             except ValueError:
@@ -727,12 +856,21 @@ def main():
         # We have intent, now gather details
         context = st.session_state["analysis_context"]
 
+        logger.info(
+            "page_render_analysis_configuration",
+            intent_signal=st.session_state.get("intent_signal"),
+            intent_type=context.inferred_intent.value if context else None,
+            is_complete=context.is_complete_for_intent() if context else False,
+            dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
+        )
+
         st.divider()
 
         # Ask follow-up questions based on intent
         if context.inferred_intent == AnalysisIntent.DESCRIBE:
-            # No additional questions needed for describe
-            context.primary_variable = "all"
+            # Only default to "all" if no specific variable was requested
+            if not context.primary_variable:
+                context.primary_variable = "all"
 
         elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
             if not context.primary_variable:
@@ -789,25 +927,30 @@ def main():
             # Auto-execute if high confidence OR user confirmed
             should_auto_execute = confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD or user_confirmed
 
+            logger.info(
+                "analysis_execution_decision",
+                intent_type=context.inferred_intent.value,
+                confidence=confidence,
+                threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
+                user_confirmed=user_confirmed,
+                should_auto_execute=should_auto_execute,
+                run_key=run_key,
+                dataset_version=dataset_version,
+                query=query_text,
+            )
+
             if should_auto_execute:
                 # Auto-execute with idempotency guard
                 st.divider()
+                logger.info("analysis_execution_triggered", run_key=run_key, dataset_version=dataset_version)
                 execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text)
 
             else:
                 # Low confidence: show detected variables with display names and allow editing
                 st.warning(LOW_CONFIDENCE_WARNING)
 
-                # Ensure semantic_layer is ready before showing variables
-                # Use get_semantic_layer() to lazy-initialize if needed
-                try:
-                    semantic_layer = dataset.get_semantic_layer()
-                except (ValueError, AttributeError) as e:
-                    st.error(SEMANTIC_LAYER_NOT_READY)
-                    logger.error(f"Failed to get semantic layer: {e}")
-                    st.stop()
-
                 # Helper to get display name for a column
+                # Note: parse_column_name() doesn't require semantic layer, so no check needed
                 def get_display_name(canonical_name: str) -> str:
                     """Get display name for a column, falling back to canonical if parsing fails."""
                     try:
