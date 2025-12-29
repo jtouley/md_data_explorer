@@ -799,10 +799,12 @@ def main():
                 st.warning(LOW_CONFIDENCE_WARNING)
 
                 # Ensure semantic_layer is ready before showing variables
+                # Use get_semantic_layer() to lazy-initialize if needed
                 try:
-                    semantic_layer = dataset.semantic
-                except (ValueError, AttributeError):
+                    semantic_layer = dataset.get_semantic_layer()
+                except (ValueError, AttributeError) as e:
                     st.error(SEMANTIC_LAYER_NOT_READY)
+                    logger.error(f"Failed to get semantic layer: {e}")
                     st.stop()
 
                 # Helper to get display name for a column
