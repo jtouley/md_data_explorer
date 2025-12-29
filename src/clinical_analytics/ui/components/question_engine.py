@@ -650,6 +650,46 @@ class QuestionEngine:
                 confidence=query_intent.confidence if query_intent else 0.0,
             )
 
+            # Pre-populate primary_variable from matched_vars for DESCRIBE intents
+            # This ensures the clarifying questions use the right default instead of first column
+            if (
+                query_intent
+                and query_intent.intent_type == "DESCRIBE"
+                and not query_intent.primary_variable
+                and matched_vars
+            ):
+                # Find the variable that best matches the query terms
+                # e.g., "what was the average t score" should match "DEXA Score (T score)"
+                query_lower = query.lower()
+                best_match = None
+                best_score = 0
+
+                for var in matched_vars:
+                    var_lower = var.lower()
+                    # Check how many query words appear in the variable name
+                    query_words = query_lower.split()
+                    score = sum(1 for word in query_words if word in var_lower and len(word) > 2)
+
+                    # Also check for compound terms like "tscore" matching "t score"
+                    compound_terms = ["tscore", "zscore", "t-score", "z-score"]
+                    for term in compound_terms:
+                        if term in query_lower.replace(" ", "") and term[0] + " score" in var_lower:
+                            score += 5  # Strong boost for score type matches
+
+                    if score > best_score:
+                        best_score = score
+                        best_match = var
+
+                # Use best match if found, otherwise fall back to first
+                query_intent.primary_variable = best_match or matched_vars[0]
+                logger.info(
+                    "primary_variable_inferred",
+                    query=query,
+                    primary_variable=query_intent.primary_variable,
+                    match_score=best_score,
+                    from_matched_vars=matched_vars,
+                )
+
             # Ask clarifying questions if confidence is low
             from clinical_analytics.core.nl_query_config import (
                 CLARIFYING_QUESTIONS_THRESHOLD,
