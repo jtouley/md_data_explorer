@@ -7,6 +7,7 @@ Phase 1: Tests for _build_config_from_variable_mapping() method.
 import json
 
 import pandas as pd
+import pytest
 
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
@@ -326,3 +327,243 @@ class TestBuildConfigFromVariableMapping:
         assert "value" not in config["time_zero"]
         assert len(config["time_zero"]) == 1
         assert "source_column" in config["time_zero"]
+
+
+class TestMaybeInitSemantic:
+    """Tests for _maybe_init_semantic() method single-table path."""
+
+    def test_maybe_init_semantic_with_variable_mapping_initializes_semantic_layer(self, tmp_path):
+        """Test that semantic layer is initialized for single-table uploads with variable_mapping."""
+        # Arrange: Create UploadedDataset with variable_mapping (no inferred_schema), mock CSV file exists
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_single_table"
+
+        # Create test data
+        test_data = pd.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003"],
+                "mortality": [0, 1, 0],
+                "age": [50, 60, 70],
+                "sex": ["M", "F", "M"],
+            }
+        )
+
+        # Save data
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        test_data.to_csv(csv_path, index=False)
+
+        # Create metadata with variable_mapping (no inferred_schema)
+        metadata = {
+            "upload_id": upload_id,
+            "upload_timestamp": "2024-01-01T00:00:00",
+            "original_filename": "test_dataset.csv",
+            "dataset_name": "test_dataset",
+            "variable_mapping": {
+                "patient_id": "patient_id",
+                "outcome": "mortality",
+                "time_variables": {},
+                "predictors": ["age", "sex"],
+            },
+        }
+
+        # Save metadata
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        metadata_path.write_text(json.dumps(metadata))
+
+        # Create dataset
+        dataset = UploadedDataset(upload_id=upload_id, storage=storage)
+
+        # Act: Call get_semantic_layer()
+        semantic_layer = dataset.get_semantic_layer()
+
+        # Assert: self.semantic is not None, semantic layer config matches variable_mapping
+        assert semantic_layer is not None
+        assert dataset.semantic is not None
+        # Verify config was built from variable_mapping
+        assert dataset.semantic.config["column_mapping"]["patient_id"] == "patient_id"
+        assert "mortality" in dataset.semantic.config["outcomes"]
+
+    def test_maybe_init_semantic_with_inferred_schema_still_works_multi_table(self, tmp_path):
+        """Test that multi-table uploads still work (regression test)."""
+        # Arrange: Create UploadedDataset with inferred_schema
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_multi_table"
+
+        # Create test data
+        test_data = pd.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "mortality": [0, 1],
+                "age": [50, 60],
+            }
+        )
+
+        # Save data
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        test_data.to_csv(csv_path, index=False)
+
+        # Create metadata with inferred_schema (multi-table format)
+        metadata = {
+            "upload_id": upload_id,
+            "upload_timestamp": "2024-01-01T00:00:00",
+            "original_filename": "test_dataset.zip",
+            "dataset_name": "test_dataset",
+            "inferred_schema": {
+                "column_mapping": {"patient_id": "patient_id"},
+                "outcomes": {"mortality": {"source_column": "mortality", "type": "binary"}},
+                "time_zero": {},
+                "predictors": ["age"],
+                "categorical_columns": [],
+            },
+        }
+
+        # Save metadata
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        metadata_path.write_text(json.dumps(metadata))
+
+        # Create dataset
+        dataset = UploadedDataset(upload_id=upload_id, storage=storage)
+
+        # Act: Call get_semantic_layer()
+        semantic_layer = dataset.get_semantic_layer()
+
+        # Assert: self.semantic is not None, uses existing _build_config_from_inferred_schema() path
+        assert semantic_layer is not None
+        assert dataset.semantic is not None
+        # Verify config was built from inferred_schema
+        assert dataset.semantic.config["column_mapping"]["patient_id"] == "patient_id"
+        assert "mortality" in dataset.semantic.config["outcomes"]
+
+    def test_maybe_init_semantic_with_variable_mapping_skips_table_registration(self, tmp_path):
+        """Test that single-table uploads skip table registration."""
+        # Arrange: Create UploadedDataset with variable_mapping, no {upload_id}_tables directory
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_no_tables"
+
+        # Create test data
+        test_data = pd.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [50, 60],
+            }
+        )
+
+        # Save data
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        test_data.to_csv(csv_path, index=False)
+
+        # Ensure tables directory does NOT exist
+        tables_dir = storage.raw_dir / f"{upload_id}_tables"
+        assert not tables_dir.exists()
+
+        # Create metadata with variable_mapping
+        metadata = {
+            "upload_id": upload_id,
+            "upload_timestamp": "2024-01-01T00:00:00",
+            "original_filename": "test_dataset.csv",
+            "dataset_name": "test_dataset",
+            "variable_mapping": {
+                "patient_id": "patient_id",
+                "outcome": None,
+                "time_variables": {},
+                "predictors": ["age"],
+            },
+        }
+
+        # Save metadata
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        metadata_path.write_text(json.dumps(metadata))
+
+        # Create dataset
+        dataset = UploadedDataset(upload_id=upload_id, storage=storage)
+
+        # Act: Call get_semantic_layer()
+        semantic_layer = dataset.get_semantic_layer()
+
+        # Assert: Semantic layer created, no table registration attempted
+        assert semantic_layer is not None
+        # Verify tables directory was not accessed (still doesn't exist)
+        assert not tables_dir.exists()
+
+    def test_maybe_init_semantic_without_schema_or_mapping_raises_valueerror(self, tmp_path):
+        """Test that missing both schema and mapping raises ValueError."""
+        # Arrange: Create UploadedDataset with neither inferred_schema nor variable_mapping
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_no_schema"
+
+        # Create test data
+        test_data = pd.DataFrame({"patient_id": ["P001"], "age": [50]})
+
+        # Save data
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        test_data.to_csv(csv_path, index=False)
+
+        # Create metadata without schema or mapping
+        metadata = {
+            "upload_id": upload_id,
+            "upload_timestamp": "2024-01-01T00:00:00",
+            "original_filename": "test_dataset.csv",
+            "dataset_name": "test_dataset",
+            # No inferred_schema or variable_mapping
+        }
+
+        # Save metadata
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        metadata_path.write_text(json.dumps(metadata))
+
+        # Create dataset
+        dataset = UploadedDataset(upload_id=upload_id, storage=storage)
+
+        # Act & Assert: Call get_semantic_layer() should raise ValueError
+        with pytest.raises(ValueError, match="No schema or mapping found"):
+            dataset.get_semantic_layer()
+
+    def test_maybe_init_semantic_sets_init_params_with_absolute_csv_path(self, tmp_path):
+        """Test that init_params is set with absolute CSV path."""
+        # Arrange: Create UploadedDataset with variable_mapping, mock CSV file exists
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_init_params"
+
+        # Create test data
+        test_data = pd.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [50, 60],
+            }
+        )
+
+        # Save data
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        test_data.to_csv(csv_path, index=False)
+        expected_absolute_path = str(csv_path.resolve())
+
+        # Create metadata with variable_mapping
+        metadata = {
+            "upload_id": upload_id,
+            "upload_timestamp": "2024-01-01T00:00:00",
+            "original_filename": "test_dataset.csv",
+            "dataset_name": "test_dataset",
+            "variable_mapping": {
+                "patient_id": "patient_id",
+                "outcome": None,
+                "time_variables": {},
+                "predictors": ["age"],
+            },
+        }
+
+        # Save metadata
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        metadata_path.write_text(json.dumps(metadata))
+
+        # Create dataset
+        dataset = UploadedDataset(upload_id=upload_id, storage=storage)
+
+        # Act: Call get_semantic_layer()
+        semantic_layer = dataset.get_semantic_layer()
+
+        # Assert: config["init_params"]["source_path"] is set to absolute path of CSV file
+        assert semantic_layer is not None
+        assert dataset.semantic is not None
+        assert "init_params" in dataset.semantic.config
+        assert "source_path" in dataset.semantic.config["init_params"]
+        assert dataset.semantic.config["init_params"]["source_path"] == expected_absolute_path

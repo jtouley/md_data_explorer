@@ -277,7 +277,7 @@ class UploadedDataset(ClinicalDataset):
         """
         Get semantic layer, lazy-initializing from unified cohort if available.
 
-        Overrides base class to support multi-table uploads.
+        Overrides base class to support all uploads (single-table and multi-table).
         """
         # Lazy initialize if not already done
         if not self._semantic_initialized:
@@ -288,11 +288,28 @@ class UploadedDataset(ClinicalDataset):
         return super().get_semantic_layer()
 
     def _maybe_init_semantic(self) -> None:
-        """Lazy initialization of semantic layer for multi-table uploads."""
-        # Only for multi-table uploads with inferred_schema
+        """Lazy initialization of semantic layer for all uploads (single-table and multi-table)."""
+        # Ensure metadata is not None (should be set in __init__)
+        if self.metadata is None:
+            raise ValueError("Metadata not initialized")
+
+        # Check for inferred_schema first (multi-table path)
         inferred_schema = self.metadata.get("inferred_schema")
-        if not inferred_schema:
-            return
+        if inferred_schema:
+            config = self._build_config_from_inferred_schema(inferred_schema)
+            upload_type = "multi-table"
+        else:
+            # Check for variable_mapping (single-table path)
+            variable_mapping = self.metadata.get("variable_mapping")
+            if variable_mapping:
+                config = self._build_config_from_variable_mapping(variable_mapping)
+                upload_type = "single-table"
+            else:
+                # Explicit error: raise instead of silent return
+                raise ValueError(
+                    f"No schema or mapping found for upload {self.upload_id}. "
+                    "Upload must have either 'inferred_schema' (multi-table) or 'variable_mapping' (single-table)."
+                )
 
         csv_path = self.storage.raw_dir / f"{self.upload_id}.csv"
         if not csv_path.exists():
@@ -302,7 +319,9 @@ class UploadedDataset(ClinicalDataset):
         try:
             from clinical_analytics.core.semantic import SemanticLayer, _safe_identifier
 
-            config = self._build_config_from_inferred_schema(inferred_schema)
+            logger.info(f"Initializing semantic layer for {upload_type} upload: {self.upload_id}")
+            logger.info(f"Built semantic layer config from {upload_type} schema")
+
             workspace_root = self.storage.upload_dir.parent.parent
 
             # Use absolute path - SemanticLayer handles absolute paths correctly
@@ -310,7 +329,7 @@ class UploadedDataset(ClinicalDataset):
 
             self.semantic = SemanticLayer(dataset_name=self.name, config=config, workspace_root=workspace_root)
 
-            # Register all individual tables from the upload
+            # Register all individual tables from the upload (only for multi-table uploads)
             tables_dir = self.storage.raw_dir / f"{self.upload_id}_tables"
             if tables_dir.exists():
                 table_names = self.metadata.get("tables", [])
@@ -335,7 +354,7 @@ class UploadedDataset(ClinicalDataset):
 
                 logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
             else:
-                logger.info(f"Created semantic layer for uploaded dataset '{self.name}'")
+                logger.info(f"Created semantic layer for uploaded dataset '{self.name}' ({upload_type})")
         except Exception as e:
             logger.warning(f"Failed to create semantic layer: {e}")
             import traceback
