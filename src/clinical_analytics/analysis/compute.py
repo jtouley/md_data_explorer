@@ -17,9 +17,67 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
     """
     Compute descriptive analysis using Polars-native operations.
 
+    If context.primary_variable is set to a specific column, focus on that column.
+    If set to "all" or None, describe all columns.
+
     Returns serializable dict (no Polars objects).
     """
-    # Overall metrics
+    # Check if we're focusing on a specific variable
+    primary_var = context.primary_variable
+    focus_on_single = primary_var and primary_var != "all" and primary_var in df.columns
+
+    if focus_on_single:
+        # Focused analysis on a single variable
+        col = primary_var
+        series = df[col]
+        row_count = df.height
+        non_null_count = row_count - series.null_count()
+
+        result = {
+            "type": "descriptive",
+            "focused_variable": col,
+            "row_count": row_count,
+            "non_null_count": non_null_count,
+            "null_count": series.null_count(),
+            "null_pct": (series.null_count() / row_count * 100) if row_count > 0 else 0.0,
+        }
+
+        # Compute stats based on dtype
+        if series.dtype in (pl.Int64, pl.Float64):
+            # Numeric variable - compute mean, median, std, min, max
+            clean_series = series.drop_nulls()
+            if len(clean_series) > 0:
+                result["mean"] = float(clean_series.mean())
+                result["median"] = float(clean_series.median())
+                result["std"] = float(clean_series.std()) if len(clean_series) > 1 else 0.0
+                result["min"] = float(clean_series.min())
+                result["max"] = float(clean_series.max())
+                result["is_numeric"] = True
+
+                # Add headline answer for the query
+                result["headline"] = f"The average {col} is **{result['mean']:.2f}**"
+            else:
+                result["headline"] = f"No valid data for {col}"
+                result["is_numeric"] = True
+        else:
+            # Categorical variable - show value counts
+            value_counts = series.value_counts().sort("count", descending=True).head(10)
+            result["value_counts"] = value_counts.to_dicts()
+            result["is_numeric"] = False
+            result["unique_count"] = series.n_unique()
+
+            # Headline for categorical
+            top_value = value_counts[0] if len(value_counts) > 0 else None
+            if top_value:
+                top_val_name = top_value[col]
+                top_val_count = top_value["count"]
+                result["headline"] = f"Most common {col}: **{top_val_name}** ({top_val_count} occurrences)"
+            else:
+                result["headline"] = f"No data for {col}"
+
+        return result
+
+    # Full dataset analysis (original behavior for "all")
     row_count = df.height
     col_count = df.width
     total_cells = row_count * col_count

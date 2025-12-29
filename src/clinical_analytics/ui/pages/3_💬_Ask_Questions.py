@@ -205,6 +205,12 @@ def clear_all_results(dataset_version: str) -> None:
 # TODO: Remove when Streamlit supports Polars natively
 def render_descriptive_analysis(result: dict) -> None:
     """Render descriptive analysis from serializable dict."""
+    # Check if this is a focused single-variable analysis
+    if "focused_variable" in result:
+        _render_focused_descriptive(result)
+        return
+
+    # Full dataset analysis
     st.markdown("## 📊 Your Data at a Glance")
 
     # Overall metrics
@@ -234,6 +240,50 @@ def render_descriptive_analysis(result: dict) -> None:
                 count = item["count"]
                 pct = (count / result["row_count"]) * 100 if result["row_count"] > 0 else 0.0
                 st.write(f"  - {value}: {count} ({pct:.1f}%)")
+
+
+def _render_focused_descriptive(result: dict) -> None:
+    """Render focused single-variable descriptive analysis."""
+    var_name = result["focused_variable"]
+
+    # Headline answer first!
+    if "headline" in result:
+        st.info(f"📋 **Answer:** {result['headline']}")
+
+    st.markdown(f"## 📊 Analysis: {var_name}")
+
+    # Data quality metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Records", f"{result['row_count']:,}")
+    with col2:
+        st.metric("Valid Values", f"{result['non_null_count']:,}")
+    with col3:
+        st.metric("Missing", f"{result['null_pct']:.1f}%")
+
+    if result.get("is_numeric"):
+        # Numeric variable stats
+        st.markdown("### Statistics")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("Mean", f"{result.get('mean', 0):.2f}")
+        with col2:
+            st.metric("Median", f"{result.get('median', 0):.2f}")
+        with col3:
+            st.metric("Std Dev", f"{result.get('std', 0):.2f}")
+        with col4:
+            st.metric("Min", f"{result.get('min', 0):.2f}")
+        with col5:
+            st.metric("Max", f"{result.get('max', 0):.2f}")
+    else:
+        # Categorical variable - show value distribution
+        st.markdown("### Value Distribution")
+        if result.get("value_counts"):
+            for item in result["value_counts"]:
+                value = item[var_name]
+                count = item["count"]
+                pct = (count / result["row_count"]) * 100 if result["row_count"] > 0 else 0.0
+                st.write(f"  - **{value}**: {count} ({pct:.1f}%)")
 
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
@@ -807,8 +857,9 @@ def main():
 
         # Ask follow-up questions based on intent
         if context.inferred_intent == AnalysisIntent.DESCRIBE:
-            # No additional questions needed for describe
-            context.primary_variable = "all"
+            # Only default to "all" if no specific variable was requested
+            if not context.primary_variable:
+                context.primary_variable = "all"
 
         elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
             if not context.primary_variable:
