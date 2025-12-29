@@ -13,6 +13,8 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from clinical_analytics.core.nl_query_engine import QueryIntent
+
 
 class AnalysisIntent(Enum):
     """Inferred analysis intentions (hidden from user)."""
@@ -366,6 +368,136 @@ class QuestionEngine:
             st.success("✅ I have everything I need to run the analysis!")
 
     @staticmethod
+    def _show_progressive_feedback(nl_engine, query: str) -> QueryIntent | None:
+        """Parse query with progressive feedback showing each tier.
+
+        Uses timeout to prevent long waits on LLM fallback.
+        Uses constants from nl_query_config (not magic values).
+
+        Args:
+            nl_engine: NLQueryEngine instance
+            query: User's query string
+
+        Returns:
+            QueryIntent if parsing succeeds, None otherwise
+        """
+        import signal
+        from contextlib import contextmanager
+
+        from clinical_analytics.core.nl_query_config import (
+            ENABLE_PROGRESSIVE_FEEDBACK,
+            TIER_1_PATTERN_MATCH_THRESHOLD,
+            TIER_2_SEMANTIC_MATCH_THRESHOLD,
+            TIER_TIMEOUT_SECONDS,
+        )
+
+        if not ENABLE_PROGRESSIVE_FEEDBACK:
+            # Fallback to simple parsing without feedback
+            return nl_engine.parse_query(query)
+
+        @contextmanager
+        def timeout_context(seconds: float):
+            """Timeout context manager for tier execution."""
+
+            def timeout_handler(signum, frame):
+                raise TimeoutError(f"Tier execution exceeded {seconds}s")
+
+            # Set alarm (Unix only - for production, use threading.Timer)
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(int(seconds))
+            try:
+                yield
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+
+        import structlog
+
+        logger = structlog.get_logger()
+        parsing_attempts = []
+
+        with st.status("🔍 Analyzing your question...", expanded=True) as status:
+            # Tier 1: Pattern matching (fast, no timeout needed)
+            status.update(label="Trying pattern matching...")
+            try:
+                intent = nl_engine._pattern_match(query)
+                attempt = {
+                    "tier": "pattern_match",
+                    "result": "success" if intent and intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD else "failed",
+                    "confidence": intent.confidence if intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
+
+                if intent and intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
+                    intent.parsing_tier = "pattern_match"
+                    intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via pattern matching (confidence: {intent.confidence:.0%})")
+                    return intent
+            except Exception as e:
+                logger.warning("pattern_match_failed", error=str(e))
+                parsing_attempts.append({"tier": "pattern_match", "result": "error", "error": str(e)})
+
+            # Tier 2: Semantic search (may be slow, but usually < 1s)
+            status.update(label="Trying semantic search...")
+            try:
+                with timeout_context(TIER_TIMEOUT_SECONDS):
+                    intent = nl_engine._semantic_match(query)
+                attempt = {
+                    "tier": "semantic_match",
+                    "result": "success"
+                    if intent and intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD
+                    else "failed",
+                    "confidence": intent.confidence if intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
+
+                if intent and intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
+                    intent.parsing_tier = "semantic_match"
+                    intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via semantic search (confidence: {intent.confidence:.0%})")
+                    return intent
+            except TimeoutError:
+                status.update(label="⏱️ Semantic search timed out, trying advanced parsing...")
+                logger.warning("semantic_match_timeout", query=query)
+                parsing_attempts.append({"tier": "semantic_match", "result": "timeout"})
+            except Exception as e:
+                logger.warning("semantic_match_failed", error=str(e))
+                parsing_attempts.append({"tier": "semantic_match", "result": "error", "error": str(e)})
+
+            # Tier 3: LLM fallback (can be very slow - 3-5s)
+            status.update(label="Trying advanced parsing...")
+            try:
+                with timeout_context(TIER_TIMEOUT_SECONDS):
+                    intent = nl_engine._llm_parse(query)
+                attempt = {
+                    "tier": "llm_fallback",
+                    "result": "success" if intent else "failed",
+                    "confidence": intent.confidence if intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
+
+                if intent:
+                    intent.parsing_tier = "llm_fallback"
+                    intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via advanced parsing (confidence: {intent.confidence:.0%})")
+                    return intent
+            except TimeoutError:
+                status.update(label="❌ Advanced parsing timed out")
+                logger.warning("llm_parse_timeout", query=query)
+                parsing_attempts.append({"tier": "llm_fallback", "result": "timeout"})
+            except Exception as e:
+                logger.warning("llm_parse_failed", error=str(e))
+                parsing_attempts.append({"tier": "llm_fallback", "result": "error", "error": str(e)})
+
+            status.update(label="❌ Could not understand query")
+            # Return intent with diagnostics even if all tiers failed
+            if intent:
+                intent.parsing_attempts = parsing_attempts
+                intent.failure_reason = "All parsing tiers failed"
+                intent.suggestions = nl_engine._generate_suggestions(query)
+            return intent
+
+    @staticmethod
     def ask_free_form_question(
         semantic_layer, dataset_id: str | None = None, upload_id: str | None = None
     ) -> AnalysisContext | None:
@@ -407,29 +539,44 @@ class QuestionEngine:
             return None
 
         # Parse query with NLQueryEngine
-        with st.spinner("Understanding your question..."):
-            try:
-                from clinical_analytics.core.nl_query_engine import NLQueryEngine
+        try:
+            from clinical_analytics.core.nl_query_config import ENABLE_PROGRESSIVE_FEEDBACK
+            from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-                # Initialize NL query engine
-                nl_engine = NLQueryEngine(semantic_layer)
+            # Initialize NL query engine
+            nl_engine = NLQueryEngine(semantic_layer)
 
-                # Parse query with structured logging context
-                query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
+            # Use progressive feedback if enabled, otherwise simple parsing
+            if ENABLE_PROGRESSIVE_FEEDBACK:
+                query_intent = QuestionEngine._show_progressive_feedback(nl_engine, query)
+            else:
+                # Fallback to simple parsing without progressive feedback
+                with st.spinner("Understanding your question..."):
+                    query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
 
-                # Extract variables with collision suggestions
-                matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
+            # Extract variables with collision suggestions
+            matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
 
-                # Show confidence
-                if query_intent.confidence > 0.75:
+            # Show confidence (only if progressive feedback didn't already show it)
+            if not ENABLE_PROGRESSIVE_FEEDBACK:
+                if query_intent and query_intent.confidence > 0.75:
                     st.success(f"✅ I understand! (Confidence: {query_intent.confidence:.0%})")
-                elif query_intent.confidence > 0.5:
+                elif query_intent and query_intent.confidence > 0.5:
                     st.warning(f"⚠️ I think I understand, but please verify (Confidence: {query_intent.confidence:.0%})")
-                else:
-                    st.info("🤔 I'm not sure what you're asking. Let me ask some clarifying questions...")
-                    return None  # Fall back to structured questions
 
-                # Show interpretation
+            # Show diagnostic info if parsing failed
+            if query_intent is None or (query_intent and query_intent.confidence < 0.5 and query_intent.failure_reason):
+                if query_intent and query_intent.suggestions:
+                    st.error("❌ Could not understand your query.")
+                    with st.expander("💡 Suggestions", expanded=True):
+                        for suggestion in query_intent.suggestions:
+                            st.write(f"• {suggestion}")
+                elif query_intent is None:
+                    st.error("❌ Could not understand your query. Please try rephrasing.")
+                return None  # Fall back to structured questions
+
+            # Show interpretation (only if we have a valid intent)
+            if query_intent:
                 with st.expander("🔍 How I interpreted your question", expanded=(query_intent.confidence < 0.85)):
                     intent_names = {
                         "DESCRIBE": "Descriptive Statistics",
@@ -497,7 +644,7 @@ class QuestionEngine:
 
                 return context
 
-            except Exception as e:
-                st.error(f"❌ Error parsing query: {str(e)}")
-                st.info("💡 Please try using the structured questions below instead.")
-                return None
+        except Exception as e:
+            st.error(f"❌ Error parsing query: {str(e)}")
+            st.info("💡 Please try using the structured questions below instead.")
+            return None
