@@ -65,8 +65,6 @@ class ClarifyingQuestionsEngine:
 
             # 2. If primary_variable missing, show available columns
             if not intent.primary_variable:
-                alias_index = semantic_layer.get_column_alias_index()
-
                 # Get display names using parse_column_name
                 column_options = {}
                 for canonical_name in available_columns:

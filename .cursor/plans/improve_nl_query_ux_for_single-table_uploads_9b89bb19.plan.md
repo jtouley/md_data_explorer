@@ -42,22 +42,22 @@ todos:
       - phase3-tests
   - id: phase3-quality
     content: "Phase 3: Run quality gates and commit"
-    status: in_progress
+    status: completed
     dependencies:
       - phase3-implement
   - id: phase4-tests
     content: "Phase 4: Write failing tests for diagnostic error messages"
-    status: pending
+    status: completed
     dependencies:
       - phase3-quality
   - id: phase4-implement
     content: "Phase 4: Enhance parse_query() to generate suggestions and format diagnostic errors"
-    status: pending
+    status: completed
     dependencies:
       - phase4-tests
   - id: phase4-quality
     content: "Phase 4: Run quality gates and commit"
-    status: pending
+    status: in_progress
     dependencies:
       - phase4-implement
   - id: phase5-tests

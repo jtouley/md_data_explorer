@@ -498,6 +498,38 @@ class QuestionEngine:
             return intent
 
     @staticmethod
+    def _format_diagnostic_error(intent: QueryIntent) -> str:
+        """Format structured diagnostics into user-friendly message.
+
+        Engine returns structured diagnostics, UI formats for display.
+        This avoids duplication - single formatting layer.
+
+        Args:
+            intent: QueryIntent with diagnostics (parsing_attempts, failure_reason, suggestions)
+
+        Returns:
+            Formatted error message with actionable suggestions
+        """
+        parts = ["❌ Could not understand your query."]
+
+        if intent.suggestions:
+            parts.append("\n💡 Suggestions:")
+            for suggestion in intent.suggestions:
+                parts.append(f"  • {suggestion}")
+
+        if intent.parsing_attempts:
+            parts.append("\n🔍 What I tried:")
+            for attempt in intent.parsing_attempts:
+                tier_name = attempt.get("tier", "unknown")
+                result = attempt.get("result", "failed")
+                parts.append(f"  • {tier_name}: {result}")
+
+        if intent.failure_reason:
+            parts.append(f"\n⚠️ Reason: {intent.failure_reason}")
+
+        return "\n".join(parts)
+
+    @staticmethod
     def ask_free_form_question(
         semantic_layer, dataset_id: str | None = None, upload_id: str | None = None
     ) -> AnalysisContext | None:
@@ -587,11 +619,10 @@ class QuestionEngine:
 
             # Show diagnostic info if parsing failed
             if query_intent is None or (query_intent and query_intent.confidence < 0.5 and query_intent.failure_reason):
-                if query_intent and query_intent.suggestions:
-                    st.error("❌ Could not understand your query.")
-                    with st.expander("💡 Suggestions", expanded=True):
-                        for suggestion in query_intent.suggestions:
-                            st.write(f"• {suggestion}")
+                if query_intent:
+                    # Use formatted diagnostic error message
+                    error_message = QuestionEngine._format_diagnostic_error(query_intent)
+                    st.error(error_message)
                 elif query_intent is None:
                     st.error("❌ Could not understand your query. Please try rephrasing.")
                 return None  # Fall back to structured questions

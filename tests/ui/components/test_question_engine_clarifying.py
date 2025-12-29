@@ -45,7 +45,7 @@ def test_ask_free_form_question_uses_clarifying_questions_for_low_confidence(moc
                             with patch("streamlit.spinner"):
                                 with patch("streamlit.expander"):
                                     with patch("streamlit.radio", return_value="Yes, that's correct"):
-                                        result = QuestionEngine.ask_free_form_question(mock_semantic_layer)
+                                        QuestionEngine.ask_free_form_question(mock_semantic_layer)
 
                                         # Verify clarifying questions were called
                                         assert mock_clarify.called
