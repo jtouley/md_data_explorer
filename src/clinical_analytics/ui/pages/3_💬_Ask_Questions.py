@@ -19,10 +19,11 @@ import structlog
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-
+# Import from config (single source of truth)
 # Import analysis compute functions (pure, no UI dependencies)
 from clinical_analytics.analysis.compute import compute_analysis_by_type
 from clinical_analytics.core.column_parser import parse_column_name
+from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.components.question_engine import (
@@ -50,8 +51,6 @@ logger = structlog.get_logger()
 
 # Constants
 MAX_STORED_RESULTS_PER_DATASET = 5
-AUTO_EXECUTE_CONFIDENCE_THRESHOLD = 0.75
-
 
 # Caching Strategy (Phase 3):
 # - Cohorts: NOT cached via st.cache_data (handled via session_state with lifecycle management)
@@ -511,15 +510,18 @@ def execute_analysis_with_idempotency(
 
     # Check if already computed
     if result_key in st.session_state:
+        logger.info(
+            "analysis_result_cached",
+            run_key=run_key,
+            dataset_version=dataset_version,
+            intent_type=context.inferred_intent.value,
+        )
         render_analysis_by_type(st.session_state[result_key], context.inferred_intent)
         return
 
     # Not computed - compute and store
     with st.spinner("Running analysis..."):
-        # Log execution start for observability
-        import structlog
-
-        logger = structlog.get_logger()
+        # Log execution start for observability (logger already defined at module level)
         logger.info(
             "analysis_execution_start",
             intent=context.inferred_intent.value,
@@ -537,7 +539,21 @@ def execute_analysis_with_idempotency(
             cohort_pl = cohort
 
         # Compute analysis (pure function, no UI dependencies)
+        logger.debug(
+            "analysis_computation_start",
+            run_key=run_key,
+            cohort_shape=(cohort_pl.height, cohort_pl.width),
+            intent_type=context.inferred_intent.value,
+        )
         result = compute_analysis_by_type(cohort_pl, context)
+
+        logger.info(
+            "analysis_computation_complete",
+            run_key=run_key,
+            result_type=result.get("type", "unknown"),
+            has_error="error" in result,
+            dataset_version=dataset_version,
+        )
 
         # Store result (serializable format)
         st.session_state[result_key] = result
@@ -546,8 +562,16 @@ def execute_analysis_with_idempotency(
         # Remember this run in history (O(1) eviction happens here)
         remember_run(dataset_version, run_key)
 
+        logger.info(
+            "analysis_result_stored",
+            run_key=run_key,
+            dataset_version=dataset_version,
+        )
+
         # Render
+        logger.debug("analysis_rendering_start", run_key=run_key)
         render_analysis_by_type(result, context.inferred_intent)
+        logger.info("analysis_rendering_complete", run_key=run_key)
 
 
 def get_dataset_version(dataset, is_uploaded: bool, dataset_choice: str) -> str:
@@ -682,14 +706,32 @@ def main():
                 dataset_id = dataset.name if hasattr(dataset, "name") else None
                 upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
 
+                logger.info(
+                    "page_render_query_input",
+                    dataset_id=dataset_id,
+                    upload_id=upload_id,
+                    dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
+                    use_nl_query=True,
+                )
+
                 context = QuestionEngine.ask_free_form_question(
                     semantic_layer, dataset_id=dataset_id, upload_id=upload_id
                 )
 
                 if context:
                     # Successfully parsed NL query
+                    logger.info(
+                        "nl_query_parsed_successfully",
+                        query=getattr(context, "research_question", ""),
+                        intent_type=context.inferred_intent.value,
+                        confidence=context.confidence,
+                        is_complete=context.is_complete_for_intent(),
+                        dataset_id=dataset_id,
+                        upload_id=upload_id,
+                    )
                     st.session_state["analysis_context"] = context
                     st.session_state["intent_signal"] = "nl_parsed"
+                    logger.debug("page_rerun_triggered", reason="nl_query_parsed")
                     st.rerun()
 
             except ValueError:
@@ -739,6 +781,14 @@ def main():
     else:
         # We have intent, now gather details
         context = st.session_state["analysis_context"]
+
+        logger.info(
+            "page_render_analysis_configuration",
+            intent_signal=st.session_state.get("intent_signal"),
+            intent_type=context.inferred_intent.value if context else None,
+            is_complete=context.is_complete_for_intent() if context else False,
+            dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
+        )
 
         st.divider()
 
@@ -802,9 +852,22 @@ def main():
             # Auto-execute if high confidence OR user confirmed
             should_auto_execute = confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD or user_confirmed
 
+            logger.info(
+                "analysis_execution_decision",
+                intent_type=context.inferred_intent.value,
+                confidence=confidence,
+                threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
+                user_confirmed=user_confirmed,
+                should_auto_execute=should_auto_execute,
+                run_key=run_key,
+                dataset_version=dataset_version,
+                query=query_text,
+            )
+
             if should_auto_execute:
                 # Auto-execute with idempotency guard
                 st.divider()
+                logger.info("analysis_execution_triggered", run_key=run_key, dataset_version=dataset_version)
                 execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text)
 
             else:

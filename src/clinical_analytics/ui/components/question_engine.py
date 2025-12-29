@@ -417,6 +417,7 @@ class QuestionEngine:
         logger = structlog.get_logger()
         parsing_attempts = []
         final_intent = None  # Don't reuse variable name across tiers
+        best_partial_intent = None  # Track best partial result for fallback
 
         def track_attempt(tier: str, tier_intent: QueryIntent | None, threshold: float) -> dict:
             """Track parsing attempt (DRY helper)."""
@@ -439,6 +440,15 @@ class QuestionEngine:
                     tier1_intent.parsing_attempts = parsing_attempts
                     status.update(label=f"✅ Matched via pattern matching (confidence: {tier1_intent.confidence:.0%})")
                     return tier1_intent
+                elif tier1_intent and tier1_intent.intent_type != "DESCRIBE":
+                    # Save as potential fallback if it's more specific than DESCRIBE
+                    best_partial_intent = tier1_intent
+                    best_partial_intent.parsing_tier = "pattern_match_partial"
+                    logger.debug(
+                        "pattern_match_saved_as_fallback",
+                        intent_type=tier1_intent.intent_type,
+                        confidence=tier1_intent.confidence,
+                    )
             except Exception as e:
                 logger.warning("pattern_match_failed", error=str(e))
                 parsing_attempts.append({"tier": "pattern_match", "result": "error", "error": str(e)})
@@ -492,7 +502,22 @@ class QuestionEngine:
 
             status.update(label="❌ Could not understand query")
             # Return intent with diagnostics even if all tiers failed
-            if final_intent is None:
+            # BUT: Use best partial result if it's more specific than DESCRIBE
+            if best_partial_intent and best_partial_intent.intent_type != "DESCRIBE":
+                # Use the partial pattern match - it's better than nothing
+                best_partial_intent.parsing_attempts = parsing_attempts
+                status.update(
+                    label=f"⚠️ Using partial match: {best_partial_intent.intent_type} "
+                    f"(confidence: {best_partial_intent.confidence:.0%})"
+                )
+                logger.info(
+                    "using_partial_pattern_match",
+                    intent_type=best_partial_intent.intent_type,
+                    confidence=best_partial_intent.confidence,
+                    query=query,
+                )
+                return best_partial_intent
+            elif final_intent is None:
                 # Create a failure intent if all tiers failed
                 from clinical_analytics.core.nl_query_engine import QueryIntent
 
@@ -582,6 +607,18 @@ class QuestionEngine:
         if not query:
             return None
 
+        # Log query entry
+        import structlog
+
+        logger = structlog.get_logger()
+        logger.info(
+            "nl_query_entered",
+            query=query,
+            dataset_id=dataset_id,
+            upload_id=upload_id,
+            query_length=len(query),
+        )
+
         # Parse query with NLQueryEngine
         try:
             from clinical_analytics.core.nl_query_config import ENABLE_PROGRESSIVE_FEEDBACK
@@ -589,6 +626,8 @@ class QuestionEngine:
 
             # Initialize NL query engine
             nl_engine = NLQueryEngine(semantic_layer)
+
+            logger.debug("nl_query_engine_initialized", dataset_id=dataset_id, upload_id=upload_id)
 
             # Use progressive feedback if enabled, otherwise simple parsing
             if ENABLE_PROGRESSIVE_FEEDBACK:
@@ -598,8 +637,18 @@ class QuestionEngine:
                 with st.spinner("Understanding your question..."):
                     query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
 
-            # Extract variables with collision suggestions
+            # Extract variables with collision suggestions (for collision handling only)
+            # Note: Variables are already extracted and assigned in parse_query() for COMPARE_GROUPS, etc.
             matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
+
+            logger.info(
+                "variables_extracted",
+                query=query,
+                matched_vars=matched_vars,
+                collision_suggestions=list(collision_suggestions.keys()) if collision_suggestions else [],
+                intent_type=query_intent.intent_type if query_intent else None,
+                confidence=query_intent.confidence if query_intent else 0.0,
+            )
 
             # Ask clarifying questions if confidence is low
             from clinical_analytics.core.nl_query_config import (
@@ -708,6 +757,18 @@ class QuestionEngine:
 
                 # Propagate confidence for auto-execution logic
                 context.confidence = query_intent.confidence
+
+                logger.info(
+                    "analysis_context_created",
+                    query=query,
+                    intent_type=context.inferred_intent.value,
+                    primary_variable=context.primary_variable,
+                    grouping_variable=context.grouping_variable,
+                    confidence=context.confidence,
+                    is_complete=context.is_complete_for_intent(),
+                    dataset_id=dataset_id,
+                    upload_id=upload_id,
+                )
 
                 return context
 
