@@ -13,13 +13,265 @@ from scipy import stats
 from clinical_analytics.ui.components.question_engine import AnalysisContext
 
 
+def _normalize_column_name(name: str) -> str:
+    """
+    Normalize column name for matching: collapse whitespace, lowercase, strip.
+
+    This handles cases where column names have inconsistent whitespace:
+    - "DEXA Score          (T score)" -> "dexa score (t score)"
+    - "Age " -> "age"
+    - "CD4  Count" -> "cd4 count"
+
+    Args:
+        name: Original column name
+
+    Returns:
+        Normalized name for comparison
+    """
+    import re
+
+    # Collapse multiple spaces to single space, strip, lowercase
+    normalized = re.sub(r"\s+", " ", name.strip().lower())
+    return normalized
+
+
+def _find_matching_column(target_name: str, available_columns: list[str]) -> str | None:
+    """
+    Find matching column using robust matching strategy.
+
+    Strategy (in order):
+    1. Exact match (case-sensitive)
+    2. Exact match after normalization (whitespace/case-insensitive)
+    3. Substring match (normalized)
+    4. Fuzzy match (simple Levenshtein-like, normalized)
+
+    Args:
+        target_name: Column name to find
+        available_columns: List of available column names
+
+    Returns:
+        Matching column name from available_columns, or None if no match
+    """
+    # Strategy 1: Exact match
+    if target_name in available_columns:
+        return target_name
+
+    # Strategy 2: Normalized exact match
+    target_normalized = _normalize_column_name(target_name)
+    for col in available_columns:
+        if _normalize_column_name(col) == target_normalized:
+            return col
+
+    # Strategy 3: Substring match (normalized) - but require key terms for specificity
+    # Extract key terms from target (e.g., "t score", "z score", "viral load")
+    key_terms_in_target = []
+    important_terms = ["t score", "z score", "viral load", "cd4", "age", "regimen"]
+    for term in important_terms:
+        if term in target_normalized:
+            key_terms_in_target.append(term)
+
+    # If target has specific key terms, require at least one to match
+    if key_terms_in_target:
+        for col in available_columns:
+            col_normalized = _normalize_column_name(col)
+            # Check if all key terms from target are in column
+            if all(term in col_normalized for term in key_terms_in_target):
+                return col
+        # If no exact key term match, don't use substring matching (too risky)
+    else:
+        # No key terms - use general substring matching
+        for col in available_columns:
+            col_normalized = _normalize_column_name(col)
+            if target_normalized in col_normalized or col_normalized in target_normalized:
+                return col
+
+    # Strategy 4: Simple fuzzy match (character overlap ratio)
+    # This is a lightweight alternative to full Levenshtein
+    best_match = None
+    best_score = 0.0
+    target_chars = set(target_normalized.replace(" ", ""))
+
+    for col in available_columns:
+        col_normalized = _normalize_column_name(col)
+        col_chars = set(col_normalized.replace(" ", ""))
+
+        if not target_chars or not col_chars:
+            continue
+
+        # Jaccard similarity on character sets
+        intersection = len(target_chars & col_chars)
+        union = len(target_chars | col_chars)
+        score = intersection / union if union > 0 else 0.0
+
+        # Boost score if key terms match (e.g., "t score" in both)
+        key_terms = ["t score", "z score", "dexa", "viral load", "cd4"]
+        for term in key_terms:
+            if term in target_normalized and term in col_normalized:
+                score += 0.3
+                break
+
+        if score > best_score and score > 0.5:  # Minimum threshold
+            best_score = score
+            best_match = col
+
+    return best_match
+
+
+def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
+    """
+    Try to convert a string series to numeric.
+
+    Handles:
+    - European comma format: "-1,8" -> -1.8
+    - Empty strings and whitespace -> null
+    - Non-numeric values -> null
+
+    Returns None if conversion fails or results in all nulls.
+    """
+    if series.dtype != pl.Utf8:
+        return None
+
+    try:
+        # Clean the values: replace comma with dot, strip whitespace
+        cleaned = (
+            series.str.strip_chars().str.replace(",", ".").str.replace_all(r"^\s*$", "")  # Empty strings to empty
+        )
+
+        # Try to cast to float
+        numeric = cleaned.cast(pl.Float64, strict=False)
+
+        # Check if we got any valid values
+        if numeric.null_count() == len(numeric):
+            return None
+
+        return numeric
+    except Exception:
+        return None
+
+
 def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compute descriptive analysis using Polars-native operations.
 
+    If context.primary_variable is set to a specific column, focus on that column.
+    If set to "all" or None, describe all columns.
+
     Returns serializable dict (no Polars objects).
     """
-    # Overall metrics
+    import structlog
+
+    logger = structlog.get_logger()
+
+    # Check if we're focusing on a specific variable
+    primary_var = context.primary_variable
+    focus_on_single = False
+    matched_col = None
+
+    if primary_var and primary_var != "all":
+        # Use robust column matching to handle whitespace/normalization differences
+        matched_col = _find_matching_column(primary_var, df.columns)
+        focus_on_single = matched_col is not None
+
+        logger.debug(
+            "compute_descriptive_check",
+            primary_var=primary_var,
+            matched_col=matched_col,
+            focus_on_single=focus_on_single,
+            df_columns=df.columns[:5] if len(df.columns) > 5 else df.columns,
+        )
+
+        if not focus_on_single:
+            logger.warning(
+                "compute_descriptive_column_not_found",
+                primary_var=primary_var,
+                available_columns=df.columns.tolist(),
+            )
+            # Return error result instead of falling through to "all"
+            cols_preview = df.columns[:10].tolist()
+            cols_str = ", ".join(cols_preview)
+            if len(df.columns) > 10:
+                cols_str += "..."
+            return {
+                "type": "descriptive",
+                "error": f"Column '{primary_var}' not found in dataset. Available columns: {cols_str}",
+                "requested_column": primary_var,
+                "available_columns": df.columns.tolist(),
+            }
+
+    if focus_on_single and matched_col:
+        # Focused analysis on a single variable
+        col = matched_col
+        series = df[col]
+        row_count = df.height
+
+        logger.info(
+            "compute_descriptive_focused",
+            col=col,
+            original_dtype=str(series.dtype),
+            row_count=row_count,
+        )
+
+        # Try to convert string columns to numeric (handles European comma format, etc.)
+        numeric_series = None
+        if series.dtype == pl.Utf8:
+            numeric_series = _try_convert_to_numeric(series)
+            logger.debug(
+                "compute_descriptive_conversion",
+                col=col,
+                conversion_success=numeric_series is not None,
+            )
+
+        # Use converted series if successful, otherwise original
+        analysis_series = numeric_series if numeric_series is not None else series
+        is_numeric = analysis_series.dtype in (pl.Int64, pl.Float64)
+
+        non_null_count = row_count - analysis_series.null_count()
+
+        result = {
+            "type": "descriptive",
+            "focused_variable": col,
+            "row_count": row_count,
+            "non_null_count": non_null_count,
+            "null_count": analysis_series.null_count(),
+            "null_pct": (analysis_series.null_count() / row_count * 100) if row_count > 0 else 0.0,
+        }
+
+        # Compute stats based on dtype
+        if is_numeric:
+            # Numeric variable - compute mean, median, std, min, max
+            clean_series = analysis_series.drop_nulls()
+            if len(clean_series) > 0:
+                result["mean"] = float(clean_series.mean())
+                result["median"] = float(clean_series.median())
+                result["std"] = float(clean_series.std()) if len(clean_series) > 1 else 0.0
+                result["min"] = float(clean_series.min())
+                result["max"] = float(clean_series.max())
+                result["is_numeric"] = True
+
+                # Add headline answer for the query
+                result["headline"] = f"The average {col} is **{result['mean']:.2f}**"
+            else:
+                result["headline"] = f"No valid data for {col}"
+                result["is_numeric"] = True
+        else:
+            # Categorical variable - show value counts
+            value_counts = series.value_counts().sort("count", descending=True).head(10)
+            result["value_counts"] = value_counts.to_dicts()
+            result["is_numeric"] = False
+            result["unique_count"] = series.n_unique()
+
+            # Headline for categorical
+            top_value = value_counts[0] if len(value_counts) > 0 else None
+            if top_value:
+                top_val_name = top_value[col]
+                top_val_count = top_value["count"]
+                result["headline"] = f"Most common {col}: **{top_val_name}** ({top_val_count} occurrences)"
+            else:
+                result["headline"] = f"No data for {col}"
+
+        return result
+
+    # Full dataset analysis (original behavior for "all")
     row_count = df.height
     col_count = df.width
     total_cells = row_count * col_count
@@ -50,11 +302,78 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
     }
 
 
+def _compute_headline_answer(
+    group_means: dict[str, float], outcome_col: str, group_col: str, query_direction: str = "lowest"
+) -> dict[str, Any]:
+    """
+    Compute headline answer for comparison results.
+
+    Args:
+        group_means: Dict mapping group name to mean value
+        outcome_col: Name of outcome variable
+        group_col: Name of grouping variable
+        query_direction: "lowest" or "highest"
+
+    Returns:
+        Dict with headline_group, headline_value, headline_text
+    """
+    if not group_means:
+        return {}
+
+    if query_direction == "lowest":
+        best_group = min(group_means, key=group_means.get)
+    else:
+        best_group = max(group_means, key=group_means.get)
+
+    best_value = group_means[best_group]
+
+    # Format the headline text
+    headline_text = f"**{best_group}** had the {query_direction} {outcome_col} (mean: {best_value:.1f})"
+
+    return {
+        "headline_group": str(best_group),
+        "headline_value": best_value,
+        "headline_text": headline_text,
+        "headline_direction": query_direction,
+    }
+
+
+def _try_numeric_conversion(series: pl.Series) -> tuple[pl.Series | None, bool]:
+    """
+    Try to convert a string series to numeric, handling common patterns.
+
+    Returns (converted_series, success).
+    """
+    if series.dtype in (pl.Int64, pl.Float64):
+        return series, True
+
+    if series.dtype != pl.Utf8:
+        return None, False
+
+    try:
+        # Try direct cast first
+        numeric = series.cast(pl.Float64)
+        if numeric.null_count() < series.len() * 0.5:  # Less than 50% nulls
+            return numeric, True
+    except Exception:
+        pass
+
+    try:
+        # Try extracting numeric part (handles "<20" -> 20, ">100" -> 100)
+        numeric = series.str.extract(r"(\d+\.?\d*)").cast(pl.Float64)
+        if numeric.null_count() < series.len() * 0.5:
+            return numeric, True
+    except Exception:
+        pass
+
+    return None, False
+
+
 def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compute comparison analysis using Polars-native operations.
 
-    Returns serializable dict (no Polars objects).
+    Returns serializable dict (no Polars objects) including headline_answer.
     """
     outcome_col = context.primary_variable
     group_col = context.grouping_variable
@@ -97,6 +416,10 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             ci_lower = mean_diff - 1.96 * se_diff
             ci_upper = mean_diff + 1.96 * se_diff
 
+            # Compute headline answer
+            group_means = {str(groups[0]): mean1, str(groups[1]): mean2}
+            headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+
             return {
                 "type": "comparison",
                 "test_type": "t_test",
@@ -110,6 +433,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "mean_diff": float(mean_diff),
                 "ci_lower": float(ci_lower),
                 "ci_upper": float(ci_upper),
+                "group_means": group_means,
+                **headline,
             }
 
         else:
@@ -122,6 +447,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 str(g): float(analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()) for g in groups
             }
 
+            # Compute headline answer
+            headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+
             return {
                 "type": "comparison",
                 "test_type": "anova",
@@ -132,6 +460,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "statistic": float(statistic),
                 "p_value": float(p_value),
                 "group_means": group_means,
+                **headline,
             }
 
     else:
@@ -152,6 +481,26 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         # Store contingency as dict for serialization
         contingency_dict = contingency.to_dicts()
 
+        # Try to compute group means if outcome can be converted to numeric
+        # This allows answering "which group had the lowest X" for pseudo-numeric data
+        headline: dict[str, Any] = {}
+        group_means: dict[str, float] = {}
+        numeric_outcome, success = _try_numeric_conversion(analysis_df[outcome_col])
+
+        if success and numeric_outcome is not None:
+            # Compute mean per group using the numeric conversion
+            analysis_with_numeric = analysis_df.with_columns(numeric_outcome.alias("_numeric_outcome"))
+
+            for g in groups:
+                group_mean = (
+                    analysis_with_numeric.filter(pl.col(group_col) == g).select("_numeric_outcome").mean().item()
+                )
+                if group_mean is not None:
+                    group_means[str(g)] = float(group_mean)
+
+            if group_means:
+                headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+
         return {
             "type": "comparison",
             "test_type": "chi_square",
@@ -162,6 +511,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             "dof": int(dof),
             "contingency": contingency_dict,
             "contingency_index_col": outcome_col,
+            "group_means": group_means if group_means else None,
+            **headline,
         }
 
 

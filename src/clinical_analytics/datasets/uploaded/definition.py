@@ -217,6 +217,20 @@ class UploadedDataset(ClinicalDataset):
             if pred in self.data.columns:
                 cohort_data[pred] = self.data[pred]
 
+        # For descriptive analysis, include ALL columns from original data
+        # (not just predictors) so users can analyze any variable
+        excluded_from_all = {
+            patient_id_col,
+            outcome_col,
+            UnifiedCohort.PATIENT_ID,
+            UnifiedCohort.OUTCOME,
+            UnifiedCohort.OUTCOME_LABEL,
+            UnifiedCohort.TIME_ZERO,
+        }
+        for col in self.data.columns:
+            if col not in excluded_from_all and col not in cohort_data:
+                cohort_data[col] = self.data[col]
+
         # Create cohort dataframe
         cohort = pd.DataFrame(cohort_data)
 

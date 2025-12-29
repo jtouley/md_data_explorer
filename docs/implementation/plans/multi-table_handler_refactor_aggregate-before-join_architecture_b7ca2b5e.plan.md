@@ -1,6 +1,6 @@
 ---
-name: ""
-overview: ""
+name: Multi-Table Handler Refactor - DEFERRED_TO_V2
+overview: "DEFERRED_TO_V2: This plan is on hold pending completion of the Cohort-First Single Table MVP. Multi-table support will be implemented in V2 after the single-table workflow is validated."
 todos:
   - id: "1"
     content: Add TableClassification dataclass (with bridge/reference types, byte estimates) and classify_tables() method with bridge detection
@@ -232,15 +232,15 @@ In `UserDatasetStorage.save_zip_upload()`:
 2. Create fresh DuckDB connection per handler (not shared)
 3. Use **cross-platform** file lock for metadata writes:
    ```python
-               from filelock import FileLock
-               
-               lock = FileLock(str(metadata_path) + ".lock")
-               with lock:
-                   # Atomic write via temp file + rename
-                   tmp = metadata_path.with_suffix(".json.tmp")
-                   with open(tmp, 'w') as f:
-                       json.dump(full_metadata, f, indent=2)
-                   tmp.replace(metadata_path)  # atomic rename
+            from filelock import FileLock
+            
+            lock = FileLock(str(metadata_path) + ".lock")
+            with lock:
+                # Atomic write via temp file + rename
+                tmp = metadata_path.with_suffix(".json.tmp")
+                with open(tmp, 'w') as f:
+                    json.dump(full_metadata, f, indent=2)
+                tmp.replace(metadata_path)  # atomic rename
    ```
 
 
@@ -493,3 +493,4 @@ This refactor **completes Phase 4** of the [consolidate-docs plan](docs/implemen
 
 - Keep `build_unified_cohort()` as deprecated method (logs warning, can be wrapped around `materialize_mart()` + read in future)
 - Default granularity to `"patient_level"` for backward compatibility
+- Add feature flags to gradually roll out changes

@@ -4,31 +4,31 @@ overview: "Strategic pivot to cohort-first architecture: M8 complete (granularit
 todos:
   - id: m8-complete
     content: "Milestone 8: Granularity parameter chain complete (SemanticLayer + all datasets, keyword-only internal calls)"
-    status: pending
+    status: completed
   - id: create-config-module
     content: Create src/clinical_analytics/ui/config.py with MULTI_TABLE_ENABLED env var flag
-    status: pending
+    status: completed
   - id: disable-multi-table-ui
     content: Import config flag in Upload_Data.py and user_datasets.py, gate ZIP uploads
-    status: pending
+    status: completed
   - id: fix-sql-injection
     content: Add _validate_table_identifier() in semantic.py, validate then quote (not just quote)
-    status: pending
+    status: completed
   - id: fix-path-traversal
     content: Add _safe_store_upload() with UUID storage and _safe_extract_zip_member() in user_datasets.py
-    status: pending
+    status: completed
   - id: fix-class-attribute
     content: Convert semantic class attribute to instance attribute in dataset.py
-    status: pending
+    status: completed
   - id: add-schema-validator
     content: Add validate_unified_cohort_schema() to schema.py and call at save-time
-    status: pending
+    status: completed
   - id: update-summary-page
     content: Add Semantic Scope section showing cohort-only mode
-    status: pending
+    status: completed
   - id: defer-multi-table-plans
     content: Mark multi-table refactor plan as DEFERRED_TO_V2
-    status: pending
+    status: completed
   - id: test-acceptance
     content: "Validate with wife's dataset: upload < 5min, summary works, chat answers, schema validated"
     status: pending
