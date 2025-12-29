@@ -250,6 +250,11 @@ def render_comparison_analysis(result: dict) -> None:
     group_col = result["group_col"]
     test_type = result["test_type"]
 
+    # Show headline answer if available (direct answer to the user's question)
+    if "headline_text" in result:
+        st.markdown("### 📋 Answer")
+        st.info(result["headline_text"])
+
     if test_type == "t_test":
         groups = result["groups"]
         p_value = result["p_value"]
@@ -304,6 +309,14 @@ def render_comparison_analysis(result: dict) -> None:
 
         p_interp = ResultInterpreter.interpret_p_value(p_value)
         st.metric("Result", f"{p_interp['significance']} {p_interp['emoji']}")
+
+        # Show group means if available (for pseudo-numeric categorical data)
+        if result.get("group_means"):
+            st.markdown("### Group Averages")
+            cols = st.columns(min(len(result["group_means"]), 4))
+            for idx, (group, mean_val) in enumerate(sorted(result["group_means"].items(), key=lambda x: x[1])):
+                with cols[idx % len(cols)]:
+                    st.metric(group, f"{mean_val:.1f}")
 
         st.markdown("### Distribution")
         # Reconstruct contingency table for display

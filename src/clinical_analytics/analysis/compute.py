@@ -50,11 +50,78 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
     }
 
 
+def _compute_headline_answer(
+    group_means: dict[str, float], outcome_col: str, group_col: str, query_direction: str = "lowest"
+) -> dict[str, Any]:
+    """
+    Compute headline answer for comparison results.
+
+    Args:
+        group_means: Dict mapping group name to mean value
+        outcome_col: Name of outcome variable
+        group_col: Name of grouping variable
+        query_direction: "lowest" or "highest"
+
+    Returns:
+        Dict with headline_group, headline_value, headline_text
+    """
+    if not group_means:
+        return {}
+
+    if query_direction == "lowest":
+        best_group = min(group_means, key=group_means.get)
+    else:
+        best_group = max(group_means, key=group_means.get)
+
+    best_value = group_means[best_group]
+
+    # Format the headline text
+    headline_text = f"**{best_group}** had the {query_direction} {outcome_col} (mean: {best_value:.1f})"
+
+    return {
+        "headline_group": str(best_group),
+        "headline_value": best_value,
+        "headline_text": headline_text,
+        "headline_direction": query_direction,
+    }
+
+
+def _try_numeric_conversion(series: pl.Series) -> tuple[pl.Series | None, bool]:
+    """
+    Try to convert a string series to numeric, handling common patterns.
+
+    Returns (converted_series, success).
+    """
+    if series.dtype in (pl.Int64, pl.Float64):
+        return series, True
+
+    if series.dtype != pl.Utf8:
+        return None, False
+
+    try:
+        # Try direct cast first
+        numeric = series.cast(pl.Float64)
+        if numeric.null_count() < series.len() * 0.5:  # Less than 50% nulls
+            return numeric, True
+    except Exception:
+        pass
+
+    try:
+        # Try extracting numeric part (handles "<20" -> 20, ">100" -> 100)
+        numeric = series.str.extract(r"(\d+\.?\d*)").cast(pl.Float64)
+        if numeric.null_count() < series.len() * 0.5:
+            return numeric, True
+    except Exception:
+        pass
+
+    return None, False
+
+
 def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compute comparison analysis using Polars-native operations.
 
-    Returns serializable dict (no Polars objects).
+    Returns serializable dict (no Polars objects) including headline_answer.
     """
     outcome_col = context.primary_variable
     group_col = context.grouping_variable
@@ -97,6 +164,10 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             ci_lower = mean_diff - 1.96 * se_diff
             ci_upper = mean_diff + 1.96 * se_diff
 
+            # Compute headline answer
+            group_means = {str(groups[0]): mean1, str(groups[1]): mean2}
+            headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+
             return {
                 "type": "comparison",
                 "test_type": "t_test",
@@ -110,6 +181,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "mean_diff": float(mean_diff),
                 "ci_lower": float(ci_lower),
                 "ci_upper": float(ci_upper),
+                "group_means": group_means,
+                **headline,
             }
 
         else:
@@ -122,6 +195,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 str(g): float(analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()) for g in groups
             }
 
+            # Compute headline answer
+            headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+
             return {
                 "type": "comparison",
                 "test_type": "anova",
@@ -132,6 +208,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "statistic": float(statistic),
                 "p_value": float(p_value),
                 "group_means": group_means,
+                **headline,
             }
 
     else:
@@ -152,6 +229,26 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         # Store contingency as dict for serialization
         contingency_dict = contingency.to_dicts()
 
+        # Try to compute group means if outcome can be converted to numeric
+        # This allows answering "which group had the lowest X" for pseudo-numeric data
+        headline: dict[str, Any] = {}
+        group_means: dict[str, float] = {}
+        numeric_outcome, success = _try_numeric_conversion(analysis_df[outcome_col])
+
+        if success and numeric_outcome is not None:
+            # Compute mean per group using the numeric conversion
+            analysis_with_numeric = analysis_df.with_columns(numeric_outcome.alias("_numeric_outcome"))
+
+            for g in groups:
+                group_mean = (
+                    analysis_with_numeric.filter(pl.col(group_col) == g).select("_numeric_outcome").mean().item()
+                )
+                if group_mean is not None:
+                    group_means[str(g)] = float(group_mean)
+
+            if group_means:
+                headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+
         return {
             "type": "comparison",
             "test_type": "chi_square",
@@ -162,6 +259,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             "dof": int(dof),
             "contingency": contingency_dict,
             "contingency_index_col": outcome_col,
+            "group_means": group_means if group_means else None,
+            **headline,
         }
 
 
