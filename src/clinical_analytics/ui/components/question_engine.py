@@ -381,7 +381,6 @@ class QuestionEngine:
         Returns:
             QueryIntent if parsing succeeds, None otherwise
         """
-        import signal
         from contextlib import contextmanager
 
         from clinical_analytics.core.nl_query_config import (
@@ -397,42 +396,48 @@ class QuestionEngine:
 
         @contextmanager
         def timeout_context(seconds: float):
-            """Timeout context manager for tier execution."""
+            """Timeout using threading (cross-platform, thread-safe)."""
+            import threading
 
-            def timeout_handler(signum, frame):
-                raise TimeoutError(f"Tier execution exceeded {seconds}s")
+            timed_out = {"value": False}
 
-            # Set alarm (Unix only - for production, use threading.Timer)
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(int(seconds))
+            def set_timeout():
+                timed_out["value"] = True
+
+            timer = threading.Timer(seconds, set_timeout)
+            timer.start()
             try:
-                yield
+                yield timed_out
             finally:
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
+                timer.cancel()
 
         import structlog
 
         logger = structlog.get_logger()
         parsing_attempts = []
+        final_intent = None  # Don't reuse variable name across tiers
+
+        def track_attempt(tier: str, tier_intent: QueryIntent | None, threshold: float) -> dict:
+            """Track parsing attempt (DRY helper)."""
+            return {
+                "tier": tier,
+                "result": "success" if tier_intent and tier_intent.confidence >= threshold else "failed",
+                "confidence": tier_intent.confidence if tier_intent else 0.0,
+            }
 
         with st.status("🔍 Analyzing your question...", expanded=True) as status:
             # Tier 1: Pattern matching (fast, no timeout needed)
             status.update(label="Trying pattern matching...")
             try:
-                intent = nl_engine._pattern_match(query)
-                attempt = {
-                    "tier": "pattern_match",
-                    "result": "success" if intent and intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD else "failed",
-                    "confidence": intent.confidence if intent else 0.0,
-                }
+                tier1_intent = nl_engine._pattern_match(query)
+                attempt = track_attempt("pattern_match", tier1_intent, TIER_1_PATTERN_MATCH_THRESHOLD)
                 parsing_attempts.append(attempt)
 
-                if intent and intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
-                    intent.parsing_tier = "pattern_match"
-                    intent.parsing_attempts = parsing_attempts
-                    status.update(label=f"✅ Matched via pattern matching (confidence: {intent.confidence:.0%})")
-                    return intent
+                if tier1_intent and tier1_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
+                    tier1_intent.parsing_tier = "pattern_match"
+                    tier1_intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via pattern matching (confidence: {tier1_intent.confidence:.0%})")
+                    return tier1_intent
             except Exception as e:
                 logger.warning("pattern_match_failed", error=str(e))
                 parsing_attempts.append({"tier": "pattern_match", "result": "error", "error": str(e)})
@@ -440,22 +445,18 @@ class QuestionEngine:
             # Tier 2: Semantic search (may be slow, but usually < 1s)
             status.update(label="Trying semantic search...")
             try:
-                with timeout_context(TIER_TIMEOUT_SECONDS):
-                    intent = nl_engine._semantic_match(query)
-                attempt = {
-                    "tier": "semantic_match",
-                    "result": "success"
-                    if intent and intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD
-                    else "failed",
-                    "confidence": intent.confidence if intent else 0.0,
-                }
+                with timeout_context(TIER_TIMEOUT_SECONDS) as timeout_state:
+                    tier2_intent = nl_engine._semantic_match(query)
+                    if timeout_state["value"]:
+                        raise TimeoutError("Semantic match exceeded timeout")
+                attempt = track_attempt("semantic_match", tier2_intent, TIER_2_SEMANTIC_MATCH_THRESHOLD)
                 parsing_attempts.append(attempt)
 
-                if intent and intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
-                    intent.parsing_tier = "semantic_match"
-                    intent.parsing_attempts = parsing_attempts
-                    status.update(label=f"✅ Matched via semantic search (confidence: {intent.confidence:.0%})")
-                    return intent
+                if tier2_intent and tier2_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
+                    tier2_intent.parsing_tier = "semantic_match"
+                    tier2_intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via semantic search (confidence: {tier2_intent.confidence:.0%})")
+                    return tier2_intent
             except TimeoutError:
                 status.update(label="⏱️ Semantic search timed out, trying advanced parsing...")
                 logger.warning("semantic_match_timeout", query=query)
@@ -467,20 +468,19 @@ class QuestionEngine:
             # Tier 3: LLM fallback (can be very slow - 3-5s)
             status.update(label="Trying advanced parsing...")
             try:
-                with timeout_context(TIER_TIMEOUT_SECONDS):
-                    intent = nl_engine._llm_parse(query)
-                attempt = {
-                    "tier": "llm_fallback",
-                    "result": "success" if intent else "failed",
-                    "confidence": intent.confidence if intent else 0.0,
-                }
+                with timeout_context(TIER_TIMEOUT_SECONDS) as timeout_state:
+                    tier3_intent = nl_engine._llm_parse(query)
+                    if timeout_state["value"]:
+                        raise TimeoutError("LLM parse exceeded timeout")
+                attempt = track_attempt("llm_fallback", tier3_intent, 0.0)  # LLM has no threshold
                 parsing_attempts.append(attempt)
 
-                if intent:
-                    intent.parsing_tier = "llm_fallback"
-                    intent.parsing_attempts = parsing_attempts
-                    status.update(label=f"✅ Matched via advanced parsing (confidence: {intent.confidence:.0%})")
-                    return intent
+                if tier3_intent:
+                    tier3_intent.parsing_tier = "llm_fallback"
+                    tier3_intent.parsing_attempts = parsing_attempts
+                    status.update(label=f"✅ Matched via advanced parsing (confidence: {tier3_intent.confidence:.0%})")
+                    return tier3_intent
+                final_intent = tier3_intent  # May be None
             except TimeoutError:
                 status.update(label="❌ Advanced parsing timed out")
                 logger.warning("llm_parse_timeout", query=query)
@@ -491,11 +491,22 @@ class QuestionEngine:
 
             status.update(label="❌ Could not understand query")
             # Return intent with diagnostics even if all tiers failed
-            if intent:
-                intent.parsing_attempts = parsing_attempts
-                intent.failure_reason = "All parsing tiers failed"
-                intent.suggestions = nl_engine._generate_suggestions(query)
-            return intent
+            if final_intent is None:
+                # Create a failure intent if all tiers failed
+                from clinical_analytics.core.nl_query_engine import QueryIntent
+
+                final_intent = QueryIntent(
+                    intent_type="DESCRIBE",
+                    confidence=0.0,
+                    parsing_attempts=parsing_attempts,
+                    failure_reason="All parsing tiers failed",
+                    suggestions=nl_engine._generate_suggestions(query),
+                )
+            else:
+                final_intent.parsing_attempts = parsing_attempts
+                final_intent.failure_reason = "All parsing tiers failed"
+                final_intent.suggestions = nl_engine._generate_suggestions(query)
+            return final_intent
 
     @staticmethod
     def _format_diagnostic_error(intent: QueryIntent) -> str:

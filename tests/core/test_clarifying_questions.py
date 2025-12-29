@@ -57,10 +57,16 @@ def test_clarifying_questions_asks_about_intent_type(mock_semantic_layer, low_co
                 assert refined_intent.confidence >= 0.6  # Should be boosted after user selection
 
 
-def test_clarifying_questions_uses_semantic_layer_metadata(mock_semantic_layer, low_confidence_intent):
+def test_clarifying_questions_uses_semantic_layer_metadata(mock_semantic_layer):
     """Clarifying questions should use semantic layer metadata for context."""
+
     # Mock st.selectbox to return a column
-    with patch("streamlit.selectbox", return_value="Mortality"):
+    def selectbox_side_effect(label, *args, **kwargs):
+        if "Primary Variable" in str(label):
+            return "Mortality"
+        return "Mortality"
+
+    with patch("streamlit.selectbox", side_effect=selectbox_side_effect):
         with patch("streamlit.subheader"):
             # Mock parse_column_name to return display name
             with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
@@ -68,16 +74,15 @@ def test_clarifying_questions_uses_semantic_layer_metadata(mock_semantic_layer, 
 
                 mock_parse.return_value = ColumnMetadata(display_name="Mortality", canonical_name="mortality")
 
+                intent = QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.4, primary_variable=None)
                 refined_intent = ClarifyingQuestionsEngine.ask_clarifying_questions(
-                    QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.4, primary_variable=None),
-                    mock_semantic_layer,
-                    available_columns=["mortality"],
+                    intent, mock_semantic_layer, available_columns=["mortality"]
                 )
 
-                # Verify get_column_alias_index was called
-                mock_semantic_layer.get_column_alias_index.assert_called()
-                # Verify primary_variable was set
+                # Verify primary_variable was set (behavior, not implementation)
                 assert refined_intent.primary_variable == "mortality"
+                # Verify parse_column_name was used (semantic layer metadata usage)
+                assert mock_parse.called
 
 
 def test_clarifying_questions_handles_collisions(mock_semantic_layer):

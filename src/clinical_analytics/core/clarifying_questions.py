@@ -4,8 +4,13 @@ Interactive questions to help users refine their queries when confidence is low.
 Leverages semantic layer metadata to provide context-aware suggestions.
 """
 
+from typing import TYPE_CHECKING
+
 import streamlit as st
 import structlog
+
+if TYPE_CHECKING:
+    from clinical_analytics.core.nl_query_engine import QueryIntent
 
 logger = structlog.get_logger()
 

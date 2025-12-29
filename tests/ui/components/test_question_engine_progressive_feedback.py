@@ -33,17 +33,17 @@ def test_progressive_feedback_returns_intent_with_diagnostics(mock_nl_engine):
 
     query = "compare mortality by treatment"
 
-    # Mock st.status to avoid Streamlit dependency
+    # Test behavior, not implementation details
     with patch("streamlit.status") as mock_status:
         mock_status.return_value.__enter__.return_value.update = MagicMock()
-        # Mock the actual parsing to return a valid intent
         intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
 
-        # Assert
+        # Assert behavior: correct intent returned with diagnostics
         assert intent is not None
         assert intent.parsing_tier in ["pattern_match", "semantic_match", "llm_fallback"]
         assert intent.parsing_attempts  # Should have at least one attempt
         assert intent.confidence > 0.0
+        assert intent.intent_type == "COMPARE_GROUPS"  # Verify correct parsing
 
 
 def test_progressive_feedback_tracks_all_attempts(mock_nl_engine):
@@ -57,12 +57,13 @@ def test_progressive_feedback_tracks_all_attempts(mock_nl_engine):
         mock_status.return_value.__enter__.return_value.update = MagicMock()
         intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
 
-        # Should have tracked attempts
+        # Test behavior: all attempts tracked, correct tier selected
         assert intent is not None
         assert len(intent.parsing_attempts) > 0
-        # Should have at least pattern_match attempt
         tier_names = [attempt.get("tier") for attempt in intent.parsing_attempts]
         assert "pattern_match" in tier_names
+        # Verify correct tier was selected based on confidence
+        assert intent.parsing_tier in tier_names
 
 
 def test_progressive_feedback_handles_timeout(mock_nl_engine):
@@ -95,17 +96,14 @@ def test_progressive_feedback_handles_timeout(mock_nl_engine):
 
 def test_progressive_feedback_respects_feature_flag(mock_nl_engine):
     """Progressive feedback should respect ENABLE_PROGRESSIVE_FEEDBACK feature flag."""
-    from unittest.mock import patch
-
     from clinical_analytics.ui.components.question_engine import QuestionEngine
 
     query = "compare mortality by treatment"
 
     # When feature flag is disabled, should fall back to simple parsing
     with patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False):
-        with patch("streamlit.status"):
-            intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
-            # Should still return intent (via simple parse_query)
-            assert intent is not None
-            # Status should not be called when feature flag is off
-            # (Actually, it might still be called, but the behavior should be different)
+        intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
+        # Should still return intent (via simple parse_query)
+        assert intent is not None
+        # Should have diagnostics from parse_query
+        assert intent.parsing_tier is not None or intent.parsing_attempts

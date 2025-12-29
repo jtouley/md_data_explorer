@@ -72,7 +72,7 @@ todos:
       - phase5-tests
   - id: phase5-quality
     content: "Phase 5: Run quality gates and commit"
-    status: in_progress
+    status: completed
     dependencies:
       - phase5-implement
   - id: phase6-deferred
