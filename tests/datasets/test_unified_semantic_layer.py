@@ -36,7 +36,7 @@ class TestUnifiedSemanticLayerRegistration:
         # Save individual table (Phase 2 persistence)
         tables_dir = storage.raw_dir / f"{upload_id}_tables"
         tables_dir.mkdir(exist_ok=True)
-        (tables_dir / "patient_outcomes.csv").write_text(df.write_csv())
+        df.write_csv(tables_dir / "patient_outcomes.csv")
 
         # Create metadata with inferred_schema
         metadata = {
@@ -101,8 +101,8 @@ class TestUnifiedSemanticLayerRegistration:
         # Save individual tables
         tables_dir = storage.raw_dir / f"{upload_id}_tables"
         tables_dir.mkdir(exist_ok=True)
-        (tables_dir / "patients.csv").write_text(patients_df.write_csv())
-        (tables_dir / "admissions.csv").write_text(admissions_df.write_csv())
+        patients_df.write_csv(tables_dir / "patients.csv")
+        admissions_df.write_csv(tables_dir / "admissions.csv")
 
         # Create metadata
         metadata = {
@@ -150,7 +150,7 @@ class TestUnifiedSemanticLayerRegistration:
 
         tables_dir = storage.raw_dir / f"{upload_id}_tables"
         tables_dir.mkdir(exist_ok=True)
-        (tables_dir / "data.csv").write_text(df.write_csv())
+        df.write_csv(tables_dir / "data.csv")
 
         metadata = {
             "upload_id": upload_id,
@@ -167,24 +167,29 @@ class TestUnifiedSemanticLayerRegistration:
         import json
         (storage.metadata_dir / f"{upload_id}.json").write_text(json.dumps(metadata))
 
-        # Act - Initialize twice
-        dataset = UploadedDataset(upload_id, storage)
-        dataset._semantic_initialized = False  # Reset flag
-        dataset._maybe_init_semantic()  # First init
+        # Act - Call get_semantic_layer() twice (public API)
+        dataset1 = UploadedDataset(upload_id, storage)
+        semantic1 = dataset1.get_semantic_layer()
 
-        # Get row count
-        first_count = dataset.semantic.con.con.execute(
-            f"SELECT COUNT(*) FROM {dataset.semantic.con.con.execute('SHOW TABLES').fetchall()[0][0]}"
-        ).fetchone()[0]
+        # Get row count from first initialization
+        # Find the actual table name (includes hashes for uniqueness)
+        tables1 = semantic1.con.con.execute("SHOW TABLES").fetchall()
+        data_tables1 = [t[0] for t in tables1 if "data" in t[0]]
+        assert len(data_tables1) == 1, f"Expected 1 data table, found: {data_tables1}"
+        table_name = data_tables1[0]
+        first_count = semantic1.con.con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
-        dataset._semantic_initialized = False
-        dataset._maybe_init_semantic()  # Second init (should be idempotent)
+        # Second initialization - creates new dataset instance
+        dataset2 = UploadedDataset(upload_id, storage)
+        semantic2 = dataset2.get_semantic_layer()
 
-        second_count = dataset.semantic.con.con.execute(
-            f"SELECT COUNT(*) FROM {dataset.semantic.con.con.execute('SHOW TABLES').fetchall()[0][0]}"
-        ).fetchone()[0]
+        # Get row count after second initialization (same table should exist)
+        tables2 = semantic2.con.con.execute("SHOW TABLES").fetchall()
+        data_tables2 = [t[0] for t in tables2 if "data" in t[0]]
+        assert len(data_tables2) == 1, f"Expected 1 data table after re-init, found: {data_tables2}"
+        second_count = semantic2.con.con.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
-        # Assert - Data not lost
+        # Assert - Data not lost (IF NOT EXISTS prevented clobbering)
         assert first_count == second_count == 2
 
 
@@ -296,7 +301,7 @@ class TestNoConditionalLogic:
 
             tables_dir = storage.raw_dir / f"{upload_id}_tables"
             tables_dir.mkdir(exist_ok=True)
-            (tables_dir / f"{table_name}.csv").write_text(df.write_csv())
+            df.write_csv(tables_dir / f"{table_name}.csv")
 
             metadata = {
                 "upload_id": upload_id,

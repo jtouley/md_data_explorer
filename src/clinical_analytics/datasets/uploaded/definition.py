@@ -379,6 +379,13 @@ class UploadedDataset(ClinicalDataset):
 
                         # CRITICAL FIX: Use IF NOT EXISTS instead of OR REPLACE
                         # Prevents data loss on semantic layer re-init within same session
+                        #
+                        # Idempotency assumption: Table names include upload_id via dataset_name,
+                        # ensuring uniqueness across uploads. Same upload re-initialized uses same
+                        # table name, so IF NOT EXISTS prevents clobbering existing data.
+                        #
+                        # Example: upload_id="abc123" -> dataset_name="my_data" -> table="my_data_patients"
+                        # Re-init of same upload reuses "my_data_patients", skips CREATE if exists.
                         duckdb_con.execute(
                             f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS SELECT * FROM read_csv_auto(?)",
                             [abs_path],
