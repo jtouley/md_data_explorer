@@ -27,22 +27,22 @@ todos:
       - phase2-tests
   - id: phase2-quality
     content: "Phase 2: Run quality gates and commit"
-    status: in_progress
+    status: completed
     dependencies:
       - phase2-implement
   - id: phase3-tests
     content: "Phase 3: Write failing tests for ClarifyingQuestionsEngine"
-    status: pending
+    status: completed
     dependencies:
       - phase2-quality
   - id: phase3-implement
     content: "Phase 3: Create ClarifyingQuestionsEngine class and integrate with UI"
-    status: pending
+    status: completed
     dependencies:
       - phase3-tests
   - id: phase3-quality
     content: "Phase 3: Run quality gates and commit"
-    status: pending
+    status: in_progress
     dependencies:
       - phase3-implement
   - id: phase4-tests

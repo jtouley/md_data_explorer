@@ -557,6 +557,27 @@ class QuestionEngine:
             # Extract variables with collision suggestions
             matched_vars, collision_suggestions = nl_engine._extract_variables_from_query(query)
 
+            # Ask clarifying questions if confidence is low
+            from clinical_analytics.core.nl_query_config import (
+                CLARIFYING_QUESTIONS_THRESHOLD,
+                ENABLE_CLARIFYING_QUESTIONS,
+            )
+
+            if (
+                query_intent
+                and query_intent.confidence < CLARIFYING_QUESTIONS_THRESHOLD
+                and ENABLE_CLARIFYING_QUESTIONS
+            ):
+                # Get available columns from semantic layer for clarifying questions
+                alias_index = semantic_layer.get_column_alias_index()
+                available_columns = list(alias_index.values()) if alias_index else []
+
+                from clinical_analytics.core.clarifying_questions import ClarifyingQuestionsEngine
+
+                query_intent = ClarifyingQuestionsEngine.ask_clarifying_questions(
+                    query_intent, semantic_layer, available_columns
+                )
+
             # Show confidence (only if progressive feedback didn't already show it)
             if not ENABLE_PROGRESSIVE_FEEDBACK:
                 if query_intent and query_intent.confidence > 0.75:

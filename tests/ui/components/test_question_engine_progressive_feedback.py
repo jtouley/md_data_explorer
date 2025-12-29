@@ -103,7 +103,7 @@ def test_progressive_feedback_respects_feature_flag(mock_nl_engine):
 
     # When feature flag is disabled, should fall back to simple parsing
     with patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False):
-        with patch("streamlit.status") as mock_status:
+        with patch("streamlit.status"):
             intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
             # Should still return intent (via simple parse_query)
             assert intent is not None
