@@ -119,14 +119,16 @@ class UploadedDataset(ClinicalDataset):
                 # Convert variable_mapping to inferred_schema for granularity check
                 if self.data is None:
                     self.load()
-                from clinical_analytics.ui.storage.user_datasets import convert_schema
+                from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
 
                 inferred_schema = convert_schema(
                     self.metadata["variable_mapping"],
                     pl.from_pandas(self.data) if isinstance(self.data, pd.DataFrame) else self.data,
                 )
 
-            supported = inferred_schema.get("granularities", ["patient_level"]) if inferred_schema else ["patient_level"]
+            supported = (
+                inferred_schema.get("granularities", ["patient_level"]) if inferred_schema else ["patient_level"]
+            )
 
             if granularity not in supported:
                 raise ValueError(

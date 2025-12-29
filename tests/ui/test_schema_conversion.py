@@ -6,7 +6,11 @@ Tests convert_schema() function that transforms variable_mapping to inferred_sch
 
 import polars as pl
 
-from clinical_analytics.ui.storage.user_datasets import convert_schema
+from clinical_analytics.datasets.uploaded.schema_conversion import (
+    convert_schema,
+    infer_granularities,
+    is_categorical,
+)
 
 
 class TestConvertSchema:
@@ -273,8 +277,6 @@ class TestCategoricalDetection:
     def test_categorical_detection_low_cardinality_string(self):
         """Test that strings with low cardinality are categorical."""
         # Arrange
-        from clinical_analytics.ui.storage.user_datasets import is_categorical
-
         # 5 unique values out of 10 rows = 0.5 ratio (< 0.5 threshold)
         series = pl.Series("gender", ["M", "F", "M", "F", "M", "F", "M", "F", "M", "F"])
 
@@ -287,8 +289,6 @@ class TestCategoricalDetection:
     def test_categorical_detection_high_cardinality_string(self):
         """Test that strings with high cardinality are not categorical."""
         # Arrange
-        from clinical_analytics.ui.storage.user_datasets import is_categorical
-
         # 25 unique values out of 25 rows = 1.0 ratio (>= 0.5 threshold)
         series = pl.Series("icd_code", [f"ICD{i:03d}" for i in range(25)])
 
@@ -301,8 +301,6 @@ class TestCategoricalDetection:
     def test_categorical_detection_numeric_never_categorical(self):
         """Test that numeric columns are never auto-categorical."""
         # Arrange
-        from clinical_analytics.ui.storage.user_datasets import is_categorical
-
         # Even with low cardinality, numeric should NOT be categorical
         series = pl.Series("status", [0, 1, 0, 1, 0, 1, 0, 1])  # Only 2 unique values
 
@@ -319,8 +317,6 @@ class TestGranularityInference:
     def test_infer_granularities_patient_only(self):
         """Test that patient_level is always inferred."""
         # Arrange
-        from clinical_analytics.ui.storage.user_datasets import infer_granularities
-
         df = pl.DataFrame({
             "patient_id": ["P001", "P002"],
             "age": [25, 30],
@@ -335,8 +331,6 @@ class TestGranularityInference:
     def test_infer_granularities_with_admission_id(self):
         """Test that admission_level is inferred when admission_id exists."""
         # Arrange
-        from clinical_analytics.ui.storage.user_datasets import infer_granularities
-
         df = pl.DataFrame({
             "patient_id": ["P001", "P002"],
             "admission_id": ["A001", "A002"],
@@ -352,8 +346,6 @@ class TestGranularityInference:
     def test_infer_granularities_with_event_timestamp(self):
         """Test that event_level is inferred when event_timestamp exists."""
         # Arrange
-        from clinical_analytics.ui.storage.user_datasets import infer_granularities
-
         df = pl.DataFrame({
             "patient_id": ["P001", "P002"],
             "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
@@ -369,8 +361,6 @@ class TestGranularityInference:
     def test_infer_granularities_with_all_columns(self):
         """Test that all granularities are inferred when all columns exist."""
         # Arrange
-        from clinical_analytics.ui.storage.user_datasets import infer_granularities
-
         df = pl.DataFrame({
             "patient_id": ["P001", "P002"],
             "admission_id": ["A001", "A002"],
