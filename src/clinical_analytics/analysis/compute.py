@@ -13,6 +13,38 @@ from scipy import stats
 from clinical_analytics.ui.components.question_engine import AnalysisContext
 
 
+def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
+    """
+    Try to convert a string series to numeric.
+
+    Handles:
+    - European comma format: "-1,8" -> -1.8
+    - Empty strings and whitespace -> null
+    - Non-numeric values -> null
+
+    Returns None if conversion fails or results in all nulls.
+    """
+    if series.dtype != pl.Utf8:
+        return None
+
+    try:
+        # Clean the values: replace comma with dot, strip whitespace
+        cleaned = (
+            series.str.strip_chars().str.replace(",", ".").str.replace_all(r"^\s*$", "")  # Empty strings to empty
+        )
+
+        # Try to cast to float
+        numeric = cleaned.cast(pl.Float64, strict=False)
+
+        # Check if we got any valid values
+        if numeric.null_count() == len(numeric):
+            return None
+
+        return numeric
+    except Exception:
+        return None
+
+
 def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compute descriptive analysis using Polars-native operations.
@@ -31,21 +63,31 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
         col = primary_var
         series = df[col]
         row_count = df.height
-        non_null_count = row_count - series.null_count()
+
+        # Try to convert string columns to numeric (handles European comma format, etc.)
+        numeric_series = None
+        if series.dtype == pl.Utf8:
+            numeric_series = _try_convert_to_numeric(series)
+
+        # Use converted series if successful, otherwise original
+        analysis_series = numeric_series if numeric_series is not None else series
+        is_numeric = analysis_series.dtype in (pl.Int64, pl.Float64)
+
+        non_null_count = row_count - analysis_series.null_count()
 
         result = {
             "type": "descriptive",
             "focused_variable": col,
             "row_count": row_count,
             "non_null_count": non_null_count,
-            "null_count": series.null_count(),
-            "null_pct": (series.null_count() / row_count * 100) if row_count > 0 else 0.0,
+            "null_count": analysis_series.null_count(),
+            "null_pct": (analysis_series.null_count() / row_count * 100) if row_count > 0 else 0.0,
         }
 
         # Compute stats based on dtype
-        if series.dtype in (pl.Int64, pl.Float64):
+        if is_numeric:
             # Numeric variable - compute mean, median, std, min, max
-            clean_series = series.drop_nulls()
+            clean_series = analysis_series.drop_nulls()
             if len(clean_series) > 0:
                 result["mean"] = float(clean_series.mean())
                 result["median"] = float(clean_series.median())
