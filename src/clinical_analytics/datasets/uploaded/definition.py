@@ -17,6 +17,9 @@ from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 logger = logging.getLogger(__name__)
 
+# Centralize categorical threshold (matches VariableTypeDetector)
+CATEGORICAL_THRESHOLD = 20  # If unique values <= this, likely categorical
+
 
 class UploadedDataset(ClinicalDataset):
     """
@@ -361,6 +364,146 @@ class UploadedDataset(ClinicalDataset):
         }
         return config
 
+    def _build_config_from_variable_mapping(self, variable_mapping: dict[str, Any]) -> dict[str, Any]:
+        """
+        Build semantic layer config from variable_mapping (single-table uploads).
+
+        Converts variable_mapping format to semantic layer config format.
+        Matches structure of _build_config_from_inferred_schema() for consistency.
+
+        Args:
+            variable_mapping: Dictionary with patient_id, outcome, time_variables, predictors
+
+        Returns:
+            Semantic layer config dictionary compatible with SemanticLayer
+        """
+        # Load data if needed for categorical detection and outcome type inference
+        if self.data is None:
+            self.load()
+
+        # After load(), self.data should not be None
+        if self.data is None:
+            raise ValueError("Failed to load data for semantic layer config")
+
+        # Convert to Polars for efficient processing
+        df_polars = pl.from_pandas(self.data) if isinstance(self.data, pd.DataFrame) else self.data
+
+        # Build column_mapping
+        column_mapping = {}
+        patient_id_col = variable_mapping.get("patient_id")
+        if patient_id_col:
+            column_mapping[patient_id_col] = "patient_id"
+
+        # Build outcomes with type inference
+        outcomes = {}
+        outcome_col = variable_mapping.get("outcome")
+        if outcome_col:
+            # Infer outcome type from data (don't hardcode "binary")
+            outcome_type = self._infer_outcome_type(df_polars, outcome_col)
+            outcomes[outcome_col] = {
+                "source_column": outcome_col,
+                "type": outcome_type,
+            }
+
+        # Build time_zero (must match multi-table format exactly: {"source_column": str})
+        time_zero = {}
+        time_vars = variable_mapping.get("time_variables", {})
+        time_zero_col = time_vars.get("time_zero")
+        if time_zero_col:
+            # Match multi-table format: {"source_column": str}
+            time_zero["source_column"] = time_zero_col
+
+        # Detect categorical variables from predictors
+        # TODO: Consider sampling strategy for large columns (series.n_unique() can be expensive)
+        predictors = variable_mapping.get("predictors", [])
+        categorical_variables = []
+
+        for col in predictors:
+            if col not in df_polars.columns:
+                continue
+
+            series = df_polars[col]
+            dtype = series.dtype
+
+            # String type → categorical
+            if dtype == pl.Utf8 or dtype == pl.Categorical:
+                categorical_variables.append(col)
+            # Boolean → categorical
+            elif dtype == pl.Boolean:
+                categorical_variables.append(col)
+            # Numeric with ≤CATEGORICAL_THRESHOLD unique values → categorical
+            elif dtype.is_numeric():
+                # For large columns, consider sampling (TODO: implement if performance issues)
+                unique_count = series.n_unique()
+                if unique_count > 100_000:
+                    logger.warning(
+                        f"Column '{col}' has {unique_count:,} unique values. "
+                        "Categorical detection may be slow. Consider sampling strategy."
+                    )
+                if unique_count <= CATEGORICAL_THRESHOLD:
+                    categorical_variables.append(col)
+
+        config = {
+            "name": self.name,
+            "display_name": self.metadata.get("original_filename", self.name),
+            "status": "available",
+            "init_params": {},  # Will be set to absolute CSV path in _maybe_init_semantic()
+            "column_mapping": column_mapping,
+            "outcomes": outcomes,
+            "time_zero": time_zero,
+            "analysis": {
+                "default_outcome": outcome_col,
+                "default_predictors": predictors,
+                "categorical_variables": categorical_variables,
+            },
+        }
+        return config
+
+    def _infer_outcome_type(self, df_polars: pl.DataFrame, outcome_col: str) -> str:
+        """
+        Infer outcome type from data characteristics.
+
+        Args:
+            df_polars: Polars DataFrame
+            outcome_col: Outcome column name
+
+        Returns:
+            Outcome type: "binary", "continuous", or "time_to_event"
+
+        Note:
+            Defaults to "binary" if ambiguous, but logs warning.
+        """
+        if outcome_col not in df_polars.columns:
+            logger.warning(f"Outcome column '{outcome_col}' not found in data, defaulting to 'binary'")
+            return "binary"
+
+        series = df_polars[outcome_col]
+        dtype = series.dtype
+        unique_count = series.n_unique()
+
+        # Binary: exactly 2 unique values
+        if unique_count == 2:
+            return "binary"
+
+        # Time-to-event: datetime type or name suggests time
+        if dtype in (pl.Date, pl.Datetime, pl.Time):
+            return "time_to_event"
+
+        # Continuous: numeric with >2 unique values
+        if dtype.is_numeric() and unique_count > 2:
+            logger.warning(
+                f"Outcome '{outcome_col}' has {unique_count} unique values. "
+                "Inferring 'continuous' type. If this is binary, ensure data is encoded as 0/1."
+            )
+            return "continuous"
+
+        # Default to binary with warning
+        logger.warning(
+            f"Outcome '{outcome_col}' type ambiguous (dtype={dtype}, unique={unique_count}). "
+            "Defaulting to 'binary'. Verify outcome type is correct."
+        )
+        return "binary"
+
     def get_info(self) -> dict[str, Any]:
         """
         Get dataset information.
@@ -368,6 +511,10 @@ class UploadedDataset(ClinicalDataset):
         Returns:
             Dictionary with dataset metadata
         """
+        # Ensure metadata is not None (should be set in __init__)
+        if self.metadata is None:
+            raise ValueError("Metadata not initialized")
+
         return {
             "upload_id": self.upload_id,
             "name": self.name,
