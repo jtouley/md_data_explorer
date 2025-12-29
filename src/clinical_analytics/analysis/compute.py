@@ -62,12 +62,28 @@ def _find_matching_column(target_name: str, available_columns: list[str]) -> str
         if _normalize_column_name(col) == target_normalized:
             return col
 
-    # Strategy 3: Substring match (normalized)
-    # Check if target is contained in any column name (or vice versa)
-    for col in available_columns:
-        col_normalized = _normalize_column_name(col)
-        if target_normalized in col_normalized or col_normalized in target_normalized:
-            return col
+    # Strategy 3: Substring match (normalized) - but require key terms for specificity
+    # Extract key terms from target (e.g., "t score", "z score", "viral load")
+    key_terms_in_target = []
+    important_terms = ["t score", "z score", "viral load", "cd4", "age", "regimen"]
+    for term in important_terms:
+        if term in target_normalized:
+            key_terms_in_target.append(term)
+
+    # If target has specific key terms, require at least one to match
+    if key_terms_in_target:
+        for col in available_columns:
+            col_normalized = _normalize_column_name(col)
+            # Check if all key terms from target are in column
+            if all(term in col_normalized for term in key_terms_in_target):
+                return col
+        # If no exact key term match, don't use substring matching (too risky)
+    else:
+        # No key terms - use general substring matching
+        for col in available_columns:
+            col_normalized = _normalize_column_name(col)
+            if target_normalized in col_normalized or col_normalized in target_normalized:
+                return col
 
     # Strategy 4: Simple fuzzy match (character overlap ratio)
     # This is a lightweight alternative to full Levenshtein
