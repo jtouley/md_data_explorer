@@ -28,6 +28,179 @@ class SecurityError(Exception):
     pass
 
 
+class UploadError(Exception):
+    """Upload processing error (malformed files, invalid content, etc.)."""
+
+    pass
+
+
+def normalize_upload_to_table_list(
+    file_bytes: bytes,
+    filename: str,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """
+    Normalize any upload to unified table list.
+
+    This is the ONLY function that detects upload type.
+    Everything downstream uses unified table list format.
+
+    Args:
+        file_bytes: File content
+        filename: Original filename (used to detect type)
+        metadata: Optional metadata (for progress callbacks)
+
+    Returns:
+        (tables, table_metadata) where:
+        - tables: list of {"name": str, "data": pl.DataFrame}
+        - table_metadata: dict with table_count, table_names, etc.
+    """
+    # Detect upload type from file extension
+    if filename.endswith(".zip"):
+        # Multi-table: extract from ZIP
+        tables = extract_zip_tables(file_bytes)
+    else:
+        # Single-file: wrap in list (becomes multi-table with 1 table)
+        df = load_single_file(file_bytes, filename)
+        table_name = Path(filename).stem  # Use original filename stem
+        tables = [{"name": table_name, "data": df}]
+
+    # Build metadata
+    table_metadata = {
+        "table_count": len(tables),
+        "table_names": [t["name"] for t in tables],
+    }
+
+    return tables, table_metadata
+
+
+def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
+    """
+    Extract tables from ZIP archive.
+
+    Args:
+        file_bytes: ZIP file content
+
+    Returns:
+        List of {"name": str, "data": pl.DataFrame} dicts
+
+    Raises:
+        SecurityError: If path traversal or invalid paths detected
+        UploadError: If no CSV files or corrupted ZIP
+    """
+    import gzip
+    import io
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            # Security: Check for path traversal
+            for entry in z.namelist():
+                if ".." in entry or entry.startswith("/"):
+                    raise SecurityError(f"Invalid path: {entry}")
+
+            # Get CSV files (including .csv.gz), skip __MACOSX and directories
+            csv_files = [
+                e
+                for e in z.namelist()
+                if (e.endswith(".csv") or e.endswith(".csv.gz"))
+                and not e.startswith("__MACOSX")
+                and not e.endswith("/")  # Skip directory entries
+            ]
+
+            if not csv_files:
+                raise UploadError("No CSV files in ZIP")
+
+            # Check for duplicate table names
+            seen = set()
+            tables = []
+
+            for entry in csv_files:
+                # Extract table name (filename stem)
+                name = Path(entry).stem
+                if name.endswith(".csv"):  # Handle .csv.gz case
+                    name = Path(name).stem
+
+                if name in seen:
+                    raise UploadError(f"Duplicate table name: {name}")
+                seen.add(name)
+
+                # Read file content
+                csv_content = z.read(entry)
+
+                # Handle gzip compression
+                if entry.endswith(".gz"):
+                    csv_content = gzip.decompress(csv_content)
+
+                # Load as Polars DataFrame with robust schema inference
+                try:
+                    df = pl.read_csv(
+                        io.BytesIO(csv_content),
+                        infer_schema_length=10000,  # Scan more rows for better type inference
+                        try_parse_dates=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"Schema inference failed for {name}, falling back to string types: {e}")
+                    # Fallback: read with all columns as strings
+                    df = pl.read_csv(
+                        io.BytesIO(csv_content),
+                        infer_schema_length=0,  # Treat all as strings
+                    )
+
+                tables.append({"name": name, "data": df})
+                logger.debug(f"Loaded table '{name}': {df.height:,} rows, {df.width} cols")
+
+            return tables
+
+    except zipfile.BadZipFile:
+        raise UploadError("Corrupted ZIP file")
+
+
+def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
+    """
+    Load single file (CSV, Excel, SPSS) as Polars DataFrame.
+
+    Args:
+        file_bytes: File content
+        filename: Original filename (determines file type)
+
+    Returns:
+        Polars DataFrame
+
+    Raises:
+        ValueError: If unsupported file type
+    """
+    import io
+
+    file_ext = Path(filename).suffix.lower()
+
+    if file_ext == ".csv":
+        # Load CSV with Polars
+        return pl.read_csv(io.BytesIO(file_bytes))
+
+    elif file_ext in {".xlsx", ".xls"}:
+        # Load Excel with Polars (openpyxl engine)
+        try:
+            return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+        except Exception as e:
+            logger.warning(f"Polars Excel read failed: {e}. Falling back to pandas.")
+            # PANDAS EXCEPTION: Required for Excel files when Polars fails
+            # TODO: Remove when Polars Excel support is more robust
+            import pandas as pd
+
+            df_pandas = pd.read_excel(io.BytesIO(file_bytes))
+            return pl.from_pandas(df_pandas)
+
+    elif file_ext == ".sav":
+        # Load SPSS file
+        import pyreadstat
+
+        df_pandas, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
+        return pl.from_pandas(df_pandas)
+
+    else:
+        raise ValueError(f"Unsupported file type: {file_ext}")
+
+
 def _safe_store_upload(
     file_bytes: bytes,
     base_dir: Path,
