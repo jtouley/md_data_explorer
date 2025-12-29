@@ -1,0 +1,288 @@
+---
+description: Mandatory hygiene for executing cursor plans. Phase commits, test-first workflow, quality gates.
+globs: [".cursor/plans/**/*.md", ".cursor/plans/**/*.plan.md"]
+alwaysApply: false
+---
+
+# Plan Execution Hygiene
+
+## Overview
+
+This rule defines mandatory hygiene standards for executing implementation plans. These rules ensure code quality, proper testing, and disciplined phase-by-phase development with commits.
+
+**This rule integrates with:**
+- [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc) - Makefile commands (NEVER run tools directly)
+- [100-polars-first.mdc](.cursor/rules/100-polars-first.mdc) - Data processing standards
+- [101-testing-hygiene.mdc](.cursor/rules/101-testing-hygiene.mdc) - Testing patterns and fixtures
+- [102-dry-principles.mdc](.cursor/rules/102-dry-principles.mdc) - Code organization and reuse
+- [103-staff-engineer-standards.mdc](.cursor/rules/103-staff-engineer-standards.mdc) - Production-grade patterns
+
+## Code Quality Gates
+
+### Mandatory Pre-Commit Checks
+
+**Before every commit/PR, you MUST run:**
+
+1. **Formatting**: `make format` (auto-fix) or `make format-check` (verify)
+2. **Linting**: `make lint-fix` (auto-fix) or `make lint` (verify)
+3. **Type checking**: `make type-check`
+4. **Testing**: `make test-fast` (quick feedback) or `make test` (full suite)
+
+**Never commit code that fails these checks.**
+
+### Pre-commit Hook (Recommended)
+
+```bash
+# .git/hooks/pre-commit
+#!/bin/sh
+make format-check && make lint && make type-check && make test-fast
+```
+
+### CI/CD Integration
+
+- Use `make ci` for CI-specific checks (GitHub Actions)
+- All checks must pass before merge
+- Never merge PRs that fail quality gates
+
+### Code Quality Fixes
+
+- **Fix issues immediately** - Don't accumulate technical debt
+- **Run linting after writing code** - `make lint-fix` to auto-fix issues
+- **Check for duplicate imports** - Remove redundant imports immediately
+- **Verify formatting** - `make format` before committing
+- **No duplicate imports** - If you see the same import pattern in multiple files, extract to `conftest.py` or shared module
+
+### Makefile Usage (MANDATORY)
+
+> **Reference: [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc)**
+
+**Always use Makefile commands:**
+- `make format` / `make format-check` (never `ruff format` directly)
+- `make lint` / `make lint-fix` (never `ruff check` directly)
+- `make type-check` (never `mypy` directly)
+- `make test-fast` / `make test` (never `pytest` directly)
+- `make check` (full quality gate before commit)
+- `make ci` (CI-specific checks)
+
+## Test-First Development Workflow (MANDATORY)
+
+> **Reference: [101-testing-hygiene.mdc](.cursor/rules/101-testing-hygiene.mdc)**
+
+### Red-Green-Refactor Cycle
+
+**CRITICAL RULE: Always run tests immediately after writing them. Never mark work as "done" without running tests.**
+
+**Workflow Steps:**
+
+1. **Write failing test** (Red) - Use AAA pattern (Arrange-Act-Assert)
+2. **Run test immediately** - `make test-fast` to verify it fails as expected
+3. **Implement minimum code to pass** (Green)
+4. **Run test again** - `make test-fast` to verify it passes
+5. **Fix code quality issues immediately** - Run `make lint-fix` and `make format` if needed
+6. **Refactor** (Refactor)
+7. **Run full test suite** - `make test-fast` before commit
+
+### Test Structure Standards
+
+**Test Naming Convention:**
+- Follow pattern: `test_unit_scenario_expectedBehavior`
+- Descriptive names that explain what is being tested
+
+**Test Organization:**
+- Use AAA pattern (Arrange-Act-Assert) with clear separation
+- Use shared fixtures from `conftest.py` (DRY principle)
+- Create module-level fixtures for common test data
+- Never duplicate imports across test files
+
+### Fixture Scoping
+
+> **Reference: [101-testing-hygiene.mdc](.cursor/rules/101-testing-hygiene.mdc) - Fixture Discipline section**
+
+```python
+# Session scope: expensive, immutable resources (e.g., database connections)
+@pytest.fixture(scope="session")
+def spark_session(): ...
+
+# Module scope: shared across tests in one file (e.g., reference data)
+@pytest.fixture(scope="module")
+def reference_data(): ...
+
+# Function scope (default): fresh per test, use for mutable state
+@pytest.fixture
+def empty_staging_table(): ...
+```
+
+### DRY Principle for Tests
+
+> **Reference: [102-dry-principles.mdc](.cursor/rules/102-dry-principles.mdc)**
+
+- **Use shared fixtures from `conftest.py`** - Avoid repetitive imports and setup
+- **Create module-level fixtures** - For common test data (e.g., `sample_cohort`, `sample_context`, `mock_session_state`)
+- **Never duplicate imports** - If you see the same import pattern in multiple test files, extract to `conftest.py`
+- **Mock external dependencies** - Use `unittest.mock.patch` for Streamlit, file I/O, etc.
+- **Handle missing dependencies gracefully** - Tests should fail with clear error messages if dependencies are missing
+
+### Polars Testing Assertions
+
+> **Reference: [100-polars-first.mdc](.cursor/rules/100-polars-first.mdc)**
+
+```python
+import polars.testing as plt
+
+# Use Polars-native assertions for DataFrame comparisons
+plt.assert_frame_equal(result, expected)
+```
+
+### Dependency Management
+
+- **Check dependencies before running tests** - Ensure all required packages are installed (`uv sync --extra dev --group dev`)
+- **Mock external dependencies in tests** - Use `unittest.mock.patch` for Streamlit, file I/O, etc.
+- **Tests should be isolated** - No shared mutable state between tests
+
+## Phase Commit Discipline (MANDATORY)
+
+### Phase Completion Checklist
+
+**Before starting the next phase, you MUST:**
+
+1. **Write tests for the phase** - Create test files covering all new functionality
+2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+3. **Fix any test failures** - Do not proceed until all tests pass
+4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+5. **Commit all changes** - Include both implementation AND tests in the commit
+6. **Verify commit includes** - All relevant files for that phase (source code + test files)
+
+**CRITICAL RULES:**
+- **Never commit code without tests**
+- **Never commit tests without running them**
+- **Never start a new phase without:**
+  - Tests written and passing
+  - All quality gates passing
+  - Previous phase committed
+
+### Commit Message Template
+
+Each phase commit should include:
+
+```bash
+feat: Phase N - [Brief description]
+
+- [Key change 1]
+- [Key change 2]
+- [Key change 3]
+- Add comprehensive test suite (X tests passing)
+
+All tests passing: X/Y
+```
+
+### Phase Verification
+
+Before marking a phase as complete, verify:
+
+- [ ] All test files created and passing
+- [ ] All quality gates passing (`make check`)
+- [ ] Implementation files committed
+- [ ] Test files committed
+- [ ] Commit message includes test count
+- [ ] No duplicate imports
+- [ ] All linting issues fixed
+- [ ] Code formatted correctly
+
+## Development Hygiene
+
+### Immediate Issue Resolution
+
+- **Fix code quality issues immediately** - Don't accumulate technical debt
+- **Run linting after writing code** - `make lint-fix` to auto-fix issues
+- **Check for duplicate imports** - Remove redundant imports immediately
+- **Verify formatting** - `make format` before committing
+
+### Import Hygiene
+
+- **No duplicate imports** - Remove redundant imports immediately
+- **Extract common imports** - If you see the same import pattern in multiple files, extract to `conftest.py` or shared module
+- **Use module-level imports** - Import modules, access via namespace when appropriate
+
+### Architectural Discipline
+
+> **Reference: [103-staff-engineer-standards.mdc](.cursor/rules/103-staff-engineer-standards.mdc)**
+
+- **Separation of concerns** - Compute functions belong in backend/core, not in UI pages
+- **Polars-first** - Use `pl.DataFrame` for all data processing. Pandas only at render boundary
+- **Serializable artifacts** - Store only serializable data (dicts, lists, primitives) in session state
+- **No UI dependencies in core** - Core layer must have no Streamlit/UI imports
+
+### Polars-First Patterns
+
+> **Reference: [100-polars-first.mdc](.cursor/rules/100-polars-first.mdc)**
+
+- Use `df.height`/`df.width` (not `len(df)`/`len(df.columns)`)
+- Use `df.to_dicts()` (not `to_dict(orient="records")`)
+- Use `df.schema` (not `df.dtypes`)
+- Pandas ONLY at render boundary with `# PANDAS EXCEPTION` comment
+
+```python
+# PANDAS EXCEPTION: Required for Streamlit st.dataframe display
+# TODO: Remove when Streamlit supports Polars natively
+import pandas as pd
+```
+
+### Safety Patterns
+
+> **Reference: [103-staff-engineer-standards.mdc](.cursor/rules/103-staff-engineer-standards.mdc) - Defensive Programming section**
+
+- **Fail closed** - Default to safe/restrictive values (e.g., confidence defaults to 0.0)
+- **Defensive defaults** - Missing values should trigger safe behavior, not failures
+- **Validate at boundaries** - Check untrusted input at system edges
+
+## Quality Gate Summary
+
+### Before Every Commit
+
+```bash
+make format        # Auto-format code
+make lint-fix      # Auto-fix linting issues
+make type-check    # Verify type hints
+make test-fast     # Run fast tests
+make check         # Full quality gate (recommended)
+```
+
+### Before Starting Next Phase
+
+```bash
+# 1. Write tests
+# 2. Run tests
+make test-fast
+
+# 3. Fix any failures
+# 4. Run full quality gate
+make check
+
+# 5. Commit (implementation + tests)
+git commit -m "feat: Phase N - [description]"
+```
+
+## Rule Cross-Reference Summary
+
+| Rule | Key Topics | When to Consult |
+|------|------------|-----------------|
+| [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc) | Makefile commands, project setup, uv | Running any command |
+| [100-polars-first.mdc](.cursor/rules/100-polars-first.mdc) | Polars patterns, lazy execution, no pandas | Data processing |
+| [101-testing-hygiene.mdc](.cursor/rules/101-testing-hygiene.mdc) | AAA pattern, fixtures, test isolation | Writing tests |
+| [102-dry-principles.mdc](.cursor/rules/102-dry-principles.mdc) | Configuration, columns, expressions | Code organization |
+| [103-staff-engineer-standards.mdc](.cursor/rules/103-staff-engineer-standards.mdc) | Error handling, observability, idempotency | Production patterns |
+
+## Enforcement
+
+**These rules are MANDATORY for plan execution:**
+
+- Violations should be caught by pre-commit hooks
+- CI/CD should enforce quality gates
+- Code reviews should verify rule compliance
+- Never merge PRs that fail quality gates
+
+**Remember:**
+- Quality gates are not optional
+- Tests are not optional
+- Phase commits are not optional
+- Code quality fixes are not optional
