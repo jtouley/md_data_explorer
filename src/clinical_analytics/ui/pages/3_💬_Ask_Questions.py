@@ -205,6 +205,17 @@ def clear_all_results(dataset_version: str) -> None:
 # TODO: Remove when Streamlit supports Polars natively
 def render_descriptive_analysis(result: dict) -> None:
     """Render descriptive analysis from serializable dict."""
+    # Check for error results first
+    if "error" in result:
+        st.error(f"❌ **Analysis Error**: {result['error']}")
+        if "available_columns" in result:
+            cols_preview = result["available_columns"][:20]
+            cols_str = ", ".join(cols_preview)
+            if len(result["available_columns"]) > 20:
+                cols_str += "..."
+            st.info(f"💡 **Available columns**: {cols_str}")
+        return
+
     # Check if this is a focused single-variable analysis
     if "focused_variable" in result:
         _render_focused_descriptive(result)

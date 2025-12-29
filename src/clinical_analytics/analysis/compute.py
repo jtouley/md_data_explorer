@@ -13,6 +13,94 @@ from scipy import stats
 from clinical_analytics.ui.components.question_engine import AnalysisContext
 
 
+def _normalize_column_name(name: str) -> str:
+    """
+    Normalize column name for matching: collapse whitespace, lowercase, strip.
+
+    This handles cases where column names have inconsistent whitespace:
+    - "DEXA Score          (T score)" -> "dexa score (t score)"
+    - "Age " -> "age"
+    - "CD4  Count" -> "cd4 count"
+
+    Args:
+        name: Original column name
+
+    Returns:
+        Normalized name for comparison
+    """
+    import re
+
+    # Collapse multiple spaces to single space, strip, lowercase
+    normalized = re.sub(r"\s+", " ", name.strip().lower())
+    return normalized
+
+
+def _find_matching_column(target_name: str, available_columns: list[str]) -> str | None:
+    """
+    Find matching column using robust matching strategy.
+
+    Strategy (in order):
+    1. Exact match (case-sensitive)
+    2. Exact match after normalization (whitespace/case-insensitive)
+    3. Substring match (normalized)
+    4. Fuzzy match (simple Levenshtein-like, normalized)
+
+    Args:
+        target_name: Column name to find
+        available_columns: List of available column names
+
+    Returns:
+        Matching column name from available_columns, or None if no match
+    """
+    # Strategy 1: Exact match
+    if target_name in available_columns:
+        return target_name
+
+    # Strategy 2: Normalized exact match
+    target_normalized = _normalize_column_name(target_name)
+    for col in available_columns:
+        if _normalize_column_name(col) == target_normalized:
+            return col
+
+    # Strategy 3: Substring match (normalized)
+    # Check if target is contained in any column name (or vice versa)
+    for col in available_columns:
+        col_normalized = _normalize_column_name(col)
+        if target_normalized in col_normalized or col_normalized in target_normalized:
+            return col
+
+    # Strategy 4: Simple fuzzy match (character overlap ratio)
+    # This is a lightweight alternative to full Levenshtein
+    best_match = None
+    best_score = 0.0
+    target_chars = set(target_normalized.replace(" ", ""))
+
+    for col in available_columns:
+        col_normalized = _normalize_column_name(col)
+        col_chars = set(col_normalized.replace(" ", ""))
+
+        if not target_chars or not col_chars:
+            continue
+
+        # Jaccard similarity on character sets
+        intersection = len(target_chars & col_chars)
+        union = len(target_chars | col_chars)
+        score = intersection / union if union > 0 else 0.0
+
+        # Boost score if key terms match (e.g., "t score" in both)
+        key_terms = ["t score", "z score", "dexa", "viral load", "cd4"]
+        for term in key_terms:
+            if term in target_normalized and term in col_normalized:
+                score += 0.3
+                break
+
+        if score > best_score and score > 0.5:  # Minimum threshold
+            best_score = score
+            best_match = col
+
+    return best_match
+
+
 def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
     """
     Try to convert a string series to numeric.
@@ -54,20 +142,68 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
 
     Returns serializable dict (no Polars objects).
     """
+    import structlog
+
+    logger = structlog.get_logger()
+
     # Check if we're focusing on a specific variable
     primary_var = context.primary_variable
-    focus_on_single = primary_var and primary_var != "all" and primary_var in df.columns
+    focus_on_single = False
+    matched_col = None
 
-    if focus_on_single:
+    if primary_var and primary_var != "all":
+        # Use robust column matching to handle whitespace/normalization differences
+        matched_col = _find_matching_column(primary_var, df.columns)
+        focus_on_single = matched_col is not None
+
+        logger.debug(
+            "compute_descriptive_check",
+            primary_var=primary_var,
+            matched_col=matched_col,
+            focus_on_single=focus_on_single,
+            df_columns=df.columns[:5] if len(df.columns) > 5 else df.columns,
+        )
+
+        if not focus_on_single:
+            logger.warning(
+                "compute_descriptive_column_not_found",
+                primary_var=primary_var,
+                available_columns=df.columns.tolist(),
+            )
+            # Return error result instead of falling through to "all"
+            cols_preview = df.columns[:10].tolist()
+            cols_str = ", ".join(cols_preview)
+            if len(df.columns) > 10:
+                cols_str += "..."
+            return {
+                "type": "descriptive",
+                "error": f"Column '{primary_var}' not found in dataset. Available columns: {cols_str}",
+                "requested_column": primary_var,
+                "available_columns": df.columns.tolist(),
+            }
+
+    if focus_on_single and matched_col:
         # Focused analysis on a single variable
-        col = primary_var
+        col = matched_col
         series = df[col]
         row_count = df.height
+
+        logger.info(
+            "compute_descriptive_focused",
+            col=col,
+            original_dtype=str(series.dtype),
+            row_count=row_count,
+        )
 
         # Try to convert string columns to numeric (handles European comma format, etc.)
         numeric_series = None
         if series.dtype == pl.Utf8:
             numeric_series = _try_convert_to_numeric(series)
+            logger.debug(
+                "compute_descriptive_conversion",
+                col=col,
+                conversion_success=numeric_series is not None,
+            )
 
         # Use converted series if successful, otherwise original
         analysis_series = numeric_series if numeric_series is not None else series
