@@ -23,6 +23,15 @@ import structlog
 
 logger = structlog.get_logger()
 
+# Valid intent types (single source of truth)
+VALID_INTENT_TYPES = [
+    "DESCRIBE",
+    "COMPARE_GROUPS",
+    "FIND_PREDICTORS",
+    "SURVIVAL",
+    "CORRELATIONS",
+]
+
 
 @dataclass
 class QueryIntent:
@@ -48,6 +57,15 @@ class QueryIntent:
     event_variable: str | None = None
     filters: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
+    parsing_tier: str | None = None  # "pattern_match", "semantic_match", "llm_fallback"
+    parsing_attempts: list[dict] = field(default_factory=list)  # What was tried
+    failure_reason: str | None = None  # Why it failed
+    suggestions: list[str] = field(default_factory=list)  # How to improve query
+
+    def __post_init__(self):
+        """Validate intent_type."""
+        if self.intent_type not in VALID_INTENT_TYPES:
+            raise ValueError(f"Invalid intent_type: {self.intent_type}. Must be one of {VALID_INTENT_TYPES}")
 
 
 class NLQueryEngine:
@@ -170,6 +188,12 @@ class NLQueryEngine:
 
         query = query.strip()
 
+        # Import config constants
+        from clinical_analytics.core.nl_query_config import (
+            TIER_1_PATTERN_MATCH_THRESHOLD,
+            TIER_2_SEMANTIC_MATCH_THRESHOLD,
+        )
+
         # Log query parsing start
         log_context = {
             "query": query,
@@ -178,9 +202,21 @@ class NLQueryEngine:
         }
         logger.info("query_parse_start", **log_context)
 
+        # Track parsing attempts for diagnostics
+        parsing_attempts = []
+
         # Tier 1: Pattern matching
         intent = self._pattern_match(query)
-        if intent and intent.confidence > 0.9:
+        attempt = {
+            "tier": "pattern_match",
+            "result": "success" if intent and intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD else "failed",
+            "confidence": intent.confidence if intent else 0.0,
+        }
+        parsing_attempts.append(attempt)
+
+        if intent and intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
+            intent.parsing_tier = "pattern_match"
+            intent.parsing_attempts = parsing_attempts
             matched_vars = self._get_matched_variables(intent)
             logger.info(
                 "query_parse_success",
@@ -194,7 +230,16 @@ class NLQueryEngine:
 
         # Tier 2: Semantic embeddings
         intent = self._semantic_match(query)
-        if intent and intent.confidence > 0.75:
+        attempt = {
+            "tier": "semantic_match",
+            "result": "success" if intent and intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD else "failed",
+            "confidence": intent.confidence if intent else 0.0,
+        }
+        parsing_attempts.append(attempt)
+
+        if intent and intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
+            intent.parsing_tier = "semantic_match"
+            intent.parsing_attempts = parsing_attempts
             matched_vars = self._get_matched_variables(intent)
             logger.info(
                 "query_parse_success",
@@ -208,7 +253,16 @@ class NLQueryEngine:
 
         # Tier 3: LLM fallback (stub for now)
         intent = self._llm_parse(query)
+        attempt = {
+            "tier": "llm_fallback",
+            "result": "success" if intent else "failed",
+            "confidence": intent.confidence if intent else 0.0,
+        }
+        parsing_attempts.append(attempt)
+
         if intent:
+            intent.parsing_tier = "llm_fallback"
+            intent.parsing_attempts = parsing_attempts
             matched_vars = self._get_matched_variables(intent)
             logger.info(
                 "query_parse_success",
@@ -219,6 +273,20 @@ class NLQueryEngine:
                 **log_context,
             )
         else:
+            # All tiers failed - set failure diagnostics
+            if intent is None:
+                intent = QueryIntent(
+                    intent_type="DESCRIBE",
+                    confidence=0.0,
+                    failure_reason="All parsing tiers failed",
+                    suggestions=self._generate_suggestions(query),
+                    parsing_attempts=parsing_attempts,
+                )
+            else:
+                intent.failure_reason = "All parsing tiers failed"
+                intent.suggestions = self._generate_suggestions(query)
+                intent.parsing_attempts = parsing_attempts
+
             logger.warning(
                 "query_parse_failed",
                 error_type="no_intent_found",
@@ -496,3 +564,37 @@ class NLQueryEngine:
             return alias_index[matched_alias], 0.7, None
 
         return None, 0.0, None
+
+    def _generate_suggestions(self, query: str) -> list[str]:
+        """
+        Generate suggestions for improving query when all tiers fail.
+
+        Args:
+            query: User's query that failed to parse
+
+        Returns:
+            List of suggestion strings
+        """
+        suggestions = []
+
+        # Query length suggestions
+        if len(query.split()) < 3:
+            suggestions.append("Try adding more details to your question")
+        elif len(query.split()) > 20:
+            suggestions.append("Try simplifying your question")
+
+        # Suggest available columns if semantic layer has them
+        try:
+            alias_index = self.semantic_layer.get_column_alias_index()
+            if alias_index:
+                sample_columns = list(alias_index.keys())[:5]
+                suggestions.append(f"Try mentioning specific variable names (e.g., {', '.join(sample_columns)})")
+        except Exception:
+            pass  # If semantic layer unavailable, skip this suggestion
+
+        # Generic suggestions
+        if not suggestions:
+            suggestions.append("Try using phrases like 'compare X by Y' or 'what predicts X'")
+            suggestions.append("Mention specific variable names from your dataset")
+
+        return suggestions

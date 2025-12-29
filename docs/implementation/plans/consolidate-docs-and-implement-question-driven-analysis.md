@@ -118,27 +118,35 @@ Before users see their data, the system now:
 
 **Target:** PR #3 (in progress)
 
-### 🔄 Phase 4: Multi-Table Support (In Progress)
+### ⏸️ Phase 4: Multi-Table Support (DEFERRED_TO_V2)
 
-**Delivered Features:**
+**Status Update (2025-12-27):** This phase is deferred to V2 pending completion of the Cohort-First Single Table MVP. The strategic decision was made to prioritize "Doctor uploads CSV, it works in 5 minutes" over multi-table complexity.
+
+**Completed Infrastructure (preserved for V2):**
 - ✅ ZIP upload with multiple CSVs
 - ✅ Auto-detect foreign key relationships using Polars/DuckDB
 - ✅ Build join graph and execute joins via DuckDB SQL
-- ✅ MIMIC-IV-style dataset support
-- ✅ Unified cohort creation from related tables
+- ⏸️ MIMIC-IV-style dataset support - deferred
+- ⏸️ Unified cohort creation from related tables - deferred (OOM issues to resolve)
 
-**Implementation:**
+**Implementation (gated by MULTI_TABLE_ENABLED feature flag):**
 - `multi_table_handler.py`:
   - `TableRelationship` dataclass for FK detection
   - `MultiTableHandler` with DuckDB-based joins
   - Primary/foreign key detection via cardinality + naming patterns
   - BFS join graph traversal
 - `user_datasets.py`:
-  - `save_zip_upload()` method for multi-table ZIP files
+  - `save_zip_upload()` method for multi-table ZIP files (disabled in V1)
   - Automatic relationship detection and cohort building
   - Metadata includes table counts and join relationships
+- `src/clinical_analytics/ui/config.py`:
+  - `MULTI_TABLE_ENABLED` feature flag (default: false)
 
-**Target:** PR #3 (in progress)
+**Blocking Issues for V2:**
+- OutOfMemory (OOM) with large tables (chartevents 668k rows)
+- Aggregate-before-join architecture needed (see `.cursor/plans/multi-table_handler_refactor*.md`)
+
+**Target:** V2 after single-table MVP is validated
 
 ### ⏳ Phase 5: Testing & Refinement (Pending)
 
