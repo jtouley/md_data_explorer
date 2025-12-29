@@ -98,6 +98,57 @@ def test_existing_queries_still_parse_correctly(mock_semantic_layer):
 
     # Correlation query may require variables to be extractable
     # Test that it at least parses (even if it falls back to low confidence)
+
+
+def test_pattern_match_which_x_had_lowest_y(mock_semantic_layer):
+    """Pattern matching should handle 'which X had the lowest Y' queries."""
+    engine = NLQueryEngine(mock_semantic_layer)
+
+    # Mock fuzzy_match_variable to return test variables
+    def mock_fuzzy_match(var_name: str):
+        var_map = {
+            "regimen": ("current_regimen", 0.9, {}),
+            "current regimen": ("current_regimen", 0.9, {}),
+            "viral load": ("viral_load", 0.9, {}),
+            "viral": ("viral_load", 0.8, {}),
+        }
+        return var_map.get(var_name.lower(), (None, 0.0, {}))
+
+    engine._fuzzy_match_variable = mock_fuzzy_match
+
+    # Test "which X had the lowest Y" pattern
+    query = "which Current Regimen had the lowest viral load"
+    intent = engine._pattern_match(query)
+
+    assert intent is not None, f"Pattern should match: {query}"
+    assert intent.intent_type == "COMPARE_GROUPS", f"Should be COMPARE_GROUPS for: {query}"
+    assert intent.grouping_variable == "current_regimen", "Grouping variable should be regimen"
+    assert intent.primary_variable == "viral_load", "Primary variable should be viral load"
+    assert intent.confidence >= 0.9, "Should have high confidence for pattern match"
+
+
+def test_pattern_match_which_x_had_highest_y(mock_semantic_layer):
+    """Pattern matching should handle 'which X had the highest Y' queries."""
+    engine = NLQueryEngine(mock_semantic_layer)
+
+    # Mock fuzzy_match_variable (use variables that won't match other patterns)
+    def mock_fuzzy_match(var_name: str):
+        var_map = {
+            "treatment": ("treatment_arm", 0.9, {}),
+            "response rate": ("response_rate", 0.9, {}),
+            "response": ("response_rate", 0.8, {}),
+        }
+        return var_map.get(var_name.lower(), (None, 0.0, {}))
+
+    engine._fuzzy_match_variable = mock_fuzzy_match
+
+    query = "which treatment had the highest response rate"
+    intent = engine._pattern_match(query)
+
+    assert intent is not None, f"Pattern should match: {query}"
+    assert intent.intent_type == "COMPARE_GROUPS", f"Should be COMPARE_GROUPS for: {query}"
+    assert intent.grouping_variable == "treatment_arm", "Grouping variable should be treatment"
+    assert intent.primary_variable == "response_rate", "Primary variable should be response rate"
     correlation_intent = engine.parse_query("correlation between age and outcome")
     assert correlation_intent is not None
     # Should be CORRELATIONS if pattern matches, or DESCRIBE if it falls through

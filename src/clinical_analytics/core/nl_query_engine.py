@@ -382,6 +382,22 @@ class NLQueryEngine:
                     confidence=0.95,
                 )
 
+        # Pattern: "which X had the lowest/highest Y" or "what X had the lowest/highest Y"
+        match = re.search(
+            r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had\s+the\s+(lowest|highest)\s+(\w+(?:\s+\w+)*)", query_lower
+        )
+        if match:
+            group_var, _, _ = self._fuzzy_match_variable(match.group(1))
+            primary_var, _, _ = self._fuzzy_match_variable(match.group(3))
+
+            if group_var and primary_var:
+                return QueryIntent(
+                    intent_type="COMPARE_GROUPS",
+                    primary_variable=primary_var,
+                    grouping_variable=group_var,
+                    confidence=0.95,
+                )
+
         return None
 
     def _semantic_match(self, query: str) -> QueryIntent | None:

@@ -56,6 +56,7 @@ class AnalysisContext:
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
     match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
+    confidence: float = 0.0  # Confidence from NL query parsing (for auto-execution logic)
 
     def is_complete_for_intent(self) -> bool:
         """Check if we have enough information for the inferred analysis."""
@@ -704,6 +705,9 @@ class QuestionEngine:
                 context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
                 context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
                 context.time_to_event = query_intent.intent_type == "SURVIVAL"
+
+                # Propagate confidence for auto-execution logic
+                context.confidence = query_intent.confidence
 
                 return context
 

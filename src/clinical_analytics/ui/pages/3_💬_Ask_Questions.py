@@ -516,6 +516,20 @@ def execute_analysis_with_idempotency(
 
     # Not computed - compute and store
     with st.spinner("Running analysis..."):
+        # Log execution start for observability
+        import structlog
+
+        logger = structlog.get_logger()
+        logger.info(
+            "analysis_execution_start",
+            intent=context.inferred_intent.value,
+            primary_variable=context.primary_variable,
+            grouping_variable=context.grouping_variable,
+            predictor_variables=context.predictor_variables,
+            dataset_version=dataset_version,
+            confidence=getattr(context, "confidence", 0.0),
+        )
+
         # Convert cohort to Polars if needed (defensive)
         if isinstance(cohort, pd.DataFrame):
             cohort_pl = pl.from_pandas(cohort)
