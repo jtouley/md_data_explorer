@@ -57,22 +57,22 @@ todos:
       - phase4-tests
   - id: phase4-quality
     content: "Phase 4: Run quality gates and commit"
-    status: in_progress
+    status: completed
     dependencies:
       - phase4-implement
   - id: phase5-tests
     content: "Phase 5: Write failing test for structured questions without semantic layer"
-    status: pending
+    status: completed
     dependencies:
       - phase4-quality
   - id: phase5-implement
     content: "Phase 5: Remove unnecessary semantic layer check from structured questions path"
-    status: pending
+    status: completed
     dependencies:
       - phase5-tests
   - id: phase5-quality
     content: "Phase 5: Run quality gates and commit"
-    status: pending
+    status: in_progress
     dependencies:
       - phase5-implement
   - id: phase6-deferred

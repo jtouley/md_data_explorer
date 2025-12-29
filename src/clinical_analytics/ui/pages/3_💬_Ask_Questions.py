@@ -39,7 +39,6 @@ from clinical_analytics.ui.messages import (
     LOW_CONFIDENCE_WARNING,
     NO_DATASETS_AVAILABLE,
     RESULTS_CLEARED,
-    SEMANTIC_LAYER_NOT_READY,
     START_OVER,
 )
 
@@ -798,16 +797,8 @@ def main():
                 # Low confidence: show detected variables with display names and allow editing
                 st.warning(LOW_CONFIDENCE_WARNING)
 
-                # Ensure semantic_layer is ready before showing variables
-                # Use get_semantic_layer() to lazy-initialize if needed
-                try:
-                    semantic_layer = dataset.get_semantic_layer()
-                except (ValueError, AttributeError) as e:
-                    st.error(SEMANTIC_LAYER_NOT_READY)
-                    logger.error(f"Failed to get semantic layer: {e}")
-                    st.stop()
-
                 # Helper to get display name for a column
+                # Note: parse_column_name() doesn't require semantic layer, so no check needed
                 def get_display_name(canonical_name: str) -> str:
                     """Get display name for a column, falling back to canonical if parsing fails."""
                     try:

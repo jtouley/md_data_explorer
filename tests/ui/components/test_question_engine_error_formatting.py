@@ -1,7 +1,5 @@
 """Tests for error message formatting in question engine."""
 
-
-
 from clinical_analytics.core.nl_query_engine import QueryIntent
 from clinical_analytics.ui.components.question_engine import QuestionEngine
 
