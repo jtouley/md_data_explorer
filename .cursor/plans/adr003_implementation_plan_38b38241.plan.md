@@ -1,7 +1,6 @@
 ---
 name: ADR003 Implementation Plan
 overview: "Implement ADR003: Clinical Trust Protocol + Adaptive Alias Persistence. Four phases: (0) Tier 3 LLM fallback with local Ollama, (1) Trust UI with verification expanders and patient-level export, (2) Adaptive alias persistence scoped per dataset, (3) Semantic layer QueryPlan execution with type-aware validation and confidence gating."
-progress: "Phase 0 ✅ (Commit f979c96) - 12/12 tests passing. Tier 3 LLM Fallback with local Ollama implemented. Phase 1 ✅ (Commit af46ca9) - 11/11 tests passing. Trust UI with patient-level export implemented."
 todos:
   - id: phase0-tests
     content: Write Phase 0 test specifications (12 tests) in tests/core/test_llm_fallback.py
@@ -51,20 +50,20 @@ todos:
       - phase1-integration
   - id: phase2-tests
     content: Write Phase 2 test specifications (8 tests) in tests/core/test_semantic_alias_persistence.py
-    status: pending
+    status: completed
   - id: phase2-alias-persistence
     content: Extend SemanticLayer to load and persist user aliases (add_user_alias, load on init)
-    status: pending
+    status: completed
     dependencies:
       - phase2-tests
   - id: phase2-ui
     content: Add 'Add alias?' UI in error handling (3_💬_Ask_Questions.py)
-    status: pending
+    status: completed
     dependencies:
       - phase2-alias-persistence
   - id: phase2-commit
     content: Run quality gates (make check) and commit Phase 2 with all tests passing
-    status: pending
+    status: completed
     dependencies:
       - phase2-ui
   - id: phase3-tests
@@ -669,12 +668,17 @@ import pandas as pd
 - [x] Type errors fixed, linting/formatting applied
 - [x] Committed: af46ca9
 
-**Phase 2 Complete**:
+**Phase 2 Complete** ✅:
 
-- [ ] All 8 alias persistence tests passing
-- [ ] User aliases persist to metadata JSON per `(upload_id, dataset_version)`
-- [ ] Aliases load on SemanticLayer initialization
-- [ ] "Add alias?" UI appears in error handling
+- [x] All 8 alias persistence tests passing
+- [x] User aliases persist to metadata JSON per `(upload_id, dataset_version)`
+- [x] Aliases load on SemanticLayer initialization
+- [x] "Add alias?" UI appears in error handling
+- [x] User aliases override system aliases for same normalized key
+- [x] Orphaned alias handling (columns missing after schema change)
+- [x] Collision detection and scope isolation per dataset
+- [x] Extended metadata JSON schema for alias_mappings
+- [x] Committed: 063b3d6
 
 **Phase 3 Complete**:
 
