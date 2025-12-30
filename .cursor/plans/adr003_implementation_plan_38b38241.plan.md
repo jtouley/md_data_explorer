@@ -1,7 +1,7 @@
 ---
 name: ADR003 Implementation Plan
 overview: "Implement ADR003: Clinical Trust Protocol + Adaptive Alias Persistence. Four phases: (0) Tier 3 LLM fallback with local Ollama, (1) Trust UI with verification expanders and patient-level export, (2) Adaptive alias persistence scoped per dataset, (3) Semantic layer QueryPlan execution with type-aware validation and confidence gating."
-progress: "Phase 0 ✅ (Commit f979c96) - 12/12 tests passing. Phase 1 ✅ (Commit af46ca9) - 11/11 tests passing. Phase 2 ✅ (Commit 063b3d6) - 8/8 tests passing. Phase 3 ⏳ PENDING."
+progress: "Phase 0 ✅ (Commit f979c96) - 12/12 tests passing. Phase 1 ✅ (Commit af46ca9) - 11/11 tests passing. Phase 2 ✅ (Commit 063b3d6) - 8/8 tests passing. Phase 3 ✅ (Commit 3d4abdb) - 15/15 tests passing."
 todos:
   - id: phase0-tests
     content: Write Phase 0 test specifications (12 tests) in tests/core/test_llm_fallback.py
@@ -69,22 +69,22 @@ todos:
       - phase2-ui
   - id: phase3-tests
     content: Write Phase 3 test specifications (15 tests) in tests/core/test_semantic_queryplan_execution.py
-    status: pending
+    status: completed
     dependencies:
       - phase0-commit
   - id: phase3-queryplan-extend
     content: Extend QueryPlan with ADR003 contract fields (requires_filters, requires_grouping, entity_key, scope)
-    status: pending
+    status: completed
     dependencies:
       - phase3-tests
   - id: phase3-execution
     content: Implement execute_query_plan() with confidence gating, validation, type-aware execution
-    status: pending
+    status: completed
     dependencies:
       - phase3-queryplan-extend
   - id: phase3-integration
     content: Integrate QueryPlan execution into analysis flow (execute_analysis_with_idempotency)
-    status: pending
+    status: completed
     dependencies:
       - phase3-execution
   - id: phase3-commit
@@ -629,7 +629,7 @@ import pandas as pd
 - ✅ **Phase 0** (Tier 3 LLM Fallback) - **COMPLETE** (Commit f979c96)
 - ✅ **Phase 1** (Trust UI) - **COMPLETE** (Commit af46ca9)
 - ✅ **Phase 2** (Alias Persistence) - **COMPLETE** (Commit 063b3d6)
-- ⏳ **Phase 3** (QueryPlan Execution) - **PENDING** - Unblocked (Phase 0 & 2 complete)
+- ✅ **Phase 3** (QueryPlan Execution) - **COMPLETE** (Commit 3d4abdb)
 
 **Dependencies**:
 
@@ -680,8 +680,16 @@ import pandas as pd
 - [x] Extended metadata JSON schema for alias_mappings
 - [x] Committed: 063b3d6
 
-**Phase 3 Complete**:
+**Phase 3 Complete** ✅:
 
-- [ ] All 15 QueryPlan execution tests passing
-- [ ] Confidence and completeness gating enforced (hard gate, no side effects)
-- [ ] Type-aware execution works (categorical → frequency, numeric → stats)
+- [x] All 15 QueryPlan execution tests passing
+- [x] Confidence and completeness gating enforced (hard gate, no side effects)
+- [x] Type-aware execution works (categorical → frequency, numeric → stats)
+- [x] COUNT intent validation and execution
+- [x] Breakdown validation (high cardinality detection, entity key grouping prevention)
+- [x] Filter deduplication (redundant filters removed when grouping on same field)
+- [x] Deterministic run_key generation from canonical plan + query text
+- [x] UI integration with confirmation UI for low-confidence queries
+- [x] Categorical detection with encoding pattern recognition ("1: Yes 2: No")
+- [x] Comprehensive validation (columns, operators, type compatibility, COUNT scope)
+- [x] Committed: 3d4abdb
