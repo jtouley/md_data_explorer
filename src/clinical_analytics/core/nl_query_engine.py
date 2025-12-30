@@ -556,6 +556,41 @@ class NLQueryEngine:
         ):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
+        # Pattern: "average X" or "mean X" or "avg X" - DESCRIBE with variable extraction
+        # Examples: "average BMI of patients", "mean age", "avg ldl", "average ldl of all patients"
+        # Match: "average/mean/avg" + optional "of" + variable + optional trailing phrase
+        avg_match = re.search(
+            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)(?:\s+of|\s+in|\s+for|\s+all|\s+the|$)", query_lower
+        )
+        if avg_match:
+            variable_term = avg_match.group(2).strip()
+            # Remove common trailing words that might be captured
+            variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases|all|the)$", "", variable_term)
+            variable_term = variable_term.strip()
+
+            # Try to match the variable
+            matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                logger.debug(
+                    "pattern_match_average_with_variable",
+                    variable_term=variable_term,
+                    matched_var=matched_var,
+                    confidence=var_conf,
+                )
+                return QueryIntent(
+                    intent_type="DESCRIBE",
+                    primary_variable=matched_var,
+                    confidence=0.9,
+                )
+            else:
+                # Still return DESCRIBE intent, variable will be extracted later
+                logger.debug(
+                    "pattern_match_average_no_variable_match",
+                    variable_term=variable_term,
+                    reason="fuzzy_match_failed_but_pattern_matched",
+                )
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.85)
+
         # Pattern: "describe" or "summary"
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
             return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
