@@ -19,7 +19,7 @@ def get_available_datasets():
     Helper to discover all available datasets from registry.
 
     Returns:
-        List of dataset names to test against
+        List of dataset names to test against (excludes special cases)
     """
     DatasetRegistry.reset()
     DatasetRegistry.discover_datasets()
@@ -28,14 +28,32 @@ def get_available_datasets():
     return [name for name in DatasetRegistry.list_datasets() if name != "uploaded"]
 
 
+def get_sample_datasets():
+    """
+    Helper to get 1-2 representative datasets for fast tests.
+
+    Returns:
+        List of 1-2 dataset names for fast unit testing
+    """
+    all_datasets = get_available_datasets()
+    # Return first 1-2 available datasets for fast testing
+    # This reduces test count from N*M to 1-2*M where M is test methods
+    return all_datasets[:2] if len(all_datasets) >= 2 else all_datasets[:1]
+
+
 # ============================================================================
 # Parametrized Dataset Interface Tests
 # ============================================================================
 
 
-@pytest.mark.parametrize("dataset_name", get_available_datasets())
+@pytest.mark.parametrize("dataset_name", get_sample_datasets())
 class TestDatasetInterface:
-    """Test ClinicalDataset interface across all datasets using registry."""
+    """
+    Test ClinicalDataset interface using sample datasets for fast unit testing.
+    
+    Uses 1-2 representative datasets to keep test count manageable.
+    Full integration tests across all datasets are in TestDatasetInterfaceIntegration.
+    """
 
     def test_initialization_creates_dataset_instance(self, dataset_name):
         """Test that registry can create dataset instance."""
@@ -59,6 +77,8 @@ class TestDatasetInterface:
         # Assert: Returns boolean indicating data availability
         assert isinstance(is_valid, bool)
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_load_populates_data_when_available(self, dataset_name):
         """Test that load() populates _data when dataset is available."""
         # Arrange
@@ -73,6 +93,8 @@ class TestDatasetInterface:
         assert dataset._data is not None
         assert len(dataset._data) > 0
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_cohort_returns_unified_schema(self, dataset_name):
         """Test that get_cohort() returns UnifiedCohort-compliant DataFrame."""
         # Arrange
@@ -92,6 +114,8 @@ class TestDatasetInterface:
         assert pd.api.types.is_datetime64_any_dtype(cohort[UnifiedCohort.TIME_ZERO])
         assert pd.api.types.is_numeric_dtype(cohort[UnifiedCohort.OUTCOME])
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_cohort_auto_loads_if_not_loaded(self, dataset_name):
         """Test that get_cohort() auto-loads data if not already loaded."""
         # Arrange
@@ -106,6 +130,8 @@ class TestDatasetInterface:
         assert isinstance(cohort, pd.DataFrame)
         assert len(cohort) > 0
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_idempotency_same_filters_produce_same_result(self, dataset_name):
         """Test that calling get_cohort() with same filters is idempotent."""
         # Arrange
@@ -144,6 +170,8 @@ class TestDatasetInterface:
         outcome = dataset.mapper.get_default_outcome()
         assert isinstance(outcome, str)
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_config_driven_time_zero_value(self, dataset_name):
         """Test that time_zero value comes from config."""
         # Arrange
@@ -162,6 +190,8 @@ class TestDatasetInterface:
         assert isinstance(time_zero_value, str)
         assert UnifiedCohort.TIME_ZERO in cohort.columns
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_config_driven_outcome_label(self, dataset_name):
         """Test that outcome_label comes from config."""
         # Arrange
@@ -181,6 +211,8 @@ class TestDatasetInterface:
         assert isinstance(outcome_label, str)
         assert UnifiedCohort.OUTCOME_LABEL in cohort.columns
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_patient_level_granularity_supported(self, dataset_name):
         """Test that patient_level granularity works (M8 integration)."""
         # Arrange
@@ -198,14 +230,32 @@ class TestDatasetInterface:
 
 
 # ============================================================================
-# Semantic Layer Integration Tests
+# Semantic Layer Integration Tests (Fast - No Data Loading)
 # ============================================================================
 
 
-@pytest.mark.parametrize("dataset_name", get_available_datasets())
+@pytest.mark.parametrize("dataset_name", get_sample_datasets())
 class TestSemanticLayerIntegration:
-    """Test that datasets properly integrate with semantic layer."""
+    """
+    Test that datasets properly integrate with semantic layer.
+    
+    Uses sample datasets for fast testing. Full integration tests across
+    all datasets verify semantic layer behavior comprehensively.
+    """
 
+    def test_config_loaded_correctly(self, dataset_name):
+        """Test that dataset config is loaded from datasets.yaml."""
+        # Arrange
+        dataset = DatasetRegistry.get_dataset(dataset_name)
+
+        # Assert: Config loaded (structure may vary by dataset)
+        assert dataset.config is not None
+        assert isinstance(dataset.config, dict)
+        # Config should have some content
+        assert len(dataset.config) > 0
+
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_semantic_layer_initialized_after_load(self, dataset_name):
         """Test that semantic layer is initialized after load()."""
         # Arrange
@@ -220,26 +270,23 @@ class TestSemanticLayerIntegration:
         assert hasattr(dataset, "semantic")
         # Note: semantic might be None for single-table datasets without explicit semantic layer
 
-    def test_config_loaded_correctly(self, dataset_name):
-        """Test that dataset config is loaded from datasets.yaml."""
-        # Arrange
-        dataset = DatasetRegistry.get_dataset(dataset_name)
-
-        # Assert: Config loaded (structure may vary by dataset)
-        assert dataset.config is not None
-        assert isinstance(dataset.config, dict)
-        # Config should have some content
-        assert len(dataset.config) > 0
-
 
 # ============================================================================
-# Schema Compliance Tests
+# Schema Compliance Tests (Full Integration - All Datasets)
 # ============================================================================
 
 
 @pytest.mark.parametrize("dataset_name", get_available_datasets())
+@pytest.mark.slow
+@pytest.mark.integration
 class TestSchemaCompliance:
-    """Test that all datasets comply with UnifiedCohort schema."""
+    """
+    Test that all datasets comply with UnifiedCohort schema.
+    
+    These are critical integration tests that verify schema compliance
+    across ALL available datasets. Marked as slow/integration because
+    they load real data.
+    """
 
     def test_required_columns_present(self, dataset_name):
         """Test that all required UnifiedCohort columns are present."""
