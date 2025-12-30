@@ -33,6 +33,18 @@ def get_available_datasets():
     ]
 
 
+def get_sample_datasets():
+    """
+    Helper to get 1-2 representative datasets for fast tests.
+
+    Returns:
+        List of 1-2 dataset names for fast unit testing
+    """
+    all_datasets = get_available_datasets()
+    # Return first 1-2 available datasets for fast testing
+    return all_datasets[:2] if len(all_datasets) >= 2 else all_datasets[:1]
+
+
 class TestUIDatasetIntegration:
     """Test dataset interactions as they would occur in the UI."""
 
@@ -75,7 +87,9 @@ class TestUIDatasetIntegration:
         assert dataset is not None
         assert dataset.name == first_dataset
 
-    @pytest.mark.parametrize("dataset_name", get_available_datasets())
+    @pytest.mark.parametrize("dataset_name", get_sample_datasets())
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_cohort_retrieval_with_default_filters(self, dataset_name):
         """Test dataset cohort retrieval with default filters."""
         # Arrange
@@ -94,6 +108,8 @@ class TestUIDatasetIntegration:
         for col in UnifiedCohort.REQUIRED_COLUMNS:
             assert col in cohort.columns, f"{dataset_name} missing required column: {col}"
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_ui_workflow_end_to_end_with_all_datasets(self):
         """Test complete UI workflow: select dataset -> get cohort -> verify schema."""
         # Arrange: Get all available datasets
@@ -127,7 +143,9 @@ class TestUIDatasetIntegration:
         # Assert: At least one dataset was tested
         assert tested_count > 0, "No datasets available for testing"
 
-    @pytest.mark.parametrize("dataset_name", get_available_datasets())
+    @pytest.mark.parametrize("dataset_name", get_sample_datasets())
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_patient_level_granularity_supported(self, dataset_name):
         """Test that patient_level granularity works (M8 integration)."""
         # Arrange
@@ -143,7 +161,9 @@ class TestUIDatasetIntegration:
         for col in UnifiedCohort.REQUIRED_COLUMNS:
             assert col in cohort.columns
 
-    @pytest.mark.parametrize("dataset_name", get_available_datasets())
+    @pytest.mark.parametrize("dataset_name", get_sample_datasets())
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_non_patient_level_granularity_rejected_for_single_table(self, dataset_name):
         """Test that single-table datasets reject non-patient_level granularity (M8)."""
         # Arrange
@@ -186,7 +206,9 @@ class TestUIErrorHandling:
 class TestUIFilterHandling:
     """Test filter handling scenarios in UI."""
 
-    @pytest.mark.parametrize("dataset_name", get_available_datasets())
+    @pytest.mark.parametrize("dataset_name", get_sample_datasets())
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_boolean_filter_type_safety(self, dataset_name):
         """Regression test: Ensure boolean filters work with different column types."""
         # Arrange

@@ -277,9 +277,49 @@ exclude_lines = [
 
 ## Test Performance
 
+### Dataset Sampling for Parametrized Tests
+
+**CRITICAL**: When writing parametrized tests across datasets, use dataset sampling to keep test count manageable.
+
+**Fast Unit Tests**: Use `get_sample_datasets()` to test with 1-2 representative datasets:
+```python
+def get_sample_datasets():
+    """Return 1-2 representative datasets for fast testing."""
+    all_datasets = get_available_datasets()
+    return all_datasets[:2] if len(all_datasets) >= 2 else all_datasets[:1]
+
+@pytest.mark.parametrize("dataset_name", get_sample_datasets())
+def test_fast_unit_test(dataset_name):
+    """Fast test - no data loading, just interface verification."""
+    dataset = DatasetRegistry.get_dataset(dataset_name)
+    assert dataset is not None
+    assert hasattr(dataset, "config")
+```
+
+**Critical Integration Tests**: Use `get_available_datasets()` for schema/compliance tests that must verify all datasets:
+```python
+@pytest.mark.parametrize("dataset_name", get_available_datasets())
+@pytest.mark.slow
+@pytest.mark.integration
+def test_schema_compliance_all_datasets(dataset_name):
+    """Critical test - must verify all datasets comply with schema."""
+    dataset = DatasetRegistry.get_dataset(dataset_name)
+    if not dataset.validate():
+        pytest.skip(f"{dataset_name} data not available")
+    
+    cohort = dataset.get_cohort()
+    for col in UnifiedCohort.REQUIRED_COLUMNS:
+        assert col in cohort.columns
+```
+
+**Rule**: Any test that calls `dataset.load()`, `dataset.get_cohort()`, or `dataset.validate()` should be marked `@pytest.mark.slow` and `@pytest.mark.integration`.
+
+### Test Markers
+
 ```python
 # Mark slow tests for optional exclusion
 @pytest.mark.slow
+@pytest.mark.integration
 def test_full_backfill_processing():
     """Takes 2+ minutes; skip in quick feedback loops."""
     ...
@@ -287,6 +327,11 @@ def test_full_backfill_processing():
 # Run fast tests only: make test-fast
 # (Uses pytest -m "not slow" internally)
 ```
+
+**Marker Usage:**
+- `@pytest.mark.slow`: Tests that load data or take >1s (skipped by `make test-fast`)
+- `@pytest.mark.integration`: Tests that require real data/connections (can run separately with `make test-integration`)
+- **Always use both** for data-loading tests: `@pytest.mark.slow` + `@pytest.mark.integration`
 
 ## Running Tests (Use Makefile)
 

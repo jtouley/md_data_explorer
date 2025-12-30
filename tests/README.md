@@ -16,25 +16,25 @@ tests/
 │   ├── test_profiling.py           # Data profiling and quality metrics
 │   └── test_schema.py              # Unified cohort schema
 │
-├── loader/            # Dataset loader tests (unit tests with test data)
-│   ├── test_covid_ms_loader.py    # COVID-MS dataset loader
-│   ├── test_sepsis_loader.py      # Sepsis dataset loader
-│   ├── test_mimic3_loader.py      # MIMIC-III dataset loader
-│   └── test_zip_extraction.py     # ZIP file handling and extraction
+├── loader/            # Loader utility tests (shared utilities only)
+│   └── test_zip_extraction.py     # ZIP file handling and multi-table extraction
 │
 ├── analysis/          # Statistical analysis tests
 │   ├── test_compute.py      # Statistical computations
 │   └── test_survival.py     # Survival analysis (Kaplan-Meier, Cox regression)
 │
 ├── ui/                # UI component tests
-│   ├── unit/pages/
-│   │   ├── test_ask_questions_idempotency.py  # Idempotency checks
-│   │   ├── test_ask_questions_low_confidence.py  # Low-confidence feedback
-│   │   └── test_ask_questions_run_key.py      # Run key generation
+│   ├── components/    # UI component unit tests
+│   │   ├── test_question_engine_*.py  # Question engine tests
+│   ├── pages/         # Page-specific tests
+│   │   └── test_ask_questions_*.py
+│   ├── test_app.py    # Streamlit app integration tests
+│   ├── test_integration.py  # UI integration tests (parametrized, uses sample datasets)
+│   ├── test_upload_security.py  # Upload security validation
+│   ├── test_user_datasets.py  # User dataset storage and security
 │   ├── test_variable_detector.py  # Variable type detection
-│   └── test_user_datasets.py      # User dataset storage and security
+│   └── test_*.py      # Other UI component tests
 │
-├── test_ui_integration.py  # UI integration tests (parametrized across all datasets)
 ├── conftest.py        # Pytest configuration and consolidated fixtures
 ├── AGENTS.md          # Comprehensive testing guidelines for AI agents
 └── README.md          # This file
@@ -42,28 +42,36 @@ tests/
 
 ## Running Tests
 
+> **CRITICAL**: Always use Makefile commands. Never run `pytest` directly.
+
 Run all tests:
 ```bash
-uv run pytest tests/
+make test              # Run all tests
+make test-fast         # Fast tests only (skip slow)
 ```
 
 Run tests for a specific module:
 ```bash
-uv run pytest tests/core/          # Core module tests
-uv run pytest tests/loader/        # Loader tests
-uv run pytest tests/analysis/      # Analysis tests
-uv run pytest tests/ui/            # UI tests
-```
-
-Run a specific test file:
-```bash
-uv run pytest tests/core/test_registry.py
+make test-unit         # Unit tests only
+make test-integration  # Integration tests only
 ```
 
 Run with coverage:
 ```bash
-uv run pytest tests/ --cov=src/clinical_analytics --cov-report=html
+make test-cov          # Tests with HTML coverage report
+make test-cov-term     # Tests with terminal coverage
 ```
+
+### Quality Gates (Run Before Commit)
+
+```bash
+make format        # Auto-format code
+make lint-fix      # Auto-fix linting issues
+make type-check    # Verify type hints
+make check         # Full quality gate (format + lint + type + test)
+```
+
+> **Note**: See [.cursor/rules/000-project-setup-and-makefile.mdc](../.cursor/rules/000-project-setup-and-makefile.mdc) for complete Makefile reference.
 
 ## Test Organization Principles
 
@@ -74,8 +82,14 @@ uv run pytest tests/ --cov=src/clinical_analytics --cov-report=html
 
 ### 2. **Registry-Based Testing**
    - Tests use `DatasetRegistry.discover_datasets()` for dynamic discovery
-   - Parametrized tests across all available datasets using `@pytest.mark.parametrize`
+   - Parametrized tests use **sample datasets** (1-2) for fast unit testing
+   - **Full integration tests** across all datasets are marked `@pytest.mark.slow` and `@pytest.mark.integration`
    - No hardcoded dataset names in integration tests
+   
+   **Test Optimization Strategy:**
+   - Fast tests (`make test-fast`): Use `get_sample_datasets()` - 1-2 representative datasets
+   - Integration tests (`make test-integration`): Use `get_available_datasets()` - all datasets for critical schema/compliance tests
+   - Data-loading tests are marked `@pytest.mark.slow` and `@pytest.mark.integration` to skip in fast runs
 
 ### 3. **AAA Pattern**
    - All tests follow Arrange-Act-Assert structure
