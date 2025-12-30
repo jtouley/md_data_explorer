@@ -380,3 +380,286 @@ def synthetic_complex_excel_file(tmp_path_factory):
         df_data.to_excel(writer, index=False, header=False, startrow=2)
 
     return excel_path
+
+
+# ============================================================================
+# Consolidated Test Fixtures (DRY - Single Source of Truth)
+# ============================================================================
+
+
+@pytest.fixture
+def sample_cohort():
+    """
+    Standard Polars cohort fixture used across all tests.
+
+    Returns Polars DataFrame with:
+    - patient_id: Integer IDs [1, 2, 3, 4, 5]
+    - outcome: Binary outcome [0, 1, 0, 1, 0]
+    - age: Age values [45, 62, 38, 71, 55]
+    - treatment: Treatment arm ["A", "A", "B", "B", "A"]
+    """
+    return pl.DataFrame(
+        {
+            "patient_id": [1, 2, 3, 4, 5],
+            "outcome": [0, 1, 0, 1, 0],
+            "age": [45, 62, 38, 71, 55],
+            "treatment": ["A", "A", "B", "B", "A"],
+        }
+    )
+
+
+@pytest.fixture
+def mock_cohort():
+    """
+    Pandas cohort fixture for Streamlit UI tests.
+
+    Returns Pandas DataFrame with UnifiedCohort schema:
+    - patient_id: String IDs ["P0" - "P19"]
+    - time_zero: Date range
+    - outcome: Binary [0, 1] alternating
+    - outcome_label: ["alive", "dead"] alternating
+    - Predictors: age, score, group
+    """
+    import pandas as pd
+
+    from clinical_analytics.core.schema import UnifiedCohort
+
+    return pd.DataFrame(
+        {
+            UnifiedCohort.PATIENT_ID: [f"P{i}" for i in range(20)],
+            UnifiedCohort.TIME_ZERO: pd.date_range("2023-01-01", periods=20),
+            UnifiedCohort.OUTCOME: [0, 1] * 10,
+            UnifiedCohort.OUTCOME_LABEL: ["alive", "dead"] * 10,
+            # Predictors
+            "age": [25, 30, 35, 40] * 5,
+            "score": [1.5, 2.5, 3.5, 4.5] * 5,
+            "group": ["A", "B"] * 10,
+        }
+    )
+
+
+@pytest.fixture
+def sample_context():
+    """
+    Direct AnalysisContext fixture for backward compatibility.
+
+    Returns AnalysisContext with DESCRIBE intent and confidence=0.9.
+    This is a simple, ready-to-use fixture.
+    """
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.DESCRIBE,
+        primary_variable="all",
+    )
+    context.confidence = 0.9
+    return context
+
+
+@pytest.fixture
+def low_confidence_context():
+    """
+    AnalysisContext fixture with low confidence (0.4).
+
+    Returns AnalysisContext configured for low-confidence feedback testing:
+    - inferred_intent: COMPARE_GROUPS
+    - primary_variable: "mortality"
+    - grouping_variable: "treatment_arm"
+    - confidence: 0.4 (below auto-execute threshold)
+    - match_suggestions: Dictionary with collision suggestions
+    """
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.COMPARE_GROUPS,
+        primary_variable="mortality",
+        grouping_variable="treatment_arm",
+        research_question="compare mortality by treatment",
+        match_suggestions={"mortality": ["mortality", "death", "outcome"]},
+    )
+    context.confidence = 0.4  # Low confidence
+    return context
+
+
+@pytest.fixture
+def high_confidence_context():
+    """
+    AnalysisContext fixture with high confidence (0.9).
+
+    Returns AnalysisContext configured for high-confidence auto-execute testing:
+    - inferred_intent: COMPARE_GROUPS
+    - primary_variable: "mortality"
+    - grouping_variable: "treatment_arm"
+    - confidence: 0.9 (above auto-execute threshold)
+    """
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.COMPARE_GROUPS,
+        primary_variable="mortality",
+        grouping_variable="treatment_arm",
+        research_question="compare mortality by treatment",
+    )
+    context.confidence = 0.9  # High confidence
+    return context
+
+
+@pytest.fixture
+def mock_semantic_layer():
+    """
+    Factory fixture for creating mock SemanticLayer instances.
+
+    Returns a function that creates a MagicMock with configurable column mappings.
+
+    Usage:
+        def test_example(mock_semantic_layer):
+            mock = mock_semantic_layer(columns={
+                "mortality": "mortality",
+                "treatment": "treatment_arm"
+            })
+    """
+    from unittest.mock import MagicMock
+
+    def _make(columns=None, collision_suggestions=None):
+        mock = MagicMock()
+        default_columns = {
+            "mortality": "mortality",
+            "treatment": "treatment_arm",
+            "age": "age",
+        }
+        mock.get_column_alias_index.return_value = columns or default_columns
+        mock.get_collision_suggestions.return_value = collision_suggestions
+        mock.get_collision_warnings.return_value = set()
+        mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
+        return mock
+
+    return _make
+
+
+# ============================================================================
+# Analysis Context Fixtures (for compute tests)
+# ============================================================================
+
+
+@pytest.fixture
+def sample_numeric_df():
+    """Create sample Polars DataFrame with numeric columns."""
+    return pl.DataFrame(
+        {
+            "age": [25, 30, 35, 40, 45, 50, 55, 60],
+            "score": [10, 20, 30, 40, 50, 60, 70, 80],
+            "value": [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5],
+        }
+    )
+
+
+@pytest.fixture
+def sample_categorical_df():
+    """Create sample Polars DataFrame with categorical columns."""
+    return pl.DataFrame(
+        {
+            "category": ["A", "B", "A", "B", "A", "B", "A", "B"],
+            "status": ["active", "inactive", "active", "inactive", "active", "inactive", "active", "inactive"],
+        }
+    )
+
+
+@pytest.fixture
+def sample_mixed_df():
+    """Create sample Polars DataFrame with mixed column types."""
+    return pl.DataFrame(
+        {
+            "age": [25, 30, 35, 40, 45],
+            "category": ["A", "B", "A", "B", "A"],
+            "score": [10, 20, 30, 40, 50],
+        }
+    )
+
+
+@pytest.fixture
+def sample_context_describe():
+    """Create AnalysisContext for descriptive analysis."""
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext()
+    context.inferred_intent = AnalysisIntent.DESCRIBE
+    context.primary_variable = "all"
+    return context
+
+
+@pytest.fixture
+def sample_context_compare():
+    """Create AnalysisContext for comparison analysis."""
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext()
+    context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+    context.primary_variable = "score"
+    context.grouping_variable = "category"
+    return context
+
+
+@pytest.fixture
+def sample_context_predictor():
+    """Create AnalysisContext for predictor analysis."""
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext()
+    context.inferred_intent = AnalysisIntent.FIND_PREDICTORS
+    context.primary_variable = "outcome"
+    context.predictor_variables = ["age", "score"]
+    return context
+
+
+@pytest.fixture
+def sample_context_survival():
+    """Create AnalysisContext for survival analysis."""
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext()
+    context.inferred_intent = AnalysisIntent.EXAMINE_SURVIVAL
+    context.time_variable = "time"
+    context.event_variable = "event"
+    return context
+
+
+@pytest.fixture
+def sample_context_relationship():
+    """Create AnalysisContext for relationship analysis."""
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext()
+    context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
+    context.predictor_variables = ["age", "score", "value"]
+    return context
+
+
+# ============================================================================
+# Mock Session State Fixture
+# ============================================================================
+
+
+@pytest.fixture
+def mock_session_state():
+    """Mock Streamlit session_state for UI tests."""
+    return {}
+
+
+@pytest.fixture
+def sample_context_direct():
+    """
+    Direct AnalysisContext fixture (not a factory) for tests that expect it ready-to-use.
+
+    Returns AnalysisContext with default DESCRIBE intent and confidence=0.9.
+    Use this when you need a simple context object without customization.
+
+    For customization, use the sample_context() factory fixture instead.
+    """
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.DESCRIBE,
+        primary_variable="all",
+    )
+    context.confidence = 0.9
+    return context

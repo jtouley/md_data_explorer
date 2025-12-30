@@ -12,18 +12,8 @@ import pytest
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
-@pytest.fixture
-def sample_context():
-    """Create sample AnalysisContext for testing."""
-    context = AnalysisContext(
-        inferred_intent=AnalysisIntent.DESCRIBE,
-        primary_variable="outcome",
-        grouping_variable="treatment",
-        predictor_variables=["age", "sex"],
-    )
-    # Set confidence as attribute (not a dataclass field, but used via getattr)
-    context.confidence = 0.9
-    return context
+# sample_context fixture moved to conftest.py - use shared fixture
+# Note: Tests may need to customize this context using context attributes after retrieval
 
 
 def test_run_key_generation_same_query_produces_same_key(sample_context, ask_questions_page):

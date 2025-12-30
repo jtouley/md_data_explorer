@@ -1,61 +1,107 @@
 """
-Tests for the column mapper module.
+Tests for the column mapper module using config-driven approach.
+
+Tests the ColumnMapper functionality without hardcoded dataset dependencies,
+using dynamic config loading for tests that require real dataset configs.
+
+Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import polars as pl
 import pytest
 
 from clinical_analytics.core.mapper import ColumnMapper, get_global_config, load_dataset_config
+from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.core.schema import UnifiedCohort
+
+
+def get_first_available_dataset_config():
+    """
+    Helper to get config from first available dataset.
+
+    Returns:
+        dict: Config for first available dataset, or None if none available
+    """
+    DatasetRegistry.reset()
+    DatasetRegistry.discover_datasets()
+    DatasetRegistry.load_config()
+    datasets = DatasetRegistry.list_datasets()
+    # Prefer datasets that are likely to have data available
+    # Filter out special cases that require specific setup
+    available = [d for d in datasets if d not in ["uploaded", "mimic3"]]
+    if not available:
+        return None
+    return load_dataset_config(available[0])
 
 
 class TestColumnMapper:
     """Test suite for ColumnMapper."""
 
-    def test_mapper_initialization(self):
-        """Test mapper can be initialized with config."""
-        config = load_dataset_config("covid_ms")
+    def test_mapper_initialization_with_config(self):
+        """Test mapper can be initialized with dataset config."""
+        # Arrange: Get config from first available dataset
+        config = get_first_available_dataset_config()
+        assert config is not None, "No datasets available for testing"
+
+        # Act: Initialize mapper with config
         mapper = ColumnMapper(config)
 
+        # Assert: Mapper initialized with config and column mapping
         assert mapper.config is not None
         assert mapper.column_mapping is not None
 
-    def test_get_default_predictors(self):
-        """Test getting default predictors from config."""
-        config = load_dataset_config("covid_ms")
+    def test_get_default_predictors_returns_list(self):
+        """Test getting default predictors returns non-empty list."""
+        # Arrange: Get config and create mapper
+        config = get_first_available_dataset_config()
+        assert config is not None, "No datasets available for testing"
         mapper = ColumnMapper(config)
 
+        # Act: Get default predictors
         predictors = mapper.get_default_predictors()
 
+        # Assert: Returns non-empty list of predictor names
         assert isinstance(predictors, list)
         assert len(predictors) > 0
 
-    def test_get_categorical_variables(self):
-        """Test getting categorical variables from config."""
-        config = load_dataset_config("covid_ms")
+    def test_get_categorical_variables_returns_list(self):
+        """Test getting categorical variables returns list."""
+        # Arrange: Get config and create mapper
+        config = get_first_available_dataset_config()
+        assert config is not None, "No datasets available for testing"
         mapper = ColumnMapper(config)
 
+        # Act: Get categorical variables
         categoricals = mapper.get_categorical_variables()
 
+        # Assert: Returns list (may be empty if no categoricals defined)
         assert isinstance(categoricals, list)
 
-    def test_get_default_outcome(self):
-        """Test getting default outcome from config."""
-        config = load_dataset_config("covid_ms")
+    def test_get_default_outcome_returns_non_empty_string(self):
+        """Test getting default outcome returns non-empty string."""
+        # Arrange: Get config and create mapper
+        config = get_first_available_dataset_config()
+        assert config is not None, "No datasets available for testing"
         mapper = ColumnMapper(config)
 
+        # Act: Get default outcome
         outcome = mapper.get_default_outcome()
 
+        # Assert: Returns non-empty string
         assert isinstance(outcome, str)
         assert len(outcome) > 0
 
-    def test_get_default_filters(self):
-        """Test getting default filters from config."""
-        config = load_dataset_config("covid_ms")
+    def test_get_default_filters_returns_dict(self):
+        """Test getting default filters returns dict."""
+        # Arrange: Get config and create mapper
+        config = get_first_available_dataset_config()
+        assert config is not None, "No datasets available for testing"
         mapper = ColumnMapper(config)
 
+        # Act: Get default filters
         filters = mapper.get_default_filters()
 
+        # Assert: Returns dict (may be empty if no filters defined)
         assert isinstance(filters, dict)
 
     def test_apply_outcome_transformations(self):
@@ -357,22 +403,36 @@ class TestColumnMapper:
 class TestConfigLoading:
     """Test suite for config loading functions."""
 
-    def test_load_dataset_config(self):
-        """Test loading dataset configuration."""
-        config = load_dataset_config("covid_ms")
+    def test_load_dataset_config_returns_valid_dict(self):
+        """Test loading dataset configuration returns valid dict."""
+        # Arrange: Get first available dataset name
+        DatasetRegistry.reset()
+        DatasetRegistry.discover_datasets()
+        DatasetRegistry.load_config()
+        datasets = DatasetRegistry.list_datasets()
+        available = [d for d in datasets if d not in ["uploaded", "mimic3"]]
+        assert len(available) > 0, "No datasets available for testing"
 
+        # Act: Load config for first available dataset
+        config = load_dataset_config(available[0])
+
+        # Assert: Returns dict with required keys
         assert isinstance(config, dict)
         assert "name" in config or "display_name" in config
         assert "init_params" in config
 
-    def test_load_nonexistent_config(self):
-        """Test loading nonexistent config raises error."""
+    def test_load_nonexistent_config_raises_keyerror(self):
+        """Test loading nonexistent config raises KeyError."""
+        # Arrange: Use nonexistent dataset name
+        # Act & Assert: Should raise KeyError
         with pytest.raises(KeyError):
             load_dataset_config("nonexistent_dataset")
 
-    def test_get_global_config(self):
-        """Test loading global configuration."""
+    def test_get_global_config_returns_dict(self):
+        """Test loading global configuration returns dict."""
+        # Arrange: No setup needed
+        # Act: Get global config
         global_config = get_global_config()
 
+        # Assert: Returns dict (may be empty if no global config defined)
         assert isinstance(global_config, dict)
-        # May be empty if no global config defined

@@ -45,6 +45,9 @@ You are a thought partner, not a yes-machine. Accuracy over politeness.
 - Factory fixtures over static fixtures
 - Parametrize edge cases: nulls, empty, boundary values
 - Schema contract tests, idempotency tests
+- **Test optimization**: Use `get_sample_datasets()` (1-2 datasets) for fast tests, `get_available_datasets()` for critical integration tests
+- **Markers**: `@pytest.mark.slow` + `@pytest.mark.integration` for data-loading tests (skipped by `make test-fast`)
+- **Always use Makefile**: `make test-fast` for development, `make test` for full suite
 
 ## Patterns
 
