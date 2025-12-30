@@ -687,25 +687,212 @@ class NLQueryEngine:
 
         return None
 
-    def _llm_parse(self, query: str) -> QueryIntent:
-        """
-        Tier 3: LLM fallback with RAG context from semantic layer.
+    def _get_ollama_client(self):
+        """Get or create Ollama client (lazy initialization)."""
+        if not hasattr(self, "_ollama_client"):
+            from clinical_analytics.core.llm_client import OllamaClient
+            from clinical_analytics.core.nl_query_config import (
+                OLLAMA_BASE_URL,
+                OLLAMA_DEFAULT_MODEL,
+                OLLAMA_TIMEOUT_SECONDS,
+            )
 
-        NOTE: This is a stub implementation. Full implementation would:
-        1. Build context from semantic layer metadata
-        2. Create structured prompt with available variables
-        3. Call LLM API (or local model) with JSON schema
-        4. Parse response into QueryIntent
+            self._ollama_client = OllamaClient(
+                model=OLLAMA_DEFAULT_MODEL,
+                base_url=OLLAMA_BASE_URL,
+                timeout=OLLAMA_TIMEOUT_SECONDS,
+            )
+        return self._ollama_client
+
+    def _build_rag_context(self, query: str) -> dict:
+        """
+        Build RAG context from semantic layer metadata.
+
+        Extracts available columns, aliases, and example queries to provide
+        context for LLM parsing.
 
         Args:
             query: User's question
 
         Returns:
-            QueryIntent with low confidence (fallback to structured input)
+            Dict with columns, aliases, examples, and query
         """
-        # For now, return a low-confidence DESCRIBE intent as safe default
-        # This triggers the "ask clarifying questions" flow in the UI
-        return QueryIntent(intent_type="DESCRIBE", confidence=0.3)
+        # Extract columns from semantic layer base view
+        base_view = self.semantic_layer.get_base_view()
+        columns = list(base_view.columns)
+
+        # Get alias mappings
+        alias_index = self.semantic_layer.get_column_alias_index()
+
+        # Build example queries (simple patterns for now)
+        examples = [
+            "What is the average age?",
+            "Compare viral load by treatment",
+            "How many patients have treatment A?",
+            "Show me patients with age > 30",
+        ]
+
+        return {
+            "columns": columns,
+            "aliases": alias_index,
+            "examples": examples,
+            "query": query,
+        }
+
+    def _build_llm_prompt(self, query: str, context: dict) -> tuple[str, str]:
+        """
+        Build structured prompts for LLM.
+
+        Args:
+            query: User's question
+            context: RAG context with columns, aliases, examples
+
+        Returns:
+            Tuple of (system_prompt, user_prompt)
+        """
+        system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
+
+Return JSON with these fields:
+- intent_type: One of ["DESCRIBE", "COMPARE_GROUPS", "COUNT", "FIND_PREDICTORS", "SURVIVAL", "CORRELATIONS"]
+- primary_variable: Main variable of interest (or null)
+- grouping_variable: Variable to group by (or null)
+- confidence: Your confidence 0.0-1.0
+
+Available columns: {columns}
+Aliases: {aliases}
+
+Examples:
+{examples}""".format(
+            columns=", ".join(context["columns"]),
+            aliases=str(context["aliases"]),
+            examples="\n".join(f"- {ex}" for ex in context["examples"]),
+        )
+
+        user_prompt = f"Parse this query: {query}"
+
+        return (system_prompt, user_prompt)
+
+    def _extract_query_intent_from_llm_response(self, response: str, max_retries: int = 3) -> QueryIntent | None:
+        """
+        Extract QueryIntent from LLM JSON response with retries.
+
+        Args:
+            response: JSON string from LLM
+            max_retries: Maximum retry attempts (not used in this version)
+
+        Returns:
+            QueryIntent if valid, None if parsing fails
+        """
+        import json
+
+        try:
+            data = json.loads(response)
+
+            # Validate required fields
+            if "intent_type" not in data:
+                logger.warning("llm_response_missing_intent_type", response=response[:100])
+                return None
+
+            # Extract fields with defaults
+            intent_type = data.get("intent_type", "DESCRIBE")
+            primary_variable = data.get("primary_variable")
+            grouping_variable = data.get("grouping_variable")
+            confidence = float(data.get("confidence", 0.5))
+
+            # Clamp confidence to valid range
+            confidence = max(0.0, min(1.0, confidence))
+
+            return QueryIntent(
+                intent_type=intent_type,
+                primary_variable=primary_variable,
+                grouping_variable=grouping_variable,
+                confidence=confidence,
+                parsing_tier="llm_fallback",
+            )
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(
+                "llm_response_parse_failed",
+                error=str(e),
+                response=response[:100],
+            )
+            return None
+
+    def _llm_parse(self, query: str) -> QueryIntent:
+        """
+        Tier 3: LLM fallback with RAG context from semantic layer.
+
+        This is the blast shield - catches all exceptions and always returns a QueryIntent.
+        Never crashes, always provides a fallback (confidence=0.3 stub).
+
+        Privacy-preserving: Uses local Ollama only, no external API calls.
+
+        Args:
+            query: User's question
+
+        Returns:
+            QueryIntent with confidence >= 0.5 on success, or 0.3 stub on failure
+        """
+        from clinical_analytics.core.nl_query_config import TIER_3_MIN_CONFIDENCE
+
+        try:
+            # Step 1: Get Ollama client (lazy init)
+            client = self._get_ollama_client()
+
+            # Step 2: Check if Ollama is available
+            if not client.is_available():
+                logger.info("ollama_not_available_fallback_to_stub", query=query)
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Step 3: Build RAG context
+            context = self._build_rag_context(query)
+
+            # Step 4: Build structured prompts
+            system_prompt, user_prompt = self._build_llm_prompt(query, context)
+
+            # Step 5: Call Ollama with JSON mode
+            response = client.generate(user_prompt, system_prompt=system_prompt, json_mode=True)
+
+            if response is None:
+                logger.info("ollama_generate_failed_fallback_to_stub", query=query)
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Step 6: Extract QueryIntent from response
+            intent = self._extract_query_intent_from_llm_response(response)
+
+            if intent is None:
+                logger.info("llm_parse_extraction_failed_fallback_to_stub", query=query)
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Step 7: Validate confidence meets minimum threshold
+            if intent.confidence < TIER_3_MIN_CONFIDENCE:
+                logger.info(
+                    "llm_parse_low_confidence_fallback_to_stub",
+                    confidence=intent.confidence,
+                    threshold=TIER_3_MIN_CONFIDENCE,
+                    query=query,
+                )
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Success!
+            logger.info(
+                "llm_parse_success",
+                intent_type=intent.intent_type,
+                confidence=intent.confidence,
+                query=query,
+            )
+            return intent
+
+        except Exception as e:
+            # Blast shield: catch everything, log, return stub
+            # This is the only place where broad exception catching is correct
+            logger.warning(
+                "llm_parse_exception_fallback_to_stub",
+                error_type=type(e).__name__,
+                error=str(e),
+                query=query,
+            )
+            return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
     def _extract_variables_from_query(self, query: str) -> tuple[list[str], dict[str, list[str]]]:
         """

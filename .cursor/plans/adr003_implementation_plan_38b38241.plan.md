@@ -1,8 +1,35 @@
 ---
 name: ADR003 Implementation Plan
-overview: "Implement ADR003: Clinical Trust Protocol + Adaptive Alias Persistence. Three phases: (1) Trust UI with verification expanders and patient-level export, (2) Adaptive alias persistence scoped per dataset, (3) Semantic layer QueryPlan execution with type-aware validation and confidence gating."
-progress: "Phase 1 Complete ✅ (Commit af46ca9) - 11/11 tests passing. Trust UI with patient-level export and cohort size calculation implemented and integrated."
+overview: "Implement ADR003: Clinical Trust Protocol + Adaptive Alias Persistence. Four phases: (0) Tier 3 LLM fallback with local Ollama, (1) Trust UI with verification expanders and patient-level export, (2) Adaptive alias persistence scoped per dataset, (3) Semantic layer QueryPlan execution with type-aware validation and confidence gating."
 todos:
+  - id: phase0-tests
+    content: Write Phase 0 test specifications (12 tests) in tests/core/test_llm_fallback.py
+    status: pending
+  - id: phase0-ollama-client
+    content: Implement OllamaClient class with connection handling and model management
+    status: pending
+    dependencies:
+      - phase0-tests
+  - id: phase0-rag-context
+    content: Implement RAG context builder from semantic layer metadata
+    status: pending
+    dependencies:
+      - phase0-ollama-client
+  - id: phase0-structured-parsing
+    content: Implement structured JSON extraction with schema validation and retries
+    status: pending
+    dependencies:
+      - phase0-rag-context
+  - id: phase0-integration
+    content: Integrate _llm_parse() into NLQueryEngine with error handling and timeouts
+    status: pending
+    dependencies:
+      - phase0-structured-parsing
+  - id: phase0-commit
+    content: Run quality gates (make check) and commit Phase 0 with all tests passing
+    status: pending
+    dependencies:
+      - phase0-integration
   - id: phase1-tests
     content: Write Phase 1 test specifications (11 tests) in tests/ui/test_trust_ui.py
     status: completed
@@ -42,6 +69,8 @@ todos:
   - id: phase3-tests
     content: Write Phase 3 test specifications (15 tests) in tests/core/test_semantic_queryplan_execution.py
     status: pending
+    dependencies:
+      - phase0-commit
   - id: phase3-queryplan-extend
     content: Extend QueryPlan with ADR003 contract fields (requires_filters, requires_grouping, entity_key, scope)
     status: pending
@@ -68,7 +97,7 @@ todos:
 
 ## Overview
 
-This plan implements ADR003 in three phases following test-first development, phase commits, and quality gates per `.cursor/rules/104-plan-execution-hygiene.mdc`.**Architecture**: ADR003 extends existing infrastructure:
+This plan implements ADR003 in four phases following test-first development, phase commits, and quality gates per `.cursor/rules/104-plan-execution-hygiene.mdc`.**Current Status**: Phase 1 complete ✅. Phase 0 (Tier 3 LLM Fallback) is **CRITICAL** and must be completed before Phase 3, as Phase 3's confidence gating requires valid QueryPlans with confidence >= 0.75, which the current Tier 3 stub cannot provide.**Architecture**: ADR003 extends existing infrastructure:
 
 - **QueryPlan** (`src/clinical_analytics/core/query_plan.py`) - Extend with ADR003 contract fields
 - **SemanticLayer** (`src/clinical_analytics/core/semantic.py`) - Add alias persistence and QueryPlan execution
@@ -80,6 +109,134 @@ This plan implements ADR003 in three phases following test-first development, ph
 - ADR003 does NOT own NLU parsing (ADR001's responsibility)
 - Semantic layer executes QueryPlans, does not parse natural language
 - All validation is against explicit QueryPlan contract fields, not inferred from NL
+- **Phase 0 Dependency**: Tier 3 LLM fallback must be functional before Phase 3 execution layer can work (confidence gating requires valid QueryPlans)
+
+## Phase 0: Tier 3 LLM Fallback with Local Ollama (P0 - Bootstrap Dependency)
+
+### 0.1 Test Specifications
+
+**File**: `tests/core/test_llm_fallback.py`**Test Cases**:
+
+1. `test_ollama_client_connection_success` - Verify OllamaClient connects to local Ollama service
+2. `test_ollama_client_connection_failure_handles_gracefully` - Verify connection failure returns None without crashing
+3. `test_ollama_client_model_available` - Verify model availability check (llama3.1:8b or llama3.2:3b)
+4. `test_ollama_client_model_not_available_handles_gracefully` - Verify missing model handled gracefully
+5. `test_rag_context_builder_includes_columns` - Verify RAG context includes available columns from semantic layer
+6. `test_rag_context_builder_includes_aliases` - Verify RAG context includes alias mappings
+7. `test_rag_context_builder_includes_examples` - Verify RAG context includes example queries
+8. `test_structured_json_extraction_valid_schema` - Verify JSON extraction with valid schema returns QueryIntent
+9. `test_structured_json_extraction_invalid_json_retries` - Verify invalid JSON triggers retry (up to 3 attempts)
+10. `test_structured_json_extraction_timeout_handling` - Verify timeout handling (5s default)
+11. `test_llm_parse_returns_query_intent_with_confidence` - Verify _llm_parse() returns QueryIntent with confidence >= 0.5
+12. `test_llm_parse_fallback_to_stub_on_error` - Verify _llm_parse() falls back to stub (confidence=0.3) on unrecoverable errors
+
+**Fixtures** (add to `tests/conftest.py`):
+
+- `mock_ollama_client()` - Mock OllamaClient for testing without actual Ollama service
+- `sample_rag_context()` - Factory for RAG context dict with columns, aliases, examples
+- `sample_semantic_layer_metadata()` - Mock semantic layer with metadata for RAG context
+
+### 0.2 Implementation Tasks
+
+**File**: `src/clinical_analytics/core/llm_client.py` (NEW)**Task 0.2.1**: Create `OllamaClient` class
+
+- Signature: `class OllamaClient:`
+- Methods:
+- `__init__(model: str = "llama3.1:8b", base_url: str = "http://localhost:11434", timeout: float = 5.0)`
+- `is_available() -> bool` - Check if Ollama service is running
+- `is_model_available(model: str) -> bool` - Check if model is downloaded
+- `generate(prompt: str, system_prompt: str | None = None, json_mode: bool = True) -> str | None` - Generate response with JSON mode
+- `_check_connection() -> bool` - Internal method to check Ollama service
+- Error handling: Return None on connection failures, don't raise exceptions
+- Timeout: Default 5 seconds, configurable
+- Privacy: All data stays local (no external API calls)
+
+**Task 0.2.2**: Add Ollama dependency (optional)
+
+- Add `ollama>=0.1.0` to `pyproject.toml` under `[project.optional-dependencies]` as `llm`
+- Or use `requests` library (already in dependencies via other packages) to call Ollama REST API directly
+- **Decision**: Use `requests` to avoid new dependency (Ollama exposes REST API at `http://localhost:11434`)
+
+**File**: `src/clinical_analytics/core/nl_query_engine.py`**Task 0.2.3**: Implement RAG context builder
+
+- Function: `_build_rag_context(self, query: str) -> dict[str, Any]`
+- Extract from semantic layer:
+- Available columns (from `semantic_layer.get_base_view().columns`)
+- Alias mappings (from `semantic_layer.get_column_alias_index()`)
+- Example queries (from query templates)
+- Format as structured context for LLM prompt
+- Return dict with keys: `columns`, `aliases`, `examples`, `query`
+
+**Task 0.2.4**: Implement structured prompt builder
+
+- Function: `_build_llm_prompt(self, query: str, context: dict[str, Any]) -> tuple[str, str]`
+- System prompt: Instructions for JSON schema extraction
+- User prompt: Query + RAG context (columns, aliases, examples)
+- Return tuple: `(system_prompt, user_prompt)`
+- JSON schema: Define expected QueryIntent structure (intent_type, primary_variable, grouping_variable, filters, confidence)
+
+**Task 0.2.5**: Implement structured JSON extraction with retries
+
+- Function: `_extract_query_intent_from_llm_response(self, response: str, max_retries: int = 3) -> QueryIntent | None`
+- Parse JSON response with schema validation
+- Retry on invalid JSON (up to 3 attempts with exponential backoff)
+- Validate required fields: `intent_type`, `confidence`
+- Return `QueryIntent` if valid, `None` if all retries fail
+- Use `json.loads()` with defensive error handling
+
+**Task 0.2.6**: Replace `_llm_parse()` stub with full implementation
+
+- Signature: `_llm_parse(self, query: str) -> QueryIntent`
+- Steps:
+
+1. Check if Ollama is available (lazy check, cache result)
+2. Build RAG context from semantic layer
+3. Build structured prompt (system + user)
+4. Call OllamaClient.generate() with JSON mode
+5. Extract QueryIntent from response (with retries)
+6. Fallback to stub (confidence=0.3) if all steps fail
+
+- Error handling: Catch all exceptions, log with structlog, return stub on failure
+- Timeout: Use OllamaClient timeout (5s default)
+- Confidence: Set confidence based on extraction quality (0.5-0.9 range)
+
+**File**: `src/clinical_analytics/core/nl_query_config.py`**Task 0.2.7**: Add LLM configuration constants
+
+- `OLLAMA_BASE_URL: str = "http://localhost:11434"`
+- `OLLAMA_DEFAULT_MODEL: str = "llama3.1:8b"`
+- `OLLAMA_FALLBACK_MODEL: str = "llama3.2:3b"`
+- `OLLAMA_TIMEOUT_SECONDS: float = 5.0`
+- `OLLAMA_MAX_RETRIES: int = 3`
+- `OLLAMA_JSON_MODE: bool = True`
+
+### 0.3 Quality Gates
+
+**Before Phase 0 Commit**:
+
+```bash
+make format
+make lint-fix
+make type-check
+make test-core  # Run core tests including LLM fallback tests
+make check      # Full quality gate
+```
+
+**Note**: Tests should mock OllamaClient to avoid requiring actual Ollama service running. Integration tests (optional) can test against real Ollama if available.**Commit Message Template**:
+
+```javascript
+feat: Phase 0 - Tier 3 LLM Fallback with Local Ollama (ADR003)
+
+- Implement OllamaClient for local LLM integration
+- Add RAG context builder from semantic layer metadata
+- Implement structured JSON extraction with retries and validation
+- Replace _llm_parse() stub with full implementation
+- Add LLM configuration constants to nl_query_config.py
+- Privacy-preserving: All data stays on-device
+
+All tests passing: 12/12
+```
+
+
 
 ## Phase 1: Trust Layer (P0 - Mandatory Verification UI)
 
@@ -234,13 +391,16 @@ All tests passing: 11/11
 
 - Ensure `alias_mappings` structure in metadata:
   ```json
-    {
-      "alias_mappings": {
-        "user_aliases": {"VL": "viral_load", "LDL": "LDL mg/dL"},
-        "system_aliases": {...}
+      {
+        "alias_mappings": {
+          "user_aliases": {"VL": "viral_load", "LDL": "LDL mg/dL"},
+          "system_aliases": {...}
+        }
       }
-    }
   ```
+
+
+
 
 - Load aliases on metadata read
 - Save aliases on metadata write (atomic update)
@@ -407,6 +567,7 @@ All tests passing: 15/15
 
 **Reusable Components**:
 
+- LLM client in `src/clinical_analytics/core/llm_client.py` (Phase 0)
 - Trust UI components in `src/clinical_analytics/ui/components/trust_ui.py` (Phase 1)
 - Alias persistence logic in `SemanticLayer` (Phase 2)
 - QueryPlan execution in `SemanticLayer` (Phase 3)
@@ -462,17 +623,34 @@ import pandas as pd
 
 ## Implementation Order
 
-1. **Phase 1** (Trust UI) - Enables user verification immediately
-2. **Phase 2** (Alias Persistence) - Enables error-driven learning
-3. **Phase 3** (QueryPlan Execution) - Enables type-aware execution and validation
+**Current Status**:
+
+- ✅ **Phase 1** (Trust UI) - **COMPLETE** (Commit af46ca9)
+- ⏳ **Phase 0** (Tier 3 LLM Fallback) - **PENDING** - **CRITICAL**: Required before Phase 3 execution layer (confidence gating needs valid QueryPlans)
+- ⏳ **Phase 2** (Alias Persistence) - **PENDING** - Can start immediately
+- ⏳ **Phase 3** (QueryPlan Execution) - **PENDING** - Blocked until Phase 0 complete
 
 **Dependencies**:
 
-- Phase 1: Independent (can start immediately)
-- Phase 2: Independent (can start immediately, but benefits from Phase 1 error UI)
-- Phase 3: Requires Phase 2 (needs alias resolution) and Phase 1 (needs trust UI for validation display)
+- **Phase 0**: Independent (can start immediately, **MUST complete before Phase 3**)
+- **Phase 1**: ✅ **COMPLETE** - Trust UI with verification expanders and patient-level export
+- **Phase 2**: Independent (can start immediately, benefits from Phase 1 error UI which is already complete)
+- **Phase 3**: **BLOCKED** - Requires:
+- Phase 0 ✅ (needs functional Tier 3 for valid QueryPlans with confidence >= 0.75)
+- Phase 2 (needs alias resolution)
+- Phase 1 ✅ (needs trust UI for validation display - already complete)
 
 ## Success Criteria
+
+**Phase 0 Complete**:
+
+- [ ] All 12 LLM fallback tests passing
+- [ ] OllamaClient connects to local Ollama service (or handles gracefully if unavailable)
+- [ ] RAG context builder extracts columns, aliases, and examples from semantic layer
+- [ ] Structured JSON extraction works with retries and validation
+- [ ] _llm_parse() returns QueryIntent with confidence >= 0.5 (or falls back to stub gracefully)
+- [ ] Timeout handling works (5s default)
+- [ ] Privacy-preserving: No external API calls, all data stays on-device
 
 **Phase 1 Complete** ✅:
 
@@ -497,4 +675,3 @@ import pandas as pd
 - [ ] All 15 QueryPlan execution tests passing
 - [ ] Confidence and completeness gating enforced (hard gate, no side effects)
 - [ ] Type-aware execution works (categorical → frequency, numeric → stats)
-- [ ] COUNT intent validation and execution correct
