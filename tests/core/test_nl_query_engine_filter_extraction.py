@@ -494,3 +494,63 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
             if statin_filters:
                 for f in statin_filters:
                     assert not isinstance(f.value, str), f"Filter should have numeric code, not string, got: {f.value}"
+
+    def test_strategy1_handles_full_alias_string_as_column_name(self, mock_semantic_layer):
+        """
+        Test that when _fuzzy_match_variable returns the full alias string (with codes)
+        as the column name, Strategy 1 correctly identifies it and passes it to Strategy 2.
+
+        This handles the case where the canonical name IS the full alias string
+        (e.g., "Statin Used: 0: n/a 1: Atorvastatin...").
+        """
+        # Arrange: _fuzzy_match_variable returns the full alias string as canonical
+        full_alias = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin 3: Simvastatin"
+
+        from unittest.mock import MagicMock
+
+        mock = MagicMock()
+        mock.get_column_alias_index.return_value = {
+            full_alias: full_alias,  # Canonical name is the alias itself
+        }
+        mock.get_collision_suggestions.return_value = None
+        mock.get_collision_warnings.return_value = set()
+        mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
+        }
+
+        engine = NLQueryEngine(mock)
+
+        # Override _fuzzy_match_variable to return full alias string
+        def mock_fuzzy(term):
+            if "statin" in term.lower():
+                return full_alias, 0.9, None  # Returns full alias as "canonical"
+            return None, 0.0, None
+
+        engine._fuzzy_match_variable = mock_fuzzy
+
+        # Act: Extract filters
+        query = "how many patients were on statins"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract numeric codes (not string "statins")
+        assert intent is not None
+        if intent.filters:
+            statin_filters = [f for f in intent.filters if "statin" in f.column.lower()]
+            if statin_filters:
+                statin_filter = statin_filters[0]
+                # Value should be numeric codes, not string
+                assert not isinstance(statin_filter.value, str), (
+                    f"When Strategy 1 returns full alias, should extract numeric codes, "
+                    f"got: {statin_filter.value} (type: {type(statin_filter.value)})"
+                )
+                # Should be list of int codes (IN operator) or single int
+                if isinstance(statin_filter.value, list):
+                    assert all(isinstance(v, int) for v in statin_filter.value), (
+                        f"Filter value list should contain int codes, got: {statin_filter.value}"
+                    )
+                else:
+                    assert isinstance(statin_filter.value, int), (
+                        f"Filter value should be int code, got: {statin_filter.value}"
+                    )
