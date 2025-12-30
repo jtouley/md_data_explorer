@@ -10,6 +10,7 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.core.query_plan import FilterSpec
 from clinical_analytics.ui.components.question_engine import AnalysisContext
 
 
@@ -122,7 +123,10 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
     Try to convert a string series to numeric.
 
     Handles:
-    - European comma format: "-1,8" -> -1.8
+    - European comma format: "-1,8" -> -1.8 (comma as decimal separator)
+    - US thousands format: "1,234.5" -> 1234.5 (comma as thousands separator)
+    - Below detection limit: "<20" -> 20 (uses upper bound, extracts numeric part)
+    - Above detection limit: ">100" -> 100 (uses lower bound, extracts numeric part)
     - Empty strings and whitespace -> null
     - Non-numeric values -> null
 
@@ -132,17 +136,51 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
         return None
 
     try:
-        # Clean the values: replace comma with dot, strip whitespace
-        cleaned = (
-            series.str.strip_chars().str.replace(",", ".").str.replace_all(r"^\s*$", "")  # Empty strings to empty
-        )
+        # Step 1: Extract numeric part (handles "<20", ">100", etc.)
+        # This pattern extracts digits, commas, dots, and minus signs
+        # It will extract "20" from "<20", "1234.5" from "1,234.5", etc.
+        extracted = series.str.extract(r"([\d,\.\-]+)", 1)
 
-        # Try to cast to float
+        # Step 2: Clean based on format detection
+        # Strategy: Use map_elements for complex logic that Polars string ops can't handle easily
+        def clean_numeric(s: str | None) -> str | None:
+            if s is None:
+                return None
+            s = s.strip()
+            if not s:
+                return None
+
+            # Check if it looks like US format (has both comma and dot)
+            # In US format: "1,234.5" -> comma is thousands, dot is decimal -> remove comma
+            if "," in s and "." in s:
+                # US format: remove commas (thousands separator)
+                return s.replace(",", "")
+            # Check if it looks like European format (comma but no dot)
+            # In European format: "1,8" -> comma is decimal -> replace with dot
+            elif "," in s and "." not in s:
+                # European format: replace comma with dot (decimal separator)
+                return s.replace(",", ".")
+            # No comma, use as-is
+            return s
+
+        # Apply cleaning using map_elements
+        cleaned = extracted.map_elements(clean_numeric, return_dtype=pl.Utf8)
+
+        # Step 3: Try to cast to float
         numeric = cleaned.cast(pl.Float64, strict=False)
 
-        # Check if we got any valid values
+        # Step 4: Check if we got any valid values
         if numeric.null_count() == len(numeric):
-            return None
+            # Fallback: try direct conversion on original series
+            # Remove all commas (assume thousands separator) and try again
+            cleaned_direct = (
+                series.str.strip_chars()
+                .str.replace(",", "")  # Remove commas
+                .str.replace_all(r"^\s*$", "")  # Empty strings
+            )
+            numeric = cleaned_direct.cast(pl.Float64, strict=False)
+            if numeric.null_count() == len(numeric):
+                return None
 
         return numeric
     except Exception:
@@ -161,6 +199,21 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
     import structlog
 
     logger = structlog.get_logger()
+
+    # Store original count before applying filters
+    original_count = df.height
+
+    # Apply filters from QueryPlan if present
+    filters_applied = []
+    if context.query_plan and context.query_plan.filters:
+        df = _apply_filters(df, context.query_plan.filters)
+        filters_applied = [f.__dict__ for f in context.query_plan.filters]
+    elif context.filters:
+        # Fallback to context.filters for backward compatibility
+        df = _apply_filters(df, context.filters)
+        filters_applied = [f.__dict__ for f in context.filters]
+
+    filtered_count = df.height
 
     # Check if we're focusing on a specific variable
     primary_var = context.primary_variable
@@ -234,6 +287,14 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             "non_null_count": non_null_count,
             "null_count": analysis_series.null_count(),
             "null_pct": (analysis_series.null_count() / row_count * 100) if row_count > 0 else 0.0,
+            "original_count": original_count,
+            "filtered_count": filtered_count,
+            "filters_applied": filters_applied,
+            "filter_description": _format_filter_description(
+                context.query_plan.filters if context.query_plan else context.filters
+            )
+            if (context.query_plan and context.query_plan.filters) or context.filters
+            else "",
         }
 
         # Compute stats based on dtype
@@ -299,6 +360,14 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
         "missing_pct": missing_pct,
         "summary_stats": desc_stats_dict,
         "categorical_summary": categorical_summary,
+        "original_count": original_count,
+        "filtered_count": filtered_count,
+        "filters_applied": filters_applied,
+        "filter_description": _format_filter_description(
+            context.query_plan.filters if context.query_plan else context.filters
+        )
+        if (context.query_plan and context.query_plan.filters) or context.filters
+        else "",
     }
 
 
@@ -384,9 +453,25 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     if analysis_df.height < 2:
         return {"type": "comparison", "error": "Not enough data for comparison"}
 
+    # CRITICAL FIX: Try numeric conversion FIRST, before deciding test type
+    outcome_series = analysis_df[outcome_col]
+    numeric_outcome = None
+    outcome_is_numeric = False
+
+    # Check if already numeric
+    if outcome_series.dtype in (pl.Int64, pl.Float64):
+        outcome_is_numeric = True
+        numeric_outcome = outcome_series
+    else:
+        # Try to convert string columns to numeric (handles "<20", "120", etc.)
+        numeric_outcome = _try_convert_to_numeric(outcome_series)
+        if numeric_outcome is not None:
+            outcome_is_numeric = True
+            # Replace outcome column with numeric version
+            analysis_df = analysis_df.with_columns(numeric_outcome.alias(outcome_col))
+
     # Determine appropriate test
-    outcome_dtype = analysis_df[outcome_col].dtype
-    outcome_numeric = outcome_dtype in (pl.Int64, pl.Float64)
+    outcome_numeric = outcome_is_numeric
 
     groups = analysis_df[group_col].unique().to_list()
     n_groups = len(groups)
@@ -516,6 +601,186 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         }
 
 
+def _format_filter_description(filters: list[FilterSpec] | None) -> str:
+    """
+    Convert filter list to human-readable description.
+
+    Args:
+        filters: List of FilterSpec objects (or None)
+
+    Returns:
+        Human-readable filter description string
+    """
+    if not filters:
+        return ""
+
+    op_text = {
+        "==": "equals",
+        "!=": "does not equal",
+        "<": "less than",
+        ">": "greater than",
+        "<=": "at most",
+        ">=": "at least",
+        "IN": "in",
+        "NOT_IN": "not in",
+    }
+
+    descriptions = []
+    for f in filters:
+        op = op_text.get(f.operator, f.operator)
+        descriptions.append(f"{f.column} {op} {f.value}")
+
+    return "; ".join(descriptions)
+
+
+def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
+    """
+    Apply filter conditions to DataFrame.
+
+    Args:
+        df: Input DataFrame
+        filters: List of FilterSpec objects
+
+    Returns:
+        Filtered DataFrame
+    """
+    if not filters:
+        return df
+
+    # Operator dispatch table
+    filtered_df = df
+    for filter_spec in filters:
+        if filter_spec.column not in df.columns:
+            continue  # Skip if column not found
+
+        # Apply null exclusion if requested (default: yes)
+        if filter_spec.exclude_nulls:
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_not_null())
+
+        # Get column dtype to check for type mismatches
+        col_dtype = df.schema[filter_spec.column]
+
+        # Apply operator with type safety
+        try:
+            if filter_spec.operator == "==":
+                # Check for type mismatch: numeric column with string value
+                if col_dtype in (pl.Int64, pl.Int32, pl.Int16, pl.Int8, pl.Float64, pl.Float32):
+                    if isinstance(filter_spec.value, str):
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.warning(
+                            f"Type mismatch: column '{filter_spec.column}' is {col_dtype} "
+                            f"but filter value is string '{filter_spec.value}'. Skipping filter."
+                        )
+                        continue
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) == filter_spec.value)
+            elif filter_spec.operator == "!=":
+                # Check for type mismatch
+                if col_dtype in (pl.Int64, pl.Int32, pl.Int16, pl.Int8, pl.Float64, pl.Float32):
+                    if isinstance(filter_spec.value, str):
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.warning(
+                            f"Type mismatch: column '{filter_spec.column}' is {col_dtype} "
+                            f"but filter value is string '{filter_spec.value}'. Skipping filter."
+                        )
+                        continue
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) != filter_spec.value)
+            elif filter_spec.operator == "<":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) < filter_spec.value)
+            elif filter_spec.operator == ">":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) > filter_spec.value)
+            elif filter_spec.operator == "<=":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) <= filter_spec.value)
+            elif filter_spec.operator == ">=":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) >= filter_spec.value)
+            elif filter_spec.operator == "IN":
+                if isinstance(filter_spec.value, list):
+                    filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_in(filter_spec.value))
+            elif filter_spec.operator == "NOT_IN":
+                if isinstance(filter_spec.value, list):
+                    filtered_df = filtered_df.filter(~pl.col(filter_spec.column).is_in(filter_spec.value))
+        except pl.exceptions.ComputeError as e:
+            # Log the error and skip this filter rather than crashing
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Error applying filter {filter_spec.column} {filter_spec.operator} {filter_spec.value}: {e}. "
+                "Skipping filter."
+            )
+            continue
+
+    return filtered_df
+
+
+def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Compute count analysis - returns total count, optionally grouped.
+
+    Args:
+        df: Polars DataFrame (cohort data)
+        context: AnalysisContext with intent and variables
+
+    Returns:
+        Serializable dict with count results
+    """
+    # Apply filters from QueryPlan if present
+    if context.query_plan and context.query_plan.filters:
+        df = _apply_filters(df, context.query_plan.filters)
+    elif context.filters:
+        df = _apply_filters(df, context.filters)
+
+    row_count = df.height
+
+    # Check if query asks for "most" (e.g., "which statin was most prescribed?")
+    is_most_query = False
+    query_text = getattr(context, "query_text", None) or ""
+
+    if query_text:
+        query_lower = query_text.lower()
+        is_most_query = "most" in query_lower and ("which" in query_lower or "what" in query_lower)
+
+    # If grouping variable is specified, count by group
+    if context.grouping_variable and context.grouping_variable in df.columns:
+        group_col = context.grouping_variable
+        counts = df.group_by(group_col).agg(pl.len().alias("count")).sort("count", descending=True)
+        counts_dict = counts.to_dicts()
+
+        # For "most" queries, return only the top result
+        if is_most_query and len(counts_dict) > 0:
+            counts_dict = [counts_dict[0]]  # Only top result
+
+        # Create headline
+        total = sum(item["count"] for item in counts_dict)
+        if is_most_query and len(counts_dict) > 0:
+            top_group = counts_dict[0]
+            headline = f"**{top_group[group_col]}** with {top_group['count']} patients"
+        else:
+            headline = f"Total count: **{total}**"
+            if len(counts_dict) > 0:
+                top_group = counts_dict[0]
+                headline += f" (largest group: {top_group[group_col]} with {top_group['count']})"
+
+        return {
+            "type": "count",
+            "total_count": total,
+            "grouped_by": group_col,
+            "group_counts": counts_dict,
+            "headline": headline,
+            "is_most_query": is_most_query,  # Flag for rendering
+        }
+    else:
+        # Simple total count
+        return {
+            "type": "count",
+            "total_count": row_count,
+            "headline": f"Total count: **{row_count}**",
+        }
+
+
 def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Route to appropriate compute function based on intent.
@@ -539,6 +804,8 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
         return compute_survival_analysis(df, context)
     elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
         return compute_relationship_analysis(df, context)
+    elif context.inferred_intent == AnalysisIntent.COUNT:
+        return compute_count_analysis(df, context)
     else:
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
 

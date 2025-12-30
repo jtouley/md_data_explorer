@@ -634,6 +634,16 @@ def sample_context_relationship():
     return context
 
 
+@pytest.fixture
+def sample_context_count():
+    """Create AnalysisContext for count analysis."""
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext()
+    context.inferred_intent = AnalysisIntent.COUNT
+    return context
+
+
 # ============================================================================
 # Mock Session State Fixture
 # ============================================================================

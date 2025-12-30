@@ -1,10 +1,7 @@
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
-
-from clinical_analytics.core.schema import UnifiedCohort
 
 # --- Fixtures ---
 

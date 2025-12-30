@@ -26,7 +26,7 @@ This rule defines mandatory hygiene standards for executing implementation plans
 1. **Formatting**: `make format` (auto-fix) or `make format-check` (verify)
 2. **Linting**: `make lint-fix` (auto-fix) or `make lint` (verify)
 3. **Type checking**: `make type-check`
-4. **Testing**: `make test-fast` (quick feedback) or `make test` (full suite)
+4. **Testing**: `make test-fast` (quick feedback) or module-specific tests (`make test-core`, `make test-analysis`, etc.) or `make test` (full suite)
 
 **Never commit code that fails these checks.**
 
@@ -61,6 +61,7 @@ make format-check && make lint && make type-check && make test-fast
 - `make lint` / `make lint-fix` (never `ruff check` directly)
 - `make type-check` (never `mypy` directly)
 - `make test-fast` / `make test` (never `pytest` directly)
+- Module-specific tests: `make test-core`, `make test-analysis`, `make test-ui`, `make test-datasets`, `make test-loader`, `make test-e2e`
 - `make check` (full quality gate before commit)
 - `make ci` (CI-specific checks)
 
@@ -75,9 +76,9 @@ make format-check && make lint && make type-check && make test-fast
 **Workflow Steps:**
 
 1. **Write failing test** (Red) - Use AAA pattern (Arrange-Act-Assert)
-2. **Run test immediately** - `make test-fast` to verify it fails as expected
+2. **Run test immediately** - Use module-specific test command (e.g., `make test-core`) or `make test-fast` to verify it fails as expected
 3. **Implement minimum code to pass** (Green)
-4. **Run test again** - `make test-fast` to verify it passes
+4. **Run test again** - Use module-specific test command or `make test-fast` to verify it passes
 5. **Fix code quality issues immediately** - Run `make lint-fix` and `make format` if needed
 6. **Refactor** (Refactor)
 7. **Run full test suite** - `make test-fast` before commit
@@ -146,7 +147,7 @@ plt.assert_frame_equal(result, expected)
 **Before starting the next phase, you MUST:**
 
 1. **Write tests for the phase** - Create test files covering all new functionality
-2. **Run tests immediately** - Execute `make test-fast` to verify all tests pass
+2. **Run tests immediately** - Execute module-specific test command (e.g., `make test-core`) or `make test-fast` to verify all tests pass
 3. **Fix any test failures** - Do not proceed until all tests pass
 4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
 5. **Commit all changes** - Include both implementation AND tests in the commit
@@ -243,7 +244,7 @@ import pandas as pd
 make format        # Auto-format code
 make lint-fix      # Auto-fix linting issues
 make type-check    # Verify type hints
-make test-fast     # Run fast tests
+make test-fast     # Run fast tests (or use module-specific: test-core, test-analysis, test-ui, etc.)
 make check         # Full quality gate (recommended)
 ```
 
@@ -251,8 +252,10 @@ make check         # Full quality gate (recommended)
 
 ```bash
 # 1. Write tests
-# 2. Run tests
-make test-fast
+# 2. Run tests (use module-specific for faster feedback)
+make test-core      # Or test-analysis, test-ui, etc.
+# OR
+make test-fast      # For all modules
 
 # 3. Fix any failures
 # 4. Run full quality gate
