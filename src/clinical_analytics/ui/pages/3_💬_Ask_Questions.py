@@ -10,6 +10,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
+from typing import TypedDict
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -37,6 +38,27 @@ from clinical_analytics.ui.messages import (
     COLLISION_SUGGESTION_WARNING,
     LOW_CONFIDENCE_WARNING,
 )
+
+
+# TypedDict schemas for chat transcript and pending state
+class ChatMessage(TypedDict):
+    """Schema for chat transcript messages."""
+
+    role: str  # "user" or "assistant"
+    text: str  # Message text
+    run_key: str | None  # Run key for assistant messages (None for user messages)
+    status: str  # "pending", "completed", "error"
+    created_at: float  # Unix timestamp
+
+
+class Pending(TypedDict):
+    """Schema for pending computation state."""
+
+    run_key: str  # Run key for pending computation
+    context: AnalysisContext  # Analysis context for computation
+    query_text: str  # Original query text
+    query_plan: object | None  # QueryPlan object (if available)
+
 
 # Page config
 st.set_page_config(page_title="Ask Questions | Clinical Analytics", page_icon="💬", layout="wide")
@@ -844,6 +866,201 @@ def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: st
             st.error(result["error"])
 
 
+def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
+    """
+    Render entire chat transcript from session_state (no side effects).
+
+    This is the ONLY function that calls st.chat_message(). All chat rendering
+    goes through this function to ensure transcript-driven rendering.
+
+    Args:
+        dataset_version: Dataset version for retrieving results
+        cohort: Cohort data (for Trust UI in render_result)
+    """
+    chat: list[ChatMessage] = st.session_state.get("chat", [])
+
+    for message in chat:
+        role = message["role"]
+        text = message["text"]
+        run_key = message.get("run_key")
+        status = message.get("status", "completed")
+
+        with st.chat_message(role):
+            if role == "user":
+                # User message - just display text
+                st.write(text)
+            elif role == "assistant":
+                # Assistant message - render result
+                if status == "pending":
+                    st.info("💭 Thinking...")
+                elif status == "error":
+                    st.error(f"❌ Error: {text}")
+                elif status == "completed" and run_key:
+                    # Load result from session_state
+                    result_key = f"analysis_result:{dataset_version}:{run_key}"
+                    if result_key in st.session_state:
+                        result = st.session_state[result_key]
+
+                        # Reconstruct context from result (minimal, for rendering)
+                        # Note: Full context not stored in transcript for memory efficiency
+                        # We only need intent for rendering
+                        intent_str = result.get("intent", "DESCRIBE")
+                        try:
+                            intent_enum = AnalysisIntent(intent_str)
+                        except (ValueError, KeyError):
+                            intent_enum = AnalysisIntent.DESCRIBE
+
+                        # Create minimal context for rendering
+                        context = AnalysisContext(inferred_intent=intent_enum)
+
+                        # Render result (idempotent, no side effects)
+                        render_result(
+                            result=result,
+                            context=context,
+                            run_key=run_key,
+                            query_text=text,
+                            query_plan=None,  # Not available from transcript
+                            cohort=None,  # Not available for cached results
+                            dataset_version=dataset_version,
+                        )
+                    else:
+                        st.warning("⚠️ Result not found in cache")
+                else:
+                    # Fallback: just display text
+                    st.write(text)
+
+
+def get_or_compute_result(
+    cohort: pl.DataFrame,
+    context: AnalysisContext,
+    run_key: str,
+    dataset_version: str,
+    query_text: str,
+) -> dict:
+    """
+    Get cached result or compute new one (pure computation, no UI).
+
+    Args:
+        cohort: Polars DataFrame with patient data
+        context: Analysis context with variables
+        run_key: Run key for this analysis
+        dataset_version: Dataset version identifier
+        query_text: Original query text
+
+    Returns:
+        Analysis result dict (serializable)
+    """
+    # Use dataset-scoped result key
+    result_key = f"analysis_result:{dataset_version}:{run_key}"
+
+    # Check if already computed
+    if result_key in st.session_state:
+        logger.info(
+            "analysis_result_cached",
+            run_key=run_key,
+            dataset_version=dataset_version,
+            intent_type=context.inferred_intent.value,
+        )
+        return st.session_state[result_key]
+
+    # Not computed - compute now
+    logger.info(
+        "analysis_execution_start",
+        intent=context.inferred_intent.value,
+        primary_variable=context.primary_variable,
+        grouping_variable=context.grouping_variable,
+        predictor_variables=context.predictor_variables,
+        dataset_version=dataset_version,
+        confidence=getattr(context, "confidence", 0.0),
+    )
+
+    # Convert cohort to Polars if needed (defensive)
+    if isinstance(cohort, pd.DataFrame):
+        cohort_pl = pl.from_pandas(cohort)
+    else:
+        cohort_pl = cohort
+
+    # Compute analysis (pure function, no UI dependencies)
+    logger.debug(
+        "analysis_computation_start",
+        run_key=run_key,
+        cohort_shape=(cohort_pl.height, cohort_pl.width),
+        intent_type=context.inferred_intent.value,
+    )
+    result = compute_analysis_by_type(cohort_pl, context)
+
+    logger.info(
+        "analysis_computation_complete",
+        run_key=run_key,
+        result_type=result.get("type", "unknown"),
+        has_error="error" in result,
+        dataset_version=dataset_version,
+    )
+
+    # Store result (serializable format)
+    st.session_state[result_key] = result
+    st.session_state[f"last_run_key:{dataset_version}"] = run_key
+
+    # Remember this run in history (O(1) eviction happens here)
+    remember_run(dataset_version, run_key)
+
+    return result
+
+
+def render_result(
+    result: dict,
+    context: AnalysisContext,
+    run_key: str,
+    query_text: str,
+    query_plan=None,
+    cohort: pl.DataFrame | None = None,
+    dataset_version: str | None = None,
+) -> None:
+    """
+    Render analysis result (pure rendering, no computation, no side effects).
+
+    This function is idempotent - can be called multiple times with same inputs.
+    It only reads from session_state and creates UI widgets. No mutations.
+
+    Args:
+        result: Analysis result dict
+        context: Analysis context
+        run_key: Run key for this analysis
+        query_text: Original query text
+        query_plan: QueryPlan object (if available)
+        cohort: Cohort data (for Trust UI, optional)
+        dataset_version: Dataset version (for Trust UI, optional)
+    """
+    # Render main results inline (no expander, no extra headers)
+    render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
+
+    # Show interpretation inline (compact, directly under results)
+    if query_plan:
+        _render_interpretation_inline_compact(query_plan)
+
+    # ADR003 Phase 1: Trust UI (verify source patients, patient-level export)
+    # Only show if cohort and dataset_version are provided (fresh computation)
+    if query_plan and cohort is not None and dataset_version is not None:
+        from clinical_analytics.ui.components.trust_ui import TrustUI
+
+        TrustUI.render_verification(
+            query_plan=query_plan,
+            result=result,
+            cohort=cohort,
+            dataset_version=dataset_version,
+            query_text=query_text,
+        )
+    elif query_plan:
+        st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
+
+    # Suggest follow-up questions (only for current results, not history)
+    # Use a session state flag to prevent duplicate rendering in same cycle
+    follow_ups_key = f"followups_rendered_{run_key}"
+    if not st.session_state.get(follow_ups_key, False):
+        _suggest_follow_ups(context, result, run_key, render_context="current")
+        st.session_state[follow_ups_key] = True
+
+
 def execute_analysis_with_idempotency(
     cohort: pl.DataFrame,
     context: AnalysisContext,
@@ -1276,15 +1493,24 @@ def main():
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
 
-    # Detect dataset change and clear conversation history/context
+    # Initialize chat transcript and pending state (Phase 2)
+    if "chat" not in st.session_state:
+        st.session_state["chat"] = []
+    if "pending" not in st.session_state:
+        st.session_state["pending"] = None
+
+    # Detect dataset change and clear conversation history/context/chat
     if "last_dataset_choice" not in st.session_state:
         st.session_state["last_dataset_choice"] = dataset_choice
     elif st.session_state["last_dataset_choice"] != dataset_choice:
-        # Dataset changed - clear conversation history and analysis context
+        # Dataset changed - clear conversation history, analysis context, and chat
         if "conversation_history" in st.session_state:
             st.session_state["conversation_history"] = []
         if "analysis_context" in st.session_state:
             del st.session_state["analysis_context"]
+        # Clear chat transcript on dataset change
+        st.session_state["chat"] = []
+        st.session_state["pending"] = None
         st.session_state["last_dataset_choice"] = dataset_choice
 
     # Load dataset (always uploaded)
@@ -1299,6 +1525,7 @@ def main():
 
     # Convert to Polars for compute functions
     cohort = pl.from_pandas(cohort_pd)
+    cohort_pl = cohort  # Alias for clarity in Phase 2
 
     # Get dataset version for lifecycle management
     dataset_version = get_dataset_version(dataset, dataset_choice)
@@ -1348,41 +1575,14 @@ def main():
         st.session_state["analysis_context"] = None
         st.session_state["intent_signal"] = None
 
-    # Initialize conversation history (lightweight storage per ADR001)
+    # Initialize conversation history (lightweight storage per ADR001 - keep for backward compat)
     if "conversation_history" not in st.session_state:
         st.session_state["conversation_history"] = []
 
-    # Display conversation history (if any) - Phase 3.5 Inline Rendering
-    # Skip the last entry if it was just rendered (prevent duplicate)
-    last_run_key = st.session_state.get(f"last_run_key:{dataset_version}")
-    history = st.session_state.get("conversation_history", [])
-
-    for entry in history:
-        # Skip if this is the current query (already rendered inline)
-        if entry.get("run_key") == last_run_key and st.session_state.get("intent_signal") == "nl_parsed":
-            continue
-
-        with st.chat_message("user"):
-            st.write(entry["query"])
-
-        with st.chat_message("assistant"):
-            # Render full results inline
-            if entry.get("run_key"):
-                result_key = f"analysis_result:{dataset_version}:{entry['run_key']}"
-                if result_key in st.session_state:
-                    result = st.session_state[result_key]
-
-                    # Get intent from entry (stored as string)
-                    intent_str = entry.get("intent", "DESCRIBE")
-                    try:
-                        intent_enum = AnalysisIntent(intent_str)
-                    except (ValueError, KeyError):
-                        intent_enum = AnalysisIntent.DESCRIBE
-
-                    # Render main results inline (no extra headers)
-                    # Pass query text from history entry for summary detection
-                    entry_query = entry.get("query", "")
-                    render_analysis_by_type(result, intent_enum, query_text=entry_query)
+    # Render chat transcript (Phase 2: transcript-driven rendering)
+    # This is the ONLY place where chat messages are rendered
+    # Fixes empty emoji tiles by rendering from persistent state, not control flow
+    render_chat(dataset_version=dataset_version, cohort=cohort_pl)
 
     # Check for semantic layer availability (show message if not available)
     try:
@@ -1808,12 +2008,62 @@ def main():
                         query=query,
                     )
 
-                    # Execute and render inline in chat message style
-                    with st.chat_message("user"):
-                        st.write(query)
+                    # Phase 2: Append messages to transcript and rerun
+                    # Add user message to chat
+                    user_msg: ChatMessage = {
+                        "role": "user",
+                        "text": query,
+                        "run_key": None,
+                        "status": "completed",
+                        "created_at": time.time(),
+                    }
+                    st.session_state["chat"].append(user_msg)
 
-                    with st.chat_message("assistant"):
-                        execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query, query_plan)
+                    # Compute result (no UI, pure computation)
+                    result = get_or_compute_result(
+                        cohort=cohort_pl,
+                        context=context,
+                        run_key=run_key,
+                        dataset_version=dataset_version,
+                        query_text=query,
+                    )
+
+                    # Add result to conversation history (backward compat)
+                    headline = result.get("headline") or result.get("headline_text") or "Analysis completed"
+                    filters_applied = []
+                    if context.query_plan and context.query_plan.filters:
+                        filters_applied = [f.__dict__ for f in context.query_plan.filters]
+                    elif context.filters:
+                        filters_applied = [f.__dict__ for f in context.filters]
+
+                    max_conversation_history = 20
+                    st.session_state["conversation_history"].append(
+                        {
+                            "query": query,
+                            "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
+                            "headline": headline,
+                            "run_key": run_key,
+                            "timestamp": time.time(),
+                            "filters_applied": filters_applied,
+                        }
+                    )
+                    if len(st.session_state["conversation_history"]) > max_conversation_history:
+                        st.session_state["conversation_history"] = st.session_state["conversation_history"][
+                            -max_conversation_history:
+                        ]
+
+                    # Add assistant message to chat
+                    assistant_msg: ChatMessage = {
+                        "role": "assistant",
+                        "text": query,  # Store query for reference
+                        "run_key": run_key,
+                        "status": "completed",
+                        "created_at": time.time(),
+                    }
+                    st.session_state["chat"].append(assistant_msg)
+
+                    # Rerun to render chat transcript
+                    st.rerun()
                 else:
                     # Context not complete - need variable selection, rerun to show UI
                     st.rerun()
