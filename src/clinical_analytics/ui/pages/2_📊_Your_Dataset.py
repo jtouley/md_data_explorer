@@ -13,7 +13,6 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
@@ -30,16 +29,8 @@ def main():
     # Dataset selection
     st.sidebar.header("Data Selection")
 
-    # Load datasets
-    available_datasets = DatasetRegistry.list_datasets()
-    dataset_info = DatasetRegistry.get_all_dataset_info()
-
+    # Load datasets - only user uploads
     dataset_display_names = {}
-    for ds_name in available_datasets:
-        info = dataset_info[ds_name]
-        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
-        dataset_display_names[display_name] = ds_name
-
     uploaded_datasets = {}
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
@@ -49,8 +40,8 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
-    except Exception:
-        pass
+    except Exception as e:
+        st.sidebar.warning(f"Could not load uploaded datasets: {e}")
 
     if not dataset_display_names:
         st.error("No datasets available. Please upload data first.")
@@ -59,26 +50,12 @@ def main():
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
-    # Check if this is an uploaded dataset (multiple checks for robustness)
-    is_uploaded = (
-        dataset_choice in uploaded_datasets
-        or dataset_choice_display.startswith("📤")
-        or dataset_choice not in available_datasets
-    )
 
-    # Load dataset
+    # Load dataset (always uploaded)
     with st.spinner(f"Loading {dataset_choice_display}..."):
         try:
-            if is_uploaded:
-                # For uploaded datasets, use the factory (requires upload_id)
-                dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
-                dataset.load()
-            else:
-                # For built-in datasets, use the registry
-                dataset = DatasetRegistry.get_dataset(dataset_choice)
-                dataset.validate()
-                dataset.load()
-
+            dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
+            dataset.load()
             cohort = dataset.get_cohort()
         except Exception as e:
             st.error(f"Error loading dataset: {e}")

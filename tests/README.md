@@ -127,7 +127,7 @@ def get_available_datasets():
     DatasetRegistry.load_config()
     return [
         name for name in DatasetRegistry.list_datasets()
-        if name not in ["uploaded", "mimic3"]  # Skip special cases
+        if name not in ["covid_ms", "mimic3", "sepsis", "uploaded"]  # Filter out built-in datasets
     ]
 
 @pytest.mark.parametrize("dataset_name", get_available_datasets())

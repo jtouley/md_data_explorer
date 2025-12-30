@@ -26,9 +26,8 @@ def get_first_available_dataset_config():
     DatasetRegistry.discover_datasets()
     DatasetRegistry.load_config()
     datasets = DatasetRegistry.list_datasets()
-    # Prefer datasets that are likely to have data available
-    # Filter out special cases that require specific setup
-    available = [d for d in datasets if d not in ["uploaded", "mimic3"]]
+    # Filter out built-in datasets (covid_ms, mimic3, sepsis) and uploaded class
+    available = [d for d in datasets if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
     if not available:
         return None
     return load_dataset_config(available[0])
@@ -249,7 +248,7 @@ class TestColumnMapper:
                     {"column": "Age", "method": "first", "target": "age"},
                     {"column": "Gender", "method": "first", "target": "gender"},
                 ],
-                "outcome": {"column": "SepsisLabel", "method": "max", "target": "sepsis_label"},
+                "outcome": {"column": "OutcomeLabel", "method": "max", "target": "outcome_label"},
             }
         }
         mapper = ColumnMapper(config)
@@ -260,7 +259,7 @@ class TestColumnMapper:
                 "patient_id": ["P001", "P001", "P001", "P002", "P002"],
                 "Age": [45, 45, 45, 62, 62],
                 "Gender": ["M", "M", "M", "F", "F"],
-                "SepsisLabel": [0, 0, 1, 0, 0],
+                "OutcomeLabel": [0, 0, 1, 0, 0],
             }
         )
 
@@ -269,12 +268,12 @@ class TestColumnMapper:
         assert len(result) == 2
         assert "age" in result.columns
         assert "gender" in result.columns
-        assert "sepsis_label" in result.columns
+        assert "outcome_label" in result.columns
         assert "num_hours" in result.columns
 
         # Check aggregation results
         p001 = result.filter(pl.col("patient_id") == "P001")
-        assert p001["sepsis_label"].item() == 1  # max should be 1
+        assert p001["outcome_label"].item() == 1  # max should be 1
         assert p001["age"].item() == 45  # first should be 45
 
     def test_apply_aggregations_all_methods(self):
@@ -410,7 +409,7 @@ class TestConfigLoading:
         DatasetRegistry.discover_datasets()
         DatasetRegistry.load_config()
         datasets = DatasetRegistry.list_datasets()
-        available = [d for d in datasets if d not in ["uploaded", "mimic3"]]
+        available = [d for d in datasets if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
         assert len(available) > 0, "No datasets available for testing"
 
         # Act: Load config for first available dataset

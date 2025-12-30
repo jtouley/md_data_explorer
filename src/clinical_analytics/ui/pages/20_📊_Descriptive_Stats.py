@@ -136,7 +136,6 @@ def main():
     gate_v1_mvp_legacy_page()  # Stops execution if gated
 
     # NOW do heavy imports (after gate)
-    from clinical_analytics.core.registry import DatasetRegistry
     from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
     st.title("📊 Descriptive Statistics")
@@ -148,20 +147,9 @@ def main():
     # Dataset selection in sidebar
     st.sidebar.header("Data Selection")
 
-    # Load available datasets
-    available_datasets = DatasetRegistry.list_datasets()
-    dataset_info = DatasetRegistry.get_all_dataset_info()
-
-    # Build display names
+    # Load available datasets - only user uploads
     dataset_display_names = {}
-    for ds_name in available_datasets:
-        info = dataset_info[ds_name]
-        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
-        dataset_display_names[display_name] = ds_name
-
-    # Add uploaded datasets
     uploaded_datasets = {}
-    uploaded_ids = set()  # Track upload IDs for detection
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
         for upload in uploads:
@@ -170,62 +158,32 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
-            uploaded_ids.add(upload_id)
     except Exception as e:
-        st.sidebar.warning(f"Could not load uploads: {e}")
+        st.sidebar.warning(f"Could not load uploaded datasets: {e}")
 
     if not dataset_display_names:
-        st.error("No datasets available. Please upload data first.")
+        st.error("No datasets found! Please upload data using the 'Add Your Data' page.")
+        st.info("👈 Go to **Add Your Data** to upload your first dataset")
         return
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
 
     dataset_choice = dataset_display_names[dataset_choice_display]
 
-    # Check if this is an uploaded dataset
-    # Method 1: Check if in uploaded_datasets dict
-    # Method 2: Check if display name starts with 📤
-    # Method 3: Check if dataset_choice is an upload_id (UUID-like or matches upload pattern)
-    is_uploaded = (
-        dataset_choice in uploaded_datasets or dataset_choice_display.startswith("📤") or dataset_choice in uploaded_ids
-    )
-
-    # Load dataset
+    # Load dataset (always uploaded)
     with st.spinner(f"Loading {dataset_choice_display}..."):
         try:
-            if is_uploaded:
-                # For uploaded datasets, use the factory
-                upload_id = dataset_choice  # dataset_choice is the upload_id for uploaded datasets
-                try:
-                    dataset = UploadedDatasetFactory.create_dataset(upload_id)
-                    dataset.load()
-                except Exception as e:
-                    st.error(f"Error loading uploaded dataset: {str(e)}")
-                    st.exception(e)
-                    return
-            else:
-                # For built-in datasets, use the registry
-                try:
-                    dataset = DatasetRegistry.get_dataset(dataset_choice)
-                    if not dataset.validate():
-                        st.error("Dataset validation failed")
-                        return
-                    dataset.load()
-                except KeyError:
-                    # Dataset not found in registry - might be an uploaded dataset
-                    st.error(f"Dataset '{dataset_choice}' not found in registry.")
-                    st.info("💡 If this is an uploaded dataset, please refresh the page or check the upload status.")
-                    return
-                except Exception as e:
-                    st.error(f"Error loading dataset: {str(e)}")
-                    st.exception(e)
-                    return
-
+            dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
+            dataset.load()
             cohort = dataset.get_cohort()
 
             if cohort.empty:
                 st.error("No data in dataset")
                 return
+        except Exception as e:
+            st.error(f"Error loading dataset: {str(e)}")
+            st.exception(e)
+            return
 
         except Exception as e:
             st.error(f"Error loading dataset: {e}")
