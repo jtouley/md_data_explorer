@@ -202,3 +202,34 @@ def sample_admissions_df() -> pl.DataFrame:
             "discharge_date": ["2020-01-05", "2020-02-10"],
         }
     )
+
+
+@pytest.fixture
+def sample_upload_df() -> pl.DataFrame:
+    """Create sample upload Polars DataFrame for testing lazy frames."""
+    return pl.DataFrame(
+        {
+            "patient_id": ["P001", "P002", "P003"],
+            "outcome": [0, 1, 0],
+            "age": [50, 60, 70],
+        }
+    )
+
+
+@pytest.fixture
+def sample_upload_metadata() -> dict:
+    """Create sample upload metadata for testing."""
+    return {
+        "upload_timestamp": "2024-01-01T00:00:00",
+        "original_filename": "test.csv",
+    }
+
+
+@pytest.fixture
+def sample_variable_mapping() -> dict:
+    """Create sample variable mapping for uploaded datasets."""
+    return {
+        "patient_id": "patient_id",
+        "outcome": "outcome",
+        "predictors": ["age"],
+    }

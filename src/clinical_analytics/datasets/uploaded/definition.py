@@ -80,20 +80,31 @@ class UploadedDataset(ClinicalDataset):
 
     def load(self) -> None:
         """
-        Load uploaded data into memory.
+        Load uploaded data (lazy by default, eager for backward compatibility).
+
+        Phase 4: Loads data as Polars LazyFrame by default for efficient processing.
+        Automatically collects lazy frames when needed for compatibility.
         """
         if not self.validate():
             raise FileNotFoundError(f"Upload data not found: {self.upload_id}")
 
-        self.data = self.storage.get_upload_data(self.upload_id)
+        # Phase 4: Load as lazy frame by default
+        self.data = self.storage.get_upload_data(self.upload_id, lazy=True)
 
         if self.data is None:
             logger.error(f"Failed to load upload data for upload_id: {self.upload_id}")
             raise ValueError(f"Failed to load upload data: {self.upload_id}")
 
-        logger.info(
-            f"Loaded upload data: {self.upload_id}, shape: {self.data.shape}, columns: {list(self.data.columns)}"
-        )
+        # Log appropriate message based on data type
+        if isinstance(self.data, pl.LazyFrame):
+            logger.info(f"Loaded lazy upload data: {self.upload_id}")
+        elif isinstance(self.data, pd.DataFrame):
+            logger.info(
+                f"Loaded eager upload data: {self.upload_id}, "
+                f"shape: {self.data.shape}, columns: {list(self.data.columns)}"
+            )
+        else:
+            logger.warning(f"Loaded upload data with unexpected type: {type(self.data)}")
 
     def get_cohort(self, granularity: Granularity = "patient_level", **filters) -> pd.DataFrame:
         """
@@ -121,9 +132,17 @@ class UploadedDataset(ClinicalDataset):
                     self.load()
                 from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
 
+                # Collect lazy frame for schema conversion
+                if isinstance(self.data, pl.LazyFrame):
+                    data_for_schema = self.data.collect()
+                elif isinstance(self.data, pd.DataFrame):
+                    data_for_schema = pl.from_pandas(self.data)
+                else:
+                    data_for_schema = self.data
+
                 inferred_schema = convert_schema(
                     self.metadata["variable_mapping"],
-                    pl.from_pandas(self.data) if isinstance(self.data, pd.DataFrame) else self.data,
+                    data_for_schema,
                 )
 
             supported = (
@@ -139,6 +158,17 @@ class UploadedDataset(ClinicalDataset):
 
         if self.data is None:
             self.load()
+
+        # Phase 4: Collect lazy frame if needed
+        # Convert LazyFrame to pandas DataFrame for processing
+        if isinstance(self.data, pl.LazyFrame):
+            # Collect and convert to pandas for UnifiedCohort compatibility
+            # TODO: Future optimization - keep as Polars throughout pipeline
+            data_df = self.data.collect().to_pandas()
+        elif isinstance(self.data, pd.DataFrame):
+            data_df = self.data
+        else:
+            raise TypeError(f"Unexpected data type: {type(self.data)}")
 
         # Get variable mapping from metadata (single-table uploads)
         variable_mapping = self.metadata.get("variable_mapping", {})
@@ -165,9 +195,9 @@ class UploadedDataset(ClinicalDataset):
         # Map patient ID
         if patient_id_col:
             # Check if column exists in data
-            if patient_id_col not in self.data.columns:
+            if patient_id_col not in data_df.columns:
                 # Handle case where column was renamed to 'patient_id' during ingestion
-                if "patient_id" in self.data.columns:
+                if "patient_id" in data_df.columns:
                     logger.warning(
                         f"Mapped ID column '{patient_id_col}' not found, but 'patient_id' exists. "
                         f"Using 'patient_id' (column was likely renamed during ingestion)."
@@ -176,44 +206,42 @@ class UploadedDataset(ClinicalDataset):
                 else:
                     logger.error(
                         f"Patient ID column '{patient_id_col}' not found in data. "
-                        f"Available columns: {list(self.data.columns)}. "
+                        f"Available columns: {list(data_df.columns)}. "
                         f"Metadata: {self.metadata.get('synthetic_id_metadata', {})}"
                     )
                     # If patient_id was created synthetically, it should be in the CSV
                     # Check if it exists with different casing or was lost
-                    if patient_id_col == "patient_id" and "patient_id" not in self.data.columns:
+                    if patient_id_col == "patient_id" and "patient_id" not in data_df.columns:
                         # Try to regenerate it
                         logger.warning("Synthetic patient_id not found in loaded data, regenerating...")
                         from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
-                        df_polars = pl.from_pandas(self.data)
+                        df_polars = pl.from_pandas(data_df)
                         df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_polars)
                         logger.info(
                             f"Regenerated patient_id: source={id_metadata['patient_id_source']}, "
                             f"columns={id_metadata.get('patient_id_columns')}"
                         )
-                        self.data = df_with_id.to_pandas()
-                        if "patient_id" not in self.data.columns:
-                            raise ValueError(
-                                f"Failed to create patient_id. Available columns: {list(self.data.columns)}"
-                            )
+                        data_df = df_with_id.to_pandas()
+                        if "patient_id" not in data_df.columns:
+                            raise ValueError(f"Failed to create patient_id. Available columns: {list(data_df.columns)}")
                         patient_id_col = "patient_id"
                     else:
                         raise KeyError(
                             f"Patient ID column '{patient_id_col}' not found in data. "
-                            f"Available columns: {list(self.data.columns)}"
+                            f"Available columns: {list(data_df.columns)}"
                         )
-            logger.debug(f"Using patient_id column '{patient_id_col}' with {len(self.data)} rows")
-            cohort_data[UnifiedCohort.PATIENT_ID] = self.data[patient_id_col]
+            logger.debug(f"Using patient_id column '{patient_id_col}' with {len(data_df)} rows")
+            cohort_data[UnifiedCohort.PATIENT_ID] = data_df[patient_id_col]
         else:
             # Generate sequential IDs if not provided
             logger.warning("No patient_id column specified, generating sequential IDs")
-            cohort_data[UnifiedCohort.PATIENT_ID] = [f"patient_{i}" for i in range(len(self.data))]
+            cohort_data[UnifiedCohort.PATIENT_ID] = [f"patient_{i}" for i in range(len(data_df))]
 
         # Map outcome (optional - semantic layer pattern)
         # Some analyses (Descriptive Stats, Correlations) don't require outcomes
         if outcome_col:
-            cohort_data[UnifiedCohort.OUTCOME] = self.data[outcome_col]
+            cohort_data[UnifiedCohort.OUTCOME] = data_df[outcome_col]
             # Add outcome_label if available
             outcome_label = variable_mapping.get("outcome_label", "outcome")
             cohort_data[UnifiedCohort.OUTCOME_LABEL] = outcome_label
@@ -223,8 +251,8 @@ class UploadedDataset(ClinicalDataset):
         # Map time zero (use upload date if not provided)
         if time_vars and time_vars.get("time_zero"):
             time_col = time_vars["time_zero"]
-            if time_col in self.data.columns:
-                cohort_data[UnifiedCohort.TIME_ZERO] = pd.to_datetime(self.data[time_col])
+            if time_col in data_df.columns:
+                cohort_data[UnifiedCohort.TIME_ZERO] = pd.to_datetime(data_df[time_col])
             else:
                 cohort_data[UnifiedCohort.TIME_ZERO] = pd.Timestamp(self.metadata["upload_timestamp"])
         else:
@@ -233,8 +261,8 @@ class UploadedDataset(ClinicalDataset):
 
         # Add predictor variables (keep original names)
         for pred in predictors:
-            if pred in self.data.columns:
-                cohort_data[pred] = self.data[pred]
+            if pred in data_df.columns:
+                cohort_data[pred] = data_df[pred]
 
         # For descriptive analysis, include ALL columns from original data
         # (not just predictors) so users can analyze any variable
@@ -246,9 +274,9 @@ class UploadedDataset(ClinicalDataset):
             UnifiedCohort.OUTCOME_LABEL,
             UnifiedCohort.TIME_ZERO,
         }
-        for col in self.data.columns:
+        for col in data_df.columns:
             if col not in excluded_from_all and col not in cohort_data:
-                cohort_data[col] = self.data[col]
+                cohort_data[col] = data_df[col]
 
         # Create cohort dataframe
         cohort = pd.DataFrame(cohort_data)
@@ -299,8 +327,16 @@ class UploadedDataset(ClinicalDataset):
             variable_mapping["time_variables"]["time_zero"] = time_zero_config["source_column"]
 
         # Add all other columns as predictors (exclude patient_id and outcome)
+        # Note: data_df is not available in this context (called before get_cohort)
+        # We need to load data if not already loaded
         if self.data is not None:
-            all_cols = set(self.data.columns)
+            # Handle both lazy and eager data
+            if isinstance(self.data, pl.LazyFrame):
+                data_for_columns = self.data.collect().to_pandas()
+            else:
+                data_for_columns = self.data
+
+            all_cols = set(data_for_columns.columns)
             excluded = {variable_mapping["patient_id"], variable_mapping["outcome"]}
             variable_mapping["predictors"] = [col for col in all_cols if col not in excluded and col not in {None}]
 

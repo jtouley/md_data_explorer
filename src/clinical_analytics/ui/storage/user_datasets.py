@@ -916,7 +916,7 @@ class UserDatasetStorage:
         with open(metadata_path) as f:
             return json.load(f)
 
-    def get_upload_data(self, upload_id: str) -> pd.DataFrame | None:
+    def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | pd.DataFrame | None:
         """
         Load uploaded dataset with automatic legacy migration.
 
@@ -925,9 +925,11 @@ class UserDatasetStorage:
 
         Args:
             upload_id: Upload identifier (immutable storage key)
+            lazy: If True, return Polars LazyFrame (default). If False, return pandas DataFrame
+                  for backward compatibility.
 
         Returns:
-            DataFrame or None if not found
+            LazyFrame (if lazy=True), pandas DataFrame (if lazy=False), or None if not found
         """
         # Load metadata
         metadata = self.get_upload_metadata(upload_id)
@@ -965,7 +967,12 @@ class UserDatasetStorage:
         if not csv_path.exists():
             return None
 
-        return pd.read_csv(csv_path)
+        # Phase 4: Return lazy frame by default, pandas for backward compatibility
+        if lazy:
+            return pl.scan_csv(csv_path)
+        else:
+            # Backward compatibility path: load with pandas
+            return pd.read_csv(csv_path)
 
     def list_uploads(self) -> list[dict[str, Any]]:
         """
