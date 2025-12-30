@@ -21,72 +21,61 @@ todos:
     status: pending
     dependencies:
       - phase1-tests
-  - id: phase2-split-functions
-    content: "Phase 2: Extract get_or_compute_result() and render_result() functions from execute_analysis_with_idempotency()"
+  - id: phase2-compute-render-split
+    content: "Phase 2: Extract get_or_compute_result() and render_result() functions (pure functions, no side effects during render)"
     status: pending
     dependencies:
       - phase1-quality-gates
-  - id: phase2-update-callsites
-    content: "Phase 2: Update all call sites to use new compute/render functions"
+  - id: phase2-remove-charts
+    content: "Phase 2: Remove charts for V1, keep only Answer + stats + Verify + Export, add stable widget keys"
     status: pending
     dependencies:
-      - phase2-split-functions
+      - phase2-compute-render-split
+  - id: phase2-render-chat
+    content: "Phase 2: Implement render_chat() function to render transcript from session_state (no side effects)"
+    status: pending
+    dependencies:
+      - phase2-remove-charts
+  - id: phase2-pending-state
+    content: "Phase 2: Implement pending state pattern for deferred computation, initialize chat and pending in session_state"
+    status: pending
+    dependencies:
+      - phase2-render-chat
+  - id: phase2-chat-input
+    content: "Phase 2: Update chat input handling to append messages to transcript and use pending state (mutations happen here, not in render)"
+    status: pending
+    dependencies:
+      - phase2-pending-state
+  - id: phase2-remove-old-rendering
+    content: "Phase 2: Remove old conversation history rendering logic, inline chat message rendering, and CSS hacks"
+    status: pending
+    dependencies:
+      - phase2-chat-input
   - id: phase2-tests
-    content: "Phase 2: Write and run tests for idempotent computation and rendering"
+    content: "Phase 2: Write and run tests for idempotency, transcript management, and pending state (focus on pure functions)"
     status: pending
     dependencies:
-      - phase2-split-functions
-      - phase2-update-callsites
+      - phase2-remove-old-rendering
   - id: phase2-quality-gates
-    content: "Phase 2: Run quality gates and commit"
+    content: "Phase 2: Run quality gates, manual testing for empty emoji tiles and duplicate widget IDs, and commit"
     status: pending
     dependencies:
       - phase2-tests
-  - id: phase3-render-chat
-    content: "Phase 3: Implement render_chat() function to render transcript from session_state"
+  - id: phase3-cache-semantic
+    content: "Phase 3 (Optional): Add semantic layer caching if dataset is hashable, otherwise defer. Gated behind Phase 2 stability."
     status: pending
     dependencies:
       - phase2-quality-gates
-  - id: phase3-pending-state
-    content: "Phase 3: Implement pending state pattern for deferred computation"
-    status: pending
-    dependencies:
-      - phase3-render-chat
-  - id: phase3-chat-input
-    content: "Phase 3: Update chat input handling to append messages to transcript and use pending state"
-    status: pending
-    dependencies:
-      - phase3-pending-state
-  - id: phase3-remove-old-rendering
-    content: "Phase 3: Remove old conversation history rendering logic and inline chat message rendering"
-    status: pending
-    dependencies:
-      - phase3-chat-input
   - id: phase3-tests
-    content: "Phase 3: Write and run tests for chat transcript management"
+    content: "Phase 3: Write and run tests for semantic layer caching behavior (if implemented)"
     status: pending
     dependencies:
-      - phase3-remove-old-rendering
+      - phase3-cache-semantic
   - id: phase3-quality-gates
-    content: "Phase 3: Run quality gates, manual testing for empty emoji tiles, and commit"
+    content: "Phase 3: Run quality gates and commit (if implemented)"
     status: pending
     dependencies:
       - phase3-tests
-  - id: phase4-cache-semantic
-    content: "Phase 4: Add @st.cache_resource decorator for semantic layer caching"
-    status: pending
-    dependencies:
-      - phase3-quality-gates
-  - id: phase4-tests
-    content: "Phase 4: Write and run tests for semantic layer caching behavior"
-    status: pending
-    dependencies:
-      - phase4-cache-semantic
-  - id: phase4-quality-gates
-    content: "Phase 4: Run quality gates and commit"
-    status: pending
-    dependencies:
-      - phase4-tests
 ---
 
 # Fix Streamlit Chat Transcript and Run Key Collisions
@@ -111,11 +100,14 @@ Two separate issues are causing UI glitches and incorrect caching:
 
 ### Core Changes
 
-1. **Query Normalization at Ingestion**: Single source of truth - normalize immediately after `st.chat_input()`
+1. **Query Normalization at Ingestion**: Single source of truth - normalize immediately after `st.chat_input()`, reject None at ingestion
 2. **Transcript-Driven Rendering**: Store chat in `st.session_state.chat`, render from state every rerun
 3. **Pending State Pattern**: Use `st.session_state.pending` to defer computation to next rerun
-4. **Compute/Render Separation**: Split `execute_analysis_with_idempotency()` into `get_or_compute_result()` and `render_result()`
-5. **Semantic Scope in run_key**: Include scope dict in run_key payload
+4. **Compute/Render Separation**: Split `execute_analysis_with_idempotency()` into `get_or_compute_result()` and `render_result()` (naturally enforced by transcript rendering)
+5. **Semantic Scope in run_key**: Include canonicalized scope dict in run_key payload (only stable, material fields)
+6. **Remove Charts for V1**: Remove all chart/plot rendering, keep only Answer + compact stats + Verify (source rows) + Export
+7. **Stable Widget Keys**: All widgets (download buttons, verify controls) must have deterministic keys scoped by run_key
+8. **No Side Effects During Render**: render_chat() and render_result() must not mutate session_state
 
 ### Data Flow
 
@@ -146,24 +138,45 @@ flowchart TD
 
 **Acceptance Criteria**:
 
-- [ ] `normalize_query()` function exists and handles None, tabs, newlines, multiple spaces
-- [ ] All queries normalized immediately after `st.chat_input()`
-- [ ] `generate_run_key()` accepts pre-normalized query (never None in chat flow)
-- [ ] `generate_run_key()` includes semantic scope in payload
-- [ ] All calls to `generate_run_key()` pass normalized query
+- [ ] `normalize_query()` function exists and handles None, tabs, newlines, multiple spaces, lowercases
+- [ ] All queries normalized immediately after `st.chat_input()` (single source of truth)
+- [ ] None queries rejected/ignored at ingestion (not passed to generate_run_key)
+- [ ] `canonicalize_scope()` function exists (drops None, sorts keys, sorts lists, stable JSON)
+- [ ] `generate_run_key()` signature: `query_text: str` (never None, already normalized)
+- [ ] **run_key contract**: `run_key = hash(dataset_version + normalized_query + canonical_scope + material_plan_signature)`
+- [ ] **material_plan_signature** includes only:
+  - intent/type (e.g., analysis_type)
+  - metric/target variable(s) (e.g., metric, outcome, primary_variable)
+  - grouping (if applicable)
+  - filter specs (canonicalized)
+  - time/event fields for survival
+  - predictors list for regression (sorted)
+- [ ] **material_plan_signature** excludes:
+  - confidence
+  - interpreted text
+  - UI flags
+  - anything derived from rerun state
+- [ ] Scope canonicalized before hashing using `canonicalize_scope()` function
+- [ ] All calls to `generate_run_key()` pass normalized query (never None)
 - [ ] Tests verify different queries produce different keys
 - [ ] Tests verify same normalized query produces same key
 - [ ] Tests verify scope changes produce different keys
+- [ ] Tests verify identical scope produces same key (canonicalization)
+- [ ] Tests verify volatile fields excluded from run_key
 
 **Test Requirements**:
 
 - File: `tests/unit/ui/pages/test_ask_questions_run_key.py`
-- Add tests:
-- `test_normalize_query_handles_tabs_and_newlines`
-- `test_normalize_query_lowercases_and_strips`
-- `test_run_key_includes_semantic_scope`
-- `test_run_key_different_scope_produces_different_key`
-- `test_generate_run_key_rejects_none_query_in_chat_flow` (should raise ValueError)
+- Add tests (pure function tests, no Streamlit):
+  - `test_normalize_query_handles_tabs_and_newlines`
+  - `test_normalize_query_lowercases_and_strips`
+  - `test_normalize_query_handles_none_returns_empty_string`
+  - `test_run_key_includes_canonicalized_semantic_scope`
+  - `test_run_key_different_scope_produces_different_key`
+  - `test_run_key_identical_scope_produces_same_key` (canonicalization)
+  - `test_run_key_excludes_volatile_fields` (confidence, timestamps)
+  - `test_run_key_only_includes_material_context_variables`
+  - `test_chat_input_none_is_ignored_or_noop` (at ingestion, not in generate_run_key)
 
 **Implementation Steps**:
 
@@ -217,101 +230,64 @@ All tests passing: X/Y
 
 
 
-### Phase 2: Split Compute from Render
+### Phase 2: Transcript-Driven Chat Rendering + Compute/Render Split
 
-**Goal**: Separate computation from rendering to enable transcript-driven UI.**Files to Modify**:
-
-- `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
-
-**Acceptance Criteria**:
-
-- [ ] `get_or_compute_result()` function exists (pure computation, no UI)
-- [ ] `render_result()` function exists (pure rendering, no computation)
-- [ ] `execute_analysis_with_idempotency()` removed or refactored to use new functions
-- [ ] All result storage logic in `get_or_compute_result()`
-- [ ] All rendering logic in `render_result()`
-- [ ] Tests verify computation is idempotent
-- [ ] Tests verify rendering can be called multiple times safely
-
-**Test Requirements**:
-
-- File: `tests/unit/ui/pages/test_ask_questions_idempotency.py`
-- Update existing tests to use new function signatures
-- Add tests:
-- `test_get_or_compute_result_returns_cached_on_second_call`
-- `test_get_or_compute_result_stores_result_in_session_state`
-- `test_render_result_can_be_called_multiple_times` (idempotent rendering)
-
-**Implementation Steps**:
-
-1. Create `get_or_compute_result()` function:
-
-- Check `st.session_state[result_key]`
-- If missing, compute using `compute_analysis_by_type()`
-- Store result in session_state
-- Call `remember_run()` for history tracking
-- Return result dict
-
-2. Create `render_result()` function:
-
-- Call `render_analysis_by_type()`
-- Render interpretation if query_plan available
-- Render follow-ups (with idempotency guard)
-
-3. Update call sites to use new functions
-
-**Quality Gates**:
-
-- `make format`
-- `make lint-fix`
-- `make type-check`
-- `make test-ui`
-- All tests passing
-
-**Commit Message**:
-
-```javascript
-feat: Phase 2 - Split compute from render for transcript-driven UI
-
-- Extract get_or_compute_result() for pure computation
-- Extract render_result() for pure rendering
-- Refactor execute_analysis_with_idempotency() to use new functions
-- Update tests to use new function signatures
-
-All tests passing: X/Y
-```
-
-
-
-### Phase 3: Transcript-Driven Chat Rendering
-
-**Goal**: Implement chat transcript in session_state and render from state every rerun.**Files to Modify**:
+**Goal**: Implement chat transcript in session_state, render from state every rerun, and naturally enforce compute/render separation.**Files to Modify**:
 
 - `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
 
 **Acceptance Criteria**:
 
-- [ ] `st.session_state.chat` initialized as list
-- [ ] `st.session_state.pending` initialized for deferred computation
+- [ ] `ChatMessage` TypedDict schema defined (role, text, run_key, status, created_at)
+- [ ] `Pending` TypedDict schema defined (run_key, context)
+- [ ] `st.session_state.chat` initialized as list[ChatMessage]
+- [ ] `st.session_state.pending` initialized as Pending | None (only one pending at a time)
 - [ ] `render_chat()` function renders entire transcript from state
-- [ ] User messages appended to chat immediately on input
-- [ ] Assistant messages appended after computation completes
+- [ ] `get_or_compute_result()` function exists (pure computation, no UI, no side effects during render)
+- [ ] `render_result()` function exists (pure rendering, no computation, no side effects during render)
+- [ ] User messages appended to chat immediately on input (not during render)
+- [ ] Assistant messages appended after computation completes (not during render)
 - [ ] No `st.chat_message()` calls outside `render_chat()`
 - [ ] Pending state pattern used for computation deferral
-- [ ] Tests verify chat transcript structure
-- [ ] Tests verify messages appended exactly once per query
-- [ ] Tests verify reruns don't duplicate messages
+- [ ] **No side effects during render**: render_chat() and render_result() may:
+  - Read session_state
+  - Create widgets (Streamlit widget state mutation is unavoidable)
+- [ ] **No side effects during render**: render_chat() and render_result() may NOT:
+  - Append to transcript
+  - Write results
+  - Mutate pending
+  - Delete cache entries
+- [ ] All mutations happen only in:
+  - Input ingestion handler
+  - Pending compute handler
+  - Explicit "reset conversation" action
+- [ ] All widgets have stable keys using naming standard:
+  - `key=f"verify:{run_key}"`
+  - `key=f"dl:{run_key}:patients"`
+  - `key=f"dl:{run_key}:export"`
+  - Never reuse raw labels as keys
+- [ ] Charts removed for V1 (keep only Answer + compact stats + Verify + Export)
+- [ ] Tests verify chat transcript structure (pure functions)
+- [ ] Tests verify messages appended exactly once per query (pure mutation logic)
+- [ ] Tests verify pending state transitions (pure state machine)
 
 **Test Requirements**:
 
+- File: `tests/unit/ui/pages/test_ask_questions_idempotency.py` (update existing)
+  - Update to use new function signatures
+  - Add: `test_get_or_compute_result_returns_cached_on_second_call`
+  - Add: `test_get_or_compute_result_stores_result_in_session_state`
+  - Add: `test_render_result_can_be_called_multiple_times` (idempotent rendering)
+
 - File: `tests/unit/ui/pages/test_ask_questions_chat_transcript.py` (new file)
-- Add tests:
-- `test_chat_transcript_initialized_empty`
-- `test_user_message_appended_on_input`
-- `test_assistant_message_appended_after_computation`
-- `test_reruns_dont_duplicate_messages`
-- `test_render_chat_renders_all_messages_from_state`
-- `test_pending_state_deferred_computation`
+  - Focus on pure functions (transcript mutation, pending state transitions)
+  - Add tests:
+    - `test_chat_transcript_initialized_empty`
+    - `test_user_message_appended_on_input` (pure mutation logic)
+    - `test_assistant_message_appended_after_computation` (pure mutation logic)
+    - `test_reruns_dont_duplicate_messages` (pure logic, verify append-once)
+    - `test_pending_state_transitions` (pure state machine)
+    - `test_render_chat_is_only_chat_message_caller` (code structure enforcement, not Streamlit rendering test)
 
 **Implementation Steps**:
 
@@ -365,31 +341,39 @@ if "pending" not in st.session_state:
 **Commit Message**:
 
 ```javascript
-feat: Phase 3 - Implement transcript-driven chat rendering
+feat: Phase 2 - Transcript-driven chat rendering with compute/render split
 
-- Add render_chat() function to render from session_state
+- Add render_chat() function to render from session_state (no side effects)
+- Add get_or_compute_result() for pure computation
+- Add render_result() for pure rendering (no side effects)
+- Remove charts for V1 (keep Answer + stats + Verify + Export)
+- Add stable widget keys scoped by run_key
 - Initialize chat and pending state in session_state
 - Use pending state pattern for deferred computation
 - Remove inline chat message rendering from execution paths
-- Add comprehensive tests for transcript management
+- Remove CSS hacks for emoji persistence
+- Add comprehensive tests for transcript management and idempotency
 
 All tests passing: X/Y
 ```
 
 
 
-### Phase 4: Semantic Layer Caching
+### Phase 3: Semantic Layer Caching (Optional/Deferred)
 
-**Goal**: Cache semantic layer initialization to prevent re-initialization on every rerun.**Files to Modify**:
+**Goal**: Cache semantic layer initialization to prevent re-initialization on every rerun. **Optional: Only implement after Phase 2 is stable and idempotent. Defer if dataset object is not hashable/stable.**
+
+**Files to Modify**:
 
 - `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
 
 **Acceptance Criteria**:
 
-- [ ] Semantic layer cached using `@st.cache_resource`
-- [ ] Cache keyed by dataset_version
-- [ ] Semantic layer initialized once per dataset_version per session
-- [ ] Tests verify caching behavior (mock Streamlit cache)
+- [ ] Verify dataset object is hashable/stable for caching
+- [ ] If hashable: Cache semantic layer using `@st.cache_resource` keyed by primitives (dataset_id, dataset_version)
+- [ ] If not hashable: Defer caching, just stop re-initializing in hot loops
+- [ ] Semantic layer initialized once per (dataset_id, dataset_version) per session
+- [ ] Tests verify caching behavior (if implemented)
 
 **Test Requirements**:
 
@@ -400,7 +384,8 @@ All tests passing: X/Y
 
 **Implementation Steps**:
 
-1. Add cached function:
+1. **Reality check**: Verify dataset object is hashable and semantic layer is safe to cache
+2. **If cacheable**: Add cached function keyed by primitives (not object refs):
 ```python
 @st.cache_resource
 def get_cached_semantic_layer(_dataset, _dataset_version: str):
@@ -422,18 +407,20 @@ def get_cached_semantic_layer(_dataset, _dataset_version: str):
 - `make test-ui`
 - All tests passing
 
-**Commit Message**:
+**Commit Message** (if implemented):
 
 ```javascript
-feat: Phase 4 - Cache semantic layer initialization
+feat: Phase 3 - Cache semantic layer initialization
 
 - Add @st.cache_resource decorator for semantic layer
-- Cache keyed by dataset_version
+- Cache keyed by dataset_id + dataset_version primitives (not object refs)
 - Prevent re-initialization on every rerun
 - Add tests for caching behavior
 
 All tests passing: X/Y
 ```
+
+**Note**: This phase is optional and gated behind stability of transcript + idempotency (Phase 2). If dataset object is not hashable or semantic layer has non-cacheable handles, defer to future PR and just ensure no re-initialization in hot loops.
 
 
 
@@ -499,11 +486,15 @@ If issues arise:
 
 **Staff-level criteria** (from user requirements):
 
-- [ ] run_key uniqueness: distinct user queries produce distinct run_keys (normalized query included)
+- [ ] run_key uniqueness: distinct user queries produce distinct run_keys (normalized query included, scope canonicalized)
+- [ ] run_key stability: identical inputs produce identical run_keys (volatile fields excluded)
 - [ ] Append idempotency: for a single user submit, len(chat) increases by exactly 2 (user + assistant), regardless of reruns
 - [ ] Render determinism: the page body is a pure function of st.session_state.chat (no extra output outside it except intentional static UI)
-- [ ] Semantic init: called once per dataset_version per session (or per cache lifetime), not on every rerun
-- [ ] No empty emoji tiles: all `st.chat_message()` containers have content
+- [ ] No side effects during render: render_chat() and render_result() do not mutate session_state
+- [ ] Stable widget keys: all widgets have deterministic keys scoped by run_key (no duplicate widget ID errors)
+- [ ] Charts removed: V1 keeps only Answer + compact stats + Verify + Export (no fragile chart decoration)
+- [ ] Semantic init: called once per dataset_version per session (or per cache lifetime), not on every rerun (if Phase 3 implemented)
+- [ ] No empty emoji tiles: all `st.chat_message()` containers have content (transcript rendering fixes root cause)
 
 ## Dependencies
 
@@ -514,3 +505,7 @@ If issues arise:
 ## Notes
 
 - Remove CSS hacks for emoji persistence (lines 44-62) - transcript rendering fixes the root cause
+- Charts are fragile decoration that break the page - remove for V1, defer until transcript rendering is stable
+- Widget keys must be deterministic and scoped by run_key to prevent duplicate ID errors on reruns
+- Focus tests on pure functions (normalization, canonicalization, mutation logic) - avoid over-testing Streamlit rendering
+- Semantic layer caching is optional - defer if dataset object is not hashable or has non-cacheable handles
