@@ -1,0 +1,33 @@
+# Ollama LLM Configuration (ADR003 Phase 0)
+# Privacy-preserving: Local Ollama only, no external API calls
+#
+# This file configures the Tier 3 LLM fallback for natural language query parsing.
+# If this file is missing or incomplete, defaults will be used.
+
+ollama:
+  # Base URL for Ollama API
+  base_url: "http://localhost:11434"
+  
+  # Default model to use for query parsing
+  default_model: "llama3.1:8b"
+  
+  # Fallback model if default is not available
+  fallback_model: "llama3.2:3b"
+  
+  # Request timeout in seconds
+  timeout_seconds: 5.0
+  
+  # Maximum retries for failed requests
+  max_retries: 3
+  
+  # Enable JSON mode (structured output)
+  json_mode: true
+
+# Tier 3 confidence thresholds
+confidence:
+  # Minimum confidence for Phase 0 success (valid parse)
+  min_confidence: 0.5
+  
+  # Minimum confidence for Phase 3 execution (trusted execution)
+  execution_threshold: 0.75
+
