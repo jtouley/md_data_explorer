@@ -25,7 +25,10 @@ class TestRealWorldCorrelationQueries:
         [
             pytest.param(
                 {
-                    "query": "how does bmi, statin use relate to the regiment that the person is on and their cd4 counts?",
+                    "query": (
+                        "how does bmi, statin use relate to the regiment that the person is on "
+                        "and their cd4 counts?"
+                    ),
                     "expected_intent": "CORRELATIONS",
                     "expected_primary_variable": "BMI",  # First variable extracted
                     "expected_grouping_variable": "statins",  # Second variable (statin use)
