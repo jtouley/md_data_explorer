@@ -429,4 +429,6 @@ def test_get_cohort_collects_exactly_once(self, tmp_path, sample_variable_mappin
     # Assert: Unfiltered cohort works (proves filter doesn't mutate self.data)
     cohort_full = dataset.get_cohort()
     assert len(cohort_full) == 100
+
+
 ```

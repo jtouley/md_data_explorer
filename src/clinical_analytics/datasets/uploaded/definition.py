@@ -263,9 +263,9 @@ class UploadedDataset(ClinicalDataset):
         else:
             # Generate sequential IDs if not provided
             logger.warning("No patient_id column specified, generating sequential IDs")
-            # Use row number for sequential IDs (lazy) - int_range works with count()
+            # Use row number for sequential IDs (lazy) - int_range with len() creates 0..len-1 range
             select_exprs.append(
-                (pl.lit("patient_") + pl.int_range(pl.count()).cast(pl.Utf8)).alias(UnifiedCohort.PATIENT_ID)
+                (pl.lit("patient_") + pl.int_range(pl.len()).cast(pl.Utf8)).alias(UnifiedCohort.PATIENT_ID)
             )
 
         # Map outcome (optional - semantic layer pattern)
