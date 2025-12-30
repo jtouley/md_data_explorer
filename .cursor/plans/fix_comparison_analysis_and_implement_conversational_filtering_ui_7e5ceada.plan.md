@@ -57,12 +57,12 @@ todos:
       - phase2-filter-parsing
   - id: phase2-context-queryplan
     content: Add query_plan field (QueryPlan) to AnalysisContext and propagate from QueryIntent conversion
-    status: pending
+    status: completed
     dependencies:
       - phase2-queryplan-conversion
   - id: phase2-apply-filters
     content: Implement _apply_filters() helper (accepts list[FilterSpec]) and integrate into compute functions
-    status: pending
+    status: completed
     dependencies:
       - phase2-context-queryplan
   - id: phase2-breakdown
@@ -72,7 +72,7 @@ todos:
       - phase2-apply-filters
   - id: phase3-execution-gating
     content: Implement execution gating (confidence threshold, confirmation UI, deterministic run_key)
-    status: pending
+    status: completed
     dependencies:
       - phase2-apply-filters
   - id: phase3-conversation-history
@@ -100,8 +100,13 @@ todos:
     status: pending
     dependencies:
       - phase3-inline-rendering
+  - id: phase2-apply-filters
+    content: Implement _apply_filters() helper (accepts list[FilterSpec]) and integrate into compute functions
+    status: completed
+    dependencies:
+      - phase2-context-queryplan
   - id: phase4-tests
-    content: Add comprehensive tests for all phases with explicit feature parity verification
+    content: Add comprehensive e2e tests for all phases with explicit feature parity verification (deferred to end)
     status: pending
     dependencies:
       - phase1-tests
@@ -1231,10 +1236,11 @@ Execute phases sequentially to maintain code quality and testability. **Phase 0 
      - `refactor: redesign Ask Questions UI for conversational flow`
      - `feat: add follow-up question suggestions`
 
-4. **Phase 4** (Quality): Add comprehensive tests
+4. **Phase 4** (Quality): Add comprehensive e2e tests (deferred to end)
    - Estimated time: 2 hours
-   - Deliverable: Test coverage for all three phases
-   - Commit message: `test: add comprehensive tests for comparison fix, filters, and conversational UI`
+   - Deliverable: E2E test coverage for all phases with explicit feature parity verification
+   - Commit message: `test: add comprehensive e2e tests for comparison fix, filters, and conversational UI`
+   - **Note**: E2E testing deferred until after Phase 3 completion to test full conversational flow
 
 ## Success Criteria
 
