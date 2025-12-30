@@ -105,6 +105,8 @@ class SemanticLayer:
         dataset_name: str,
         config: dict[str, Any] | None = None,
         workspace_root: Path | None = None,
+        upload_id: str | None = None,
+        dataset_version: str | None = None,
     ):
         """
         Initialize semantic layer for a dataset.
@@ -113,12 +115,16 @@ class SemanticLayer:
             dataset_name: Name of dataset (e.g., 'covid_ms', 'sepsis')
             config: Optional config dict (if None, loads from datasets.yaml)
             workspace_root: Optional workspace root path (if None, auto-detects)
+            upload_id: Optional upload ID for user-uploaded datasets (Phase 2: alias persistence)
+            dataset_version: Optional dataset version for user-uploaded datasets (Phase 2: alias persistence)
         """
         if config is None:
             config = load_dataset_config(dataset_name)
 
         self.config = config
         self.dataset_name = dataset_name
+        self.upload_id = upload_id
+        self.dataset_version = dataset_version
 
         # Detect workspace root
         self.workspace_root = self._detect_workspace_root(workspace_root)
@@ -140,6 +146,10 @@ class SemanticLayer:
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
         self._alias_to_canonicals: dict[str, set[str]] | None = None  # For collision detection
         self._collision_warnings: set[str] | None = None  # Aliases that map to multiple canonicals
+
+        # Phase 2: Load user aliases if upload_id and dataset_version provided
+        if upload_id and dataset_version:
+            self._load_user_aliases(upload_id, dataset_version)
 
     def _detect_workspace_root(self, provided_root: Path | None = None) -> Path:
         """
@@ -847,7 +857,25 @@ class SemanticLayer:
                         if word not in alias_index:
                             alias_index[word] = canonical
 
-        # Step 5: Detect collisions and drop ambiguous aliases
+        # Step 5: Merge user aliases (Phase 2: user aliases override system aliases)
+        user_aliases = getattr(self, "_user_aliases", {})
+        for normalized_term, column in user_aliases.items():
+            # User aliases override system aliases for same normalized key
+            if normalized_term in alias_index:
+                logger.debug(
+                    f"User alias '{normalized_term}' overriding system alias "
+                    f"'{alias_index[normalized_term]}' -> '{column}'"
+                )
+
+            # Update alias_index (user alias takes precedence)
+            alias_index[normalized_term] = column
+
+            # Update alias_to_canonicals (for collision detection)
+            if normalized_term not in alias_to_canonicals:
+                alias_to_canonicals[normalized_term] = set()
+            alias_to_canonicals[normalized_term].add(column)
+
+        # Step 6: Detect collisions and drop ambiguous aliases
         collision_warnings: set[str] = set()
         for alias, canonicals in alias_to_canonicals.items():
             if len(canonicals) > 1:
@@ -862,8 +890,11 @@ class SemanticLayer:
         self._alias_to_canonicals = alias_to_canonicals
         self._collision_warnings = collision_warnings
 
+        user_count = len(user_aliases)
         logger.info(
-            f"Built alias index: {len(alias_index)} unique aliases, {len(collision_warnings)} collisions detected"
+            f"Built alias index: {len(alias_index)} unique aliases "
+            f"({user_count} user, {len(alias_index) - user_count} system), "
+            f"{len(collision_warnings)} collisions detected"
         )
 
     def get_column_alias_index(self) -> dict[str, str]:
@@ -911,3 +942,221 @@ class SemanticLayer:
             # Return all canonical names that match this alias
             return sorted(list(self._alias_to_canonicals.get(normalized, set())))
         return None
+
+    # ============================================================================
+    # Phase 2: User Alias Persistence (ADR003)
+    # ============================================================================
+
+    def _get_metadata_path(self, upload_id: str) -> Path:
+        """
+        Get path to metadata JSON file for upload.
+
+        Args:
+            upload_id: Upload identifier
+
+        Returns:
+            Path to metadata JSON file
+        """
+        # Metadata stored in data/uploads/metadata/{upload_id}.json
+        metadata_dir = self.workspace_root / "data" / "uploads" / "metadata"
+        return metadata_dir / f"{upload_id}.json"
+
+    def _load_metadata(self, upload_id: str) -> dict[str, Any] | None:
+        """
+        Load metadata JSON for upload.
+
+        Args:
+            upload_id: Upload identifier
+
+        Returns:
+            Metadata dict if found, None otherwise
+        """
+        metadata_path = self._get_metadata_path(upload_id)
+        if not metadata_path.exists():
+            return None
+
+        try:
+            import json
+
+            with open(metadata_path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load metadata for {upload_id}: {e}")
+            return None
+
+    def _save_metadata(self, upload_id: str, metadata: dict[str, Any]) -> None:
+        """
+        Save metadata JSON for upload (atomic update).
+
+        Args:
+            upload_id: Upload identifier
+            metadata: Metadata dict to save
+        """
+        import json
+
+        metadata_path = self._get_metadata_path(upload_id)
+        metadata_dir = metadata_path.parent
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+
+        # Atomic write: write to temp file, then rename
+        temp_path = metadata_path.with_suffix(".json.tmp")
+        try:
+            with open(temp_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+            temp_path.replace(metadata_path)
+        except Exception as e:
+            logger.error(f"Failed to save metadata for {upload_id}: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+    def _load_user_aliases(self, upload_id: str, dataset_version: str) -> None:
+        """
+        Load user aliases from metadata and merge into alias index.
+
+        Args:
+            upload_id: Upload identifier
+            dataset_version: Dataset version (for scope validation)
+        """
+        metadata = self._load_metadata(upload_id)
+        if not metadata:
+            logger.debug(f"No metadata found for {upload_id}, skipping user alias load")
+            return
+
+        # Verify dataset version matches (scope isolation)
+        stored_version = metadata.get("dataset_version")
+        if stored_version != dataset_version:
+            logger.warning(
+                f"Dataset version mismatch for {upload_id}: "
+                f"stored={stored_version}, requested={dataset_version}. "
+                "Skipping user alias load."
+            )
+            return
+
+        # Extract user aliases
+        alias_mappings = metadata.get("alias_mappings", {})
+        user_aliases = alias_mappings.get("user_aliases", {})
+
+        if not user_aliases:
+            logger.debug(f"No user aliases found for {upload_id}")
+            return
+
+        # Get base view to validate columns exist
+        try:
+            base_view = self.get_base_view()
+            available_columns = set(base_view.columns)
+        except Exception as e:
+            logger.warning(f"Failed to get base view for alias validation: {e}")
+            available_columns = set()
+
+        # Store user aliases (will be merged when alias index is built)
+        self._user_aliases: dict[str, str] = {}
+        orphaned_count = 0
+
+        for term, column in user_aliases.items():
+            # Validate column exists (handle orphaned aliases)
+            if column not in available_columns:
+                logger.warning(f"Orphaned alias for {upload_id}: '{term}' -> '{column}' (column not found in schema)")
+                orphaned_count += 1
+                continue
+
+            # Normalize term
+            normalized_term = self._normalize_alias(term)
+            self._user_aliases[normalized_term] = column
+
+        if orphaned_count > 0:
+            logger.info(f"Marked {orphaned_count} orphaned aliases for {upload_id}")
+
+        logger.info(f"Loaded {len(self._user_aliases)} user aliases for {upload_id}")
+
+    def add_user_alias(
+        self,
+        term: str,
+        column: str,
+        upload_id: str,
+        dataset_version: str,
+    ) -> None:
+        """
+        Add user alias and persist to metadata.
+
+        Args:
+            term: Alias term (e.g., "VL")
+            column: Canonical column name (e.g., "viral_load")
+            upload_id: Upload identifier
+            dataset_version: Dataset version (for scope isolation)
+
+        Raises:
+            ValueError: If column doesn't exist or collision detected
+        """
+        # Validate column exists
+        try:
+            base_view = self.get_base_view()
+            available_columns = set(base_view.columns)
+        except Exception as e:
+            raise ValueError(f"Failed to validate column: {e}") from e
+
+        if column not in available_columns:
+            raise ValueError(f"Column '{column}' not found in dataset schema")
+
+        # Normalize term
+        normalized_term = self._normalize_alias(term)
+
+        # Check for collisions (multiple columns match same alias)
+        # Build alias index if not already built
+        self._build_alias_index()
+
+        # Check if normalized term already maps to a different column
+        if normalized_term in self._alias_index:
+            existing_column = self._alias_index[normalized_term]
+            if existing_column != column:
+                # Collision detected - surface in UI, don't silently remap
+                raise ValueError(
+                    f"Alias '{term}' already maps to '{existing_column}'. "
+                    f"Cannot remap to '{column}' without explicit confirmation."
+                )
+
+        # Load existing metadata
+        metadata = self._load_metadata(upload_id)
+        if not metadata:
+            # Create new metadata structure
+            metadata = {
+                "upload_id": upload_id,
+                "dataset_version": dataset_version,
+                "alias_mappings": {
+                    "user_aliases": {},
+                    "system_aliases": {},
+                },
+            }
+
+        # Verify dataset version matches (scope isolation)
+        stored_version = metadata.get("dataset_version")
+        if stored_version and stored_version != dataset_version:
+            raise ValueError(
+                f"Dataset version mismatch: stored={stored_version}, "
+                f"requested={dataset_version}. Aliases are scoped per dataset version."
+            )
+
+        # Ensure alias_mappings structure exists
+        if "alias_mappings" not in metadata:
+            metadata["alias_mappings"] = {"user_aliases": {}, "system_aliases": {}}
+
+        if "user_aliases" not in metadata["alias_mappings"]:
+            metadata["alias_mappings"]["user_aliases"] = {}
+
+        # Add alias (use original term, not normalized, for storage)
+        metadata["alias_mappings"]["user_aliases"][term] = column
+
+        # Persist to metadata JSON
+        self._save_metadata(upload_id, metadata)
+
+        # Update in-memory user aliases
+        if not hasattr(self, "_user_aliases"):
+            self._user_aliases = {}
+        self._user_aliases[normalized_term] = column
+
+        # Invalidate alias index to force rebuild with new user alias
+        self._alias_index = None
+        self._alias_to_canonicals = None
+        self._collision_warnings = None
+
+        logger.info(f"Added user alias '{term}' -> '{column}' for {upload_id}")

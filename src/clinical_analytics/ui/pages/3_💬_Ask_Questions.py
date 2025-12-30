@@ -184,6 +184,48 @@ def cleanup_old_results(dataset_version: str) -> None:
         )
 
 
+def _render_add_alias_ui(
+    unknown_term: str,
+    available_columns: list[str],
+    upload_id: str,
+    dataset_version: str,
+    semantic_layer,
+) -> None:
+    """
+    Render "Add alias?" UI for unknown terms (Phase 2 - ADR003).
+
+    Args:
+        unknown_term: Term that wasn't recognized
+        available_columns: List of available column names
+        upload_id: Upload identifier
+        dataset_version: Dataset version
+        semantic_layer: SemanticLayer instance
+    """
+    with st.expander(f"💡 Add alias for '{unknown_term}'?"):
+        st.info(f"**Unknown term**: '{unknown_term}'")
+        st.caption("Map this term to a column to use it in future queries.")
+
+        selected_column = st.selectbox(
+            "Map to column:",
+            options=["(Select column)"] + available_columns,
+            key=f"add_alias_{unknown_term}_{dataset_version}",
+        )
+
+        if st.button("Save Alias", key=f"save_alias_{unknown_term}_{dataset_version}"):
+            if selected_column and selected_column != "(Select column)":
+                try:
+                    semantic_layer.add_user_alias(unknown_term, selected_column, upload_id, dataset_version)
+                    st.success(f"✅ Alias saved! '{unknown_term}' now maps to '{selected_column}'. Retry your query.")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(f"❌ Error saving alias: {e}")
+                except Exception as e:
+                    logger.error(f"Error adding user alias: {e}", exc_info=True)
+                    st.error(f"❌ Unexpected error: {e}")
+            else:
+                st.warning("Please select a column to map to.")
+
+
 def clear_all_results(dataset_version: str) -> None:
     """
     Clear all results and history for this dataset version.
@@ -235,6 +277,16 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
             if len(result["available_columns"]) > 20:
                 cols_str += "..."
             st.info(f"💡 **Available columns**: {cols_str}")
+
+        # Phase 2: Add "Add alias?" UI for unknown terms
+        if "unknown_term" in result:
+            _render_add_alias_ui(
+                unknown_term=result["unknown_term"],
+                available_columns=result.get("available_columns", []),
+                upload_id=result.get("upload_id"),
+                dataset_version=result.get("dataset_version"),
+                semantic_layer=result.get("semantic_layer"),
+            )
         return
 
     # Check if this is a focused single-variable analysis
@@ -1415,6 +1467,23 @@ def main():
                         elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS and not context.grouping_variable:
                             context.grouping_variable = selected
                         st.info(f"✅ Selected: {get_display_name(selected)}")
+
+            # Phase 2: Show "Add alias?" UI for unknown terms (no suggestions)
+            # Check if there are any terms in the query that have no matches
+            if hasattr(context, "unknown_terms") and context.unknown_terms:
+                for unknown_term in context.unknown_terms:
+                    # Get semantic layer and upload info
+                    upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+                    semantic_layer = dataset.semantic if hasattr(dataset, "semantic") else None
+
+                    if semantic_layer and upload_id:
+                        _render_add_alias_ui(
+                            unknown_term=unknown_term,
+                            available_columns=available_cols,
+                            upload_id=upload_id,
+                            dataset_version=dataset_version,
+                            semantic_layer=semantic_layer,
+                        )
 
             # Update context in session state after edits
             st.session_state["analysis_context"] = context
