@@ -657,25 +657,61 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
         if filter_spec.exclude_nulls:
             filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_not_null())
 
-        # Apply operator
-        if filter_spec.operator == "==":
-            filtered_df = filtered_df.filter(pl.col(filter_spec.column) == filter_spec.value)
-        elif filter_spec.operator == "!=":
-            filtered_df = filtered_df.filter(pl.col(filter_spec.column) != filter_spec.value)
-        elif filter_spec.operator == "<":
-            filtered_df = filtered_df.filter(pl.col(filter_spec.column) < filter_spec.value)
-        elif filter_spec.operator == ">":
-            filtered_df = filtered_df.filter(pl.col(filter_spec.column) > filter_spec.value)
-        elif filter_spec.operator == "<=":
-            filtered_df = filtered_df.filter(pl.col(filter_spec.column) <= filter_spec.value)
-        elif filter_spec.operator == ">=":
-            filtered_df = filtered_df.filter(pl.col(filter_spec.column) >= filter_spec.value)
-        elif filter_spec.operator == "IN":
-            if isinstance(filter_spec.value, list):
-                filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_in(filter_spec.value))
-        elif filter_spec.operator == "NOT_IN":
-            if isinstance(filter_spec.value, list):
-                filtered_df = filtered_df.filter(~pl.col(filter_spec.column).is_in(filter_spec.value))
+        # Get column dtype to check for type mismatches
+        col_dtype = df.schema[filter_spec.column]
+
+        # Apply operator with type safety
+        try:
+            if filter_spec.operator == "==":
+                # Check for type mismatch: numeric column with string value
+                if col_dtype in (pl.Int64, pl.Int32, pl.Int16, pl.Int8, pl.Float64, pl.Float32):
+                    if isinstance(filter_spec.value, str):
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.warning(
+                            f"Type mismatch: column '{filter_spec.column}' is {col_dtype} "
+                            f"but filter value is string '{filter_spec.value}'. Skipping filter."
+                        )
+                        continue
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) == filter_spec.value)
+            elif filter_spec.operator == "!=":
+                # Check for type mismatch
+                if col_dtype in (pl.Int64, pl.Int32, pl.Int16, pl.Int8, pl.Float64, pl.Float32):
+                    if isinstance(filter_spec.value, str):
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.warning(
+                            f"Type mismatch: column '{filter_spec.column}' is {col_dtype} "
+                            f"but filter value is string '{filter_spec.value}'. Skipping filter."
+                        )
+                        continue
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) != filter_spec.value)
+            elif filter_spec.operator == "<":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) < filter_spec.value)
+            elif filter_spec.operator == ">":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) > filter_spec.value)
+            elif filter_spec.operator == "<=":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) <= filter_spec.value)
+            elif filter_spec.operator == ">=":
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column) >= filter_spec.value)
+            elif filter_spec.operator == "IN":
+                if isinstance(filter_spec.value, list):
+                    filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_in(filter_spec.value))
+            elif filter_spec.operator == "NOT_IN":
+                if isinstance(filter_spec.value, list):
+                    filtered_df = filtered_df.filter(~pl.col(filter_spec.column).is_in(filter_spec.value))
+        except pl.exceptions.ComputeError as e:
+            # Log the error and skip this filter rather than crashing
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"Error applying filter {filter_spec.column} {filter_spec.operator} {filter_spec.value}: {e}. "
+                "Skipping filter."
+            )
+            continue
 
     return filtered_df
 

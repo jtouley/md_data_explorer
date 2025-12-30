@@ -598,6 +598,34 @@ class SemanticLayer:
             "filters": self.get_available_filters(),
         }
 
+    def get_column_metadata(self, column_name: str) -> dict[str, Any] | None:
+        """
+        Get metadata for a specific column if available.
+
+        For uploaded datasets, this accesses variable_types metadata from the upload metadata.
+        Falls back to None if metadata is not available (e.g., for built-in datasets).
+
+        Args:
+            column_name: Canonical column name
+
+        Returns:
+            Dictionary with column metadata (type, numeric, values, etc.) or None if not available
+        """
+        # Try to access variable_types from upload metadata
+        # This is stored in the config for uploaded datasets
+        variable_types = self.config.get("variable_types")
+        if variable_types and column_name in variable_types:
+            return variable_types[column_name]
+
+        # Fallback: check if metadata is stored elsewhere in config
+        metadata = self.config.get("metadata")
+        if metadata:
+            variable_types = metadata.get("variable_types")
+            if variable_types and column_name in variable_types:
+                return variable_types[column_name]
+
+        return None
+
     def _build_metric_expression(self, metric_name: str, view: ibis.Table) -> ibis.Expr:
         """
         Build an Ibis expression for a metric from config.

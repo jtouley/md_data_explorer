@@ -814,6 +814,71 @@ class NLQueryEngine:
 
         return None, 0.0, None
 
+    def _is_coded_column(self, column_name: str, alias_name: str | None = None) -> bool:
+        """
+        Determine if a column is coded (numeric values with labels in alias).
+
+        Uses metadata when available (more reliable), falls back to alias parsing.
+        This is a generic, extensible check that looks for multiple indicators:
+        1. Metadata check: column has "numeric": true and categorical/type metadata
+        2. Alias contains code patterns (e.g., "1: Yes 2: No", "0: n/a 1: Atorvastatin")
+        3. Column name suggests coded format
+
+        Args:
+            column_name: Canonical column name
+            alias_name: Optional alias name (if None, will look it up)
+
+        Returns:
+            True if column appears to be coded (numeric with label mappings)
+        """
+        # Strategy 1: Check metadata first (most reliable)
+        # This uses the variable_types metadata we capture during upload
+        column_metadata = self.semantic_layer.get_column_metadata(column_name)
+        if column_metadata:
+            var_type = column_metadata.get("type")
+            metadata_info = column_metadata.get("metadata", {})
+            is_numeric = metadata_info.get("numeric", False)
+
+            # Coded columns are categorical/binary with numeric values
+            if var_type in ("categorical", "binary") and is_numeric:
+                return True
+
+        # Strategy 2: Fall back to alias parsing (for datasets without metadata)
+        # Get alias if not provided
+        if alias_name is None:
+            alias_index = self.semantic_layer.get_column_alias_index()
+            for alias, canonical in alias_index.items():
+                if canonical == column_name:
+                    alias_name = alias
+                    break
+
+        if not alias_name:
+            return False
+
+        # Indicator 1: Contains code pattern (digits followed by colon and label)
+        # Pattern: "1: Yes", "0: n/a 1: Atorvastatin", etc.
+        has_code_pattern = ":" in alias_name and any(char.isdigit() for char in alias_name)
+
+        # Indicator 2: Contains common coded column indicators
+        alias_lower = alias_name.lower()
+        has_coded_indicators = (
+            any(
+                indicator in alias_lower
+                for indicator in [
+                    "prescribed",
+                    "used",
+                    "type",
+                    "category",
+                    "class",
+                    "status",
+                    "level",
+                ]
+            )
+            and ":" in alias_name
+        )
+
+        return has_code_pattern or has_coded_indicators
+
     def _extract_filters(self, query: str) -> list[FilterSpec]:
         """
         Extract filter conditions from query text.
@@ -832,7 +897,7 @@ class NLQueryEngine:
 
         Example:
             >>> filters = engine._extract_filters("how many patients were on statins")
-            >>> # Returns [FilterSpec(column="Statin Used", operator="!=", value="0")]
+            >>> # Returns [FilterSpec(column="Statin Used", operator="IN", value=[1,2,3,...])]
         """
         filters = []
         query_lower = query.lower()
@@ -854,18 +919,26 @@ class NLQueryEngine:
                 value_phrase = match.group(1).strip()
 
                 # Strategy 1: Try to match phrase as column name (for direct column filters)
+                # BUT: Skip this for coded columns - we need Strategy 2 to extract proper numeric codes
+                # Strategy 1 only makes sense for exact column name matches with string values
                 column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
                 if column_name and conf > 0.5:
-                    # Phrase matched a column - use equality operator
-                    filters.append(
-                        FilterSpec(
-                            column=column_name,
-                            operator="==",
-                            value=value_phrase,
-                            exclude_nulls=True,
+                    # Check if this is a coded column using generic detection
+                    if self._is_coded_column(column_name):
+                        # This is a coded column - Strategy 2 will extract proper numeric codes
+                        # Skip Strategy 1 to avoid creating filter with string value
+                        pass
+                    else:
+                        # Not a coded column - use Strategy 1 for direct column matching
+                        filters.append(
+                            FilterSpec(
+                                column=column_name,
+                                operator="==",
+                                value=value_phrase,
+                                exclude_nulls=True,
+                            )
                         )
-                    )
-                    continue
+                        continue
 
                 # Strategy 2: Try to find a related column (e.g., "statins" → "Statin Prescribed?")
                 # Look for columns that contain the phrase or related terms

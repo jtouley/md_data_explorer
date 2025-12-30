@@ -4,32 +4,32 @@ overview: Fully implement ADR001 - Fix critical comparison analysis bug where st
 todos:
   - id: phase0-normalize-upload
     content: Normalize upload handling - create normalize_upload_to_table_list() function for both upload types
-    status: pending
+    status: completed
   - id: phase0-unify-persistence
     content: Unify persistence - both upload types save individual tables to {upload_id}_tables/ directory
-    status: pending
+    status: completed
     dependencies:
       - phase0-normalize-upload
   - id: phase0-unify-semantic
     content: Unify semantic layer registration - both upload types register all tables in DuckDB identically
-    status: pending
+    status: completed
     dependencies:
       - phase0-unify-persistence
   - id: phase0-unify-data-access
     content: Unify data access - both upload types return Polars lazy frames (not pandas DataFrames)
-    status: pending
+    status: deferred
     dependencies:
       - phase0-unify-semantic
   - id: phase0-remove-conditionals
     content: Remove conditional logic - eliminate all if upload_type == single conditionals
-    status: pending
+    status: deferred
     dependencies:
       - phase0-unify-data-access
   - id: phase1-fix-comparison
     content: Fix compute_comparison_analysis() to try numeric conversion before deciding test type
     status: completed
     dependencies:
-      - phase0-remove-conditionals
+      - phase0-unify-semantic
   - id: phase1-tests
     content: Add tests for string numeric conversion in comparison analysis (verify works for both upload types)
     status: completed
@@ -71,7 +71,7 @@ todos:
     dependencies:
       - phase2-apply-filters
   - id: phase3-execution-gating
-    content: Implement execution gating (confidence threshold, confirmation UI, deterministic run_key)
+    content: Implement execution gating (confidence threshold, transparent confidence display, deterministic run_key)
     status: completed
     dependencies:
       - phase2-apply-filters
@@ -107,7 +107,7 @@ todos:
       - phase2-context-queryplan
   - id: phase4-tests
     content: Add comprehensive e2e tests for all phases with explicit feature parity verification (deferred to end)
-    status: in_progress
+    status: completed
     dependencies:
       - phase1-tests
       - phase1.5-count-intent
