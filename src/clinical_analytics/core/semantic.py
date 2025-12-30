@@ -409,7 +409,7 @@ class SemanticLayer:
                         view = view.filter(_[column] <= filter_value["max"])
             elif filter_type == "exists":
                 if filter_value:
-                    view = view.filter(_[column].isnull().not_())
+                    view = view.filter(~_[column].isnull())
                 else:
                     view = view.filter(_[column].isnull())
 
@@ -1479,7 +1479,7 @@ class SemanticLayer:
 
             # Handle exclude_nulls
             if filter_spec.exclude_nulls:
-                view = view.filter(col_expr.isnull().not_())
+                view = view.filter(~col_expr.isnull())
 
         # Execute based on intent
         if plan.intent == "COUNT":
