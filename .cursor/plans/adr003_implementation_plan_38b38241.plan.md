@@ -1,23 +1,24 @@
 ---
 name: ADR003 Implementation Plan
 overview: "Implement ADR003: Clinical Trust Protocol + Adaptive Alias Persistence. Three phases: (1) Trust UI with verification expanders and patient-level export, (2) Adaptive alias persistence scoped per dataset, (3) Semantic layer QueryPlan execution with type-aware validation and confidence gating."
+progress: "Phase 1 Complete ✅ (Commit af46ca9) - 11/11 tests passing. Trust UI with patient-level export and cohort size calculation implemented and integrated."
 todos:
   - id: phase1-tests
     content: Write Phase 1 test specifications (11 tests) in tests/ui/test_trust_ui.py
-    status: pending
+    status: completed
   - id: phase1-trust-ui
     content: Implement _render_trust_verification() function in 3_💬_Ask_Questions.py
-    status: pending
+    status: completed
     dependencies:
       - phase1-tests
   - id: phase1-integration
     content: Integrate trust UI into result rendering functions (_render_focused_descriptive, render_comparison_analysis, count analysis)
-    status: pending
+    status: completed
     dependencies:
       - phase1-trust-ui
   - id: phase1-commit
     content: Run quality gates (make check) and commit Phase 1 with all tests passing
-    status: pending
+    status: completed
     dependencies:
       - phase1-integration
   - id: phase2-tests
@@ -473,12 +474,16 @@ import pandas as pd
 
 ## Success Criteria
 
-**Phase 1 Complete**:
+**Phase 1 Complete** ✅:
 
-- [ ] All 11 trust UI tests passing
-- [ ] Trust verification expander appears in all result rendering functions
-- [ ] Patient-level export works (capped at 100 rows, full export requires confirmation)
-- [ ] Cohort size calculation correct (count_total, count_filtered, percentage)
+- [x] All 11 trust UI tests passing
+- [x] Trust verification expander appears in all result rendering functions
+- [x] Patient-level export works (capped at 100 rows, full export requires confirmation)
+- [x] Cohort size calculation correct (count_total, count_filtered, percentage)
+- [x] Created `src/clinical_analytics/ui/components/trust_ui.py` (362 lines)
+- [x] Integrated into `execute_analysis_with_idempotency()`
+- [x] Type errors fixed, linting/formatting applied
+- [x] Committed: af46ca9
 
 **Phase 2 Complete**:
 
