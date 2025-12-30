@@ -82,12 +82,12 @@ todos:
       - phase3-execution-gating
   - id: phase3-ui-redesign
     content: Redesign main() flow to show conversation history and always-visible query input
-    status: in_progress
+    status: completed
     dependencies:
       - phase3-conversation-history
   - id: phase3-remove-buttons
     content: Remove confusing buttons (Start Over, Clear Results, Confirm and Run) and replace with contextual actions
-    status: pending
+    status: completed
     dependencies:
       - phase3-ui-redesign
   - id: phase3-inline-rendering
