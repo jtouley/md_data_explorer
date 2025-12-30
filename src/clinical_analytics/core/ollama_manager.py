@@ -126,7 +126,6 @@ class OllamaManager:
         if self._available_models is not None:
             return self._available_models
 
-
         try:
             import requests
 

@@ -54,6 +54,51 @@ else
     echo -e "${YELLOW}⚠ Sepsis dataset not found (will skip in UI)${NC}"
 fi
 
+# Check and initialize Ollama LLM service (self-contained, like DuckDB)
+echo ""
+echo -e "${YELLOW}🤖 Checking Ollama LLM service...${NC}"
+source .venv/bin/activate
+
+# Check if Ollama is installed
+if command -v ollama &> /dev/null; then
+    echo -e "${GREEN}✓ Ollama binary found${NC}"
+    
+    # Check if service is running
+    if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ Ollama service running${NC}"
+        
+        # Check for models
+        MODELS=$(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('models', [])))" 2>/dev/null || echo "0")
+        if [ "$MODELS" -gt 0 ]; then
+            echo -e "${GREEN}✓ Ollama ready ($MODELS model(s) available)${NC}"
+        else
+            echo -e "${YELLOW}⚠ Ollama running but no models available${NC}"
+            echo -e "${YELLOW}   Run: ${GREEN}ollama pull llama3.2:3b${NC} to download a model"
+        fi
+    else
+        echo -e "${YELLOW}⚠ Ollama service not running${NC}"
+        echo -e "${YELLOW}   Attempting to start Ollama service...${NC}"
+        
+        # Try to start Ollama in background
+        nohup ollama serve > /dev/null 2>&1 &
+        OLLAMA_PID=$!
+        sleep 2
+        
+        # Check if it started
+        if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ Ollama service started${NC}"
+        else
+            echo -e "${YELLOW}⚠ Could not start Ollama service automatically${NC}"
+            echo -e "${YELLOW}   Please start manually: ${GREEN}ollama serve${NC}"
+            echo -e "${YELLOW}   Natural language queries will use pattern matching only${NC}"
+        fi
+    fi
+else
+    echo -e "${YELLOW}⚠ Ollama not installed${NC}"
+    echo -e "${YELLOW}   Natural language queries will use pattern matching only${NC}"
+    echo -e "${YELLOW}   Install at: ${GREEN}https://ollama.ai${NC} or run: ${GREEN}curl -fsSL https://ollama.ai/install.sh | sh${NC}"
+fi
+
 # Display feature summary
 echo ""
 echo -e "${BLUE}🚀 Platform Features:${NC}"
