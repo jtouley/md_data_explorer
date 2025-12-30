@@ -10,6 +10,7 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.core.query_plan import FilterSpec
 from clinical_analytics.ui.components.question_engine import AnalysisContext
 
 
@@ -569,6 +570,53 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         }
 
 
+def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
+    """
+    Apply filter conditions to DataFrame.
+
+    Args:
+        df: Input DataFrame
+        filters: List of FilterSpec objects
+
+    Returns:
+        Filtered DataFrame
+    """
+    if not filters:
+        return df
+
+    # Operator dispatch table
+    filtered_df = df
+    for filter_spec in filters:
+        if filter_spec.column not in df.columns:
+            continue  # Skip if column not found
+
+        # Apply null exclusion if requested (default: yes)
+        if filter_spec.exclude_nulls:
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_not_null())
+
+        # Apply operator
+        if filter_spec.operator == "==":
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column) == filter_spec.value)
+        elif filter_spec.operator == "!=":
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column) != filter_spec.value)
+        elif filter_spec.operator == "<":
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column) < filter_spec.value)
+        elif filter_spec.operator == ">":
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column) > filter_spec.value)
+        elif filter_spec.operator == "<=":
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column) <= filter_spec.value)
+        elif filter_spec.operator == ">=":
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column) >= filter_spec.value)
+        elif filter_spec.operator == "IN":
+            if isinstance(filter_spec.value, list):
+                filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_in(filter_spec.value))
+        elif filter_spec.operator == "NOT_IN":
+            if isinstance(filter_spec.value, list):
+                filtered_df = filtered_df.filter(~pl.col(filter_spec.column).is_in(filter_spec.value))
+
+    return filtered_df
+
+
 def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compute count analysis - returns total count, optionally grouped.
@@ -580,6 +628,10 @@ def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[s
     Returns:
         Serializable dict with count results
     """
+    # Apply filters if present
+    if context.filters:
+        df = _apply_filters(df, context.filters)
+
     row_count = df.height
 
     # If grouping variable is specified, count by group
