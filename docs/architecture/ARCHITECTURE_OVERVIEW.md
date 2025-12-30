@@ -68,8 +68,12 @@
 │  ┌─────────────────────────────────────────────────────┐     │
 │  │         Data Layer                                  │     │
 │  │                                                       │     │
-│  │  • CSV, Parquet, SQL sources                        │     │
-│  │  • Polars for data manipulation                     │     │
+│  │  • Persistent DuckDB storage (data/analytics.duckdb)│     │
+│  │  • Parquet export for lazy Polars scanning          │     │
+│  │  • Dataset versioning (content hash)                │     │
+│  │  • CSV export (backward compatibility)              │     │
+│  │  • Session recovery on app startup                   │     │
+│  │  • Polars lazy frames for transformations           │     │
 │  │  • DuckDB for query execution                       │     │
 │  └─────────────────────────────────────────────────────┘     │
 │                                                               │
@@ -177,13 +181,40 @@ User types NL query → QuestionEngine.parse_natural_language_query()
 - Config-driven initialization
 - Factory pattern for dataset creation
 - Zero-code dataset addition
+- Unified upload handling (single-table = multi-table with 1 table)
 
 **Integration:**
 - Each dataset has semantic layer config
 - Registry provides access to all semantic metadata
 - Enables dataset-specific NL understanding
+- All upload types use identical persistence and query capabilities
 
-### 4. Configuration System
+### 4. Storage Layer
+
+**Location:** `src/clinical_analytics/storage/`
+
+**Capabilities:**
+- Persistent DuckDB storage at `data/analytics.duckdb` (ACID guarantees)
+- Parquet export for lazy Polars scanning (columnar optimization)
+- Dataset versioning (content hash for idempotent queries)
+- CSV export (backward compatibility)
+- Session recovery (restore datasets on app startup)
+- Conversation history (JSONL audit trail)
+
+**Boundary Rules:**
+- **IO is eager**: File reads and DuckDB writes materialize data
+- **Transforms are lazy**: All data transformations use Polars lazy frames
+- **Semantics are declarative**: Semantic layer config is JSON/YAML
+
+**Key Classes:**
+- `DataStore` - Manages persistent DuckDB connection
+- `QueryLogger` - JSONL conversation history
+- `compute_dataset_version()` - Content hash for versioning
+
+**Persistence Invariant:**
+"Given the same upload hash + semantic config, results are immutable and reused."
+
+### 5. Configuration System
 
 **Location:** `data/configs/datasets.yaml`
 
@@ -299,6 +330,23 @@ cohort = semantic_layer.get_cohort(
 - SemanticLayer: SQL generation
 - Registry: Dataset management
 - UI: Presentation only
+
+### 5. Boundary Rules
+
+**IO is eager, transforms are lazy, semantics are declarative.**
+
+- **IO Boundary**: File reads (`pl.read_csv()`, `pl.read_parquet()`) are eager. Use `pl.scan_csv()`/`pl.scan_parquet()` for lazy IO when possible. DuckDB writes materialize data.
+- **Transform Boundary**: All data transformations use Polars lazy frames (`pl.LazyFrame`). Materialize only at query execution or UI render boundary.
+- **Semantic Boundary**: Semantic layer config is declarative (JSON/YAML). No imperative logic in semantic layer initialization.
+- **Documentation**: Any code that violates these boundaries must have explicit comment explaining why (e.g., Excel files require eager read due to Polars limitations).
+
+**Persistence Invariant:**
+"Given the same upload hash + semantic config, results are immutable and reused."
+
+This means:
+- Same content hash → same `dataset_version` → same DuckDB table → same query results
+- Query execution uses `(upload_id, dataset_version)` as idempotent run key
+- Semantic config changes create new version (different results)
 
 ---
 

@@ -43,3 +43,32 @@ Automatic schema detection for uploaded datasets.
 *Coming soon in Phase 4*
 
 Support for complex datasets with multiple related tables.
+
+## Storage
+
+::: clinical_analytics.storage.datastore.DataStore
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - __init__
+        - save_table
+        - load_table
+        - list_datasets
+        - export_to_parquet
+
+::: clinical_analytics.storage.versioning
+    options:
+      show_root_heading: true
+      show_source: true
+
+::: clinical_analytics.storage.query_logger.QueryLogger
+    options:
+      show_root_heading: true
+      show_source: true
+      members:
+        - __init__
+        - log_query
+        - log_execution
+        - log_result
+        - log_follow_up

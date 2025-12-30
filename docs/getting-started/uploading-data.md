@@ -56,14 +56,26 @@ Columns with:
 - **Categorical**: <20 unique values or string type
 - **Continuous**: Numeric with >20 unique values
 
-## Multi-Table Datasets
+## Upload Types
 
-For complex datasets (like MIMIC-IV):
+You can upload data in two ways - both work the same way:
 
-1. **Create a ZIP file** containing multiple CSV files
-2. **Upload the ZIP**: The platform detects relationships automatically
-3. **Review joins**: Check detected foreign keys in the UI
-4. **Override if needed**: Manually specify joins if auto-detection fails
+### Single File Upload
+
+Upload one CSV or Excel file:
+
+1. **Upload your file**: CSV, Excel, or SPSS format
+2. **Automatic detection**: The platform finds patient IDs, outcomes, and time variables automatically
+3. **Ready to analyze**: Start asking questions immediately
+
+### Multiple Files Upload
+
+For complex datasets with multiple related tables (like MIMIC-IV):
+
+1. **Create a ZIP file** containing all your CSV files
+2. **Upload the ZIP**: The platform automatically detects how tables relate to each other
+3. **Review connections**: Check that the platform correctly identified relationships between tables
+4. **Adjust if needed**: Manually specify connections if auto-detection missed something
 
 ### Example: MIMIC-IV
 
@@ -74,62 +86,68 @@ mimic-iv/
 └── diagnoses.csv       (patient_id, icd_code)
 ```
 
-The platform:
+The platform automatically:
 
-1. Detects `patient_id` as the primary key in patients.csv
-2. Finds matching `patient_id` in other tables
-3. Performs left joins automatically
-4. Creates unified cohort view
+1. Finds the patient ID column in each table
+2. Connects tables that share patient IDs
+3. Combines all tables into a single view for analysis
+4. Saves everything so you can analyze it later
 
 ## Manual Schema Override
 
-If auto-detection fails, you can manually specify:
+If the platform doesn't automatically detect your patient ID, outcomes, or time variables correctly, you can manually specify them in the upload interface. The platform will guide you through selecting the correct columns.
 
-```python
-from clinical_analytics.core.schema_inference import InferredSchema
+## Your Data is Saved
 
-schema = InferredSchema(
-    patient_id_column='subject_id',
-    outcome_columns=['mortality_28day'],
-    time_columns=['admission_date'],
-    time_zero='admission_date'
-)
-```
+**Important for your workflow:** Once you upload data, it's saved on your computer. You don't need to re-upload it every time.
+
+- ✅ **Data persists**: Your uploaded datasets are saved and available when you restart the app
+- ✅ **No re-uploading**: Close the browser or restart your computer - your data is still there
+- ✅ **Work across sessions**: Upload once, analyze multiple times over days or weeks
+- ✅ **Local storage only**: All data stays on your computer (never sent to external servers)
+
+**What this means for you:**
+- Upload your dataset once
+- Close the app and come back later - your data is still available
+- Refresh the page - your data doesn't disappear
+- Your analysis history is preserved (coming soon)
 
 ## Data Privacy
 
-The platform runs **entirely locally**. Your data:
+**Your data stays on your computer.** The platform runs entirely locally:
 
-- ✅ Never leaves your machine
-- ✅ Not sent to external APIs (for Tier 1/2 NL queries)
-- ✅ Processed in-memory with DuckDB
-- ⚠️ Tier 3 LLM fallback (optional) sends anonymized metadata only
+- ✅ **Never leaves your computer**: All data processing happens on your machine
+- ✅ **No cloud storage**: Your patient data is never uploaded to external servers
+- ✅ **HIPAA-friendly**: Local-only storage avoids cloud vendor complications
+- ⚠️ **Optional LLM fallback**: If enabled, only anonymized metadata (no patient data) is sent for complex queries
 
 ## Troubleshooting
 
 ### "Could not detect patient ID"
 
-Ensure you have a column with unique values per patient. If your data has no such column, add an index:
+**Problem:** The platform can't find a unique identifier for each patient.
 
-```python
-df['patient_id'] = range(len(df))
-```
+**Solution:**
+- Make sure you have a column with a unique value for each patient (like patient ID, subject ID, or MRN)
+- If your data doesn't have one, add a simple row number column in Excel before uploading
 
 ### "No outcome variables detected"
 
-Your outcome columns should be binary (0/1). Convert if needed:
+**Problem:** The platform can't find any outcome variables (like mortality, readmission).
 
-```python
-df['mortality'] = (df['status'] == 'died').astype(int)
-```
+**Solution:**
+- Your outcome columns should be binary (0/1 or Yes/No)
+- If your outcomes are text (like "died"/"alive"), convert them to 0/1 in Excel before uploading
+- Make sure outcome column names contain words like "mortality", "death", "readmission", etc.
 
 ### "Failed to join tables"
 
-Check that:
+**Problem:** When uploading multiple tables, the platform can't connect them together.
 
-1. Foreign key columns exist in child tables
-2. Column names match (case-sensitive)
-3. Values in child table exist in parent table
+**Solution:**
+- Make sure all tables have a matching patient ID column (same column name, same values)
+- Check that patient IDs in child tables actually exist in the main patient table
+- Column names are case-sensitive - "Patient_ID" and "patient_id" are treated as different
 
 ## Next Steps
 

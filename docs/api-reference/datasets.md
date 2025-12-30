@@ -42,3 +42,13 @@
     options:
       show_root_heading: true
       show_source: true
+
+## Storage & Versioning
+
+::: clinical_analytics.storage.versioning
+    options:
+      show_root_heading: true
+      show_source: true
+
+**Key Functions:**
+- `compute_dataset_version()` - Compute content hash of canonicalized tables

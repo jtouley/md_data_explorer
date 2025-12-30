@@ -170,6 +170,17 @@ For survival analysis:
 4. **Check Intent**: Review the interpreted analysis type before running
 5. **Iterate**: Refine your question based on results
 
+## Your Data is Saved
+
+**Don't worry about losing your work:** Your uploaded data is automatically saved on your computer. You can:
+
+- Close the browser and come back later - your data is still there
+- Refresh the page - your analysis continues where you left off
+- Work on the same dataset across multiple sessions
+- Your query history is preserved (coming soon)
+
+You only need to upload your data once.
+
 ## Fallback to Structured Questions
 
 If the NL query engine can't understand your question (confidence <50%), you can use structured questions:

@@ -91,22 +91,32 @@ For complex datasets with multiple tables (e.g., MIMIC-IV):
 
 ## Registration Workflow
 
+**Unified Architecture**: Single-table and multi-table uploads use identical workflows. Single-table = multi-table with 1 table.
+
 ### Single Table Upload
 
 ```
-1. User uploads CSV/Excel
+1. User uploads CSV/Excel/SPSS
    ↓
-2. SchemaInferenceEngine analyzes structure
+2. normalize_upload_to_table_list() normalizes to table list
    ↓
-3. InferredSchema generated
+3. SchemaInferenceEngine analyzes structure
    ↓
-4. Converted to Dataset Config
+4. InferredSchema generated
    ↓
-5. Registered in DatasetRegistry
+5. Dataset version computed (content hash)
    ↓
-6. SemanticLayer initialized
+6. Saved to persistent DuckDB + Parquet export
    ↓
-7. Ready for analysis
+7. Individual table saved to {upload_id}_tables/
+   ↓
+8. Converted to Dataset Config
+   ↓
+9. Registered in DatasetRegistry
+   ↓
+10. SemanticLayer initialized (all tables registered in DuckDB)
+   ↓
+11. Ready for analysis
 ```
 
 ### Multi-Table Upload
@@ -114,29 +124,45 @@ For complex datasets with multiple tables (e.g., MIMIC-IV):
 ```
 1. User uploads ZIP with multiple CSVs
    ↓
-2. Extract all tables
+2. normalize_upload_to_table_list() extracts all tables
    ↓
 3. MultiTableHandler detects relationships
    ↓
-4. Perform automatic joins
+4. Perform automatic joins (creates unified cohort)
    ↓
-5. Unified cohort DataFrame created
+5. SchemaInferenceEngine analyzes structure
    ↓
-6. SchemaInferenceEngine analyzes cohort
+6. InferredSchema generated
    ↓
-7. Registered as single dataset
+7. Dataset version computed (content hash)
    ↓
-8. Ready for analysis
+8. Saved to persistent DuckDB + Parquet export
+   ↓
+9. All individual tables saved to {upload_id}_tables/
+   ↓
+10. Converted to Dataset Config
+   ↓
+11. Registered in DatasetRegistry
+   ↓
+12. SemanticLayer initialized (all tables registered in DuckDB)
+   ↓
+13. Ready for analysis
 ```
+
+**Key Differences**: None. Both upload types follow identical workflow after normalization step.
 
 ## Configuration Format
 
 ### Auto-Inferred Config
 
+**Unified Format**: Both single-table and multi-table uploads use `inferred_schema` format (not `variable_mapping`).
+
 ```yaml
 name: my_dataset
 display_name: My Clinical Study
 status: auto-inferred
+upload_id: user_upload_20250101_120000_abc123
+dataset_version: a1b2c3d4e5f6g7h8  # Content hash
 
 column_mapping:
   patient_id: patient_id
@@ -152,13 +178,20 @@ outcomes:
 time_zero:
   source_column: admission_date
 
-tables:  # For multi-table datasets
-  - name: patients
-    primary_key: patient_id
+tables:  # All upload types have this (single-table = [table_0])
+  - name: table_0  # Single-table uses filename stem
+  - name: patients  # Multi-table uses ZIP entry names
   - name: admissions
+    primary_key: patient_id
     foreign_key: patient_id
     relationship: one-to-many
+
+granularities:  # Inferred from columns
+  - patient_level
+  - admission_level  # If admission_id column exists
 ```
+
+**Persistence**: Metadata stored in `data/uploads/metadata/{upload_id}.json` with complete schema information.
 
 ## Schema Override
 

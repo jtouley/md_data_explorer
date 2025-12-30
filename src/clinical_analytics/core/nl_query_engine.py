@@ -937,7 +937,7 @@ class NLQueryEngine:
 
         # Track which value phrases were already processed by exclusion patterns
         processed_value_phrases = set()
-        
+
         # Process exclusion patterns first (they have higher priority)
         for pattern in exclusion_patterns:
             matches = re.finditer(pattern, query_lower)
@@ -950,7 +950,7 @@ class NLQueryEngine:
                 # Exception: "those not on X" from fallback pattern is OK if it's 3 words
                 if len(value_phrase.split()) > 3:
                     continue
-                    
+
                 column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
                 if column_name and conf > 0.5:
                     # Normalize column name: if _fuzzy_match_variable returned full alias string,
@@ -966,7 +966,7 @@ class NLQueryEngine:
                                 break
                         if canonical_name:
                             column_name = canonical_name
-                    
+
                     # Check if this is a coded column
                     if self._is_coded_column(column_name):
                         # For exclusion filters on coded columns, exclude code 0 (n/a)
@@ -998,7 +998,7 @@ class NLQueryEngine:
                                     break
                             if canonical_name:
                                 column_name = canonical_name
-                        
+
                         filters.append(
                             FilterSpec(
                                 column=column_name,
@@ -1013,12 +1013,12 @@ class NLQueryEngine:
                             last_word = value_phrase.split()[-1]
                             processed_value_phrases.add(last_word)
                         continue
-        
+
         for pattern in categorical_patterns:
             matches = re.finditer(pattern, query_lower)
             for match in matches:
                 value_phrase = match.group(1).strip()
-                
+
                 # Skip if this value phrase was already processed by exclusion patterns
                 if value_phrase in processed_value_phrases:
                     continue
