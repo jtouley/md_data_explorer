@@ -1,28 +1,33 @@
-# Active Session: ADR001 Exclusion Filters Complete
+# Active Session
 
-**Session ID**: `adr001-exclusion-filters-complete`
+**Session ID**: `adr003_adr004_production_logs_analysis`
 
-**Session File**: `.context/sessions/adr001-exclusion-filters-complete.yaml`
-
-**Status**: Complete - PR #16 open for review
+**Session File**: `.context/sessions/adr003_adr004_production_logs_analysis.yaml`
 
 **Resume Prompt**:
+```
+Resume work on ADR003 and ADR004 updates based on production log analysis.
 
-Resume ADR001 implementation work. The exclusion filter patterns for "excluding those not on X" queries have been completed and tested. All tests pass (20+ filter extraction tests, 4 exclusion filter tests proving extensibility). PR #16 is open for review.
+Context:
+- Production logs showed contract violations: confidence gating not enforced, COUNT with no variables executing, run-key collisions, grouping on patient_id, redundant filters
+- ADR003 updated with explicit contract violations section and validation requirements
+- ADR004 updated with Tier 3 AutoContext Packager (deterministic, authoritative context)
+- Fixed local LLM model recommendations (removed misleading claims)
 
-Key accomplishments:
-- Generic exclusion filter patterns (no hardcoding, works for any medication/treatment type)
-- Column name normalization to ensure canonical names in FilterSpec
-- Extensibility tests for diabetes meds and treatment types
-- All ADR001 phases complete (0-3)
+Completed:
+- ADR003: Added "Production Contract Violations (2025-12-30)" section documenting 5 failures
+- ADR003: Updated Phase 3 implementation with confidence/completeness gating, COUNT validation, breakdown validation, filter deduplication, run-key determinism
+- ADR003: Added QueryPlan contract extensions (requires_grouping, entity_key, scope)
+- ADR003: Fixed local LLM section (removed "fine-tuned for JSON" claims, clarified model file size vs RAM)
+- ADR004: Added Tier 3 AutoContext Packager section (Phase 3, P0)
+- ADR004: Added explicit LLM Contract (may only reference columns in AutoContext)
+- ADR004: Emphasized deterministic construction (no LLM in context assembly)
+- ADR004: Added ownership boundaries (ADR004 is supply, ADR003 is enforcement)
 
-Next steps (out of scope for ADR001):
-- ADR002: Persistent storage, JSONL logging, lazy evaluation
-- ADR003: Trust UI, adaptive alias persistence, semantic layer execution
-
-Decision boundaries documented:
-- Pattern matching (Tier 1/1.5): 75% of queries
-- Semantic embeddings (Tier 2): When pattern matching fails
-- LLM (Tier 3): Only for complex multi-part queries
-- Polars expressions: Filter application and analysis
-- SQL/Ibis: Future optimization (ADR003 Phase 3)
+Next steps:
+- Implement ADR003 Phase 1: Trust UI with plan inspection
+- Implement ADR003 Phase 2: Alias persistence
+- Implement ADR003 Phase 3: QueryPlan execution with validation
+- Implement ADR004 Phase 3: AutoContext Packager
+- Integrate AutoContext with ADR001 Tier 3 LLM fallback
+```

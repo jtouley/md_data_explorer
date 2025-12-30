@@ -70,9 +70,7 @@ Upload → Polars Validation → DuckDB Table (persistent) → Parquet Export �
 
 ### Persistence Invariant
 
-**"Given the same upload hash + semantic config, results are immutable and reused."**
-
-This means:
+**"Given the same upload hash + semantic config, results are immutable and reused."**This means:
 
 - Same content hash → same `dataset_version` → same DuckDB table → same query results
 - Re-uploading identical data reuses existing storage (no duplication)
@@ -115,11 +113,7 @@ This means:
 
 ## Phase 1: Dataset Versioning & Metadata Schema (MVP)
 
-**Goal**: Implement core dataset versioning for persistence invariant. Defer edge cases to Phase 5+.
-
-**Scope**: MVP versioning only. Perfect dedup, re-upload handling, and edge cases deferred.
-
-**Files to Create:**
+**Goal**: Implement core dataset versioning for persistence invariant. Defer edge cases to Phase 5+.**Scope**: MVP versioning only. Perfect dedup, re-upload handling, and edge cases deferred.**Files to Create:**
 
 - [`src/clinical_analytics/storage/__init__.py`](src/clinical_analytics/storage/__init__.py) - New storage module
 - [`src/clinical_analytics/storage/versioning.py`](src/clinical_analytics/storage/versioning.py) - Version computation logic
@@ -137,16 +131,19 @@ This means:
 
 1. **Create `compute_dataset_version()` function** (MVP):
    ```python
-   def compute_dataset_version(tables: list[pl.DataFrame]) -> str:
-       """
-       Compute content hash of canonicalized tables.
-       
-       MVP: Simple hash of sorted table data. Perfect dedup deferred to Phase 5+.
-       """
-       # Canonicalize: sort rows by first column, normalize column order
-       # Return 16-char hex hash
-       # TODO (Phase 5+): Handle re-uploads, detect duplicates, reuse storage
+      def compute_dataset_version(tables: list[pl.DataFrame]) -> str:
+          """
+          Compute content hash of canonicalized tables.
+          
+          MVP: Simple hash of sorted table data. Perfect dedup deferred to Phase 5+.
+          """
+          # Canonicalize: sort rows by first column, normalize column order
+          # Return 16-char hex hash
+          # TODO (Phase 5+): Handle re-uploads, detect duplicates, reuse storage
    ```
+
+
+
 
 2. **Update metadata JSON schema** (MVP):
 
@@ -201,9 +198,7 @@ def test_save_table_list_stores_dataset_version():
 
 ## Phase 2: Persistent DuckDB Storage (MVP)
 
-**Goal**: Create `DataStore` class managing persistent DuckDB. Focus on core persistence, defer optimization.
-
-**Files to Create:**
+**Goal**: Create `DataStore` class managing persistent DuckDB. Focus on core persistence, defer optimization.**Files to Create:**
 
 - [`src/clinical_analytics/storage/datastore.py`](src/clinical_analytics/storage/datastore.py) - DataStore class
 
@@ -219,49 +214,52 @@ def test_save_table_list_stores_dataset_version():
 
 1. **Create `DataStore` class** (MVP):
    ```python
-   class DataStore:
-       """
-       Manages persistent DuckDB storage.
-       
-       Boundary: IO is eager (DuckDB writes), transforms are lazy (return LazyFrame).
-       """
-       def __init__(self, db_path: Path):
-           """Initialize persistent DuckDB connection."""
-           self.db_path = db_path
-           self.conn = duckdb.connect(str(db_path))
-       
-       def save_table(
-           self,
-           table_name: str,
-           data: pl.DataFrame,  # Eager IO boundary: materialize for DuckDB write
-           upload_id: str,
-           dataset_version: str,
-       ) -> None:
-           """
-           Save table to DuckDB with versioning.
-           
-           Enforces persistence invariant: same (upload_id, dataset_version) → same table.
-           """
-           # CREATE TABLE IF NOT EXISTS with version suffix
-           # Table name: {upload_id}_{table_name}_{dataset_version}
-       
-       def load_table(
-           self,
-           upload_id: str,
-           table_name: str,
-           dataset_version: str,
-       ) -> pl.LazyFrame:  # Transform boundary: return lazy for downstream
-           """
-           Load table as Polars lazy frame.
-           
-           Boundary: Returns LazyFrame (lazy transform), not eager DataFrame.
-           """
-           # SELECT * FROM table, return pl.scan_duckdb()
-       
-       def list_datasets(self) -> list[dict]:
-           """List all datasets in DuckDB."""
-           # Query information_schema for table names
+      class DataStore:
+          """
+          Manages persistent DuckDB storage.
+          
+          Boundary: IO is eager (DuckDB writes), transforms are lazy (return LazyFrame).
+          """
+          def __init__(self, db_path: Path):
+              """Initialize persistent DuckDB connection."""
+              self.db_path = db_path
+              self.conn = duckdb.connect(str(db_path))
+          
+          def save_table(
+              self,
+              table_name: str,
+              data: pl.DataFrame,  # Eager IO boundary: materialize for DuckDB write
+              upload_id: str,
+              dataset_version: str,
+          ) -> None:
+              """
+              Save table to DuckDB with versioning.
+              
+              Enforces persistence invariant: same (upload_id, dataset_version) → same table.
+              """
+              # CREATE TABLE IF NOT EXISTS with version suffix
+              # Table name: {upload_id}_{table_name}_{dataset_version}
+          
+          def load_table(
+              self,
+              upload_id: str,
+              table_name: str,
+              dataset_version: str,
+          ) -> pl.LazyFrame:  # Transform boundary: return lazy for downstream
+              """
+              Load table as Polars lazy frame.
+              
+              Boundary: Returns LazyFrame (lazy transform), not eager DataFrame.
+              """
+              # SELECT * FROM table, return pl.scan_duckdb()
+          
+          def list_datasets(self) -> list[dict]:
+              """List all datasets in DuckDB."""
+              # Query information_schema for table names
    ```
+
+
+
 
 2. **Integrate into `save_table_list()`** (MVP):
 
@@ -333,17 +331,20 @@ def test_datastore_table_survives_restart(tmp_path, sample_table):
 
 1. **Add Parquet export to DataStore**:
    ```python
-         def export_to_parquet(
-             self,
-             upload_id: str,
-             table_name: str,
-             dataset_version: str,
-             parquet_dir: Path,
-         ) -> Path:
-             """Export DuckDB table to Parquet file."""
-             # COPY table TO 'path.parquet' (FORMAT PARQUET)
-             # Return path to Parquet file
+            def export_to_parquet(
+                self,
+                upload_id: str,
+                table_name: str,
+                dataset_version: str,
+                parquet_dir: Path,
+            ) -> Path:
+                """Export DuckDB table to Parquet file."""
+                # COPY table TO 'path.parquet' (FORMAT PARQUET)
+                # Return path to Parquet file
    ```
+
+
+
 
 2. **Update `save_table_list()`**:
 
@@ -412,12 +413,15 @@ def test_lazy_evaluation_predicate_pushdown(upload_storage, create_upload):
 
 1. **Add `restore_datasets()` function**:
    ```python
-         def restore_datasets(storage: UserDatasetStorage, datastore: DataStore) -> list[dict]:
-             """Detect existing datasets and return metadata."""
-             # Query DataStore for all upload_ids
-             # Load metadata JSON for each
-             # Return list of dataset metadata
+            def restore_datasets(storage: UserDatasetStorage, datastore: DataStore) -> list[dict]:
+                """Detect existing datasets and return metadata."""
+                # Query DataStore for all upload_ids
+                # Load metadata JSON for each
+                # Return list of dataset metadata
    ```
+
+
+
 
 2. **Update app startup**:
 
@@ -481,46 +485,49 @@ def test_session_recovery_loads_dataset_on_startup(upload_storage, datastore):
 
 1. **Create `QueryLogger` class**:
    ```python
-         class QueryLogger:
-             def __init__(self, log_dir: Path):
-                 """Initialize JSONL logger."""
-                 self.log_dir = log_dir
-             
-             def log_query(
-                 self,
-                 upload_id: str,
-                 query_text: str,
-                 query_plan: dict,
-                 parsing_attempts: list[dict],
-             ) -> None:
-                 """Log query parsing event."""
-                 # Append JSONL entry with query metadata
-             
-             def log_execution(
-                 self,
-                 upload_id: str,
-                 run_key: str,
-                 execution_time_ms: int,
-                 cohort_shape: tuple[int, int],
-             ) -> None:
-                 """Log query execution event."""
-             
-             def log_result(
-                 self,
-                 upload_id: str,
-                 result_type: str,
-                 result_metadata: dict,
-             ) -> None:
-                 """Log query result."""
-             
-             def log_follow_up(
-                 self,
-                 upload_id: str,
-                 suggestions_shown: list[str],
-                 suggestion_clicked: str | None,
-             ) -> None:
-                 """Log follow-up suggestion interactions."""
+            class QueryLogger:
+                def __init__(self, log_dir: Path):
+                    """Initialize JSONL logger."""
+                    self.log_dir = log_dir
+                
+                def log_query(
+                    self,
+                    upload_id: str,
+                    query_text: str,
+                    query_plan: dict,
+                    parsing_attempts: list[dict],
+                ) -> None:
+                    """Log query parsing event."""
+                    # Append JSONL entry with query metadata
+                
+                def log_execution(
+                    self,
+                    upload_id: str,
+                    run_key: str,
+                    execution_time_ms: int,
+                    cohort_shape: tuple[int, int],
+                ) -> None:
+                    """Log query execution event."""
+                
+                def log_result(
+                    self,
+                    upload_id: str,
+                    result_type: str,
+                    result_metadata: dict,
+                ) -> None:
+                    """Log query result."""
+                
+                def log_follow_up(
+                    self,
+                    upload_id: str,
+                    suggestions_shown: list[str],
+                    suggestion_clicked: str | None,
+                ) -> None:
+                    """Log follow-up suggestion interactions."""
    ```
+
+
+
 
 2. **Integrate logging hooks**:
 
@@ -688,21 +695,21 @@ Before every commit:
 
 1. **Perfect Deduplication**:
 
-   - Re-upload detection (same content hash)
-   - Storage reuse (don't duplicate tables/artifacts)
-   - TODO: Add to Phase 5+ plan
+- Re-upload detection (same content hash)
+- Storage reuse (don't duplicate tables/artifacts)
+- TODO: Add to Phase 5+ plan
 
 2. **Edge Case Handling**:
 
-   - Multi-table re-uploads with partial changes
-   - Schema evolution handling
-   - TODO: Add to Phase 5+ plan
+- Multi-table re-uploads with partial changes
+- Schema evolution handling
+- TODO: Add to Phase 5+ plan
 
 3. **Storage Optimization**:
 
-   - Table compression strategies
-   - Archive old versions
-   - TODO: Add to Phase 5+ plan
+- Table compression strategies
+- Archive old versions
+- TODO: Add to Phase 5+ plan
 
 **MVP Focus**: Ship core persistence invariant first. Move unresolved elegance into explicit follow-up plans.
 
@@ -710,4 +717,3 @@ Before every commit:
 
 - [ADR002: Persistent Storage Layer](docs/implementation/ADR/ADR002.md)
 - [ADR007: Feature Parity Architecture](docs/implementation/ADR/ADR007.md)
-- [Plan Execution Hygiene](.cursor/rules/104-plan-execution-hygiene.mdc)
