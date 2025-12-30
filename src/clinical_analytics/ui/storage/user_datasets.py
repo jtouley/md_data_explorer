@@ -28,6 +28,184 @@ class SecurityError(Exception):
     pass
 
 
+class UploadError(Exception):
+    """Upload processing error (malformed files, invalid content, etc.)."""
+
+    pass
+
+
+# Re-export schema conversion functions for backward compatibility
+# These are now defined in clinical_analytics.datasets.uploaded.schema_conversion
+# but kept here for existing imports
+
+
+def normalize_upload_to_table_list(
+    file_bytes: bytes,
+    filename: str,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """
+    Normalize any upload to unified table list.
+
+    This is the ONLY function that detects upload type.
+    Everything downstream uses unified table list format.
+
+    Args:
+        file_bytes: File content
+        filename: Original filename (used to detect type)
+        metadata: Optional metadata (for progress callbacks)
+
+    Returns:
+        (tables, table_metadata) where:
+        - tables: list of {"name": str, "data": pl.DataFrame}
+        - table_metadata: dict with table_count, table_names, etc.
+    """
+    # Detect upload type from file extension
+    if filename.endswith(".zip"):
+        # Multi-table: extract from ZIP
+        tables = extract_zip_tables(file_bytes)
+    else:
+        # Single-file: wrap in list (becomes multi-table with 1 table)
+        df = load_single_file(file_bytes, filename)
+        table_name = Path(filename).stem  # Use original filename stem
+        tables = [{"name": table_name, "data": df}]
+
+    # Build metadata
+    table_metadata = {
+        "table_count": len(tables),
+        "table_names": [t["name"] for t in tables],
+    }
+
+    return tables, table_metadata
+
+
+def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
+    """
+    Extract tables from ZIP archive.
+
+    Args:
+        file_bytes: ZIP file content
+
+    Returns:
+        List of {"name": str, "data": pl.DataFrame} dicts
+
+    Raises:
+        SecurityError: If path traversal or invalid paths detected
+        UploadError: If no CSV files or corrupted ZIP
+    """
+    import gzip
+    import io
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            # Security: Check for path traversal
+            for entry in z.namelist():
+                if ".." in entry or entry.startswith("/"):
+                    raise SecurityError(f"Invalid path: {entry}")
+
+            # Get CSV files (including .csv.gz), skip __MACOSX and directories
+            csv_files = [
+                e
+                for e in z.namelist()
+                if (e.endswith(".csv") or e.endswith(".csv.gz"))
+                and not e.startswith("__MACOSX")
+                and not e.endswith("/")  # Skip directory entries
+            ]
+
+            if not csv_files:
+                raise UploadError("No CSV files in ZIP")
+
+            # Check for duplicate table names
+            seen = set()
+            tables = []
+
+            for entry in csv_files:
+                # Extract table name (filename stem)
+                name = Path(entry).stem
+                if name.endswith(".csv"):  # Handle .csv.gz case
+                    name = Path(name).stem
+
+                if name in seen:
+                    raise UploadError(f"Duplicate table name: {name}")
+                seen.add(name)
+
+                # Read file content
+                csv_content = z.read(entry)
+
+                # Handle gzip compression
+                if entry.endswith(".gz"):
+                    csv_content = gzip.decompress(csv_content)
+
+                # Load as Polars DataFrame with robust schema inference
+                try:
+                    df = pl.read_csv(
+                        io.BytesIO(csv_content),
+                        infer_schema_length=10000,  # Scan more rows for better type inference
+                        try_parse_dates=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"Schema inference failed for {name}, falling back to string types: {e}")
+                    # Fallback: read with all columns as strings
+                    df = pl.read_csv(
+                        io.BytesIO(csv_content),
+                        infer_schema_length=0,  # Treat all as strings
+                    )
+
+                tables.append({"name": name, "data": df})
+                logger.debug(f"Loaded table '{name}': {df.height:,} rows, {df.width} cols")
+
+            return tables
+
+    except zipfile.BadZipFile:
+        raise UploadError("Corrupted ZIP file")
+
+
+def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
+    """
+    Load single file (CSV, Excel, SPSS) as Polars DataFrame.
+
+    Args:
+        file_bytes: File content
+        filename: Original filename (determines file type)
+
+    Returns:
+        Polars DataFrame
+
+    Raises:
+        ValueError: If unsupported file type
+    """
+    import io
+
+    file_ext = Path(filename).suffix.lower()
+
+    if file_ext == ".csv":
+        # Load CSV with Polars
+        return pl.read_csv(io.BytesIO(file_bytes))
+
+    elif file_ext in {".xlsx", ".xls"}:
+        # Load Excel with Polars (openpyxl engine)
+        try:
+            return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+        except Exception as e:
+            logger.warning(f"Polars Excel read failed: {e}. Falling back to pandas.")
+            # PANDAS EXCEPTION: Required for Excel files when Polars fails
+            # TODO: Remove when Polars Excel support is more robust
+            import pandas as pd
+
+            df_pandas = pd.read_excel(io.BytesIO(file_bytes))
+            return pl.from_pandas(df_pandas)
+
+    elif file_ext == ".sav":
+        # Load SPSS file
+        import pyreadstat
+
+        df_pandas, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
+        return pl.from_pandas(df_pandas)
+
+    else:
+        raise ValueError(f"Unsupported file type: {file_ext}")
+
+
 def _safe_store_upload(
     file_bytes: bytes,
     base_dir: Path,
@@ -241,6 +419,176 @@ class UploadSecurityValidator:
         return True, ""
 
 
+def save_table_list(
+    storage: "UserDatasetStorage",
+    tables: list[dict[str, Any]],
+    upload_id: str,
+    metadata: dict[str, Any],
+    progress_cb: Callable[[int, str], None] | None = None,
+) -> tuple[bool, str]:
+    """
+    Save normalized table list to disk (unified persistence for both upload types).
+
+    CRITICAL: Schema conversion happens AFTER normalization (fixes circular dependency).
+
+    Args:
+        storage: UserDatasetStorage instance
+        tables: Normalized table list [{"name": str, "data": pl.DataFrame}]
+        upload_id: Upload identifier
+        metadata: Upload metadata
+        progress_cb: Optional progress callback
+
+    Returns:
+        (success, message)
+    """
+    try:
+        # 1. Convert schema (AFTER normalization, has df access)
+        if "variable_mapping" in metadata and tables:
+            from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
+
+            metadata["inferred_schema"] = convert_schema(
+                metadata["variable_mapping"],
+                tables[0]["data"],  # Access normalized DataFrame
+            )
+
+        # 2. Save individual tables to {upload_id}_tables/
+        tables_dir = storage.raw_dir / f"{upload_id}_tables"
+        tables_dir.mkdir(exist_ok=True)
+
+        table_names = []
+        for table in tables:
+            table_name = table["name"]
+            table_names.append(table_name)
+            table_path = tables_dir / f"{table_name}.csv"
+            table["data"].write_csv(table_path)
+            logger.debug(f"Saved table '{table_name}' ({table['data'].height:,} rows) to {table_path}")
+
+        # 3. Build unified cohort (for backward compatibility)
+        if len(tables) == 1:
+            # Single-table: unified cohort = first table
+            unified_df = tables[0]["data"]
+        else:
+            # Multi-table: use MultiTableHandler to build unified cohort
+            from clinical_analytics.core.multi_table_handler import MultiTableHandler
+
+            # Convert list of dicts to dict for handler
+            tables_dict = {t["name"]: t["data"] for t in tables}
+            handler = MultiTableHandler(tables_dict)
+
+            # Use relationships from metadata if present (avoid duplicate detection)
+            if "relationships" in metadata and metadata["relationships"]:
+                # Relationships already detected, just build unified cohort
+                logger.debug("Using relationships from metadata")
+            else:
+                # Detect relationships and store in metadata
+                relationships = handler.detect_relationships()
+                metadata["relationships"] = [str(rel) for rel in relationships]
+                logger.info(f"Detected {len(relationships)} relationships")
+
+            unified_df = handler.build_unified_cohort()
+            handler.close()
+
+        # 4. Save unified cohort CSV
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        unified_df.write_csv(csv_path)
+        logger.info(f"Saved unified cohort ({unified_df.height:,} rows) to {csv_path}")
+
+        # 5. Infer schema for unified cohort (if not already present)
+        if "inferred_schema" not in metadata:
+            from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
+            engine = SchemaInferenceEngine()
+            schema = engine.infer_schema(unified_df)
+            metadata["inferred_schema"] = schema.to_dataset_config()
+
+        # 6. Save metadata with tables list and inferred_schema
+        full_metadata = {
+            **metadata,
+            "upload_id": upload_id,
+            "tables": table_names,
+            "table_counts": {t["name"]: t["data"].height for t in tables},
+            "row_count": unified_df.height,
+            "column_count": unified_df.width,
+            "columns": list(unified_df.columns),
+        }
+
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        with open(metadata_path, "w") as f:
+            json.dump(full_metadata, f, indent=2)
+
+        logger.info(f"Saved {len(tables)} tables for upload {upload_id}")
+        return True, f"Saved {len(tables)} tables"
+
+    except Exception as e:
+        logger.error(f"Error saving tables for upload {upload_id}: {e}")
+        import traceback
+
+        logger.debug(traceback.format_exc())
+        return False, f"Error saving tables: {str(e)}"
+
+
+def _migrate_legacy_upload(
+    storage: "UserDatasetStorage",
+    upload_id: str,
+    metadata: dict[str, Any],
+) -> None:
+    """
+    Migrate legacy single-table upload to unified format.
+
+    Creates {upload_id}_tables/ directory and copies/derives table from existing CSV.
+    Converts variable_mapping to inferred_schema if needed.
+    Updates metadata with tables list and migrated_to_v2 marker.
+
+    Args:
+        storage: UserDatasetStorage instance
+        upload_id: Upload identifier
+        metadata: Upload metadata (will be updated in place)
+    """
+    # Load existing CSV
+    csv_path = storage.raw_dir / f"{upload_id}.csv"
+    if not csv_path.exists():
+        logger.warning(f"Legacy CSV not found for migration: {csv_path}")
+        return  # Nothing to migrate
+
+    logger.info(f"Migrating legacy upload {upload_id} to unified format")
+
+    # Load as Polars DataFrame
+    df = pl.read_csv(csv_path)
+
+    # Create tables directory
+    tables_dir = storage.raw_dir / f"{upload_id}_tables"
+    tables_dir.mkdir(exist_ok=True)
+
+    # Determine table name (use original filename stem if available)
+    table_name = Path(metadata.get("original_filename", "data.csv")).stem
+    if not table_name or table_name == "data":
+        # Fallback to generic name
+        table_name = "table_0"
+
+    # Save as individual table
+    table_path = tables_dir / f"{table_name}.csv"
+    df.write_csv(table_path)
+    logger.info(f"Migrated table '{table_name}' to {table_path}")
+
+    # Convert variable_mapping to inferred_schema if needed
+    if "variable_mapping" in metadata and "inferred_schema" not in metadata:
+        from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
+
+        metadata["inferred_schema"] = convert_schema(metadata["variable_mapping"], df)
+        logger.info("Converted variable_mapping to inferred_schema")
+
+    # Update metadata
+    metadata["tables"] = [table_name]
+    metadata["migrated_to_v2"] = True
+
+    # Write back metadata
+    metadata_path = storage.metadata_dir / f"{upload_id}.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    logger.info(f"Migration complete for upload {upload_id}")
+
+
 class UserDatasetStorage:
     """
     Manages storage and retrieval of user-uploaded datasets.
@@ -359,116 +707,52 @@ class UserDatasetStorage:
                         None,
                     )
 
-            # Convert to CSV format (normalize all uploads to CSV)
-            file_ext = Path(original_filename).suffix.lower()
-
+            # Normalize upload to table list (unified entry point)
             if progress_cb:
                 try:
-                    progress_cb(20, f"Reading {file_ext.upper()} file ({len(file_bytes):,} bytes)...")
+                    progress_cb(20, "Normalizing upload to table list...")
                 except Exception:
                     pass  # Best-effort
 
-            # Always use upload_id as immutable storage key (avoids collisions, rename issues)
-            csv_filename = f"{upload_id}.csv"
-            csv_path = self.raw_dir / csv_filename
+            tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
 
-            # Use atomic write (temp file + rename) to avoid TOCTOU race conditions
+            # For single-table uploads, ensure patient_id exists (transparent to user)
+            if len(tables) == 1:
+                from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
-            temp_path = self.raw_dir / f".{upload_id}.tmp"
+                logger.info(f"Ensuring patient_id exists for upload {upload_id}")
+                df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(tables[0]["data"])
 
-            if file_ext == ".csv":
-                # Already CSV - read from bytes (will add patient_id before writing)
-                import io
+                logger.info(
+                    f"Patient ID creation result: source={id_metadata['patient_id_source']}, "
+                    f"columns={id_metadata.get('patient_id_columns')}, "
+                    f"has_patient_id={'patient_id' in df_with_id.columns}"
+                )
 
-                if progress_cb:
-                    try:
-                        progress_cb(40, "Parsing CSV data...")
-                    except Exception:
-                        pass  # Best-effort
-                df = pd.read_csv(io.BytesIO(file_bytes))
+                # Store metadata about how patient_id was created
+                if "synthetic_id_metadata" not in metadata:
+                    metadata["synthetic_id_metadata"] = {}
+                metadata["synthetic_id_metadata"]["patient_id"] = id_metadata
 
-            elif file_ext in {".xlsx", ".xls"}:
-                # Excel file - convert to CSV
-                import io
+                # Update table with patient_id
+                tables[0]["data"] = df_with_id
 
-                if progress_cb:
-                    try:
-                        progress_cb(35, "Reading Excel file...")
-                    except Exception:
-                        pass  # Best-effort
-                # Use Polars native Excel reader to handle mixed types better
-                try:
-                    df_polars = pl.read_excel(
-                        io.BytesIO(file_bytes),
-                        engine="openpyxl",  # Use openpyxl instead of fastexcel
+                # Verify patient_id exists before saving
+                if "patient_id" not in df_with_id.columns:
+                    logger.error(
+                        f"patient_id column missing after ensure_patient_id! Columns: {list(df_with_id.columns)}"
                     )
-                    # Convert to pandas for processing
-                    df = df_polars.to_pandas()
-                    logger.info("Successfully loaded Excel file using Polars with openpyxl engine")
-                except Exception as polars_error:
-                    logger.warning(f"Polars Excel reading failed: {polars_error}. Falling back to pandas read_excel.")
-                    # Fallback to pandas if Polars fails
-                    df = pd.read_excel(io.BytesIO(file_bytes))
-                    logger.info("Successfully loaded Excel file using pandas fallback")
+                    raise ValueError("Failed to create patient_id column")
+                logger.info(
+                    f"Successfully ensured patient_id exists. DataFrame shape: {df_with_id.shape}, "
+                    f"columns: {list(df_with_id.columns)}"
+                )
 
-            elif file_ext == ".sav":
-                # SPSS file - convert to CSV
-                import io
-
-                import pyreadstat
-
-                if progress_cb:
-                    try:
-                        progress_cb(35, "Reading SPSS file...")
-                    except Exception:
-                        pass  # Best-effort
-                df, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
-
+                # Convert to pandas for validation (existing validation logic uses pandas)
+                df = df_with_id.to_pandas()
             else:
-                return False, f"Unsupported file type: {file_ext}", None
-
-            # Automatically ensure patient_id exists (transparent to user)
-            from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
-
-            logger.info(f"Ensuring patient_id exists for upload {upload_id}")
-            # Convert to Polars for processing
-            df_polars = pl.from_pandas(df) if isinstance(df, pd.DataFrame) else df
-            df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_polars)
-
-            logger.info(
-                f"Patient ID creation result: source={id_metadata['patient_id_source']}, "
-                f"columns={id_metadata.get('patient_id_columns')}, "
-                f"has_patient_id={'patient_id' in df_with_id.columns}"
-            )
-
-            # Store metadata about how patient_id was created
-            if "synthetic_id_metadata" not in metadata:
-                metadata["synthetic_id_metadata"] = {}
-            metadata["synthetic_id_metadata"]["patient_id"] = id_metadata
-
-            # Convert back to pandas for CSV writing
-            df = df_with_id.to_pandas() if isinstance(df, pd.DataFrame) else df_with_id
-
-            # Verify patient_id exists before saving
-            if "patient_id" not in df.columns:
-                logger.error(f"patient_id column missing after ensure_patient_id! Columns: {list(df.columns)}")
-                raise ValueError("Failed to create patient_id column")
-            logger.info(
-                f"Successfully ensured patient_id exists. DataFrame shape: {df.shape}, columns: {list(df.columns)}"
-            )
-
-            # Write CSV with patient_id included
-            if progress_cb:
-                try:
-                    progress_cb(60, f"Saving data file ({len(df):,} rows, {len(df.columns)} columns)...")
-                except Exception:
-                    pass  # Best-effort
-            # Write DataFrame with patient_id to temp file
-            df.to_csv(temp_path, index=False)
-
-            # Atomic rename: temp file → final file (single filesystem operation)
-            # This eliminates TOCTOU race window between exists() check and write
-            temp_path.replace(csv_path)
+                # Multi-table: use first table for validation (shouldn't happen in save_upload, but handle gracefully)
+                df = tables[0]["data"].to_pandas()
 
             # Validate schema if variable mapping is provided
             # This enforces the UnifiedCohort schema contract at save-time
@@ -550,13 +834,6 @@ class UserDatasetStorage:
                             validation_result["schema_errors"],
                         )
 
-            # Save metadata
-            if progress_cb:
-                try:
-                    progress_cb(85, "Saving dataset metadata and configuration...")
-                except Exception:
-                    pass  # Best-effort
-
             # Extract validation_result from metadata BEFORE merging
             # This prevents duplication - canonical location is metadata["validation"]
             validation_result_from_ui = metadata.pop("validation_result", None)
@@ -572,34 +849,38 @@ class UserDatasetStorage:
                 # Fallback to internal validation if UI didn't provide it
                 quality_warnings = internal_validation_result.get("quality_warnings", [])
 
-            full_metadata = {
-                "upload_id": upload_id,
-                "original_filename": safe_filename,
-                # CRITICAL: upload_id is the immutable storage key
-                # csv_filename is always {upload_id}.csv (never user-controlled)
-                "dataset_name": dataset_name,  # User-provided friendly name (display metadata only)
-                "upload_timestamp": datetime.now().isoformat(),
-                "file_size_bytes": len(file_bytes),
-                "file_format": file_ext.lstrip("."),
-                "row_count": len(df),
-                "column_count": len(df.columns),
-                "columns": list(df.columns),
-                "schema_validation": schema_validation_result,
-                "validation": {
-                    "quality_warnings": quality_warnings,
-                },
-                **metadata,
-            }
+            # Prepare metadata for save_table_list()
+            file_ext = Path(original_filename).suffix.lower()
+            metadata.update(
+                {
+                    "original_filename": safe_filename,
+                    "dataset_name": dataset_name,
+                    "upload_timestamp": datetime.now().isoformat(),
+                    "file_size_bytes": len(file_bytes),
+                    "file_format": file_ext.lstrip("."),
+                    "schema_validation": schema_validation_result,
+                    "validation": {
+                        "quality_warnings": quality_warnings,
+                    },
+                }
+            )
 
-            metadata_path = self.metadata_dir / f"{upload_id}.json"
-            with open(metadata_path, "w") as f:
-                json.dump(full_metadata, f, indent=2)
+            # Update table with validated data (convert back to Polars for save_table_list)
+            if len(tables) == 1:
+                # Convert validated pandas DataFrame back to Polars
+                tables[0]["data"] = pl.from_pandas(df)
 
+            # Save using unified save_table_list() function
             if progress_cb:
                 try:
-                    progress_cb(95, "Finalizing upload...")
+                    progress_cb(85, "Saving dataset files and metadata...")
                 except Exception:
                     pass  # Best-effort
+
+            success, message = save_table_list(self, tables, upload_id, metadata, progress_cb)
+
+            if not success:
+                return False, message, None
 
             if progress_cb:
                 try:
@@ -637,10 +918,10 @@ class UserDatasetStorage:
 
     def get_upload_data(self, upload_id: str) -> pd.DataFrame | None:
         """
-        Load uploaded dataset.
+        Load uploaded dataset with automatic legacy migration.
 
         Uses upload_id as immutable storage key: always {upload_id}.csv
-        Backward compatibility: checks for old friendly-name files if upload_id.csv doesn't exist.
+        Automatically migrates legacy single-table uploads to unified format.
 
         Args:
             upload_id: Upload identifier (immutable storage key)
@@ -648,12 +929,28 @@ class UserDatasetStorage:
         Returns:
             DataFrame or None if not found
         """
+        # Load metadata
+        metadata = self.get_upload_metadata(upload_id)
+        if not metadata:
+            return None
+
+        # Check if legacy upload needs migration
+        tables_dir = self.raw_dir / f"{upload_id}_tables"
+        needs_migration = not metadata.get("migrated_to_v2", False) and (
+            not metadata.get("tables") or not tables_dir.exists()
+        )
+
+        if needs_migration:
+            logger.info(f"Detected legacy upload {upload_id}, migrating to unified format")
+            _migrate_legacy_upload(self, upload_id, metadata)
+            # Reload metadata after migration
+            metadata = self.get_upload_metadata(upload_id)
+
         # Primary: upload_id is the immutable storage key
         csv_path = self.raw_dir / f"{upload_id}.csv"
 
         # Backward compatibility: check for old friendly-name files
         if not csv_path.exists():
-            metadata = self.get_upload_metadata(upload_id)
             if metadata:
                 # Try old stored_relpath or stored_filename (legacy uploads)
                 if "stored_relpath" in metadata:
@@ -785,11 +1082,7 @@ class UserDatasetStorage:
                 None,
             )
 
-        import io
-        import zipfile
-
         from clinical_analytics.core.multi_table_handler import MultiTableHandler
-        from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
         # Security validation
         valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
@@ -805,129 +1098,55 @@ class UserDatasetStorage:
             logger = logging.getLogger(__name__)
             logger.info(f"Starting ZIP upload processing: {original_filename}")
 
-            # Extract ZIP contents
-            zip_buffer = io.BytesIO(file_bytes)
-            tables: dict[str, pl.DataFrame] = {}
+            # Normalize upload to table list (unified entry point)
+            if progress_callback:
+                progress_callback(0, 10, "Initializing ZIP extraction...", {})
 
-            with zipfile.ZipFile(zip_buffer, "r") as zip_file:
-                # Get list of CSV files in ZIP (including .csv.gz in subdirectories)
-                csv_files = [
-                    f
-                    for f in zip_file.namelist()
-                    if (f.endswith(".csv") or f.endswith(".csv.gz"))
-                    and not f.startswith("__MACOSX")
-                    and not f.endswith("/")  # Skip directory entries
-                ]
+            tables_list, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
 
-                if not csv_files:
-                    return False, "No CSV files found in ZIP archive", None
+            if not tables_list:
+                return False, "No tables found in ZIP archive", None
 
-                logger.info(f"Found {len(csv_files)} CSV files in ZIP archive")
+            logger.info(f"Normalized {len(tables_list)} tables from ZIP: {[t['name'] for t in tables_list]}")
 
-                # Calculate total steps now that we know number of files
-                # 1 (found tables) + len(csv_files) (loading) + 4 (detect, build, save, infer)
-                total_steps = 1 + len(csv_files) + 4
-
-                if progress_callback:
-                    progress_callback(0, total_steps, "Initializing ZIP extraction...", {})
+            # Report table loading progress (for compatibility with existing tests)
+            if progress_callback:
+                for idx, table in enumerate(tables_list, start=1):
                     progress_callback(
-                        1,
-                        total_steps,
-                        f"Found {len(csv_files)} tables to load",
+                        idx,
+                        10,
+                        f"Loaded {table['name']}: {table['data'].height:,} rows, {table['data'].width} cols",
                         {
-                            "tables_found": len(csv_files),
-                            "table_names": [Path(f).stem for f in csv_files],
+                            "table_name": table["name"],
+                            "rows": table["data"].height,
+                            "cols": table["data"].width,
+                            "status": "loaded",
                         },
                     )
 
-                # Load each CSV as a table
-                for idx, csv_filename in enumerate(csv_files, start=1):
-                    # Extract table name (without path and extension)
-                    table_name = Path(csv_filename).stem
-                    if table_name.endswith(".csv"):
-                        # Handle .csv.gz case where stem gives us "filename.csv"
-                        table_name = Path(table_name).stem
+            # Convert list of dicts to dict for MultiTableHandler
+            tables_dict = {t["name"]: t["data"] for t in tables_list}
 
-                    logger.info(f"Loading table {idx}/{len(csv_files)}: {table_name} from {csv_filename}")
-
-                    if progress_callback:
-                        progress_callback(
-                            1 + idx,
-                            total_steps,
-                            f"Loading table: {table_name}",
-                            {
-                                "table_name": table_name,
-                                "file": csv_filename,
-                                "progress": f"{idx}/{len(csv_files)}",
-                            },
-                        )
-
-                    # Read file content
-                    csv_content = zip_file.read(csv_filename)
-
-                    # Handle gzip compression
-                    if csv_filename.endswith(".gz"):
-                        import gzip
-
-                        logger.debug(f"Decompressing gzip file: {csv_filename}")
-                        csv_content = gzip.decompress(csv_content)
-
-                    # Load as Polars DataFrame with robust schema inference
-                    # Use larger infer_schema_length to handle mixed-type columns (e.g., ICD codes)
-                    try:
-                        logger.debug(f"Reading CSV with schema inference for {table_name}")
-                        df = pl.read_csv(
-                            io.BytesIO(csv_content),
-                            infer_schema_length=10000,  # Scan more rows for better type inference
-                            try_parse_dates=True,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Schema inference failed for {table_name}, falling back to string types: {e}")
-                        # Fallback: read with all columns as strings, let DuckDB handle types
-                        df = pl.read_csv(
-                            io.BytesIO(csv_content),
-                            infer_schema_length=0,  # Treat all as strings
-                        )
-
-                    tables[table_name] = df
-                    logger.info(f"Loaded table '{table_name}': {df.height:,} rows, {df.width} cols")
-                    logger.debug(f"Schema for {table_name}: {dict(df.schema)}")
-
-                    if progress_callback:
-                        progress_callback(
-                            1 + idx,
-                            total_steps,
-                            f"Loaded {table_name}: {df.height:,} rows, {df.width} cols",
-                            {
-                                "table_name": table_name,
-                                "rows": df.height,
-                                "cols": df.width,
-                                "status": "loaded",
-                            },
-                        )
-
-            logger.info(f"Extracted {len(tables)} tables from ZIP: {list(tables.keys())}")
-
-            # Detect relationships between tables
-            # Step calculation: 1 (init) + len(csv_files) (loading) = current step
-            step_num = 1 + len(csv_files)
-            logger.info(f"Detecting relationships for {len(tables)} tables")
-
+            # Detect relationships between tables (for metadata)
+            step_num = len(tables_list) + 1
             if progress_callback:
                 progress_callback(
                     step_num,
-                    total_steps,
+                    10,
                     "Detecting table relationships...",
                     {
-                        "tables": list(tables.keys()),
-                        "table_counts": {name: df.height for name, df in tables.items()},
+                        "tables": list(tables_dict.keys()),
+                        "table_counts": {name: df.height for name, df in tables_dict.items()},
                     },
                 )
 
-            handler = MultiTableHandler(tables)
-            relationships = handler.detect_relationships()
-            logger.info(f"Detected {len(relationships)} relationships")
+            from clinical_analytics.core.multi_table_handler import MultiTableHandler
 
+            handler = MultiTableHandler(tables_dict)
+            relationships = handler.detect_relationships()
+            handler.close()
+
+            logger.info(f"Detected {len(relationships)} relationships")
             if relationships:
                 for rel in relationships:
                     logger.info(f"Relationship: {rel}")
@@ -935,85 +1154,54 @@ class UserDatasetStorage:
             if progress_callback:
                 progress_callback(
                     step_num + 1,
-                    total_steps,
+                    10,
                     f"Detected {len(relationships)} relationships",
                     {"relationships": [str(rel) for rel in relationships]},
                 )
 
-            # Build unified cohort
-            logger.info("Building unified cohort from detected relationships")
-            if progress_callback:
-                progress_callback(step_num + 2, total_steps, "Building unified cohort...", {})
+            # Store relationships in metadata for save_table_list()
+            metadata["relationships"] = [str(rel) for rel in relationships]
 
-            unified_df = handler.build_unified_cohort()
-            logger.info(f"Unified cohort created: {unified_df.height:,} rows, {unified_df.width} cols")
+            # Prepare metadata
+            metadata.update(
+                {
+                    "original_filename": UploadSecurityValidator.sanitize_filename(original_filename),
+                    "upload_timestamp": datetime.now().isoformat(),
+                    "file_size_bytes": len(file_bytes),
+                    "file_format": "zip_multi_table",
+                }
+            )
 
-            # Save unified cohort as CSV
-            csv_path = self.raw_dir / f"{upload_id}.csv"
-            logger.info(f"Saving unified cohort to {csv_path}")
+            # Save using unified save_table_list() function
             if progress_callback:
+                progress_callback(step_num + 2, 10, "Saving tables and building unified cohort...", {})
+
+            # Create adapter for progress callback (save_table_list uses different signature)
+            def progress_adapter(progress: int, message: str) -> None:
+                if progress_callback:
+                    # Map to ZIP upload progress format
+                    progress_callback(step_num + 2 + progress // 10, 10, message, {})
+
+            success, message = save_table_list(self, tables_list, upload_id, metadata, progress_adapter)
+
+            if not success:
+                return False, message, None
+
+            if progress_callback:
+                # Get row count from metadata
+                saved_metadata = self.get_upload_metadata(upload_id)
+                row_count = saved_metadata.get("row_count", 0) if saved_metadata else 0
                 progress_callback(
-                    step_num + 3,
-                    total_steps,
-                    f"Saving unified cohort ({unified_df.height:,} rows)...",
-                    {},
-                )
-            unified_df.write_csv(csv_path)
-
-            # Save individual tables to disk for semantic layer access
-            tables_dir = self.raw_dir / f"{upload_id}_tables"
-            tables_dir.mkdir(exist_ok=True)
-            logger.info(f"Saving {len(tables)} individual tables to {tables_dir}")
-
-            for table_name, df in tables.items():
-                table_path = tables_dir / f"{table_name}.csv"
-                df.write_csv(table_path)
-                logger.debug(f"Saved table '{table_name}' ({df.height:,} rows) to {table_path}")
-
-            # Infer schema for unified cohort
-            logger.info("Inferring schema for unified cohort")
-            if progress_callback:
-                progress_callback(step_num + 4, total_steps, "Inferring schema...", {})
-
-            engine = SchemaInferenceEngine()
-            schema = engine.infer_schema(unified_df)
-            logger.info("Schema inference complete")
-
-            # Save metadata
-            full_metadata = {
-                "upload_id": upload_id,
-                "original_filename": UploadSecurityValidator.sanitize_filename(original_filename),
-                "upload_timestamp": datetime.now().isoformat(),
-                "file_size_bytes": len(file_bytes),
-                "file_format": "zip_multi_table",
-                "row_count": unified_df.height,
-                "column_count": unified_df.width,
-                "columns": list(unified_df.columns),
-                "tables": list(tables.keys()),
-                "table_counts": {name: df.height for name, df in tables.items()},
-                "relationships": [str(rel) for rel in relationships],
-                "inferred_schema": schema.to_dataset_config(),
-                **metadata,
-            }
-
-            metadata_path = self.metadata_dir / f"{upload_id}.json"
-            with open(metadata_path, "w") as f:
-                json.dump(full_metadata, f, indent=2)
-
-            handler.close()
-
-            if progress_callback:
-                progress_callback(
-                    step_num + 4,
-                    total_steps,
+                    10,
+                    10,
                     "Processing complete!",
-                    {"tables": len(tables), "rows": unified_df.height, "cols": unified_df.width},
+                    {"tables": len(tables_list), "rows": row_count},
                 )
 
-            logger.info(f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows")
+            logger.info(f"Multi-table upload successful: {len(tables_list)} tables")
             return (
                 True,
-                f"Multi-table upload successful: {len(tables)} tables joined into {unified_df.height:,} rows",
+                f"Multi-table upload successful: {len(tables_list)} tables",
                 upload_id,
             )
 

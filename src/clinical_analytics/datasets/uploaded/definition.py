@@ -105,18 +105,37 @@ class UploadedDataset(ClinicalDataset):
 
         Args:
             granularity: Grain level (patient_level, admission_level, event_level)
-                        Single-table uploads only support patient_level
+                        All uploads support granularities based on their columns
             **filters: Optional filters (not yet implemented)
 
         Returns:
             DataFrame conforming to UnifiedCohort schema (outcome column optional)
         """
-        # Validate: single-table uploads only support patient_level
+        # Runtime validation: check if requested granularity is supported
         if granularity != "patient_level":
-            raise ValueError(
-                f"UploadedDataset (single-table) only supports patient_level granularity. "
-                f"Requested: {granularity}. Multi-table ZIP uploads support all granularities."
+            # Get inferred_schema (or convert variable_mapping if needed)
+            inferred_schema = self.metadata.get("inferred_schema")
+            if not inferred_schema and self.metadata.get("variable_mapping"):
+                # Convert variable_mapping to inferred_schema for granularity check
+                if self.data is None:
+                    self.load()
+                from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
+
+                inferred_schema = convert_schema(
+                    self.metadata["variable_mapping"],
+                    pl.from_pandas(self.data) if isinstance(self.data, pd.DataFrame) else self.data,
+                )
+
+            supported = (
+                inferred_schema.get("granularities", ["patient_level"]) if inferred_schema else ["patient_level"]
             )
+
+            if granularity not in supported:
+                raise ValueError(
+                    f"Dataset does not support {granularity} granularity. "
+                    f"Supported: {supported}. "
+                    f"Hint: Granularities are inferred from columns (admission_id, event_timestamp)."
+                )
 
         if self.data is None:
             self.load()
@@ -343,32 +362,51 @@ class UploadedDataset(ClinicalDataset):
 
             self.semantic = SemanticLayer(dataset_name=self.name, config=config, workspace_root=workspace_root)
 
-            # Register all individual tables from the upload (only for multi-table uploads)
+            # Register all individual tables from metadata (deterministic, not directory listing)
+            table_names = self.metadata.get("tables", [])
+            if not table_names:
+                logger.info(f"No tables list in metadata for {self.upload_id}, skipping table registration")
+                return
+
             tables_dir = self.storage.raw_dir / f"{self.upload_id}_tables"
-            if tables_dir.exists():
-                table_names = self.metadata.get("tables", [])
-                logger.info(f"Registering {len(table_names)} individual tables from {tables_dir}")
+            if not tables_dir.exists():
+                logger.warning(
+                    f"Tables directory missing for {self.upload_id}: {tables_dir}. "
+                    "Running in legacy single-table mode (cohort only)."
+                )
+                return
 
-                duckdb_con = self.semantic.con.con
-                safe_dataset_name = _safe_identifier(self.name)
+            logger.info(f"Registering {len(table_names)} individual tables from metadata")
 
-                for table_name in table_names:
-                    table_path = tables_dir / f"{table_name}.csv"
-                    if table_path.exists():
-                        safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
-                        abs_path = str(table_path.resolve())
+            duckdb_con = self.semantic.con.con
+            safe_dataset_name = _safe_identifier(self.name)
 
-                        duckdb_con.execute(
-                            f"CREATE OR REPLACE TABLE {safe_table_name} AS SELECT * FROM read_csv_auto(?)",
-                            [abs_path],
-                        )
-                        logger.info(f"Registered table '{safe_table_name}' from {abs_path}")
-                    else:
-                        logger.warning(f"Table file not found: {table_path}")
+            for table_name in table_names:  # Use metadata list, not directory listing
+                table_path = tables_dir / f"{table_name}.csv"
+                if not table_path.exists():
+                    raise FileNotFoundError(
+                        f"Table file missing for upload {self.upload_id}, table '{table_name}': expected {table_path}"
+                    )
 
-                logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
-            else:
-                logger.info(f"Created semantic layer for uploaded dataset '{self.name}' ({upload_type})")
+                safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
+                abs_path = str(table_path.resolve())
+
+                # CRITICAL FIX: Use IF NOT EXISTS instead of OR REPLACE
+                # Prevents data loss on semantic layer re-init within same session
+                #
+                # Idempotency assumption: Table names include upload_id via dataset_name,
+                # ensuring uniqueness across uploads. Same upload re-initialized uses same
+                # table name, so IF NOT EXISTS prevents clobbering existing data.
+                #
+                # Example: upload_id="abc123" -> dataset_name="my_data" -> table="my_data_patients"
+                # Re-init of same upload reuses "my_data_patients", skips CREATE if exists.
+                duckdb_con.execute(
+                    f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS SELECT * FROM read_csv_auto(?)",
+                    [abs_path],
+                )
+                logger.info(f"Registered table '{safe_table_name}' from {abs_path}")
+
+            logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
         except Exception as e:
             logger.warning(f"Failed to create semantic layer: {e}")
             import traceback

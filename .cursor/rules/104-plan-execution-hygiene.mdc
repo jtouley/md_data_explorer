@@ -1,6 +1,6 @@
 ---
 description: Mandatory hygiene for executing cursor plans. Phase commits, test-first workflow, quality gates.
-globs: [".cursor/plans/**/*.md", ".cursor/plans/**/*.plan.md"]
+globs: .cursor/plans/*.md
 alwaysApply: false
 ---
 

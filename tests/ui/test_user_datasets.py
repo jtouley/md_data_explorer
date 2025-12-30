@@ -2,9 +2,16 @@
 Tests for user dataset storage.
 """
 
-import pandas as pd
+import json
 
-from clinical_analytics.ui.storage.user_datasets import UploadSecurityValidator, UserDatasetStorage
+import pandas as pd
+import polars as pl
+
+from clinical_analytics.ui.storage.user_datasets import (
+    UploadSecurityValidator,
+    UserDatasetStorage,
+    save_table_list,
+)
 
 
 class TestUploadSecurityValidator:
@@ -280,3 +287,197 @@ class TestUserDatasetStorage:
         # Both uploads should exist
         uploads = storage.list_uploads()
         assert len(uploads) == 2
+
+
+class TestSaveTableList:
+    """Test suite for save_table_list() function (Fix #1)."""
+
+    def test_save_table_list_single_table_creates_tables_directory(self, tmp_path):
+        """Test that save_table_list() creates {upload_id}_tables/ directory for single-table."""
+        # Arrange
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_123"
+
+        df = pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30], "outcome": [0, 1]})
+        tables = [{"name": "patient_outcomes", "data": df}]
+        metadata = {
+            "dataset_name": "test",
+            "original_filename": "patient_outcomes.csv",
+        }
+
+        # Act
+        success, message = save_table_list(storage, tables, upload_id, metadata)
+
+        # Assert
+        assert success is True, f"save_table_list failed: {message}"
+        assert (tmp_path / "raw" / f"{upload_id}_tables" / "patient_outcomes.csv").exists()
+        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
+
+    def test_save_table_list_saves_metadata_with_tables_list(self, tmp_path):
+        """Test that save_table_list() saves metadata with tables list."""
+        # Arrange
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_456"
+
+        df = pl.DataFrame({"patient_id": ["P001"], "age": [25]})
+        tables = [{"name": "data", "data": df}]
+        metadata = {"dataset_name": "test"}
+
+        # Act
+        success, message = save_table_list(storage, tables, upload_id, metadata)
+
+        # Assert
+        assert success is True
+        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        assert metadata_path.exists()
+
+        with open(metadata_path) as f:
+            saved_metadata = json.load(f)
+
+        assert "tables" in saved_metadata
+        assert saved_metadata["tables"] == ["data"]
+        assert "inferred_schema" in saved_metadata
+
+    def test_save_table_list_converts_variable_mapping_to_inferred_schema(self, tmp_path):
+        """Test that save_table_list() converts variable_mapping to inferred_schema."""
+        # Arrange
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_upload_789"
+
+        df = pl.DataFrame(
+            {
+                "Patient ID": ["P001", "P002"],
+                "Outcome": [0, 1],  # Binary outcome
+                "Age": [25, 30],
+            }
+        )
+        tables = [{"name": "data", "data": df}]
+        metadata = {
+            "dataset_name": "test",
+            "variable_mapping": {
+                "patient_id": "Patient ID",
+                "outcome": "Outcome",
+                "predictors": ["Age"],
+            },
+        }
+
+        # Act
+        success, message = save_table_list(storage, tables, upload_id, metadata)
+
+        # Assert
+        assert success is True
+        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        with open(metadata_path) as f:
+            saved_metadata = json.load(f)
+
+        assert "inferred_schema" in saved_metadata
+        inferred = saved_metadata["inferred_schema"]
+        assert "column_mapping" in inferred
+        assert "Outcome" in inferred.get("outcomes", {})
+        assert inferred["outcomes"]["Outcome"]["type"] == "binary"  # Should infer binary
+
+    def test_save_table_list_multi_table_builds_unified_cohort(self, tmp_path):
+        """Test that save_table_list() builds unified cohort for multi-table uploads."""
+        # Arrange
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_multi_upload"
+
+        patients_df = pl.DataFrame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
+        admissions_df = pl.DataFrame(
+            {"admission_id": ["A001", "A002"], "patient_id": ["P001", "P002"], "date": ["2024-01-01", "2024-01-02"]}
+        )
+
+        tables = [
+            {"name": "patients", "data": patients_df},
+            {"name": "admissions", "data": admissions_df},
+        ]
+        metadata = {"dataset_name": "test_multi"}
+
+        # Act
+        success, message = save_table_list(storage, tables, upload_id, metadata)
+
+        # Assert
+        assert success is True
+        # Both tables should be saved
+        assert (tmp_path / "raw" / f"{upload_id}_tables" / "patients.csv").exists()
+        assert (tmp_path / "raw" / f"{upload_id}_tables" / "admissions.csv").exists()
+        # Unified cohort should exist
+        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()
+
+        # Metadata should have both tables
+        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        with open(metadata_path) as f:
+            saved_metadata = json.load(f)
+
+        assert saved_metadata["tables"] == ["patients", "admissions"]
+
+
+class TestSaveUploadIntegration:
+    """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
+
+    def test_save_upload_creates_tables_directory(self, tmp_path):
+        """Test that save_upload() creates {upload_id}_tables/ directory (unified persistence)."""
+        # Arrange
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset"},
+        )
+
+        # Assert
+        assert success is True, f"Upload failed: {message}"
+        assert upload_id is not None
+
+        # Verify unified persistence structure
+        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
+        tables_dir = tmp_path / "raw" / f"{upload_id}_tables"
+        assert tables_dir.exists(), "Tables directory should exist"
+        assert tables_dir.is_dir()
+
+        # Verify table file exists (should use filename stem)
+        table_files = list(tables_dir.glob("*.csv"))
+        assert len(table_files) == 1, f"Expected 1 table file, found {len(table_files)}"
+
+        # Verify metadata has tables list
+        metadata = storage.get_upload_metadata(upload_id)
+        assert metadata is not None
+        assert "tables" in metadata
+        assert len(metadata["tables"]) == 1
+
+    def test_save_upload_metadata_contains_inferred_schema(self, tmp_path):
+        """Test that save_upload() metadata contains inferred_schema."""
+        # Arrange
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+
+        # Assert
+        assert success is True
+        metadata = storage.get_upload_metadata(upload_id)
+        assert "inferred_schema" in metadata

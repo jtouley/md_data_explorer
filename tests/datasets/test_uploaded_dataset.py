@@ -434,9 +434,9 @@ class TestMaybeInitSemantic:
         assert dataset.semantic.config["column_mapping"]["patient_id"] == "patient_id"
         assert "mortality" in dataset.semantic.config["outcomes"]
 
-    def test_maybe_init_semantic_with_variable_mapping_skips_table_registration(self, tmp_path):
-        """Test that single-table uploads skip table registration."""
-        # Arrange: Create UploadedDataset with variable_mapping, no {upload_id}_tables directory
+    def test_maybe_init_semantic_with_variable_mapping_registers_table_after_migration(self, tmp_path):
+        """Test that legacy single-table uploads register tables after migration (Fix #2)."""
+        # Arrange: Create legacy UploadedDataset with variable_mapping, no {upload_id}_tables directory
         storage = UserDatasetStorage(upload_dir=tmp_path)
         upload_id = "test_upload_no_tables"
 
@@ -452,11 +452,11 @@ class TestMaybeInitSemantic:
         csv_path = storage.raw_dir / f"{upload_id}.csv"
         test_data.to_csv(csv_path, index=False)
 
-        # Ensure tables directory does NOT exist
+        # Ensure tables directory does NOT exist (legacy state)
         tables_dir = storage.raw_dir / f"{upload_id}_tables"
         assert not tables_dir.exists()
 
-        # Create metadata with variable_mapping
+        # Create metadata with variable_mapping (legacy format)
         metadata = {
             "upload_id": upload_id,
             "upload_timestamp": "2024-01-01T00:00:00",
@@ -477,13 +477,18 @@ class TestMaybeInitSemantic:
         # Create dataset
         dataset = UploadedDataset(upload_id=upload_id, storage=storage)
 
-        # Act: Call get_semantic_layer()
+        # Act: Call get_upload_data() which triggers migration, then get_semantic_layer()
+        _ = storage.get_upload_data(upload_id)  # Triggers migration
         semantic_layer = dataset.get_semantic_layer()
 
-        # Assert: Semantic layer created, no table registration attempted
+        # Assert: Semantic layer created, tables directory created by migration
         assert semantic_layer is not None
-        # Verify tables directory was not accessed (still doesn't exist)
-        assert not tables_dir.exists()
+        # Verify tables directory was created by migration (Fix #2)
+        assert tables_dir.exists()
+        # Verify metadata was updated with tables list
+        updated_metadata = storage.get_upload_metadata(upload_id)
+        assert "tables" in updated_metadata
+        assert updated_metadata.get("migrated_to_v2", False)
 
     def test_maybe_init_semantic_without_schema_or_mapping_raises_valueerror(self, tmp_path):
         """Test that missing both schema and mapping raises ValueError."""
