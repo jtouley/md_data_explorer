@@ -130,7 +130,7 @@ class TestUserDatasetStorage:
         success, message, upload_id = storage.save_upload(
             file_bytes=csv_bytes, original_filename="test.csv", metadata={"dataset_name": "test"}
         )
-        loaded_df = storage.get_upload_data(upload_id)
+        loaded_df = storage.get_upload_data(upload_id, lazy=False)
 
         assert isinstance(loaded_df, pd.DataFrame)
         assert len(loaded_df) == 150
