@@ -95,8 +95,9 @@ class TestRealWorldCountQueries:
 
         # Verify grouping variable if expected
         if test_case.get("expected_grouping_variable"):
-            assert intent.grouping_variable == test_case["expected_grouping_variable"], (
-                f"Expected grouping variable {test_case['expected_grouping_variable']}, got {intent.grouping_variable} for: {query}"
+            expected_grouping = test_case["expected_grouping_variable"]
+            assert intent.grouping_variable == expected_grouping, (
+                f"Expected grouping variable {expected_grouping}, got {intent.grouping_variable} for: {query}"
             )
 
     def test_count_query_with_filter_parsing(self, semantic_layer_with_clinical_columns):
@@ -126,7 +127,9 @@ class TestRealWorldCountQueries:
                 "expected_grouping": "statin",
             },
             {
-                "query": "what statins were those patients on, broken down by count of patients by their Current Regimen",
+                "query": (
+                    "what statins were those patients on, broken down by count of patients by their Current Regimen"
+                ),
                 "expected_grouping": "Current Regimen",
             },
         ]
@@ -216,8 +219,9 @@ class TestRealWorldQueryTracking:
             assert intent.intent_type == test_case["expected_intent"], (
                 f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
             )
-            assert intent.primary_variable == test_case["expected_primary_variable"], (
-                f"Expected variable {test_case['expected_primary_variable']}, got {intent.primary_variable} for: {query}"
+            expected_var = test_case["expected_primary_variable"]
+            assert intent.primary_variable == expected_var, (
+                f"Expected variable {expected_var}, got {intent.primary_variable} for: {query}"
             )
             assert intent.confidence >= test_case["min_confidence"], (
                 f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
@@ -226,5 +230,6 @@ class TestRealWorldQueryTracking:
             # Log parsing tier for tracking
             if intent.parsing_tier:
                 print(
-                    f"Query: '{query}' -> Tier: {intent.parsing_tier}, Confidence: {intent.confidence:.2f}, Variable: {intent.primary_variable}"
+                    f"Query: '{query}' -> Tier: {intent.parsing_tier}, "
+                    f"Confidence: {intent.confidence:.2f}, Variable: {intent.primary_variable}"
                 )

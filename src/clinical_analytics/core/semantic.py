@@ -1383,26 +1383,103 @@ class SemanticLayer:
                 continue
             effective_filters.append(filter_spec)
 
-        # Apply filters
-        filter_dict = {}
+        # Apply filters directly using Ibis expressions (not through apply_filters which expects config-based filters)
         for filter_spec in effective_filters:
-            # Convert FilterSpec to dict format expected by apply_filters
+            column = filter_spec.column
+            if column not in view.columns:
+                logger.warning(f"Filter column '{column}' not found in view, skipping filter")
+                continue
+
+            col_expr = view[column]
+
             if filter_spec.operator == "==":
-                filter_dict[filter_spec.column] = filter_spec.value
-            elif filter_spec.operator == "IN":
-                filter_dict[filter_spec.column] = filter_spec.value
+                view = view.filter(col_expr == filter_spec.value)
             elif filter_spec.operator == "!=":
-                # Note: apply_filters may need extension for != operator
-                # For now, log warning
-                logger.warning(f"Operator '{filter_spec.operator}' may not be fully supported in apply_filters")
-                filter_dict[filter_spec.column] = filter_spec.value
-            elif filter_spec.operator in {">", ">=", "<", "<="}:
-                # Note: apply_filters may need extension for comparison operators
-                logger.warning(f"Operator '{filter_spec.operator}' may not be fully supported in apply_filters")
-                filter_dict[filter_spec.column] = filter_spec.value
-            # Add more operator mappings as needed
-        if filter_dict:
-            view = self.apply_filters(view, filter_dict)
+                view = view.filter(col_expr != filter_spec.value)
+            elif filter_spec.operator == "IN":
+                # Handle IN operator with proper type casting
+                if isinstance(filter_spec.value, list):
+                    # For IN filters, we need to ensure type compatibility
+                    # Get column type by executing a minimal query to check dtype
+                    # Then cast filter values to match
+                    try:
+                        # First, try direct isin (works in most cases)
+                        view = view.filter(col_expr.isin(filter_spec.value))
+                    except Exception as first_error:
+                        # Type mismatch - need to cast values to match column type
+                        try:
+                            # Get a sample row to determine column dtype
+                            sample_df = view.select(column).limit(1).execute()
+                            if len(sample_df) > 0:
+                                col_dtype = str(sample_df[column].dtype)
+                                # Normalize dtype string (pandas uses 'int64', polars might use 'Int64')
+                                col_dtype_lower = col_dtype.lower()
+
+                                # Cast filter values to match column dtype
+                                if "int" in col_dtype_lower:
+                                    # Integer types - ensure all values are Python ints (which are int64)
+                                    cast_values = [int(v) for v in filter_spec.value]
+                                    # Cast column to int64 to ensure compatibility
+                                    view = view.filter(col_expr.cast("int64").isin(cast_values))
+                                elif "float" in col_dtype_lower:
+                                    cast_values = [float(v) for v in filter_spec.value]
+                                    view = view.filter(col_expr.cast("float64").isin(cast_values))
+                                else:
+                                    # String or other types - try direct isin
+                                    view = view.filter(col_expr.isin(filter_spec.value))
+                            else:
+                                # Empty table - apply filter anyway (will return empty)
+                                view = view.filter(col_expr.isin(filter_spec.value))
+                        except Exception as cast_error:
+                            # If casting also fails, log and re-raise original error
+                            logger.error(
+                                f"Failed to apply IN filter for {column}: "
+                                f"direct attempt: {first_error}, cast attempt: {cast_error}"
+                            )
+                            raise first_error from cast_error
+                else:
+                    # Single value - treat as equality
+                    view = view.filter(col_expr == filter_spec.value)
+            elif filter_spec.operator == "NOT_IN":
+                if isinstance(filter_spec.value, list):
+                    # Similar casting logic as IN
+                    try:
+                        view = view.filter(~col_expr.isin(filter_spec.value))
+                    except Exception:
+                        # If that fails, try with type casting
+                        try:
+                            sample = view.select(column).limit(1).execute()
+                            if len(sample) > 0:
+                                col_dtype = sample[column].dtype
+                                if col_dtype in ["int8", "int16", "int32", "int64", "Int8", "Int16", "Int32", "Int64"]:
+                                    cast_values = [int(v) for v in filter_spec.value]
+                                    view = view.filter(~col_expr.isin(cast_values))
+                                elif col_dtype in ["float32", "float64", "Float32", "Float64"]:
+                                    cast_values = [float(v) for v in filter_spec.value]
+                                    view = view.filter(~col_expr.isin(cast_values))
+                                else:
+                                    view = view.filter(~col_expr.isin(filter_spec.value))
+                            else:
+                                view = view.filter(~col_expr.isin(filter_spec.value))
+                        except Exception as e:
+                            logger.warning(f"Failed to apply NOT_IN filter for {column}: {e}")
+                            raise
+                else:
+                    view = view.filter(col_expr != filter_spec.value)
+            elif filter_spec.operator == ">":
+                view = view.filter(col_expr > filter_spec.value)
+            elif filter_spec.operator == ">=":
+                view = view.filter(col_expr >= filter_spec.value)
+            elif filter_spec.operator == "<":
+                view = view.filter(col_expr < filter_spec.value)
+            elif filter_spec.operator == "<=":
+                view = view.filter(col_expr <= filter_spec.value)
+            else:
+                logger.warning(f"Unsupported filter operator: {filter_spec.operator}, skipping")
+
+            # Handle exclude_nulls
+            if filter_spec.exclude_nulls:
+                view = view.filter(col_expr.isnull().not_())
 
         # Execute based on intent
         if plan.intent == "COUNT":
