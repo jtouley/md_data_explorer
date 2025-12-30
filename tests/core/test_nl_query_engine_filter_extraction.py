@@ -568,10 +568,13 @@ class TestExclusionFilters:
     def test_exclusion_filter_excludes_code_zero(self, mock_semantic_layer):
         """Test that 'excluding those not on X' creates a filter to exclude code 0."""
         # Arrange: Create semantic layer with statin column
+        # Note: alias_index is {alias: canonical}, not {canonical: alias}
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
         mock = mock_semantic_layer(
             columns={
-                "statin_used": statin_column_value,
+                statin_column_value: "statin_used",  # alias -> canonical
+                "statin used": "statin_used",  # normalized alias -> canonical
+                "statins": "statin_used",  # partial match -> canonical
             }
         )
         # Mock metadata to indicate coded column
@@ -597,10 +600,14 @@ class TestExclusionFilters:
     def test_exclusion_with_most_query(self, mock_semantic_layer):
         """Test that 'excluding those not on X, which was the most Y' extracts both exclusion and grouping."""
         # Arrange: Create semantic layer with statin column
+        # Note: alias_index is {alias: canonical}, not {canonical: alias}
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
         mock = mock_semantic_layer(
             columns={
-                "statin_used": statin_column_value,
+                statin_column_value: "statin_used",  # alias -> canonical
+                "statin used": "statin_used",  # normalized alias -> canonical
+                "statins": "statin_used",  # partial match -> canonical
+                "statin": "statin_used",  # singular -> canonical
             }
         )
         # Mock metadata to indicate coded column
