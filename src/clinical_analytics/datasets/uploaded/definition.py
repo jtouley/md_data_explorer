@@ -21,6 +21,22 @@ logger = logging.getLogger(__name__)
 CATEGORICAL_THRESHOLD = 20  # If unique values <= this, likely categorical
 
 
+def _to_lazy(df_or_lf: pl.LazyFrame | pl.DataFrame | pd.DataFrame) -> pl.LazyFrame:
+    """
+    Normalize any data representation to LazyFrame.
+
+    This ensures internal representation is always lazy, regardless of IO boundary.
+    CSV files use pl.scan_csv() (true lazy IO).
+    Excel files are eagerly loaded via pandas, then converted to LazyFrame.
+    """
+    if isinstance(df_or_lf, pl.LazyFrame):
+        return df_or_lf
+    if isinstance(df_or_lf, pl.DataFrame):
+        return df_or_lf.lazy()
+    # pandas - convert eagerly then make lazy
+    return pl.from_pandas(df_or_lf).lazy()
+
+
 class UploadedDataset(ClinicalDataset):
     """
     Dynamic dataset implementation for user uploads.
@@ -79,21 +95,18 @@ class UploadedDataset(ClinicalDataset):
         return csv_path.exists()
 
     def load(self) -> None:
-        """
-        Load uploaded data into memory.
-        """
+        """Load uploaded data, normalized to LazyFrame internally."""
         if not self.validate():
             raise FileNotFoundError(f"Upload data not found: {self.upload_id}")
 
-        self.data = self.storage.get_upload_data(self.upload_id)
-
-        if self.data is None:
+        raw_data = self.storage.get_upload_data(self.upload_id, lazy=True)
+        if raw_data is None:
             logger.error(f"Failed to load upload data for upload_id: {self.upload_id}")
             raise ValueError(f"Failed to load upload data: {self.upload_id}")
 
-        logger.info(
-            f"Loaded upload data: {self.upload_id}, shape: {self.data.shape}, columns: {list(self.data.columns)}"
-        )
+        # Normalize to LazyFrame (handles both CSV lazy scan and Excel eager→lazy conversion)
+        self.data = _to_lazy(raw_data)
+        logger.info(f"Loaded upload data as LazyFrame: {self.upload_id}")
 
     def get_cohort(self, granularity: Granularity = "patient_level", **filters) -> pd.DataFrame:
         """
@@ -121,9 +134,21 @@ class UploadedDataset(ClinicalDataset):
                     self.load()
                 from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
 
+                if isinstance(self.data, pl.LazyFrame):
+                    try:
+                        schema = self.data.collect_schema()  # Preferred (Polars 0.19+)
+                    except AttributeError:
+                        schema = self.data.schema  # Fallback (may be incomplete but works for column names)
+                    # Create empty DataFrame with schema for convert_schema()
+                    data_for_schema = pl.DataFrame(schema={k: v for k, v in schema.items()})
+                elif isinstance(self.data, pd.DataFrame):
+                    data_for_schema = pl.from_pandas(self.data)
+                else:
+                    data_for_schema = self.data
+
                 inferred_schema = convert_schema(
                     self.metadata["variable_mapping"],
-                    pl.from_pandas(self.data) if isinstance(self.data, pd.DataFrame) else self.data,
+                    data_for_schema,
                 )
 
             supported = (
@@ -139,6 +164,24 @@ class UploadedDataset(ClinicalDataset):
 
         if self.data is None:
             self.load()
+
+        # Ensure LazyFrame (normalize if somehow not)
+        lf = _to_lazy(self.data)
+
+        # Apply filters in Polars (lazy)
+        if filters:
+            filter_exprs = []
+            for key, value in filters.items():
+                if isinstance(value, list):
+                    filter_exprs.append(pl.col(key).is_in(value))
+                else:
+                    filter_exprs.append(pl.col(key) == value)
+
+            if filter_exprs:
+                combined_filter = filter_exprs[0]
+                for expr in filter_exprs[1:]:
+                    combined_filter = combined_filter & expr
+                lf = lf.filter(combined_filter)
 
         # Get variable mapping from metadata (single-table uploads)
         variable_mapping = self.metadata.get("variable_mapping", {})
@@ -159,15 +202,18 @@ class UploadedDataset(ClinicalDataset):
         predictors = variable_mapping.get("predictors", [])
         time_vars = variable_mapping.get("time_variables", {})
 
-        # Build cohort dataframe
-        cohort_data = {}
+        # Get schema to check for columns (lazy)
+        try:
+            schema = lf.collect_schema()
+        except AttributeError:
+            schema = lf.schema
+        schema_names = set(schema.keys())
 
-        # Map patient ID
+        # Handle patient_id regeneration if needed (materialize once, then continue lazy)
         if patient_id_col:
-            # Check if column exists in data
-            if patient_id_col not in self.data.columns:
+            if patient_id_col not in schema_names:
                 # Handle case where column was renamed to 'patient_id' during ingestion
-                if "patient_id" in self.data.columns:
+                if "patient_id" in schema_names:
                     logger.warning(
                         f"Mapped ID column '{patient_id_col}' not found, but 'patient_id' exists. "
                         f"Using 'patient_id' (column was likely renamed during ingestion)."
@@ -176,65 +222,75 @@ class UploadedDataset(ClinicalDataset):
                 else:
                     logger.error(
                         f"Patient ID column '{patient_id_col}' not found in data. "
-                        f"Available columns: {list(self.data.columns)}. "
+                        f"Available columns: {list(schema_names)}. "
                         f"Metadata: {self.metadata.get('synthetic_id_metadata', {})}"
                     )
                     # If patient_id was created synthetically, it should be in the CSV
                     # Check if it exists with different casing or was lost
-                    if patient_id_col == "patient_id" and "patient_id" not in self.data.columns:
-                        # Try to regenerate it
+                    if patient_id_col == "patient_id" and "patient_id" not in schema_names:
+                        # Try to regenerate it - materialize once for ID generation
                         logger.warning("Synthetic patient_id not found in loaded data, regenerating...")
                         from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
-                        df_polars = pl.from_pandas(self.data)
-                        df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_polars)
+                        df_materialized = lf.collect()
+                        df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_materialized)
                         logger.info(
                             f"Regenerated patient_id: source={id_metadata['patient_id_source']}, "
                             f"columns={id_metadata.get('patient_id_columns')}"
                         )
-                        self.data = df_with_id.to_pandas()
-                        if "patient_id" not in self.data.columns:
+
+                        # Persist as LazyFrame for future calls (avoids re-materialization)
+                        self.data = df_with_id.lazy()
+                        lf = self.data  # Update lf to use corrected LazyFrame
+
+                        if "patient_id" not in df_with_id.columns:
                             raise ValueError(
-                                f"Failed to create patient_id. Available columns: {list(self.data.columns)}"
+                                f"Failed to create patient_id. Available columns: {list(df_with_id.columns)}"
                             )
                         patient_id_col = "patient_id"
                     else:
                         raise KeyError(
                             f"Patient ID column '{patient_id_col}' not found in data. "
-                            f"Available columns: {list(self.data.columns)}"
+                            f"Available columns: {list(schema_names)}"
                         )
-            logger.debug(f"Using patient_id column '{patient_id_col}' with {len(self.data)} rows")
-            cohort_data[UnifiedCohort.PATIENT_ID] = self.data[patient_id_col]
+
+        # Build select expressions for UnifiedCohort schema (all lazy)
+        select_exprs = []
+
+        # Map patient ID
+        if patient_id_col:
+            select_exprs.append(pl.col(patient_id_col).alias(UnifiedCohort.PATIENT_ID))
         else:
             # Generate sequential IDs if not provided
             logger.warning("No patient_id column specified, generating sequential IDs")
-            cohort_data[UnifiedCohort.PATIENT_ID] = [f"patient_{i}" for i in range(len(self.data))]
+            # Use row number for sequential IDs (lazy) - int_range with len() creates 0..len-1 range
+            select_exprs.append(
+                (pl.lit("patient_") + pl.int_range(pl.len()).cast(pl.Utf8)).alias(UnifiedCohort.PATIENT_ID)
+            )
 
         # Map outcome (optional - semantic layer pattern)
-        # Some analyses (Descriptive Stats, Correlations) don't require outcomes
-        if outcome_col:
-            cohort_data[UnifiedCohort.OUTCOME] = self.data[outcome_col]
-            # Add outcome_label if available
+        if outcome_col and outcome_col in schema_names:
+            select_exprs.append(pl.col(outcome_col).alias(UnifiedCohort.OUTCOME))
+            # Add outcome_label as literal (metadata)
             outcome_label = variable_mapping.get("outcome_label", "outcome")
-            cohort_data[UnifiedCohort.OUTCOME_LABEL] = outcome_label
-        # If no outcome specified, skip it - semantic layer handles this gracefully
-        # Downstream code must check for OUTCOME/OUTCOME_LABEL existence before using
+            select_exprs.append(pl.lit(outcome_label).alias(UnifiedCohort.OUTCOME_LABEL))
 
         # Map time zero (use upload date if not provided)
+        upload_timestamp = pd.Timestamp(self.metadata["upload_timestamp"])
         if time_vars and time_vars.get("time_zero"):
             time_col = time_vars["time_zero"]
-            if time_col in self.data.columns:
-                cohort_data[UnifiedCohort.TIME_ZERO] = pd.to_datetime(self.data[time_col])
+            if time_col in schema_names:
+                select_exprs.append(pl.col(time_col).cast(pl.Datetime).alias(UnifiedCohort.TIME_ZERO))
             else:
-                cohort_data[UnifiedCohort.TIME_ZERO] = pd.Timestamp(self.metadata["upload_timestamp"])
+                select_exprs.append(pl.lit(upload_timestamp).alias(UnifiedCohort.TIME_ZERO))
         else:
             # Use upload timestamp as time zero
-            cohort_data[UnifiedCohort.TIME_ZERO] = pd.Timestamp(self.metadata["upload_timestamp"])
+            select_exprs.append(pl.lit(upload_timestamp).alias(UnifiedCohort.TIME_ZERO))
 
         # Add predictor variables (keep original names)
         for pred in predictors:
-            if pred in self.data.columns:
-                cohort_data[pred] = self.data[pred]
+            if pred in schema_names:
+                select_exprs.append(pl.col(pred))
 
         # For descriptive analysis, include ALL columns from original data
         # (not just predictors) so users can analyze any variable
@@ -246,21 +302,38 @@ class UploadedDataset(ClinicalDataset):
             UnifiedCohort.OUTCOME_LABEL,
             UnifiedCohort.TIME_ZERO,
         }
-        for col in self.data.columns:
-            if col not in excluded_from_all and col not in cohort_data:
-                cohort_data[col] = self.data[col]
+        # Track which columns we've already added (by checking what we're selecting)
+        # Get updated schema after potential patient_id regeneration
+        try:
+            current_schema = lf.collect_schema()
+        except AttributeError:
+            current_schema = lf.schema
 
-        # Create cohort dataframe
-        cohort = pd.DataFrame(cohort_data)
+        # Build set of columns already in select_exprs (by checking aliases and root names)
+        added_columns = set()
+        for expr in select_exprs:
+            try:
+                # Try to get output name (alias)
+                if hasattr(expr, "meta") and hasattr(expr.meta, "output_name"):
+                    added_columns.add(expr.meta.output_name())
+                # Try to get root column names
+                if hasattr(expr, "meta") and hasattr(expr.meta, "root_names"):
+                    added_columns.update(expr.meta.root_names())
+            except Exception:
+                pass  # If we can't extract, continue - will check by column name below
 
-        # Apply any filters
-        if filters:
-            # Basic filter support (can be extended)
-            for key, value in filters.items():
-                if key in cohort.columns:
-                    cohort = cohort[cohort[key] == value]
+        # Add remaining columns
+        for col in current_schema.keys():
+            if col not in excluded_from_all and col not in added_columns:
+                select_exprs.append(pl.col(col))
 
-        return cohort
+        # Apply all transformations lazily
+        lf = lf.select(select_exprs)
+
+        # EXACTLY ONE COLLECT at return boundary
+        result_df = lf.collect().to_pandas()
+
+        return result_df
 
     def _convert_inferred_schema_to_mapping(self, inferred_schema: dict[str, Any]) -> dict[str, Any]:
         """
@@ -299,8 +372,18 @@ class UploadedDataset(ClinicalDataset):
             variable_mapping["time_variables"]["time_zero"] = time_zero_config["source_column"]
 
         # Add all other columns as predictors (exclude patient_id and outcome)
+        # Use schema to get column names without collecting (avoid materializing large datasets)
         if self.data is not None:
-            all_cols = set(self.data.columns)
+            # Get column names efficiently
+            if isinstance(self.data, pl.LazyFrame):
+                # Use collect_schema() to get column names without collecting data
+                all_cols = set(self.data.collect_schema().names())
+            elif isinstance(self.data, pd.DataFrame):
+                all_cols = set(self.data.columns)
+            else:
+                # Fallback for other types (e.g., Polars DataFrame)
+                all_cols = set(self.data.columns)
+
             excluded = {variable_mapping["patient_id"], variable_mapping["outcome"]}
             variable_mapping["predictors"] = [col for col in all_cols if col not in excluded and col not in {None}]
 
@@ -456,8 +539,13 @@ class UploadedDataset(ClinicalDataset):
         if self.data is None:
             raise ValueError("Failed to load data for semantic layer config")
 
-        # Convert to Polars for efficient processing
-        df_polars = pl.from_pandas(self.data) if isinstance(self.data, pd.DataFrame) else self.data
+        # Convert to Polars DataFrame for efficient processing (materialize LazyFrame if needed)
+        if isinstance(self.data, pl.LazyFrame):
+            df_polars = self.data.collect()
+        elif isinstance(self.data, pd.DataFrame):
+            df_polars = pl.from_pandas(self.data)
+        else:
+            df_polars = self.data
 
         # Build column_mapping
         column_mapping = {}
@@ -493,7 +581,7 @@ class UploadedDataset(ClinicalDataset):
             if col not in df_polars.columns:
                 continue
 
-            series = df_polars[col]
+            series = df_polars.select(col).to_series()
             dtype = series.dtype
 
             # String type → categorical
@@ -535,7 +623,7 @@ class UploadedDataset(ClinicalDataset):
         Infer outcome type from data characteristics.
 
         Args:
-            df_polars: Polars DataFrame
+            df_polars: Polars DataFrame (must be materialized, not LazyFrame)
             outcome_col: Outcome column name
 
         Returns:
@@ -548,7 +636,7 @@ class UploadedDataset(ClinicalDataset):
             logger.warning(f"Outcome column '{outcome_col}' not found in data, defaulting to 'binary'")
             return "binary"
 
-        series = df_polars[outcome_col]
+        series = df_polars.select(outcome_col).to_series()
         dtype = series.dtype
         unique_count = series.n_unique()
 

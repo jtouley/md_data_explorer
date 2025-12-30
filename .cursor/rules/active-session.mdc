@@ -1,26 +1,19 @@
----
-description: Active development session
-globs: []
-alwaysApply: true
----
-
-# Active Session: multi-table-semantic-layer-fix
+# Active Session: excel-column-detection-fix
 
 ## Session File
-.context/sessions/multi-table-semantic-layer-fix.yaml
+.context/sessions/excel-column-detection-fix.yaml
 
 ## Resume Prompt
-Resume session: multi-table-semantic-layer-fix
+Resume session: excel-column-detection-fix
 
-Problem: When uploading multi-table ZIP files (e.g., MIMIC-IV), only the unified cohort table was being registered in the semantic layer, not the individual tables.
+Problem: Excel files with 27 columns were only showing 4 columns in preview and upload.
 
 Completed:
-1. Modified save_zip_upload() in user_datasets.py to save individual tables to {upload_id}_tables/ directory
-2. Modified _maybe_init_semantic() in uploaded/definition.py to register all individual tables in DuckDB
+1. Implemented intelligent header row detection (_detect_excel_header_row) that scores rows to find best header
+2. Modified load_single_file() to use pandas as primary Excel reader with header detection
+3. Added column count comparison logic: when pl.from_pandas() fails, fall back to Polars read_excel and use whichever has more columns
+4. Fixed preview code to reuse file_bytes already read via getvalue() instead of reading twice
+5. Added Excel test fixtures in conftest.py (synthetic_dexa_excel_file, synthetic_statin_excel_file, synthetic_complex_excel_file)
+6. Added tests for header detection in test_excel_reading.py
 
-Remaining:
-1. Fix list_uploads() to deduplicate by dataset_name (keep most recent upload)
-   - Current issue: When re-uploading with same dataset_name, old upload is used because dictionary overwrites with oldest entry
-   - Solution: Add deduplication logic to list_uploads() method
-
-Apply the deduplication fix to list_uploads() in src/clinical_analytics/ui/storage/user_datasets.py
+Status: Fix is complete and working. Excel files now correctly show all 27 columns. All tests passing.
