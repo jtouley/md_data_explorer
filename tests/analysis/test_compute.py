@@ -13,6 +13,7 @@ import pytest
 from clinical_analytics.analysis.compute import (
     compute_analysis_by_type,
     compute_comparison_analysis,
+    compute_count_analysis,
     compute_descriptive_analysis,
     compute_predictor_analysis,
     compute_relationship_analysis,
@@ -642,6 +643,79 @@ class TestComputeAnalysisByType:
         assert result["grouped_by"] == "category"
         assert "group_counts" in result
         assert len(result["group_counts"]) == 3  # A, B, C
+
+    def test_compute_count_analysis_applies_filters(self, sample_context_count):
+        """Test that compute_count_analysis applies filters before counting."""
+        # Arrange: DataFrame with filterable data
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        df = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3, 4, 5],
+                "status": ["active", "active", "inactive", "active", "inactive"],
+                "value": [10, 20, 30, 40, 50],
+            }
+        )
+        context = sample_context_count
+        # Add filter: status == "active"
+        context.filters = [FilterSpec(column="status", operator="==", value="active", exclude_nulls=True)]
+
+        # Act
+        result = compute_count_analysis(df, context)
+
+        # Assert: Only filtered rows counted
+        assert result["type"] == "count"
+        assert result["total_count"] == 3  # Only 3 rows with status == "active"
+        assert result["total_count"] < df.height  # Filtered count is less than total
+
+    def test_compute_count_analysis_with_filters_and_grouping(self, sample_context_count):
+        """Test that compute_count_analysis applies filters before grouping."""
+        # Arrange: DataFrame with filterable and groupable data
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        df = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3, 4, 5, 6],
+                "status": ["active", "active", "active", "inactive", "active", "inactive"],
+                "category": ["A", "A", "B", "A", "B", "B"],
+            }
+        )
+        context = sample_context_count
+        context.grouping_variable = "category"
+        # Add filter: status == "active"
+        context.filters = [FilterSpec(column="status", operator="==", value="active", exclude_nulls=True)]
+
+        # Act
+        result = compute_count_analysis(df, context)
+
+        # Assert: Filtered and grouped counts
+        assert result["type"] == "count"
+        assert result["total_count"] == 4  # 4 rows with status == "active"
+        assert result["grouped_by"] == "category"
+        assert len(result["group_counts"]) == 2  # Categories A and B
+        # Verify counts per category (after filtering)
+        category_counts = {item["category"]: item["count"] for item in result["group_counts"]}
+        assert category_counts["A"] == 2  # 2 active rows in category A
+        assert category_counts["B"] == 2  # 2 active rows in category B
+
+    def test_compute_count_analysis_without_filters_counts_all_rows(self, sample_context_count):
+        """Test that compute_count_analysis counts all rows when no filters present."""
+        # Arrange: DataFrame without filters
+        df = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3, 4, 5],
+                "status": ["active", "active", "inactive", "active", "inactive"],
+            }
+        )
+        context = sample_context_count
+        context.filters = []  # No filters
+
+        # Act
+        result = compute_count_analysis(df, context)
+
+        # Assert: All rows counted
+        assert result["type"] == "count"
+        assert result["total_count"] == df.height  # All 5 rows
 
     def test_compute_analysis_by_type_handles_unknown_intent(self, sample_numeric_df):
         """Test that compute_analysis_by_type handles unknown intent."""

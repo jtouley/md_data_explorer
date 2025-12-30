@@ -54,6 +54,9 @@ class AnalysisContext:
     # Inferred intent (hidden from user)
     inferred_intent: AnalysisIntent = AnalysisIntent.UNKNOWN
 
+    # Filters
+    filters: list = field(default_factory=list)  # List of FilterSpec objects
+
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
     match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
@@ -795,6 +798,9 @@ class QuestionEngine:
                 context.predictor_variables = query_intent.predictor_variables
                 context.time_variable = query_intent.time_variable
                 context.event_variable = query_intent.event_variable
+
+                # Copy filters from QueryIntent to AnalysisContext
+                context.filters = query_intent.filters
 
                 # Propagate collision suggestions to context
                 context.match_suggestions = collision_suggestions
