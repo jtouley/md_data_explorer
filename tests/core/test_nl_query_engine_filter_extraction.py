@@ -248,6 +248,11 @@ class TestFilterExtractionTypeSafety:
                 "statin_used": statin_alias,
             }
         )
+        # Mock metadata to indicate coded column (required for Strategy 1 to skip direct match)
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
+        }
         engine = NLQueryEngine(mock)
 
         # Act: Extract filters from query

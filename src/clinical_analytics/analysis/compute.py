@@ -727,11 +727,21 @@ def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[s
     Returns:
         Serializable dict with count results
     """
-    # Apply filters if present
-    if context.filters:
+    # Apply filters from QueryPlan if present
+    if context.query_plan and context.query_plan.filters:
+        df = _apply_filters(df, context.query_plan.filters)
+    elif context.filters:
         df = _apply_filters(df, context.filters)
 
     row_count = df.height
+
+    # Check if query asks for "most" (e.g., "which statin was most prescribed?")
+    is_most_query = False
+    query_text = getattr(context, "query_text", None) or ""
+
+    if query_text:
+        query_lower = query_text.lower()
+        is_most_query = "most" in query_lower and ("which" in query_lower or "what" in query_lower)
 
     # If grouping variable is specified, count by group
     if context.grouping_variable and context.grouping_variable in df.columns:
@@ -739,12 +749,20 @@ def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[s
         counts = df.group_by(group_col).agg(pl.len().alias("count")).sort("count", descending=True)
         counts_dict = counts.to_dicts()
 
+        # For "most" queries, return only the top result
+        if is_most_query and len(counts_dict) > 0:
+            counts_dict = [counts_dict[0]]  # Only top result
+
         # Create headline
         total = sum(item["count"] for item in counts_dict)
-        headline = f"Total count: **{total}**"
-        if len(counts_dict) > 0:
+        if is_most_query and len(counts_dict) > 0:
             top_group = counts_dict[0]
-            headline += f" (largest group: {top_group[group_col]} with {top_group['count']})"
+            headline = f"**{top_group[group_col]}** with {top_group['count']} patients"
+        else:
+            headline = f"Total count: **{total}**"
+            if len(counts_dict) > 0:
+                top_group = counts_dict[0]
+                headline += f" (largest group: {top_group[group_col]} with {top_group['count']})"
 
         return {
             "type": "count",
@@ -752,6 +770,7 @@ def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[s
             "grouped_by": group_col,
             "group_counts": counts_dict,
             "headline": headline,
+            "is_most_query": is_most_query,  # Flag for rendering
         }
     else:
         # Simple total count

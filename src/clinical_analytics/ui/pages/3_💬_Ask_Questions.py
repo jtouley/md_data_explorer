@@ -200,8 +200,14 @@ def clear_all_results(dataset_version: str) -> None:
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
 # TODO: Remove when Streamlit supports Polars natively
-def render_descriptive_analysis(result: dict) -> None:
-    """Render descriptive analysis from serializable dict."""
+def render_descriptive_analysis(result: dict, query_text: str | None = None) -> None:
+    """
+    Render descriptive analysis from serializable dict.
+
+    Args:
+        result: Analysis result dict
+        query_text: Original query text (to determine if user explicitly asked for summary)
+    """
     # Check for error results first
     if "error" in result:
         st.error(f"❌ **Analysis Error**: {result['error']}")
@@ -236,7 +242,24 @@ def render_descriptive_analysis(result: dict) -> None:
 
         st.divider()
 
-    st.markdown("## 📊 Your Data at a Glance")
+    # Only show "Your Data at a Glance" if user explicitly asked for summary/overview
+    # Check if query contains summary-related keywords
+    is_explicit_summary = False
+    if query_text:
+        query_lower = query_text.lower()
+        summary_keywords = ["summary", "overview", "describe all", "show all", "data at a glance", "general statistics"]
+        is_explicit_summary = any(keyword in query_lower for keyword in summary_keywords)
+
+    # If not explicitly requested, show a more focused message
+    if not is_explicit_summary:
+        st.info(
+            "💡 **Tip**: Ask about a specific variable for more detailed analysis, "
+            "or say 'show summary' for an overview."
+        )
+        return
+
+    # User explicitly asked for summary - show full overview
+    st.markdown("<h2>📊 Your Data at a Glance</h2>", unsafe_allow_html=True)
 
     # Overall metrics
     col1, col2, col3 = st.columns(3)
@@ -335,11 +358,51 @@ def render_count_analysis(result: dict) -> None:
     # If grouped, show group breakdown
     if "grouped_by" in result and result.get("group_counts"):
         group_col = result["grouped_by"]
-        for item in result["group_counts"]:
-            group_value = item[group_col]
-            count = item["count"]
-            pct = (count / result["total_count"]) * 100 if result["total_count"] > 0 else 0.0
-            st.write(f"- **{group_value}**: {count:,} ({pct:.1f}%)")
+        is_most_query = result.get("is_most_query", False)
+
+        # Get code-to-label mapping for the grouping column
+        code_to_label = {}
+        try:
+            from clinical_analytics.core.column_parser import parse_column_name
+
+            column_meta = parse_column_name(group_col)
+            if column_meta.value_mapping:
+                code_to_label = column_meta.value_mapping
+        except Exception:
+            pass  # If parsing fails, just use codes as-is
+
+        # For "most" queries, show only top result with label if available
+        if is_most_query and len(result["group_counts"]) > 0:
+            top_item = result["group_counts"][0]
+            group_value = top_item[group_col]
+            count = top_item["count"]
+
+            # Try to map code to label
+            display_value = group_value
+            if code_to_label:
+                # Convert group_value to string for lookup
+                value_str = str(group_value)
+                if value_str in code_to_label:
+                    label = code_to_label[value_str]
+                    display_value = f"{label} ({value_str})"
+
+            st.metric("Most Prescribed", f"{display_value}: {count:,}")
+        else:
+            # Show all groups
+            for item in result["group_counts"]:
+                group_value = item[group_col]
+                count = item["count"]
+                pct = (count / result["total_count"]) * 100 if result["total_count"] > 0 else 0.0
+
+                # Try to map code to label
+                display_value = group_value
+                if code_to_label:
+                    value_str = str(group_value)
+                    if value_str in code_to_label:
+                        label = code_to_label[value_str]
+                        display_value = f"{label} ({value_str})"
+
+                st.write(f"- **{display_value}**: {count:,} ({pct:.1f}%)")
     else:
         # Simple total count
         st.metric("Total Count", f"{result['total_count']:,}")
@@ -591,12 +654,12 @@ def render_relationship_analysis(result: dict) -> None:
         st.info("ℹ️ No strong correlations found (|r| >= 0.5)")
 
 
-def render_analysis_by_type(result: dict, intent: AnalysisIntent) -> None:
+def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: str | None = None) -> None:
     """Route to appropriate render function based on result type."""
     result_type = result.get("type")
 
     if result_type == "descriptive":
-        render_descriptive_analysis(result)
+        render_descriptive_analysis(result, query_text=query_text)
     elif result_type == "comparison":
         render_comparison_analysis(result)
     elif result_type == "predictor":
@@ -642,14 +705,14 @@ def execute_analysis_with_idempotency(
         result = st.session_state[result_key]
 
         # Render main results inline (no expander, no extra headers)
-        render_analysis_by_type(result, context.inferred_intent)
+        render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
 
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
 
         # Suggest follow-up questions
-        _suggest_follow_ups(context, result)
+        _suggest_follow_ups(context, result, run_key)
         return
 
     # Not computed - compute and store
@@ -738,14 +801,14 @@ def execute_analysis_with_idempotency(
         logger.debug("analysis_rendering_start", run_key=run_key)
 
         # Render main results inline (no expander, no extra headers)
-        render_analysis_by_type(result, context.inferred_intent)
+        render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
 
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
 
         # Suggest follow-up questions
-        _suggest_follow_ups(context, result)
+        _suggest_follow_ups(context, result, run_key)
 
         logger.info("analysis_rendering_complete", run_key=run_key)
 
@@ -853,7 +916,7 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
     )
 
 
-def _suggest_follow_ups(context: AnalysisContext, result: dict) -> None:
+def _suggest_follow_ups(context: AnalysisContext, result: dict, run_key: str | None = None) -> None:
     """Suggest natural follow-up questions based on current result."""
     suggestions = []
 
@@ -888,7 +951,7 @@ def _suggest_follow_ups(context: AnalysisContext, result: dict) -> None:
             suggestions.append(f"Filter {context.grouping_variable} and count again")
         else:
             suggestions.append("Break down the count by a grouping variable")
-        if context.filters:
+        if context.filters or (context.query_plan and context.query_plan.filters):
             suggestions.append("Remove filters and count all records")
 
     elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
@@ -909,10 +972,12 @@ def _suggest_follow_ups(context: AnalysisContext, result: dict) -> None:
         for idx, suggestion in enumerate(suggestions[:4]):  # Limit to 4 suggestions
             col = cols[idx % len(cols)]
             with col:
-                # Use index + hash for unique key (prevents collisions)
-                button_key = f"followup_{idx}_{hash(suggestion) % 1000000}"
+                # Include run_key in button key to ensure uniqueness across different results
+                # This prevents StreamlitDuplicateElementKey errors when same suggestion appears in different contexts
+                run_key_suffix = run_key[:8] if run_key else "default"
+                button_key = f"followup_{run_key_suffix}_{idx}_{hash(suggestion) % 1000000}"
                 if st.button(suggestion, key=button_key, use_container_width=True):
-                    # Store suggestion to prefill chat input
+                    # Store suggestion to prefill chat input and rerun to process it
                     st.session_state["prefilled_query"] = suggestion
                     st.rerun()
 
@@ -969,6 +1034,18 @@ def main():
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
+
+    # Detect dataset change and clear conversation history/context
+    if "last_dataset_choice" not in st.session_state:
+        st.session_state["last_dataset_choice"] = dataset_choice
+    elif st.session_state["last_dataset_choice"] != dataset_choice:
+        # Dataset changed - clear conversation history and analysis context
+        if "conversation_history" in st.session_state:
+            st.session_state["conversation_history"] = []
+        if "analysis_context" in st.session_state:
+            del st.session_state["analysis_context"]
+        st.session_state["last_dataset_choice"] = dataset_choice
+
     # Check if this is an uploaded dataset (multiple checks for robustness)
     is_uploaded = (
         dataset_choice in uploaded_datasets
@@ -1077,7 +1154,9 @@ def main():
                         intent_enum = AnalysisIntent.DESCRIBE
 
                     # Render main results inline (no extra headers)
-                    render_analysis_by_type(result, intent_enum)
+                    # Pass query text from history entry for summary detection
+                    entry_query = entry.get("query", "")
+                    render_analysis_by_type(result, intent_enum, query_text=entry_query)
 
     # Check for semantic layer availability (show message if not available)
     try:
@@ -1142,9 +1221,11 @@ def main():
         # Update context in session state
         st.session_state["analysis_context"] = context
 
-        # Show progress
-        st.divider()
-        QuestionEngine.render_progress_indicator(context)
+        # Show progress (only if missing info - removed "I have everything" message)
+        missing = context.get_missing_info()
+        if missing:
+            st.divider()
+            QuestionEngine.render_progress_indicator(context)
 
         # If complete, always execute (transparent confidence display, no blocking gates)
         if context.is_complete_for_intent():
@@ -1318,14 +1399,13 @@ def main():
     # Check for prefilled query from follow-up suggestions
     prefilled = st.session_state.get("prefilled_query", "")
 
-    query = st.chat_input("Ask a question about your data...")
-
-    # If prefilled query exists and user clicked button (rerun triggered), use prefilled
-    if prefilled and not query:
-        # User clicked a follow-up button - use the prefilled query
+    # If prefilled query exists, use it and clear it (user clicked a follow-up button)
+    if prefilled:
         query = prefilled
-        # Clear prefilled after using
+        # Clear prefilled immediately to prevent reuse
         del st.session_state["prefilled_query"]
+    else:
+        query = st.chat_input("Ask a question about your data...")
 
     if query:
         # Handle new query from chat input
@@ -1368,6 +1448,7 @@ def main():
 
                 # Map variables
                 context.research_question = query
+                context.query_text = query  # Store original query for "most" detection
                 context.primary_variable = query_intent.primary_variable
                 context.grouping_variable = query_intent.grouping_variable
                 context.predictor_variables = query_intent.predictor_variables

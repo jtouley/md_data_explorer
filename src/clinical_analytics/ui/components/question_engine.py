@@ -59,6 +59,9 @@ class AnalysisContext:
     # QueryPlan (structured plan from NLU)
     query_plan = None  # QueryPlan | None - will be set after QueryIntent conversion (type: ignore for forward ref)
 
+    # Original query text (for "most" detection, etc.)
+    query_text: str | None = None
+
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
     match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
@@ -260,8 +263,7 @@ class QuestionEngine:
 
         if missing:
             st.info(f"ℹ️ I still need to know: {', '.join(missing)}")
-        else:
-            st.success("✅ I have everything I need to run the analysis!")
+        # Removed "I have everything I need" message - bad UX design
 
     @staticmethod
     def _show_progressive_feedback(nl_engine, query: str) -> QueryIntent | None:
