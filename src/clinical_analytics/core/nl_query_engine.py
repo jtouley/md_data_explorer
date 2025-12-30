@@ -522,9 +522,10 @@ class NLQueryEngine:
         if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
             return QueryIntent(intent_type="SURVIVAL", confidence=0.9)
 
-        # Pattern: "correlation" or "relationship"
-        if re.search(r"\b(correlat|relationship|associat)\b", query_lower):
-            # Try to extract two variables
+        # Pattern: "correlation" or "relationship" or "relate" or "association"
+        # Matches: "correlate", "correlation", "relationship", "relate", "relates", "associated", "association"
+        if re.search(r"\b(correlat|relationship|relate|associat)\b", query_lower):
+            # Try to extract variables from query
             variables, _ = self._extract_variables_from_query(query)
             if len(variables) >= 2:
                 return QueryIntent(
@@ -533,7 +534,15 @@ class NLQueryEngine:
                     grouping_variable=variables[1],
                     confidence=0.9,
                 )
+            elif len(variables) == 1:
+                # Single variable found - still CORRELATIONS but with one variable
+                return QueryIntent(
+                    intent_type="CORRELATIONS",
+                    primary_variable=variables[0],
+                    confidence=0.85,
+                )
             else:
+                # No variables extracted but relationship keyword found
                 return QueryIntent(intent_type="CORRELATIONS", confidence=0.85)
 
         # Pattern: "how many" or "count" or "number of" (COUNT intent)

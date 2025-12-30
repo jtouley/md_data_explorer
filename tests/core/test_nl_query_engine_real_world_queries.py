@@ -17,6 +17,64 @@ import pytest
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 
+class TestRealWorldCorrelationQueries:
+    """Test real-world CORRELATIONS queries from user interactions."""
+
+    @pytest.mark.parametrize(
+        "test_case",
+        [
+            pytest.param(
+                {
+                    "query": "how does bmi, statin use relate to the regiment that the person is on and their cd4 counts?",
+                    "expected_intent": "CORRELATIONS",
+                    "expected_primary_variable": "BMI",  # First variable extracted
+                    "expected_grouping_variable": "statins",  # Second variable (statin use)
+                    "min_confidence": 0.85,
+                    "parsing_tier": "pattern_match",
+                },
+                id="bmi_statin_regimen_cd4_relationship",
+            ),
+        ],
+    )
+    def test_correlation_query_parsing(self, test_case: dict, semantic_layer_with_clinical_columns):
+        """Test that CORRELATIONS queries parse correctly with expected intent and variables."""
+        # Arrange
+        engine = NLQueryEngine(semantic_layer_with_clinical_columns)
+        query = test_case["query"]
+
+        # Act
+        intent = engine.parse_query(query)
+
+        # Assert
+        assert intent is not None, f"Query should parse: {query}"
+        assert intent.intent_type == test_case["expected_intent"], (
+            f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
+        )
+        assert intent.confidence >= test_case["min_confidence"], (
+            f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+        )
+
+        # Verify parsing tier if specified
+        if "parsing_tier" in test_case and test_case["parsing_tier"]:
+            assert intent.parsing_tier == test_case["parsing_tier"], (
+                f"Expected tier {test_case['parsing_tier']}, got {intent.parsing_tier} for: {query}"
+            )
+
+        # Verify primary variable if expected
+        if test_case.get("expected_primary_variable"):
+            expected_primary = test_case["expected_primary_variable"]
+            assert intent.primary_variable == expected_primary, (
+                f"Expected primary variable {expected_primary}, got {intent.primary_variable} for: {query}"
+            )
+
+        # Verify grouping variable if expected
+        if test_case.get("expected_grouping_variable"):
+            expected_grouping = test_case["expected_grouping_variable"]
+            assert intent.grouping_variable == expected_grouping, (
+                f"Expected grouping variable {expected_grouping}, got {intent.grouping_variable} for: {query}"
+            )
+
+
 class TestRealWorldCountQueries:
     """Test real-world COUNT queries from user interactions."""
 
