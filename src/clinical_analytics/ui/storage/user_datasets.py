@@ -658,7 +658,21 @@ def save_table_list(
                 tables[0]["data"],  # Access normalized DataFrame
             )
 
-        # 2. Save individual tables to {upload_id}_tables/
+        # 2. Compute dataset version and table fingerprints (MVP - Phase 1)
+        from clinical_analytics.storage.versioning import (
+            compute_dataset_version,
+            compute_table_fingerprint,
+        )
+
+        # Extract DataFrames for versioning
+        table_dfs = [t["data"] for t in tables]
+        dataset_version = compute_dataset_version(table_dfs)
+        logger.info(f"Computed dataset_version: {dataset_version}")
+
+        # Compute table fingerprints for provenance
+        table_fingerprints = [compute_table_fingerprint(t["data"], t["name"]) for t in tables]
+
+        # 3. Save individual tables to {upload_id}_tables/
         tables_dir = storage.raw_dir / f"{upload_id}_tables"
         tables_dir.mkdir(exist_ok=True)
 
@@ -708,15 +722,20 @@ def save_table_list(
             schema = engine.infer_schema(unified_df)
             metadata["inferred_schema"] = schema.to_dataset_config()
 
-        # 6. Save metadata with tables list and inferred_schema
+        # 6. Save metadata with tables list, dataset_version, and provenance
         full_metadata = {
             **metadata,
             "upload_id": upload_id,
+            "dataset_version": dataset_version,  # Phase 1: Content-based version
             "tables": table_names,
             "table_counts": {t["name"]: t["data"].height for t in tables},
             "row_count": unified_df.height,
             "column_count": unified_df.width,
             "columns": list(unified_df.columns),
+            "provenance": {  # Phase 1: Basic provenance tracking
+                "upload_type": "single" if len(tables) == 1 else "multi",
+                "tables": table_fingerprints,
+            },
         }
 
         metadata_path = storage.metadata_dir / f"{upload_id}.json"

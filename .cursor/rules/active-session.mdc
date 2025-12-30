@@ -1,25 +1,28 @@
-# Active Session: test_optimization_complete
+# Active Session: ADR001 Exclusion Filters Complete
 
-## Session File
-.context/sessions/test_optimization_complete.yaml
+**Session ID**: `adr001-exclusion-filters-complete`
 
-## Resume Prompt
-Resume session: test_optimization_complete
+**Session File**: `.context/sessions/adr001-exclusion-filters-complete.yaml`
 
-Completed test refactoring and optimization:
-1. Deleted dataset-specific loader test files (test_covid_ms_loader.py, test_sepsis_loader.py, test_mimic3_loader.py) - loader behavior tested through ClinicalDataset interface
-2. Moved UI test files to tests/ui/ directory for better organization
-3. Optimized parametrized tests with dataset sampling:
-   - Fast tests use get_sample_datasets() (1-2 datasets) 
-   - Critical integration tests use get_available_datasets() (all datasets)
-4. Added test markers: @pytest.mark.slow + @pytest.mark.integration for data-loading tests
-5. Updated documentation: tests/README.md with optimization strategy
-6. Updated rules: .claude/CLAUDE.md and .cursor/rules/101-testing-hygiene.mdc with dataset sampling patterns
+**Status**: Complete - PR #16 open for review
 
-Results:
-- Test count: 577 (down from 589)
-- Fast tests (make test-fast): 537 tests (skips 40 slow tests)
-- Slow/integration tests: 40 tests (properly marked)
-- All tests passing, better organized, faster for development feedback
+**Resume Prompt**:
 
-Status: Complete. All optimizations applied, rules updated, tests passing.
+Resume ADR001 implementation work. The exclusion filter patterns for "excluding those not on X" queries have been completed and tested. All tests pass (20+ filter extraction tests, 4 exclusion filter tests proving extensibility). PR #16 is open for review.
+
+Key accomplishments:
+- Generic exclusion filter patterns (no hardcoding, works for any medication/treatment type)
+- Column name normalization to ensure canonical names in FilterSpec
+- Extensibility tests for diabetes meds and treatment types
+- All ADR001 phases complete (0-3)
+
+Next steps (out of scope for ADR001):
+- ADR002: Persistent storage, JSONL logging, lazy evaluation
+- ADR003: Trust UI, adaptive alias persistence, semantic layer execution
+
+Decision boundaries documented:
+- Pattern matching (Tier 1/1.5): 75% of queries
+- Semantic embeddings (Tier 2): When pattern matching fails
+- LLM (Tier 3): Only for complex multi-part queries
+- Polars expressions: Filter application and analysis
+- SQL/Ibis: Future optimization (ADR003 Phase 3)
