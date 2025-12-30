@@ -82,7 +82,182 @@ The codebase uses a semantic layer architecture where:
 - Create generic dataset fixtures that work with registry
 - Add helper functions for getting available datasets
 
-### 7. Delete Legacy Test File
+### 7. Create Testing Guidelines Documentation
+
+**File:** `tests/AGENTS.md` (NEW)
+
+Create comprehensive documentation for AI agents and developers on maintaining DRY test code. The file should reference and align with all project rules:
+
+**References:**
+- `.cursor/rules/101-testing-hygiene.mdc` - Testing patterns and standards
+- `.cursor/rules/102-dry-principles.mdc` - DRY principles and code organization
+- `.cursor/rules/104-plan-execution-hygiene.mdc` - Test-first workflow and quality gates
+- `.cursor/rules/103-staff-engineer-standards.mdc` - Production-grade patterns
+
+The file should include:
+
+1. **Test Structure: AAA Pattern** (from 101-testing-hygiene.mdc)
+   - Arrange-Act-Assert with clear separation
+   - Code examples showing proper structure
+   - Why this pattern matters for maintainability
+
+2. **Test Naming Convention** (from 101-testing-hygiene.mdc, 104-plan-execution-hygiene.mdc)
+   - Pattern: `test_unit_scenario_expectedBehavior`
+   - Examples of correct vs incorrect naming
+   - Descriptive names that explain what is being tested
+
+3. **DRY Principles for Tests** (from 102-dry-principles.mdc, 104-plan-execution-hygiene.mdc)
+   - Single source of truth: All shared test data and fixtures in `conftest.py`
+   - Never duplicate fixture definitions across test files
+   - Extract common patterns to reusable fixtures
+   - Use factory fixtures for variations of similar data
+   - Never duplicate imports - extract to `conftest.py` if repeated
+
+4. **Fixture Discipline** (from 101-testing-hygiene.mdc, 104-plan-execution-hygiene.mdc)
+   - **Before creating a new fixture**: Always check `conftest.py` first
+   - **Fixture scoping**:
+     - Session scope: Expensive, immutable resources (e.g., database connections)
+     - Module scope: Shared across tests in one file (e.g., reference data)
+     - Function scope (default): Fresh per test, use for mutable state
+   - **Factory fixtures**: Use factory pattern for creating variations (e.g., `make_transaction()`)
+   - **Parametrized fixtures**: Use `@pytest.fixture(params=[...])` for multiple test cases
+   - **Fixture files location**: Document where fixtures belong (root `conftest.py` vs module-level)
+
+5. **Test Isolation** (from 101-testing-hygiene.mdc, 104-plan-execution-hygiene.mdc)
+   - No shared mutable state between tests
+   - Each test must be independent
+   - Use fixtures for isolated test data
+   - Database isolation patterns (if applicable)
+
+6. **Parameterization** (from 101-testing-hygiene.mdc)
+   - Use `@pytest.mark.parametrize` for variations
+   - Use `pytest.param` with IDs for readable test output
+   - Examples of proper parametrization
+
+7. **Error Testing** (from 101-testing-hygiene.mdc)
+   - Use `pytest.raises` with specific exception types
+   - Test error messages for clarity
+   - Examples of proper error testing patterns
+
+8. **Data Engineering Specific Patterns** (from 101-testing-hygiene.mdc)
+   - Schema contract tests
+   - Idempotency tests
+   - Null handling tests
+   - Examples for each pattern
+
+9. **Polars Testing Assertions** (from 104-plan-execution-hygiene.mdc)
+   - Use `polars.testing.assert_frame_equal` for DataFrame comparisons
+   - Never use pandas assertions for Polars DataFrames
+   - Examples of proper Polars test assertions
+
+10. **Common Anti-Patterns to Avoid**
+    - Creating duplicate `sample_cohort` fixtures in multiple files
+    - Repeating mock setup code across tests
+    - Hardcoding test data in test functions instead of fixtures
+    - Copy-pasting fixture definitions between test files
+    - Duplicate imports across test files
+    - Shared mutable state between tests
+
+11. **Standard Fixtures Reference**
+    - Document all available fixtures in `conftest.py`
+    - Provide usage examples for each fixture
+    - Explain when to use each fixture type
+    - Document fixture dependencies
+
+12. **Makefile Usage** (from 101-testing-hygiene.mdc, 104-plan-execution-hygiene.mdc)
+    - Always use `make test` / `make test-fast` (never run pytest directly)
+    - Use `make test-cov` for coverage reports
+    - Use `make test-unit` / `make test-integration` for specific test types
+    - Never run `pytest` or `uv run pytest` directly
+
+13. **Test Writing Checklist**
+    - [ ] Checked `conftest.py` for existing fixtures
+    - [ ] Used parametrization instead of duplicate test functions
+    - [ ] Extracted repeated setup to fixtures
+    - [ ] Documented fixture purpose and scope
+    - [ ] Used appropriate fixture scope (session/module/function)
+    - [ ] Test follows AAA pattern (Arrange-Act-Assert)
+    - [ ] Test name follows `test_unit_scenario_expectedBehavior` pattern
+    - [ ] Test is isolated (no shared mutable state)
+    - [ ] Used Polars testing assertions (not pandas)
+    - [ ] Used Makefile commands for running tests
+
+14. **Examples**
+    - Show before/after examples of refactoring duplicate code
+    - Demonstrate proper fixture composition
+    - Show how to use factory fixtures for variations
+    - Show proper AAA pattern usage
+    - Show proper parametrization examples
+    - Show proper error testing examples
+
+**Important Notes:**
+- AGENTS.md should cross-reference the actual rule files for detailed information
+- AGENTS.md serves as a quick reference guide, but developers should consult the full rule files for comprehensive guidance
+- All examples in AGENTS.md should align with patterns shown in the rule files
+- AGENTS.md should emphasize the "single source of truth" principle - if it's in `conftest.py`, use it; don't duplicate
+
+### 8. Consolidate Duplicate Fixtures Across Test Files
+
+**Files to Audit and Refactor:**
+
+- `tests/test_ui.py` - Has `mock_cohort` fixture (should use centralized fixture)
+- `tests/unit/ui/pages/test_ask_questions_low_confidence.py` - Has `sample_cohort` fixture
+- `tests/unit/ui/pages/test_ask_questions_idempotency.py` - Has `sample_cohort` and `sample_context` fixtures
+- `tests/unit/ui/pages/test_ask_questions_run_key.py` - Has `sample_context` fixture
+- `tests/core/test_nl_query_engine_variable_extraction.py` - Has `mock_semantic_layer` fixture
+- `tests/core/test_nl_query_engine_pattern_fallback.py` - Has `mock_semantic_layer` fixture
+- `tests/core/test_nl_query_engine_error_messages.py` - May have duplicate fixtures
+- `tests/core/test_nl_query_engine_diagnostics.py` - May have duplicate fixtures
+- `tests/core/test_clarifying_questions.py` - May have duplicate fixtures
+- `tests/ui/components/test_question_engine_*.py` - Multiple files with potential duplicate fixtures
+- `tests/analysis/test_compute.py` - Has `sample_numeric_df`, `sample_categorical_df`, `sample_mixed_df` fixtures
+
+**Actions:**
+1. Audit all test files for duplicate fixture definitions
+2. Identify common patterns: `sample_cohort`, `mock_cohort`, `sample_context`, `mock_semantic_layer`, `sample_numeric_df`, etc.
+3. Move common fixtures to `conftest.py` with appropriate scoping
+4. Create factory fixtures for variations (e.g., `make_cohort()`, `make_context()`)
+5. Update all test files to use centralized fixtures
+6. Remove duplicate fixture definitions from individual test files
+
+### 9. Review Additional Core Tests
+
+**Files:**
+- `tests/core/test_mapper.py` - Verify alignment with semantic layer approach
+  - Check for hardcoded dataset configs
+  - Ensure tests use registry discovery
+  - Verify config-driven behavior testing
+
+- `tests/core/test_semantic_layer.py` - Verify alignment with semantic layer architecture
+  - Ensure tests verify interface, not implementations
+  - Check for any dataset-specific assumptions
+  - Verify config-driven SQL generation is tested
+
+**Actions:**
+1. Review both files for hardcoded dataset references
+2. Ensure tests use generic patterns and registry discovery
+3. Refactor if needed to align with semantic layer approach
+
+### 10. Review Loader Test
+
+**File:** `tests/loader/test_zip_extraction.py`
+
+- Review for dataset-specific code
+- Ensure it tests generic zip extraction behavior
+- Verify it uses fixtures from `conftest.py`
+- Refactor if needed to align with generic approach
+
+### 11. Update Test Documentation
+
+**File:** `tests/README.md`
+
+- Remove dataset-specific references (covid_ms, sepsis, mimic3)
+- Update to reflect generic, registry-based approach
+- Document fixture usage from `conftest.py`
+- Add reference to `AGENTS.md` for testing guidelines
+- Update examples to use registry discovery
+
+### 12. Delete Legacy Test File
 
 **File:** `tests/test_covid_ms_dataset.py`
 
@@ -140,6 +315,7 @@ def test_registry_discovers_all_datasets():
 
 
 
+
 ## Testing Strategy
 
 1. **Interface Tests** - Test `ClinicalDataset` ABC methods
@@ -156,6 +332,19 @@ def test_registry_discovers_all_datasets():
 - ✅ Tests verify semantic layer integration
 - ✅ All existing tests pass after refactoring
 - ✅ New tests are more maintainable and extensible
+- ✅ AGENTS.md provides comprehensive guidance aligned with all project rules:
+  - Testing hygiene standards (AAA pattern, fixture discipline, test isolation)
+  - DRY principles (single source of truth, no duplication)
+  - Plan execution hygiene (test-first workflow, Makefile usage)
+  - Staff engineer standards (where applicable to testing)
+- ✅ AGENTS.md cross-references rule files for detailed information
+- ✅ Common fixtures are centralized in `conftest.py`
+- ✅ No duplicate fixture definitions across test files
+- ✅ All test examples in AGENTS.md follow project standards
+- ✅ Duplicate fixtures consolidated (sample_cohort, mock_cohort, mock_semantic_layer, etc.)
+- ✅ All test files use centralized fixtures from `conftest.py`
+- ✅ `tests/README.md` updated to reflect generic approach
+- ✅ Additional core tests reviewed and aligned with semantic layer architecture
 
 ## Files Modified
 
@@ -164,3 +353,14 @@ def test_registry_discovers_all_datasets():
 3. `tests/test_registry.py` (MODIFY)
 4. `tests/core/test_registry.py` (MODIFY)
 5. `tests/test_mapper.py` (MODIFY)
+6. `tests/core/test_mapper.py` (REVIEW/MODIFY)
+7. `tests/core/test_semantic_layer.py` (REVIEW/MODIFY)
+8. `tests/loader/test_zip_extraction.py` (REVIEW/MODIFY)
+9. `tests/conftest.py` (MODIFY - consolidate fixtures)
+10. `tests/test_ui.py` (MODIFY - use centralized fixtures)
+11. `tests/unit/ui/pages/test_ask_questions_*.py` (MODIFY - use centralized fixtures)
+12. `tests/core/test_nl_query_engine_*.py` (MODIFY - use centralized fixtures)
+13. `tests/ui/components/test_question_engine_*.py` (MODIFY - use centralized fixtures)
+14. `tests/analysis/test_compute.py` (MODIFY - use centralized fixtures if applicable)
+15. `tests/README.md` (MODIFY - update documentation)
+16. `tests/AGENTS.md` (NEW)
