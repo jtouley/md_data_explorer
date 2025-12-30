@@ -922,12 +922,21 @@ class NLQueryEngine:
                 # BUT: Skip this for coded columns - we need Strategy 2 to extract proper numeric codes
                 # Strategy 1 only makes sense for exact column name matches with string values
                 column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
+                matched_column_from_strategy1 = None
+                matched_alias_from_strategy1 = None
+
                 if column_name and conf > 0.5:
                     # Check if this is a coded column using generic detection
                     if self._is_coded_column(column_name):
                         # This is a coded column - Strategy 2 will extract proper numeric codes
-                        # Skip Strategy 1 to avoid creating filter with string value
-                        pass
+                        # Store the matched column for Strategy 2 to use
+                        matched_column_from_strategy1 = column_name
+                        # Find the alias for this column
+                        alias_index = self.semantic_layer.get_column_alias_index()
+                        for alias, canonical in alias_index.items():
+                            if canonical == column_name:
+                                matched_alias_from_strategy1 = alias
+                                break
                     else:
                         # Not a coded column - use Strategy 1 for direct column matching
                         filters.append(
@@ -941,147 +950,158 @@ class NLQueryEngine:
                         continue
 
                 # Strategy 2: Try to find a related column (e.g., "statins" → "Statin Prescribed?")
-                # Look for columns that contain the phrase or related terms
-                alias_index = self.semantic_layer.get_column_alias_index()
-                value_lower = value_phrase.lower()
+                # If Strategy 1 already found a coded column, use it directly
+                # Otherwise, search for columns that contain the phrase or related terms
+                if matched_column_from_strategy1 and matched_alias_from_strategy1:
+                    # Use the column Strategy 1 already found
+                    column_name = matched_column_from_strategy1
+                    alias_name = matched_alias_from_strategy1
+                else:
+                    # Strategy 1 didn't find a coded column - search for related columns
+                    alias_index = self.semantic_layer.get_column_alias_index()
+                    value_lower = value_phrase.lower()
 
-                # Find columns that might contain this value
-                # For "statins", look for columns with "statin" in the name
-                matching_columns = []
-                for alias, canonical in alias_index.items():
-                    alias_lower = alias.lower()
-                    # Check if value phrase is related to column name
-                    if value_lower in alias_lower or alias_lower in value_lower:
-                        matching_columns.append((canonical, alias))
-                    # Also check if they share a root word
-                    value_words = set(value_lower.split())
-                    alias_words = set(alias_lower.split())
-                    if value_words & alias_words:  # Intersection
-                        matching_columns.append((canonical, alias))
-
-                if matching_columns:
-                    # Prioritize binary yes/no columns for "on X" queries
-                    # These typically have patterns like "1: Yes 2: No" or "prescribed"
-                    prioritized_columns = []
-                    other_columns = []
-
-                    for canonical, alias in matching_columns:
+                    # Find columns that might contain this value
+                    # For "statins", look for columns with "statin" in the name
+                    matching_columns = []
+                    for alias, canonical in alias_index.items():
                         alias_lower = alias.lower()
-                        # Check for binary yes/no pattern indicators (higher priority)
-                        # Look for: "1:" followed by "yes" or "prescribed" in the name
-                        has_binary_pattern = (
-                            "1:" in alias
-                            and ("yes" in alias_lower or "prescribed" in alias_lower or "no" in alias_lower)
-                        ) or (
-                            # Alternative pattern: column name suggests binary (prescribed, yes/no, etc.)
-                            any(term in alias_lower for term in ["prescribed", "yes", "no"])
-                            and ":" in alias
-                            and any(char.isdigit() for char in alias)
-                        )
+                        # Check if value phrase is related to column name
+                        if value_lower in alias_lower or alias_lower in value_lower:
+                            matching_columns.append((canonical, alias))
+                        # Also check if they share a root word
+                        value_words = set(value_lower.split())
+                        alias_words = set(alias_lower.split())
+                        if value_words & alias_words:  # Intersection
+                            if (canonical, alias) not in matching_columns:
+                                matching_columns.append((canonical, alias))
 
-                        if has_binary_pattern:
-                            prioritized_columns.append((canonical, alias))
-                        else:
-                            other_columns.append((canonical, alias))
+                    if matching_columns:
+                        # Prioritize binary yes/no columns for "on X" queries
+                        # These typically have patterns like "1: Yes 2: No" or "prescribed"
+                        prioritized_columns = []
+                        other_columns = []
 
-                    # Use prioritized columns first, then others
-                    if prioritized_columns:
-                        column_name, alias_name = prioritized_columns[0]
-                    else:
-                        column_name, alias_name = matching_columns[0]
-
-                    # For "on statins" / "were on statins", determine the filter value
-                    # Check if column name suggests it's a coded variable
-                    # (e.g., "Statin Prescribed? 1: Yes 2: No" or "Statin Used: 0: n/a 1: Atorvastatin...")
-                    if ":" in alias_name and any(char.isdigit() for char in alias_name):
-                        import re as re_module
-
-                        # Extract codes like "1:", "2:", etc. with their labels
-                        code_pattern = r"(\d+):\s*([^0-9]+?)(?=\s+\d+:|$)"
-                        codes = re_module.findall(code_pattern, alias_name)
-
-                        if codes:
-                            # Check if this is a binary yes/no column (e.g., "1: Yes 2: No")
-                            # For "on X" queries, we want the "Yes" value
-                            alias_lower = alias_name.lower()
-                            is_binary_yes_no = (
-                                len(codes) == 2  # Binary = exactly 2 codes
-                                and ("yes" in alias_lower or "prescribed" in alias_lower)
-                                and any("yes" in label.lower() or "no" in label.lower() for _, label in codes)
+                        for canonical, alias in matching_columns:
+                            alias_lower = alias.lower()
+                            # Check for binary yes/no pattern indicators (higher priority)
+                            # Look for: "1:" followed by "yes" or "prescribed" in the name
+                            has_binary_pattern = (
+                                "1:" in alias
+                                and ("yes" in alias_lower or "prescribed" in alias_lower or "no" in alias_lower)
+                            ) or (
+                                # Alternative pattern: column name suggests binary (prescribed, yes/no, etc.)
+                                any(term in alias_lower for term in ["prescribed", "yes", "no"])
+                                and ":" in alias
+                                and any(char.isdigit() for char in alias)
                             )
 
-                            if is_binary_yes_no:
-                                # Binary yes/no column - find the "Yes" code
-                                yes_code = None
-                                for code, label in codes:
-                                    label_lower = label.lower()
-                                    if "yes" in label_lower or ("prescribed" in alias_lower and int(code) != 0):
-                                        yes_code = int(code)
-                                        break
+                            if has_binary_pattern:
+                                prioritized_columns.append((canonical, alias))
+                            else:
+                                other_columns.append((canonical, alias))
 
-                                if yes_code is not None:
+                        # Use prioritized columns first, then others
+                        if prioritized_columns:
+                            column_name, alias_name = prioritized_columns[0]
+                        else:
+                            column_name, alias_name = matching_columns[0]
+                    else:
+                        # No matching columns found - skip this filter
+                        continue
+
+                # For "on statins" / "were on statins", determine the filter value
+                # Check if column name suggests it's a coded variable
+                # (e.g., "Statin Prescribed? 1: Yes 2: No" or "Statin Used: 0: n/a 1: Atorvastatin...")
+                if ":" in alias_name and any(char.isdigit() for char in alias_name):
+                    import re as re_module
+
+                    # Extract codes like "1:", "2:", etc. with their labels
+                    code_pattern = r"(\d+):\s*([^0-9]+?)(?=\s+\d+:|$)"
+                    codes = re_module.findall(code_pattern, alias_name)
+
+                    if codes:
+                        # Check if this is a binary yes/no column (e.g., "1: Yes 2: No")
+                        # For "on X" queries, we want the "Yes" value
+                        alias_lower = alias_name.lower()
+                        is_binary_yes_no = (
+                            len(codes) == 2  # Binary = exactly 2 codes
+                            and ("yes" in alias_lower or "prescribed" in alias_lower)
+                            and any("yes" in label.lower() or "no" in label.lower() for _, label in codes)
+                        )
+
+                        if is_binary_yes_no:
+                            # Binary yes/no column - find the "Yes" code
+                            yes_code = None
+                            for code, label in codes:
+                                label_lower = label.lower()
+                                if "yes" in label_lower or ("prescribed" in alias_lower and int(code) != 0):
+                                    yes_code = int(code)
+                                    break
+
+                            if yes_code is not None:
+                                filters.append(
+                                    FilterSpec(
+                                        column=column_name,
+                                        operator="==",
+                                        value=yes_code,
+                                        exclude_nulls=True,
+                                    )
+                                )
+                            else:
+                                # Fallback: use code 1 if it exists (common pattern)
+                                if any(int(code) == 1 for code, _ in codes):
                                     filters.append(
                                         FilterSpec(
                                             column=column_name,
                                             operator="==",
-                                            value=yes_code,
-                                            exclude_nulls=True,
-                                        )
-                                    )
-                                else:
-                                    # Fallback: use code 1 if it exists (common pattern)
-                                    if any(int(code) == 1 for code, _ in codes):
-                                        filters.append(
-                                            FilterSpec(
-                                                column=column_name,
-                                                operator="==",
-                                                value=1,
-                                                exclude_nulls=True,
-                                            )
-                                        )
-                            else:
-                                # Coded column (not binary prescribed) - filter for non-zero values
-                                # For "on statins" with "Statin Used", filter for != 0 or IN [1,2,3,4,5]
-                                non_zero_codes = [int(code) for code, _ in codes if int(code) != 0]
-                                if non_zero_codes:
-                                    filters.append(
-                                        FilterSpec(
-                                            column=column_name,
-                                            operator="IN",
-                                            value=non_zero_codes,
-                                            exclude_nulls=True,
-                                        )
-                                    )
-                                else:
-                                    # Fallback: just exclude zero
-                                    filters.append(
-                                        FilterSpec(
-                                            column=column_name,
-                                            operator="!=",
-                                            value=0,
+                                            value=1,
                                             exclude_nulls=True,
                                         )
                                     )
                         else:
-                            # No codes found, but column matches - use != 0 as default
-                            filters.append(
-                                FilterSpec(
-                                    column=column_name,
-                                    operator="!=",
-                                    value=0,
-                                    exclude_nulls=True,
+                            # Coded column (not binary prescribed) - filter for non-zero values
+                            # For "on statins" with "Statin Used", filter for != 0 or IN [1,2,3,4,5]
+                            non_zero_codes = [int(code) for code, _ in codes if int(code) != 0]
+                            if non_zero_codes:
+                                filters.append(
+                                    FilterSpec(
+                                        column=column_name,
+                                        operator="IN",
+                                        value=non_zero_codes,
+                                        exclude_nulls=True,
+                                    )
                                 )
-                            )
+                            else:
+                                # Fallback: just exclude zero
+                                filters.append(
+                                    FilterSpec(
+                                        column=column_name,
+                                        operator="!=",
+                                        value=0,
+                                        exclude_nulls=True,
+                                    )
+                                )
                     else:
-                        # Not a coded column - use equality with the phrase
+                        # No codes found, but column matches - use != 0 as default
                         filters.append(
                             FilterSpec(
                                 column=column_name,
-                                operator="==",
-                                value=value_phrase,
+                                operator="!=",
+                                value=0,
                                 exclude_nulls=True,
                             )
                         )
+                else:
+                    # Not a coded column - use equality with the phrase
+                    filters.append(
+                        FilterSpec(
+                            column=column_name,
+                            operator="==",
+                            value=value_phrase,
+                            exclude_nulls=True,
+                        )
+                    )
 
         # Pattern 2: Numeric range filters
         # "below X", "above X", "less than X", "greater than X", "> X", "< X"
