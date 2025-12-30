@@ -123,4 +123,3 @@ def test_ollama_manager_end_to_end(ollama_manager):
     # Response should contain "4" (or at least be non-empty)
     # We're lenient here since LLM responses can vary
     assert len(response) > 0
-

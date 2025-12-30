@@ -726,20 +726,13 @@ class NLQueryEngine:
         return None
 
     def _get_ollama_client(self):
-        """Get or create Ollama client (lazy initialization)."""
+        """Get or create Ollama client via OllamaManager (lazy initialization)."""
         if not hasattr(self, "_ollama_client"):
-            from clinical_analytics.core.llm_client import OllamaClient
-            from clinical_analytics.core.nl_query_config import (
-                OLLAMA_BASE_URL,
-                OLLAMA_DEFAULT_MODEL,
-                OLLAMA_TIMEOUT_SECONDS,
-            )
+            from clinical_analytics.core.ollama_manager import get_ollama_manager
 
-            self._ollama_client = OllamaClient(
-                model=OLLAMA_DEFAULT_MODEL,
-                base_url=OLLAMA_BASE_URL,
-                timeout=OLLAMA_TIMEOUT_SECONDS,
-            )
+            manager = get_ollama_manager()
+            self._ollama_client = manager.get_client()
+
         return self._ollama_client
 
     def _build_rag_context(self, query: str) -> dict:
