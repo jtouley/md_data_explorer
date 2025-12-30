@@ -81,21 +81,16 @@ class UploadedDataset(ClinicalDataset):
     def load(self) -> None:
         """
         Load uploaded data (lazy by default, eager for backward compatibility).
-
-        Phase 4: Loads data as Polars LazyFrame by default for efficient processing.
-        Automatically collects lazy frames when needed for compatibility.
         """
         if not self.validate():
             raise FileNotFoundError(f"Upload data not found: {self.upload_id}")
 
-        # Phase 4: Load as lazy frame by default
         self.data = self.storage.get_upload_data(self.upload_id, lazy=True)
 
         if self.data is None:
             logger.error(f"Failed to load upload data for upload_id: {self.upload_id}")
             raise ValueError(f"Failed to load upload data: {self.upload_id}")
 
-        # Log appropriate message based on data type
         if isinstance(self.data, pl.LazyFrame):
             logger.info(f"Loaded lazy upload data: {self.upload_id}")
         elif isinstance(self.data, pd.DataFrame):
@@ -103,8 +98,6 @@ class UploadedDataset(ClinicalDataset):
                 f"Loaded eager upload data: {self.upload_id}, "
                 f"shape: {self.data.shape}, columns: {list(self.data.columns)}"
             )
-        else:
-            logger.warning(f"Loaded upload data with unexpected type: {type(self.data)}")
 
     def get_cohort(self, granularity: Granularity = "patient_level", **filters) -> pd.DataFrame:
         """
@@ -132,7 +125,6 @@ class UploadedDataset(ClinicalDataset):
                     self.load()
                 from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
 
-                # Collect lazy frame for schema conversion
                 if isinstance(self.data, pl.LazyFrame):
                     data_for_schema = self.data.collect()
                 elif isinstance(self.data, pd.DataFrame):
@@ -159,33 +151,26 @@ class UploadedDataset(ClinicalDataset):
         if self.data is None:
             self.load()
 
-        # Phase 4: Apply filters in Polars before collecting (real lazy execution)
-        # Keep data as LazyFrame to enable predicate pushdown and projection pruning
         if isinstance(self.data, pl.LazyFrame):
             lf = self.data
 
-            # Apply filters using Polars expressions (predicate pushdown)
             if filters:
                 filter_exprs = []
                 for key, value in filters.items():
-                    # Simple equality filters (extend as needed)
                     if isinstance(value, list):
                         filter_exprs.append(pl.col(key).is_in(value))
                     else:
                         filter_exprs.append(pl.col(key) == value)
 
                 if filter_exprs:
-                    # Combine filters with AND logic
                     combined_filter = filter_exprs[0]
                     for expr in filter_exprs[1:]:
                         combined_filter = combined_filter & expr
                     lf = lf.filter(combined_filter)
 
-            # Collect only once at the end (after filters applied)
             data_df = lf.collect().to_pandas()
         elif isinstance(self.data, pd.DataFrame):
             data_df = self.data
-            # Apply filters in pandas (backward compatibility path)
             if filters:
                 for key, value in filters.items():
                     if key in data_df.columns:
