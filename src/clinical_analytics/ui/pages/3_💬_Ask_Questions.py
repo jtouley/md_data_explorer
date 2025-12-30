@@ -711,8 +711,8 @@ def execute_analysis_with_idempotency(
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
 
-        # Suggest follow-up questions
-        _suggest_follow_ups(context, result, run_key)
+        # Suggest follow-up questions (only for current results, not history)
+        _suggest_follow_ups(context, result, run_key, render_context="current")
         return
 
     # Not computed - compute and store
@@ -807,8 +807,8 @@ def execute_analysis_with_idempotency(
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
 
-        # Suggest follow-up questions
-        _suggest_follow_ups(context, result, run_key)
+        # Suggest follow-up questions (only for current results, not history)
+        _suggest_follow_ups(context, result, run_key, render_context="current")
 
         logger.info("analysis_rendering_complete", run_key=run_key)
 
@@ -916,8 +916,18 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
     )
 
 
-def _suggest_follow_ups(context: AnalysisContext, result: dict, run_key: str | None = None) -> None:
-    """Suggest natural follow-up questions based on current result."""
+def _suggest_follow_ups(
+    context: AnalysisContext, result: dict, run_key: str | None = None, render_context: str = "current"
+) -> None:
+    """
+    Suggest natural follow-up questions based on current result.
+
+    Args:
+        context: Analysis context
+        result: Analysis result dict
+        run_key: Run key for this analysis
+        render_context: Context identifier ("current" or "history") to ensure unique button keys
+    """
     suggestions = []
 
     # Generate suggestions based on intent and result
@@ -972,10 +982,11 @@ def _suggest_follow_ups(context: AnalysisContext, result: dict, run_key: str | N
         for idx, suggestion in enumerate(suggestions[:4]):  # Limit to 4 suggestions
             col = cols[idx % len(cols)]
             with col:
-                # Include run_key in button key to ensure uniqueness across different results
+                # Include run_key and render_context in button key to ensure uniqueness
                 # This prevents StreamlitDuplicateElementKey errors when same suggestion appears in different contexts
                 run_key_suffix = run_key[:8] if run_key else "default"
-                button_key = f"followup_{run_key_suffix}_{idx}_{hash(suggestion) % 1000000}"
+                # Use render_context to distinguish between current result and history rendering
+                button_key = f"followup_{render_context}_{run_key_suffix}_{idx}_{hash(suggestion) % 1000000}"
                 if st.button(suggestion, key=button_key, use_container_width=True):
                     # Store suggestion to prefill chat input and rerun to process it
                     st.session_state["prefilled_query"] = suggestion

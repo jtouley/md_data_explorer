@@ -10,8 +10,6 @@ Note: These tests verify the logic is extensible and DRY, not hardcoded.
 """
 
 
-
-
 class TestCodeToLabelMapping:
     """Test that codes are mapped to labels in count analysis rendering."""
 
