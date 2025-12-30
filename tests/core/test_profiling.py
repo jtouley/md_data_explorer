@@ -95,7 +95,8 @@ class TestDataProfiler:
         assert numeric["numeric"]["min"] == 1
         assert numeric["numeric"]["max"] == 10
         assert numeric["numeric"]["median"] == 5.5
-        assert numeric["with_zeros"]["n_zeros"] == 3
+        # Data: [0, 1, 2, 0, 3, 0, 4, 5, 0, 6] has 4 zeros (indices 0, 3, 5, 8)
+        assert numeric["with_zeros"]["n_zeros"] == 4
 
     def test_profile_numeric_features_empty(self):
         """Test numeric profiling with no numeric columns."""
