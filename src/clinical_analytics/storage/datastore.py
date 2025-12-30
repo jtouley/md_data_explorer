@@ -2,6 +2,11 @@
 DataStore Class - Persistent DuckDB Storage
 
 Manages persistent DuckDB storage for uploaded datasets.
+
+INVARIANT (see versioning.py for full contract):
+    Tables are persisted as: {upload_id}_{table_name}_{dataset_version}
+    Guarantees: same (upload_id, dataset_version) → storage reuse
+
 MVP scope: Basic save/load operations, lazy frame support.
 Deferred to Phase 5+: Table deduplication, storage optimization, compression.
 """

@@ -2,8 +2,21 @@
 Dataset Versioning Module
 
 Implements content-based dataset versioning for idempotent query execution.
+
+INVARIANT (Core Contract):
+    A dataset is uniquely identified by (upload_id, dataset_version) where:
+    - upload_id: User-scoped identifier (assigned at upload time)
+    - dataset_version: Content hash (deterministic from data)
+
+    This guarantees:
+    - Identical data → Identical version → Storage reuse
+    - Different data → Different version → Separate storage
+    - Query results can be cached/memoized by (upload_id, dataset_version)
+
+    Persistence key format: {upload_id}_{table_name}_{dataset_version}
+
 MVP scope: Basic content hashing with canonicalization.
-Deferred to Phase 5+: Perfect deduplication, re-upload detection, storage reuse.
+Deferred to Phase 5+: Perfect deduplication, re-upload detection, cross-user storage reuse.
 """
 
 import hashlib

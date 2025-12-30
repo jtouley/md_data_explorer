@@ -638,6 +638,17 @@ def save_table_list(
 
     CRITICAL: Schema conversion happens AFTER normalization (fixes circular dependency).
 
+    TECHNICAL DEBT (Boundary Leakage - MVP acceptable, fix in Phase 5+):
+        This function couples UI upload concerns with semantic storage:
+        1. ID column normalization (lines ~725-743): Type coercion based on UI heuristics
+        2. Schema conversion (lines ~652-659): UI variable_mapping influences semantic schema
+        3. Schema inference fallback (lines ~772-778): UI-driven fallback logic
+
+        Ideal: Semantic layer owns data types/schema, UI layer only provides hints.
+        Reality: Upload wizard directly mutates data before semantic layer sees it.
+
+        Deferred to Phase 5+: Move type coercion to semantic layer boundary validator.
+
     Args:
         storage: UserDatasetStorage instance
         tables: Normalized table list [{"name": str, "data": pl.DataFrame}]

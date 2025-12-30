@@ -214,3 +214,73 @@ class TestADR002EndToEnd:
         assert all(result["status"] == "active")
 
         # Success: Predicate pushdown works (didn't materialize full DataFrame)
+
+    def test_core_invariant_identical_data_produces_same_version(self, integration_env):
+        """
+        CONTRACT TEST: Verify core invariant - identical data → identical version → storage reuse.
+
+        This is the fundamental contract that enables:
+        - Idempotent uploads (re-uploading same data doesn't duplicate storage)
+        - Query result caching (keyed by upload_id + dataset_version)
+        - Storage deduplication (same content = same version)
+
+        Invariant: same (upload_id, dataset_version) → guaranteed storage reuse
+        """
+        datastore = integration_env["datastore"]
+        parquet_dir = integration_env["parquet_dir"]
+
+        # Create identical dataset
+        df = pl.DataFrame({
+            "patient_id": [1, 2, 3],
+            "age": [25, 30, 35],
+            "diagnosis": ["A", "B", "C"],
+        })
+
+        # Upload 1: Save with version v1
+        from clinical_analytics.storage.versioning import compute_dataset_version
+
+        version_1 = compute_dataset_version([df])
+
+        datastore.save_table("patients", df, "upload_001", version_1)
+        parquet_1 = datastore.export_to_parquet("upload_001", "patients", version_1, parquet_dir)
+
+        # Upload 2: Same data, different column order (should produce same version)
+        df_reordered = pl.DataFrame({
+            "diagnosis": ["A", "B", "C"],
+            "patient_id": [1, 2, 3],
+            "age": [25, 30, 35],
+        })
+
+        version_2 = compute_dataset_version([df_reordered])
+
+        # CORE CONTRACT: Identical data → Identical version
+        assert version_1 == version_2, (
+            f"Core invariant violated: identical data produced different versions "
+            f"(v1={version_1}, v2={version_2}). This breaks storage reuse guarantee."
+        )
+
+        # Upload 3: Different data (should produce different version)
+        df_different = pl.DataFrame({
+            "patient_id": [1, 2, 3, 4],  # Different row count
+            "age": [25, 30, 35, 40],
+            "diagnosis": ["A", "B", "C", "D"],
+        })
+
+        version_3 = compute_dataset_version([df_different])
+
+        # CORE CONTRACT: Different data → Different version
+        assert version_3 != version_1, (
+            f"Core invariant violated: different data produced same version "
+            f"(v1={version_1}, v3={version_3}). This breaks storage isolation."
+        )
+
+        # Verify storage key uniqueness (upload_id + version uniquely identifies storage)
+        # Same upload_id, same version → should reference same storage
+        parquet_2 = datastore.export_to_parquet("upload_001", "patients", version_2, parquet_dir)
+
+        # Both should point to same Parquet file (reuse)
+        assert parquet_1 == parquet_2, (
+            "Storage reuse failed: same (upload_id, version) produced different Parquet paths"
+        )
+
+        datastore.close()
