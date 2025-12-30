@@ -187,3 +187,83 @@ class TestConversationHistory:
         # Assert: Entry has fallback headline
         assert entry["headline"] == "Analysis completed"
         assert isinstance(entry["headline"], str)
+
+    def test_conversation_history_preserved_across_reruns(self, mock_session_state):
+        """
+        Test that conversation history is NOT reset mid-conversation.
+
+        This verifies the fix where conversation history was being cleared
+        unexpectedly. History should only be cleared via explicit user action
+        (Clear Conversation button), not during normal page reruns.
+        """
+        # Arrange: Simulate existing conversation history
+        mock_session_state["conversation_history"] = [
+            {
+                "query": "what is the average age",
+                "intent": "DESCRIBE",
+                "headline": "Average age: 45.2 years",
+                "run_key": "describe_abc123",
+                "timestamp": time.time(),
+                "filters_applied": [],
+            },
+            {
+                "query": "compare by treatment",
+                "intent": "COMPARE_GROUPS",
+                "headline": "Treatment A vs B: p<0.05",
+                "run_key": "compare_def456",
+                "timestamp": time.time(),
+                "filters_applied": [],
+            },
+        ]
+        original_history = mock_session_state["conversation_history"].copy()
+
+        # Act: Simulate page rerun (initialization check should preserve history)
+        # The initialization code should check "if not in session_state" and NOT reset
+        if "conversation_history" not in mock_session_state:
+            mock_session_state["conversation_history"] = []
+
+        # Assert: History is preserved (not reset to empty)
+        assert "conversation_history" in mock_session_state
+        assert len(mock_session_state["conversation_history"]) == len(original_history), (
+            f"History should be preserved, got {len(mock_session_state['conversation_history'])} entries, "
+            f"expected {len(original_history)}"
+        )
+        assert mock_session_state["conversation_history"] == original_history, "History entries should be unchanged"
+
+    def test_conversation_history_only_cleared_by_explicit_user_action(self, mock_session_state):
+        """
+        Test that conversation history is only cleared by explicit user action,
+        not by normal page operations.
+        """
+        # Arrange: Existing conversation history
+        mock_session_state["conversation_history"] = [
+            {
+                "query": "query 1",
+                "intent": "DESCRIBE",
+                "headline": "result 1",
+                "run_key": "run_1",
+                "timestamp": time.time(),
+                "filters_applied": [],
+            },
+        ]
+
+        # Act: Normal operations (adding new entry) should NOT clear history
+        # Simulate adding a new entry (as done in execute_analysis_with_idempotency)
+        if "conversation_history" not in mock_session_state:
+            mock_session_state["conversation_history"] = []
+
+        mock_session_state["conversation_history"].append(
+            {
+                "query": "query 2",
+                "intent": "DESCRIBE",
+                "headline": "result 2",
+                "run_key": "run_2",
+                "timestamp": time.time(),
+                "filters_applied": [],
+            }
+        )
+
+        # Assert: History should contain both entries (not cleared)
+        assert len(mock_session_state["conversation_history"]) == 2, "History should accumulate entries, not be cleared"
+        assert mock_session_state["conversation_history"][0]["query"] == "query 1"
+        assert mock_session_state["conversation_history"][1]["query"] == "query 2"

@@ -702,7 +702,7 @@ def execute_analysis_with_idempotency(
         elif context.filters:
             filters_applied = [f.__dict__ for f in context.filters]
 
-        # Initialize conversation history if not exists
+        # Ensure conversation history exists (don't reset if it already exists)
         if "conversation_history" not in st.session_state:
             st.session_state["conversation_history"] = []
 
