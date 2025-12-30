@@ -638,6 +638,17 @@ def save_table_list(
 
     CRITICAL: Schema conversion happens AFTER normalization (fixes circular dependency).
 
+    TECHNICAL DEBT (Boundary Leakage - MVP acceptable, fix in Phase 5+):
+        This function couples UI upload concerns with semantic storage:
+        1. ID column normalization (lines ~725-743): Type coercion based on UI heuristics
+        2. Schema conversion (lines ~652-659): UI variable_mapping influences semantic schema
+        3. Schema inference fallback (lines ~772-778): UI-driven fallback logic
+
+        Ideal: Semantic layer owns data types/schema, UI layer only provides hints.
+        Reality: Upload wizard directly mutates data before semantic layer sees it.
+
+        Deferred to Phase 5+: Move type coercion to semantic layer boundary validator.
+
     Args:
         storage: UserDatasetStorage instance
         tables: Normalized table list [{"name": str, "data": pl.DataFrame}]
@@ -658,7 +669,21 @@ def save_table_list(
                 tables[0]["data"],  # Access normalized DataFrame
             )
 
-        # 2. Save individual tables to {upload_id}_tables/
+        # 2. Compute dataset version and table fingerprints (MVP - Phase 1)
+        from clinical_analytics.storage.versioning import (
+            compute_dataset_version,
+            compute_table_fingerprint,
+        )
+
+        # Extract DataFrames for versioning
+        table_dfs = [t["data"] for t in tables]
+        dataset_version = compute_dataset_version(table_dfs)
+        logger.info(f"Computed dataset_version: {dataset_version}")
+
+        # Compute table fingerprints for provenance
+        table_fingerprints = [compute_table_fingerprint(t["data"], t["name"]) for t in tables]
+
+        # 3. Save individual tables to {upload_id}_tables/
         tables_dir = storage.raw_dir / f"{upload_id}_tables"
         tables_dir.mkdir(exist_ok=True)
 
@@ -700,6 +725,61 @@ def save_table_list(
         unified_df.write_csv(csv_path)
         logger.info(f"Saved unified cohort ({unified_df.height:,} rows) to {csv_path}")
 
+        # 4.5. Save to persistent DuckDB and export to Parquet (Phase 2 + Phase 3)
+        from clinical_analytics.storage.datastore import DataStore
+
+        # Get or create DataStore (persistent DuckDB at data/analytics.duckdb)
+        db_path = storage.upload_dir.parent / "analytics.duckdb"
+        parquet_dir = storage.upload_dir.parent / "parquet"
+        datastore = DataStore(db_path)
+
+        # Common ID column names that should be strings (prevent integer overflow)
+        id_column_names = {
+            "patient_id",
+            "patientid",
+            "subject_id",
+            "subjectid",
+            "id",
+            "mrn",
+            "study_id",
+        }
+
+        # Convert ID columns to strings before persisting (ensures consistent schema)
+        for table in tables:
+            df = table["data"]
+            for col in df.columns:
+                if col.lower() in id_column_names:
+                    # Cast to string to prevent integer overflow and ensure consistent type
+                    table["data"] = df.with_columns(pl.col(col).cast(pl.Utf8))
+                    logger.debug(f"Converted {col} to Utf8 in table '{table['name']}'")
+
+        parquet_paths = {}
+        try:
+            # Save all individual tables to DuckDB and export to Parquet
+            for table in tables:
+                # Save to DuckDB (Phase 2)
+                datastore.save_table(
+                    table_name=table["name"],
+                    data=table["data"],
+                    upload_id=upload_id,
+                    dataset_version=dataset_version,
+                )
+                logger.debug(f"Saved table '{table['name']}' to DuckDB")
+
+                # Export to Parquet (Phase 3)
+                parquet_path = datastore.export_to_parquet(
+                    upload_id=upload_id,
+                    table_name=table["name"],
+                    dataset_version=dataset_version,
+                    parquet_dir=parquet_dir,
+                )
+                parquet_paths[table["name"]] = str(parquet_path)
+                logger.debug(f"Exported table '{table['name']}' to Parquet")
+
+            logger.info(f"Saved {len(tables)} tables to persistent DuckDB and exported to Parquet at {parquet_dir}")
+        finally:
+            datastore.close()
+
         # 5. Infer schema for unified cohort (if not already present)
         if "inferred_schema" not in metadata:
             from clinical_analytics.core.schema_inference import SchemaInferenceEngine
@@ -708,15 +788,21 @@ def save_table_list(
             schema = engine.infer_schema(unified_df)
             metadata["inferred_schema"] = schema.to_dataset_config()
 
-        # 6. Save metadata with tables list and inferred_schema
+        # 6. Save metadata with tables list, dataset_version, provenance, and Parquet paths
         full_metadata = {
             **metadata,
             "upload_id": upload_id,
+            "dataset_version": dataset_version,  # Phase 1: Content-based version
             "tables": table_names,
             "table_counts": {t["name"]: t["data"].height for t in tables},
             "row_count": unified_df.height,
             "column_count": unified_df.width,
             "columns": list(unified_df.columns),
+            "provenance": {  # Phase 1: Basic provenance tracking
+                "upload_type": "single" if len(tables) == 1 else "multi",
+                "tables": table_fingerprints,
+            },
+            "parquet_paths": parquet_paths,  # Phase 3: Parquet file paths for lazy loading
         }
 
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
@@ -1190,6 +1276,28 @@ class UserDatasetStorage:
             return None
 
         if lazy:
+            # Phase 3: Prefer Parquet for lazy loading (columnar, compressed, lazy IO)
+            # Check if Parquet paths available in metadata (Phase 3+)
+            parquet_paths = metadata.get("parquet_paths", {})
+            if parquet_paths:
+                # Try to load from Parquet first (single-table upload = first table)
+                # For multi-table, this loads the unified cohort's first table
+                first_table_name = metadata.get("tables", [])[0] if metadata.get("tables") else None
+                if first_table_name and first_table_name in parquet_paths:
+                    from pathlib import Path
+
+                    from clinical_analytics.storage.datastore import DataStore
+
+                    parquet_path = Path(parquet_paths[first_table_name])
+                    if parquet_path.exists():
+                        logger.info(f"Loading from Parquet (lazy): {parquet_path}")
+                        return DataStore.load_from_parquet(parquet_path)
+                    else:
+                        logger.warning(f"Parquet file missing: {parquet_path}. Falling back to CSV.")
+
+            # Fallback to CSV if Parquet not available (backward compatibility)
+            logger.debug(f"Loading from CSV (lazy): {csv_path}")
+
             # Build schema overrides for ID columns to prevent integer overflow
             # Common ID column names that should always be strings
             id_column_names = {

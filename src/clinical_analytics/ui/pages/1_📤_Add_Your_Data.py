@@ -14,6 +14,7 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from clinical_analytics.ui.app_utils import restore_datasets
 from clinical_analytics.ui.components.data_validator import DataQualityValidator
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 from clinical_analytics.ui.components.variable_mapper import VariableMappingWizard
@@ -25,6 +26,55 @@ st.set_page_config(page_title="Add Your Data | Clinical Analytics", page_icon="�
 
 # Initialize storage
 storage = UserDatasetStorage()
+
+# Phase 4: Session Recovery - Restore previous datasets on startup
+
+db_path = storage.upload_dir.parent / "analytics.duckdb"
+previous_datasets = restore_datasets(storage, db_path)
+
+# Display restored datasets if any exist
+if previous_datasets and "selected_upload_id" not in st.session_state:
+    st.info("🔄 **Previous datasets detected!** You can continue working with an existing dataset or upload a new one.")
+
+    with st.expander("📁 Load Previous Dataset", expanded=True):
+        st.markdown("### Available Datasets")
+
+        # Create a selection table
+        dataset_options = {}
+        for dataset in previous_datasets:
+            dataset_name = dataset.get("dataset_name", dataset["upload_id"])
+            created_at = dataset.get("created_at", "Unknown")
+            row_count = dataset.get("row_count", "Unknown")
+
+            # Format display name
+            display_name = f"{dataset_name} ({row_count:,} rows) - {created_at}"
+            dataset_options[display_name] = dataset["upload_id"]
+
+        # Let user select a dataset
+        if dataset_options:
+            selected_display = st.selectbox(
+                "Select a dataset to continue working:",
+                options=list(dataset_options.keys()),
+                help="These datasets were previously uploaded and are stored persistently.",
+            )
+
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button("Load Selected Dataset", type="primary"):
+                    selected_upload_id = dataset_options[selected_display]
+                    st.session_state["selected_upload_id"] = selected_upload_id
+
+                    # Load the dataset metadata
+                    metadata = storage.get_upload_metadata(selected_upload_id)
+                    st.session_state["current_dataset_metadata"] = metadata
+
+                    st.success(f"✅ Loaded dataset: {metadata.get('dataset_name', selected_upload_id)}")
+                    st.info("💡 Navigate to other pages (Ask Questions, Compare Groups, etc.) to analyze this dataset.")
+
+            with col2:
+                st.markdown("_Or scroll down to upload a new dataset_")
+
+    st.divider()
 
 
 def render_upload_step():
