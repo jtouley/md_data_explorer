@@ -545,6 +545,11 @@ class NLQueryEngine:
         if any(re.search(pattern, query_lower) for pattern in count_patterns):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
+        # Pattern: "which X was most Y" - COUNT with grouping (e.g., "which statin was most prescribed?")
+        # This pattern asks for the top result by count, so it's a COUNT intent with grouping
+        if re.search(r"which\s+\w+(?:\s+\w+)*?\s+was\s+most\s+\w+", query_lower):
+            return QueryIntent(intent_type="COUNT", confidence=0.9)
+
         # Pattern: "describe" or "summary"
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
             return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
@@ -960,65 +965,68 @@ class NLQueryEngine:
                         continue
 
                 # Strategy 2: Try to find a related column (e.g., "statins" → "Statin Prescribed?")
-                # If Strategy 1 already found a coded column, use it directly
-                # Otherwise, search for columns that contain the phrase or related terms
-                if matched_column_from_strategy1 and matched_alias_from_strategy1:
-                    # Use the column Strategy 1 already found
+                # Always search for matching columns and prioritize binary columns, even if Strategy 1 found something
+                # This ensures we select the best match (binary > multi-value) for "on X" queries
+                alias_index = self.semantic_layer.get_column_alias_index()
+                value_lower = value_phrase.lower()
+
+                # Find columns that might contain this value
+                # Example: For "statins", look for columns with "statin" in the name (generic pattern matching)
+                matching_columns = []
+                for alias, canonical in alias_index.items():
+                    alias_lower = alias.lower()
+                    # Check if value phrase is related to column name
+                    if value_lower in alias_lower or alias_lower in value_lower:
+                        matching_columns.append((canonical, alias))
+                    # Also check if they share a root word
+                    value_words = set(value_lower.split())
+                    alias_words = set(alias_lower.split())
+                    if value_words & alias_words:  # Intersection
+                        if (canonical, alias) not in matching_columns:
+                            matching_columns.append((canonical, alias))
+
+                if matching_columns:
+                    # Prioritize binary yes/no columns for "on X" queries
+                    # These typically have patterns like "1: Yes 2: No" or "prescribed"
+                    prioritized_columns = []
+                    other_columns = []
+
+                    for canonical, alias in matching_columns:
+                        alias_lower = alias.lower()
+                        # Check for binary yes/no pattern indicators (higher priority)
+                        # Look for: "1:" followed by "yes" or "prescribed" in the name
+                        has_binary_pattern = (
+                            "1:" in alias
+                            and ("yes" in alias_lower or "prescribed" in alias_lower or "no" in alias_lower)
+                        ) or (
+                            # Alternative pattern: column name suggests binary (prescribed, yes/no, etc.)
+                            any(term in alias_lower for term in ["prescribed", "yes", "no"])
+                            and ":" in alias
+                            and any(char.isdigit() for char in alias)
+                        )
+
+                        if has_binary_pattern:
+                            prioritized_columns.append((canonical, alias))
+                        else:
+                            other_columns.append((canonical, alias))
+
+                    # Use prioritized columns first, then others
+                    # If Strategy 1 found a match and it's in prioritized, use it; otherwise use best match
+                    if prioritized_columns:
+                        column_name, alias_name = prioritized_columns[0]
+                    elif matched_column_from_strategy1 and matched_alias_from_strategy1:
+                        # Fallback to Strategy 1 match if no binary column found
+                        column_name = matched_column_from_strategy1
+                        alias_name = matched_alias_from_strategy1
+                    else:
+                        column_name, alias_name = matching_columns[0]
+                elif matched_column_from_strategy1 and matched_alias_from_strategy1:
+                    # No matching columns found, but Strategy 1 found something - use it
                     column_name = matched_column_from_strategy1
                     alias_name = matched_alias_from_strategy1
                 else:
-                    # Strategy 1 didn't find a coded column - search for related columns
-                    alias_index = self.semantic_layer.get_column_alias_index()
-                    value_lower = value_phrase.lower()
-
-                    # Find columns that might contain this value
-                    # For "statins", look for columns with "statin" in the name
-                    matching_columns = []
-                    for alias, canonical in alias_index.items():
-                        alias_lower = alias.lower()
-                        # Check if value phrase is related to column name
-                        if value_lower in alias_lower or alias_lower in value_lower:
-                            matching_columns.append((canonical, alias))
-                        # Also check if they share a root word
-                        value_words = set(value_lower.split())
-                        alias_words = set(alias_lower.split())
-                        if value_words & alias_words:  # Intersection
-                            if (canonical, alias) not in matching_columns:
-                                matching_columns.append((canonical, alias))
-
-                    if matching_columns:
-                        # Prioritize binary yes/no columns for "on X" queries
-                        # These typically have patterns like "1: Yes 2: No" or "prescribed"
-                        prioritized_columns = []
-                        other_columns = []
-
-                        for canonical, alias in matching_columns:
-                            alias_lower = alias.lower()
-                            # Check for binary yes/no pattern indicators (higher priority)
-                            # Look for: "1:" followed by "yes" or "prescribed" in the name
-                            has_binary_pattern = (
-                                "1:" in alias
-                                and ("yes" in alias_lower or "prescribed" in alias_lower or "no" in alias_lower)
-                            ) or (
-                                # Alternative pattern: column name suggests binary (prescribed, yes/no, etc.)
-                                any(term in alias_lower for term in ["prescribed", "yes", "no"])
-                                and ":" in alias
-                                and any(char.isdigit() for char in alias)
-                            )
-
-                            if has_binary_pattern:
-                                prioritized_columns.append((canonical, alias))
-                            else:
-                                other_columns.append((canonical, alias))
-
-                        # Use prioritized columns first, then others
-                        if prioritized_columns:
-                            column_name, alias_name = prioritized_columns[0]
-                        else:
-                            column_name, alias_name = matching_columns[0]
-                    else:
-                        # No matching columns found - skip this filter
-                        continue
+                    # No matching columns found - skip this filter
+                    continue
 
                 # For "on statins" / "were on statins", determine the filter value
                 # Check if column name suggests it's a coded variable
@@ -1182,14 +1190,28 @@ class NLQueryEngine:
         # We'll look for common medical terms that might be values
         # This is heuristic and will be improved with better value matching
 
+        # Deduplicate filters (same column + operator + value)
+        seen_filters = set()
+        deduplicated_filters = []
+        for f in filters:
+            # Create a unique key for this filter
+            filter_key = (
+                f.column,
+                f.operator,
+                str(f.value) if not isinstance(f.value, list) else tuple(sorted(f.value)),
+            )
+            if filter_key not in seen_filters:
+                seen_filters.add(filter_key)
+                deduplicated_filters.append(f)
+
         logger.debug(
             "filters_extracted",
             query=query,
-            filter_count=len(filters),
-            filters=[{"column": f.column, "operator": f.operator, "value": f.value} for f in filters],
+            filter_count=len(deduplicated_filters),
+            filters=[{"column": f.column, "operator": f.operator, "value": f.value} for f in deduplicated_filters],
         )
 
-        return filters
+        return deduplicated_filters
 
     def _extract_grouping_from_compound_query(self, query: str) -> str | None:
         """
