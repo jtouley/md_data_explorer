@@ -183,17 +183,26 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
         return pl.read_csv(io.BytesIO(file_bytes))
 
     elif file_ext in {".xlsx", ".xls"}:
-        # Load Excel with Polars (openpyxl engine)
-        try:
-            return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-        except Exception as e:
-            logger.warning(f"Polars Excel read failed: {e}. Falling back to pandas.")
-            # PANDAS EXCEPTION: Required for Excel files when Polars fails
-            # TODO: Remove when Polars Excel support is more robust
-            import pandas as pd
+        # PANDAS EXCEPTION: Use pandas as primary for Excel files
+        # Polars read_excel() can miss columns or stop early on complex Excel files
+        # TODO: Revisit when Polars Excel support is more robust
+        import pandas as pd
 
-            df_pandas = pd.read_excel(io.BytesIO(file_bytes))
-            return pl.from_pandas(df_pandas)
+        try:
+            df_pandas = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+            df_polars = pl.from_pandas(df_pandas)
+            logger.info(
+                f"Successfully loaded Excel file with pandas: {df_polars.height} rows, {df_polars.width} columns"
+            )
+            return df_polars
+        except Exception as e:
+            logger.warning(f"Pandas Excel read failed: {e}. Trying Polars as fallback.")
+            # Fallback to Polars if pandas fails
+            try:
+                return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+            except Exception as polars_error:
+                logger.error(f"Both pandas and Polars failed to read Excel file: {polars_error}")
+                raise ValueError(f"Failed to read Excel file: {polars_error}") from polars_error
 
     elif file_ext == ".sav":
         # Load SPSS file
