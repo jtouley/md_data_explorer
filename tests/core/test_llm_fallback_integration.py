@@ -10,23 +10,42 @@ Or skip if Ollama unavailable: pytest tests/core/test_llm_fallback_integration.p
 
 import pytest
 
-from clinical_analytics.core.llm_client import OllamaClient
-
 # Mark all tests in this file as integration tests
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def ollama_client():
-    """Create real OllamaClient instance."""
-    return OllamaClient()
+def ollama_manager():
+    """Get OllamaManager instance."""
+    from clinical_analytics.core.ollama_manager import get_ollama_manager
+
+    return get_ollama_manager()
 
 
 @pytest.fixture
-def skip_if_ollama_unavailable(ollama_client):
-    """Skip test if Ollama is not available."""
-    if not ollama_client.is_available():
+def ollama_client(ollama_manager):
+    """Create real OllamaClient instance via manager."""
+    client = ollama_manager.get_client()
+    if client is None:
         pytest.skip("Ollama not available - skipping integration test")
+    return client
+
+
+@pytest.fixture
+def skip_if_ollama_unavailable(ollama_manager):
+    """Skip test if Ollama is not available."""
+    status = ollama_manager.get_status()
+    if not status["ready"]:
+        pytest.skip(f"Ollama not ready - {ollama_manager.get_setup_instructions()}")
+
+
+def test_ollama_manager_status(ollama_manager):
+    """Verify OllamaManager status reporting."""
+    status = ollama_manager.get_status()
+    assert isinstance(status, dict)
+    assert "installed" in status
+    assert "running" in status
+    assert "ready" in status
 
 
 def test_ollama_client_real_connection(ollama_client, skip_if_ollama_unavailable):
