@@ -138,10 +138,29 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
 
                 # Load as Polars DataFrame with robust schema inference
                 try:
+                    # Common ID columns that should be strings to prevent overflow
+                    id_column_names = {
+                        "patient_id",
+                        "patientid",
+                        "subject_id",
+                        "subjectid",
+                        "id",
+                        "mrn",
+                        "study_id",
+                    }
+
+                    # First, peek at schema to identify ID columns
+                    sample_df = pl.read_csv(io.BytesIO(csv_content), n_rows=0)
+                    schema_overrides = {}
+                    for col_name in sample_df.columns:
+                        if col_name.lower() in {name.lower() for name in id_column_names}:
+                            schema_overrides[col_name] = pl.Utf8
+
                     df = pl.read_csv(
                         io.BytesIO(csv_content),
                         infer_schema_length=10000,  # Scan more rows for better type inference
                         try_parse_dates=True,
+                        schema_overrides=schema_overrides if schema_overrides else None,
                     )
                 except Exception as e:
                     logger.warning(f"Schema inference failed for {name}, falling back to string types: {e}")
@@ -289,8 +308,52 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
     file_ext = Path(filename).suffix.lower()
 
     if file_ext == ".csv":
-        # Load CSV with Polars
-        return pl.read_csv(io.BytesIO(file_bytes))
+        # For CSV files, use Polars directly
+        try:
+            # Common ID columns that should be strings
+            id_column_names = {
+                "patient_id",
+                "patientid",
+                "subject_id",
+                "subjectid",
+                "id",
+                "mrn",
+                "study_id",
+            }
+
+            # Peek at schema first
+            sample_df = pl.read_csv(io.BytesIO(file_bytes), n_rows=0)
+            schema_overrides = {}
+            for col_name in sample_df.columns:
+                if col_name.lower() in {name.lower() for name in id_column_names}:
+                    schema_overrides[col_name] = pl.Utf8
+
+            return pl.read_csv(
+                io.BytesIO(file_bytes),
+                infer_schema_length=10000,
+                try_parse_dates=True,
+                schema_overrides=schema_overrides if schema_overrides else None,
+            )
+        except Exception as e:
+            logger.warning(f"CSV read failed with schema inference: {e}. Retrying with ID columns as strings.")
+            # Fallback: force ID columns to strings
+            try:
+                fallback_overrides = {
+                    "patient_id": pl.Utf8,
+                    "patientid": pl.Utf8,
+                    "subject_id": pl.Utf8,
+                    "subjectid": pl.Utf8,
+                    "id": pl.Utf8,
+                }
+                return pl.read_csv(
+                    io.BytesIO(file_bytes),
+                    infer_schema_length=10000,
+                    try_parse_dates=True,
+                    schema_overrides=fallback_overrides,
+                )
+            except Exception as e2:
+                logger.warning(f"Retry failed: {e2}. Falling back to all-string schema.")
+                return pl.read_csv(io.BytesIO(file_bytes), infer_schema_length=0)
 
     elif file_ext in {".xlsx", ".xls"}:
         # PANDAS EXCEPTION: Use pandas as primary for Excel files
@@ -1127,9 +1190,74 @@ class UserDatasetStorage:
             return None
 
         if lazy:
-            return pl.scan_csv(csv_path)
+            # Build schema overrides for ID columns to prevent integer overflow
+            # Common ID column names that should always be strings
+            id_column_names = {
+                "patient_id",
+                "patientid",
+                "subject_id",
+                "subjectid",
+                "id",
+                "mrn",
+                "study_id",
+            }
+
+            # Check metadata for synthetic ID info to identify ID columns
+            synthetic_id_metadata = metadata.get("synthetic_id_metadata", {})
+            if "patient_id" in synthetic_id_metadata:
+                # If patient_id was created synthetically, it's definitely an ID column
+                id_column_names.add("patient_id")
+
+            # Try to read CSV with schema overrides for ID columns
+            try:
+                # First, scan CSV to get column names without materializing
+                # We need to peek at the schema to know which columns exist
+                sample_lf = pl.scan_csv(csv_path, n_rows=0)
+                try:
+                    schema = sample_lf.collect_schema()  # Preferred method (Polars 0.19+)
+                except AttributeError:
+                    schema = sample_lf.schema  # Fallback for older Polars versions
+
+                # Build schema_overrides dict: force ID columns to Utf8
+                schema_overrides = {}
+                for col_name in schema.keys():
+                    if col_name.lower() in {name.lower() for name in id_column_names}:
+                        schema_overrides[col_name] = pl.Utf8
+                        logger.debug(f"Overriding {col_name} to Utf8 to prevent integer overflow")
+
+                # If we have overrides, use them; otherwise use default inference
+                if schema_overrides:
+                    return pl.scan_csv(csv_path, schema_overrides=schema_overrides)
+                else:
+                    return pl.scan_csv(csv_path)
+
+            except Exception as e:
+                # If schema inference fails (e.g., integer overflow), retry with patient_id as string
+                logger.warning(f"CSV schema inference failed for {upload_id}: {e}. Retrying with patient_id as string.")
+                # Fallback: force common ID columns to strings
+                fallback_overrides = {
+                    "patient_id": pl.Utf8,
+                    "patientid": pl.Utf8,
+                    "subject_id": pl.Utf8,
+                    "subjectid": pl.Utf8,
+                    "id": pl.Utf8,
+                }
+                try:
+                    return pl.scan_csv(csv_path, schema_overrides=fallback_overrides)
+                except Exception as e2:
+                    # Last resort: read all as strings
+                    logger.warning(f"Retry with ID overrides failed: {e2}. Falling back to all-string schema.")
+                    # Get column names first
+                    sample_lf = pl.scan_csv(csv_path, n_rows=0)
+                    try:
+                        schema = sample_lf.collect_schema()
+                    except AttributeError:
+                        schema = sample_lf.schema
+                    all_string_overrides = {col: pl.Utf8 for col in schema.keys()}
+                    return pl.scan_csv(csv_path, schema_overrides=all_string_overrides)
         else:
-            return pd.read_csv(csv_path)
+            # For pandas, read as string to avoid integer overflow
+            return pd.read_csv(csv_path, dtype={"patient_id": str})
 
     def list_uploads(self) -> list[dict[str, Any]]:
         """

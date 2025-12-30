@@ -136,6 +136,111 @@ class TestUserDatasetStorage:
         assert len(loaded_df) == 150
         assert "patient_id" in loaded_df.columns
 
+    def test_get_upload_data_large_id_values(self, tmp_path):
+        """
+        Test loading CSV with large patient_id values that exceed i64 range.
+
+        Composite identifier hashes (e.g., 18325393944197996489) exceed max i64
+        (9223372036854775807) and must be read as strings (Utf8) to prevent
+        integer overflow errors.
+        """
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Create DataFrame with large ID values that exceed i64 range
+        # These simulate composite identifier hashes
+        # Repeat values to meet 1KB minimum file size requirement
+        large_ids = [
+            "18325393944197996489",  # Exceeds i64 max (9223372036854775807)
+            "18446744073709551615",  # Max u64 (would overflow i64)
+            "99999999999999999999",  # Very large number
+            "12345678901234567890",  # Large but within i64 range (should still work)
+        ] * 50  # Repeat 50 times to meet 1KB minimum
+        df = pd.DataFrame(
+            {
+                "patient_id": large_ids,
+                "age": [20 + (i % 4) for i in range(200)],
+                "outcome": [i % 2 for i in range(200)],
+                "diagnosis": [f"Diagnosis_{i}" for i in range(200)],  # Add more data for size
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Save upload
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes, original_filename="test_large_ids.csv", metadata={"dataset_name": "test_large_ids"}
+        )
+        assert success is True, f"Upload failed: {message}"
+
+        # Test lazy loading (LazyFrame)
+        loaded_lf = storage.get_upload_data(upload_id, lazy=True)
+        assert isinstance(loaded_lf, pl.LazyFrame)
+
+        # Collect and verify patient_id is string type
+        loaded_df_lazy = loaded_lf.collect()
+        assert loaded_df_lazy.schema["patient_id"] == pl.Utf8, "patient_id should be Utf8 (string) type"
+        assert len(loaded_df_lazy) == 200
+        # Verify all unique large IDs are present (accounting for repetition)
+        unique_loaded_ids = set(loaded_df_lazy["patient_id"].to_list())
+        unique_expected_ids = set(large_ids)
+        assert unique_loaded_ids == unique_expected_ids, "All large ID values should be preserved"
+
+        # Test eager loading (pandas DataFrame)
+        loaded_df_eager = storage.get_upload_data(upload_id, lazy=False)
+        assert isinstance(loaded_df_eager, pd.DataFrame)
+        assert len(loaded_df_eager) == 200
+        assert loaded_df_eager["patient_id"].dtype == "object", "patient_id should be string type in pandas"
+        # Verify all unique large IDs are present
+        unique_loaded_ids = set(loaded_df_eager["patient_id"].tolist())
+        unique_expected_ids = set(large_ids)
+        assert unique_loaded_ids == unique_expected_ids, "All large ID values should be preserved"
+
+    def test_get_upload_data_synthetic_id_metadata(self, tmp_path):
+        """
+        Test that synthetic ID metadata is used to identify ID columns for schema override.
+
+        When patient_id is created synthetically (composite hash), metadata should
+        indicate this so we can force it to Utf8 during CSV reading.
+        """
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Create DataFrame with composite identifier columns (no patient_id initially)
+        # Add enough rows to meet 1KB minimum file size requirement
+        df = pd.DataFrame(
+            {
+                "age": [20 + i for i in range(150)],
+                "cd4_count": [500 + i * 10 for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+                "diagnosis": [f"Diagnosis_{i}" for i in range(150)],  # Add more data for size
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Save upload (this will create synthetic patient_id via ensure_patient_id)
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test_synthetic_id.csv",
+            metadata={"dataset_name": "test_synthetic_id"},
+        )
+        assert success is True, f"Upload failed: {message}"
+
+        # Verify metadata contains synthetic_id_metadata
+        metadata = storage.get_upload_metadata(upload_id)
+        assert "synthetic_id_metadata" in metadata
+        assert "patient_id" in metadata["synthetic_id_metadata"]
+
+        # Load with lazy=True - should handle large hash values correctly
+        loaded_lf = storage.get_upload_data(upload_id, lazy=True)
+        assert isinstance(loaded_lf, pl.LazyFrame)
+
+        # Collect and verify patient_id exists and is string type
+        loaded_df = loaded_lf.collect()
+        assert "patient_id" in loaded_df.columns
+        assert loaded_df.schema["patient_id"] == pl.Utf8, "Synthetic patient_id should be Utf8 (string) type"
+        assert len(loaded_df) == 150
+        # Verify patient_id values are strings (not integers)
+        patient_ids = loaded_df["patient_id"].to_list()
+        assert all(isinstance(pid, str) for pid in patient_ids), "All patient_id values should be strings"
+
     def test_list_uploads(self, tmp_path):
         """Test listing all uploads."""
         storage = UserDatasetStorage(upload_dir=tmp_path)
