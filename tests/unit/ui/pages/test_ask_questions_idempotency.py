@@ -6,12 +6,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 from unittest.mock import Mock, patch
 
-import polars as pl
-import pytest
-
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
-
-
 # mock_session_state, sample_cohort, sample_context moved to conftest.py - use shared fixtures
 
 

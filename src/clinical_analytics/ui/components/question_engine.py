@@ -24,6 +24,7 @@ class AnalysisIntent(Enum):
     FIND_PREDICTORS = "find_predictors"
     EXAMINE_SURVIVAL = "examine_survival"
     EXPLORE_RELATIONSHIPS = "explore_relationships"
+    COUNT = "count"
     UNKNOWN = "unknown"
 
 
@@ -75,6 +76,9 @@ class AnalysisContext:
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             return len(self.predictor_variables) >= 2
 
+        elif self.inferred_intent == AnalysisIntent.COUNT:
+            return True  # Just needs data (can optionally filter by grouping_variable)
+
         return False
 
     def get_missing_info(self) -> list[str]:
@@ -102,6 +106,10 @@ class AnalysisContext:
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             if len(self.predictor_variables) < 2:
                 missing.append("at least 2 variables to examine relationships")
+
+        elif self.inferred_intent == AnalysisIntent.COUNT:
+            # COUNT doesn't require any additional info
+            pass
 
         return missing
 
@@ -776,6 +784,7 @@ class QuestionEngine:
                     "FIND_PREDICTORS": AnalysisIntent.FIND_PREDICTORS,
                     "SURVIVAL": AnalysisIntent.EXAMINE_SURVIVAL,
                     "CORRELATIONS": AnalysisIntent.EXPLORE_RELATIONSHIPS,
+                    "COUNT": AnalysisIntent.COUNT,
                 }
                 context.inferred_intent = intent_map.get(query_intent.intent_type, AnalysisIntent.UNKNOWN)
 

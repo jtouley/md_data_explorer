@@ -297,6 +297,28 @@ def _render_focused_descriptive(result: dict) -> None:
                 st.write(f"  - **{value}**: {count} ({pct:.1f}%)")
 
 
+def render_count_analysis(result: dict) -> None:
+    """Render count analysis from serializable dict."""
+    # Headline answer first!
+    if "headline" in result:
+        st.info(f"📋 **Answer:** {result['headline']}")
+
+    st.markdown("## 📊 Count Analysis")
+
+    # If grouped, show group breakdown
+    if "grouped_by" in result and result.get("group_counts"):
+        st.markdown(f"### Counts by {result['grouped_by']}")
+        group_col = result["grouped_by"]
+        for item in result["group_counts"]:
+            group_value = item[group_col]
+            count = item["count"]
+            pct = (count / result["total_count"]) * 100 if result["total_count"] > 0 else 0.0
+            st.write(f"  - **{group_value}**: {count} ({pct:.1f}%)")
+    else:
+        # Simple total count
+        st.metric("Total Count", f"{result['total_count']:,}")
+
+
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
 # TODO: Remove when Streamlit supports Polars natively
 def render_comparison_analysis(result: dict) -> None:
@@ -560,6 +582,8 @@ def render_analysis_by_type(result: dict, intent: AnalysisIntent) -> None:
         render_survival_analysis(result)
     elif result_type == "relationship":
         render_relationship_analysis(result)
+    elif result_type == "count":
+        render_count_analysis(result)
     else:
         st.error(f"Unknown result type: {result_type}")
         if "error" in result:

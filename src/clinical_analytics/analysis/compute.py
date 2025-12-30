@@ -139,7 +139,7 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
         # This pattern extracts digits, commas, dots, and minus signs
         # It will extract "20" from "<20", "1234.5" from "1,234.5", etc.
         extracted = series.str.extract(r"([\d,\.\-]+)", 1)
-        
+
         # Step 2: Clean based on format detection
         # Strategy: Use map_elements for complex logic that Polars string ops can't handle easily
         def clean_numeric(s: str | None) -> str | None:
@@ -148,7 +148,7 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
             s = s.strip()
             if not s:
                 return None
-            
+
             # Check if it looks like US format (has both comma and dot)
             # In US format: "1,234.5" -> comma is thousands, dot is decimal -> remove comma
             if "," in s and "." in s:
@@ -161,7 +161,7 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
                 return s.replace(",", ".")
             # No comma, use as-is
             return s
-        
+
         # Apply cleaning using map_elements
         cleaned = extracted.map_elements(clean_numeric, return_dtype=pl.Utf8)
 
@@ -425,7 +425,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     outcome_series = analysis_df[outcome_col]
     numeric_outcome = None
     outcome_is_numeric = False
-    
+
     # Check if already numeric
     if outcome_series.dtype in (pl.Int64, pl.Float64):
         outcome_is_numeric = True
@@ -437,7 +437,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             outcome_is_numeric = True
             # Replace outcome column with numeric version
             analysis_df = analysis_df.with_columns(numeric_outcome.alias(outcome_col))
-    
+
     # Determine appropriate test
     outcome_numeric = outcome_is_numeric
 
@@ -569,6 +569,48 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         }
 
 
+def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
+    """
+    Compute count analysis - returns total count, optionally grouped.
+
+    Args:
+        df: Polars DataFrame (cohort data)
+        context: AnalysisContext with intent and variables
+
+    Returns:
+        Serializable dict with count results
+    """
+    row_count = df.height
+
+    # If grouping variable is specified, count by group
+    if context.grouping_variable and context.grouping_variable in df.columns:
+        group_col = context.grouping_variable
+        counts = df.group_by(group_col).agg(pl.len().alias("count")).sort("count", descending=True)
+        counts_dict = counts.to_dicts()
+
+        # Create headline
+        total = sum(item["count"] for item in counts_dict)
+        headline = f"Total count: **{total}**"
+        if len(counts_dict) > 0:
+            top_group = counts_dict[0]
+            headline += f" (largest group: {top_group[group_col]} with {top_group['count']})"
+
+        return {
+            "type": "count",
+            "total_count": total,
+            "grouped_by": group_col,
+            "group_counts": counts_dict,
+            "headline": headline,
+        }
+    else:
+        # Simple total count
+        return {
+            "type": "count",
+            "total_count": row_count,
+            "headline": f"Total count: **{row_count}**",
+        }
+
+
 def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Route to appropriate compute function based on intent.
@@ -592,6 +634,8 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
         return compute_survival_analysis(df, context)
     elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
         return compute_relationship_analysis(df, context)
+    elif context.inferred_intent == AnalysisIntent.COUNT:
+        return compute_count_analysis(df, context)
     else:
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
 

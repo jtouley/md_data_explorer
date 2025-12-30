@@ -238,6 +238,5 @@ class TestDatasetRegistry:
         assert dataset.name == dataset_name
 
         # Verify logging indicates dropped params (if any)
-        log_messages = " ".join([record.message for record in caplog.records])
         # Logging may or may not indicate dropped params depending on dataset
         assert True  # Just verify no error was raised
