@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 
 from clinical_analytics.ui.components.data_validator import _ensure_polars
+from clinical_analytics.ui.storage.user_datasets import _detect_excel_header_row
 
 
 class TestPolarsExcelReading:
@@ -209,3 +210,83 @@ class TestExcelReadingIntegration:
         assert isinstance(df_final, pl.DataFrame)
         assert df_final.height == 3
         assert "viral_load" in df_final.columns
+
+
+class TestExcelHeaderDetection:
+    """Tests for intelligent Excel header row detection using fixtures from conftest.py."""
+
+    def test_detect_header_row_standard_format(self, synthetic_dexa_excel_file):
+        """
+        Test header detection with standard format (header in row 0).
+
+        NOTE: Testing private API because header detection is critical path
+        and public API (load_single_file) doesn't expose header row directly.
+        If header detection logic is refactored, this test may need updating.
+        """
+        # Use fixture from conftest.py (DRY principle)
+        with open(synthetic_dexa_excel_file, "rb") as f:
+            file_bytes = f.read()
+
+        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+        assert header_row == 0, f"Expected header row 0, got {header_row}"
+
+        # Verify reading works correctly (semantic assertions)
+        file_io = io.BytesIO(file_bytes)
+        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+        # Semantic assertions (not exact shape)
+        assert "Race" in df_read.columns
+        assert "Age" in df_read.columns
+        assert df_read.shape[0] >= 50  # At least expected rows (allows fixture changes)
+        # Assert no "Unnamed:" columns (common failure mode)
+        assert not any("Unnamed" in str(col) for col in df_read.columns)
+
+    def test_detect_header_row_with_empty_first_row(self, synthetic_statin_excel_file):
+        """
+        Test header detection with empty first row (header in row 1).
+
+        NOTE: Testing private API because header detection is critical path
+        and public API (load_single_file) doesn't expose header row directly.
+        If header detection logic is refactored, this test may need updating.
+        """
+        # Use fixture from conftest.py (DRY principle)
+        with open(synthetic_statin_excel_file, "rb") as f:
+            file_bytes = f.read()
+
+        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+        assert header_row == 1, f"Expected header row 1, got {header_row}"
+
+        # Verify reading works correctly (semantic assertions)
+        file_io = io.BytesIO(file_bytes)
+        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+        # Semantic assertions (not exact shape)
+        assert "Race" in df_read.columns
+        assert "Age" in df_read.columns
+        assert "Most Recent VL copies/mL" in df_read.columns
+        assert df_read.shape[0] >= 50  # At least expected rows (allows fixture changes)
+        # Assert no "Unnamed:" columns (common failure mode)
+        assert not any("Unnamed" in str(col) for col in df_read.columns)
+
+    def test_detect_header_row_with_metadata_rows(self, synthetic_complex_excel_file):
+        """
+        Test header detection with metadata rows before headers.
+
+        NOTE: Testing private API because header detection is critical path
+        and public API (load_single_file) doesn't expose header row directly.
+        If header detection logic is refactored, this test may need updating.
+        """
+        # Use fixture from conftest.py (DRY principle)
+        with open(synthetic_complex_excel_file, "rb") as f:
+            file_bytes = f.read()
+
+        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+        assert header_row == 1, f"Expected header row 1, got {header_row}"
+
+        # Verify reading works correctly (semantic assertions)
+        file_io = io.BytesIO(file_bytes)
+        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+        # Semantic assertions (not exact shape)
+        assert "Race" in df_read.columns
+        assert "Viral Load copies/mL" in df_read.columns
+        assert df_read.shape[0] >= 45  # At least expected rows (allows fixture changes)
+        # Assert no "Unnamed:" columns (common failure mode)
+        assert not any("Unnamed" in str(col) for col in df_read.columns)

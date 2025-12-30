@@ -138,10 +138,29 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
 
                 # Load as Polars DataFrame with robust schema inference
                 try:
+                    # Common ID columns that should be strings to prevent overflow
+                    id_column_names = {
+                        "patient_id",
+                        "patientid",
+                        "subject_id",
+                        "subjectid",
+                        "id",
+                        "mrn",
+                        "study_id",
+                    }
+
+                    # First, peek at schema to identify ID columns
+                    sample_df = pl.read_csv(io.BytesIO(csv_content), n_rows=0)
+                    schema_overrides = {}
+                    for col_name in sample_df.columns:
+                        if col_name.lower() in {name.lower() for name in id_column_names}:
+                            schema_overrides[col_name] = pl.Utf8
+
                     df = pl.read_csv(
                         io.BytesIO(csv_content),
                         infer_schema_length=10000,  # Scan more rows for better type inference
                         try_parse_dates=True,
+                        schema_overrides=schema_overrides if schema_overrides else None,
                     )
                 except Exception as e:
                     logger.warning(f"Schema inference failed for {name}, falling back to string types: {e}")
@@ -158,6 +177,116 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
 
     except zipfile.BadZipFile:
         raise UploadError("Corrupted ZIP file")
+
+
+def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> int:
+    """
+    Intelligently detect the best header row in an Excel file.
+
+    Analyzes the first few rows to find which one looks most like column headers:
+    - Headers typically have many non-empty cells
+    - Headers are usually strings (not numeric data)
+    - Headers are relatively short
+    - Headers are unique/distinct
+
+    Args:
+        file_bytes: Excel file content
+        max_rows_to_check: Maximum number of rows to analyze (default 5)
+
+    Returns:
+        Row index (0-based) to use as header, or 0 if detection fails
+    """
+    import io
+
+    import pandas as pd
+
+    try:
+        if not isinstance(file_bytes, bytes):
+            if hasattr(file_bytes, "read"):
+                file_bytes = file_bytes.read()
+            else:
+                raise TypeError(f"Expected bytes, got {type(file_bytes)}")
+
+        df_preview = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", header=None, nrows=max_rows_to_check)
+
+        if df_preview.empty:
+            return 0
+
+        scores = []
+        for row_idx in range(min(max_rows_to_check, len(df_preview))):
+            row = df_preview.iloc[row_idx]
+
+            # Count non-empty cells
+            non_empty = row.notna().sum()
+            if non_empty == 0:
+                scores.append(0.0)
+                continue
+
+            # Calculate score components
+            score = 0.0
+
+            # 1. More non-empty cells = better (weight: 40%)
+            fill_ratio = non_empty / len(row)
+            score += fill_ratio * 0.4
+
+            # 2. Check if values look like headers (strings, not numeric data)
+            string_count = 0
+            avg_length = 0
+            unique_count = 0
+
+            for val in row.dropna():
+                val_str = str(val).strip()
+                if not val_str:
+                    continue
+
+                # Headers are usually strings, not pure numbers
+                try:
+                    float(val_str)  # If it's a number, less likely to be a header
+                    # But allow short numbers (like "1", "2" for coded values)
+                    if len(val_str) > 3:
+                        continue
+                except ValueError:
+                    string_count += 1
+
+                # Track length and uniqueness
+                avg_length += len(val_str)
+                unique_count += 1
+
+            if unique_count > 0:
+                avg_length = avg_length / unique_count
+                uniqueness_ratio = row.dropna().nunique() / unique_count
+
+                # 3. Higher string ratio = better (weight: 30%)
+                string_ratio = string_count / unique_count if unique_count > 0 else 0
+                score += string_ratio * 0.3
+
+                # 4. Reasonable length (not too short, not too long) (weight: 15%)
+                # Headers are usually 5-50 characters
+                if 5 <= avg_length <= 50:
+                    score += 0.15
+                elif avg_length < 5:
+                    score += (avg_length / 5) * 0.15
+                else:
+                    score += max(0, (50 / avg_length)) * 0.15
+
+                # 5. High uniqueness (headers should be distinct) (weight: 15%)
+                score += min(uniqueness_ratio, 1.0) * 0.15
+
+            scores.append(score)
+
+        # Find row with highest score
+        if scores and max(scores) > 0.3:  # Minimum threshold
+            best_row = scores.index(max(scores))
+            logger.debug(f"Detected header row: {best_row} (score: {max(scores):.2f})")
+            return best_row
+
+        # Default to row 0 if no good candidate found
+        logger.debug("No clear header row detected, using row 0")
+        return 0
+
+    except Exception as e:
+        logger.warning(f"Header detection failed: {e}, using default row 0")
+        return 0
 
 
 def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
@@ -179,21 +308,99 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
     file_ext = Path(filename).suffix.lower()
 
     if file_ext == ".csv":
-        # Load CSV with Polars
-        return pl.read_csv(io.BytesIO(file_bytes))
+        # For CSV files, use Polars directly
+        try:
+            # Common ID columns that should be strings
+            id_column_names = {
+                "patient_id",
+                "patientid",
+                "subject_id",
+                "subjectid",
+                "id",
+                "mrn",
+                "study_id",
+            }
+
+            # Peek at schema first
+            sample_df = pl.read_csv(io.BytesIO(file_bytes), n_rows=0)
+            schema_overrides = {}
+            for col_name in sample_df.columns:
+                if col_name.lower() in {name.lower() for name in id_column_names}:
+                    schema_overrides[col_name] = pl.Utf8
+
+            return pl.read_csv(
+                io.BytesIO(file_bytes),
+                infer_schema_length=10000,
+                try_parse_dates=True,
+                schema_overrides=schema_overrides if schema_overrides else None,
+            )
+        except Exception as e:
+            logger.warning(f"CSV read failed with schema inference: {e}. Retrying with ID columns as strings.")
+            # Fallback: force ID columns to strings
+            try:
+                fallback_overrides = {
+                    "patient_id": pl.Utf8,
+                    "patientid": pl.Utf8,
+                    "subject_id": pl.Utf8,
+                    "subjectid": pl.Utf8,
+                    "id": pl.Utf8,
+                }
+                return pl.read_csv(
+                    io.BytesIO(file_bytes),
+                    infer_schema_length=10000,
+                    try_parse_dates=True,
+                    schema_overrides=fallback_overrides,
+                )
+            except Exception as e2:
+                logger.warning(f"Retry failed: {e2}. Falling back to all-string schema.")
+                return pl.read_csv(io.BytesIO(file_bytes), infer_schema_length=0)
 
     elif file_ext in {".xlsx", ".xls"}:
-        # Load Excel with Polars (openpyxl engine)
-        try:
-            return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-        except Exception as e:
-            logger.warning(f"Polars Excel read failed: {e}. Falling back to pandas.")
-            # PANDAS EXCEPTION: Required for Excel files when Polars fails
-            # TODO: Remove when Polars Excel support is more robust
-            import pandas as pd
+        # PANDAS EXCEPTION: Use pandas as primary for Excel files
+        # Polars read_excel() can miss columns or stop early on complex Excel files
+        # TODO: Revisit when Polars Excel support is more robust
+        import pandas as pd
 
-            df_pandas = pd.read_excel(io.BytesIO(file_bytes))
-            return pl.from_pandas(df_pandas)
+        try:
+            header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+            df_pandas = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", header=header_row)
+
+            # Clean up any remaining "Unnamed" columns (from empty header cells)
+            df_pandas.columns = [
+                f"column_{i}" if str(col).startswith("Unnamed") else col for i, col in enumerate(df_pandas.columns)
+            ]
+
+            # Try converting pandas DataFrame to Polars
+            try:
+                return pl.from_pandas(df_pandas)
+            except Exception as polars_error:
+                logger.warning(f"pl.from_pandas failed: {polars_error}. Trying Polars read_excel as fallback.")
+                # Fallback to Polars read_excel and compare column counts
+                try:
+                    df_polars_fallback = pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+                    pandas_column_count = len(df_pandas.columns)
+                    polars_column_count = len(df_polars_fallback.columns)
+
+                    # Use whichever has more columns
+                    if pandas_column_count >= polars_column_count:
+                        # Convert object columns to string to handle mixed types
+                        for col in df_pandas.columns:
+                            if df_pandas[col].dtype == "object":
+                                df_pandas[col] = df_pandas[col].astype(str).replace("nan", None)
+                        return pl.from_pandas(df_pandas)
+                    else:
+                        return df_polars_fallback
+                except Exception as polars_error:
+                    logger.error(f"Both pandas and Polars failed to read Excel file: {polars_error}")
+                    raise ValueError(f"Failed to read Excel file: {polars_error}") from polars_error
+        except Exception as e:
+            logger.warning(f"Pandas Excel read failed: {e}. Trying Polars as fallback.")
+            # Fallback to Polars if pandas fails completely
+            try:
+                return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+            except Exception as polars_error:
+                logger.error(f"Both pandas and Polars failed to read Excel file: {polars_error}")
+                raise ValueError(f"Failed to read Excel file: {polars_error}") from polars_error
 
     elif file_ext == ".sav":
         # Load SPSS file
@@ -916,18 +1123,35 @@ class UserDatasetStorage:
         with open(metadata_path) as f:
             return json.load(f)
 
-    def get_upload_data(self, upload_id: str) -> pd.DataFrame | None:
+    def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | pd.DataFrame | None:
         """
         Load uploaded dataset with automatic legacy migration.
 
         Uses upload_id as immutable storage key: always {upload_id}.csv
         Automatically migrates legacy single-table uploads to unified format.
 
+        IO Boundary Behavior:
+        - CSV files: When lazy=True, uses pl.scan_csv() for true lazy IO
+        - Excel files: Eagerly loaded via pandas (due to Polars Excel limitations),
+                      then converted to LazyFrame. Lazy execution applies from
+                      transformation/filtering onward, not from IO.
+        - SPSS files: Eagerly loaded via pyreadstat, then converted to LazyFrame.
+
+        Internal Representation:
+        - lazy=True: Returns pl.LazyFrame (recommended for internal use)
+        - lazy=False: Returns pd.DataFrame (for backward compatibility/UI boundaries)
+
         Args:
             upload_id: Upload identifier (immutable storage key)
+            lazy: If True, return Polars LazyFrame (default). If False, return pandas DataFrame
+                  for backward compatibility.
 
         Returns:
-            DataFrame or None if not found
+            LazyFrame (if lazy=True), pandas DataFrame (if lazy=False), or None if not found
+
+        Note:
+            Excel eager read is due to Polars read_excel() limitations with complex files
+            (header detection, mixed types). See load_single_file() for details.
         """
         # Load metadata
         metadata = self.get_upload_metadata(upload_id)
@@ -965,7 +1189,75 @@ class UserDatasetStorage:
         if not csv_path.exists():
             return None
 
-        return pd.read_csv(csv_path)
+        if lazy:
+            # Build schema overrides for ID columns to prevent integer overflow
+            # Common ID column names that should always be strings
+            id_column_names = {
+                "patient_id",
+                "patientid",
+                "subject_id",
+                "subjectid",
+                "id",
+                "mrn",
+                "study_id",
+            }
+
+            # Check metadata for synthetic ID info to identify ID columns
+            synthetic_id_metadata = metadata.get("synthetic_id_metadata", {})
+            if "patient_id" in synthetic_id_metadata:
+                # If patient_id was created synthetically, it's definitely an ID column
+                id_column_names.add("patient_id")
+
+            # Try to read CSV with schema overrides for ID columns
+            try:
+                # First, scan CSV to get column names without materializing
+                # We need to peek at the schema to know which columns exist
+                sample_lf = pl.scan_csv(csv_path, n_rows=0)
+                try:
+                    schema = sample_lf.collect_schema()  # Preferred method (Polars 0.19+)
+                except AttributeError:
+                    schema = sample_lf.schema  # Fallback for older Polars versions
+
+                # Build schema_overrides dict: force ID columns to Utf8
+                schema_overrides = {}
+                for col_name in schema.keys():
+                    if col_name.lower() in {name.lower() for name in id_column_names}:
+                        schema_overrides[col_name] = pl.Utf8
+                        logger.debug(f"Overriding {col_name} to Utf8 to prevent integer overflow")
+
+                # If we have overrides, use them; otherwise use default inference
+                if schema_overrides:
+                    return pl.scan_csv(csv_path, schema_overrides=schema_overrides)
+                else:
+                    return pl.scan_csv(csv_path)
+
+            except Exception as e:
+                # If schema inference fails (e.g., integer overflow), retry with patient_id as string
+                logger.warning(f"CSV schema inference failed for {upload_id}: {e}. Retrying with patient_id as string.")
+                # Fallback: force common ID columns to strings
+                fallback_overrides = {
+                    "patient_id": pl.Utf8,
+                    "patientid": pl.Utf8,
+                    "subject_id": pl.Utf8,
+                    "subjectid": pl.Utf8,
+                    "id": pl.Utf8,
+                }
+                try:
+                    return pl.scan_csv(csv_path, schema_overrides=fallback_overrides)
+                except Exception as e2:
+                    # Last resort: read all as strings
+                    logger.warning(f"Retry with ID overrides failed: {e2}. Falling back to all-string schema.")
+                    # Get column names first
+                    sample_lf = pl.scan_csv(csv_path, n_rows=0)
+                    try:
+                        schema = sample_lf.collect_schema()
+                    except AttributeError:
+                        schema = sample_lf.schema
+                    all_string_overrides = {col: pl.Utf8 for col in schema.keys()}
+                    return pl.scan_csv(csv_path, schema_overrides=all_string_overrides)
+        else:
+            # For pandas, read as string to avoid integer overflow
+            return pd.read_csv(csv_path, dtype={"patient_id": str})
 
     def list_uploads(self) -> list[dict[str, Any]]:
         """
