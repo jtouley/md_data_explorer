@@ -13,17 +13,7 @@ import pytest
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
-@pytest.fixture
-def sample_cohort():
-    """Create sample Polars DataFrame for testing."""
-    return pl.DataFrame(
-        {
-            "patient_id": [1, 2, 3, 4, 5],
-            "mortality": [0, 1, 0, 1, 0],
-            "treatment_arm": ["A", "B", "A", "B", "A"],
-            "age": [45, 62, 38, 71, 55],
-        }
-    )
+# sample_cohort fixture moved to conftest.py - use shared fixture
 
 
 @pytest.fixture

@@ -12,35 +12,7 @@ import pytest
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
-@pytest.fixture
-def mock_session_state():
-    """Mock Streamlit session_state."""
-    return {}
-
-
-@pytest.fixture
-def sample_cohort():
-    """Create sample Polars DataFrame for testing."""
-    return pl.DataFrame(
-        {
-            "patient_id": [1, 2, 3, 4, 5],
-            "outcome": [0, 1, 0, 1, 0],
-            "treatment": ["A", "A", "B", "B", "A"],
-            "age": [25, 30, 35, 40, 45],
-        }
-    )
-
-
-@pytest.fixture
-def sample_context():
-    """Create sample AnalysisContext for testing."""
-    context = AnalysisContext(
-        inferred_intent=AnalysisIntent.DESCRIBE,
-        primary_variable="all",
-    )
-    # Set confidence as attribute (not a dataclass field, but used via getattr)
-    context.confidence = 0.9
-    return context
+# mock_session_state, sample_cohort, sample_context moved to conftest.py - use shared fixtures
 
 
 def test_idempotency_same_query_uses_cached_result(
