@@ -190,8 +190,10 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
                 raise TypeError(f"Expected bytes, got {type(file_bytes)}")
 
         # Read first few rows without headers to analyze them
+        # Create a fresh BytesIO from bytes (bytes are immutable, so this is safe)
         file_io = io.BytesIO(file_bytes)
         df_preview = pd.read_excel(file_io, engine="openpyxl", header=None, nrows=max_rows_to_check)
+        file_io.close()  # Explicitly close to free resources
 
         if df_preview.empty:
             return 0
@@ -302,9 +304,23 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
         import pandas as pd
 
         try:
+            # Verify file_bytes is bytes before processing
+            if not isinstance(file_bytes, bytes):
+                raise TypeError(f"load_single_file: Expected bytes, got {type(file_bytes)}")
+
             # Intelligently detect the best header row
             header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+            logger.debug(f"Detected header row: {header_row}, file_bytes type: {type(file_bytes)}")
+
+            # Create fresh BytesIO for pandas (file_bytes should be immutable bytes)
+            # Ensure we're using a fresh copy of the bytes
+            if not isinstance(file_bytes, bytes):
+                raise TypeError(f"load_single_file Excel: file_bytes is {type(file_bytes)}, expected bytes")
+
             file_io = io.BytesIO(file_bytes)
+            logger.debug(
+                f"Created BytesIO, calling pd.read_excel with header={header_row}, file_io type: {type(file_io)}"
+            )
             df_pandas = pd.read_excel(file_io, engine="openpyxl", header=header_row)
 
             # Clean up any remaining "Unnamed" columns (from empty header cells)

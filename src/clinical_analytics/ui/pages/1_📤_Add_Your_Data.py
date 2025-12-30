@@ -156,12 +156,15 @@ def render_upload_step():
 
                     # Ensure we get bytes from Streamlit UploadedFile
                     file_bytes = uploaded_file.read()
+                    file_len = len(file_bytes) if isinstance(file_bytes, bytes) else "N/A"
+                    logger.debug(f"Read file_bytes: type={type(file_bytes)}, len={file_len}")
+
                     if not isinstance(file_bytes, bytes):
                         # Convert to bytes if needed (handle edge cases)
                         if hasattr(file_bytes, "read"):
                             file_bytes = file_bytes.read()
                         elif isinstance(file_bytes, (str, int, float)):
-                            logger.error(f"Unexpected file_bytes type: {type(file_bytes)}")
+                            logger.error(f"Unexpected file_bytes type: {type(file_bytes)}, value: {file_bytes}")
                             st.error("Failed to read file: invalid file format")
                             return None
                         else:
@@ -172,11 +175,20 @@ def render_upload_step():
                                 st.error("Failed to read file: invalid file format")
                                 return None
 
+                    # Final verification
+                    if not isinstance(file_bytes, bytes):
+                        logger.error(f"file_bytes is still not bytes after conversion: {type(file_bytes)}")
+                        st.error("Failed to read file: invalid file format")
+                        return None
+
                     uploaded_file.seek(0)  # Reset for later use
 
                     try:
                         # Use the same Excel reading logic as upload (with header detection)
                         filename = uploaded_file.name if uploaded_file.name else "upload.xlsx"
+                        logger.debug(
+                            f"Calling load_single_file with filename: {filename}, file_bytes type: {type(file_bytes)}"
+                        )
                         df_polars = load_single_file(file_bytes, filename)
                         # Convert to pandas for compatibility with existing preview code
                         df = df_polars.to_pandas()
