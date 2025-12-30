@@ -1,89 +1,117 @@
 ---
 name: Fix comparison analysis and implement conversational filtering UI
-overview: Fix critical comparison analysis bug where string numeric columns are treated as categorical, implement filter parsing/application from NL queries, and redesign Ask Questions UI for a clean conversational flow (question → data → question) with follow-up support. All features must work identically for single-file and multi-table uploads per ADR007 feature parity requirements.
+overview: Fully implement ADR001 - Fix critical comparison analysis bug where string numeric columns are treated as categorical, implement QueryPlan contract (FilterSpec, QueryPlan dataclasses), add COUNT intent type, implement filter parsing/application from NL queries, and redesign Ask Questions UI for a clean conversational flow (question → data → question) with execution gating and follow-up support. All features must work identically for single-file and multi-table uploads per ADR007 feature parity requirements.
 todos:
   - id: phase0-normalize-upload
     content: Normalize upload handling - create normalize_upload_to_table_list() function for both upload types
-    status: pending
+    status: completed
   - id: phase0-unify-persistence
     content: Unify persistence - both upload types save individual tables to {upload_id}_tables/ directory
-    status: pending
+    status: completed
     dependencies:
       - phase0-normalize-upload
   - id: phase0-unify-semantic
     content: Unify semantic layer registration - both upload types register all tables in DuckDB identically
-    status: pending
+    status: completed
     dependencies:
       - phase0-unify-persistence
   - id: phase0-unify-data-access
     content: Unify data access - both upload types return Polars lazy frames (not pandas DataFrames)
-    status: pending
+    status: deferred
     dependencies:
       - phase0-unify-semantic
   - id: phase0-remove-conditionals
     content: Remove conditional logic - eliminate all if upload_type == single conditionals
-    status: pending
+    status: deferred
     dependencies:
       - phase0-unify-data-access
   - id: phase1-fix-comparison
     content: Fix compute_comparison_analysis() to try numeric conversion before deciding test type
-    status: pending
+    status: completed
     dependencies:
-      - phase0-remove-conditionals
+      - phase0-unify-semantic
   - id: phase1-tests
     content: Add tests for string numeric conversion in comparison analysis (verify works for both upload types)
-    status: pending
+    status: completed
     dependencies:
       - phase1-fix-comparison
-  - id: phase2-filter-parsing
-    content: Implement _extract_filters() in NL Query Engine to parse filter conditions from queries (returns list[dict])
-    status: pending
+  - id: phase1.5-queryplan-contract
+    content: Define QueryPlan and FilterSpec dataclasses per ADR001 contract
+    status: completed
     dependencies:
-      - phase0-remove-conditionals
-  - id: phase2-context-filters
-    content: Add filters field (list[dict]) to AnalysisContext and propagate from QueryIntent
-    status: pending
+      - phase1-tests
+  - id: phase1.5-count-intent
+    content: Add COUNT intent type with pattern matching and semantic layer execution
+    status: completed
+    dependencies:
+      - phase1.5-queryplan-contract
+  - id: phase2-filter-parsing
+    content: Implement _extract_filters() in NL Query Engine to parse filter conditions (returns list[FilterSpec])
+    status: completed
+    dependencies:
+      - phase1.5-count-intent
+  - id: phase2-queryplan-conversion
+    content: Convert QueryIntent to QueryPlan with FilterSpec objects in NL Query Engine
+    status: completed
     dependencies:
       - phase2-filter-parsing
-  - id: phase2-apply-filters
-    content: Implement _apply_filters() helper (accepts list[dict]) and integrate into compute functions
-    status: pending
+  - id: phase2-context-queryplan
+    content: Add query_plan field (QueryPlan) to AnalysisContext and propagate from QueryIntent conversion
+    status: completed
     dependencies:
-      - phase2-context-filters
+      - phase2-queryplan-conversion
+  - id: phase2-apply-filters
+    content: Implement _apply_filters() helper (accepts list[FilterSpec]) and integrate into compute functions
+    status: completed
+    dependencies:
+      - phase2-context-queryplan
   - id: phase2-breakdown
     content: Add breakdown reporting (filtered vs unfiltered counts) to descriptive analysis results
-    status: pending
+    status: completed
+    dependencies:
+      - phase2-apply-filters
+  - id: phase3-execution-gating
+    content: Implement execution gating (confidence threshold, transparent confidence display, deterministic run_key)
+    status: completed
     dependencies:
       - phase2-apply-filters
   - id: phase3-conversation-history
     content: Implement lightweight conversation history data structure (headline, not full result dicts)
-    status: pending
+    status: completed
+    dependencies:
+      - phase3-execution-gating
   - id: phase3-ui-redesign
     content: Redesign main() flow to show conversation history and always-visible query input
-    status: pending
+    status: completed
     dependencies:
       - phase3-conversation-history
   - id: phase3-remove-buttons
     content: Remove confusing buttons (Start Over, Clear Results, Confirm and Run) and replace with contextual actions
-    status: pending
+    status: completed
     dependencies:
       - phase3-ui-redesign
   - id: phase3-inline-rendering
     content: Implement inline result rendering with chat message style and collapsible details
-    status: pending
+    status: completed
     dependencies:
       - phase3-ui-redesign
   - id: phase3-follow-ups
     content: Add follow-up question suggestions based on current analysis result
-    status: pending
+    status: completed
     dependencies:
       - phase3-inline-rendering
+  - id: phase2-apply-filters
+    content: Implement _apply_filters() helper (accepts list[FilterSpec]) and integrate into compute functions
+    status: completed
+    dependencies:
+      - phase2-context-queryplan
   - id: phase4-tests
-    content: Add comprehensive tests for all phases with explicit feature parity verification
-    status: pending
+    content: Add comprehensive e2e tests for all phases with explicit feature parity verification (deferred to end)
+    status: completed
     dependencies:
       - phase1-tests
-      - phase2-breakdown
+      - phase1.5-count-intent
+      - phase2-apply-filters
       - phase3-follow-ups
 ---
 
@@ -123,18 +151,25 @@ Three critical issues need addressing:
 flowchart TD
     A[User Query] --> B[NL Query Engine]
     B --> C[Parse Intent + Variables]
-    B --> D[Extract Filters]
-    C --> E[AnalysisContext]
+    B --> D[Extract Filters as FilterSpec]
+    C --> E[QueryPlan Contract]
     D --> E
-    E --> F[Apply Filters to Cohort]
-    F --> G[Compute Analysis]
-    G --> H[Render Results Inline]
-    H --> I[Show Follow-up Input]
-    I --> A
+    E --> F{Confidence >= 0.75?}
+    F -->|Yes| G[Auto-Execute]
+    F -->|No| H[Show Confirmation UI]
+    H --> I[User Confirms]
+    I --> G
+    G --> J[Apply Filters to Cohort]
+    J --> K[Compute Analysis]
+    K --> L[Render Results Inline]
+    L --> M[Show Follow-up Input]
+    M --> A
     
     style D fill:#e1f5ff
+    style E fill:#ffe1f5
     style F fill:#fff4e1
-    style H fill:#e8f5e9
+    style J fill:#fff4e1
+    style L fill:#e8f5e9
 ```
 
 ## Phase 0: Ensure Feature Parity (Prerequisite)
@@ -193,6 +228,63 @@ flowchart TD
 - This phase must be completed before Phase 1-3 to ensure new features work for both upload types
 - All subsequent phases assume feature parity is established per ADR007
 
+## QueryPlan Contract (ADR001 Requirement)
+
+**ADR001 owns the QueryPlan schema** - this is the contract between NLU (query parsing) and execution (semantic layer + analysis functions). All query parsing must produce a `QueryPlan`, and all execution must consume a `QueryPlan`.
+
+### Define QueryPlan and FilterSpec Dataclasses
+
+**File**: `src/clinical_analytics/core/query_plan.py` (new)
+
+```python
+from dataclasses import dataclass, field
+from typing import Literal
+
+@dataclass
+class FilterSpec:
+    """Single filter condition specification."""
+    column: str  # Canonical column name (after alias resolution)
+    operator: Literal["==", "!=", ">", ">=", "<", "<=", "IN", "NOT_IN"]
+    value: str | int | float | list[str | int | float]  # Filter value(s)
+    exclude_nulls: bool = True  # Whether to exclude nulls (default: yes)
+
+@dataclass
+class QueryPlan:
+    """Structured query plan produced by NLU and consumed by execution layer."""
+    intent: Literal["COUNT", "DESCRIBE", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]
+    metric: str | None = None  # Column name for aggregation (e.g., "LDL mg/dL" for average/describe)
+    group_by: str | None = None  # Column name for grouping (e.g., "Nicotine Use")
+    filters: list[FilterSpec] = field(default_factory=list)  # Filter conditions
+    confidence: float = 0.0  # Parsing confidence (0.0-1.0)
+    explanation: str = ""  # Human-readable explanation (shown in UI + logs)
+    run_key: str | None = None  # Deterministic key for idempotent execution (includes dataset_version + plan hash)
+```
+
+**QueryPlan Semantics by Intent**:
+
+- **COUNT**: Count rows (optionally with filters, optionally grouped by `group_by`)
+  - `metric=None`, `group_by=None` → Total count with filters
+  - `metric=None`, `group_by="X"` → Count by X (frequency table)
+  - Example: "how many patients on statins?" → `COUNT`, `filters=[FilterSpec("Statin Prescribed?", "==", "Yes")]`
+
+- **DESCRIBE**: Descriptive statistics for a metric
+  - `metric="X"`, `group_by=None` → Stats for X (mean, median, std dev, etc.)
+  - `metric="X"`, `group_by="Y"` → Stats for X grouped by Y
+  - Example: "average LDL" → `DESCRIBE`, `metric="LDL mg/dL"`
+
+- **COMPARE_GROUPS**: Compare metric across groups
+  - `metric="X"`, `group_by="Y"` → Compare X across Y groups (t-test/ANOVA/chi-square)
+  - Example: "compare viral load by treatment" → `COMPARE_GROUPS`, `metric="Viral Load"`, `group_by="Treatment"`
+
+- **FIND_PREDICTORS**: Predictive modeling
+  - `metric="X"` (outcome), `group_by=None` → Find predictors of X
+  - Example: "what predicts mortality?" → `FIND_PREDICTORS`, `metric="mortality"`
+
+**Execution Gating Rules**:
+- **Confidence < threshold (default 0.75)**: Show interpreted plan in UI, require user confirmation before execution
+- **Confidence >= threshold**: Auto-execute (user can still review results)
+- **Idempotency**: `run_key` is deterministic hash of `(dataset_version, normalized_plan)` - same plan on same data = same key = cached result
+
 ## Phase 1: Fix Comparison Analysis Bug
 
 ### 1.1 Update `compute_comparison_analysis()` to try numeric conversion first
@@ -243,31 +335,87 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
 - String numeric outcome with European comma format
 - Verify group means are computed correctly (not counts)
 
+## Phase 1.5: Add COUNT Intent Type (P0 - Quick Win)
+
+**Goal**: Support simple counting queries ("how many X?") as first-class intent type.
+
+**Real-World Failure Evidence**: Query **"how many were on a statin?"** should return a simple count, but system computed descriptive statistics (mean=0.93) instead. This is a fundamental query type that must work.
+
+### 1.5.1 Add COUNT to intent types
+
+**File**: `src/clinical_analytics/core/nl_query_engine.py`
+
+```python
+VALID_INTENT_TYPES = ["DESCRIBE", "COMPARE_GROUPS", "FIND_PREDICTORS", "COUNT", "CORRELATIONS"]
+```
+
+### 1.5.2 Pattern matching for COUNT intent
+
+**File**: `src/clinical_analytics/core/nl_query_engine.py`
+
+```python
+COUNT_PATTERNS = [
+    r"how many",
+    r"count",
+    r"number of",
+]
+if any(re.search(p, query.lower()) for p in COUNT_PATTERNS):
+    intent = QueryIntent(intent_type="COUNT", confidence=0.9)
+```
+
+### 1.5.3 COUNT QueryPlan execution
+
+**File**: `src/clinical_analytics/analysis/compute.py` or semantic layer
+
+- If `filters` present: Use `semantic_layer.query(metrics=["count"], filters={...})` for SQL aggregation
+- If `group_by` present: Use `semantic_layer.query(metrics=["count"], dimensions=[group_by])` for grouped counts
+- Return simple count/percentage, not statistics
+
+**Success Criteria**:
+- "how many X?" queries produce COUNT intent with confidence >0.75
+- COUNT queries return count/percentage, not mean/median/std dev
+- COUNT queries use semantic layer aggregation (SQL) when possible, not Polars
+
 ## Phase 2: Implement Filter Parsing and Application
 
 ### 2.1 Add filter extraction to NL Query Engine
 
 **File**: `src/clinical_analytics/core/nl_query_engine.py`
 
-**New Method**: `_extract_filters(query: str) -> list[dict[str, Any]]`
+**Note**: This coordinates with ADR003 Phase 2 (Enhanced LLM Parser) - filter extraction can leverage enhanced LLM parsing for complex filter conditions.
 
-Extract filter conditions from query text:
+**Implementation Strategy**: **P0: Deterministic heuristics first, LLM only when needed**
+
+Filter extraction should use deterministic pattern matching (Tier 1.5) for common patterns:
+- "not on X" → `FilterSpec(column="X", operator="==", value="No")`
+- "those patients with X" → `FilterSpec(column="X", operator="==", value="Yes")`
+- "scores below/above X" → `FilterSpec(column="score_col", operator="<"/">", value=X)`
+
+LLM structured extraction (Tier 3) only invoked when:
+- Tier 1.5 cannot produce valid FilterSpec with confidence ≥ threshold
+- Query contains complex negation or multiple conditions
+
+**New Method**: `_extract_filters(query: str) -> list[FilterSpec]`
+
+Extract filter conditions from query text (returns FilterSpec, not dict):
 
 ```python
-def _extract_filters(self, query: str) -> list[dict[str, Any]]:
+from clinical_analytics.core.query_plan import FilterSpec
+
+def _extract_filters(self, query: str) -> list[FilterSpec]:
     """
     Extract filter conditions from query text.
     
     Patterns to detect:
- - "those that had X" / "patients with X" → categorical filter
- - "scores below/above X" → numeric range filter
- - "with X" / "without X" → presence filter
+    - "those that had X" / "patients with X" → categorical filter
+    - "scores below/above X" → numeric range filter
+    - "with X" / "without X" → presence filter
     
     Returns:
-        List of filter conditions:
+        List of FilterSpec objects:
         [
-            {"column": "Results of DEXA?", "operator": "==", "value": "Osteoporosis"},
-            {"column": "DEXA Score (T score)", "operator": "<", "value": -2.5}
+            FilterSpec(column="Results of DEXA?", operator="==", value="Osteoporosis"),
+            FilterSpec(column="DEXA Score (T score)", operator="<", value=-2.5)
         ]
     """
     filters = []
@@ -287,39 +435,101 @@ def _extract_filters(self, query: str) -> list[dict[str, Any]]:
     return filters
 ```
 
-**Data Structure Change**: Filters are stored as a list of dicts (not a single dict) to support multiple conditions on different columns or multiple conditions on the same column.
+**Integration**: 
+- Call `_extract_filters()` in `parse_query()` and populate `QueryIntent.filters` (as `list[FilterSpec]`)
+- Convert `QueryIntent` to `QueryPlan` with filters as `list[FilterSpec]`
+- Pass `QueryPlan` to execution layer (semantic layer or analysis functions)
 
-**Integration**: Call `_extract_filters()` in `parse_query()` and populate `QueryIntent.filters`.
+**Data Structure**: Filters use `FilterSpec` dataclass (from QueryPlan contract), not dicts. This ensures type safety and prevents ad-hoc structures.
 
-### 2.2 Add filters field to AnalysisContext
+### 2.2 Convert QueryIntent to QueryPlan
+
+**File**: `src/clinical_analytics/core/nl_query_engine.py`
+
+**New Method**: `_intent_to_plan(intent: QueryIntent, dataset_version: str) -> QueryPlan`
+
+```python
+from clinical_analytics.core.query_plan import QueryPlan, FilterSpec
+import hashlib
+import json
+
+def _intent_to_plan(self, intent: QueryIntent, dataset_version: str) -> QueryPlan:
+    """Convert QueryIntent to QueryPlan with deterministic run_key."""
+    
+    # Create QueryPlan from intent
+    plan = QueryPlan(
+        intent=intent.intent_type,
+        metric=intent.primary_variable,
+        group_by=intent.grouping_variable,
+        filters=intent.filters,  # Already FilterSpec objects
+        confidence=intent.confidence,
+        explanation=intent.explanation or "",
+    )
+    
+    # Generate deterministic run_key: hash of (dataset_version, normalized_plan)
+    normalized_plan = {
+        "intent": plan.intent,
+        "metric": plan.metric,
+        "group_by": plan.group_by,
+        "filters": [
+            {
+                "column": f.column,
+                "operator": f.operator,
+                "value": f.value,
+                "exclude_nulls": f.exclude_nulls,
+            }
+            for f in plan.filters
+        ],
+    }
+    plan_hash = hashlib.sha256(
+        json.dumps(normalized_plan, sort_keys=True).encode()
+    ).hexdigest()[:16]
+    plan.run_key = f"{dataset_version}_{plan_hash}"
+    
+    return plan
+```
+
+### 2.3 Update AnalysisContext to use QueryPlan
 
 **File**: `src/clinical_analytics/ui/components/question_engine.py`
 
+**Change**: `AnalysisContext` should contain a `QueryPlan` (or be replaced by QueryPlan entirely).
+
 ```python
+from clinical_analytics.core.query_plan import QueryPlan
+
 @dataclass
 class AnalysisContext:
     # ... existing fields ...
-    filters: list[dict[str, Any]] = field(default_factory=list)
+    query_plan: QueryPlan | None = None  # Structured plan (preferred)
+    # OR: Keep existing fields but add query_plan for new code paths
 ```
 
-**Propagation**: In `ask_free_form_question()`, copy `query_intent.filters` to `context.filters`.
+**Propagation**: In `ask_free_form_question()`, convert `QueryIntent` to `QueryPlan` and store in context:
 
-### 2.3 Apply filters in compute functions
+```python
+# In ask_free_form_question():
+query_intent = self.parse_query(query, ...)
+query_plan = self._intent_to_plan(query_intent, dataset_version)
+context.query_plan = query_plan
+```
+
+### 2.4 Apply filters in compute functions
 
 **File**: `src/clinical_analytics/analysis/compute.py`
 
-**New Helper**: `_apply_filters(df: pl.DataFrame, filters: list[dict[str, Any]]) -> pl.DataFrame`
+**New Helper**: `_apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame`
 
 ```python
-def _apply_filters(df: pl.DataFrame, filters: list[dict[str, Any]]) -> pl.DataFrame:
+from clinical_analytics.core.query_plan import FilterSpec
+
+def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
     """
     Apply filter conditions to DataFrame.
     
     Args:
         df: Input DataFrame
-        filters: List of filter conditions:
-            [{"column": "col_name", "operator": "==", "value": "X"},
-             {"column": "col_name", "operator": "<", "value": 2.5}]
+        filters: List of FilterSpec objects
     
     Returns:
         Filtered DataFrame
@@ -332,40 +542,39 @@ def _apply_filters(df: pl.DataFrame, filters: list[dict[str, Any]]) -> pl.DataFr
         ">": lambda col, val: pl.col(col) > val,
         "<=": lambda col, val: pl.col(col) <= val,
         ">=": lambda col, val: pl.col(col) >= val,
-        "in": lambda col, val: pl.col(col).is_in(val),
+        "IN": lambda col, val: pl.col(col).is_in(val),
+        "NOT_IN": lambda col, val: ~pl.col(col).is_in(val),
     }
     
     filtered_df = df
-    for condition in filters:
-        col_name = condition.get("column")
-        operator = condition.get("operator")
-        value = condition.get("value")
-        exclude_nulls = condition.get("exclude_nulls", True)
-        
-        if col_name not in df.columns:
+    for filter_spec in filters:
+        if filter_spec.column not in df.columns:
             continue  # Skip if column not found
         
         # Apply null exclusion if requested (default: yes)
-        if exclude_nulls:
-            filtered_df = filtered_df.filter(pl.col(col_name).is_not_null())
+        if filter_spec.exclude_nulls:
+            filtered_df = filtered_df.filter(pl.col(filter_spec.column).is_not_null())
         
         # Apply operator
-        op_func = OPERATORS.get(operator)
+        op_func = OPERATORS.get(filter_spec.operator)
         if op_func:
-            filtered_df = filtered_df.filter(op_func(col_name, value))
+            filtered_df = filtered_df.filter(op_func(filter_spec.column, filter_spec.value))
     
     return filtered_df
 ```
 
 **Feature Parity**: Filter application must work identically for both single-file and multi-table uploads, using the same lazy Polars evaluation pattern.
 
-**Integration**:
-
-- In `compute_descriptive_analysis()`: Apply filters before computing stats
-- In `compute_comparison_analysis()`: Apply filters before grouping
+**Integration**: 
+- In `compute_descriptive_analysis()`: Apply filters at the start (line ~340), before computing statistics
+- In `compute_comparison_analysis()`: Apply filters at the start (line ~390), before grouping
+- For COUNT intent: Use `semantic_layer.query(metrics=["count"], filters={...})` when possible (SQL aggregation), fall back to Polars if needed
 - Track filtered vs unfiltered counts for breakdown reporting
+- **Feature Parity**: Filter application must work identically for both single-file and multi-table uploads, using the same lazy Polars evaluation pattern
 
-### 2.4 Enhanced breakdown reporting
+**Note**: For COUNT queries with filters, prefer semantic layer aggregation (`query()` method) over Polars filtering + counting. This is faster and more correct (predicate pushdown in SQL).
+
+### 2.5 Enhanced breakdown reporting
 
 **File**: `src/clinical_analytics/analysis/compute.py`**Modify `compute_descriptive_analysis()`** to return breakdown info:
 
@@ -374,9 +583,9 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
     # Store original count
     original_count = len(df)
     
-    # Apply filters
-    if context.filters:
-        df = _apply_filters(df, context.filters)
+    # Apply filters from QueryPlan
+    if context.query_plan and context.query_plan.filters:
+        df = _apply_filters(df, context.query_plan.filters)
     
     # ... existing analysis logic ...
     
@@ -384,25 +593,23 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
         # ... existing fields ...
         "original_count": original_count,
         "filtered_count": len(df),
-        "filters_applied": context.filters,
-        "filter_description": _format_filter_description(context.filters),
+        "filters_applied": [f.__dict__ for f in context.query_plan.filters] if context.query_plan else [],
+        "filter_description": _format_filter_description(context.query_plan.filters) if context.query_plan else "",
     }
 ```
 
-**New Helper**: `_format_filter_description(filters: list[dict]) -> str`
+**New Helper**: `_format_filter_description(filters: list[FilterSpec]) -> str`
 
 ```python
-def _format_filter_description(filters: list[dict[str, Any]]) -> str:
+from clinical_analytics.core.query_plan import FilterSpec
+
+def _format_filter_description(filters: list[FilterSpec]) -> str:
     """Convert filter list to human-readable description."""
     if not filters:
         return ""
     
     descriptions = []
     for f in filters:
-        col = f["column"]
-        op = f["operator"]
-        val = f["value"]
-        
         op_text = {
             "==": "equals",
             "!=": "does not equal",
@@ -410,9 +617,11 @@ def _format_filter_description(filters: list[dict[str, Any]]) -> str:
             ">": "greater than",
             "<=": "at most",
             ">=": "at least",
-        }.get(op, op)
+            "IN": "in",
+            "NOT_IN": "not in",
+        }.get(f.operator, f.operator)
         
-        descriptions.append(f"{col} {op_text} {val}")
+        descriptions.append(f"{f.column} {op_text} {f.value}")
     
     return "; ".join(descriptions)
 ```
@@ -446,7 +655,62 @@ Apply similar breakdown display to `_render_focused_comparison()`.
 
 ## Phase 3: Redesign UI for Conversational Flow
 
-### 3.1 Conversation history data structure
+**Note**: This coordinates with ADR003 Phase 1 (Trust Layer) - conversational UI should include verification expanders in each result message.
+
+### 3.1 Implement execution gating
+
+**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
+
+**Execution Gating Rules** (per ADR001):
+- **Confidence < threshold (default 0.75)**: Show interpreted plan in UI, require user confirmation before execution
+- **Confidence >= threshold**: Auto-execute (user can still review results)
+- **Idempotency**: `run_key` is deterministic hash of `(dataset_version, normalized_plan)` - same plan on same data = same key = cached result
+
+**Implementation**:
+
+```python
+# In main() flow:
+query_plan = context.query_plan  # From QuestionEngine.ask_free_form_question()
+
+# Check confidence threshold
+CONFIDENCE_THRESHOLD = 0.75
+if query_plan.confidence < CONFIDENCE_THRESHOLD:
+    # Low confidence - show confirmation UI
+    with st.chat_message("assistant"):
+        st.warning(f"Confidence: {query_plan.confidence:.0%} - Please confirm interpretation")
+        st.json({
+            "intent": query_plan.intent,
+            "metric": query_plan.metric,
+            "group_by": query_plan.group_by,
+            "filters": [f.__dict__ for f in query_plan.filters],
+            "explanation": query_plan.explanation,
+        })
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Confirm and Run", use_container_width=True):
+                st.session_state["confirmed_plan"] = query_plan
+                st.rerun()
+        with col2:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state["confirmed_plan"] = None
+                st.rerun()
+    
+    # Wait for confirmation
+    if "confirmed_plan" not in st.session_state:
+        return
+    
+    query_plan = st.session_state["confirmed_plan"]
+    del st.session_state["confirmed_plan"]
+
+# High confidence or confirmed - proceed with execution
+# Use deterministic run_key from QueryPlan (already set in _intent_to_plan)
+run_key = query_plan.run_key
+```
+
+**Note**: The `run_key` is now deterministic (hash-based) and set during QueryPlan creation, not time-based. This enables idempotent execution and result caching.
+
+### 3.2 Conversation history data structure
 
 **File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`**New Session State Structure** (lightweight storage per ADR001):
 
@@ -508,8 +772,8 @@ def main():
                 context=context,
             )
             
-            # Generate unique run key
-            run_key = f"{context.inferred_intent.value}_{int(time.time()*1000)}"
+            # Use deterministic run_key from QueryPlan (already set during creation)
+            run_key = context.query_plan.run_key if context.query_plan else None
             
             # Add to conversation history (lightweight)
             st.session_state.conversation_history.append({
@@ -518,7 +782,7 @@ def main():
                 "headline": result.get("headline") or result.get("headline_text"),
                 "run_key": run_key,
                 "timestamp": time.time(),
-                "filters_applied": context.filters,
+                "filters_applied": [f.__dict__ for f in context.query_plan.filters] if context.query_plan else [],
             })
             
             # Rerun to display new message
@@ -750,9 +1014,10 @@ def test_extract_categorical_filter():
     filters = engine._extract_filters(query)
     
     assert len(filters) == 1
-    assert filters[0]["column"] == "Results of DEXA?"
-    assert filters[0]["operator"] == "=="
-    assert filters[0]["value"] == "Osteoporosis"
+    assert isinstance(filters[0], FilterSpec)
+    assert filters[0].column == "Results of DEXA?"
+    assert filters[0].operator == "=="
+    assert filters[0].value == "Osteoporosis"
 
 def test_extract_numeric_range_filter():
     """Test extraction of numeric range filters."""
@@ -762,9 +1027,10 @@ def test_extract_numeric_range_filter():
     filters = engine._extract_filters(query)
     
     assert len(filters) == 1
-    assert filters[0]["column"] == "DEXA Score (T score)"
-    assert filters[0]["operator"] == "<"
-    assert filters[0]["value"] == -2.5
+    assert isinstance(filters[0], FilterSpec)
+    assert filters[0].column == "DEXA Score (T score)"
+    assert filters[0].operator == "<"
+    assert filters[0].value == -2.5
 
 def test_extract_multiple_filters():
     """Test extraction of multiple filters in one query."""
@@ -774,21 +1040,24 @@ def test_extract_multiple_filters():
     filters = engine._extract_filters(query)
     
     assert len(filters) == 2
+    assert all(isinstance(f, FilterSpec) for f in filters)
     # Order may vary
-    filter_columns = {f["column"] for f in filters}
+    filter_columns = {f.column for f in filters}
     assert "Results of DEXA?" in filter_columns
     assert "DEXA Score (T score)" in filter_columns
 
 def test_apply_filters():
     """Test filter application to DataFrame."""
+    from clinical_analytics.core.query_plan import FilterSpec
+    
     df = pl.DataFrame({
         "Results of DEXA?": ["Osteoporosis", "Normal", "Osteoporosis", "Osteopenia"],
         "DEXA Score (T score)": [-3.0, -0.5, -2.8, -1.5],
     })
     
     filters = [
-        {"column": "Results of DEXA?", "operator": "==", "value": "Osteoporosis"},
-        {"column": "DEXA Score (T score)", "operator": "<", "value": -2.5},
+        FilterSpec(column="Results of DEXA?", operator="==", value="Osteoporosis"),
+        FilterSpec(column="DEXA Score (T score)", operator="<", value=-2.5),
     ]
     
     filtered_df = _apply_filters(df, filters)
@@ -799,6 +1068,8 @@ def test_apply_filters():
 
 def test_filters_work_identically_single_file_and_multi_table():
     """Test that filter application works identically for both upload types."""
+    from clinical_analytics.core.query_plan import FilterSpec
+    
     # Create test data for single-file upload
     single_file_df = pl.DataFrame({
         "patient_id": [1, 2, 3, 4],
@@ -813,7 +1084,7 @@ def test_filters_work_identically_single_file_and_multi_table():
         "age": [50, 60, 70, 80],
     })
     
-    filters = [{"column": "age", "operator": ">=", "value": 60}]
+    filters = [FilterSpec(column="age", operator=">=", value=60)]
     
     # Apply filters to both
     single_filtered = _apply_filters(single_file_df, filters)
@@ -822,6 +1093,49 @@ def test_filters_work_identically_single_file_and_multi_table():
     # Results must be identical
     assert len(single_filtered) == len(multi_filtered)
     assert single_filtered["age"].to_list() == multi_filtered["age"].to_list()
+
+def test_count_intent_pattern_matching():
+    """Test that COUNT intent is detected for 'how many' queries."""
+    engine = NLQueryEngine(semantic_layer=mock_semantic_layer)
+    
+    query = "how many patients on statins?"
+    intent = engine.parse_query(query)
+    
+    assert intent.intent_type == "COUNT"
+    assert intent.confidence >= 0.75
+
+def test_queryplan_deterministic_run_key():
+    """Test that same QueryPlan produces same run_key."""
+    from clinical_analytics.core.query_plan import QueryPlan, FilterSpec
+    
+    plan1 = QueryPlan(
+        intent="DESCRIBE",
+        metric="LDL mg/dL",
+        filters=[FilterSpec(column="Statin Prescribed?", operator="==", value="Yes")],
+        confidence=0.9,
+    )
+    plan1.run_key = generate_run_key(plan1, "dataset_v1")
+    
+    plan2 = QueryPlan(
+        intent="DESCRIBE",
+        metric="LDL mg/dL",
+        filters=[FilterSpec(column="Statin Prescribed?", operator="==", value="Yes")],
+        confidence=0.9,
+    )
+    plan2.run_key = generate_run_key(plan2, "dataset_v1")
+    
+    # Same plan should produce same run_key
+    assert plan1.run_key == plan2.run_key
+    
+    # Different dataset version should produce different run_key
+    plan3 = QueryPlan(
+        intent="DESCRIBE",
+        metric="LDL mg/dL",
+        filters=[FilterSpec(column="Statin Prescribed?", operator="==", value="Yes")],
+        confidence=0.9,
+    )
+    plan3.run_key = generate_run_key(plan3, "dataset_v2")
+    assert plan1.run_key != plan3.run_key
 ```
 
 ### 4.3 Test conversational UI flow
@@ -896,26 +1210,37 @@ Execute phases sequentially to maintain code quality and testability. **Phase 0 
    - Deliverable: Comparison analysis correctly computes group means for string numeric columns
    - Commit message: `fix: handle string numeric columns in comparison analysis`
 
+1.5. **Phase 1.5** (QueryPlan Contract + COUNT Intent): Define QueryPlan contract and add COUNT intent type
+   - Estimated time: 2 hours
+   - Deliverable: QueryPlan/FilterSpec dataclasses, COUNT intent support, deterministic run_key
+   - Commit messages:
+     - `feat: add QueryPlan and FilterSpec dataclasses per ADR001`
+     - `feat: add COUNT intent type with pattern matching`
+
 2. **Phase 2** (Core Feature): Implement filter parsing and application
    - Estimated time: 3 hours
-   - Deliverable: Filters are extracted from NL queries and applied to cohort before analysis
+   - Deliverable: Filters are extracted from NL queries as FilterSpec, converted to QueryPlan, and applied to cohort before analysis
    - Commit messages: 
-     - `feat: add filter extraction to NL query engine`
-     - `feat: apply filters in compute functions`
+     - `feat: add filter extraction returning FilterSpec objects`
+     - `feat: convert QueryIntent to QueryPlan with deterministic run_key`
+     - `feat: update AnalysisContext to use QueryPlan`
+     - `feat: apply filters in compute functions using FilterSpec`
      - `feat: add breakdown reporting for filtered cohorts`
 
-3. **Phase 3** (UX Improvement): Redesign UI for conversational flow
-   - Estimated time: 3-4 hours
-   - Deliverable: Clean conversation flow with inline results, no confusing buttons
+3. **Phase 3** (UX Improvement): Redesign UI for conversational flow with execution gating
+   - Estimated time: 4-5 hours
+   - Deliverable: Clean conversation flow with inline results, execution gating (confidence threshold), deterministic run_key, no confusing buttons
    - Commit messages:
+     - `feat: implement execution gating with confidence threshold and confirmation UI`
      - `feat: add conversation history to session state`
      - `refactor: redesign Ask Questions UI for conversational flow`
      - `feat: add follow-up question suggestions`
 
-4. **Phase 4** (Quality): Add comprehensive tests
+4. **Phase 4** (Quality): Add comprehensive e2e tests (deferred to end)
    - Estimated time: 2 hours
-   - Deliverable: Test coverage for all three phases
-   - Commit message: `test: add comprehensive tests for comparison fix, filters, and conversational UI`
+   - Deliverable: E2E test coverage for all phases with explicit feature parity verification
+   - Commit message: `test: add comprehensive e2e tests for comparison fix, filters, and conversational UI`
+   - **Note**: E2E testing deferred until after Phase 3 completion to test full conversational flow
 
 ## Success Criteria
 
@@ -931,11 +1256,17 @@ Execute phases sequentially to maintain code quality and testability. **Phase 0 
 
 ### Phase 1-3: Core Features
 
+- [ ] QueryPlan and FilterSpec dataclasses defined per ADR001 contract
+- [ ] COUNT intent type supported with pattern matching and semantic layer execution
 - [ ] Comparison analysis correctly computes group means for string numeric columns (not counts)
 - [ ] Comparison analysis works identically for single-file and multi-table uploads
-- [ ] Filter conditions from NL queries are parsed and applied correctly
+- [ ] Filter conditions from NL queries are parsed as FilterSpec objects and applied correctly
+- [ ] QueryIntent converted to QueryPlan with deterministic run_key generation
+- [ ] AnalysisContext uses QueryPlan (not ad-hoc dict structures)
 - [ ] Filter application works identically for both upload types (using lazy Polars)
 - [ ] Filtered cohort size is displayed in breakdown reporting
+- [ ] Execution gating implemented: confidence threshold (0.75), confirmation UI for low confidence
+- [ ] Run_key is deterministic (hash-based), not time-based, enabling idempotent execution
 - [ ] UI shows clean conversation flow: question → data → question
 - [ ] Conversational UI works identically for both upload types
 - [ ] No confusing buttons; all actions are clear and contextual

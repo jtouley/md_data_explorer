@@ -342,6 +342,14 @@ make test-fast         # Fast tests only (skip slow)
 make test-cov          # Tests with coverage report
 make test-unit         # Unit tests only
 make test-integration  # Integration tests only
+
+# Module-specific tests (for faster feedback when working on specific modules)
+make test-analysis     # Run analysis module tests
+make test-core         # Run core module tests
+make test-datasets     # Run datasets module tests
+make test-e2e          # Run end-to-end tests
+make test-loader       # Run loader module tests
+make test-ui           # Run UI module tests
 ```
 
 **Never run pytest directly:**
@@ -352,6 +360,8 @@ uv run pytest tests/
 
 # CORRECT
 make test
+# OR for module-specific testing:
+make test-core
 ```
 
 See `.cursor/rules/000-project-setup-and-makefile.mdc` for full Makefile reference.

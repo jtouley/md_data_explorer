@@ -73,6 +73,14 @@ make test-integration  # Integration tests only
 make test-fast         # Fast tests (skip slow ones)
 make test-cov          # Tests with HTML coverage report
 make test-cov-term     # Tests with terminal coverage
+
+# Module-specific tests (for faster feedback when working on specific modules)
+make test-analysis     # Run analysis module tests
+make test-core         # Run core module tests
+make test-datasets     # Run datasets module tests
+make test-e2e          # Run end-to-end tests
+make test-loader       # Run loader module tests
+make test-ui           # Run UI module tests
 ```
 
 ### Code Quality
@@ -150,7 +158,7 @@ make check
 
 **When writing tests:**
 1. Write test first (TDD when possible)
-2. Run: `make test-fast` for quick feedback
+2. Run: `make test-fast` for quick feedback (or use module-specific: `make test-core`, `make test-analysis`, etc.)
 3. Run: `make test-cov` to check coverage
 4. Ensure tests pass before committing
 
@@ -230,7 +238,7 @@ make install-dev
 # Daily workflow
 make format          # Format code
 make lint-fix        # Fix linting
-make test-fast       # Quick test
+make test-fast       # Quick test (or use module-specific: test-core, test-analysis, test-ui, etc.)
 make check           # Full check before commit
 
 # Troubleshooting

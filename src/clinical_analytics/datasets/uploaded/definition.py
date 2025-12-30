@@ -515,6 +515,8 @@ class UploadedDataset(ClinicalDataset):
                 "default_predictors": inferred_schema.get("predictors", []),
                 "categorical_variables": inferred_schema.get("categorical_columns", []),
             },
+            # Include variable_types metadata for column type detection
+            "variable_types": self.metadata.get("variable_types"),
         }
         return config
 
@@ -615,6 +617,8 @@ class UploadedDataset(ClinicalDataset):
                 "default_predictors": predictors,
                 "categorical_variables": categorical_variables,
             },
+            # Include variable_types metadata for column type detection
+            "variable_types": self.metadata.get("variable_types"),
         }
         return config
 

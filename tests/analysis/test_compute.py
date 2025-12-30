@@ -13,6 +13,7 @@ import pytest
 from clinical_analytics.analysis.compute import (
     compute_analysis_by_type,
     compute_comparison_analysis,
+    compute_count_analysis,
     compute_descriptive_analysis,
     compute_predictor_analysis,
     compute_relationship_analysis,
@@ -20,11 +21,10 @@ from clinical_analytics.analysis.compute import (
 )
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
-
 # All fixtures moved to conftest.py - use shared fixtures
 # sample_numeric_df, sample_categorical_df, sample_mixed_df
 # sample_context_describe, sample_context_compare, sample_context_predictor
-# sample_context_survival, sample_context_relationship
+# sample_context_survival, sample_context_relationship, sample_context_count
 
 
 class TestComputeDescriptiveAnalysis:
@@ -98,6 +98,91 @@ class TestComputeDescriptiveAnalysis:
         # Assert: Missing percentage calculated
         assert result["missing_pct"] > 0.0
         assert result["missing_pct"] <= 100.0
+
+    def test_compute_descriptive_analysis_includes_breakdown_when_filters_applied(self):
+        """Test that breakdown info is included when filters are applied."""
+        # Arrange: DataFrame and context with filters
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        df = pl.DataFrame(
+            {
+                "age": [25, 30, 35, 40, 45, 50, 55, 60],
+                "score": [10, 20, 30, 40, 50, 60, 70, 80],
+            }
+        )
+
+        # Create QueryPlan with filters
+        query_plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="age",
+            filters=[FilterSpec(column="age", operator=">=", value=35, exclude_nulls=True)],
+            confidence=0.9,
+        )
+
+        context = AnalysisContext()
+        context.primary_variable = "age"
+        context.query_plan = query_plan
+
+        # Act
+        result = compute_descriptive_analysis(df, context)
+
+        # Assert: Breakdown info included
+        assert "original_count" in result
+        assert "filtered_count" in result
+        assert "filters_applied" in result
+        assert "filter_description" in result
+        assert result["original_count"] == 8  # All rows
+        assert result["filtered_count"] == 6  # Rows with age >= 35: [35, 40, 45, 50, 55, 60]
+        assert len(result["filters_applied"]) == 1
+        assert "age" in result["filter_description"].lower()
+
+    def test_compute_descriptive_analysis_no_breakdown_when_no_filters(
+        self, sample_numeric_df, sample_context_describe
+    ):
+        """Test that breakdown info is empty when no filters are applied."""
+        # Act
+        result = compute_descriptive_analysis(sample_numeric_df, sample_context_describe)
+
+        # Assert: Breakdown fields present but empty
+        assert "original_count" in result
+        assert "filtered_count" in result
+        assert "filters_applied" in result
+        assert "filter_description" in result
+        assert result["original_count"] == result["filtered_count"]  # No filtering
+        assert result["filters_applied"] == []
+        assert result["filter_description"] == ""
+
+    def test_compute_descriptive_analysis_breakdown_tracks_filtered_vs_unfiltered_counts(self):
+        """Test that breakdown correctly tracks filtered vs unfiltered counts."""
+        # Arrange: DataFrame with filters that exclude some rows
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        df = pl.DataFrame(
+            {
+                "age": [20, 25, 30, 35, 40, 45, 50],
+                "category": ["A", "B", "A", "B", "A", "B", "A"],
+            }
+        )
+
+        # Filter: age >= 30
+        query_plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="all",
+            filters=[FilterSpec(column="age", operator=">=", value=30, exclude_nulls=True)],
+            confidence=0.9,
+        )
+
+        context = AnalysisContext()
+        context.primary_variable = "all"
+        context.query_plan = query_plan
+
+        # Act
+        result = compute_descriptive_analysis(df, context)
+
+        # Assert: Counts tracked correctly
+        assert result["original_count"] == 7  # All rows
+        assert result["filtered_count"] == 5  # Rows with age >= 30
+        assert result["row_count"] == 5  # Analysis uses filtered count
 
 
 class TestComputeComparisonAnalysis:
@@ -233,6 +318,105 @@ class TestComputeComparisonAnalysis:
         # Assert: Error returned
         assert result["type"] == "comparison"
         assert "error" in result
+
+    def test_comparison_analysis_with_string_numeric_outcome(self):
+        """Test that string numeric columns are converted and means computed."""
+        # Arrange: String numeric outcome with "<20" style values
+        df = pl.DataFrame(
+            {
+                "Treatment": ["A", "A", "B", "B"],
+                "Viral Load": ["<20", "120", "200", "150"],
+            }
+        )
+
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+        context.primary_variable = "Viral Load"
+        context.grouping_variable = "Treatment"
+
+        # Act
+        result = compute_comparison_analysis(df, context)
+
+        # Assert: Verify group means were computed (not counts)
+        assert "group_statistics" not in result  # This key doesn't exist in current implementation
+        assert "group_means" in result or "group1_mean" in result
+        # Treatment A: mean of [20, 120] = 70
+        # Treatment B: mean of [200, 150] = 175
+        # (Note: "<20" converts to 20 as upper bound)
+        if "group_means" in result:
+            assert result["group_means"]["A"] == pytest.approx(70, rel=0.01)
+            assert result["group_means"]["B"] == pytest.approx(175, rel=0.01)
+        elif "group1_mean" in result and "group2_mean" in result:
+            # Check that means are approximately correct (order may vary)
+            means = [result["group1_mean"], result["group2_mean"]]
+            assert 70 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 70) < 1 for m in means)
+            assert 175 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 175) < 1 for m in means)
+
+        # Verify test type is numeric (t-test or ANOVA)
+        assert result["test_type"] in ["t_test", "anova"]
+
+    def test_comparison_analysis_with_european_comma_format(self):
+        """Test European comma format conversion (e.g., '1,234.5')."""
+        # Arrange: European comma format
+        df = pl.DataFrame(
+            {
+                "Treatment": ["A", "B"],
+                "Score": ["1,234.5", "2,345.6"],
+            }
+        )
+
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+        context.primary_variable = "Score"
+        context.grouping_variable = "Treatment"
+
+        # Act
+        result = compute_comparison_analysis(df, context)
+
+        # Assert: Verify conversion and mean computation
+        assert result["test_type"] in ["t_test", "anova"]
+        if "group_means" in result:
+            assert result["group_means"]["A"] == pytest.approx(1234.5, rel=0.01)
+            assert result["group_means"]["B"] == pytest.approx(2345.6, rel=0.01)
+        elif "group1_mean" in result and "group2_mean" in result:
+            means = [result["group1_mean"], result["group2_mean"]]
+            assert any(abs(m - 1234.5) < 1 for m in means)
+            assert any(abs(m - 2345.6) < 1 for m in means)
+
+    def test_comparison_analysis_works_identically_single_file_and_multi_table(self):
+        """Test that comparison analysis works identically for both upload types."""
+        # Arrange: Create identical test data for both upload types
+        single_file_df = pl.DataFrame(
+            {
+                "Treatment": ["A", "A", "B", "B"],
+                "Viral Load": ["<20", "120", "200", "150"],
+            }
+        )
+
+        multi_table_df = pl.DataFrame(
+            {
+                "Treatment": ["A", "A", "B", "B"],
+                "Viral Load": ["<20", "120", "200", "150"],
+            }
+        )
+
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+        context.primary_variable = "Viral Load"
+        context.grouping_variable = "Treatment"
+
+        # Act: Run analysis on both
+        single_result = compute_comparison_analysis(single_file_df, context)
+        multi_result = compute_comparison_analysis(multi_table_df, context)
+
+        # Assert: Results must be identical
+        assert single_result["test_type"] == multi_result["test_type"]
+        if "group_means" in single_result and "group_means" in multi_result:
+            assert single_result["group_means"]["A"] == multi_result["group_means"]["A"]
+            assert single_result["group_means"]["B"] == multi_result["group_means"]["B"]
+        elif "group1_mean" in single_result and "group1_mean" in multi_result:
+            assert single_result["group1_mean"] == multi_result["group1_mean"]
+            assert single_result["group2_mean"] == multi_result["group2_mean"]
 
 
 class TestComputePredictorAnalysis:
@@ -509,6 +693,114 @@ class TestComputeAnalysisByType:
 
         # Assert: Relationship analysis returned
         assert result["type"] == "relationship"
+
+    def test_compute_analysis_by_type_routes_to_count(self, sample_numeric_df, sample_context_count):
+        """Test that compute_analysis_by_type routes COUNT intent correctly."""
+        # Act
+        result = compute_analysis_by_type(sample_numeric_df, sample_context_count)
+
+        # Assert: Count analysis returned
+        assert result["type"] == "count"
+        assert "total_count" in result
+        assert result["total_count"] == sample_numeric_df.height
+        assert "headline" in result
+
+    def test_compute_analysis_by_type_routes_to_count_with_grouping(self, sample_context_count):
+        """Test that compute_analysis_by_type routes COUNT intent with grouping correctly."""
+        # Arrange: COUNT intent with grouping variable
+        df = pl.DataFrame(
+            {
+                "category": ["A", "A", "B", "B", "C"],
+                "value": [10, 20, 30, 40, 50],
+            }
+        )
+        context = sample_context_count
+        context.grouping_variable = "category"
+
+        # Act
+        result = compute_analysis_by_type(df, context)
+
+        # Assert: Count analysis with grouping returned
+        assert result["type"] == "count"
+        assert "total_count" in result
+        assert result["total_count"] == df.height
+        assert "grouped_by" in result
+        assert result["grouped_by"] == "category"
+        assert "group_counts" in result
+        assert len(result["group_counts"]) == 3  # A, B, C
+
+    def test_compute_count_analysis_applies_filters(self, sample_context_count):
+        """Test that compute_count_analysis applies filters before counting."""
+        # Arrange: DataFrame with filterable data
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        df = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3, 4, 5],
+                "status": ["active", "active", "inactive", "active", "inactive"],
+                "value": [10, 20, 30, 40, 50],
+            }
+        )
+        context = sample_context_count
+        # Add filter: status == "active"
+        context.filters = [FilterSpec(column="status", operator="==", value="active", exclude_nulls=True)]
+
+        # Act
+        result = compute_count_analysis(df, context)
+
+        # Assert: Only filtered rows counted
+        assert result["type"] == "count"
+        assert result["total_count"] == 3  # Only 3 rows with status == "active"
+        assert result["total_count"] < df.height  # Filtered count is less than total
+
+    def test_compute_count_analysis_with_filters_and_grouping(self, sample_context_count):
+        """Test that compute_count_analysis applies filters before grouping."""
+        # Arrange: DataFrame with filterable and groupable data
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        df = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3, 4, 5, 6],
+                "status": ["active", "active", "active", "inactive", "active", "inactive"],
+                "category": ["A", "A", "B", "A", "B", "B"],
+            }
+        )
+        context = sample_context_count
+        context.grouping_variable = "category"
+        # Add filter: status == "active"
+        context.filters = [FilterSpec(column="status", operator="==", value="active", exclude_nulls=True)]
+
+        # Act
+        result = compute_count_analysis(df, context)
+
+        # Assert: Filtered and grouped counts
+        assert result["type"] == "count"
+        assert result["total_count"] == 4  # 4 rows with status == "active"
+        assert result["grouped_by"] == "category"
+        assert len(result["group_counts"]) == 2  # Categories A and B
+        # Verify counts per category (after filtering)
+        category_counts = {item["category"]: item["count"] for item in result["group_counts"]}
+        assert category_counts["A"] == 2  # 2 active rows in category A
+        assert category_counts["B"] == 2  # 2 active rows in category B
+
+    def test_compute_count_analysis_without_filters_counts_all_rows(self, sample_context_count):
+        """Test that compute_count_analysis counts all rows when no filters present."""
+        # Arrange: DataFrame without filters
+        df = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3, 4, 5],
+                "status": ["active", "active", "inactive", "active", "inactive"],
+            }
+        )
+        context = sample_context_count
+        context.filters = []  # No filters
+
+        # Act
+        result = compute_count_analysis(df, context)
+
+        # Assert: All rows counted
+        assert result["type"] == "count"
+        assert result["total_count"] == df.height  # All 5 rows
 
     def test_compute_analysis_by_type_handles_unknown_intent(self, sample_numeric_df):
         """Test that compute_analysis_by_type handles unknown intent."""

@@ -7,6 +7,7 @@ Ask questions, get answers. No statistical jargon - just tell me what you want t
 import hashlib
 import json
 import sys
+import time
 from collections import deque
 from pathlib import Path
 
@@ -34,17 +35,33 @@ from clinical_analytics.ui.components.question_engine import (
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 from clinical_analytics.ui.messages import (
-    CLEAR_RESULTS,
     COLLISION_SUGGESTION_WARNING,
-    CONFIRM_AND_RUN,
     LOW_CONFIDENCE_WARNING,
     NO_DATASETS_AVAILABLE,
-    RESULTS_CLEARED,
-    START_OVER,
 )
 
 # Page config
 st.set_page_config(page_title="Ask Questions | Clinical Analytics", page_icon="💬", layout="wide")
+# Prevent emoji rendering artifacts in chat messages
+# Ensure chat message icons persist across reruns
+st.markdown(
+    """
+    <style>
+    .stChatMessage {
+        border-bottom: none !important;
+    }
+    .stChatMessage:not(:last-child) {
+        margin-bottom: 0.5rem;
+    }
+    /* Ensure chat message avatars persist */
+    .stChatMessage [data-testid="stAvatar"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Structured logging
 logger = structlog.get_logger()
@@ -203,8 +220,14 @@ def clear_all_results(dataset_version: str) -> None:
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
 # TODO: Remove when Streamlit supports Polars natively
-def render_descriptive_analysis(result: dict) -> None:
-    """Render descriptive analysis from serializable dict."""
+def render_descriptive_analysis(result: dict, query_text: str | None = None) -> None:
+    """
+    Render descriptive analysis from serializable dict.
+
+    Args:
+        result: Analysis result dict
+        query_text: Original query text (to determine if user explicitly asked for summary)
+    """
     # Check for error results first
     if "error" in result:
         st.error(f"❌ **Analysis Error**: {result['error']}")
@@ -222,7 +245,41 @@ def render_descriptive_analysis(result: dict) -> None:
         return
 
     # Full dataset analysis
-    st.markdown("## 📊 Your Data at a Glance")
+    # Show breakdown if filters were applied
+    if result.get("filters_applied"):
+        st.markdown("### Data Breakdown")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Matching Criteria", f"{result.get('filtered_count', result['row_count']):,}")
+        with col2:
+            original = result.get("original_count", result["row_count"])
+            filtered = result.get("filtered_count", result["row_count"])
+            excluded = original - filtered
+            st.metric("Excluded", f"{excluded:,}")
+
+        if result.get("filter_description"):
+            st.caption(f"**Filters:** {result['filter_description']}")
+
+        st.divider()
+
+    # Only show "Your Data at a Glance" if user explicitly asked for summary/overview
+    # Check if query contains summary-related keywords
+    is_explicit_summary = False
+    if query_text:
+        query_lower = query_text.lower()
+        summary_keywords = ["summary", "overview", "describe all", "show all", "data at a glance", "general statistics"]
+        is_explicit_summary = any(keyword in query_lower for keyword in summary_keywords)
+
+    # If not explicitly requested, show a more focused message
+    if not is_explicit_summary:
+        st.info(
+            "💡 **Tip**: Ask about a specific variable for more detailed analysis, "
+            "or say 'show summary' for an overview."
+        )
+        return
+
+    # User explicitly asked for summary - show full overview
+    st.markdown("<h2>📊 Your Data at a Glance</h2>", unsafe_allow_html=True)
 
     # Overall metrics
     col1, col2, col3 = st.columns(3)
@@ -233,12 +290,14 @@ def render_descriptive_analysis(result: dict) -> None:
     with col3:
         st.metric("Data Completeness", f"{100 - result['missing_pct']:.1f}%")
 
-    # Summary statistics
-    st.markdown("### Summary Statistics")
+    # Summary statistics (use HTML to avoid Streamlit auto-anchor generation)
+    st.markdown("<h3>Summary Statistics</h3>", unsafe_allow_html=True)
 
     if result["summary_stats"]:
         st.markdown("**Numeric Variables:**")
         # Convert to pandas for display
+        # TODO: Future enhancement - use seaborn for styled tables/heatmaps
+        # e.g., sns.heatmap(summary_df, annot=True, fmt='.2f') for correlation matrices
         summary_df = pd.DataFrame(result["summary_stats"])
         st.dataframe(summary_df)
 
@@ -256,6 +315,23 @@ def render_descriptive_analysis(result: dict) -> None:
 def _render_focused_descriptive(result: dict) -> None:
     """Render focused single-variable descriptive analysis."""
     var_name = result["focused_variable"]
+
+    # Show breakdown if filters were applied
+    if result.get("filters_applied"):
+        st.markdown("### Data Breakdown")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Matching Criteria", f"{result.get('filtered_count', result['row_count']):,}")
+        with col2:
+            original = result.get("original_count", result["row_count"])
+            filtered = result.get("filtered_count", result["row_count"])
+            excluded = original - filtered
+            st.metric("Excluded", f"{excluded:,}")
+
+        if result.get("filter_description"):
+            st.caption(f"**Filters:** {result['filter_description']}")
+
+        st.divider()
 
     # Headline answer first!
     if "headline" in result:
@@ -297,31 +373,83 @@ def _render_focused_descriptive(result: dict) -> None:
                 st.write(f"  - **{value}**: {count} ({pct:.1f}%)")
 
 
+def render_count_analysis(result: dict) -> None:
+    """Render count analysis inline."""
+    # If grouped, show group breakdown
+    if "grouped_by" in result and result.get("group_counts"):
+        group_col = result["grouped_by"]
+        is_most_query = result.get("is_most_query", False)
+
+        # Get code-to-label mapping for the grouping column
+        code_to_label = {}
+        try:
+            from clinical_analytics.core.column_parser import parse_column_name
+
+            column_meta = parse_column_name(group_col)
+            if column_meta.value_mapping:
+                code_to_label = column_meta.value_mapping
+        except Exception:
+            pass  # If parsing fails, just use codes as-is
+
+        # For "most" queries, show only top result with label if available
+        if is_most_query and len(result["group_counts"]) > 0:
+            top_item = result["group_counts"][0]
+            group_value = top_item[group_col]
+            count = top_item["count"]
+
+            # Try to map code to label
+            display_value = group_value
+            if code_to_label:
+                # Convert group_value to string for lookup
+                value_str = str(group_value)
+                if value_str in code_to_label:
+                    label = code_to_label[value_str]
+                    display_value = f"{label} ({value_str})"
+
+            st.metric("Most Prescribed", f"{display_value}: {count:,}")
+        else:
+            # Show all groups
+            for item in result["group_counts"]:
+                group_value = item[group_col]
+                count = item["count"]
+                pct = (count / result["total_count"]) * 100 if result["total_count"] > 0 else 0.0
+
+                # Try to map code to label
+                display_value = group_value
+                if code_to_label:
+                    value_str = str(group_value)
+                    if value_str in code_to_label:
+                        label = code_to_label[value_str]
+                        display_value = f"{label} ({value_str})"
+
+                st.write(f"- **{display_value}**: {count:,} ({pct:.1f}%)")
+    else:
+        # Simple total count
+        st.metric("Total Count", f"{result['total_count']:,}")
+
+
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
 # TODO: Remove when Streamlit supports Polars natively
 def render_comparison_analysis(result: dict) -> None:
-    """Render comparison analysis from serializable dict."""
+    """Render comparison analysis from serializable dict inline."""
     if "error" in result:
         st.error(result["error"])
         return
 
-    st.markdown("## 📈 Group Comparison")
+    st.markdown("#### 📈 Group Comparison")
 
     outcome_col = result["outcome_col"]
     group_col = result["group_col"]
     test_type = result["test_type"]
 
-    # Show headline answer if available (direct answer to the user's question)
-    if "headline_text" in result:
-        st.markdown("### 📋 Answer")
-        st.info(result["headline_text"])
+    # Headline already shown above in chat message, skip duplicate
 
     if test_type == "t_test":
         groups = result["groups"]
         p_value = result["p_value"]
 
-        st.markdown("### Results")
-        st.markdown(f"**Comparing {outcome_col} between {groups[0]} and {groups[1]}**")
+        st.markdown("**Results:**")
+        st.markdown(f"Comparing {outcome_col} between {groups[0]} and {groups[1]}")
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -332,7 +460,7 @@ def render_comparison_analysis(result: dict) -> None:
             p_interp = ResultInterpreter.interpret_p_value(p_value)
             st.metric("Difference", f"{p_interp['significance']} {p_interp['emoji']}")
 
-        st.markdown("### What does this mean?")
+        st.markdown("**Interpretation:**")
         interpretation = ResultInterpreter.interpret_mean_difference(
             mean_diff=result["mean_diff"],
             ci_lower=result["ci_lower"],
@@ -546,12 +674,12 @@ def render_relationship_analysis(result: dict) -> None:
         st.info("ℹ️ No strong correlations found (|r| >= 0.5)")
 
 
-def render_analysis_by_type(result: dict, intent: AnalysisIntent) -> None:
+def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: str | None = None) -> None:
     """Route to appropriate render function based on result type."""
     result_type = result.get("type")
 
     if result_type == "descriptive":
-        render_descriptive_analysis(result)
+        render_descriptive_analysis(result, query_text=query_text)
     elif result_type == "comparison":
         render_comparison_analysis(result)
     elif result_type == "predictor":
@@ -560,6 +688,8 @@ def render_analysis_by_type(result: dict, intent: AnalysisIntent) -> None:
         render_survival_analysis(result)
     elif result_type == "relationship":
         render_relationship_analysis(result)
+    elif result_type == "count":
+        render_count_analysis(result)
     else:
         st.error(f"Unknown result type: {result_type}")
         if "error" in result:
@@ -572,6 +702,7 @@ def execute_analysis_with_idempotency(
     run_key: str,
     dataset_version: str,
     query_text: str,
+    query_plan=None,
 ) -> None:
     """
     Execute analysis with idempotency guard and result persistence.
@@ -590,7 +721,22 @@ def execute_analysis_with_idempotency(
             dataset_version=dataset_version,
             intent_type=context.inferred_intent.value,
         )
-        render_analysis_by_type(st.session_state[result_key], context.inferred_intent)
+        # Render inline in chat message style (Phase 3.5)
+        result = st.session_state[result_key]
+
+        # Render main results inline (no expander, no extra headers)
+        render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
+
+        # Show interpretation inline (compact, directly under results)
+        if query_plan:
+            _render_interpretation_inline_compact(query_plan)
+
+        # Suggest follow-up questions (only for current results, not history)
+        # Use a session state flag to prevent duplicate rendering in same cycle
+        follow_ups_key = f"followups_rendered_{run_key}"
+        if not st.session_state.get(follow_ups_key, False):
+            _suggest_follow_ups(context, result, run_key, render_context="current")
+            st.session_state[follow_ups_key] = True
         return
 
     # Not computed - compute and store
@@ -636,16 +782,247 @@ def execute_analysis_with_idempotency(
         # Remember this run in history (O(1) eviction happens here)
         remember_run(dataset_version, run_key)
 
+        # Add to conversation history (lightweight storage per ADR001)
+        query_text = query_text or getattr(context, "research_question", "")
+        headline = result.get("headline") or result.get("headline_text") or "Analysis completed"
+        filters_applied = []
+        if context.query_plan and context.query_plan.filters:
+            filters_applied = [f.__dict__ for f in context.query_plan.filters]
+        elif context.filters:
+            filters_applied = [f.__dict__ for f in context.filters]
+
+        # Ensure conversation history exists (don't reset if it already exists)
+        if "conversation_history" not in st.session_state:
+            st.session_state["conversation_history"] = []
+
+        # Add entry (lightweight: headline, not full result dict)
+        # Limit to last 20 queries to prevent memory bloat
+        max_conversation_history = 20
+        st.session_state["conversation_history"].append(
+            {
+                "query": query_text,
+                "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
+                "headline": headline,
+                "run_key": run_key,
+                "timestamp": time.time(),
+                "filters_applied": filters_applied,
+            }
+        )
+
+        # Limit history size (keep last N entries)
+        if len(st.session_state["conversation_history"]) > max_conversation_history:
+            st.session_state["conversation_history"] = st.session_state["conversation_history"][
+                -max_conversation_history:
+            ]
+
         logger.info(
             "analysis_result_stored",
             run_key=run_key,
             dataset_version=dataset_version,
         )
 
-        # Render
+        # Render inline in chat message style (Phase 3.5)
         logger.debug("analysis_rendering_start", run_key=run_key)
-        render_analysis_by_type(result, context.inferred_intent)
+
+        # Render main results inline (no expander, no extra headers)
+        render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
+
+        # Show interpretation inline (compact, directly under results)
+        if query_plan:
+            _render_interpretation_inline_compact(query_plan)
+
+        # Suggest follow-up questions (only for current results, not history)
+        # Use a session state flag to prevent duplicate rendering in same cycle
+        follow_ups_key = f"followups_rendered_{run_key}"
+        if not st.session_state.get(follow_ups_key, False):
+            _suggest_follow_ups(context, result, run_key, render_context="current")
+            st.session_state[follow_ups_key] = True
+
         logger.info("analysis_rendering_complete", run_key=run_key)
+
+        # Don't rerun - results are already rendered inline, conversation history will show on next query
+
+
+def _render_interpretation_inline_compact(query_plan) -> None:
+    """Render compact interpretation inline directly under results."""
+    confidence = query_plan.confidence
+
+    # Show compact confidence badge
+    if confidence >= 0.75:
+        st.caption(f"✓ High confidence ({confidence:.0%})")
+    elif confidence >= 0.5:
+        st.caption(f"⚠ Moderate confidence ({confidence:.0%})")
+    else:
+        st.caption(f"⚠ Low confidence ({confidence:.0%})")
+
+    # Show compact interpretation (only if low confidence or has filters)
+    if confidence < 0.75 or query_plan.filters:
+        interpretation_parts = []
+        if query_plan.group_by:
+            interpretation_parts.append(f"grouped by {query_plan.group_by}")
+        if query_plan.filters:
+            filter_text = ", ".join([f"{f.column} {f.operator} {f.value}" for f in query_plan.filters[:2]])
+            if len(query_plan.filters) > 2:
+                filter_text += f" (+{len(query_plan.filters) - 2} more)"
+            interpretation_parts.append(f"filters: {filter_text}")
+        if interpretation_parts:
+            st.caption(f"Interpreted: {', '.join(interpretation_parts)}")
+
+    logger.info(
+        "confidence_displayed",
+        confidence=confidence,
+        intent=query_plan.intent,
+        has_filters=len(query_plan.filters) > 0,
+        has_explanation=bool(query_plan.explanation),
+    )
+
+
+def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
+    """
+    Show transparent interpretation and confidence inline with results.
+
+    This replaces blocking confirmation gates with data-driven transparency:
+    - Always execute regardless of confidence
+    - Show what was interpreted
+    - Display confidence level with appropriate visual indicator
+    - Explain why confidence might be low (if applicable)
+    """
+    from clinical_analytics.core.query_plan import QueryPlan
+
+    if not isinstance(query_plan, QueryPlan):
+        return
+
+    st.divider()
+    st.markdown("### 🔍 Interpretation & Confidence")
+
+    # Show confidence badge with appropriate visual indicator
+    confidence = query_plan.confidence
+    if confidence >= 0.75:
+        st.success(f"✅ **High confidence** ({confidence:.0%})")
+    elif confidence >= 0.5:
+        st.warning(f"⚠️ **Moderate confidence** ({confidence:.0%})")
+    else:
+        st.error(f"⚠️ **Low confidence** ({confidence:.0%})")
+
+    # Show what we interpreted (collapsible, expanded for low confidence)
+    expanded = confidence < 0.75
+    with st.expander("How I interpreted your question", expanded=expanded):
+        st.markdown(f"**Intent:** `{query_plan.intent}`")
+
+        if query_plan.metric:
+            st.markdown(f"**Metric:** `{query_plan.metric}`")
+
+        if query_plan.group_by:
+            st.markdown(f"**Group by:** `{query_plan.group_by}`")
+
+        if query_plan.filters:
+            st.markdown("**Filters applied:**")
+            for f in query_plan.filters:
+                op_text = {
+                    "==": "equals",
+                    "!=": "does not equal",
+                    "<": "less than",
+                    ">": "greater than",
+                    "<=": "at most",
+                    ">=": "at least",
+                    "IN": "in",
+                    "NOT_IN": "not in",
+                }.get(f.operator, f.operator)
+                st.markdown(f"- `{f.column}` {op_text} `{f.value}`")
+
+        # Show explanation (why confidence is what it is)
+        if query_plan.explanation:
+            st.info(f"**Note:** {query_plan.explanation}")
+
+    # Log confidence for analytics (helps identify improvement opportunities)
+    logger.info(
+        "confidence_displayed",
+        confidence=confidence,
+        intent=query_plan.intent,
+        has_filters=len(query_plan.filters) > 0,
+        has_explanation=bool(query_plan.explanation),
+    )
+
+
+def _suggest_follow_ups(
+    context: AnalysisContext, result: dict, run_key: str | None = None, render_context: str = "current"
+) -> None:
+    """
+    Suggest natural follow-up questions based on current result.
+
+    Args:
+        context: Analysis context
+        result: Analysis result dict
+        run_key: Run key for this analysis
+        render_context: Context identifier ("current" or "history") to ensure unique button keys
+    """
+    suggestions = []
+
+    # Generate suggestions based on intent and result
+    if context.inferred_intent == AnalysisIntent.DESCRIBE:
+        if context.primary_variable and context.primary_variable != "all":
+            # Suggest comparing this variable
+            suggestions.append(f"Compare {context.primary_variable} by treatment group")
+            suggestions.append(f"What predicts {context.primary_variable}?")
+        else:
+            # No specific variable - suggest exploring
+            suggestions.append("Compare outcomes by treatment group")
+            suggestions.append("What predicts the outcome?")
+
+    elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
+        if context.grouping_variable and context.primary_variable:
+            # Suggest deeper analysis
+            suggestions.append(f"What else affects {context.primary_variable}?")
+            suggestions.append(f"Show distribution of {context.primary_variable} by {context.grouping_variable}")
+        if context.primary_variable:
+            suggestions.append(f"Describe {context.primary_variable} in detail")
+
+    elif context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
+        if context.primary_variable:
+            # Suggest comparing predictors
+            suggestions.append(f"Compare {context.primary_variable} by the strongest predictor")
+            suggestions.append(f"Describe {context.primary_variable} in detail")
+
+    elif context.inferred_intent == AnalysisIntent.COUNT:
+        # Suggest grouping or filtering
+        if context.grouping_variable:
+            suggestions.append(f"Filter {context.grouping_variable} and count again")
+        else:
+            suggestions.append("Break down the count by a grouping variable")
+        if context.filters or (context.query_plan and context.query_plan.filters):
+            suggestions.append("Remove filters and count all records")
+
+    elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
+        if context.primary_variable:
+            suggestions.append(f"Compare survival by {context.primary_variable}")
+        suggestions.append("What predicts survival time?")
+
+    elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
+        if context.predictor_variables:
+            second_var = context.predictor_variables[1] if len(context.predictor_variables) > 1 else "outcome"
+            suggestions.append(f"Compare {context.predictor_variables[0]} by {second_var}")
+
+    # Render suggestions as compact buttons (only if we have suggestions)
+    if suggestions:
+        st.markdown("**💡 You might also ask:**")
+        # Use columns for compact layout
+        cols = st.columns(min(len(suggestions), 2))
+        for idx, suggestion in enumerate(suggestions[:4]):  # Limit to 4 suggestions
+            col = cols[idx % len(cols)]
+            with col:
+                # Include run_key and render_context in button key to ensure uniqueness
+                # This prevents StreamlitDuplicateElementKey errors when same suggestion appears in different contexts
+                # Use sanitized run_key (not hash) to prevent collisions while keeping it readable
+                # Sanitize run_key to remove special characters that might cause issues
+                run_key_safe = (run_key or "default").replace(":", "_").replace("/", "_").replace("-", "_")[:30]
+                suggestion_hash = hash(suggestion) % 1000000
+                # Use render_context to distinguish between current result and history rendering
+                # Create a unique key that combines all these elements
+                button_key = f"followup_{render_context}_{run_key_safe}_{idx}_{suggestion_hash}"
+                if st.button(suggestion, key=button_key, use_container_width=True):
+                    # Store suggestion to prefill chat input and rerun to process it
+                    st.session_state["prefilled_query"] = suggestion
+                    st.rerun()
 
 
 def get_dataset_version(dataset, is_uploaded: bool, dataset_choice: str) -> str:
@@ -700,6 +1077,18 @@ def main():
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
     dataset_choice = dataset_display_names[dataset_choice_display]
+
+    # Detect dataset change and clear conversation history/context
+    if "last_dataset_choice" not in st.session_state:
+        st.session_state["last_dataset_choice"] = dataset_choice
+    elif st.session_state["last_dataset_choice"] != dataset_choice:
+        # Dataset changed - clear conversation history and analysis context
+        if "conversation_history" in st.session_state:
+            st.session_state["conversation_history"] = []
+        if "analysis_context" in st.session_state:
+            del st.session_state["analysis_context"]
+        st.session_state["last_dataset_choice"] = dataset_choice
+
     # Check if this is an uploaded dataset (multiple checks for robustness)
     is_uploaded = (
         dataset_choice in uploaded_datasets
@@ -760,99 +1149,69 @@ def main():
         # Show column count
         st.caption(f"{cohort.width} columns available")
 
+    # Conversation management in sidebar - Phase 3.4 Remove Buttons
+    with st.sidebar:
+        st.markdown("### Conversation")
+        if st.button("Clear Conversation", use_container_width=True):
+            st.session_state["conversation_history"] = []
+            st.session_state["analysis_context"] = None
+            st.session_state["intent_signal"] = None
+            st.rerun()
+
     st.divider()
 
     # Initialize session state for context
     if "analysis_context" not in st.session_state:
         st.session_state["analysis_context"] = None
         st.session_state["intent_signal"] = None
-        st.session_state["use_nl_query"] = True  # Default to NL query first
 
-    # Step 1: Ask question (NL or structured)
-    if st.session_state["intent_signal"] is None:
-        # Try free-form NL query first
-        if st.session_state["use_nl_query"]:
-            try:
-                # Get semantic layer using contract pattern
-                semantic_layer = dataset.get_semantic_layer()
+    # Initialize conversation history (lightweight storage per ADR001)
+    if "conversation_history" not in st.session_state:
+        st.session_state["conversation_history"] = []
 
-                # Get dataset identifiers for structured logging
-                dataset_id = dataset.name if hasattr(dataset, "name") else None
-                upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+    # Display conversation history (if any) - Phase 3.5 Inline Rendering
+    # Skip the last entry if it was just rendered (prevent duplicate)
+    last_run_key = st.session_state.get(f"last_run_key:{dataset_version}")
+    history = st.session_state.get("conversation_history", [])
 
-                logger.info(
-                    "page_render_query_input",
-                    dataset_id=dataset_id,
-                    upload_id=upload_id,
-                    dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
-                    use_nl_query=True,
-                )
+    for entry in history:
+        # Skip if this is the current query (already rendered inline)
+        if entry.get("run_key") == last_run_key and st.session_state.get("intent_signal") == "nl_parsed":
+            continue
 
-                context = QuestionEngine.ask_free_form_question(
-                    semantic_layer, dataset_id=dataset_id, upload_id=upload_id
-                )
+        with st.chat_message("user"):
+            st.write(entry["query"])
 
-                if context:
-                    # Successfully parsed NL query
-                    logger.info(
-                        "nl_query_parsed_successfully",
-                        query=getattr(context, "research_question", ""),
-                        intent_type=context.inferred_intent.value,
-                        confidence=context.confidence,
-                        is_complete=context.is_complete_for_intent(),
-                        dataset_id=dataset_id,
-                        upload_id=upload_id,
-                    )
-                    st.session_state["analysis_context"] = context
-                    st.session_state["intent_signal"] = "nl_parsed"
-                    logger.debug("page_rerun_triggered", reason="nl_query_parsed")
-                    st.rerun()
+        with st.chat_message("assistant"):
+            # Render full results inline
+            if entry.get("run_key"):
+                result_key = f"analysis_result:{dataset_version}:{entry['run_key']}"
+                if result_key in st.session_state:
+                    result = st.session_state[result_key]
 
-            except ValueError:
-                # Semantic layer not available
-                st.info("Natural language queries are only available for datasets with semantic layers.")
-                st.session_state["use_nl_query"] = False
-                st.rerun()
-                return
-            except Exception as e:
-                st.error(f"Error parsing natural language query: {e}")
-                st.session_state["use_nl_query"] = False
+                    # Get intent from entry (stored as string)
+                    intent_str = entry.get("intent", "DESCRIBE")
+                    try:
+                        intent_enum = AnalysisIntent(intent_str)
+                    except (ValueError, KeyError):
+                        intent_enum = AnalysisIntent.DESCRIBE
 
-            # Show option to use structured questions instead
-            st.divider()
-            st.markdown("### Or use structured questions")
-            if st.button("💬 Use structured questions instead", help="Choose from predefined question types"):
-                st.session_state["use_nl_query"] = False
-                st.rerun()
+                    # Render main results inline (no extra headers)
+                    # Pass query text from history entry for summary detection
+                    entry_query = entry.get("query", "")
+                    render_analysis_by_type(result, intent_enum, query_text=entry_query)
 
-        else:
-            # Use structured questions
-            intent_signal = QuestionEngine.ask_initial_question(cohort)
+    # Check for semantic layer availability (show message if not available)
+    try:
+        semantic_layer = dataset.get_semantic_layer()
+    except ValueError:
+        # Semantic layer not available
+        st.info("Natural language queries are only available for datasets with semantic layers.")
+        # Still show chat input but it will fail gracefully
+        semantic_layer = None
 
-            if intent_signal:
-                if intent_signal == "help":
-                    st.divider()
-                    help_answers = QuestionEngine.ask_help_questions(cohort)
-
-                    # Map help answers to intent
-                    if help_answers.get("has_time"):
-                        intent_signal = "survival"
-                    elif help_answers.get("has_outcome"):
-                        intent_signal = help_answers.get("approach", "predict")
-                    else:
-                        intent_signal = "describe"
-
-                st.session_state["intent_signal"] = intent_signal
-                st.session_state["analysis_context"] = QuestionEngine.build_context_from_intent(intent_signal, cohort)
-                st.rerun()
-
-            # Show option to go back to NL query
-            st.divider()
-            if st.button("🔙 Try natural language query instead"):
-                st.session_state["use_nl_query"] = True
-                st.rerun()
-
-    else:
+    # Handle analysis execution if we have a context ready
+    if st.session_state.get("intent_signal") is not None:
         # We have intent, now gather details
         context = st.session_state["analysis_context"]
 
@@ -905,208 +1264,301 @@ def main():
         # Update context in session state
         st.session_state["analysis_context"] = context
 
-        # Show progress
-        st.divider()
-        QuestionEngine.render_progress_indicator(context)
+        # Show progress (only if missing info - removed "I have everything" message)
+        missing = context.get_missing_info()
+        if missing:
+            st.divider()
+            QuestionEngine.render_progress_indicator(context)
 
-        # If complete, auto-execute or show confirmation
+        # If complete, always execute (transparent confidence display, no blocking gates)
         if context.is_complete_for_intent():
-            # Get confidence (default to 0.0 if missing - fail closed)
-            confidence = getattr(context, "confidence", 0.0)
+            # Get QueryPlan if available (preferred), otherwise fallback to context
+            query_plan = getattr(context, "query_plan", None)
 
-            # Get query text for run_key generation
-            query_text = getattr(context, "research_question", "")
-
-            # Generate stable run_key
-            run_key = generate_run_key(dataset_version, query_text, context)
-
-            # Check if user has confirmed (for low confidence cases)
-            confirmation_key = f"confirmed_analysis:{dataset_version}:{run_key}"
-            user_confirmed = st.session_state.get(confirmation_key, False)
-
-            # Auto-execute if high confidence OR user confirmed
-            should_auto_execute = confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD or user_confirmed
+            # Get confidence from QueryPlan or context (default to 0.0 if missing - fail closed)
+            if query_plan:
+                confidence = query_plan.confidence
+                run_key = query_plan.run_key or generate_run_key(
+                    dataset_version, getattr(context, "research_question", ""), context
+                )
+            else:
+                confidence = getattr(context, "confidence", 0.0)
+                query_text = getattr(context, "research_question", "")
+                run_key = generate_run_key(dataset_version, query_text, context)
 
             logger.info(
-                "analysis_execution_decision",
+                "analysis_execution_triggered",
                 intent_type=context.inferred_intent.value,
                 confidence=confidence,
                 threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
-                user_confirmed=user_confirmed,
-                should_auto_execute=should_auto_execute,
                 run_key=run_key,
                 dataset_version=dataset_version,
-                query=query_text,
+                query=getattr(context, "research_question", ""),
             )
 
-            if should_auto_execute:
-                # Auto-execute with idempotency guard
-                st.divider()
-                logger.info("analysis_execution_triggered", run_key=run_key, dataset_version=dataset_version)
-                execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text)
+            # Always execute (no blocking gates) - show transparent confidence inline with results
+            st.divider()
+            execute_analysis_with_idempotency(
+                cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
+            )
 
-            else:
-                # Low confidence: show detected variables with display names and allow editing
-                st.warning(LOW_CONFIDENCE_WARNING)
+        else:
+            # Context not complete - show variable selection UI (for missing required variables)
+            st.warning(LOW_CONFIDENCE_WARNING)
 
-                # Helper to get display name for a column
-                # Note: parse_column_name() doesn't require semantic layer, so no check needed
-                def get_display_name(canonical_name: str) -> str:
-                    """Get display name for a column, falling back to canonical if parsing fails."""
-                    try:
-                        meta = parse_column_name(canonical_name)
-                        return meta.display_name
-                    except Exception:
-                        return canonical_name
+            # Helper to get display name for a column
+            # Note: parse_column_name() doesn't require semantic layer, so no check needed
+            def get_display_name(canonical_name: str) -> str:
+                """Get display name for a column, falling back to canonical if parsing fails."""
+                try:
+                    meta = parse_column_name(canonical_name)
+                    return meta.display_name
+                except Exception:
+                    return canonical_name
 
-                # Show detected variables with display names and editable selectors
-                st.markdown("### Detected Variables")
+            # Show detected variables with display names and editable selectors
+            st.markdown("### Detected Variables")
 
-                available_cols = [c for c in cohort.columns if c not in ["patient_id", "time_zero"]]
+            available_cols = [c for c in cohort.columns if c not in ["patient_id", "time_zero"]]
 
-                # Primary variable
-                if context.inferred_intent in [AnalysisIntent.COMPARE_GROUPS, AnalysisIntent.FIND_PREDICTORS]:
-                    primary_display = get_display_name(context.primary_variable) if context.primary_variable else None
-                    primary_index = (
-                        available_cols.index(context.primary_variable)
-                        if context.primary_variable in available_cols
-                        else 0
+            # Primary variable
+            if context.inferred_intent in [AnalysisIntent.COMPARE_GROUPS, AnalysisIntent.FIND_PREDICTORS]:
+                primary_display = get_display_name(context.primary_variable) if context.primary_variable else None
+                primary_index = (
+                    available_cols.index(context.primary_variable) if context.primary_variable in available_cols else 0
+                )
+                selected_primary = st.selectbox(
+                    "**Primary Variable** (what you want to measure/compare):",
+                    options=available_cols,
+                    index=primary_index if primary_index < len(available_cols) else 0,
+                    key=f"low_conf_primary_{dataset_version}",
+                    help=f"Detected: {primary_display or context.primary_variable}"
+                    if context.primary_variable
+                    else None,
+                )
+                context.primary_variable = selected_primary
+
+            # Grouping variable (for comparisons)
+            if context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
+                grouping_display = get_display_name(context.grouping_variable) if context.grouping_variable else None
+                grouping_index = (
+                    available_cols.index(context.grouping_variable)
+                    if context.grouping_variable in available_cols
+                    else 0
+                )
+                exclude_primary = [context.primary_variable] if context.primary_variable else []
+                grouping_options = [c for c in available_cols if c not in exclude_primary]
+                selected_grouping = st.selectbox(
+                    "**Grouping Variable** (groups to compare):",
+                    options=grouping_options,
+                    index=min(grouping_index, len(grouping_options) - 1)
+                    if context.grouping_variable in grouping_options
+                    else 0,
+                    key=f"low_conf_grouping_{dataset_version}",
+                    help=f"Detected: {grouping_display or context.grouping_variable}"
+                    if context.grouping_variable
+                    else None,
+                )
+                context.grouping_variable = selected_grouping
+
+            # Predictor variables (for regression)
+            if context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
+                predictor_display = (
+                    [get_display_name(p) for p in context.predictor_variables] if context.predictor_variables else []
+                )
+                exclude_primary = [context.primary_variable] if context.primary_variable else []
+                predictor_options = [c for c in available_cols if c not in exclude_primary]
+                selected_predictors = st.multiselect(
+                    "**Predictor Variables** (what might affect the outcome):",
+                    options=predictor_options,
+                    default=context.predictor_variables if context.predictor_variables else [],
+                    key=f"low_conf_predictors_{dataset_version}",
+                    help=f"Detected: {', '.join(predictor_display) if predictor_display else 'None'}",
+                )
+                context.predictor_variables = selected_predictors
+
+            # Time and event variables (for survival)
+            if context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
+                col1, col2 = st.columns(2)
+                with col1:
+                    time_display = get_display_name(context.time_variable) if context.time_variable else None
+                    time_index = (
+                        available_cols.index(context.time_variable) if context.time_variable in available_cols else 0
                     )
-                    selected_primary = st.selectbox(
-                        "**Primary Variable** (what you want to measure/compare):",
+                    selected_time = st.selectbox(
+                        "**Time Variable**:",
                         options=available_cols,
-                        index=primary_index if primary_index < len(available_cols) else 0,
-                        key=f"low_conf_primary_{dataset_version}",
-                        help=f"Detected: {primary_display or context.primary_variable}"
-                        if context.primary_variable
-                        else None,
+                        index=time_index if time_index < len(available_cols) else 0,
+                        key=f"low_conf_time_{dataset_version}",
+                        help=f"Detected: {time_display or context.time_variable}" if context.time_variable else None,
                     )
-                    context.primary_variable = selected_primary
+                    context.time_variable = selected_time
+                with col2:
+                    event_options = [c for c in available_cols if c != context.time_variable]
+                    event_display = get_display_name(context.event_variable) if context.event_variable else None
+                    event_index = (
+                        event_options.index(context.event_variable) if context.event_variable in event_options else 0
+                    )
+                    selected_event = st.selectbox(
+                        "**Event Variable**:",
+                        options=event_options,
+                        index=event_index if event_index < len(event_options) else 0,
+                        key=f"low_conf_event_{dataset_version}",
+                        help=f"Detected: {event_display or context.event_variable}" if context.event_variable else None,
+                    )
+                    context.event_variable = selected_event
 
-                # Grouping variable (for comparisons)
-                if context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
-                    grouping_display = (
-                        get_display_name(context.grouping_variable) if context.grouping_variable else None
+            # Show collision suggestions if available
+            if context.match_suggestions:
+                st.warning(COLLISION_SUGGESTION_WARNING)
+                for query_term, suggestions in context.match_suggestions.items():
+                    suggestion_display = [get_display_name(s) for s in suggestions]
+                    selected = st.selectbox(
+                        f"**'{query_term}'** matches multiple columns. Which one did you mean?",
+                        options=["(Select one)"] + suggestions,
+                        key=f"collision_{query_term}_{dataset_version}",
+                        help=f"Options: {', '.join(suggestion_display)}",
                     )
-                    grouping_index = (
-                        available_cols.index(context.grouping_variable)
-                        if context.grouping_variable in available_cols
-                        else 0
-                    )
-                    exclude_primary = [context.primary_variable] if context.primary_variable else []
-                    grouping_options = [c for c in available_cols if c not in exclude_primary]
-                    selected_grouping = st.selectbox(
-                        "**Grouping Variable** (groups to compare):",
-                        options=grouping_options,
-                        index=min(grouping_index, len(grouping_options) - 1)
-                        if context.grouping_variable in grouping_options
-                        else 0,
-                        key=f"low_conf_grouping_{dataset_version}",
-                        help=f"Detected: {grouping_display or context.grouping_variable}"
-                        if context.grouping_variable
-                        else None,
-                    )
-                    context.grouping_variable = selected_grouping
+                    if selected and selected != "(Select one)":
+                        # Update context with selected column based on intent
+                        if not context.primary_variable:
+                            context.primary_variable = selected
+                        elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS and not context.grouping_variable:
+                            context.grouping_variable = selected
+                        st.info(f"✅ Selected: {get_display_name(selected)}")
 
-                # Predictor variables (for regression)
-                if context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
-                    predictor_display = (
-                        [get_display_name(p) for p in context.predictor_variables]
-                        if context.predictor_variables
-                        else []
-                    )
-                    exclude_primary = [context.primary_variable] if context.primary_variable else []
-                    predictor_options = [c for c in available_cols if c not in exclude_primary]
-                    selected_predictors = st.multiselect(
-                        "**Predictor Variables** (what might affect the outcome):",
-                        options=predictor_options,
-                        default=context.predictor_variables if context.predictor_variables else [],
-                        key=f"low_conf_predictors_{dataset_version}",
-                        help=f"Detected: {', '.join(predictor_display) if predictor_display else 'None'}",
-                    )
-                    context.predictor_variables = selected_predictors
+            # Update context in session state after edits
+            st.session_state["analysis_context"] = context
 
-                # Time and event variables (for survival)
-                if context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        time_display = get_display_name(context.time_variable) if context.time_variable else None
-                        time_index = (
-                            available_cols.index(context.time_variable)
-                            if context.time_variable in available_cols
-                            else 0
-                        )
-                        selected_time = st.selectbox(
-                            "**Time Variable**:",
-                            options=available_cols,
-                            index=time_index if time_index < len(available_cols) else 0,
-                            key=f"low_conf_time_{dataset_version}",
-                            help=f"Detected: {time_display or context.time_variable}"
-                            if context.time_variable
-                            else None,
-                        )
-                        context.time_variable = selected_time
-                    with col2:
-                        event_options = [c for c in available_cols if c != context.time_variable]
-                        event_display = get_display_name(context.event_variable) if context.event_variable else None
-                        event_index = (
-                            event_options.index(context.event_variable)
-                            if context.event_variable in event_options
-                            else 0
-                        )
-                        selected_event = st.selectbox(
-                            "**Event Variable**:",
-                            options=event_options,
-                            index=event_index if event_index < len(event_options) else 0,
-                            key=f"low_conf_event_{dataset_version}",
-                            help=f"Detected: {event_display or context.event_variable}"
-                            if context.event_variable
-                            else None,
-                        )
-                        context.event_variable = selected_event
+            # Auto-execute after variable selection (no confirmation button needed)
+            # User has already made their selection, so proceed with execution
+            st.info("✅ Variables selected. Executing analysis...")
+            st.rerun()
 
-                # Show collision suggestions if available
-                if context.match_suggestions:
-                    st.warning(COLLISION_SUGGESTION_WARNING)
-                    for query_term, suggestions in context.match_suggestions.items():
-                        suggestion_display = [get_display_name(s) for s in suggestions]
-                        selected = st.selectbox(
-                            f"**'{query_term}'** matches multiple columns. Which one did you mean?",
-                            options=["(Select one)"] + suggestions,
-                            key=f"collision_{query_term}_{dataset_version}",
-                            help=f"Options: {', '.join(suggestion_display)}",
-                        )
-                        if selected and selected != "(Select one)":
-                            # Update context with selected column based on intent
-                            if not context.primary_variable:
-                                context.primary_variable = selected
-                            elif (
-                                context.inferred_intent == AnalysisIntent.COMPARE_GROUPS
-                                and not context.grouping_variable
-                            ):
-                                context.grouping_variable = selected
-                            st.info(f"✅ Selected: {get_display_name(selected)}")
+        # Action buttons removed - replaced with sidebar conversation management (Phase 3.4)
 
-                # Update context in session state after edits
+    # Always show query input at bottom (sticky) - Phase 3.3 UI Redesign
+    # This provides a conversational interface for follow-up questions
+    # Check for prefilled query from follow-up suggestions
+    prefilled = st.session_state.get("prefilled_query", "")
+
+    # If prefilled query exists, use it and clear it (user clicked a follow-up button)
+    if prefilled:
+        query = prefilled
+        # Clear prefilled immediately to prevent reuse
+        del st.session_state["prefilled_query"]
+    else:
+        query = st.chat_input("Ask a question about your data...")
+
+    if query:
+        # Handle new query from chat input
+        try:
+            # Get semantic layer
+            semantic_layer = dataset.get_semantic_layer()
+
+            # Get dataset identifiers for structured logging
+            dataset_id = dataset.name if hasattr(dataset, "name") else None
+            upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+
+            logger.info(
+                "chat_input_query_received",
+                query=query,
+                dataset_id=dataset_id,
+                upload_id=upload_id,
+                dataset_version=dataset_version,
+            )
+
+            # Parse query directly (without UI components from ask_free_form_question)
+            from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+            nl_engine = NLQueryEngine(semantic_layer)
+            query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
+
+            if query_intent:
+                # Convert QueryIntent to AnalysisContext (similar to ask_free_form_question logic)
+                context = AnalysisContext()
+
+                # Map intent type
+                intent_map = {
+                    "DESCRIBE": AnalysisIntent.DESCRIBE,
+                    "COMPARE_GROUPS": AnalysisIntent.COMPARE_GROUPS,
+                    "FIND_PREDICTORS": AnalysisIntent.FIND_PREDICTORS,
+                    "SURVIVAL": AnalysisIntent.EXAMINE_SURVIVAL,
+                    "CORRELATIONS": AnalysisIntent.EXPLORE_RELATIONSHIPS,
+                    "COUNT": AnalysisIntent.COUNT,
+                }
+                context.inferred_intent = intent_map.get(query_intent.intent_type, AnalysisIntent.UNKNOWN)
+
+                # Map variables
+                context.research_question = query
+                context.query_text = query  # Store original query for "most" detection
+                context.primary_variable = query_intent.primary_variable
+                context.grouping_variable = query_intent.grouping_variable
+                context.predictor_variables = query_intent.predictor_variables
+                context.time_variable = query_intent.time_variable
+                context.event_variable = query_intent.event_variable
+
+                # Copy filters from QueryIntent to AnalysisContext
+                context.filters = query_intent.filters
+
+                # Convert QueryIntent to QueryPlan and store in context
+                if dataset_version and hasattr(nl_engine, "_intent_to_plan"):
+                    context.query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
+                    # Use QueryPlan confidence
+                    context.confidence = context.query_plan.confidence
+                else:
+                    # Fallback: use QueryIntent confidence
+                    context.confidence = query_intent.confidence
+
+                # Set flags based on intent
+                context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
+                context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
+                context.time_to_event = query_intent.intent_type == "SURVIVAL"
+
+                # Store context
                 st.session_state["analysis_context"] = context
+                st.session_state["intent_signal"] = "nl_parsed"
 
-                # Confirmation button
-                if st.button(CONFIRM_AND_RUN, type="primary", use_container_width=True):
-                    st.session_state[confirmation_key] = True
+                # If context is complete, execute immediately and render inline
+                if context.is_complete_for_intent():
+                    # Get QueryPlan if available (preferred), otherwise fallback to context
+                    query_plan = getattr(context, "query_plan", None)
+
+                    # Get confidence from QueryPlan or context (default to 0.0 if missing)
+                    if query_plan:
+                        confidence = query_plan.confidence
+                        run_key = query_plan.run_key or generate_run_key(dataset_version, query, context)
+                    else:
+                        confidence = getattr(context, "confidence", 0.0)
+                        run_key = generate_run_key(dataset_version, query, context)
+
+                    logger.info(
+                        "chat_input_analysis_execution_triggered",
+                        intent_type=context.inferred_intent.value,
+                        confidence=confidence,
+                        run_key=run_key,
+                        dataset_version=dataset_version,
+                        query=query,
+                    )
+
+                    # Execute and render inline in chat message style
+                    with st.chat_message("user"):
+                        st.write(query)
+
+                    with st.chat_message("assistant"):
+                        execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query, query_plan)
+                else:
+                    # Context not complete - need variable selection, rerun to show UI
                     st.rerun()
+            else:
+                st.error("I couldn't understand your question. Please try rephrasing.")
 
-        # Action buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button(START_OVER, use_container_width=True):
-                st.session_state["analysis_context"] = None
-                st.session_state["intent_signal"] = None
-                st.rerun()
-        with col2:
-            if st.button(CLEAR_RESULTS, use_container_width=True):
-                clear_all_results(dataset_version)
-                st.success(RESULTS_CLEARED)
-                st.rerun()
+        except ValueError:
+            # Semantic layer not available
+            st.error("Natural language queries are only available for datasets with semantic layers.")
+        except Exception as e:
+            logger.error("chat_input_query_error", query=query, error=str(e), exc_info=True)
+            st.error(f"Error processing your question: {e}")
 
 
 if __name__ == "__main__":

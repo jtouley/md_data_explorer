@@ -6,12 +6,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 from unittest.mock import Mock, patch
 
-import polars as pl
-import pytest
-
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
-
-
 # mock_session_state, sample_cohort, sample_context moved to conftest.py - use shared fixtures
 
 
@@ -47,7 +41,11 @@ def test_idempotency_same_query_uses_cached_result(
         )
 
         # Assert: Used cached result (render called once with cached data)
-        mock_render.assert_called_once_with(cached_result, sample_context.inferred_intent)
+        # Note: render_analysis_by_type now accepts optional query_text parameter
+        mock_render.assert_called_once()
+        call_args = mock_render.call_args
+        assert call_args[0][0] == cached_result
+        assert call_args[0][1] == sample_context.inferred_intent
 
 
 def test_idempotency_different_query_computes_new_result(

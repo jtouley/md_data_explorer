@@ -3,12 +3,11 @@ Question Engine - Conversational analysis configuration through questions.
 
 Guides users through analysis setup by asking natural questions,
 infers the appropriate statistical test, and dynamically configures analysis.
-Supports both free-form natural language queries and structured questions.
+Supports free-form natural language queries only.
 """
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -24,6 +23,7 @@ class AnalysisIntent(Enum):
     FIND_PREDICTORS = "find_predictors"
     EXAMINE_SURVIVAL = "examine_survival"
     EXPLORE_RELATIONSHIPS = "explore_relationships"
+    COUNT = "count"
     UNKNOWN = "unknown"
 
 
@@ -53,6 +53,15 @@ class AnalysisContext:
     # Inferred intent (hidden from user)
     inferred_intent: AnalysisIntent = AnalysisIntent.UNKNOWN
 
+    # Filters
+    filters: list = field(default_factory=list)  # List of FilterSpec objects
+
+    # QueryPlan (structured plan from NLU)
+    query_plan = None  # QueryPlan | None - will be set after QueryIntent conversion (type: ignore for forward ref)
+
+    # Original query text (for "most" detection, etc.)
+    query_text: str | None = None
+
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
     match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
@@ -74,6 +83,9 @@ class AnalysisContext:
 
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             return len(self.predictor_variables) >= 2
+
+        elif self.inferred_intent == AnalysisIntent.COUNT:
+            return True  # Just needs data (can optionally filter by grouping_variable)
 
         return False
 
@@ -102,6 +114,10 @@ class AnalysisContext:
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             if len(self.predictor_variables) < 2:
                 missing.append("at least 2 variables to examine relationships")
+
+        elif self.inferred_intent == AnalysisIntent.COUNT:
+            # COUNT doesn't require any additional info
+            pass
 
         return missing
 
@@ -148,93 +164,6 @@ class QuestionEngine:
             return AnalysisIntent.DESCRIBE
 
         return AnalysisIntent.UNKNOWN
-
-    @staticmethod
-    def ask_initial_question(df: pd.DataFrame) -> str | None:
-        """
-        Ask the first question: What do you want to know?
-
-        Returns the user's selection as a string intent signal.
-        """
-        st.markdown("## 💬 What do you want to know about your data?")
-
-        st.markdown("""
-        Choose what you'd like to understand. Don't worry about statistical tests -
-        I'll figure out the right approach based on your question.
-        """)
-
-        question_type = st.radio(
-            "I want to...",
-            [
-                "📊 See what's in my data (describe patient characteristics)",
-                "📈 Compare something between groups (e.g., treatment vs control)",
-                "🎯 Find what predicts or causes an outcome",
-                "⏱️ Analyze time until an event happens (survival analysis)",
-                "🔗 See how variables relate to each other",
-                "💭 I'm not sure - help me figure it out",
-            ],
-            label_visibility="collapsed",
-        )
-
-        # Map to intent signals
-        intent_map = {
-            "📊 See what's in my data": "describe",
-            "📈 Compare something between groups": "compare",
-            "🎯 Find what predicts or causes an outcome": "predict",
-            "⏱️ Analyze time until an event happens": "survival",
-            "🔗 See how variables relate to each other": "relationships",
-            "💭 I'm not sure": "help",
-        }
-
-        for key, value in intent_map.items():
-            if key in question_type:
-                return value
-
-        return None
-
-    @staticmethod
-    def ask_help_questions(df: pd.DataFrame) -> dict[str, Any]:
-        """
-        If user selects 'help me figure it out', ask clarifying questions.
-
-        Returns answers that help infer intent.
-        """
-        st.markdown("### Let me ask a few questions to understand what you need:")
-
-        answers = {}
-
-        # Question 1: Do they have an outcome?
-        has_outcome = st.radio(
-            "Do you have a specific outcome or result you're interested in?",
-            [
-                "Yes, I want to understand what affects a specific outcome",
-                "No, I just want to explore and describe my data",
-            ],
-        )
-        answers["has_outcome"] = "yes" in has_outcome.lower()
-
-        if answers["has_outcome"]:
-            # Question 2: Groups or predictors?
-            approach = st.radio(
-                "What do you want to know about this outcome?",
-                [
-                    "Compare it between groups (e.g., does treatment affect outcome?)",
-                    "Find what variables predict or cause it",
-                ],
-            )
-            answers["approach"] = "compare" if "compare" in approach.lower() else "predict"
-
-        # Question 3: Time element?
-        has_time = st.radio(
-            "Does your question involve time?",
-            [
-                "Yes - I want to know how long until something happens",
-                "No - time isn't important for my question",
-            ],
-        )
-        answers["has_time"] = "yes" in has_time.lower()
-
-        return answers
 
     @staticmethod
     def select_primary_variable(
@@ -328,45 +257,13 @@ class QuestionEngine:
         return time_var, event_var
 
     @staticmethod
-    def build_context_from_intent(intent_signal: str, df: pd.DataFrame) -> AnalysisContext:
-        """
-        Build initial context based on user's intent signal.
-
-        Args:
-            intent_signal: One of 'describe', 'compare', 'predict', 'survival', 'relationships'
-            df: DataFrame being analyzed
-
-        Returns:
-            Initialized AnalysisContext
-        """
-        context = AnalysisContext()
-
-        # Map intent signal to flags
-        if intent_signal == "describe":
-            context.inferred_intent = AnalysisIntent.DESCRIBE
-        elif intent_signal == "compare":
-            context.compare_groups = True
-            context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
-        elif intent_signal == "predict":
-            context.find_predictors = True
-            context.inferred_intent = AnalysisIntent.FIND_PREDICTORS
-        elif intent_signal == "survival":
-            context.time_to_event = True
-            context.inferred_intent = AnalysisIntent.EXAMINE_SURVIVAL
-        elif intent_signal == "relationships":
-            context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
-
-        return context
-
-    @staticmethod
     def render_progress_indicator(context: AnalysisContext):
         """Show user how much information we still need."""
         missing = context.get_missing_info()
 
         if missing:
             st.info(f"ℹ️ I still need to know: {', '.join(missing)}")
-        else:
-            st.success("✅ I have everything I need to run the analysis!")
+        # Removed "I have everything I need" message - bad UX design
 
     @staticmethod
     def _show_progressive_feedback(nl_engine, query: str) -> QueryIntent | None:
@@ -568,7 +465,7 @@ class QuestionEngine:
 
     @staticmethod
     def ask_free_form_question(
-        semantic_layer, dataset_id: str | None = None, upload_id: str | None = None
+        semantic_layer, dataset_id: str | None = None, upload_id: str | None = None, dataset_version: str | None = None
     ) -> AnalysisContext | None:
         """
         Ask user to type their question in natural language.
@@ -726,7 +623,7 @@ class QuestionEngine:
                     st.error(error_message)
                 elif query_intent is None:
                     st.error("❌ Could not understand your query. Please try rephrasing.")
-                return None  # Fall back to structured questions
+                return None  # Could not parse query
 
             # Show interpretation (only if we have a valid intent)
             if query_intent:
@@ -763,7 +660,7 @@ class QuestionEngine:
                         )
 
                         if "No" in correct:
-                            st.info("💡 Try rephrasing your question or use the structured questions below.")
+                            st.info("💡 Try rephrasing your question.")
                             return None
 
                 # Convert QueryIntent to AnalysisContext
@@ -776,6 +673,7 @@ class QuestionEngine:
                     "FIND_PREDICTORS": AnalysisIntent.FIND_PREDICTORS,
                     "SURVIVAL": AnalysisIntent.EXAMINE_SURVIVAL,
                     "CORRELATIONS": AnalysisIntent.EXPLORE_RELATIONSHIPS,
+                    "COUNT": AnalysisIntent.COUNT,
                 }
                 context.inferred_intent = intent_map.get(query_intent.intent_type, AnalysisIntent.UNKNOWN)
 
@@ -787,6 +685,19 @@ class QuestionEngine:
                 context.time_variable = query_intent.time_variable
                 context.event_variable = query_intent.event_variable
 
+                # Copy filters from QueryIntent to AnalysisContext
+                context.filters = query_intent.filters
+
+                # Convert QueryIntent to QueryPlan and store in context
+                if dataset_version:
+                    query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
+                    context.query_plan = query_plan
+                    # Use QueryPlan confidence (may differ from QueryIntent)
+                    context.confidence = query_plan.confidence
+                else:
+                    # Fallback: use QueryIntent confidence if dataset_version not available
+                    context.confidence = query_intent.confidence
+
                 # Propagate collision suggestions to context
                 context.match_suggestions = collision_suggestions
 
@@ -794,9 +705,6 @@ class QuestionEngine:
                 context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
                 context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
                 context.time_to_event = query_intent.intent_type == "SURVIVAL"
-
-                # Propagate confidence for auto-execution logic
-                context.confidence = query_intent.confidence
 
                 logger.info(
                     "analysis_context_created",
@@ -814,5 +722,5 @@ class QuestionEngine:
 
         except Exception as e:
             st.error(f"❌ Error parsing query: {str(e)}")
-            st.info("💡 Please try using the structured questions below instead.")
+            st.info("💡 Please try rephrasing your question.")
             return None

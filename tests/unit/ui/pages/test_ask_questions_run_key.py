@@ -7,10 +7,7 @@ Test name follows: test_unit_scenario_expectedBehavior
 import hashlib
 import json
 
-import pytest
-
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
-
 
 # sample_context fixture moved to conftest.py - use shared fixture
 # Note: Tests may need to customize this context using context attributes after retrieval
