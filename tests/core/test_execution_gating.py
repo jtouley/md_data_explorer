@@ -8,7 +8,6 @@ Tests verify:
 - QueryPlan.run_key is used for idempotency
 """
 
-
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent

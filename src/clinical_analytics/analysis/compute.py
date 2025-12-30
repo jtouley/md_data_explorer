@@ -200,6 +200,21 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
 
     logger = structlog.get_logger()
 
+    # Store original count before applying filters
+    original_count = df.height
+
+    # Apply filters from QueryPlan if present
+    filters_applied = []
+    if context.query_plan and context.query_plan.filters:
+        df = _apply_filters(df, context.query_plan.filters)
+        filters_applied = [f.__dict__ for f in context.query_plan.filters]
+    elif context.filters:
+        # Fallback to context.filters for backward compatibility
+        df = _apply_filters(df, context.filters)
+        filters_applied = [f.__dict__ for f in context.filters]
+
+    filtered_count = df.height
+
     # Check if we're focusing on a specific variable
     primary_var = context.primary_variable
     focus_on_single = False
@@ -272,6 +287,14 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             "non_null_count": non_null_count,
             "null_count": analysis_series.null_count(),
             "null_pct": (analysis_series.null_count() / row_count * 100) if row_count > 0 else 0.0,
+            "original_count": original_count,
+            "filtered_count": filtered_count,
+            "filters_applied": filters_applied,
+            "filter_description": _format_filter_description(
+                context.query_plan.filters if context.query_plan else context.filters
+            )
+            if (context.query_plan and context.query_plan.filters) or context.filters
+            else "",
         }
 
         # Compute stats based on dtype
@@ -337,6 +360,14 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
         "missing_pct": missing_pct,
         "summary_stats": desc_stats_dict,
         "categorical_summary": categorical_summary,
+        "original_count": original_count,
+        "filtered_count": filtered_count,
+        "filters_applied": filters_applied,
+        "filter_description": _format_filter_description(
+            context.query_plan.filters if context.query_plan else context.filters
+        )
+        if (context.query_plan and context.query_plan.filters) or context.filters
+        else "",
     }
 
 
@@ -568,6 +599,38 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             "group_means": group_means if group_means else None,
             **headline,
         }
+
+
+def _format_filter_description(filters: list[FilterSpec] | None) -> str:
+    """
+    Convert filter list to human-readable description.
+
+    Args:
+        filters: List of FilterSpec objects (or None)
+
+    Returns:
+        Human-readable filter description string
+    """
+    if not filters:
+        return ""
+
+    op_text = {
+        "==": "equals",
+        "!=": "does not equal",
+        "<": "less than",
+        ">": "greater than",
+        "<=": "at most",
+        ">=": "at least",
+        "IN": "in",
+        "NOT_IN": "not in",
+    }
+
+    descriptions = []
+    for f in filters:
+        op = op_text.get(f.operator, f.operator)
+        descriptions.append(f"{f.column} {op} {f.value}")
+
+    return "; ".join(descriptions)
 
 
 def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:

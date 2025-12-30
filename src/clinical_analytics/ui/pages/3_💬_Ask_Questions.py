@@ -222,6 +222,23 @@ def render_descriptive_analysis(result: dict) -> None:
         return
 
     # Full dataset analysis
+    # Show breakdown if filters were applied
+    if result.get("filters_applied"):
+        st.markdown("### Data Breakdown")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Matching Criteria", f"{result.get('filtered_count', result['row_count']):,}")
+        with col2:
+            original = result.get("original_count", result["row_count"])
+            filtered = result.get("filtered_count", result["row_count"])
+            excluded = original - filtered
+            st.metric("Excluded", f"{excluded:,}")
+
+        if result.get("filter_description"):
+            st.caption(f"**Filters:** {result['filter_description']}")
+
+        st.divider()
+
     st.markdown("## 📊 Your Data at a Glance")
 
     # Overall metrics
@@ -256,6 +273,23 @@ def render_descriptive_analysis(result: dict) -> None:
 def _render_focused_descriptive(result: dict) -> None:
     """Render focused single-variable descriptive analysis."""
     var_name = result["focused_variable"]
+
+    # Show breakdown if filters were applied
+    if result.get("filters_applied"):
+        st.markdown("### Data Breakdown")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Matching Criteria", f"{result.get('filtered_count', result['row_count']):,}")
+        with col2:
+            original = result.get("original_count", result["row_count"])
+            filtered = result.get("filtered_count", result["row_count"])
+            excluded = original - filtered
+            st.metric("Excluded", f"{excluded:,}")
+
+        if result.get("filter_description"):
+            st.caption(f"**Filters:** {result['filter_description']}")
+
+        st.divider()
 
     # Headline answer first!
     if "headline" in result:

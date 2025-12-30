@@ -67,7 +67,7 @@ todos:
       - phase2-context-queryplan
   - id: phase2-breakdown
     content: Add breakdown reporting (filtered vs unfiltered counts) to descriptive analysis results
-    status: pending
+    status: completed
     dependencies:
       - phase2-apply-filters
   - id: phase3-execution-gating
@@ -77,7 +77,7 @@ todos:
       - phase2-apply-filters
   - id: phase3-conversation-history
     content: Implement lightweight conversation history data structure (headline, not full result dicts)
-    status: pending
+    status: in_progress
     dependencies:
       - phase3-execution-gating
   - id: phase3-ui-redesign

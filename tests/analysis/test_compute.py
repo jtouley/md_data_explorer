@@ -99,6 +99,91 @@ class TestComputeDescriptiveAnalysis:
         assert result["missing_pct"] > 0.0
         assert result["missing_pct"] <= 100.0
 
+    def test_compute_descriptive_analysis_includes_breakdown_when_filters_applied(self):
+        """Test that breakdown info is included when filters are applied."""
+        # Arrange: DataFrame and context with filters
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        df = pl.DataFrame(
+            {
+                "age": [25, 30, 35, 40, 45, 50, 55, 60],
+                "score": [10, 20, 30, 40, 50, 60, 70, 80],
+            }
+        )
+
+        # Create QueryPlan with filters
+        query_plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="age",
+            filters=[FilterSpec(column="age", operator=">=", value=35, exclude_nulls=True)],
+            confidence=0.9,
+        )
+
+        context = AnalysisContext()
+        context.primary_variable = "age"
+        context.query_plan = query_plan
+
+        # Act
+        result = compute_descriptive_analysis(df, context)
+
+        # Assert: Breakdown info included
+        assert "original_count" in result
+        assert "filtered_count" in result
+        assert "filters_applied" in result
+        assert "filter_description" in result
+        assert result["original_count"] == 8  # All rows
+        assert result["filtered_count"] == 6  # Rows with age >= 35: [35, 40, 45, 50, 55, 60]
+        assert len(result["filters_applied"]) == 1
+        assert "age" in result["filter_description"].lower()
+
+    def test_compute_descriptive_analysis_no_breakdown_when_no_filters(
+        self, sample_numeric_df, sample_context_describe
+    ):
+        """Test that breakdown info is empty when no filters are applied."""
+        # Act
+        result = compute_descriptive_analysis(sample_numeric_df, sample_context_describe)
+
+        # Assert: Breakdown fields present but empty
+        assert "original_count" in result
+        assert "filtered_count" in result
+        assert "filters_applied" in result
+        assert "filter_description" in result
+        assert result["original_count"] == result["filtered_count"]  # No filtering
+        assert result["filters_applied"] == []
+        assert result["filter_description"] == ""
+
+    def test_compute_descriptive_analysis_breakdown_tracks_filtered_vs_unfiltered_counts(self):
+        """Test that breakdown correctly tracks filtered vs unfiltered counts."""
+        # Arrange: DataFrame with filters that exclude some rows
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        df = pl.DataFrame(
+            {
+                "age": [20, 25, 30, 35, 40, 45, 50],
+                "category": ["A", "B", "A", "B", "A", "B", "A"],
+            }
+        )
+
+        # Filter: age >= 30
+        query_plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="all",
+            filters=[FilterSpec(column="age", operator=">=", value=30, exclude_nulls=True)],
+            confidence=0.9,
+        )
+
+        context = AnalysisContext()
+        context.primary_variable = "all"
+        context.query_plan = query_plan
+
+        # Act
+        result = compute_descriptive_analysis(df, context)
+
+        # Assert: Counts tracked correctly
+        assert result["original_count"] == 7  # All rows
+        assert result["filtered_count"] == 5  # Rows with age >= 30
+        assert result["row_count"] == 5  # Analysis uses filtered count
+
 
 class TestComputeComparisonAnalysis:
     """Test compute_comparison_analysis function."""
