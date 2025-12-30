@@ -93,6 +93,11 @@ def convert_schema(
 
     # Map patient_id
     if patient_id_col := variable_mapping.get("patient_id"):
+        # Defensive: check column exists
+        if patient_id_col not in df.columns:
+            raise ValueError(
+                f"Patient ID column '{patient_id_col}' not found in DataFrame. Available columns: {list(df.columns)}"
+            )
         inferred["column_mapping"][patient_id_col] = "patient_id"
 
     # Map outcome with type inference (defensive checks)
@@ -119,6 +124,11 @@ def convert_schema(
     # Map time_zero
     if time_vars := variable_mapping.get("time_variables"):
         if time_zero_col := time_vars.get("time_zero"):
+            # Defensive: check column exists
+            if time_zero_col not in df.columns:
+                raise ValueError(
+                    f"Time zero column '{time_zero_col}' not found in DataFrame. Available columns: {list(df.columns)}"
+                )
             inferred["time_zero"] = {"source_column": time_zero_col}
 
     # Map predictors and detect categoricals (better heuristic)

@@ -5,6 +5,7 @@ Tests convert_schema() function that transforms variable_mapping to inferred_sch
 """
 
 import polars as pl
+import pytest
 
 from clinical_analytics.datasets.uploaded.schema_conversion import (
     convert_schema,
@@ -293,6 +294,71 @@ class TestConvertSchema:
         # Assert - verify schema is complete
         assert inferred["analysis"]["default_predictors"] == ["age", "weight"]
         # Type info comes from df.schema: df["age"].dtype == pl.Int64, df["weight"].dtype == pl.Float64
+
+    def test_convert_schema_missing_patient_id_column_raises_valueerror(self):
+        """Test that missing patient_id column raises ValueError with clear message."""
+        # Arrange
+        df = pl.DataFrame(
+            {
+                "age": [25, 30],
+                "outcome": [0, 1],
+            }
+        )
+
+        variable_mapping = {
+            "patient_id": "patient_id",  # Column doesn't exist in df
+        }
+
+        # Act & Assert
+        with pytest.raises(ValueError) as exc_info:
+            convert_schema(variable_mapping, df)
+
+        assert "Patient ID column 'patient_id' not found" in str(exc_info.value)
+        assert "Available columns" in str(exc_info.value)
+
+    def test_convert_schema_missing_time_zero_column_raises_valueerror(self):
+        """Test that missing time_zero column raises ValueError with clear message."""
+        # Arrange
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+            }
+        )
+
+        variable_mapping = {
+            "patient_id": "patient_id",
+            "time_variables": {"time_zero": "admission_date"},  # Column doesn't exist
+        }
+
+        # Act & Assert
+        with pytest.raises(ValueError) as exc_info:
+            convert_schema(variable_mapping, df)
+
+        assert "Time zero column 'admission_date' not found" in str(exc_info.value)
+        assert "Available columns" in str(exc_info.value)
+
+    def test_convert_schema_missing_outcome_column_raises_valueerror(self):
+        """Test that missing outcome column raises ValueError with clear message."""
+        # Arrange
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+            }
+        )
+
+        variable_mapping = {
+            "patient_id": "patient_id",
+            "outcome": "mortality",  # Column doesn't exist
+        }
+
+        # Act & Assert
+        with pytest.raises(ValueError) as exc_info:
+            convert_schema(variable_mapping, df)
+
+        assert "Outcome column 'mortality' not found" in str(exc_info.value)
+        assert "DataFrame columns" in str(exc_info.value)
 
 
 class TestCategoricalDetection:

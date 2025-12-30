@@ -370,7 +370,10 @@ class UploadedDataset(ClinicalDataset):
 
             tables_dir = self.storage.raw_dir / f"{self.upload_id}_tables"
             if not tables_dir.exists():
-                logger.warning(f"Tables directory missing for {self.upload_id}: {tables_dir}")
+                logger.warning(
+                    f"Tables directory missing for {self.upload_id}: {tables_dir}. "
+                    "Running in legacy single-table mode (cohort only)."
+                )
                 return
 
             logger.info(f"Registering {len(table_names)} individual tables from metadata")
