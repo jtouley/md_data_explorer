@@ -183,9 +183,8 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
 
     try:
         # Ensure file_bytes is actually bytes
-        logger.info(
-            f"_detect_excel_header_row: file_bytes type={type(file_bytes)}, len={len(file_bytes) if isinstance(file_bytes, bytes) else 'N/A'}"
-        )
+        fb_len = len(file_bytes) if isinstance(file_bytes, bytes) else "N/A"
+        logger.info(f"_detect_excel_header_row: file_bytes type={type(file_bytes)}, len={fb_len}")
         if not isinstance(file_bytes, bytes):
             if hasattr(file_bytes, "read"):
                 file_bytes = file_bytes.read()
@@ -195,7 +194,7 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
         # Read first few rows without headers to analyze them
         # Create a fresh BytesIO from bytes (bytes are immutable, so this is safe)
         file_io = io.BytesIO(file_bytes)
-        logger.info(f"_detect_excel_header_row: Created BytesIO, about to call pd.read_excel")
+        logger.info("_detect_excel_header_row: Created BytesIO, about to call pd.read_excel")
         df_preview = pd.read_excel(file_io, engine="openpyxl", header=None, nrows=max_rows_to_check)
         logger.info(f"_detect_excel_header_row: pd.read_excel succeeded, shape={df_preview.shape}")
         file_io.close()  # Explicitly close to free resources
@@ -310,9 +309,8 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
 
         try:
             # Verify file_bytes is bytes before processing
-            logger.info(
-                f"load_single_file: file_bytes type={type(file_bytes)}, len={len(file_bytes) if isinstance(file_bytes, bytes) else 'N/A'}"
-            )
+            fb_len = len(file_bytes) if isinstance(file_bytes, bytes) else "N/A"
+            logger.info(f"load_single_file: file_bytes type={type(file_bytes)}, len={fb_len}")
             if not isinstance(file_bytes, bytes):
                 raise TypeError(f"load_single_file: Expected bytes, got {type(file_bytes)}")
 
@@ -339,8 +337,12 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
             df_pandas.columns = [
                 f"column_{i}" if str(col).startswith("Unnamed") else col for i, col in enumerate(df_pandas.columns)
             ]
-            logger.info(f"load_single_file: Columns cleaned, converting to Polars...")
+            logger.info("load_single_file: Columns cleaned, converting to Polars...")
 
+            pandas_column_count = len(df_pandas.columns)
+            logger.info(f"Pandas read has {pandas_column_count} columns")
+
+            # Try converting pandas DataFrame to Polars
             try:
                 df_polars = pl.from_pandas(df_pandas)
                 logger.info(
@@ -348,13 +350,40 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
                 )
                 return df_polars
             except Exception as polars_error:
-                logger.error(f"pl.from_pandas failed: {polars_error}, type: {type(polars_error)}")
-                logger.error(f"df_pandas type: {type(df_pandas)}, shape: {df_pandas.shape}")
-                logger.error(f"df_pandas dtypes: {df_pandas.dtypes}")
-                raise
+                logger.warning(
+                    f"pl.from_pandas failed (likely mixed types): {polars_error}. "
+                    f"Trying Polars read_excel as fallback to compare column counts."
+                )
+                # Fallback to Polars read_excel and compare column counts
+                try:
+                    df_polars_fallback = pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+                    polars_column_count = len(df_polars_fallback.columns)
+                    logger.info(
+                        f"Polars fallback has {polars_column_count} columns vs pandas {pandas_column_count} columns"
+                    )
+
+                    # Use whichever has more columns
+                    if pandas_column_count >= polars_column_count:
+                        logger.info(
+                            f"Using pandas result ({pandas_column_count} columns) - "
+                            "converting object columns to string to fix mixed types"
+                        )
+                        # Convert object columns to string to handle mixed types
+                        for col in df_pandas.columns:
+                            if df_pandas[col].dtype == "object":
+                                df_pandas[col] = df_pandas[col].astype(str).replace("nan", None)
+                        return pl.from_pandas(df_pandas)
+                    else:
+                        logger.info(
+                            f"Using Polars fallback ({polars_column_count} columns) - has more columns than pandas read"
+                        )
+                        return df_polars_fallback
+                except Exception as polars_error:
+                    logger.error(f"Both pandas and Polars failed to read Excel file: {polars_error}")
+                    raise ValueError(f"Failed to read Excel file: {polars_error}") from polars_error
         except Exception as e:
             logger.warning(f"Pandas Excel read failed: {e}. Trying Polars as fallback.")
-            # Fallback to Polars if pandas fails
+            # Fallback to Polars if pandas fails completely
             try:
                 return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
             except Exception as polars_error:
