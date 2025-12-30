@@ -329,22 +329,15 @@ def _render_focused_descriptive(result: dict) -> None:
 
 
 def render_count_analysis(result: dict) -> None:
-    """Render count analysis from serializable dict."""
-    # Headline answer first!
-    if "headline" in result:
-        st.info(f"📋 **Answer:** {result['headline']}")
-
-    st.markdown("## 📊 Count Analysis")
-
+    """Render count analysis inline."""
     # If grouped, show group breakdown
     if "grouped_by" in result and result.get("group_counts"):
-        st.markdown(f"### Counts by {result['grouped_by']}")
         group_col = result["grouped_by"]
         for item in result["group_counts"]:
             group_value = item[group_col]
             count = item["count"]
             pct = (count / result["total_count"]) * 100 if result["total_count"] > 0 else 0.0
-            st.write(f"  - **{group_value}**: {count} ({pct:.1f}%)")
+            st.write(f"- **{group_value}**: {count:,} ({pct:.1f}%)")
     else:
         # Simple total count
         st.metric("Total Count", f"{result['total_count']:,}")
@@ -353,28 +346,25 @@ def render_count_analysis(result: dict) -> None:
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
 # TODO: Remove when Streamlit supports Polars natively
 def render_comparison_analysis(result: dict) -> None:
-    """Render comparison analysis from serializable dict."""
+    """Render comparison analysis from serializable dict inline."""
     if "error" in result:
         st.error(result["error"])
         return
 
-    st.markdown("## 📈 Group Comparison")
+    st.markdown("#### 📈 Group Comparison")
 
     outcome_col = result["outcome_col"]
     group_col = result["group_col"]
     test_type = result["test_type"]
 
-    # Show headline answer if available (direct answer to the user's question)
-    if "headline_text" in result:
-        st.markdown("### 📋 Answer")
-        st.info(result["headline_text"])
+    # Headline already shown above in chat message, skip duplicate
 
     if test_type == "t_test":
         groups = result["groups"]
         p_value = result["p_value"]
 
-        st.markdown("### Results")
-        st.markdown(f"**Comparing {outcome_col} between {groups[0]} and {groups[1]}**")
+        st.markdown("**Results:**")
+        st.markdown(f"Comparing {outcome_col} between {groups[0]} and {groups[1]}")
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -385,7 +375,7 @@ def render_comparison_analysis(result: dict) -> None:
             p_interp = ResultInterpreter.interpret_p_value(p_value)
             st.metric("Difference", f"{p_interp['significance']} {p_interp['emoji']}")
 
-        st.markdown("### What does this mean?")
+        st.markdown("**Interpretation:**")
         interpretation = ResultInterpreter.interpret_mean_difference(
             mean_diff=result["mean_diff"],
             ci_lower=result["ci_lower"],
@@ -646,11 +636,15 @@ def execute_analysis_with_idempotency(
             dataset_version=dataset_version,
             intent_type=context.inferred_intent.value,
         )
-        render_analysis_by_type(st.session_state[result_key], context.inferred_intent)
+        # Render inline in chat message style (Phase 3.5)
+        result = st.session_state[result_key]
 
-        # Show transparent confidence and interpretation for cached results too
+        # Render main results inline (no expander, no extra headers)
+        render_analysis_by_type(result, context.inferred_intent)
+
+        # Show interpretation inline (compact, directly under results)
         if query_plan:
-            _render_interpretation_and_confidence(query_plan, st.session_state[result_key])
+            _render_interpretation_inline_compact(query_plan)
         return
 
     # Not computed - compute and store
@@ -735,15 +729,53 @@ def execute_analysis_with_idempotency(
             dataset_version=dataset_version,
         )
 
-        # Render
+        # Render inline in chat message style (Phase 3.5)
         logger.debug("analysis_rendering_start", run_key=run_key)
+
+        # Render main results inline (no expander, no extra headers)
         render_analysis_by_type(result, context.inferred_intent)
 
-        # Show transparent confidence and interpretation inline with results
+        # Show interpretation inline (compact, directly under results)
         if query_plan:
-            _render_interpretation_and_confidence(query_plan, result)
+            _render_interpretation_inline_compact(query_plan)
 
         logger.info("analysis_rendering_complete", run_key=run_key)
+
+        # Don't rerun - results are already rendered inline, conversation history will show on next query
+
+
+def _render_interpretation_inline_compact(query_plan) -> None:
+    """Render compact interpretation inline directly under results."""
+    confidence = query_plan.confidence
+
+    # Show compact confidence badge
+    if confidence >= 0.75:
+        st.caption(f"✓ High confidence ({confidence:.0%})")
+    elif confidence >= 0.5:
+        st.caption(f"⚠ Moderate confidence ({confidence:.0%})")
+    else:
+        st.caption(f"⚠ Low confidence ({confidence:.0%})")
+
+    # Show compact interpretation (only if low confidence or has filters)
+    if confidence < 0.75 or query_plan.filters:
+        interpretation_parts = []
+        if query_plan.group_by:
+            interpretation_parts.append(f"grouped by {query_plan.group_by}")
+        if query_plan.filters:
+            filter_text = ", ".join([f"{f.column} {f.operator} {f.value}" for f in query_plan.filters[:2]])
+            if len(query_plan.filters) > 2:
+                filter_text += f" (+{len(query_plan.filters) - 2} more)"
+            interpretation_parts.append(f"filters: {filter_text}")
+        if interpretation_parts:
+            st.caption(f"Interpreted: {', '.join(interpretation_parts)}")
+
+    logger.info(
+        "confidence_displayed",
+        confidence=confidence,
+        intent=query_plan.intent,
+        has_filters=len(query_plan.filters) > 0,
+        has_explanation=bool(query_plan.explanation),
+    )
 
 
 def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
@@ -940,125 +972,52 @@ def main():
     if "analysis_context" not in st.session_state:
         st.session_state["analysis_context"] = None
         st.session_state["intent_signal"] = None
-        st.session_state["use_nl_query"] = True  # Default to NL query first
 
     # Initialize conversation history (lightweight storage per ADR001)
     if "conversation_history" not in st.session_state:
         st.session_state["conversation_history"] = []
 
-    # Display conversation history (if any) - Phase 3.3 UI Redesign
-    if st.session_state.get("conversation_history"):
-        for entry in st.session_state["conversation_history"]:
-            with st.chat_message("user"):
-                st.write(entry["query"])
+    # Display conversation history (if any) - Phase 3.5 Inline Rendering
+    # Skip the last entry if it was just rendered (prevent duplicate)
+    last_run_key = st.session_state.get(f"last_run_key:{dataset_version}")
+    history = st.session_state.get("conversation_history", [])
 
-            with st.chat_message("assistant"):
-                st.info(entry["headline"])
+    for entry in history:
+        # Skip if this is the current query (already rendered inline)
+        if entry.get("run_key") == last_run_key and st.session_state.get("intent_signal") == "nl_parsed":
+            continue
 
-                # Expandable details - reconstruct from run_key if available
-                if entry.get("run_key"):
-                    result_key = f"analysis_result:{dataset_version}:{entry['run_key']}"
-                    if result_key in st.session_state:
-                        with st.expander("View detailed results"):
-                            # Get intent from entry (stored as string)
-                            intent_str = entry.get("intent", "DESCRIBE")
-                            try:
-                                intent_enum = AnalysisIntent(intent_str)
-                            except (ValueError, KeyError):
-                                intent_enum = AnalysisIntent.DESCRIBE
+        with st.chat_message("user"):
+            st.write(entry["query"])
 
-                            render_analysis_by_type(st.session_state[result_key], intent_enum)
+        with st.chat_message("assistant"):
+            # Render full results inline
+            if entry.get("run_key"):
+                result_key = f"analysis_result:{dataset_version}:{entry['run_key']}"
+                if result_key in st.session_state:
+                    result = st.session_state[result_key]
 
-    st.divider()
+                    # Get intent from entry (stored as string)
+                    intent_str = entry.get("intent", "DESCRIBE")
+                    try:
+                        intent_enum = AnalysisIntent(intent_str)
+                    except (ValueError, KeyError):
+                        intent_enum = AnalysisIntent.DESCRIBE
 
-    # Step 1: Ask question (NL or structured)
-    if st.session_state["intent_signal"] is None:
-        # Try free-form NL query first
-        if st.session_state["use_nl_query"]:
-            try:
-                # Get semantic layer using contract pattern
-                semantic_layer = dataset.get_semantic_layer()
+                    # Render main results inline (no extra headers)
+                    render_analysis_by_type(result, intent_enum)
 
-                # Get dataset identifiers for structured logging
-                dataset_id = dataset.name if hasattr(dataset, "name") else None
-                upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+    # Check for semantic layer availability (show message if not available)
+    try:
+        semantic_layer = dataset.get_semantic_layer()
+    except ValueError:
+        # Semantic layer not available
+        st.info("Natural language queries are only available for datasets with semantic layers.")
+        # Still show chat input but it will fail gracefully
+        semantic_layer = None
 
-                logger.info(
-                    "page_render_query_input",
-                    dataset_id=dataset_id,
-                    upload_id=upload_id,
-                    dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
-                    use_nl_query=True,
-                )
-
-                context = QuestionEngine.ask_free_form_question(
-                    semantic_layer,
-                    dataset_id=dataset_id,
-                    upload_id=upload_id,
-                    dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
-                )
-
-                if context:
-                    # Successfully parsed NL query
-                    logger.info(
-                        "nl_query_parsed_successfully",
-                        query=getattr(context, "research_question", ""),
-                        intent_type=context.inferred_intent.value,
-                        confidence=context.confidence,
-                        is_complete=context.is_complete_for_intent(),
-                        dataset_id=dataset_id,
-                        upload_id=upload_id,
-                    )
-                    st.session_state["analysis_context"] = context
-                    st.session_state["intent_signal"] = "nl_parsed"
-                    logger.debug("page_rerun_triggered", reason="nl_query_parsed")
-                    st.rerun()
-
-            except ValueError:
-                # Semantic layer not available
-                st.info("Natural language queries are only available for datasets with semantic layers.")
-                st.session_state["use_nl_query"] = False
-                st.rerun()
-                return
-            except Exception as e:
-                st.error(f"Error parsing natural language query: {e}")
-                st.session_state["use_nl_query"] = False
-
-            # Show option to use structured questions instead
-            st.divider()
-            st.markdown("### Or use structured questions")
-            if st.button("💬 Use structured questions instead", help="Choose from predefined question types"):
-                st.session_state["use_nl_query"] = False
-                st.rerun()
-
-        else:
-            # Use structured questions
-            intent_signal = QuestionEngine.ask_initial_question(cohort)
-
-            if intent_signal:
-                if intent_signal == "help":
-                    st.divider()
-                    help_answers = QuestionEngine.ask_help_questions(cohort)
-
-                    # Map help answers to intent
-                    if help_answers.get("has_time"):
-                        intent_signal = "survival"
-                    elif help_answers.get("has_outcome"):
-                        intent_signal = help_answers.get("approach", "predict")
-                    else:
-                        intent_signal = "describe"
-
-                st.session_state["intent_signal"] = intent_signal
-                st.session_state["analysis_context"] = QuestionEngine.build_context_from_intent(intent_signal, cohort)
-                st.rerun()
-
-            # Show option to go back to NL query
-            st.divider()
-            if st.button("🔙 Try natural language query instead"):
-                st.session_state["use_nl_query"] = True
-                st.rerun()
-
-    else:
+    # Handle analysis execution if we have a context ready
+    if st.session_state.get("intent_signal") is not None:
         # We have intent, now gather details
         context = st.session_state["analysis_context"]
 
@@ -1350,10 +1309,41 @@ def main():
                 context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
                 context.time_to_event = query_intent.intent_type == "SURVIVAL"
 
-                # Store context and trigger analysis flow
+                # Store context
                 st.session_state["analysis_context"] = context
                 st.session_state["intent_signal"] = "nl_parsed"
-                st.rerun()
+
+                # If context is complete, execute immediately and render inline
+                if context.is_complete_for_intent():
+                    # Get QueryPlan if available (preferred), otherwise fallback to context
+                    query_plan = getattr(context, "query_plan", None)
+
+                    # Get confidence from QueryPlan or context (default to 0.0 if missing)
+                    if query_plan:
+                        confidence = query_plan.confidence
+                        run_key = query_plan.run_key or generate_run_key(dataset_version, query, context)
+                    else:
+                        confidence = getattr(context, "confidence", 0.0)
+                        run_key = generate_run_key(dataset_version, query, context)
+
+                    logger.info(
+                        "chat_input_analysis_execution_triggered",
+                        intent_type=context.inferred_intent.value,
+                        confidence=confidence,
+                        run_key=run_key,
+                        dataset_version=dataset_version,
+                        query=query,
+                    )
+
+                    # Execute and render inline in chat message style
+                    with st.chat_message("user"):
+                        st.write(query)
+
+                    with st.chat_message("assistant"):
+                        execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query, query_plan)
+                else:
+                    # Context not complete - need variable selection, rerun to show UI
+                    st.rerun()
             else:
                 st.error("I couldn't understand your question. Please try rephrasing.")
 

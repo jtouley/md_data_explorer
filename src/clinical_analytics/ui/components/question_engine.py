@@ -3,12 +3,11 @@ Question Engine - Conversational analysis configuration through questions.
 
 Guides users through analysis setup by asking natural questions,
 infers the appropriate statistical test, and dynamically configures analysis.
-Supports both free-form natural language queries and structured questions.
+Supports free-form natural language queries only.
 """
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -164,93 +163,6 @@ class QuestionEngine:
         return AnalysisIntent.UNKNOWN
 
     @staticmethod
-    def ask_initial_question(df: pd.DataFrame) -> str | None:
-        """
-        Ask the first question: What do you want to know?
-
-        Returns the user's selection as a string intent signal.
-        """
-        st.markdown("## 💬 What do you want to know about your data?")
-
-        st.markdown("""
-        Choose what you'd like to understand. Don't worry about statistical tests -
-        I'll figure out the right approach based on your question.
-        """)
-
-        question_type = st.radio(
-            "I want to...",
-            [
-                "📊 See what's in my data (describe patient characteristics)",
-                "📈 Compare something between groups (e.g., treatment vs control)",
-                "🎯 Find what predicts or causes an outcome",
-                "⏱️ Analyze time until an event happens (survival analysis)",
-                "🔗 See how variables relate to each other",
-                "💭 I'm not sure - help me figure it out",
-            ],
-            label_visibility="collapsed",
-        )
-
-        # Map to intent signals
-        intent_map = {
-            "📊 See what's in my data": "describe",
-            "📈 Compare something between groups": "compare",
-            "🎯 Find what predicts or causes an outcome": "predict",
-            "⏱️ Analyze time until an event happens": "survival",
-            "🔗 See how variables relate to each other": "relationships",
-            "💭 I'm not sure": "help",
-        }
-
-        for key, value in intent_map.items():
-            if key in question_type:
-                return value
-
-        return None
-
-    @staticmethod
-    def ask_help_questions(df: pd.DataFrame) -> dict[str, Any]:
-        """
-        If user selects 'help me figure it out', ask clarifying questions.
-
-        Returns answers that help infer intent.
-        """
-        st.markdown("### Let me ask a few questions to understand what you need:")
-
-        answers = {}
-
-        # Question 1: Do they have an outcome?
-        has_outcome = st.radio(
-            "Do you have a specific outcome or result you're interested in?",
-            [
-                "Yes, I want to understand what affects a specific outcome",
-                "No, I just want to explore and describe my data",
-            ],
-        )
-        answers["has_outcome"] = "yes" in has_outcome.lower()
-
-        if answers["has_outcome"]:
-            # Question 2: Groups or predictors?
-            approach = st.radio(
-                "What do you want to know about this outcome?",
-                [
-                    "Compare it between groups (e.g., does treatment affect outcome?)",
-                    "Find what variables predict or cause it",
-                ],
-            )
-            answers["approach"] = "compare" if "compare" in approach.lower() else "predict"
-
-        # Question 3: Time element?
-        has_time = st.radio(
-            "Does your question involve time?",
-            [
-                "Yes - I want to know how long until something happens",
-                "No - time isn't important for my question",
-            ],
-        )
-        answers["has_time"] = "yes" in has_time.lower()
-
-        return answers
-
-    @staticmethod
     def select_primary_variable(
         df: pd.DataFrame,
         context: AnalysisContext,
@@ -340,37 +252,6 @@ class QuestionEngine:
         event_var = None if event_var == "(Choose one)" else event_var
 
         return time_var, event_var
-
-    @staticmethod
-    def build_context_from_intent(intent_signal: str, df: pd.DataFrame) -> AnalysisContext:
-        """
-        Build initial context based on user's intent signal.
-
-        Args:
-            intent_signal: One of 'describe', 'compare', 'predict', 'survival', 'relationships'
-            df: DataFrame being analyzed
-
-        Returns:
-            Initialized AnalysisContext
-        """
-        context = AnalysisContext()
-
-        # Map intent signal to flags
-        if intent_signal == "describe":
-            context.inferred_intent = AnalysisIntent.DESCRIBE
-        elif intent_signal == "compare":
-            context.compare_groups = True
-            context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
-        elif intent_signal == "predict":
-            context.find_predictors = True
-            context.inferred_intent = AnalysisIntent.FIND_PREDICTORS
-        elif intent_signal == "survival":
-            context.time_to_event = True
-            context.inferred_intent = AnalysisIntent.EXAMINE_SURVIVAL
-        elif intent_signal == "relationships":
-            context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
-
-        return context
 
     @staticmethod
     def render_progress_indicator(context: AnalysisContext):
@@ -740,7 +621,7 @@ class QuestionEngine:
                     st.error(error_message)
                 elif query_intent is None:
                     st.error("❌ Could not understand your query. Please try rephrasing.")
-                return None  # Fall back to structured questions
+                return None  # Could not parse query
 
             # Show interpretation (only if we have a valid intent)
             if query_intent:
@@ -777,7 +658,7 @@ class QuestionEngine:
                         )
 
                         if "No" in correct:
-                            st.info("💡 Try rephrasing your question or use the structured questions below.")
+                            st.info("💡 Try rephrasing your question.")
                             return None
 
                 # Convert QueryIntent to AnalysisContext
@@ -839,5 +720,5 @@ class QuestionEngine:
 
         except Exception as e:
             st.error(f"❌ Error parsing query: {str(e)}")
-            st.info("💡 Please try using the structured questions below instead.")
+            st.info("💡 Please try rephrasing your question.")
             return None

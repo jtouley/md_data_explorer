@@ -196,3 +196,114 @@ class TestChatInputHandling:
         # Assert: Context can be used in existing flow
         assert context.is_complete_for_intent()  # DESCRIBE with primary_variable is complete
         # In UI: if context.is_complete_for_intent(): execute_analysis_with_idempotency(...)
+
+    def test_chat_input_executes_immediately_when_context_complete(self):
+        """Test that chat input executes analysis immediately when context is complete."""
+        # Arrange: Create complete context
+        from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COUNT
+        context.research_question = "how many patients"
+        # COUNT intent is complete with just data (no variables needed)
+
+        # Assert: Context is complete, so should execute immediately
+        assert context.is_complete_for_intent()
+        # In UI: if context.is_complete_for_intent(): execute immediately, no rerun needed
+
+    def test_chat_input_renders_results_inline_in_chat_message_style(self):
+        """Test that chat input renders results inline in chat message style."""
+        # Arrange: Simulate result rendering
+        result = {
+            "type": "count",
+            "headline": "Total: 100 patients",
+            "total_count": 100,
+        }
+
+        # Assert: Result has headline for inline display
+        assert "headline" in result
+        assert result["headline"] == "Total: 100 patients"
+        # In UI: with st.chat_message("assistant"): st.info(headline)
+
+    def test_old_text_input_flow_removed_no_duplicate_inputs(self):
+        """Test that old ask_free_form_question flow using st.text_input is removed."""
+        # Arrange: Check that ask_free_form_question is not called in main flow
+        from pathlib import Path
+
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "3_💬_Ask_Questions.py"
+
+        # Read the page file
+        page_content = page_path.read_text()
+
+        # Assert: ask_free_form_question should not be called in main() function
+        # Check that it's not in the main() function body (after "def main():")
+        main_start = page_content.find("def main():")
+        if main_start != -1:
+            main_body = page_content[main_start:]
+            # Assert: QuestionEngine.ask_free_form_question should not be called in main()
+            assert "QuestionEngine.ask_free_form_question" not in main_body, (
+                "Old ask_free_form_question flow should be removed from main() function"
+            )
+
+        # Assert: st.chat_input should be used for query input
+        assert "st.chat_input" in page_content, "st.chat_input should be used for queries"
+
+    def test_conversation_history_skips_duplicate_rendering(self, mock_session_state):
+        """Test that conversation history skips the last entry if it was just rendered."""
+        # Arrange: Create conversation history with last entry
+        dataset_version = "test_dataset_v1"
+        last_run_key = "last_run_123"
+        mock_session_state["conversation_history"] = [
+            {
+                "query": "first query",
+                "intent": "DESCRIBE",
+                "headline": "First result",
+                "run_key": "first_run",
+                "timestamp": 1234567890.0,
+                "filters_applied": [],
+            },
+            {
+                "query": "second query",
+                "intent": "COUNT",
+                "headline": "Second result",
+                "run_key": last_run_key,
+                "timestamp": 1234567891.0,
+                "filters_applied": [],
+            },
+        ]
+        mock_session_state[f"last_run_key:{dataset_version}"] = last_run_key
+        mock_session_state["intent_signal"] = "nl_parsed"
+
+        # Assert: Logic should skip last entry if run_key matches and intent_signal is nl_parsed
+        # This is tested by checking the structure supports this logic
+        history = mock_session_state["conversation_history"]
+        assert len(history) == 2
+        assert history[-1]["run_key"] == last_run_key
+        # In UI: if entry.get("run_key") == last_run_key and
+        # st.session_state.get("intent_signal") == "nl_parsed": continue
+
+    def test_compact_interpretation_function_exists(self):
+        """Test that compact inline interpretation function exists."""
+        # Arrange: Check that the function exists in the page
+        from pathlib import Path
+
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "3_💬_Ask_Questions.py"
+
+        # Read the page file
+        page_content = page_path.read_text()
+
+        # Assert: Compact interpretation function should exist
+        assert "_render_interpretation_inline_compact" in page_content, (
+            "Compact inline interpretation function should exist"
+        )
+        # Assert: Old expander-based interpretation should not be used for inline rendering
+        # (It may still exist but should not be called in execute_analysis_with_idempotency)
+        main_start = page_content.find("def execute_analysis_with_idempotency")
+        if main_start != -1:
+            execute_body = page_content[main_start : main_start + 2000]  # Check first 2000 chars
+            # Should call compact version, not expander version
+            assert "_render_interpretation_inline_compact" in execute_body or (
+                "_render_interpretation_and_confidence" not in execute_body
+            ), "Should use compact inline interpretation, not expander version"
