@@ -1,6 +1,7 @@
 ---
 name: ADR003 Implementation Plan
 overview: "Implement ADR003: Clinical Trust Protocol + Adaptive Alias Persistence. Four phases: (0) Tier 3 LLM fallback with local Ollama, (1) Trust UI with verification expanders and patient-level export, (2) Adaptive alias persistence scoped per dataset, (3) Semantic layer QueryPlan execution with type-aware validation and confidence gating."
+progress: "Phase 0 ✅ (Commit f979c96) - 12/12 tests passing. Phase 1 ✅ (Commit af46ca9) - 11/11 tests passing. Phase 2 ✅ (Commit 063b3d6) - 8/8 tests passing. Phase 3 ⏳ PENDING."
 todos:
   - id: phase0-tests
     content: Write Phase 0 test specifications (12 tests) in tests/core/test_llm_fallback.py
@@ -627,16 +628,15 @@ import pandas as pd
 
 - ✅ **Phase 0** (Tier 3 LLM Fallback) - **COMPLETE** (Commit f979c96)
 - ✅ **Phase 1** (Trust UI) - **COMPLETE** (Commit af46ca9)
-- ⏳ **Phase 2** (Alias Persistence) - **PENDING** - Can start immediately
-- ⏳ **Phase 3** (QueryPlan Execution) - **PENDING** - Unblocked (Phase 0 complete), still requires Phase 2
+- ✅ **Phase 2** (Alias Persistence) - **COMPLETE** (Commit 063b3d6)
+- ⏳ **Phase 3** (QueryPlan Execution) - **PENDING** - Unblocked (Phase 0 & 2 complete)
 
 **Dependencies**:
 
 - **Phase 0**: ✅ **COMPLETE** - Tier 3 LLM fallback with local Ollama, RAG context, structured JSON extraction
 - **Phase 1**: ✅ **COMPLETE** - Trust UI with verification expanders and patient-level export
-- **Phase 2**: Independent (can start immediately, benefits from Phase 1 error UI which is already complete)
-- **Phase 3**: **UNBLOCKED** - Phase 0 ✅ complete. Still requires:
-- Phase 2 (needs alias resolution)
+- **Phase 2**: ✅ **COMPLETE** - Adaptive alias persistence with user alias management, scope isolation, collision detection
+- **Phase 3**: **UNBLOCKED** - Phase 0 ✅ and Phase 2 ✅ complete. Still requires:
 - Phase 1 ✅ (needs trust UI for validation display - already complete)
 
 ## Success Criteria
