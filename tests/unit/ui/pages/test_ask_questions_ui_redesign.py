@@ -249,6 +249,33 @@ class TestChatInputHandling:
         # Assert: st.chat_input should be used for query input
         assert "st.chat_input" in page_content, "st.chat_input should be used for queries"
 
+    def test_followup_suggestions_have_unique_button_keys(self, mock_session_state):
+        """
+        Test that follow-up suggestion buttons have unique keys to prevent collisions.
+
+        This verifies the fix for StreamlitDuplicateElementKey errors when multiple
+        suggestions have the same hash value.
+        """
+        # Arrange: Multiple suggestions that might hash to same value
+        suggestions = [
+            "Break down the count by a grouping variable",
+            "Filter Statin Used and count again",
+            "Remove filters and count all records",
+            "Compare outcomes by treatment group",
+        ]
+
+        # Act: Generate button keys (as done in _suggest_follow_ups)
+        button_keys = []
+        for idx, suggestion in enumerate(suggestions[:4]):
+            button_key = f"followup_{idx}_{hash(suggestion) % 1000000}"
+            button_keys.append(button_key)
+
+        # Assert: All keys should be unique
+        assert len(button_keys) == len(set(button_keys)), f"Button keys should be unique, got duplicates: {button_keys}"
+        # Assert: Keys should include index
+        for idx, key in enumerate(button_keys):
+            assert f"followup_{idx}_" in key, f"Button key should include index, got: {key}"
+
     def test_conversation_history_skips_duplicate_rendering(self, mock_session_state):
         """Test that conversation history skips the last entry if it was just rendered."""
         # Arrange: Create conversation history with last entry

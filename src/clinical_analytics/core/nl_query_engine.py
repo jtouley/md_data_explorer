@@ -932,11 +932,21 @@ class NLQueryEngine:
                         # Store the matched column for Strategy 2 to use
                         matched_column_from_strategy1 = column_name
                         # Find the alias for this column
-                        alias_index = self.semantic_layer.get_column_alias_index()
-                        for alias, canonical in alias_index.items():
-                            if canonical == column_name:
-                                matched_alias_from_strategy1 = alias
-                                break
+                        # Note: _fuzzy_match_variable might return the full alias string as canonical
+                        # Check if column_name itself looks like an alias (contains ":" and digits)
+                        if ":" in column_name and any(char.isdigit() for char in column_name):
+                            # column_name is already the full alias string - use it directly
+                            matched_alias_from_strategy1 = column_name
+                        else:
+                            # Look up the alias from alias_index
+                            alias_index = self.semantic_layer.get_column_alias_index()
+                            for alias, canonical in alias_index.items():
+                                if canonical == column_name:
+                                    matched_alias_from_strategy1 = alias
+                                    break
+                            # If not found, try using column_name as alias (fallback)
+                            if not matched_alias_from_strategy1:
+                                matched_alias_from_strategy1 = column_name
                     else:
                         # Not a coded column - use Strategy 1 for direct column matching
                         filters.append(

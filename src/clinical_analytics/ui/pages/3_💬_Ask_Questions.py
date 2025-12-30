@@ -247,12 +247,14 @@ def render_descriptive_analysis(result: dict) -> None:
     with col3:
         st.metric("Data Completeness", f"{100 - result['missing_pct']:.1f}%")
 
-    # Summary statistics
-    st.markdown("### Summary Statistics")
+    # Summary statistics (use HTML to avoid Streamlit auto-anchor generation)
+    st.markdown("<h3>Summary Statistics</h3>", unsafe_allow_html=True)
 
     if result["summary_stats"]:
         st.markdown("**Numeric Variables:**")
         # Convert to pandas for display
+        # TODO: Future enhancement - use seaborn for styled tables/heatmaps
+        # e.g., sns.heatmap(summary_df, annot=True, fmt='.2f') for correlation matrices
         summary_df = pd.DataFrame(result["summary_stats"])
         st.dataframe(summary_df)
 
@@ -907,8 +909,8 @@ def _suggest_follow_ups(context: AnalysisContext, result: dict) -> None:
         for idx, suggestion in enumerate(suggestions[:4]):  # Limit to 4 suggestions
             col = cols[idx % len(cols)]
             with col:
-                # Use hash of suggestion for unique key
-                button_key = f"followup_{hash(suggestion) % 1000000}"
+                # Use index + hash for unique key (prevents collisions)
+                button_key = f"followup_{idx}_{hash(suggestion) % 1000000}"
                 if st.button(suggestion, key=button_key, use_container_width=True):
                     # Store suggestion to prefill chat input
                     st.session_state["prefilled_query"] = suggestion
