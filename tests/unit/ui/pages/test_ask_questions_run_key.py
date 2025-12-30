@@ -4,7 +4,6 @@ Test stable run_key generation for idempotency.
 Test name follows: test_unit_scenario_expectedBehavior
 """
 
-
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 

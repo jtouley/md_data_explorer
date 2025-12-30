@@ -97,6 +97,27 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 # - Do NOT access st.session_state inside cached functions
 
 
+@st.cache_data(show_spinner="Loading semantic layer...")
+def get_cached_semantic_layer(dataset_version: str, _dataset):
+    """
+    Get semantic layer with caching (Phase 3).
+
+    Cache key includes dataset_version to invalidate on dataset changes.
+    Dataset object passed with _ prefix (not hashed, used for computation only).
+
+    Args:
+        dataset_version: Dataset version identifier (for cache key)
+        _dataset: Dataset object (not hashed, just used to call get_semantic_layer)
+
+    Returns:
+        Semantic layer instance
+
+    Raises:
+        ValueError: If semantic layer not available
+    """
+    return _dataset.get_semantic_layer()
+
+
 def normalize_query(q: str | None) -> str:
     """
     Normalize query text: collapse whitespace, lowercase, strip.
@@ -1585,8 +1606,9 @@ def main():
     render_chat(dataset_version=dataset_version, cohort=cohort_pl)
 
     # Check for semantic layer availability (show message if not available)
+    # Phase 3: Use cached semantic layer for performance
     try:
-        semantic_layer = dataset.get_semantic_layer()
+        semantic_layer = get_cached_semantic_layer(dataset_version, dataset)
     except ValueError:
         # Semantic layer not available
         st.info("Natural language queries are only available for datasets with semantic layers.")
@@ -1917,8 +1939,8 @@ def main():
     if query:
         # Handle new query from chat input
         try:
-            # Get semantic layer
-            semantic_layer = dataset.get_semantic_layer()
+            # Get semantic layer (Phase 3: cached for performance)
+            semantic_layer = get_cached_semantic_layer(dataset_version, dataset)
 
             # Get dataset identifiers for structured logging
             dataset_id = dataset.name if hasattr(dataset, "name") else None
