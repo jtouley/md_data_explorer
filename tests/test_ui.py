@@ -25,21 +25,7 @@ def disable_v1_mvp_mode(monkeypatch):
     importlib.reload(app_module)
 
 
-@pytest.fixture
-def mock_cohort():
-    """Create a mock cohort dataframe with required and predictor columns."""
-    return pd.DataFrame(
-        {
-            UnifiedCohort.PATIENT_ID: [f"P{i}" for i in range(20)],
-            UnifiedCohort.TIME_ZERO: pd.date_range("2023-01-01", periods=20),
-            UnifiedCohort.OUTCOME: [0, 1] * 10,
-            UnifiedCohort.OUTCOME_LABEL: ["alive", "dead"] * 10,
-            # Predictors
-            "age": [25, 30, 35, 40] * 5,
-            "score": [1.5, 2.5, 3.5, 4.5] * 5,
-            "group": ["A", "B"] * 10,
-        }
-    )
+# mock_cohort fixture moved to conftest.py - use shared fixture
 
 
 @pytest.fixture

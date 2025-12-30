@@ -21,87 +21,10 @@ from clinical_analytics.analysis.compute import (
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
-@pytest.fixture
-def sample_numeric_df():
-    """Create sample Polars DataFrame with numeric columns."""
-    return pl.DataFrame(
-        {
-            "age": [25, 30, 35, 40, 45, 50, 55, 60],
-            "score": [10, 20, 30, 40, 50, 60, 70, 80],
-            "value": [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5],
-        }
-    )
-
-
-@pytest.fixture
-def sample_categorical_df():
-    """Create sample Polars DataFrame with categorical columns."""
-    return pl.DataFrame(
-        {
-            "category": ["A", "B", "A", "B", "A", "B", "A", "B"],
-            "status": ["active", "inactive", "active", "inactive", "active", "inactive", "active", "inactive"],
-        }
-    )
-
-
-@pytest.fixture
-def sample_mixed_df():
-    """Create sample Polars DataFrame with mixed column types."""
-    return pl.DataFrame(
-        {
-            "age": [25, 30, 35, 40, 45],
-            "category": ["A", "B", "A", "B", "A"],
-            "score": [10, 20, 30, 40, 50],
-        }
-    )
-
-
-@pytest.fixture
-def sample_context_describe():
-    """Create AnalysisContext for descriptive analysis."""
-    context = AnalysisContext()
-    context.inferred_intent = AnalysisIntent.DESCRIBE
-    context.primary_variable = "all"
-    return context
-
-
-@pytest.fixture
-def sample_context_compare():
-    """Create AnalysisContext for comparison analysis."""
-    context = AnalysisContext()
-    context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
-    context.primary_variable = "score"
-    context.grouping_variable = "category"
-    return context
-
-
-@pytest.fixture
-def sample_context_predictor():
-    """Create AnalysisContext for predictor analysis."""
-    context = AnalysisContext()
-    context.inferred_intent = AnalysisIntent.FIND_PREDICTORS
-    context.primary_variable = "outcome"
-    context.predictor_variables = ["age", "score"]
-    return context
-
-
-@pytest.fixture
-def sample_context_survival():
-    """Create AnalysisContext for survival analysis."""
-    context = AnalysisContext()
-    context.inferred_intent = AnalysisIntent.EXAMINE_SURVIVAL
-    context.time_variable = "time"
-    context.event_variable = "event"
-    return context
-
-
-@pytest.fixture
-def sample_context_relationship():
-    """Create AnalysisContext for relationship analysis."""
-    context = AnalysisContext()
-    context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
-    context.predictor_variables = ["age", "score", "value"]
-    return context
+# All fixtures moved to conftest.py - use shared fixtures
+# sample_numeric_df, sample_categorical_df, sample_mixed_df
+# sample_context_describe, sample_context_compare, sample_context_predictor
+# sample_context_survival, sample_context_relationship
 
 
 class TestComputeDescriptiveAnalysis:
