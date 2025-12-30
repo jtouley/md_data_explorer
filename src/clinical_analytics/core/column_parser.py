@@ -161,9 +161,10 @@ def _extract_value_mapping(column_name: str) -> tuple[dict[str, str], dict[str, 
             code_to_label[code] = label
             label_to_code[label] = code
 
-    # Pattern 2: Code:Label format (e.g., "1:Normal 2:Osteopenia")
-    # Match: number : word(s)
-    pattern2 = r"(\d+):([A-Za-z\s]+)"
+    # Pattern 2: Code:Label format (e.g., "1:Normal 2:Osteopenia", "0: n/a 1: Atorvastatin")
+    # Match: number : word(s) including special chars like "/" in "n/a"
+    # Stop at next code:label pair or end of string
+    pattern2 = r"(\d+):([A-Za-z\s/]+?)(?=\s+\d+:|$)"
     matches2 = re.findall(pattern2, column_name)
 
     if matches2:
