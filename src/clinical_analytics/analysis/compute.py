@@ -122,7 +122,10 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
     Try to convert a string series to numeric.
 
     Handles:
-    - European comma format: "-1,8" -> -1.8
+    - European comma format: "-1,8" -> -1.8 (comma as decimal separator)
+    - US thousands format: "1,234.5" -> 1234.5 (comma as thousands separator)
+    - Below detection limit: "<20" -> 20 (uses upper bound, extracts numeric part)
+    - Above detection limit: ">100" -> 100 (uses lower bound, extracts numeric part)
     - Empty strings and whitespace -> null
     - Non-numeric values -> null
 
@@ -132,17 +135,51 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
         return None
 
     try:
-        # Clean the values: replace comma with dot, strip whitespace
-        cleaned = (
-            series.str.strip_chars().str.replace(",", ".").str.replace_all(r"^\s*$", "")  # Empty strings to empty
-        )
+        # Step 1: Extract numeric part (handles "<20", ">100", etc.)
+        # This pattern extracts digits, commas, dots, and minus signs
+        # It will extract "20" from "<20", "1234.5" from "1,234.5", etc.
+        extracted = series.str.extract(r"([\d,\.\-]+)", 1)
+        
+        # Step 2: Clean based on format detection
+        # Strategy: Use map_elements for complex logic that Polars string ops can't handle easily
+        def clean_numeric(s: str | None) -> str | None:
+            if s is None:
+                return None
+            s = s.strip()
+            if not s:
+                return None
+            
+            # Check if it looks like US format (has both comma and dot)
+            # In US format: "1,234.5" -> comma is thousands, dot is decimal -> remove comma
+            if "," in s and "." in s:
+                # US format: remove commas (thousands separator)
+                return s.replace(",", "")
+            # Check if it looks like European format (comma but no dot)
+            # In European format: "1,8" -> comma is decimal -> replace with dot
+            elif "," in s and "." not in s:
+                # European format: replace comma with dot (decimal separator)
+                return s.replace(",", ".")
+            # No comma, use as-is
+            return s
+        
+        # Apply cleaning using map_elements
+        cleaned = extracted.map_elements(clean_numeric, return_dtype=pl.Utf8)
 
-        # Try to cast to float
+        # Step 3: Try to cast to float
         numeric = cleaned.cast(pl.Float64, strict=False)
 
-        # Check if we got any valid values
+        # Step 4: Check if we got any valid values
         if numeric.null_count() == len(numeric):
-            return None
+            # Fallback: try direct conversion on original series
+            # Remove all commas (assume thousands separator) and try again
+            cleaned_direct = (
+                series.str.strip_chars()
+                .str.replace(",", "")  # Remove commas
+                .str.replace_all(r"^\s*$", "")  # Empty strings
+            )
+            numeric = cleaned_direct.cast(pl.Float64, strict=False)
+            if numeric.null_count() == len(numeric):
+                return None
 
         return numeric
     except Exception:
@@ -384,9 +421,25 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     if analysis_df.height < 2:
         return {"type": "comparison", "error": "Not enough data for comparison"}
 
+    # CRITICAL FIX: Try numeric conversion FIRST, before deciding test type
+    outcome_series = analysis_df[outcome_col]
+    numeric_outcome = None
+    outcome_is_numeric = False
+    
+    # Check if already numeric
+    if outcome_series.dtype in (pl.Int64, pl.Float64):
+        outcome_is_numeric = True
+        numeric_outcome = outcome_series
+    else:
+        # Try to convert string columns to numeric (handles "<20", "120", etc.)
+        numeric_outcome = _try_convert_to_numeric(outcome_series)
+        if numeric_outcome is not None:
+            outcome_is_numeric = True
+            # Replace outcome column with numeric version
+            analysis_df = analysis_df.with_columns(numeric_outcome.alias(outcome_col))
+    
     # Determine appropriate test
-    outcome_dtype = analysis_df[outcome_col].dtype
-    outcome_numeric = outcome_dtype in (pl.Int64, pl.Float64)
+    outcome_numeric = outcome_is_numeric
 
     groups = analysis_df[group_col].unique().to_list()
     n_groups = len(groups)
