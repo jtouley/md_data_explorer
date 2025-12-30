@@ -7,6 +7,7 @@ Ask questions, get answers. No statistical jargon - just tell me what you want t
 import hashlib
 import json
 import sys
+import time
 from collections import deque
 from pathlib import Path
 
@@ -694,6 +695,39 @@ def execute_analysis_with_idempotency(
         # Remember this run in history (O(1) eviction happens here)
         remember_run(dataset_version, run_key)
 
+        # Add to conversation history (lightweight storage per ADR001)
+        query_text = query_text or getattr(context, "research_question", "")
+        headline = result.get("headline") or result.get("headline_text") or "Analysis completed"
+        filters_applied = []
+        if context.query_plan and context.query_plan.filters:
+            filters_applied = [f.__dict__ for f in context.query_plan.filters]
+        elif context.filters:
+            filters_applied = [f.__dict__ for f in context.filters]
+
+        # Initialize conversation history if not exists
+        if "conversation_history" not in st.session_state:
+            st.session_state["conversation_history"] = []
+
+        # Add entry (lightweight: headline, not full result dict)
+        # Limit to last 20 queries to prevent memory bloat
+        max_conversation_history = 20
+        st.session_state["conversation_history"].append(
+            {
+                "query": query_text,
+                "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
+                "headline": headline,
+                "run_key": run_key,
+                "timestamp": time.time(),
+                "filters_applied": filters_applied,
+            }
+        )
+
+        # Limit history size (keep last N entries)
+        if len(st.session_state["conversation_history"]) > max_conversation_history:
+            st.session_state["conversation_history"] = st.session_state["conversation_history"][
+                -max_conversation_history:
+            ]
+
         logger.info(
             "analysis_result_stored",
             run_key=run_key,
@@ -825,6 +859,10 @@ def main():
         st.session_state["analysis_context"] = None
         st.session_state["intent_signal"] = None
         st.session_state["use_nl_query"] = True  # Default to NL query first
+
+    # Initialize conversation history (lightweight storage per ADR001)
+    if "conversation_history" not in st.session_state:
+        st.session_state["conversation_history"] = []
 
     # Step 1: Ask question (NL or structured)
     if st.session_state["intent_signal"] is None:
