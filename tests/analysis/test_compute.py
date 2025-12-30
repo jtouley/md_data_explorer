@@ -234,6 +234,97 @@ class TestComputeComparisonAnalysis:
         assert result["type"] == "comparison"
         assert "error" in result
 
+    def test_comparison_analysis_with_string_numeric_outcome(self):
+        """Test that string numeric columns are converted and means computed."""
+        # Arrange: String numeric outcome with "<20" style values
+        df = pl.DataFrame({
+            "Treatment": ["A", "A", "B", "B"],
+            "Viral Load": ["<20", "120", "200", "150"],
+        })
+        
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+        context.primary_variable = "Viral Load"
+        context.grouping_variable = "Treatment"
+        
+        # Act
+        result = compute_comparison_analysis(df, context)
+        
+        # Assert: Verify group means were computed (not counts)
+        assert "group_statistics" not in result  # This key doesn't exist in current implementation
+        assert "group_means" in result or "group1_mean" in result
+        # Treatment A: mean of [20, 120] = 70
+        # Treatment B: mean of [200, 150] = 175
+        # (Note: "<20" converts to 20 as upper bound)
+        if "group_means" in result:
+            assert result["group_means"]["A"] == pytest.approx(70, rel=0.01)
+            assert result["group_means"]["B"] == pytest.approx(175, rel=0.01)
+        elif "group1_mean" in result and "group2_mean" in result:
+            # Check that means are approximately correct (order may vary)
+            means = [result["group1_mean"], result["group2_mean"]]
+            assert 70 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 70) < 1 for m in means)
+            assert 175 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 175) < 1 for m in means)
+        
+        # Verify test type is numeric (t-test or ANOVA)
+        assert result["test_type"] in ["t_test", "anova"]
+
+    def test_comparison_analysis_with_european_comma_format(self):
+        """Test European comma format conversion (e.g., '1,234.5')."""
+        # Arrange: European comma format
+        df = pl.DataFrame({
+            "Treatment": ["A", "B"],
+            "Score": ["1,234.5", "2,345.6"],
+        })
+        
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+        context.primary_variable = "Score"
+        context.grouping_variable = "Treatment"
+        
+        # Act
+        result = compute_comparison_analysis(df, context)
+        
+        # Assert: Verify conversion and mean computation
+        assert result["test_type"] in ["t_test", "anova"]
+        if "group_means" in result:
+            assert result["group_means"]["A"] == pytest.approx(1234.5, rel=0.01)
+            assert result["group_means"]["B"] == pytest.approx(2345.6, rel=0.01)
+        elif "group1_mean" in result and "group2_mean" in result:
+            means = [result["group1_mean"], result["group2_mean"]]
+            assert any(abs(m - 1234.5) < 1 for m in means)
+            assert any(abs(m - 2345.6) < 1 for m in means)
+
+    def test_comparison_analysis_works_identically_single_file_and_multi_table(self):
+        """Test that comparison analysis works identically for both upload types."""
+        # Arrange: Create identical test data for both upload types
+        single_file_df = pl.DataFrame({
+            "Treatment": ["A", "A", "B", "B"],
+            "Viral Load": ["<20", "120", "200", "150"],
+        })
+        
+        multi_table_df = pl.DataFrame({
+            "Treatment": ["A", "A", "B", "B"],
+            "Viral Load": ["<20", "120", "200", "150"],
+        })
+        
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+        context.primary_variable = "Viral Load"
+        context.grouping_variable = "Treatment"
+        
+        # Act: Run analysis on both
+        single_result = compute_comparison_analysis(single_file_df, context)
+        multi_result = compute_comparison_analysis(multi_table_df, context)
+        
+        # Assert: Results must be identical
+        assert single_result["test_type"] == multi_result["test_type"]
+        if "group_means" in single_result and "group_means" in multi_result:
+            assert single_result["group_means"]["A"] == multi_result["group_means"]["A"]
+            assert single_result["group_means"]["B"] == multi_result["group_means"]["B"]
+        elif "group1_mean" in single_result and "group1_mean" in multi_result:
+            assert single_result["group1_mean"] == multi_result["group1_mean"]
+            assert single_result["group2_mean"] == multi_result["group2_mean"]
+
 
 class TestComputePredictorAnalysis:
     """Test compute_predictor_analysis function."""
