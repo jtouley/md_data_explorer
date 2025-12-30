@@ -457,6 +457,54 @@ def sample_context():
 
 
 @pytest.fixture
+def low_confidence_context():
+    """
+    AnalysisContext fixture with low confidence (0.4).
+
+    Returns AnalysisContext configured for low-confidence feedback testing:
+    - inferred_intent: COMPARE_GROUPS
+    - primary_variable: "mortality"
+    - grouping_variable: "treatment_arm"
+    - confidence: 0.4 (below auto-execute threshold)
+    - match_suggestions: Dictionary with collision suggestions
+    """
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.COMPARE_GROUPS,
+        primary_variable="mortality",
+        grouping_variable="treatment_arm",
+        research_question="compare mortality by treatment",
+        match_suggestions={"mortality": ["mortality", "death", "outcome"]},
+    )
+    context.confidence = 0.4  # Low confidence
+    return context
+
+
+@pytest.fixture
+def high_confidence_context():
+    """
+    AnalysisContext fixture with high confidence (0.9).
+
+    Returns AnalysisContext configured for high-confidence auto-execute testing:
+    - inferred_intent: COMPARE_GROUPS
+    - primary_variable: "mortality"
+    - grouping_variable: "treatment_arm"
+    - confidence: 0.9 (above auto-execute threshold)
+    """
+    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+    context = AnalysisContext(
+        inferred_intent=AnalysisIntent.COMPARE_GROUPS,
+        primary_variable="mortality",
+        grouping_variable="treatment_arm",
+        research_question="compare mortality by treatment",
+    )
+    context.confidence = 0.9  # High confidence
+    return context
+
+
+@pytest.fixture
 def mock_semantic_layer():
     """
     Factory fixture for creating mock SemanticLayer instances.
