@@ -84,10 +84,12 @@ class AnalysisContext:
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             # Complete if we have at least 2 predictor variables OR primary + grouping variables
             # (NLU may extract variables as primary/grouping instead of predictor_variables)
+            # For CORRELATIONS, predictor_variables should contain ALL variables mentioned
             has_predictors = len(self.predictor_variables) >= 2
             has_primary_grouping = (
                 self.primary_variable is not None and self.grouping_variable is not None
             )
+            # Also check if we have primary + grouping that can be used
             return has_predictors or has_primary_grouping
 
         elif self.inferred_intent == AnalysisIntent.COUNT:

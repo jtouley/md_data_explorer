@@ -421,12 +421,18 @@ class NLQueryEngine:
                     if not intent.primary_variable and len(matched_vars) >= 1:
                         intent.primary_variable = matched_vars[0]
 
-                # For CORRELATIONS: assign first two variables
+                # For CORRELATIONS: extract ALL variables mentioned (not just first 2)
+                # CORRELATIONS queries often mention multiple variables (e.g., "how does X, Y relate to Z and W")
+                # Put ALL extracted variables in predictor_variables for correlation analysis
                 elif intent.intent_type == "CORRELATIONS":
-                    if not intent.primary_variable and len(matched_vars) >= 1:
-                        intent.primary_variable = matched_vars[0]
-                    if not intent.grouping_variable and len(matched_vars) >= 2:
-                        intent.grouping_variable = matched_vars[1]
+                    # For CORRELATIONS, use predictor_variables to hold all variables
+                    if matched_vars:
+                        intent.predictor_variables = matched_vars
+                        # Also set primary/grouping for backward compatibility
+                        if len(matched_vars) >= 1:
+                            intent.primary_variable = matched_vars[0]
+                        if len(matched_vars) >= 2:
+                            intent.grouping_variable = matched_vars[1]
 
                 if matched_vars or (intent.primary_variable or intent.grouping_variable):
                     logger.info(
@@ -528,10 +534,12 @@ class NLQueryEngine:
             # Try to extract variables from query
             variables, _ = self._extract_variables_from_query(query)
             if len(variables) >= 2:
+                # For CORRELATIONS with multiple variables, put ALL in predictor_variables
                 return QueryIntent(
                     intent_type="CORRELATIONS",
-                    primary_variable=variables[0],
-                    grouping_variable=variables[1],
+                    primary_variable=variables[0],  # First variable for backward compatibility
+                    grouping_variable=variables[1],  # Second for backward compatibility
+                    predictor_variables=variables,  # ALL variables for correlation analysis
                     confidence=0.9,
                 )
             elif len(variables) == 1:
@@ -539,6 +547,7 @@ class NLQueryEngine:
                 return QueryIntent(
                     intent_type="CORRELATIONS",
                     primary_variable=variables[0],
+                    predictor_variables=variables,  # Include in predictor_variables too
                     confidence=0.85,
                 )
             else:
