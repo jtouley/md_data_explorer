@@ -728,10 +728,7 @@ def render_relationship_analysis(result: dict) -> None:
             direction = "increases together" if corr_val > 0 else "increases as the other decreases"
             strength = "strongly" if abs(corr_val) >= 0.7 else "moderately"
 
-            st.markdown(
-                f"• **{var1_clean}** and **{var2_clean}** {strength} {direction} "
-                f"(correlation: {corr_val:.2f})"
-            )
+            st.markdown(f"• **{var1_clean}** and **{var2_clean}** {strength} {direction} (correlation: {corr_val:.2f})")
     elif moderate_correlations:
         st.markdown("#### 📊 Findings")
         st.info("No strong relationships found, but some moderate relationships exist:")

@@ -1024,7 +1024,7 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
         excluded_str = ", ".join(non_numeric_variables[:5])
         if len(non_numeric_variables) > 5:
             excluded_str += "..."
-        
+
         return {
             "type": "relationship",
             "error": (
@@ -1065,9 +1065,7 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
 
     # Find moderate correlations (0.3 <= |r| < 0.5)
     moderate_correlations = [
-        item
-        for item in corr_data
-        if item["var1"] != item["var2"] and 0.3 <= abs(item["correlation"]) < 0.5
+        item for item in corr_data if item["var1"] != item["var2"] and 0.3 <= abs(item["correlation"]) < 0.5
     ]
 
     return {

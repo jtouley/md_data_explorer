@@ -86,9 +86,7 @@ class AnalysisContext:
             # (NLU may extract variables as primary/grouping instead of predictor_variables)
             # For CORRELATIONS, predictor_variables should contain ALL variables mentioned
             has_predictors = len(self.predictor_variables) >= 2
-            has_primary_grouping = (
-                self.primary_variable is not None and self.grouping_variable is not None
-            )
+            has_primary_grouping = self.primary_variable is not None and self.grouping_variable is not None
             # Also check if we have primary + grouping that can be used
             return has_predictors or has_primary_grouping
 
@@ -122,9 +120,7 @@ class AnalysisContext:
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
             # Check if we have enough variables (either as predictors or primary+grouping)
             has_predictors = len(self.predictor_variables) >= 2
-            has_primary_grouping = (
-                self.primary_variable is not None and self.grouping_variable is not None
-            )
+            has_primary_grouping = self.primary_variable is not None and self.grouping_variable is not None
             if not has_predictors and not has_primary_grouping:
                 missing.append("at least 2 variables to examine relationships")
 
