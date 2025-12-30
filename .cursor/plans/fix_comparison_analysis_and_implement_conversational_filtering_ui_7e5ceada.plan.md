@@ -92,7 +92,7 @@ todos:
       - phase3-ui-redesign
   - id: phase3-inline-rendering
     content: Implement inline result rendering with chat message style and collapsible details
-    status: pending
+    status: completed
     dependencies:
       - phase3-ui-redesign
   - id: phase3-follow-ups

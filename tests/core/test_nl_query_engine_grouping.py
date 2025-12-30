@@ -18,10 +18,14 @@ class TestGroupingExtractionFromCompoundQueries:
     def test_extract_grouping_broken_down_by_per_pattern(self, mock_semantic_layer):
         """Test extraction of grouping from 'broken down by count of patients per X' pattern."""
         # Arrange: Create semantic layer with statin column
+        statin_column_value = (
+            "Statin Used:    0: n/a                       1: Atorvastatin  "
+            "2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin"
+        )
         mock = mock_semantic_layer(
             columns={
-                "statin": "Statin Used:    0: n/a                       1: Atorvastatin  2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin",
-                "statin_used": "Statin Used:    0: n/a                       1: Atorvastatin  2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin",
+                "statin": statin_column_value,
+                "statin_used": statin_column_value,
             }
         )
         engine = NLQueryEngine(mock)
@@ -184,9 +188,13 @@ class TestGroupingExtractionFromCompoundQueries:
     def test_extract_grouping_uses_partial_match_when_fuzzy_fails(self, mock_semantic_layer):
         """Test that partial matching is used when fuzzy match confidence is too low."""
         # Arrange: Create semantic layer with column that has long name
+        statin_column_value = (
+            "Statin Used:    0: n/a                       1: Atorvastatin  "
+            "2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin"
+        )
         mock = mock_semantic_layer(
             columns={
-                "statin_used_long_name": "Statin Used:    0: n/a                       1: Atorvastatin  2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin",
+                "statin_used_long_name": statin_column_value,
             }
         )
         # Mock _fuzzy_match_variable to return low confidence

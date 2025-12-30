@@ -839,12 +839,13 @@ class NLQueryEngine:
 
         # Pattern 1: Categorical filters with explicit values
         # "those that had X", "patients with X", "with X", "on X"
+        # Stop at common query continuation words: and, or, which, what, how, where, when
         categorical_patterns = [
-            r"(?:those|patients|subjects|people)\s+(?:that|who)\s+(?:had|have|were|are)\s+([^,\.]+)",
-            r"(?:patients|subjects|people)\s+with\s+([^,\.]+)",
-            r"with\s+([^,\.]+)",
-            r"on\s+([^,\.]+)",  # "on statins", "on treatment"
-            r"were\s+on\s+([^,\.]+)",  # "were on statins"
+            r"(?:those|patients|subjects|people)\s+(?:that|who)\s+(?:had|have|were|are)\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            r"(?:patients|subjects|people)\s+with\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            r"with\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            r"on\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "on statins", "on treatment"
+            r"were\s+on\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "were on statins"
         ]
 
         for pattern in categorical_patterns:
