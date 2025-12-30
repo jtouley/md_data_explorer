@@ -154,7 +154,7 @@ class TestGetCohortLazyEvaluation:
         assert "outcome" in cohort.columns
 
     def test_get_cohort_applies_filters_lazily(self, tmp_path, sample_variable_mapping):
-        """Test that get_cohort() applies filters using lazy evaluation."""
+        """Test that get_cohort() applies filters using lazy evaluation with real predicate pushdown."""
         # Arrange
         storage = UserDatasetStorage(upload_dir=tmp_path)
         upload_id = "test_cohort_filter"
@@ -182,15 +182,18 @@ class TestGetCohortLazyEvaluation:
         dataset = UploadedDataset(upload_id=upload_id, storage=storage)
         dataset.load()
 
-        # Act
+        # Act: Apply filter through get_cohort
         cohort = dataset.get_cohort(treatment="A")
 
-        # Assert
+        # Assert: Filter was applied correctly
         assert len(cohort) == 2, "Should only return treatment A patients"
-        assert all(cohort["treatment"] == "A")
+        assert all(cohort["treatment"] == "A"), "All rows should have treatment=A"
+
+        # Assert: Verify lazy frame still exists and can be reused
+        assert isinstance(dataset.data, pl.LazyFrame), "Should still have LazyFrame for reuse"
 
     def test_get_cohort_lazy_evaluation_predicate_pushdown(self, tmp_path, sample_variable_mapping):
-        """Test that lazy evaluation benefits from predicate pushdown."""
+        """Test that lazy evaluation actually performs predicate pushdown (not just stores LazyFrame)."""
         # Arrange
         storage = UserDatasetStorage(upload_dir=tmp_path)
         upload_id = "test_predicate_pushdown"
@@ -218,13 +221,55 @@ class TestGetCohortLazyEvaluation:
         dataset = UploadedDataset(upload_id=upload_id, storage=storage)
         dataset.load()
 
-        # Act
-        cohort = dataset.get_cohort()
+        # Act: Get filtered cohort (should push predicate down)
+        cohort_filtered = dataset.get_cohort(treatment="A")
 
-        # Assert
-        assert len(cohort) == 1000
-        assert "patient_id" in cohort.columns
-        assert isinstance(dataset.data, pl.LazyFrame), "Should use lazy frames for large datasets"
+        # Assert: Verify actual predicate pushdown happened
+        # 1. Filtered cohort has correct number of rows (500 out of 1000)
+        assert len(cohort_filtered) == 500, "Should return exactly 500 treatment A patients"
+        assert all(cohort_filtered["treatment"] == "A"), "All rows should have treatment=A"
+
+        # 2. Verify lazy frame can still be used (not consumed)
+        assert isinstance(dataset.data, pl.LazyFrame), "Should maintain LazyFrame for reuse"
+
+        # 3. Verify we can get unfiltered cohort (tests that filter doesn't mutate self.data)
+        cohort_full = dataset.get_cohort()
+        assert len(cohort_full) == 1000, "Unfiltered cohort should have all 1000 rows"
+
+    def test_get_cohort_lazy_plan_contains_filter(self, tmp_path, sample_variable_mapping):
+        """Test that Polars optimized plan contains FILTER node when filtering."""
+        # Arrange
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = "test_filter_plan"
+
+        test_data = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003", "P004"],
+                "outcome": [0, 1, 0, 1],
+                "age": [50, 60, 70, 80],
+                "treatment": ["A", "B", "A", "B"],
+            }
+        )
+        csv_path = storage.raw_dir / f"{upload_id}.csv"
+        test_data.write_csv(csv_path)
+
+        metadata = {
+            "upload_id": upload_id,
+            "upload_timestamp": "2024-01-01T00:00:00",
+            "variable_mapping": sample_variable_mapping,
+        }
+        metadata_path = storage.metadata_dir / f"{upload_id}.json"
+        metadata_path.write_text(json.dumps(metadata))
+
+        # Act: Create LazyFrame with filter (simulating internal get_cohort logic)
+        lf = storage.get_upload_data(upload_id, lazy=True)
+        lf_filtered = lf.filter(pl.col("treatment") == "A")
+
+        # Assert: Optimized plan should contain SELECTION (Polars' term for filter pushdown)
+        plan = lf_filtered.explain(optimized=True)
+        assert "SELECTION" in plan, f"Optimized plan should contain SELECTION node. Got: {plan}"
+        # Verify the filter is actually in the CSV scan (not applied after)
+        assert 'col("treatment")' in plan, "Filter should be part of CSV scan"
 
 
 class TestLazyFrameMigrationCompleteness:

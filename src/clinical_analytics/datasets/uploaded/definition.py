@@ -159,14 +159,40 @@ class UploadedDataset(ClinicalDataset):
         if self.data is None:
             self.load()
 
-        # Phase 4: Collect lazy frame if needed
-        # Convert LazyFrame to pandas DataFrame for processing
+        # Phase 4: Apply filters in Polars before collecting (real lazy execution)
+        # Keep data as LazyFrame to enable predicate pushdown and projection pruning
         if isinstance(self.data, pl.LazyFrame):
-            # Collect and convert to pandas for UnifiedCohort compatibility
-            # TODO: Future optimization - keep as Polars throughout pipeline
-            data_df = self.data.collect().to_pandas()
+            lf = self.data
+
+            # Apply filters using Polars expressions (predicate pushdown)
+            if filters:
+                filter_exprs = []
+                for key, value in filters.items():
+                    # Simple equality filters (extend as needed)
+                    if isinstance(value, list):
+                        filter_exprs.append(pl.col(key).is_in(value))
+                    else:
+                        filter_exprs.append(pl.col(key) == value)
+
+                if filter_exprs:
+                    # Combine filters with AND logic
+                    combined_filter = filter_exprs[0]
+                    for expr in filter_exprs[1:]:
+                        combined_filter = combined_filter & expr
+                    lf = lf.filter(combined_filter)
+
+            # Collect only once at the end (after filters applied)
+            data_df = lf.collect().to_pandas()
         elif isinstance(self.data, pd.DataFrame):
             data_df = self.data
+            # Apply filters in pandas (backward compatibility path)
+            if filters:
+                for key, value in filters.items():
+                    if key in data_df.columns:
+                        if isinstance(value, list):
+                            data_df = data_df[data_df[key].isin(value)]
+                        else:
+                            data_df = data_df[data_df[key] == value]
         else:
             raise TypeError(f"Unexpected data type: {type(self.data)}")
 
@@ -223,6 +249,16 @@ class UploadedDataset(ClinicalDataset):
                             f"columns={id_metadata.get('patient_id_columns')}"
                         )
                         data_df = df_with_id.to_pandas()
+
+                        # CRITICAL FIX: Update self.data to persist regenerated patient_id
+                        # Without this, next call to get_cohort() re-collects old LazyFrame and re-hits this path
+                        if isinstance(self.data, pl.LazyFrame):
+                            # Convert back to LazyFrame to maintain lazy execution for future calls
+                            self.data = pl.LazyFrame(df_with_id)
+                        else:
+                            # If original was pandas, update with corrected pandas
+                            self.data = data_df
+
                         if "patient_id" not in data_df.columns:
                             raise ValueError(f"Failed to create patient_id. Available columns: {list(data_df.columns)}")
                         patient_id_col = "patient_id"
@@ -279,14 +315,8 @@ class UploadedDataset(ClinicalDataset):
                 cohort_data[col] = data_df[col]
 
         # Create cohort dataframe
+        # Note: Filters already applied in Polars/pandas paths above (predicate pushdown)
         cohort = pd.DataFrame(cohort_data)
-
-        # Apply any filters
-        if filters:
-            # Basic filter support (can be extended)
-            for key, value in filters.items():
-                if key in cohort.columns:
-                    cohort = cohort[cohort[key] == value]
 
         return cohort
 
@@ -327,16 +357,18 @@ class UploadedDataset(ClinicalDataset):
             variable_mapping["time_variables"]["time_zero"] = time_zero_config["source_column"]
 
         # Add all other columns as predictors (exclude patient_id and outcome)
-        # Note: data_df is not available in this context (called before get_cohort)
-        # We need to load data if not already loaded
+        # Use schema to get column names without collecting (avoid materializing large datasets)
         if self.data is not None:
-            # Handle both lazy and eager data
+            # Get column names efficiently
             if isinstance(self.data, pl.LazyFrame):
-                data_for_columns = self.data.collect().to_pandas()
+                # Use collect_schema() to get column names without collecting data
+                all_cols = set(self.data.collect_schema().names())
+            elif isinstance(self.data, pd.DataFrame):
+                all_cols = set(self.data.columns)
             else:
-                data_for_columns = self.data
+                # Fallback for other types (e.g., Polars DataFrame)
+                all_cols = set(self.data.columns)
 
-            all_cols = set(data_for_columns.columns)
             excluded = {variable_mapping["patient_id"], variable_mapping["outcome"]}
             variable_mapping["predictors"] = [col for col in all_cols if col not in excluded and col not in {None}]
 
