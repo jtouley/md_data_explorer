@@ -1089,12 +1089,16 @@ class NLQueryEngine:
 
     def _extract_grouping_from_compound_query(self, query: str) -> str | None:
         """
-        Extract grouping variable from compound queries with "which X" patterns.
+        Extract grouping variable from compound queries with "which X" and "broken down by" patterns.
 
         Handles patterns like:
         - "which statin was most prescribed"
         - "which treatment was most common"
         - "and which X"
+        - "broken down by count of patients per statin"
+        - "broken down by X"
+        - "by X" (simple pattern at end)
+        - "per X" (at end of query)
 
         Args:
             query: User's natural language query
@@ -1104,10 +1108,53 @@ class NLQueryEngine:
         """
         query_lower = query.lower()
 
-        # Pattern 1: "which X was most Y" or "which X was Y"
+        # Pattern 1: "broken down by X" or "by X" or "per X" (prioritize explicit grouping phrases)
+        # These patterns are semantic - they capture grouping intent without hardcoding specific words
+        broken_down_patterns = [
+            # "broken down by count of patients per X" - captures grouping after "per"
+            r"broken\s+down\s+by\s+(?:count\s+of\s+)?(?:\w+\s+)*?per\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+            # "broken down by X" - captures grouping variable directly
+            r"broken\s+down\s+by\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+            # "by X" at end of query - simple grouping pattern
+            r"by\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+            # "per X" at end of query - frequency/rate grouping pattern
+            r"per\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+        ]
+
+        for pattern in broken_down_patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                group_phrase = match.group(1).strip()
+                # Try to match this phrase to a column name using semantic layer
+                column_name, conf, _ = self._fuzzy_match_variable(group_phrase)
+                if column_name and conf > 0.5:
+                    logger.debug(
+                        "grouping_extracted_broken_down",
+                        query=query,
+                        group_phrase=group_phrase,
+                        column_name=column_name,
+                        confidence=conf,
+                    )
+                    return column_name
+                # If fuzzy match failed, try partial matching (uses semantic layer alias index)
+                if not column_name or conf <= 0.5:
+                    column_name = self._find_column_by_partial_match(group_phrase)
+                    if column_name:
+                        logger.debug(
+                            "grouping_extracted_broken_down_partial",
+                            query=query,
+                            group_phrase=group_phrase,
+                            column_name=column_name,
+                        )
+                        return column_name
+
+        # Pattern 2: "which X was most Y" - semantic pattern (captures any superlative, not hardcoded words)
+        # Uses "most" + any word pattern to be flexible with domain-specific terms
         patterns = [
-            r"which\s+(\w+(?:\s+\w+)*?)\s+was\s+(?:most\s+)?(?:prescribed|common|used|frequent)",
-            r"and\s+which\s+(\w+(?:\s+\w+)*?)\s+was\s+(?:most\s+)?(?:prescribed|common|used|frequent)",
+            # "which X was most Y" - captures X, Y can be any word (prescribed, common, used, frequent, etc.)
+            r"which\s+(\w+(?:\s+\w+)*?)\s+was\s+most\s+\w+",
+            # "and which X was most Y" - same pattern with conjunction
+            r"and\s+which\s+(\w+(?:\s+\w+)*?)\s+was\s+most\s+\w+",
         ]
 
         for pattern in patterns:
@@ -1137,10 +1184,12 @@ class NLQueryEngine:
                         )
                         return column_name
 
-        # Pattern 2: "which X" at the end of query (fallback)
+        # Pattern 3: "which X" at the end of query (fallback - most general pattern)
+        # This is semantic - captures any "which X" without hardcoding what follows
         match = re.search(r"which\s+(\w+(?:\s+\w+)*?)(?:\?|$)", query_lower)
         if match:
             group_phrase = match.group(1).strip()
+            # Use semantic layer for matching (not hardcoded keywords)
             column_name, conf, _ = self._fuzzy_match_variable(group_phrase)
             if column_name and conf > 0.5:
                 logger.debug(
@@ -1151,7 +1200,7 @@ class NLQueryEngine:
                     confidence=conf,
                 )
                 return column_name
-            # If fuzzy match failed, try partial matching
+            # If fuzzy match failed, try partial matching (uses semantic layer alias index)
             if not column_name or conf <= 0.5:
                 column_name = self._find_column_by_partial_match(group_phrase)
                 if column_name:
