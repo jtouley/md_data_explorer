@@ -50,7 +50,7 @@ def get_sample_datasets():
 class TestDatasetInterface:
     """
     Test ClinicalDataset interface using sample datasets for fast unit testing.
-    
+
     Uses 1-2 representative datasets to keep test count manageable.
     Full integration tests across all datasets are in TestDatasetInterfaceIntegration.
     """
@@ -238,7 +238,7 @@ class TestDatasetInterface:
 class TestSemanticLayerIntegration:
     """
     Test that datasets properly integrate with semantic layer.
-    
+
     Uses sample datasets for fast testing. Full integration tests across
     all datasets verify semantic layer behavior comprehensively.
     """
@@ -282,7 +282,7 @@ class TestSemanticLayerIntegration:
 class TestSchemaCompliance:
     """
     Test that all datasets comply with UnifiedCohort schema.
-    
+
     These are critical integration tests that verify schema compliance
     across ALL available datasets. Marked as slow/integration because
     they load real data.
@@ -331,9 +331,9 @@ class TestSchemaCompliance:
         cohort = dataset.get_cohort()
 
         # Assert: time_zero is datetime
-        assert pd.api.types.is_datetime64_any_dtype(
-            cohort[UnifiedCohort.TIME_ZERO]
-        ), f"{dataset_name} time_zero is not datetime type"
+        assert pd.api.types.is_datetime64_any_dtype(cohort[UnifiedCohort.TIME_ZERO]), (
+            f"{dataset_name} time_zero is not datetime type"
+        )
 
     def test_outcome_column_is_numeric(self, dataset_name):
         """Test that outcome column is numeric type."""
@@ -346,9 +346,9 @@ class TestSchemaCompliance:
         cohort = dataset.get_cohort()
 
         # Assert: outcome is numeric
-        assert pd.api.types.is_numeric_dtype(
-            cohort[UnifiedCohort.OUTCOME]
-        ), f"{dataset_name} outcome is not numeric type"
+        assert pd.api.types.is_numeric_dtype(cohort[UnifiedCohort.OUTCOME]), (
+            f"{dataset_name} outcome is not numeric type"
+        )
 
     def test_cohort_has_data(self, dataset_name):
         """Test that cohort returns non-empty DataFrame."""

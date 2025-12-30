@@ -7,11 +7,7 @@ and allow user correction without retyping.
 
 from unittest.mock import MagicMock, patch
 
-import polars as pl
-import pytest
-
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
-
+from clinical_analytics.ui.components.question_engine import AnalysisIntent
 
 # Fixtures moved to conftest.py - use shared fixtures:
 # - sample_cohort

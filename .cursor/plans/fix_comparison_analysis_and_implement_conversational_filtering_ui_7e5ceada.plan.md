@@ -37,22 +37,22 @@ todos:
       - phase1-fix-comparison
   - id: phase1.5-queryplan-contract
     content: Define QueryPlan and FilterSpec dataclasses per ADR001 contract
-    status: pending
+    status: completed
     dependencies:
       - phase1-tests
   - id: phase1.5-count-intent
     content: Add COUNT intent type with pattern matching and semantic layer execution
-    status: pending
+    status: completed
     dependencies:
       - phase1.5-queryplan-contract
   - id: phase2-filter-parsing
     content: Implement _extract_filters() in NL Query Engine to parse filter conditions (returns list[FilterSpec])
-    status: pending
+    status: completed
     dependencies:
       - phase1.5-count-intent
   - id: phase2-queryplan-conversion
     content: Convert QueryIntent to QueryPlan with FilterSpec objects in NL Query Engine
-    status: pending
+    status: in_progress
     dependencies:
       - phase2-filter-parsing
   - id: phase2-context-queryplan

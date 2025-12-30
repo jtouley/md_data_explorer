@@ -14,12 +14,15 @@ Example:
     'COMPARE_GROUPS'
 """
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from difflib import get_close_matches
-from typing import Any
 
 import structlog
+
+from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 logger = structlog.get_logger()
 
@@ -30,6 +33,7 @@ VALID_INTENT_TYPES = [
     "FIND_PREDICTORS",
     "SURVIVAL",
     "CORRELATIONS",
+    "COUNT",
 ]
 
 
@@ -45,7 +49,7 @@ class QueryIntent:
         predictor_variables: List of predictor variables for regression
         time_variable: Time column for survival analysis
         event_variable: Event indicator for survival analysis
-        filters: Dictionary of filter conditions
+        filters: List of FilterSpec objects for filter conditions
         confidence: Confidence score 0-1 for the parse
     """
 
@@ -55,7 +59,7 @@ class QueryIntent:
     predictor_variables: list[str] = field(default_factory=list)
     time_variable: str | None = None
     event_variable: str | None = None
-    filters: dict[str, Any] = field(default_factory=dict)
+    filters: list[FilterSpec] = field(default_factory=list)
     confidence: float = 0.0
     parsing_tier: str | None = None  # "pattern_match", "semantic_match", "llm_fallback"
     parsing_attempts: list[dict] = field(default_factory=list)  # What was tried
@@ -433,6 +437,17 @@ class NLQueryEngine:
                         grouping_variable=intent.grouping_variable,
                     )
 
+        # Extract filters from query (applies to all intent types)
+        if intent:
+            intent.filters = self._extract_filters(query)
+            if intent.filters:
+                logger.debug(
+                    "filters_extracted_in_parse",
+                    query=query,
+                    filter_count=len(intent.filters),
+                    intent_type=intent.intent_type,
+                )
+
         return intent
 
     def _get_matched_variables(self, intent: QueryIntent) -> list[str]:
@@ -501,6 +516,15 @@ class NLQueryEngine:
                 )
             else:
                 return QueryIntent(intent_type="CORRELATIONS", confidence=0.85)
+
+        # Pattern: "how many" or "count" or "number of" (COUNT intent)
+        count_patterns = [
+            r"how many",
+            r"\bcount\b",
+            r"number of",
+        ]
+        if any(re.search(pattern, query_lower) for pattern in count_patterns):
+            return QueryIntent(intent_type="COUNT", confidence=0.9)
 
         # Pattern: "describe" or "summary"
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
@@ -770,6 +794,328 @@ class NLQueryEngine:
                     return canonical, 0.6, None
 
         return None, 0.0, None
+
+    def _extract_filters(self, query: str) -> list[FilterSpec]:
+        """
+        Extract filter conditions from query text.
+
+        Patterns to detect:
+        - "those that had X" / "patients with X" → categorical filter
+        - "scores below/above X" → numeric range filter
+        - "with X" / "without X" → presence filter
+        - "on statins" / "were on statins" → categorical filter (value matching)
+
+        Args:
+            query: User's natural language query
+
+        Returns:
+            List of FilterSpec objects
+
+        Example:
+            >>> filters = engine._extract_filters("how many patients were on statins")
+            >>> # Returns [FilterSpec(column="Statin Used", operator="!=", value="0")]
+        """
+        filters = []
+        query_lower = query.lower()
+
+        # Pattern 1: Categorical filters with explicit values
+        # "those that had X", "patients with X", "with X", "on X"
+        categorical_patterns = [
+            r"(?:those|patients|subjects|people)\s+(?:that|who)\s+(?:had|have|were|are)\s+([^,\.]+)",
+            r"(?:patients|subjects|people)\s+with\s+([^,\.]+)",
+            r"with\s+([^,\.]+)",
+            r"on\s+([^,\.]+)",  # "on statins", "on treatment"
+            r"were\s+on\s+([^,\.]+)",  # "were on statins"
+        ]
+
+        for pattern in categorical_patterns:
+            matches = re.finditer(pattern, query_lower)
+            for match in matches:
+                value_phrase = match.group(1).strip()
+
+                # Strategy 1: Try to match phrase as column name (for direct column filters)
+                column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
+                if column_name and conf > 0.5:
+                    # Phrase matched a column - use equality operator
+                    filters.append(
+                        FilterSpec(
+                            column=column_name,
+                            operator="==",
+                            value=value_phrase,
+                            exclude_nulls=True,
+                        )
+                    )
+                    continue
+
+                # Strategy 2: Try to find a related column (e.g., "statins" → "Statin Prescribed?")
+                # Look for columns that contain the phrase or related terms
+                alias_index = self.semantic_layer.get_column_alias_index()
+                value_lower = value_phrase.lower()
+
+                # Find columns that might contain this value
+                # For "statins", look for columns with "statin" in the name
+                matching_columns = []
+                for alias, canonical in alias_index.items():
+                    alias_lower = alias.lower()
+                    # Check if value phrase is related to column name
+                    if value_lower in alias_lower or alias_lower in value_lower:
+                        matching_columns.append((canonical, alias))
+                    # Also check if they share a root word
+                    value_words = set(value_lower.split())
+                    alias_words = set(alias_lower.split())
+                    if value_words & alias_words:  # Intersection
+                        matching_columns.append((canonical, alias))
+
+                if matching_columns:
+                    # Prioritize binary yes/no columns for "on X" queries
+                    # These typically have patterns like "1: Yes 2: No" or "prescribed"
+                    prioritized_columns = []
+                    other_columns = []
+
+                    for canonical, alias in matching_columns:
+                        alias_lower = alias.lower()
+                        # Check for binary yes/no pattern indicators (higher priority)
+                        # Look for: "1:" followed by "yes" or "prescribed" in the name
+                        has_binary_pattern = (
+                            "1:" in alias
+                            and ("yes" in alias_lower or "prescribed" in alias_lower or "no" in alias_lower)
+                        ) or (
+                            # Alternative pattern: column name suggests binary (prescribed, yes/no, etc.)
+                            any(term in alias_lower for term in ["prescribed", "yes", "no"])
+                            and ":" in alias
+                            and any(char.isdigit() for char in alias)
+                        )
+
+                        if has_binary_pattern:
+                            prioritized_columns.append((canonical, alias))
+                        else:
+                            other_columns.append((canonical, alias))
+
+                    # Use prioritized columns first, then others
+                    if prioritized_columns:
+                        column_name, alias_name = prioritized_columns[0]
+                    else:
+                        column_name, alias_name = matching_columns[0]
+
+                    # For "on statins" / "were on statins", determine the filter value
+                    # Check if column name suggests it's a coded variable
+                    # (e.g., "Statin Prescribed? 1: Yes 2: No" or "Statin Used: 0: n/a 1: Atorvastatin...")
+                    if ":" in alias_name and any(char.isdigit() for char in alias_name):
+                        import re as re_module
+
+                        # Extract codes like "1:", "2:", etc. with their labels
+                        code_pattern = r"(\d+):\s*([^0-9]+?)(?=\s+\d+:|$)"
+                        codes = re_module.findall(code_pattern, alias_name)
+
+                        if codes:
+                            # Check if this is a binary yes/no column (e.g., "1: Yes 2: No")
+                            # For "on X" queries, we want the "Yes" value
+                            alias_lower = alias_name.lower()
+                            is_binary_yes_no = (
+                                len(codes) == 2  # Binary = exactly 2 codes
+                                and ("yes" in alias_lower or "prescribed" in alias_lower)
+                                and any("yes" in label.lower() or "no" in label.lower() for _, label in codes)
+                            )
+
+                            if is_binary_yes_no:
+                                # Binary yes/no column - find the "Yes" code
+                                yes_code = None
+                                for code, label in codes:
+                                    label_lower = label.lower()
+                                    if "yes" in label_lower or ("prescribed" in alias_lower and int(code) != 0):
+                                        yes_code = int(code)
+                                        break
+
+                                if yes_code is not None:
+                                    filters.append(
+                                        FilterSpec(
+                                            column=column_name,
+                                            operator="==",
+                                            value=yes_code,
+                                            exclude_nulls=True,
+                                        )
+                                    )
+                                else:
+                                    # Fallback: use code 1 if it exists (common pattern)
+                                    if any(int(code) == 1 for code, _ in codes):
+                                        filters.append(
+                                            FilterSpec(
+                                                column=column_name,
+                                                operator="==",
+                                                value=1,
+                                                exclude_nulls=True,
+                                            )
+                                        )
+                            else:
+                                # Coded column (not binary prescribed) - filter for non-zero values
+                                # For "on statins" with "Statin Used", filter for != 0 or IN [1,2,3,4,5]
+                                non_zero_codes = [int(code) for code, _ in codes if int(code) != 0]
+                                if non_zero_codes:
+                                    filters.append(
+                                        FilterSpec(
+                                            column=column_name,
+                                            operator="IN",
+                                            value=non_zero_codes,
+                                            exclude_nulls=True,
+                                        )
+                                    )
+                                else:
+                                    # Fallback: just exclude zero
+                                    filters.append(
+                                        FilterSpec(
+                                            column=column_name,
+                                            operator="!=",
+                                            value=0,
+                                            exclude_nulls=True,
+                                        )
+                                    )
+                        else:
+                            # No codes found, but column matches - use != 0 as default
+                            filters.append(
+                                FilterSpec(
+                                    column=column_name,
+                                    operator="!=",
+                                    value=0,
+                                    exclude_nulls=True,
+                                )
+                            )
+                    else:
+                        # Not a coded column - use equality with the phrase
+                        filters.append(
+                            FilterSpec(
+                                column=column_name,
+                                operator="==",
+                                value=value_phrase,
+                                exclude_nulls=True,
+                            )
+                        )
+
+        # Pattern 2: Numeric range filters
+        # "below X", "above X", "less than X", "greater than X", "> X", "< X"
+        numeric_patterns = [
+            (r"(\w+(?:\s+\w+)*)\s+below\s+([0-9]+\.?[0-9]*)", "<"),
+            (r"(\w+(?:\s+\w+)*)\s+above\s+([0-9]+\.?[0-9]*)", ">"),
+            (r"(\w+(?:\s+\w+)*)\s+less\s+than\s+([0-9]+\.?[0-9]*)", "<"),
+            (r"(\w+(?:\s+\w+)*)\s+greater\s+than\s+([0-9]+\.?[0-9]*)", ">"),
+            (r"(\w+(?:\s+\w+)*)\s+<=\s+([0-9]+\.?[0-9]*)", "<="),
+            (r"(\w+(?:\s+\w+)*)\s+>=\s+([0-9]+\.?[0-9]*)", ">="),
+            (r"(\w+(?:\s+\w+)*)\s+<\s+([0-9]+\.?[0-9]*)", "<"),
+            (r"(\w+(?:\s+\w+)*)\s+>\s+([0-9]+\.?[0-9]*)", ">"),
+            (r"scores?\s+below\s+([0-9\-]+\.?[0-9]*)", "<"),  # "scores below -2.5"
+            (r"scores?\s+above\s+([0-9\-]+\.?[0-9]*)", ">"),
+        ]
+
+        for pattern, operator in numeric_patterns:
+            matches = re.finditer(pattern, query_lower)
+            for match in matches:
+                if len(match.groups()) == 2:
+                    column_phrase = match.group(1).strip()
+                    value_str = match.group(2).strip()
+                else:
+                    # Pattern like "scores below -2.5" (no column name, just value)
+                    # Try to find a score column
+                    value_str = match.group(1).strip()
+                    column_phrase = "score"  # Default to "score"
+
+                # Try to match column phrase to actual column
+                column_name, conf, _ = self._fuzzy_match_variable(column_phrase)
+                if column_name and conf > 0.5:
+                    try:
+                        # Try to parse as float first, then int
+                        value = float(value_str)
+                        if value.is_integer():
+                            value = int(value)
+                        filters.append(
+                            FilterSpec(
+                                column=column_name,
+                                operator=operator,
+                                value=value,
+                                exclude_nulls=True,
+                            )
+                        )
+                    except ValueError:
+                        # Couldn't parse as number, skip
+                        pass
+
+        # Pattern 3: "without X" → inverse filter (NOT_IN or !=)
+        without_pattern = r"without\s+([^,\.]+)"
+        matches = re.finditer(without_pattern, query_lower)
+        for match in matches:
+            value_phrase = match.group(1).strip()
+            column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
+            if column_name and conf > 0.5:
+                filters.append(
+                    FilterSpec(
+                        column=column_name,
+                        operator="!=",
+                        value=value_phrase,
+                        exclude_nulls=True,
+                    )
+                )
+
+        # Pattern 4: Specific value mentions (e.g., "osteoporosis", "statin")
+        # This is a fallback for queries like "how many patients were on statins"
+        # where "statins" might not match a column but should match a value
+        # We'll look for common medical terms that might be values
+        # This is heuristic and will be improved with better value matching
+
+        logger.debug(
+            "filters_extracted",
+            query=query,
+            filter_count=len(filters),
+            filters=[{"column": f.column, "operator": f.operator, "value": f.value} for f in filters],
+        )
+
+        return filters
+
+    def _intent_to_plan(self, intent: QueryIntent, dataset_version: str) -> QueryPlan:
+        """
+        Convert QueryIntent to QueryPlan with deterministic run_key.
+
+        Args:
+            intent: QueryIntent from parse_query()
+            dataset_version: Dataset version identifier (upload_id or dataset_id)
+
+        Returns:
+            QueryPlan with deterministic run_key for idempotent execution
+        """
+        # Create QueryPlan from intent
+        plan = QueryPlan(
+            intent=intent.intent_type,  # type: ignore[arg-type]  # QueryPlan expects Literal, but we validate in QueryIntent
+            metric=intent.primary_variable,
+            group_by=intent.grouping_variable,
+            filters=intent.filters,  # Already FilterSpec objects
+            confidence=intent.confidence,
+            explanation="",  # Will be populated from intent if available
+            run_key=None,  # Will be set below
+        )
+
+        # Generate deterministic run_key: hash of (dataset_version, normalized_plan)
+        normalized_plan = {
+            "intent": plan.intent,
+            "metric": plan.metric,
+            "group_by": plan.group_by,
+            "filters": [
+                {
+                    "column": f.column,
+                    "operator": f.operator,
+                    "value": f.value,
+                    "exclude_nulls": f.exclude_nulls,
+                }
+                for f in plan.filters
+            ],
+        }
+        plan_hash = hashlib.sha256(json.dumps(normalized_plan, sort_keys=True).encode()).hexdigest()[:16]
+        plan.run_key = f"{dataset_version}_{plan_hash}"
+
+        logger.debug(
+            "intent_converted_to_plan",
+            intent_type=intent.intent_type,
+            run_key=plan.run_key,
+            filter_count=len(plan.filters),
+        )
+
+        return plan
 
     def _generate_suggestions(self, query: str) -> list[str]:
         """

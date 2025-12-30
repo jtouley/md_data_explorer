@@ -20,11 +20,10 @@ from clinical_analytics.analysis.compute import (
 )
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
-
 # All fixtures moved to conftest.py - use shared fixtures
 # sample_numeric_df, sample_categorical_df, sample_mixed_df
 # sample_context_describe, sample_context_compare, sample_context_predictor
-# sample_context_survival, sample_context_relationship
+# sample_context_survival, sample_context_relationship, sample_context_count
 
 
 class TestComputeDescriptiveAnalysis:
@@ -237,19 +236,21 @@ class TestComputeComparisonAnalysis:
     def test_comparison_analysis_with_string_numeric_outcome(self):
         """Test that string numeric columns are converted and means computed."""
         # Arrange: String numeric outcome with "<20" style values
-        df = pl.DataFrame({
-            "Treatment": ["A", "A", "B", "B"],
-            "Viral Load": ["<20", "120", "200", "150"],
-        })
-        
+        df = pl.DataFrame(
+            {
+                "Treatment": ["A", "A", "B", "B"],
+                "Viral Load": ["<20", "120", "200", "150"],
+            }
+        )
+
         context = AnalysisContext()
         context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
         context.primary_variable = "Viral Load"
         context.grouping_variable = "Treatment"
-        
+
         # Act
         result = compute_comparison_analysis(df, context)
-        
+
         # Assert: Verify group means were computed (not counts)
         assert "group_statistics" not in result  # This key doesn't exist in current implementation
         assert "group_means" in result or "group1_mean" in result
@@ -264,26 +265,28 @@ class TestComputeComparisonAnalysis:
             means = [result["group1_mean"], result["group2_mean"]]
             assert 70 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 70) < 1 for m in means)
             assert 175 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 175) < 1 for m in means)
-        
+
         # Verify test type is numeric (t-test or ANOVA)
         assert result["test_type"] in ["t_test", "anova"]
 
     def test_comparison_analysis_with_european_comma_format(self):
         """Test European comma format conversion (e.g., '1,234.5')."""
         # Arrange: European comma format
-        df = pl.DataFrame({
-            "Treatment": ["A", "B"],
-            "Score": ["1,234.5", "2,345.6"],
-        })
-        
+        df = pl.DataFrame(
+            {
+                "Treatment": ["A", "B"],
+                "Score": ["1,234.5", "2,345.6"],
+            }
+        )
+
         context = AnalysisContext()
         context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
         context.primary_variable = "Score"
         context.grouping_variable = "Treatment"
-        
+
         # Act
         result = compute_comparison_analysis(df, context)
-        
+
         # Assert: Verify conversion and mean computation
         assert result["test_type"] in ["t_test", "anova"]
         if "group_means" in result:
@@ -297,25 +300,29 @@ class TestComputeComparisonAnalysis:
     def test_comparison_analysis_works_identically_single_file_and_multi_table(self):
         """Test that comparison analysis works identically for both upload types."""
         # Arrange: Create identical test data for both upload types
-        single_file_df = pl.DataFrame({
-            "Treatment": ["A", "A", "B", "B"],
-            "Viral Load": ["<20", "120", "200", "150"],
-        })
-        
-        multi_table_df = pl.DataFrame({
-            "Treatment": ["A", "A", "B", "B"],
-            "Viral Load": ["<20", "120", "200", "150"],
-        })
-        
+        single_file_df = pl.DataFrame(
+            {
+                "Treatment": ["A", "A", "B", "B"],
+                "Viral Load": ["<20", "120", "200", "150"],
+            }
+        )
+
+        multi_table_df = pl.DataFrame(
+            {
+                "Treatment": ["A", "A", "B", "B"],
+                "Viral Load": ["<20", "120", "200", "150"],
+            }
+        )
+
         context = AnalysisContext()
         context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
         context.primary_variable = "Viral Load"
         context.grouping_variable = "Treatment"
-        
+
         # Act: Run analysis on both
         single_result = compute_comparison_analysis(single_file_df, context)
         multi_result = compute_comparison_analysis(multi_table_df, context)
-        
+
         # Assert: Results must be identical
         assert single_result["test_type"] == multi_result["test_type"]
         if "group_means" in single_result and "group_means" in multi_result:
@@ -600,6 +607,41 @@ class TestComputeAnalysisByType:
 
         # Assert: Relationship analysis returned
         assert result["type"] == "relationship"
+
+    def test_compute_analysis_by_type_routes_to_count(self, sample_numeric_df, sample_context_count):
+        """Test that compute_analysis_by_type routes COUNT intent correctly."""
+        # Act
+        result = compute_analysis_by_type(sample_numeric_df, sample_context_count)
+
+        # Assert: Count analysis returned
+        assert result["type"] == "count"
+        assert "total_count" in result
+        assert result["total_count"] == sample_numeric_df.height
+        assert "headline" in result
+
+    def test_compute_analysis_by_type_routes_to_count_with_grouping(self, sample_context_count):
+        """Test that compute_analysis_by_type routes COUNT intent with grouping correctly."""
+        # Arrange: COUNT intent with grouping variable
+        df = pl.DataFrame(
+            {
+                "category": ["A", "A", "B", "B", "C"],
+                "value": [10, 20, 30, 40, 50],
+            }
+        )
+        context = sample_context_count
+        context.grouping_variable = "category"
+
+        # Act
+        result = compute_analysis_by_type(df, context)
+
+        # Assert: Count analysis with grouping returned
+        assert result["type"] == "count"
+        assert "total_count" in result
+        assert result["total_count"] == df.height
+        assert "grouped_by" in result
+        assert result["grouped_by"] == "category"
+        assert "group_counts" in result
+        assert len(result["group_counts"]) == 3  # A, B, C
 
     def test_compute_analysis_by_type_handles_unknown_intent(self, sample_numeric_df):
         """Test that compute_analysis_by_type handles unknown intent."""
