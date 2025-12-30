@@ -448,6 +448,25 @@ class NLQueryEngine:
                     intent_type=intent.intent_type,
                 )
 
+            # Extract grouping variable from compound queries (e.g., "which X was most Y")
+            # This handles queries like "how many patients were on statins and which statin was most prescribed?"
+            if intent.intent_type == "COUNT" and not intent.grouping_variable:
+                grouping_var = self._extract_grouping_from_compound_query(query)
+                if grouping_var:
+                    intent.grouping_variable = grouping_var
+                    logger.info(
+                        "grouping_extracted_from_compound",
+                        query=query,
+                        grouping_variable=grouping_var,
+                        intent_type=intent.intent_type,
+                    )
+                else:
+                    logger.debug(
+                        "grouping_extraction_failed",
+                        query=query,
+                        intent_type=intent.intent_type,
+                    )
+
         return intent
 
     def _get_matched_variables(self, intent: QueryIntent) -> list[str]:
@@ -1067,6 +1086,138 @@ class NLQueryEngine:
         )
 
         return filters
+
+    def _extract_grouping_from_compound_query(self, query: str) -> str | None:
+        """
+        Extract grouping variable from compound queries with "which X" patterns.
+
+        Handles patterns like:
+        - "which statin was most prescribed"
+        - "which treatment was most common"
+        - "and which X"
+
+        Args:
+            query: User's natural language query
+
+        Returns:
+            Canonical column name if found, None otherwise
+        """
+        query_lower = query.lower()
+
+        # Pattern 1: "which X was most Y" or "which X was Y"
+        patterns = [
+            r"which\s+(\w+(?:\s+\w+)*?)\s+was\s+(?:most\s+)?(?:prescribed|common|used|frequent)",
+            r"and\s+which\s+(\w+(?:\s+\w+)*?)\s+was\s+(?:most\s+)?(?:prescribed|common|used|frequent)",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                group_phrase = match.group(1).strip()
+                # Try to match this phrase to a column name
+                column_name, conf, _ = self._fuzzy_match_variable(group_phrase)
+                if column_name and conf > 0.5:
+                    logger.debug(
+                        "grouping_extracted",
+                        query=query,
+                        group_phrase=group_phrase,
+                        column_name=column_name,
+                        confidence=conf,
+                    )
+                    return column_name
+                # If fuzzy match failed, try partial matching
+                if not column_name or conf <= 0.5:
+                    column_name = self._find_column_by_partial_match(group_phrase)
+                    if column_name:
+                        logger.debug(
+                            "grouping_extracted_partial",
+                            query=query,
+                            group_phrase=group_phrase,
+                            column_name=column_name,
+                        )
+                        return column_name
+
+        # Pattern 2: "which X" at the end of query (fallback)
+        match = re.search(r"which\s+(\w+(?:\s+\w+)*?)(?:\?|$)", query_lower)
+        if match:
+            group_phrase = match.group(1).strip()
+            column_name, conf, _ = self._fuzzy_match_variable(group_phrase)
+            if column_name and conf > 0.5:
+                logger.debug(
+                    "grouping_extracted_fallback",
+                    query=query,
+                    group_phrase=group_phrase,
+                    column_name=column_name,
+                    confidence=conf,
+                )
+                return column_name
+            # If fuzzy match failed, try partial matching
+            if not column_name or conf <= 0.5:
+                column_name = self._find_column_by_partial_match(group_phrase)
+                if column_name:
+                    logger.debug(
+                        "grouping_extracted_fallback_partial",
+                        query=query,
+                        group_phrase=group_phrase,
+                        column_name=column_name,
+                    )
+                    return column_name
+
+        return None
+
+    def _find_column_by_partial_match(self, search_term: str) -> str | None:
+        """
+        Find column by partial match (e.g., "statin" matches "Statin Used").
+
+        This is more lenient than fuzzy matching and useful for grouping variables
+        where the user might use a shortened form.
+
+        Args:
+            search_term: Term to search for (e.g., "statin")
+
+        Returns:
+            Canonical column name if found, None otherwise
+        """
+        search_term_lower = search_term.lower().strip()
+        alias_index = self.semantic_layer.get_column_alias_index()
+
+        # Alias index is dict[normalized_alias, canonical_name]
+        # We need to check if any normalized alias contains/starts with the search term
+        # Priority: exact match > starts with > contains
+        best_match = None
+        best_score = 0.0
+
+        # Normalize search term to match alias index format
+        normalized_search = self.semantic_layer._normalize_alias(search_term)
+
+        for normalized_alias, canonical_name in alias_index.items():
+            # Exact match (after normalization)
+            if normalized_alias == normalized_search:
+                return canonical_name
+            # Starts with search term
+            if normalized_alias.startswith(normalized_search):
+                score = len(normalized_search) / len(normalized_alias)
+                if score > best_score:
+                    best_match = canonical_name
+                    best_score = score
+            # Contains search term (lower priority)
+            elif normalized_search in normalized_alias:
+                score = len(normalized_search) / len(normalized_alias) * 0.7
+                if score > best_score:
+                    best_match = canonical_name
+                    best_score = score
+            # Also check original search term (not normalized) against normalized alias
+            elif search_term_lower in normalized_alias:
+                score = len(search_term_lower) / len(normalized_alias) * 0.5
+                if score > best_score:
+                    best_match = canonical_name
+                    best_score = score
+
+        # Return if we found a reasonable match (score > 0.3)
+        if best_match and best_score > 0.3:
+            return best_match
+
+        return None
 
     def _intent_to_plan(self, intent: QueryIntent, dataset_version: str) -> QueryPlan:
         """
