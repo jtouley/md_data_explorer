@@ -82,7 +82,13 @@ class AnalysisContext:
             return self.time_variable is not None and self.event_variable is not None
 
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
-            return len(self.predictor_variables) >= 2
+            # Complete if we have at least 2 predictor variables OR primary + grouping variables
+            # (NLU may extract variables as primary/grouping instead of predictor_variables)
+            has_predictors = len(self.predictor_variables) >= 2
+            has_primary_grouping = (
+                self.primary_variable is not None and self.grouping_variable is not None
+            )
+            return has_predictors or has_primary_grouping
 
         elif self.inferred_intent == AnalysisIntent.COUNT:
             return True  # Just needs data (can optionally filter by grouping_variable)
@@ -112,7 +118,12 @@ class AnalysisContext:
                 missing.append("what event you're tracking")
 
         elif self.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
-            if len(self.predictor_variables) < 2:
+            # Check if we have enough variables (either as predictors or primary+grouping)
+            has_predictors = len(self.predictor_variables) >= 2
+            has_primary_grouping = (
+                self.primary_variable is not None and self.grouping_variable is not None
+            )
+            if not has_predictors and not has_primary_grouping:
                 missing.append("at least 2 variables to examine relationships")
 
         elif self.inferred_intent == AnalysisIntent.COUNT:

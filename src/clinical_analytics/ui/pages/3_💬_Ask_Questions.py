@@ -1343,8 +1343,20 @@ def main():
                 context.time_variable, context.event_variable = QuestionEngine.select_time_variables(cohort)
 
         elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
+            # For CORRELATIONS, NLU may extract variables as primary_variable + grouping_variable
+            # OR as predictor_variables. If we have primary+grouping but not enough predictors, use those.
             if len(context.predictor_variables) < 2:
-                context.predictor_variables = QuestionEngine.select_predictor_variables(cohort, exclude=[], min_vars=2)
+                # Check if we have primary + grouping variables from NLU extraction
+                if context.primary_variable and context.grouping_variable:
+                    # Merge primary and grouping with existing predictor_variables (avoiding duplicates)
+                    existing = set(context.predictor_variables)
+                    if context.primary_variable not in existing:
+                        context.predictor_variables.append(context.primary_variable)
+                    if context.grouping_variable not in existing:
+                        context.predictor_variables.append(context.grouping_variable)
+                elif not context.primary_variable and not context.grouping_variable:
+                    # No variables extracted by NLU - ask user to select
+                    context.predictor_variables = QuestionEngine.select_predictor_variables(cohort, exclude=[], min_vars=2)
 
         # Update context in session state
         st.session_state["analysis_context"] = context
