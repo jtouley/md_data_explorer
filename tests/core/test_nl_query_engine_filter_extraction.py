@@ -7,6 +7,7 @@ Tests verify:
 - Compound queries don't incorrectly extract filters from continuation phrases
 - Type safety: coded numeric columns extract numeric codes, not string values
 - Generic coded column detection works for various column formats
+- Exclusion filters ("excluding those not on X") correctly exclude code 0
 """
 
 import polars as pl
@@ -559,3 +560,68 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
                     assert isinstance(statin_filter.value, int), (
                         f"Filter value should be int code, got: {statin_filter.value}"
                     )
+
+
+class TestExclusionFilters:
+    """Test exclusion filter patterns like 'excluding those not on X'."""
+
+    def test_exclusion_filter_excludes_code_zero(self, mock_semantic_layer):
+        """Test that 'excluding those not on X' creates a filter to exclude code 0."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                "statin_used": statin_column_value,
+            }
+        )
+        # Mock metadata to indicate coded column
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from exclusion query
+        query = "excluding those not on statins"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filter = intent.filters[0]
+        assert exclusion_filter.column == "statin_used"
+        assert exclusion_filter.operator == "!="
+        assert exclusion_filter.value == 0
+        assert exclusion_filter.exclude_nulls is True
+
+    def test_exclusion_with_most_query(self, mock_semantic_layer):
+        """Test that 'excluding those not on X, which was the most Y' extracts both exclusion and grouping."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                "statin_used": statin_column_value,
+            }
+        )
+        # Mock metadata to indicate coded column
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Parse compound query with exclusion and grouping
+        query = "excluding those not on statins, which was the most prescribed statin?"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract exclusion filter and grouping variable
+        assert intent is not None
+        assert intent.intent_type == "COUNT"
+        # Should have exclusion filter
+        assert len(intent.filters) > 0
+        exclusion_filter = intent.filters[0]
+        assert exclusion_filter.column == "statin_used"
+        assert exclusion_filter.operator == "!="
+        assert exclusion_filter.value == 0
+        # Should have grouping variable
+        assert intent.grouping_variable == "statin_used"

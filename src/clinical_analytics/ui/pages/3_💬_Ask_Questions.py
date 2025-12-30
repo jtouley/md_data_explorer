@@ -42,6 +42,26 @@ from clinical_analytics.ui.messages import (
 
 # Page config
 st.set_page_config(page_title="Ask Questions | Clinical Analytics", page_icon="💬", layout="wide")
+# Prevent emoji rendering artifacts in chat messages
+# Ensure chat message icons persist across reruns
+st.markdown(
+    """
+    <style>
+    .stChatMessage {
+        border-bottom: none !important;
+    }
+    .stChatMessage:not(:last-child) {
+        margin-bottom: 0.5rem;
+    }
+    /* Ensure chat message avatars persist */
+    .stChatMessage [data-testid="stAvatar"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Structured logging
 logger = structlog.get_logger()
@@ -712,7 +732,11 @@ def execute_analysis_with_idempotency(
             _render_interpretation_inline_compact(query_plan)
 
         # Suggest follow-up questions (only for current results, not history)
-        _suggest_follow_ups(context, result, run_key, render_context="current")
+        # Use a session state flag to prevent duplicate rendering in same cycle
+        follow_ups_key = f"followups_rendered_{run_key}"
+        if not st.session_state.get(follow_ups_key, False):
+            _suggest_follow_ups(context, result, run_key, render_context="current")
+            st.session_state[follow_ups_key] = True
         return
 
     # Not computed - compute and store
@@ -808,7 +832,11 @@ def execute_analysis_with_idempotency(
             _render_interpretation_inline_compact(query_plan)
 
         # Suggest follow-up questions (only for current results, not history)
-        _suggest_follow_ups(context, result, run_key, render_context="current")
+        # Use a session state flag to prevent duplicate rendering in same cycle
+        follow_ups_key = f"followups_rendered_{run_key}"
+        if not st.session_state.get(follow_ups_key, False):
+            _suggest_follow_ups(context, result, run_key, render_context="current")
+            st.session_state[follow_ups_key] = True
 
         logger.info("analysis_rendering_complete", run_key=run_key)
 
@@ -984,9 +1012,13 @@ def _suggest_follow_ups(
             with col:
                 # Include run_key and render_context in button key to ensure uniqueness
                 # This prevents StreamlitDuplicateElementKey errors when same suggestion appears in different contexts
-                run_key_suffix = run_key[:8] if run_key else "default"
+                # Use sanitized run_key (not hash) to prevent collisions while keeping it readable
+                # Sanitize run_key to remove special characters that might cause issues
+                run_key_safe = (run_key or "default").replace(":", "_").replace("/", "_").replace("-", "_")[:30]
+                suggestion_hash = hash(suggestion) % 1000000
                 # Use render_context to distinguish between current result and history rendering
-                button_key = f"followup_{render_context}_{run_key_suffix}_{idx}_{hash(suggestion) % 1000000}"
+                # Create a unique key that combines all these elements
+                button_key = f"followup_{render_context}_{run_key_safe}_{idx}_{suggestion_hash}"
                 if st.button(suggestion, key=button_key, use_container_width=True):
                     # Store suggestion to prefill chat input and rerun to process it
                     st.session_state["prefilled_query"] = suggestion
