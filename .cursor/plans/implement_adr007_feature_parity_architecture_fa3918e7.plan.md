@@ -86,7 +86,19 @@ This plan implements [ADR007: Feature Parity Architecture](../../docs/implementa
 
 **Total**: 38 new tests passing, 3 commits, 2 critical fixes implemented
 
-### ⏳ Remaining (Phases 4-5)
+### ✅ MVP PR Completion (2025-01-XX)
+
+**MVP Feedback Addressed**:
+- ✅ Added defensive guards in `convert_schema()` for all mapped columns (patient_id, outcome, time_zero)
+- ✅ Improved legacy mode log message in `_maybe_init_semantic()`
+- ✅ Added comprehensive tests for missing column guards (3 new tests)
+- ✅ All blocking issues from Staff Review Feedback resolved
+
+**MVP Scope**: Phases 1-3 complete with safety rails. Phases 4-5 planned for future PR.
+
+### ⏳ Remaining (Phases 4-5) - Planned for Future PR
+
+**Note**: Phases 4-5 are deferred from MVP PR but remain planned for future implementation.
 
 **Phase 4 - Lazy Frames** (High complexity - 9 caller files)
 - ⏳ Add `lazy` parameter to `get_upload_data()` (default False for rollback)
@@ -987,15 +999,17 @@ Execute phases sequentially:
    - Demonstrates architecture but crashes if called
    - **Fix**: Remove until fully integrated, or implement behind feature flag
 
-2. **Layering violation** ⚠️
+2. **Layering violation** ⚠️ → ✅ **FIXED**
    - `UploadedDataset.get_cohort()` imports from `ui.storage.user_datasets`
    - Core should not depend on UI
    - **Fix**: Move `convert_schema()` to `clinical_analytics/datasets/uploaded/schema_conversion.py`
+   - **Status**: ✅ Completed - Schema conversion moved to neutral module
 
-3. **convert_schema() unsafe assumptions** ⚠️
+3. **convert_schema() unsafe assumptions** ⚠️ → ✅ **FIXED**
    - `df[outcome_col].n_unique()` - crashes if column missing
    - `is_categorical()` divides by total_count - crashes if empty
    - **Fix**: Defensive checks for missing columns, empty dataframes
+   - **Status**: ✅ Completed - All mapped columns (patient_id, outcome, time_zero) now validated with clear error messages
 
 4. **CREATE TABLE IF NOT EXISTS staleness risk** ⚠️
    - Idempotent but may not refresh on metadata changes
