@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff
+.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui
 
 # Default target
 .DEFAULT_GOAL := help
@@ -40,6 +40,7 @@ help: ## Show this help message
 	@echo "  make install-dev    # Install all dependencies including dev tools"
 	@echo "  make check          # Run all checks (lint, type-check, test)"
 	@echo "  make test-cov       # Run tests with coverage report"
+	@echo "  make test-core      # Run tests for core module only"
 	@echo "  make run            # Start the Streamlit application"
 
 install: ## Install production dependencies
@@ -68,6 +69,31 @@ test-integration: ## Run integration tests only
 test-fast: ## Run fast tests (skip slow tests)
 	@echo "$(GREEN)Running fast tests...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v -m "not slow"
+
+# Module-specific test commands
+test-analysis: ensure-venv ## Run analysis module tests
+	@echo "$(GREEN)Running analysis module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/analysis -v
+
+test-core: ensure-venv ## Run core module tests
+	@echo "$(GREEN)Running core module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/core -v
+
+test-datasets: ensure-venv ## Run datasets module tests
+	@echo "$(GREEN)Running datasets module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/datasets -v
+
+test-e2e: ensure-venv ## Run end-to-end tests
+	@echo "$(GREEN)Running end-to-end tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/e2e -v
+
+test-loader: ensure-venv ## Run loader module tests
+	@echo "$(GREEN)Running loader module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/loader -v
+
+test-ui: ensure-venv ## Run UI module tests
+	@echo "$(GREEN)Running UI module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/ui -v
 
 test-cov: ## Run tests with coverage report
 	@echo "$(GREEN)Running tests with coverage...$(NC)"

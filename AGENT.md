@@ -33,7 +33,11 @@ def test_excel_reading(synthetic_dexa_excel_file):
 **Reference: [104-plan-execution-hygiene.mdc](.cursor/rules/104-plan-execution-hygiene.mdc)**
 
 1. **Write test first** (Red-Green-Refactor)
-2. **Run test immediately** - `make test-fast` to verify it fails/passes
+2. **Run test immediately** - Use module-specific commands for faster feedback:
+   - `make test-core` - When working on core module
+   - `make test-analysis` - When working on analysis module
+   - `make test-ui` - When working on UI module
+   - `make test-fast` - For quick feedback across all modules
 3. **Fix code quality** - `make lint-fix` and `make format` after writing code
 4. **Run full quality gate** - `make check` before committing
 5. **Never commit without tests** - All new code must have tests
@@ -45,7 +49,7 @@ Before every commit:
 make format        # Auto-format code
 make lint-fix      # Auto-fix linting issues
 make type-check    # Verify type hints
-make test-fast     # Run fast tests
+make test-fast     # Run fast tests (or use module-specific: test-core, test-analysis, test-ui, etc.)
 make check         # Full quality gate (recommended)
 ```
 
@@ -55,6 +59,7 @@ make check         # Full quality gate (recommended)
 - `make format` (not `ruff format`)
 - `make lint-fix` (not `ruff check --fix`)
 - `make test-fast` (not `pytest` directly)
+- Module-specific tests: `make test-core`, `make test-analysis`, `make test-ui`, `make test-datasets`, `make test-loader`, `make test-e2e`
 - `make check` (full quality gate)
 
 **Reference: [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc)**
