@@ -183,6 +183,9 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
 
     try:
         # Ensure file_bytes is actually bytes
+        logger.info(
+            f"_detect_excel_header_row: file_bytes type={type(file_bytes)}, len={len(file_bytes) if isinstance(file_bytes, bytes) else 'N/A'}"
+        )
         if not isinstance(file_bytes, bytes):
             if hasattr(file_bytes, "read"):
                 file_bytes = file_bytes.read()
@@ -192,7 +195,9 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
         # Read first few rows without headers to analyze them
         # Create a fresh BytesIO from bytes (bytes are immutable, so this is safe)
         file_io = io.BytesIO(file_bytes)
+        logger.info(f"_detect_excel_header_row: Created BytesIO, about to call pd.read_excel")
         df_preview = pd.read_excel(file_io, engine="openpyxl", header=None, nrows=max_rows_to_check)
+        logger.info(f"_detect_excel_header_row: pd.read_excel succeeded, shape={df_preview.shape}")
         file_io.close()  # Explicitly close to free resources
 
         if df_preview.empty:
@@ -305,34 +310,48 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
 
         try:
             # Verify file_bytes is bytes before processing
+            logger.info(
+                f"load_single_file: file_bytes type={type(file_bytes)}, len={len(file_bytes) if isinstance(file_bytes, bytes) else 'N/A'}"
+            )
             if not isinstance(file_bytes, bytes):
                 raise TypeError(f"load_single_file: Expected bytes, got {type(file_bytes)}")
 
             # Intelligently detect the best header row
             header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
-            logger.debug(f"Detected header row: {header_row}, file_bytes type: {type(file_bytes)}")
+            logger.info(f"Detected header row: {header_row}")
 
             # Create fresh BytesIO for pandas (file_bytes should be immutable bytes)
             # Ensure we're using a fresh copy of the bytes
             if not isinstance(file_bytes, bytes):
                 raise TypeError(f"load_single_file Excel: file_bytes is {type(file_bytes)}, expected bytes")
 
-            file_io = io.BytesIO(file_bytes)
-            logger.debug(
-                f"Created BytesIO, calling pd.read_excel with header={header_row}, file_io type: {type(file_io)}"
+            # Create fresh bytes copy to avoid any state issues
+            fresh_bytes = bytes(file_bytes)
+            file_io = io.BytesIO(fresh_bytes)
+            logger.info(
+                f"load_single_file: About to read Excel with header={header_row}, BytesIO len={len(fresh_bytes)}"
             )
             df_pandas = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+            logger.info(f"load_single_file: pd.read_excel succeeded, shape={df_pandas.shape}")
 
             # Clean up any remaining "Unnamed" columns (from empty header cells)
+            logger.info(f"load_single_file: Cleaning columns, current columns: {list(df_pandas.columns)[:5]}...")
             df_pandas.columns = [
                 f"column_{i}" if str(col).startswith("Unnamed") else col for i, col in enumerate(df_pandas.columns)
             ]
+            logger.info(f"load_single_file: Columns cleaned, converting to Polars...")
 
-            df_polars = pl.from_pandas(df_pandas)
-            logger.info(
-                f"Successfully loaded Excel file with pandas: {df_polars.height} rows, {df_polars.width} columns"
-            )
-            return df_polars
+            try:
+                df_polars = pl.from_pandas(df_pandas)
+                logger.info(
+                    f"Successfully loaded Excel file with pandas: {df_polars.height} rows, {df_polars.width} columns"
+                )
+                return df_polars
+            except Exception as polars_error:
+                logger.error(f"pl.from_pandas failed: {polars_error}, type: {type(polars_error)}")
+                logger.error(f"df_pandas type: {type(df_pandas)}, shape: {df_pandas.shape}")
+                logger.error(f"df_pandas dtypes: {df_pandas.dtypes}")
+                raise
         except Exception as e:
             logger.warning(f"Pandas Excel read failed: {e}. Trying Polars as fallback.")
             # Fallback to Polars if pandas fails
