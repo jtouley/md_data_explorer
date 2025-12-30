@@ -1,20 +1,137 @@
 #!/bin/bash
 
 # Clinical Analytics Platform - Streamlit Launcher
-# This script runs the Streamlit application with helpful startup messages
+# This script automatically installs dependencies and runs the Streamlit application
+# Designed for easy use by doctors - everything is automated!
 
-set -e
+# Don't exit on error - we want to handle installation failures gracefully
+set +e
 
 # Colors for better output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Get the directory of this script
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to install Homebrew if not present
+install_homebrew() {
+    if command_exists brew; then
+        return 0
+    fi
+    
+    echo -e "${YELLOW}📦 Homebrew not found. Installing Homebrew...${NC}"
+    echo -e "${CYAN}   This may take a few minutes and will prompt for your password.${NC}"
+    echo ""
+    
+    # Install Homebrew
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    
+    if [ $? -eq 0 ]; then
+        # Add Homebrew to PATH for Apple Silicon Macs
+        if [ -f /opt/homebrew/bin/brew ]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [ -f /usr/local/bin/brew ]; then
+            eval "$(/usr/local/bin/brew shellenv)"
+        fi
+        
+        echo -e "${GREEN}✓ Homebrew installed successfully${NC}"
+        return 0
+    else
+        echo -e "${RED}❌ Failed to install Homebrew${NC}"
+        echo -e "${YELLOW}   Please install manually from: https://brew.sh${NC}"
+        return 1
+    fi
+}
+
+# Function to install Ollama via Homebrew
+install_ollama() {
+    if command_exists ollama; then
+        return 0
+    fi
+    
+    echo -e "${YELLOW}🤖 Ollama not found. Installing via Homebrew...${NC}"
+    echo -e "${CYAN}   This may take a few minutes.${NC}"
+    echo ""
+    
+    # Ensure Homebrew is available
+    if ! command_exists brew; then
+        install_homebrew
+        if [ $? -ne 0 ]; then
+            return 1
+        fi
+    fi
+    
+    # Install Ollama
+    brew install ollama
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Ollama installed successfully${NC}"
+        return 0
+    else
+        echo -e "${RED}❌ Failed to install Ollama${NC}"
+        echo -e "${YELLOW}   You can install manually from: https://ollama.ai${NC}"
+        return 1
+    fi
+}
+
+# Function to start Ollama service
+start_ollama_service() {
+    # Check if service is already running
+    if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        return 0
+    fi
+    
+    echo -e "${YELLOW}🚀 Starting Ollama service...${NC}"
+    
+    # Start Ollama in background
+    nohup ollama serve > /tmp/ollama.log 2>&1 &
+    OLLAMA_PID=$!
+    
+    # Wait for service to start (max 10 seconds)
+    for i in {1..10}; do
+        sleep 1
+        if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ Ollama service started${NC}"
+            return 0
+        fi
+    done
+    
+    echo -e "${YELLOW}⚠ Ollama service is starting in the background${NC}"
+    echo -e "${CYAN}   It may take a moment to be ready.${NC}"
+    return 0
+}
+
+# Function to ensure Ollama has a model
+ensure_ollama_model() {
+    # Check if any models are available
+    MODELS=$(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('models', [])))" 2>/dev/null || echo "0")
+    
+    if [ "$MODELS" -gt 0 ]; then
+        return 0
+    fi
+    
+    echo -e "${YELLOW}📥 No Ollama models found. Downloading default model (llama3.2:3b)...${NC}"
+    echo -e "${CYAN}   This is a one-time download (~2GB) and may take several minutes.${NC}"
+    echo -e "${CYAN}   You can continue using the app - queries will use pattern matching until the model is ready.${NC}"
+    echo ""
+    
+    # Download model in background
+    ollama pull llama3.2:3b > /tmp/ollama_pull.log 2>&1 &
+    
+    echo -e "${GREEN}✓ Model download started in background${NC}"
+    return 0
+}
 
 echo ""
 echo -e "${BLUE}╔════════════════════════════════════════════════╗${NC}"
@@ -54,49 +171,48 @@ else
     echo -e "${YELLOW}⚠ Sepsis dataset not found (will skip in UI)${NC}"
 fi
 
-# Check and initialize Ollama LLM service (self-contained, like DuckDB)
+# Check and install Ollama LLM service (self-contained, like DuckDB)
 echo ""
-echo -e "${YELLOW}🤖 Checking Ollama LLM service...${NC}"
+echo -e "${YELLOW}🤖 Setting up Ollama LLM service...${NC}"
 source .venv/bin/activate
 
-# Check if Ollama is installed
-if command -v ollama &> /dev/null; then
+# Check if Ollama is installed, install if not
+if ! command_exists ollama; then
+    install_ollama
+    if [ $? -ne 0 ]; then
+        echo -e "${YELLOW}⚠ Ollama installation failed - continuing without LLM support${NC}"
+        echo -e "${CYAN}   Natural language queries will use pattern matching only${NC}"
+        OLLAMA_AVAILABLE=false
+    else
+        OLLAMA_AVAILABLE=true
+    fi
+else
     echo -e "${GREEN}✓ Ollama binary found${NC}"
+    OLLAMA_AVAILABLE=true
+fi
+
+# Start Ollama service if available
+if [ "$OLLAMA_AVAILABLE" = true ]; then
+    start_ollama_service
+    
+    # Wait a moment for service to be ready
+    sleep 2
     
     # Check if service is running
     if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Ollama service running${NC}"
         
-        # Check for models
+        # Check for models and download if needed
         MODELS=$(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('models', [])))" 2>/dev/null || echo "0")
         if [ "$MODELS" -gt 0 ]; then
             echo -e "${GREEN}✓ Ollama ready ($MODELS model(s) available)${NC}"
         else
-            echo -e "${YELLOW}⚠ Ollama running but no models available${NC}"
-            echo -e "${YELLOW}   Run: ${GREEN}ollama pull llama3.2:3b${NC} to download a model"
+            ensure_ollama_model
         fi
     else
-        echo -e "${YELLOW}⚠ Ollama service not running${NC}"
-        echo -e "${YELLOW}   Attempting to start Ollama service...${NC}"
-        
-        # Try to start Ollama in background
-        nohup ollama serve > /dev/null 2>&1 &
-        OLLAMA_PID=$!
-        sleep 2
-        
-        # Check if it started
-        if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-            echo -e "${GREEN}✓ Ollama service started${NC}"
-        else
-            echo -e "${YELLOW}⚠ Could not start Ollama service automatically${NC}"
-            echo -e "${YELLOW}   Please start manually: ${GREEN}ollama serve${NC}"
-            echo -e "${YELLOW}   Natural language queries will use pattern matching only${NC}"
-        fi
+        echo -e "${YELLOW}⚠ Ollama service not responding yet${NC}"
+        echo -e "${CYAN}   It may still be starting. Queries will use pattern matching until ready.${NC}"
     fi
-else
-    echo -e "${YELLOW}⚠ Ollama not installed${NC}"
-    echo -e "${YELLOW}   Natural language queries will use pattern matching only${NC}"
-    echo -e "${YELLOW}   Install at: ${GREEN}https://ollama.ai${NC} or run: ${GREEN}curl -fsSL https://ollama.ai/install.sh | sh${NC}"
 fi
 
 # Display feature summary
@@ -117,6 +233,9 @@ echo -e "${YELLOW}   The app will open in your browser at:${NC} ${GREEN}http://l
 echo ""
 echo -e "${YELLOW}   Press Ctrl+C to stop the server${NC}"
 echo ""
+
+# Re-enable exit on error for the actual app run
+set -e
 
 # Run streamlit with the app (verbose mode for debugging)
 source .venv/bin/activate
