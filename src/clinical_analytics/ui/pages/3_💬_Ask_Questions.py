@@ -896,9 +896,8 @@ def _suggest_follow_ups(context: AnalysisContext, result: dict) -> None:
 
     elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
         if context.predictor_variables:
-            suggestions.append(
-                f"Compare {context.predictor_variables[0]} by {context.predictor_variables[1] if len(context.predictor_variables) > 1 else 'outcome'}"
-            )
+            second_var = context.predictor_variables[1] if len(context.predictor_variables) > 1 else "outcome"
+            suggestions.append(f"Compare {context.predictor_variables[0]} by {second_var}")
 
     # Render suggestions as compact buttons (only if we have suggestions)
     if suggestions:
