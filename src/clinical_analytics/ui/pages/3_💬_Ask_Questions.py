@@ -645,6 +645,9 @@ def execute_analysis_with_idempotency(
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
+
+        # Suggest follow-up questions
+        _suggest_follow_ups(context, result)
         return
 
     # Not computed - compute and store
@@ -738,6 +741,9 @@ def execute_analysis_with_idempotency(
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
+
+        # Suggest follow-up questions
+        _suggest_follow_ups(context, result)
 
         logger.info("analysis_rendering_complete", run_key=run_key)
 
@@ -843,6 +849,71 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
         has_filters=len(query_plan.filters) > 0,
         has_explanation=bool(query_plan.explanation),
     )
+
+
+def _suggest_follow_ups(context: AnalysisContext, result: dict) -> None:
+    """Suggest natural follow-up questions based on current result."""
+    suggestions = []
+
+    # Generate suggestions based on intent and result
+    if context.inferred_intent == AnalysisIntent.DESCRIBE:
+        if context.primary_variable and context.primary_variable != "all":
+            # Suggest comparing this variable
+            suggestions.append(f"Compare {context.primary_variable} by treatment group")
+            suggestions.append(f"What predicts {context.primary_variable}?")
+        else:
+            # No specific variable - suggest exploring
+            suggestions.append("Compare outcomes by treatment group")
+            suggestions.append("What predicts the outcome?")
+
+    elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
+        if context.grouping_variable and context.primary_variable:
+            # Suggest deeper analysis
+            suggestions.append(f"What else affects {context.primary_variable}?")
+            suggestions.append(f"Show distribution of {context.primary_variable} by {context.grouping_variable}")
+        if context.primary_variable:
+            suggestions.append(f"Describe {context.primary_variable} in detail")
+
+    elif context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
+        if context.primary_variable:
+            # Suggest comparing predictors
+            suggestions.append(f"Compare {context.primary_variable} by the strongest predictor")
+            suggestions.append(f"Describe {context.primary_variable} in detail")
+
+    elif context.inferred_intent == AnalysisIntent.COUNT:
+        # Suggest grouping or filtering
+        if context.grouping_variable:
+            suggestions.append(f"Filter {context.grouping_variable} and count again")
+        else:
+            suggestions.append("Break down the count by a grouping variable")
+        if context.filters:
+            suggestions.append("Remove filters and count all records")
+
+    elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
+        if context.primary_variable:
+            suggestions.append(f"Compare survival by {context.primary_variable}")
+        suggestions.append("What predicts survival time?")
+
+    elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
+        if context.predictor_variables:
+            suggestions.append(
+                f"Compare {context.predictor_variables[0]} by {context.predictor_variables[1] if len(context.predictor_variables) > 1 else 'outcome'}"
+            )
+
+    # Render suggestions as compact buttons (only if we have suggestions)
+    if suggestions:
+        st.markdown("**💡 You might also ask:**")
+        # Use columns for compact layout
+        cols = st.columns(min(len(suggestions), 2))
+        for idx, suggestion in enumerate(suggestions[:4]):  # Limit to 4 suggestions
+            col = cols[idx % len(cols)]
+            with col:
+                # Use hash of suggestion for unique key
+                button_key = f"followup_{hash(suggestion) % 1000000}"
+                if st.button(suggestion, key=button_key, use_container_width=True):
+                    # Store suggestion to prefill chat input
+                    st.session_state["prefilled_query"] = suggestion
+                    st.rerun()
 
 
 def get_dataset_version(dataset, is_uploaded: bool, dataset_choice: str) -> str:
@@ -1243,7 +1314,17 @@ def main():
 
     # Always show query input at bottom (sticky) - Phase 3.3 UI Redesign
     # This provides a conversational interface for follow-up questions
+    # Check for prefilled query from follow-up suggestions
+    prefilled = st.session_state.get("prefilled_query", "")
+
     query = st.chat_input("Ask a question about your data...")
+
+    # If prefilled query exists and user clicked button (rerun triggered), use prefilled
+    if prefilled and not query:
+        # User clicked a follow-up button - use the prefilled query
+        query = prefilled
+        # Clear prefilled after using
+        del st.session_state["prefilled_query"]
 
     if query:
         # Handle new query from chat input
