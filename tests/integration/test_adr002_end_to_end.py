@@ -230,11 +230,13 @@ class TestADR002EndToEnd:
         parquet_dir = integration_env["parquet_dir"]
 
         # Create identical dataset
-        df = pl.DataFrame({
-            "patient_id": [1, 2, 3],
-            "age": [25, 30, 35],
-            "diagnosis": ["A", "B", "C"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3],
+                "age": [25, 30, 35],
+                "diagnosis": ["A", "B", "C"],
+            }
+        )
 
         # Upload 1: Save with version v1
         from clinical_analytics.storage.versioning import compute_dataset_version
@@ -245,11 +247,13 @@ class TestADR002EndToEnd:
         parquet_1 = datastore.export_to_parquet("upload_001", "patients", version_1, parquet_dir)
 
         # Upload 2: Same data, different column order (should produce same version)
-        df_reordered = pl.DataFrame({
-            "diagnosis": ["A", "B", "C"],
-            "patient_id": [1, 2, 3],
-            "age": [25, 30, 35],
-        })
+        df_reordered = pl.DataFrame(
+            {
+                "diagnosis": ["A", "B", "C"],
+                "patient_id": [1, 2, 3],
+                "age": [25, 30, 35],
+            }
+        )
 
         version_2 = compute_dataset_version([df_reordered])
 
@@ -260,11 +264,13 @@ class TestADR002EndToEnd:
         )
 
         # Upload 3: Different data (should produce different version)
-        df_different = pl.DataFrame({
-            "patient_id": [1, 2, 3, 4],  # Different row count
-            "age": [25, 30, 35, 40],
-            "diagnosis": ["A", "B", "C", "D"],
-        })
+        df_different = pl.DataFrame(
+            {
+                "patient_id": [1, 2, 3, 4],  # Different row count
+                "age": [25, 30, 35, 40],
+                "diagnosis": ["A", "B", "C", "D"],
+            }
+        )
 
         version_3 = compute_dataset_version([df_different])
 

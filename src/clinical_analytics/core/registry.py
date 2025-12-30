@@ -73,6 +73,8 @@ class DatasetRegistry:
         """
         Auto-discover all ClinicalDataset implementations in the datasets package.
 
+        Excludes built-in datasets (covid_ms, mimic3, sepsis) - only user uploads are supported.
+
         Returns:
             Dict mapping dataset names to their classes
         """
@@ -80,10 +82,17 @@ class DatasetRegistry:
 
         datasets_path = Path(datasets_pkg.__file__).parent
 
+        # Built-in datasets to exclude (only user uploads are supported)
+        builtin_datasets = {"covid_ms", "mimic3", "sepsis"}
+
         # Iterate through all subdirectories in datasets/
         for module_info in pkgutil.iter_modules([str(datasets_path)]):
             if module_info.ispkg:
                 module_name = module_info.name
+
+                # Skip built-in datasets
+                if module_name in builtin_datasets:
+                    continue
 
                 try:
                     # Import the definition module

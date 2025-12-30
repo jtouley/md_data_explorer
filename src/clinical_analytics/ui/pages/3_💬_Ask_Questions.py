@@ -25,7 +25,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from clinical_analytics.analysis.compute import compute_analysis_by_type
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
-from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.components.question_engine import (
     AnalysisContext,
@@ -37,7 +36,6 @@ from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 from clinical_analytics.ui.messages import (
     COLLISION_SUGGESTION_WARNING,
     LOW_CONFIDENCE_WARNING,
-    NO_DATASETS_AVAILABLE,
 )
 
 # Page config
@@ -1025,19 +1023,14 @@ def _suggest_follow_ups(
                     st.rerun()
 
 
-def get_dataset_version(dataset, is_uploaded: bool, dataset_choice: str) -> str:
+def get_dataset_version(dataset, dataset_choice: str) -> str:
     """
     Get stable dataset version identifier for caching and lifecycle management.
 
-    For uploaded datasets: use upload_id
-    For built-in datasets: use dataset name + config hash (if available)
+    All datasets are uploaded datasets, so use upload_id as version.
     """
-    if is_uploaded:
-        # Uploaded datasets: use upload_id as version
-        return dataset_choice  # This is the upload_id
-    else:
-        # Built-in datasets: use dataset name (could be enhanced with config hash)
-        return dataset_choice
+    # All datasets are uploaded datasets: use upload_id as version
+    return dataset_choice  # This is the upload_id
 
 
 def main():
@@ -1049,16 +1042,8 @@ def main():
     # Dataset selection
     st.sidebar.header("Data Selection")
 
-    # Load datasets
-    available_datasets = DatasetRegistry.list_datasets()
-    dataset_info = DatasetRegistry.get_all_dataset_info()
-
+    # Load datasets - only user uploads
     dataset_display_names = {}
-    for ds_name in available_datasets:
-        info = dataset_info[ds_name]
-        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
-        dataset_display_names[display_name] = ds_name
-
     uploaded_datasets = {}
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
@@ -1068,11 +1053,12 @@ def main():
             display_name = f"📤 {dataset_name}"
             dataset_display_names[display_name] = upload_id
             uploaded_datasets[upload_id] = upload
-    except Exception:
-        pass
+    except Exception as e:
+        st.sidebar.warning(f"Could not load uploaded datasets: {e}")
 
     if not dataset_display_names:
-        st.error(NO_DATASETS_AVAILABLE)
+        st.error("No datasets found! Please upload data using the 'Add Your Data' page.")
+        st.info("👈 Go to **Add Your Data** to upload your first dataset")
         return
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
@@ -1089,26 +1075,11 @@ def main():
             del st.session_state["analysis_context"]
         st.session_state["last_dataset_choice"] = dataset_choice
 
-    # Check if this is an uploaded dataset (multiple checks for robustness)
-    is_uploaded = (
-        dataset_choice in uploaded_datasets
-        or dataset_choice_display.startswith("📤")
-        or dataset_choice not in available_datasets
-    )
-
-    # Load dataset
+    # Load dataset (always uploaded)
     with st.spinner(f"Loading {dataset_choice_display}..."):
         try:
-            if is_uploaded:
-                # For uploaded datasets, use the factory (requires upload_id)
-                dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
-                dataset.load()
-            else:
-                # For built-in datasets, use the registry
-                dataset = DatasetRegistry.get_dataset(dataset_choice)
-                dataset.validate()
-                dataset.load()
-
+            dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
+            dataset.load()
             cohort_pd = dataset.get_cohort()
         except Exception as e:
             st.error(f"Error loading dataset: {e}")
@@ -1118,7 +1089,7 @@ def main():
     cohort = pl.from_pandas(cohort_pd)
 
     # Get dataset version for lifecycle management
-    dataset_version = get_dataset_version(dataset, is_uploaded, dataset_choice)
+    dataset_version = get_dataset_version(dataset, dataset_choice)
 
     # Show Semantic Scope in sidebar
     with st.sidebar.expander("🔍 Semantic Scope", expanded=False):
@@ -1220,7 +1191,7 @@ def main():
             intent_signal=st.session_state.get("intent_signal"),
             intent_type=context.inferred_intent.value if context else None,
             is_complete=context.is_complete_for_intent() if context else False,
-            dataset_version=get_dataset_version(dataset, is_uploaded, dataset_choice),
+            dataset_version=get_dataset_version(dataset, dataset_choice),
         )
 
         st.divider()

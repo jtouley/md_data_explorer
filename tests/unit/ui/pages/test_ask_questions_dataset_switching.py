@@ -74,7 +74,6 @@ class TestDatasetSwitching:
         """Test that dataset switching logic is generic and works for any dataset name."""
         # Arrange: Test with various dataset names
         dataset_pairs = [
-            ("covid_ms", "mimic3"),
             ("user_upload_123", "user_upload_456"),
             ("dataset_a", "dataset_b"),
             ("📤 Statin use", "📤 DEXA results"),

@@ -585,8 +585,6 @@ See `tests/conftest.py` for complete list. Key fixtures:
 
 #### Dataset Fixtures
 
-- `sample_covid_ms_path`: Path to COVID-MS test data (if available)
-- `sample_sepsis_path`: Path to Sepsis test data (if available)
 - `temp_config_file`: Temporary config file for testing
 
 #### DataFrame Fixtures
