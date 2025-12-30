@@ -548,11 +548,14 @@ class NLQueryEngine:
         # Pattern: "which X was most Y" or "what was the most Y" - COUNT with grouping
         # This pattern asks for the top result by count, so it's a COUNT intent with grouping
         # More flexible pattern to handle "which was the most Y", "what was the most Y",
-        # and "excluding X, which was the most Y"
+        # "what was the most common X", and "excluding X, which was the most Y"
         if (
             re.search(r"which\s+(?:\w+\s+)?(?:was|is)\s+the?\s+most\s+\w+", query_lower)
             or re.search(r"which\s+\w+(?:\s+\w+)*?\s+was\s+most\s+\w+", query_lower)
-            or re.search(r"what\s+was\s+the\s+most\s+\w+", query_lower)  # "what was the most common X"
+            or re.search(
+                r"what\s+was\s+the\s+most\s+(?:common|prescribed|frequent)\s+\w+", query_lower
+            )  # "what was the most common X"
+            or re.search(r"what\s+was\s+the\s+most\s+\w+", query_lower)  # "what was the most X" (fallback)
         ):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
