@@ -75,34 +75,92 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 # - Do NOT access st.session_state inside cached functions
 
 
+def normalize_query(q: str | None) -> str:
+    """
+    Normalize query text: collapse whitespace, lowercase, strip.
+
+    This is the single source of truth for query normalization.
+    All queries must be normalized immediately after st.chat_input().
+
+    Args:
+        q: Raw query text (may be None)
+
+    Returns:
+        Normalized query string (lowercase, single spaces, stripped)
+    """
+    if q is None:
+        return ""
+    # Collapse whitespace, lowercase, strip
+    return " ".join(q.strip().split()).lower()
+
+
+def canonicalize_scope(scope: dict | None) -> dict:
+    """
+    Canonicalize semantic scope dict for stable hashing.
+
+    - Drops None values
+    - Sorts dictionary keys
+    - Sorts list values
+    - Ensures stable JSON serialization
+
+    Args:
+        scope: Semantic scope dict (may be None)
+
+    Returns:
+        Canonicalized scope dict (stable, sorted, no Nones)
+    """
+    if scope is None:
+        return {}
+
+    canonical = {}
+    for key in sorted(scope.keys()):
+        value = scope[key]
+        if value is None:
+            continue  # Drop None values
+        if isinstance(value, list):
+            canonical[key] = sorted(value)  # Sort lists for stability
+        else:
+            canonical[key] = value
+
+    return canonical
+
+
 def generate_run_key(
     dataset_version: str,
-    query_text: str | None,
+    query_text: str,  # Must be already normalized, never None
     context: AnalysisContext,
+    scope: dict | None = None,
 ) -> str:
     """
     Generate stable run key for idempotency.
 
-    Canonicalizes inputs to ensure same query + variables = same key.
-    """
-    # Normalize query text (collapse whitespace)
-    # Handle None query_text (default to empty string)
-    if query_text is None:
-        query_text = ""
-    normalized_query = " ".join(query_text.strip().split())
+    Canonicalizes inputs to ensure same query + variables + scope = same key.
 
-    # Canonicalize variables
+    Args:
+        dataset_version: Dataset version identifier
+        query_text: Normalized query text (must be pre-normalized, never None)
+        context: Analysis context with variables
+        scope: Semantic scope dict (optional, will be canonicalized)
+
+    Returns:
+        SHA256 hash of canonicalized payload
+    """
+    # Extract material context variables (only those that affect computation)
+    material_vars = {
+        "primary": context.primary_variable or "",
+        "grouping": context.grouping_variable or "",
+        "predictors": sorted(context.predictor_variables or []),
+        "time": context.time_variable or "",
+        "event": context.event_variable or "",
+    }
+
+    # Build payload with canonicalized scope
     payload = {
         "dataset_version": dataset_version,
-        "query": normalized_query,
+        "query": query_text,  # Already normalized by caller
         "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
-        "vars": {
-            "primary": context.primary_variable or "",
-            "grouping": context.grouping_variable or "",
-            "predictors": sorted(context.predictor_variables or []),
-            "time": context.time_variable or "",
-            "event": context.event_variable or "",
-        },
+        "vars": material_vars,
+        "scope": canonicalize_scope(scope),  # Include canonicalized scope
     }
 
     # Stable JSON serialization
@@ -1417,13 +1475,16 @@ def main():
             # Get confidence from QueryPlan or context (default to 0.0 if missing - fail closed)
             if query_plan:
                 confidence = query_plan.confidence
-                run_key = query_plan.run_key or generate_run_key(
-                    dataset_version, getattr(context, "research_question", ""), context
-                )
+                # Normalize query before generating run_key
+                raw_query = getattr(context, "research_question", "")
+                normalized_query = normalize_query(raw_query)
+                run_key = query_plan.run_key or generate_run_key(dataset_version, normalized_query, context)
             else:
                 confidence = getattr(context, "confidence", 0.0)
-                query_text = getattr(context, "research_question", "")
-                run_key = generate_run_key(dataset_version, query_text, context)
+                # Normalize query before generating run_key
+                raw_query = getattr(context, "research_question", "")
+                normalized_query = normalize_query(raw_query)
+                run_key = generate_run_key(dataset_version, normalized_query, context)
 
             logger.info(
                 "analysis_execution_triggered",
@@ -1727,13 +1788,16 @@ def main():
                     # Get QueryPlan if available (preferred), otherwise fallback to context
                     query_plan = getattr(context, "query_plan", None)
 
+                    # Normalize query before generating run_key
+                    normalized_query = normalize_query(query)
+
                     # Get confidence from QueryPlan or context (default to 0.0 if missing)
                     if query_plan:
                         confidence = query_plan.confidence
-                        run_key = query_plan.run_key or generate_run_key(dataset_version, query, context)
+                        run_key = query_plan.run_key or generate_run_key(dataset_version, normalized_query, context)
                     else:
                         confidence = getattr(context, "confidence", 0.0)
-                        run_key = generate_run_key(dataset_version, query, context)
+                        run_key = generate_run_key(dataset_version, normalized_query, context)
 
                     logger.info(
                         "chat_input_analysis_execution_triggered",
