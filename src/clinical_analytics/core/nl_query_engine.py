@@ -421,12 +421,18 @@ class NLQueryEngine:
                     if not intent.primary_variable and len(matched_vars) >= 1:
                         intent.primary_variable = matched_vars[0]
 
-                # For CORRELATIONS: assign first two variables
+                # For CORRELATIONS: extract ALL variables mentioned (not just first 2)
+                # CORRELATIONS queries often mention multiple variables (e.g., "how does X, Y relate to Z and W")
+                # Put ALL extracted variables in predictor_variables for correlation analysis
                 elif intent.intent_type == "CORRELATIONS":
-                    if not intent.primary_variable and len(matched_vars) >= 1:
-                        intent.primary_variable = matched_vars[0]
-                    if not intent.grouping_variable and len(matched_vars) >= 2:
-                        intent.grouping_variable = matched_vars[1]
+                    # For CORRELATIONS, use predictor_variables to hold all variables
+                    if matched_vars:
+                        intent.predictor_variables = matched_vars
+                        # Also set primary/grouping for backward compatibility
+                        if len(matched_vars) >= 1:
+                            intent.primary_variable = matched_vars[0]
+                        if len(matched_vars) >= 2:
+                            intent.grouping_variable = matched_vars[1]
 
                 if matched_vars or (intent.primary_variable or intent.grouping_variable):
                     logger.info(
@@ -522,18 +528,30 @@ class NLQueryEngine:
         if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
             return QueryIntent(intent_type="SURVIVAL", confidence=0.9)
 
-        # Pattern: "correlation" or "relationship"
-        if re.search(r"\b(correlat|relationship|associat)\b", query_lower):
-            # Try to extract two variables
+        # Pattern: "correlation" or "relationship" or "relate" or "association"
+        # Matches: "correlate", "correlation", "relationship", "relate", "relates", "associated", "association"
+        if re.search(r"\b(correlat|relationship|relate|associat)\b", query_lower):
+            # Try to extract variables from query
             variables, _ = self._extract_variables_from_query(query)
             if len(variables) >= 2:
+                # For CORRELATIONS with multiple variables, put ALL in predictor_variables
+                return QueryIntent(
+                    intent_type="CORRELATIONS",
+                    primary_variable=variables[0],  # First variable for backward compatibility
+                    grouping_variable=variables[1],  # Second for backward compatibility
+                    predictor_variables=variables,  # ALL variables for correlation analysis
+                    confidence=0.9,
+                )
+            elif len(variables) == 1:
+                # Single variable found - still CORRELATIONS but with one variable
                 return QueryIntent(
                     intent_type="CORRELATIONS",
                     primary_variable=variables[0],
-                    grouping_variable=variables[1],
-                    confidence=0.9,
+                    predictor_variables=variables,  # Include in predictor_variables too
+                    confidence=0.85,
                 )
             else:
+                # No variables extracted but relationship keyword found
                 return QueryIntent(intent_type="CORRELATIONS", confidence=0.85)
 
         # Pattern: "how many" or "count" or "number of" (COUNT intent)
@@ -548,13 +566,51 @@ class NLQueryEngine:
         # Pattern: "which X was most Y" or "what was the most Y" - COUNT with grouping
         # This pattern asks for the top result by count, so it's a COUNT intent with grouping
         # More flexible pattern to handle "which was the most Y", "what was the most Y",
-        # and "excluding X, which was the most Y"
+        # "what was the most common X", and "excluding X, which was the most Y"
         if (
             re.search(r"which\s+(?:\w+\s+)?(?:was|is)\s+the?\s+most\s+\w+", query_lower)
             or re.search(r"which\s+\w+(?:\s+\w+)*?\s+was\s+most\s+\w+", query_lower)
-            or re.search(r"what\s+was\s+the\s+most\s+\w+", query_lower)  # "what was the most common X"
+            or re.search(
+                r"what\s+was\s+the\s+most\s+(?:common|prescribed|frequent)\s+\w+", query_lower
+            )  # "what was the most common X"
+            or re.search(r"what\s+was\s+the\s+most\s+\w+", query_lower)  # "what was the most X" (fallback)
         ):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
+
+        # Pattern: "average X" or "mean X" or "avg X" - DESCRIBE with variable extraction
+        # Examples: "average BMI of patients", "mean age", "avg ldl", "average ldl of all patients"
+        # Match: "average/mean/avg" + optional "of" + variable + optional trailing phrase
+        avg_match = re.search(
+            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)(?:\s+of|\s+in|\s+for|\s+all|\s+the|$)", query_lower
+        )
+        if avg_match:
+            variable_term = avg_match.group(2).strip()
+            # Remove common trailing words that might be captured
+            variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases|all|the)$", "", variable_term)
+            variable_term = variable_term.strip()
+
+            # Try to match the variable
+            matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                logger.debug(
+                    "pattern_match_average_with_variable",
+                    variable_term=variable_term,
+                    matched_var=matched_var,
+                    confidence=var_conf,
+                )
+                return QueryIntent(
+                    intent_type="DESCRIBE",
+                    primary_variable=matched_var,
+                    confidence=0.9,
+                )
+            else:
+                # Still return DESCRIBE intent, variable will be extracted later
+                logger.debug(
+                    "pattern_match_average_no_variable_match",
+                    variable_term=variable_term,
+                    reason="fuzzy_match_failed_but_pattern_matched",
+                )
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.85)
 
         # Pattern: "describe" or "summary"
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
@@ -687,25 +743,205 @@ class NLQueryEngine:
 
         return None
 
-    def _llm_parse(self, query: str) -> QueryIntent:
-        """
-        Tier 3: LLM fallback with RAG context from semantic layer.
+    def _get_ollama_client(self):
+        """Get or create Ollama client via OllamaManager (lazy initialization)."""
+        if not hasattr(self, "_ollama_client"):
+            from clinical_analytics.core.ollama_manager import get_ollama_manager
 
-        NOTE: This is a stub implementation. Full implementation would:
-        1. Build context from semantic layer metadata
-        2. Create structured prompt with available variables
-        3. Call LLM API (or local model) with JSON schema
-        4. Parse response into QueryIntent
+            manager = get_ollama_manager()
+            self._ollama_client = manager.get_client()
+
+        return self._ollama_client
+
+    def _build_rag_context(self, query: str) -> dict:
+        """
+        Build RAG context from semantic layer metadata.
+
+        Extracts available columns, aliases, and example queries to provide
+        context for LLM parsing.
 
         Args:
             query: User's question
 
         Returns:
-            QueryIntent with low confidence (fallback to structured input)
+            Dict with columns, aliases, examples, and query
         """
-        # For now, return a low-confidence DESCRIBE intent as safe default
-        # This triggers the "ask clarifying questions" flow in the UI
-        return QueryIntent(intent_type="DESCRIBE", confidence=0.3)
+        # Extract columns from semantic layer base view
+        base_view = self.semantic_layer.get_base_view()
+        columns = list(base_view.columns)
+
+        # Get alias mappings
+        alias_index = self.semantic_layer.get_column_alias_index()
+
+        # Build example queries (simple patterns for now)
+        examples = [
+            "What is the average age?",
+            "Compare viral load by treatment",
+            "How many patients have treatment A?",
+            "Show me patients with age > 30",
+        ]
+
+        return {
+            "columns": columns,
+            "aliases": alias_index,
+            "examples": examples,
+            "query": query,
+        }
+
+    def _build_llm_prompt(self, query: str, context: dict) -> tuple[str, str]:
+        """
+        Build structured prompts for LLM.
+
+        Args:
+            query: User's question
+            context: RAG context with columns, aliases, examples
+
+        Returns:
+            Tuple of (system_prompt, user_prompt)
+        """
+        system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
+
+Return JSON with these fields:
+- intent_type: One of ["DESCRIBE", "COMPARE_GROUPS", "COUNT", "FIND_PREDICTORS", "SURVIVAL", "CORRELATIONS"]
+- primary_variable: Main variable of interest (or null)
+- grouping_variable: Variable to group by (or null)
+- confidence: Your confidence 0.0-1.0
+
+Available columns: {columns}
+Aliases: {aliases}
+
+Examples:
+{examples}""".format(
+            columns=", ".join(context["columns"]),
+            aliases=str(context["aliases"]),
+            examples="\n".join(f"- {ex}" for ex in context["examples"]),
+        )
+
+        user_prompt = f"Parse this query: {query}"
+
+        return (system_prompt, user_prompt)
+
+    def _extract_query_intent_from_llm_response(self, response: str, max_retries: int = 3) -> QueryIntent | None:
+        """
+        Extract QueryIntent from LLM JSON response with retries.
+
+        Args:
+            response: JSON string from LLM
+            max_retries: Maximum retry attempts (not used in this version)
+
+        Returns:
+            QueryIntent if valid, None if parsing fails
+        """
+        import json
+
+        try:
+            data = json.loads(response)
+
+            # Validate required fields
+            if "intent_type" not in data:
+                logger.warning("llm_response_missing_intent_type", response=response[:100])
+                return None
+
+            # Extract fields with defaults
+            intent_type = data.get("intent_type", "DESCRIBE")
+            primary_variable = data.get("primary_variable")
+            grouping_variable = data.get("grouping_variable")
+            confidence = float(data.get("confidence", 0.5))
+
+            # Clamp confidence to valid range
+            confidence = max(0.0, min(1.0, confidence))
+
+            return QueryIntent(
+                intent_type=intent_type,
+                primary_variable=primary_variable,
+                grouping_variable=grouping_variable,
+                confidence=confidence,
+                parsing_tier="llm_fallback",
+            )
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(
+                "llm_response_parse_failed",
+                error=str(e),
+                response=response[:100],
+            )
+            return None
+
+    def _llm_parse(self, query: str) -> QueryIntent:
+        """
+        Tier 3: LLM fallback with RAG context from semantic layer.
+
+        This is the blast shield - catches all exceptions and always returns a QueryIntent.
+        Never crashes, always provides a fallback (confidence=0.3 stub).
+
+        Privacy-preserving: Uses local Ollama only, no external API calls.
+
+        Args:
+            query: User's question
+
+        Returns:
+            QueryIntent with confidence >= 0.5 on success, or 0.3 stub on failure
+        """
+        from clinical_analytics.core.nl_query_config import TIER_3_MIN_CONFIDENCE
+
+        try:
+            # Step 1: Get Ollama client (lazy init)
+            client = self._get_ollama_client()
+
+            # Step 2: Check if Ollama is available
+            if not client.is_available():
+                logger.info("ollama_not_available_fallback_to_stub", query=query)
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Step 3: Build RAG context
+            context = self._build_rag_context(query)
+
+            # Step 4: Build structured prompts
+            system_prompt, user_prompt = self._build_llm_prompt(query, context)
+
+            # Step 5: Call Ollama with JSON mode
+            response = client.generate(user_prompt, system_prompt=system_prompt, json_mode=True)
+
+            if response is None:
+                logger.info("ollama_generate_failed_fallback_to_stub", query=query)
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Step 6: Extract QueryIntent from response
+            intent = self._extract_query_intent_from_llm_response(response)
+
+            if intent is None:
+                logger.info("llm_parse_extraction_failed_fallback_to_stub", query=query)
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Step 7: Validate confidence meets minimum threshold
+            if intent.confidence < TIER_3_MIN_CONFIDENCE:
+                logger.info(
+                    "llm_parse_low_confidence_fallback_to_stub",
+                    confidence=intent.confidence,
+                    threshold=TIER_3_MIN_CONFIDENCE,
+                    query=query,
+                )
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # Success!
+            logger.info(
+                "llm_parse_success",
+                intent_type=intent.intent_type,
+                confidence=intent.confidence,
+                query=query,
+            )
+            return intent
+
+        except Exception as e:
+            # Blast shield: catch everything, log, return stub
+            # This is the only place where broad exception catching is correct
+            logger.warning(
+                "llm_parse_exception_fallback_to_stub",
+                error_type=type(e).__name__,
+                error=str(e),
+                query=query,
+            )
+            return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
     def _extract_variables_from_query(self, query: str) -> tuple[list[str], dict[str, list[str]]]:
         """
