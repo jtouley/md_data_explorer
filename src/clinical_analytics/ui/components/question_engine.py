@@ -57,6 +57,9 @@ class AnalysisContext:
     # Filters
     filters: list = field(default_factory=list)  # List of FilterSpec objects
 
+    # QueryPlan (structured plan from NLU)
+    query_plan = None  # QueryPlan | None - will be set after QueryIntent conversion (type: ignore for forward ref)
+
     # Metadata
     variable_types: dict[str, str] = field(default_factory=dict)
     match_suggestions: dict[str, list[str]] = field(default_factory=dict)  # {query_term: [canonical_names]}
@@ -579,7 +582,7 @@ class QuestionEngine:
 
     @staticmethod
     def ask_free_form_question(
-        semantic_layer, dataset_id: str | None = None, upload_id: str | None = None
+        semantic_layer, dataset_id: str | None = None, upload_id: str | None = None, dataset_version: str | None = None
     ) -> AnalysisContext | None:
         """
         Ask user to type their question in natural language.
@@ -802,6 +805,16 @@ class QuestionEngine:
                 # Copy filters from QueryIntent to AnalysisContext
                 context.filters = query_intent.filters
 
+                # Convert QueryIntent to QueryPlan and store in context
+                if dataset_version:
+                    query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
+                    context.query_plan = query_plan
+                    # Use QueryPlan confidence (may differ from QueryIntent)
+                    context.confidence = query_plan.confidence
+                else:
+                    # Fallback: use QueryIntent confidence if dataset_version not available
+                    context.confidence = query_intent.confidence
+
                 # Propagate collision suggestions to context
                 context.match_suggestions = collision_suggestions
 
@@ -809,9 +822,6 @@ class QuestionEngine:
                 context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
                 context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
                 context.time_to_event = query_intent.intent_type == "SURVIVAL"
-
-                # Propagate confidence for auto-execution logic
-                context.confidence = query_intent.confidence
 
                 logger.info(
                     "analysis_context_created",
