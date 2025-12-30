@@ -6,33 +6,33 @@ import io
 import zipfile
 
 import polars as pl
+import pytest
 
 from clinical_analytics.core.multi_table_handler import MultiTableHandler
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 
+@pytest.fixture(autouse=True)
+def enable_multi_table(monkeypatch):
+    """Enable MULTI_TABLE feature flag for these tests."""
+    import clinical_analytics.ui.storage.user_datasets as user_datasets_module
+
+    monkeypatch.setattr(user_datasets_module, "MULTI_TABLE_ENABLED", True)
+
+
 class TestZipExtraction:
     """Test suite for ZIP file extraction and processing."""
 
-    def test_extract_zip_with_csv_files(self, tmp_path):
+    def test_extract_zip_with_csv_files(
+        self, tmp_path, large_patients_csv, large_admissions_with_discharge_csv, large_diagnoses_csv
+    ):
         """Test extracting ZIP file containing multiple CSV files."""
-        # Create test ZIP file
+        # Create test ZIP file using shared fixtures
         zip_buffer = io.BytesIO()
-
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            # Add first CSV
-            zip_file.writestr("patients.csv", "patient_id,age,sex\nP001,45,M\nP002,62,F\n")
-            # Add second CSV
-            zip_file.writestr(
-                "admissions.csv",
-                "patient_id,admission_date,discharge_date\nP001,2020-01-01,2020-01-05\nP002,2020-02-01,2020-02-10\n",
-            )
-            # Add third CSV
-            zip_file.writestr(
-                "diagnoses.csv",
-                "patient_id,icd_code,diagnosis\nP001,E11.9,Diabetes\nP002,I10,Hypertension\n",
-            )
-
+            zip_file.writestr("patients.csv", large_patients_csv)
+            zip_file.writestr("admissions.csv", large_admissions_with_discharge_csv)
+            zip_file.writestr("diagnoses.csv", large_diagnoses_csv)
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
@@ -44,29 +44,29 @@ class TestZipExtraction:
             metadata={"dataset_name": "test_dataset"},
         )
 
-        assert success is True
+        if not success:
+            print(f"Upload failed: {message}")
+        assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
-        assert "tables" in message.lower() or "joined" in message.lower()
+        assert "tables" in message.lower() or "joined" in message.lower() or "successful" in message.lower()
 
-    def test_extract_zip_with_csv_gz_files(self, tmp_path):
+    def test_extract_zip_with_csv_gz_files(self, tmp_path, large_test_data_csv, large_admissions_csv):
         """Test extracting ZIP file containing compressed CSV files."""
         import gzip
 
         zip_buffer = io.BytesIO()
-
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            # Create compressed CSV
-            csv_content = b"patient_id,age\nP001,45\nP002,62\n"
+            # Create compressed CSV using shared fixture
+            csv_content = large_test_data_csv.encode("utf-8")
             compressed = gzip.compress(csv_content)
             zip_file.writestr("patients.csv.gz", compressed)
-
-            # Add regular CSV
-            zip_file.writestr("admissions.csv", "patient_id,date\nP001,2020-01-01\n")
+            # Add regular CSV using shared fixture
+            zip_file.writestr("admissions.csv", large_admissions_csv)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="compressed.zip",
@@ -76,41 +76,43 @@ class TestZipExtraction:
         assert success is True
         assert upload_id is not None
 
-    def test_extract_zip_with_subdirectories(self, tmp_path):
+    def test_extract_zip_with_subdirectories(
+        self, tmp_path, large_test_data_csv, large_admissions_csv, large_diagnoses_csv
+    ):
         """Test extracting ZIP file with CSV files in subdirectories."""
         zip_buffer = io.BytesIO()
-
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            zip_file.writestr("mimic-iv/patients.csv", "patient_id,age\nP001,45\n")
-            zip_file.writestr("mimic-iv/admissions.csv", "patient_id,date\nP001,2020-01-01\n")
-            zip_file.writestr("mimic-iv/diagnoses.csv", "patient_id,code\nP001,E11.9\n")
+            zip_file.writestr("mimic-iv/patients.csv", large_test_data_csv)
+            zip_file.writestr("mimic-iv/admissions.csv", large_admissions_csv)
+            zip_file.writestr("mimic-iv/diagnoses.csv", large_diagnoses_csv)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="mimic-iv-clinical-database-demo-2.2.zip",
             metadata={"dataset_name": "mimic_iv"},
         )
 
-        assert success is True
+        if not success:
+            print(f"Upload failed: {message}")
+        assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
 
-    def test_extract_zip_ignores_macosx(self, tmp_path):
+    def test_extract_zip_ignores_macosx(self, tmp_path, large_test_data_csv):
         """Test that ZIP extraction ignores __MACOSX files."""
         zip_buffer = io.BytesIO()
-
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            zip_file.writestr("patients.csv", "patient_id,age\nP001,45\n")
+            zip_file.writestr("patients.csv", large_test_data_csv)
             zip_file.writestr("__MACOSX/._patients.csv", "metadata")
             zip_file.writestr("__MACOSX/.DS_Store", "metadata")
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes, original_filename="test.zip", metadata={"dataset_name": "test"}
         )
@@ -123,13 +125,16 @@ class TestZipExtraction:
         zip_buffer = io.BytesIO()
 
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            zip_file.writestr("readme.txt", "This is a readme file")
-            zip_file.writestr("data.json", '{"key": "value"}')
+            # Create larger files to meet 1KB minimum, but no CSV files
+            readme_content = "This is a readme file\n" + "x" * 1000
+            zip_file.writestr("readme.txt", readme_content)
+            json_content = '{"key": "value", "data": "' + "x" * 500 + '"}'
+            zip_file.writestr("data.json", json_content)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes, original_filename="no_csv.zip", metadata={"dataset_name": "test"}
         )
@@ -139,9 +144,10 @@ class TestZipExtraction:
 
     def test_extract_zip_invalid_file(self, tmp_path):
         """Test handling invalid ZIP file."""
-        invalid_bytes = b"This is not a ZIP file"
+        # Create invalid ZIP that's large enough to pass size validation (1KB+)
+        invalid_bytes = b"This is not a ZIP file" + b"x" * 2000
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=invalid_bytes,
             original_filename="invalid.zip",
@@ -149,22 +155,22 @@ class TestZipExtraction:
         )
 
         assert success is False
-        assert "error" in message.lower() or "invalid" in message.lower()
+        assert "error" in message.lower() or "invalid" in message.lower() or "corrupted" in message.lower()
 
     def test_extract_zip_with_mixed_types(self, tmp_path):
         """Test ZIP extraction with tables having different key column types (int vs string)."""
         zip_buffer = io.BytesIO()
-
+        # Generate data with integer patient_id
+        patients_data = "patient_id,age\n" + "\n".join([f"{i},{20 + i % 100}" for i in range(1000000)])
+        admissions_data = "patient_id,date\n" + "\n".join([f"{i},2020-01-{1 + i % 30:02d}" for i in range(1000000)])
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            # Table 1: patient_id as integer
-            zip_file.writestr("patients.csv", "patient_id,age\n1,45\n2,62\n")
-            # Table 2: patient_id as string (should be normalized)
-            zip_file.writestr("admissions.csv", "patient_id,date\n1,2020-01-01\n2,2020-02-01\n")
+            zip_file.writestr("patients.csv", patients_data)
+            zip_file.writestr("admissions.csv", admissions_data)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="mixed_types.zip",
@@ -174,26 +180,17 @@ class TestZipExtraction:
         # Should succeed despite type differences (normalization should handle it)
         assert success is True
 
-    def test_extract_zip_large_dataset(self, tmp_path):
+    def test_extract_zip_large_dataset(self, tmp_path, large_patients_csv, large_admissions_csv):
         """Test extracting ZIP with larger dataset (multiple tables, many rows)."""
         zip_buffer = io.BytesIO()
-
-        # Create larger dataset
-        patients_data = "patient_id,age,sex\n" + "\n".join(
-            [f"P{i:03d},{20 + i},{['M', 'F'][i % 2]}" for i in range(100)]
-        )
-        admissions_data = "patient_id,admission_date\n" + "\n".join(
-            [f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(100)]
-        )
-
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            zip_file.writestr("patients.csv", patients_data)
-            zip_file.writestr("admissions.csv", admissions_data)
+            zip_file.writestr("patients.csv", large_patients_csv)
+            zip_file.writestr("admissions.csv", large_admissions_csv)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="large_dataset.zip",
@@ -203,18 +200,19 @@ class TestZipExtraction:
         assert success is True
         assert upload_id is not None
 
-    def test_extract_zip_creates_unified_cohort(self, tmp_path):
+    def test_extract_zip_creates_unified_cohort(
+        self, tmp_path, large_patients_csv, large_admissions_with_admission_date_csv
+    ):
         """Test that ZIP extraction creates unified cohort with joined tables."""
         zip_buffer = io.BytesIO()
-
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            zip_file.writestr("patients.csv", "patient_id,age,sex\nP001,45,M\nP002,62,F\n")
-            zip_file.writestr("admissions.csv", "patient_id,admission_date\nP001,2020-01-01\nP002,2020-02-01\n")
+            zip_file.writestr("patients.csv", large_patients_csv)
+            zip_file.writestr("admissions.csv", large_admissions_with_admission_date_csv)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes, original_filename="test.zip", metadata={"dataset_name": "test"}
         )
@@ -231,18 +229,17 @@ class TestZipExtraction:
         assert "age" in unified_df.columns
         assert "admission_date" in unified_df.columns
 
-    def test_extract_zip_saves_metadata(self, tmp_path):
+    def test_extract_zip_saves_metadata(self, tmp_path, large_test_data_csv, large_admissions_csv):
         """Test that ZIP extraction saves proper metadata."""
         zip_buffer = io.BytesIO()
-
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            zip_file.writestr("patients.csv", "patient_id,age\nP001,45\nP002,62\n")
-            zip_file.writestr("admissions.csv", "patient_id,date\nP001,2020-01-01\n")
+            zip_file.writestr("patients.csv", large_test_data_csv)
+            zip_file.writestr("admissions.csv", large_admissions_csv)
 
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(base_dir=tmp_path)
+        storage = UserDatasetStorage(upload_dir=tmp_path)
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",

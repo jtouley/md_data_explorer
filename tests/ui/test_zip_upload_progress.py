@@ -22,19 +22,9 @@ def enable_multi_table(monkeypatch):
 class TestZipUploadProgress:
     """Test suite for progress callback in ZIP upload processing."""
 
-    def test_save_zip_upload_calls_progress_callback(self, tmp_path):
+    def test_save_zip_upload_calls_progress_callback(self, tmp_path, large_zip_with_csvs):
         """Test that progress callback is called during ZIP upload."""
-        # Create test ZIP file (must be >= 1KB)
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            # Create larger CSV files to meet 1KB minimum
-            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(50)])
-            admissions_data = "patient_id,date\n" + "\n".join([f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)])
-            zip_file.writestr("patients.csv", patients_data)
-            zip_file.writestr("admissions.csv", admissions_data)
-
-        zip_buffer.seek(0)
-        zip_bytes = zip_buffer.getvalue()
+        zip_bytes = large_zip_with_csvs
 
         # Track progress calls
         progress_calls = []
@@ -58,20 +48,9 @@ class TestZipUploadProgress:
         # Verify initial progress call
         assert any("Initializing" in call["message"] for call in progress_calls)
 
-    def test_progress_callback_receives_table_loading_updates(self, tmp_path):
+    def test_progress_callback_receives_table_loading_updates(self, tmp_path, large_zip_with_three_tables):
         """Test that progress callback receives updates for each table being loaded."""
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            # Create larger CSV files to meet 1KB minimum
-            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(50)])
-            admissions_data = "patient_id,date\n" + "\n".join([f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)])
-            diagnoses_data = "patient_id,code\n" + "\n".join([f"P{i:03d},E11.9" for i in range(50)])
-            zip_file.writestr("patients.csv", patients_data)
-            zip_file.writestr("admissions.csv", admissions_data)
-            zip_file.writestr("diagnoses.csv", diagnoses_data)
-
-        zip_buffer.seek(0)
-        zip_bytes = zip_buffer.getvalue()
+        zip_bytes = large_zip_with_three_tables
 
         table_loading_calls = []
 
@@ -160,18 +139,9 @@ class TestZipUploadProgress:
         assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
 
-    def test_progress_callback_receives_correct_step_counts(self, tmp_path):
+    def test_progress_callback_receives_correct_step_counts(self, tmp_path, large_zip_with_csvs):
         """Test that progress callback receives correct step and total_steps values."""
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            # Create larger CSV files to meet 1KB minimum
-            patients_data = "patient_id,age\n" + "\n".join([f"P{i:03d},{20 + i}" for i in range(50)])
-            admissions_data = "patient_id,date\n" + "\n".join([f"P{i:03d},2020-01-{1 + i % 30:02d}" for i in range(50)])
-            zip_file.writestr("patients.csv", patients_data)
-            zip_file.writestr("admissions.csv", admissions_data)
-
-        zip_buffer.seek(0)
-        zip_bytes = zip_buffer.getvalue()
+        zip_bytes = large_zip_with_csvs
 
         step_values = []
 
@@ -199,16 +169,11 @@ class TestZipUploadProgress:
         total_steps_values = {s[1] for s in step_values}
         assert len(total_steps_values) == 1, "All calls should use same total_steps"
 
-    def test_progress_callback_receives_table_details(self, tmp_path):
+    def test_progress_callback_receives_table_details(self, tmp_path, large_patients_csv):
         """Test that progress callback receives detailed table information."""
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            # Create larger CSV file to meet 1KB minimum (need more rows)
-            patients_data = "patient_id,age,sex\n" + "\n".join(
-                [f"P{i:03d},{20 + i},{['M', 'F'][i % 2]}" for i in range(100)]
-            )
-            zip_file.writestr("patients.csv", patients_data)
-
+            zip_file.writestr("patients.csv", large_patients_csv)
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 

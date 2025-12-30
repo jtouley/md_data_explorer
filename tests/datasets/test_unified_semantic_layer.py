@@ -4,7 +4,6 @@ Tests for unified semantic layer registration (Phase 3 - ADR007).
 Tests that both single-table and multi-table uploads register tables identically.
 """
 
-
 import polars as pl
 import pytest
 
@@ -21,11 +20,13 @@ class TestUnifiedSemanticLayerRegistration:
         storage = UserDatasetStorage(upload_dir=tmp_path)
 
         # Create single-table upload with inferred_schema
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "age": [25, 30],
-            "outcome": [0, 1],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+                "outcome": [0, 1],
+            }
+        )
 
         upload_id = "test_single_upload"
 
@@ -58,6 +59,7 @@ class TestUnifiedSemanticLayerRegistration:
         }
 
         import json
+
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
         metadata_path.write_text(json.dumps(metadata))
 
@@ -78,23 +80,29 @@ class TestUnifiedSemanticLayerRegistration:
         storage = UserDatasetStorage(upload_dir=tmp_path)
 
         # Create multi-table upload
-        patients_df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "name": ["Alice", "Bob"],
-        })
+        patients_df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "name": ["Alice", "Bob"],
+            }
+        )
 
-        admissions_df = pl.DataFrame({
-            "admission_id": ["A001", "A002"],
-            "patient_id": ["P001", "P002"],
-        })
+        admissions_df = pl.DataFrame(
+            {
+                "admission_id": ["A001", "A002"],
+                "patient_id": ["P001", "P002"],
+            }
+        )
 
         upload_id = "test_multi_upload"
 
         # Save unified cohort CSV
-        cohort_df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "outcome": [0, 1],
-        })
+        cohort_df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "outcome": [0, 1],
+            }
+        )
         csv_path = storage.raw_dir / f"{upload_id}.csv"
         cohort_df.write_csv(csv_path)
 
@@ -118,6 +126,7 @@ class TestUnifiedSemanticLayerRegistration:
         }
 
         import json
+
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
         metadata_path.write_text(json.dumps(metadata))
 
@@ -137,10 +146,12 @@ class TestUnifiedSemanticLayerRegistration:
         # Arrange
         storage = UserDatasetStorage(upload_dir=tmp_path)
 
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "outcome": [0, 1],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "outcome": [0, 1],
+            }
+        )
 
         upload_id = "test_idempotent"
 
@@ -165,6 +176,7 @@ class TestUnifiedSemanticLayerRegistration:
         }
 
         import json
+
         (storage.metadata_dir / f"{upload_id}.json").write_text(json.dumps(metadata))
 
         # Act - Call get_semantic_layer() twice (public API)
@@ -201,10 +213,12 @@ class TestGranularityValidation:
         # Arrange
         storage = UserDatasetStorage(upload_dir=tmp_path)
 
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "age": [25, 30],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+            }
+        )
 
         upload_id = "test_validation"
 
@@ -225,6 +239,7 @@ class TestGranularityValidation:
         }
 
         import json
+
         (storage.metadata_dir / f"{upload_id}.json").write_text(json.dumps(metadata))
 
         # Act & Assert
@@ -244,11 +259,13 @@ class TestGranularityValidation:
         # Arrange
         storage = UserDatasetStorage(upload_dir=tmp_path)
 
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "admission_id": ["A001", "A002"],
-            "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "admission_id": ["A001", "A002"],
+                "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
+            }
+        )
 
         upload_id = "test_all_granularities"
         csv_path = storage.raw_dir / f"{upload_id}.csv"
@@ -266,6 +283,7 @@ class TestGranularityValidation:
         }
 
         import json
+
         (storage.metadata_dir / f"{upload_id}.json").write_text(json.dumps(metadata))
 
         # Act & Assert
@@ -316,6 +334,7 @@ class TestNoConditionalLogic:
             }
 
             import json
+
             (storage.metadata_dir / f"{upload_id}.json").write_text(json.dumps(metadata))
 
         # Act

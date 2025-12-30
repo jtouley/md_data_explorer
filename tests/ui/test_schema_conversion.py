@@ -19,11 +19,13 @@ class TestConvertSchema:
     def test_convert_basic_variable_mapping_to_inferred_schema(self):
         """Test converting basic variable_mapping to inferred_schema format."""
         # Arrange
-        df = pl.DataFrame({
-            "Patient ID": ["P001", "P002", "P003"],
-            "Age": [25, 30, 35],
-            "Outcome": [0, 1, 0],  # Binary outcome
-        })
+        df = pl.DataFrame(
+            {
+                "Patient ID": ["P001", "P002", "P003"],
+                "Age": [25, 30, 35],
+                "Outcome": [0, 1, 0],  # Binary outcome
+            }
+        )
 
         variable_mapping = {
             "patient_id": "Patient ID",
@@ -43,10 +45,12 @@ class TestConvertSchema:
     def test_convert_schema_infers_binary_outcome_from_data(self):
         """Test that outcome type is inferred as binary when n_unique == 2."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002", "P003"],
-            "mortality": [0, 1, 1],  # Binary: 2 unique values
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003"],
+                "mortality": [0, 1, 1],  # Binary: 2 unique values
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -64,10 +68,12 @@ class TestConvertSchema:
     def test_convert_schema_infers_continuous_outcome_from_data(self):
         """Test that outcome type is inferred as continuous when n_unique > 2."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002", "P003", "P004"],
-            "viral_load": [100.5, 200.3, 150.7, 180.2],  # Continuous: >2 unique values
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003", "P004"],
+                "viral_load": [100.5, 200.3, 150.7, 180.2],  # Continuous: >2 unique values
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -84,10 +90,12 @@ class TestConvertSchema:
     def test_convert_schema_maps_time_zero(self):
         """Test that time_zero is correctly mapped."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "admission_date": ["2024-01-01", "2024-01-02"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "admission_date": ["2024-01-01", "2024-01-02"],
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -106,12 +114,14 @@ class TestConvertSchema:
     def test_convert_schema_maps_predictors(self):
         """Test that predictors are correctly mapped to analysis section."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "age": [25, 30],
-            "gender": ["M", "F"],
-            "bmi": [22.5, 24.3],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+                "gender": ["M", "F"],
+                "bmi": [22.5, 24.3],
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -128,12 +138,14 @@ class TestConvertSchema:
     def test_convert_schema_detects_categorical_variables(self):
         """Test improved categorical detection heuristic."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002", "P003", "P004", "P005"],
-            "gender": ["M", "F", "M", "F", "M"],  # Low cardinality string
-            "age": [25, 30, 35, 40, 45],  # Numeric: never categorical
-            "lab_value": [100, 200, 100, 200, 100],  # Numeric: never categorical
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003", "P004", "P005"],
+                "gender": ["M", "F", "M", "F", "M"],  # Low cardinality string
+                "age": [25, 30, 35, 40, 45],  # Numeric: never categorical
+                "lab_value": [100, 200, 100, 200, 100],  # Numeric: never categorical
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -152,10 +164,12 @@ class TestConvertSchema:
     def test_convert_schema_rejects_high_uniqueness_ratio_as_categorical(self):
         """Test that strings with high uniqueness ratio are not categorical."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002", "P003", "P004", "P005"],
-            "diagnosis_code": ["D001", "D002", "D003", "D004", "D005"],  # 5 unique / 5 total = 1.0 ratio
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003", "P004", "P005"],
+                "diagnosis_code": ["D001", "D002", "D003", "D004", "D005"],  # 5 unique / 5 total = 1.0 ratio
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -172,11 +186,13 @@ class TestConvertSchema:
     def test_convert_schema_infers_granularities_from_columns(self):
         """Test that granularities are inferred from column presence."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "admission_id": ["A001", "A002"],
-            "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "admission_id": ["A001", "A002"],
+                "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -194,10 +210,12 @@ class TestConvertSchema:
     def test_convert_schema_patient_level_always_supported(self):
         """Test that patient_level granularity is always included."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "age": [25, 30],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -212,9 +230,11 @@ class TestConvertSchema:
     def test_convert_schema_handles_missing_optional_fields(self):
         """Test that missing optional fields don't cause errors."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -233,10 +253,12 @@ class TestConvertSchema:
     def test_convert_schema_sets_default_outcome(self):
         """Test that default_outcome is set when outcome is provided."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "mortality": [0, 1],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "mortality": [0, 1],
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -252,11 +274,13 @@ class TestConvertSchema:
     def test_convert_schema_preserves_polars_dtype_info(self):
         """Test that Polars dtypes are accessible via DataFrame schema."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "age": [25, 30],
-            "weight": [70.5, 80.2],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+                "weight": [70.5, 80.2],
+            }
+        )
 
         variable_mapping = {
             "patient_id": "patient_id",
@@ -317,10 +341,12 @@ class TestGranularityInference:
     def test_infer_granularities_patient_only(self):
         """Test that patient_level is always inferred."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "age": [25, 30],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "age": [25, 30],
+            }
+        )
 
         # Act
         granularities = infer_granularities(df)
@@ -331,10 +357,12 @@ class TestGranularityInference:
     def test_infer_granularities_with_admission_id(self):
         """Test that admission_level is inferred when admission_id exists."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "admission_id": ["A001", "A002"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "admission_id": ["A001", "A002"],
+            }
+        )
 
         # Act
         granularities = infer_granularities(df)
@@ -346,10 +374,12 @@ class TestGranularityInference:
     def test_infer_granularities_with_event_timestamp(self):
         """Test that event_level is inferred when event_timestamp exists."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
+            }
+        )
 
         # Act
         granularities = infer_granularities(df)
@@ -361,11 +391,13 @@ class TestGranularityInference:
     def test_infer_granularities_with_all_columns(self):
         """Test that all granularities are inferred when all columns exist."""
         # Arrange
-        df = pl.DataFrame({
-            "patient_id": ["P001", "P002"],
-            "admission_id": ["A001", "A002"],
-            "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
-        })
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "admission_id": ["A001", "A002"],
+                "event_timestamp": ["2024-01-01 10:00:00", "2024-01-01 11:00:00"],
+            }
+        )
 
         # Act
         granularities = infer_granularities(df)
