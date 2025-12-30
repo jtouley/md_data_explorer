@@ -21,7 +21,6 @@ configure_logging()
 # Imports after logging config (intentional - logging must be configured first)
 from clinical_analytics.analysis.stats import run_logistic_regression  # noqa: E402
 from clinical_analytics.core.profiling import DataProfiler  # noqa: E402
-from clinical_analytics.core.registry import DatasetRegistry  # noqa: E402
 from clinical_analytics.core.schema import UnifiedCohort  # noqa: E402
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory  # noqa: E402
 from clinical_analytics.ui.config import V1_MVP_MODE  # noqa: E402
@@ -210,20 +209,11 @@ def main():
     st.title("🏥 Clinical Analytics Platform")
     st.markdown("Multi-dataset clinical analytics with unified schema")
 
-    # DYNAMIC DATASET DISCOVERY - No more hardcoding!
-    # Auto-discover all available datasets from registry
-    available_datasets = DatasetRegistry.list_datasets()
-    dataset_info = DatasetRegistry.get_all_dataset_info()
-
-    # Build display names from config
+    # DYNAMIC DATASET DISCOVERY - Only user uploads
+    # Only show uploaded datasets, no built-in datasets
     dataset_display_names = {}
-    for ds_name in available_datasets:
-        info = dataset_info[ds_name]
-        display_name = info["config"].get("display_name", ds_name.replace("_", "-").upper())
-        dataset_display_names[display_name] = ds_name
-
-    # Add uploaded datasets
     uploaded_datasets = {}
+
     try:
         uploads = UploadedDatasetFactory.list_available_uploads()
         for upload in uploads:
@@ -239,52 +229,29 @@ def main():
     st.sidebar.header("Dataset Selection")
 
     if not dataset_display_names:
-        st.error("No datasets found! Please upload data or check your dataset implementations.")
+        st.error("No datasets found! Please upload data using the 'Add Your Data' page.")
+        st.info("👈 Go to **Add Your Data** to upload your first dataset")
         return
-
-    # Organize datasets by type
-    builtin_datasets = [k for k in dataset_display_names.keys() if not k.startswith("📤")]
-    uploaded_dataset_names = [k for k in dataset_display_names.keys() if k.startswith("📤")]
-
-    # Show dataset count
-    if uploaded_dataset_names:
-        st.sidebar.caption(f"{len(builtin_datasets)} built-in, {len(uploaded_dataset_names)} uploaded")
 
     dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
 
     # Get internal dataset name
     dataset_choice = dataset_display_names[dataset_choice_display]
 
-    # Check if this is an uploaded dataset
-    is_uploaded = dataset_choice in uploaded_datasets
+    # All datasets are uploaded datasets now
+    upload_info = uploaded_datasets[dataset_choice]
+    st.sidebar.markdown("**Type:** User Upload")
+    st.sidebar.markdown(f"**Uploaded:** {upload_info['upload_timestamp'][:10]}")
+    st.sidebar.markdown(f"**Rows:** {upload_info.get('row_count', 'N/A'):,}")
 
-    # Show dataset info in sidebar
-    if is_uploaded:
-        upload_info = uploaded_datasets[dataset_choice]
-        st.sidebar.markdown("**Type:** User Upload")
-        st.sidebar.markdown(f"**Uploaded:** {upload_info['upload_timestamp'][:10]}")
-        st.sidebar.markdown(f"**Rows:** {upload_info.get('row_count', 'N/A'):,}")
-    else:
-        info = dataset_info[dataset_choice]
-        st.sidebar.markdown(f"**Status:** {info['config'].get('status', 'unknown')}")
-        st.sidebar.markdown(f"**Source:** {info['config'].get('source', 'N/A')}")
-
-    # Load selected dataset (registry or uploaded)
+    # Load selected dataset (always uploaded)
     with st.spinner(f"Loading {dataset_choice_display} dataset..."):
-        if is_uploaded:
-            # Load uploaded dataset
-            try:
-                dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
-                dataset.load()
-            except Exception as e:
-                st.error(f"Failed to load uploaded dataset: {str(e)}")
-                return
-        else:
-            # Load registry dataset
-            dataset = load_dataset(dataset_choice)
-            if dataset is None:
-                st.error(f"Failed to load {dataset_choice} dataset. Please check data availability.")
-                return
+        try:
+            dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
+            dataset.load()
+        except Exception as e:
+            st.error(f"Failed to load uploaded dataset: {str(e)}")
+            return
 
     # Display dataset info
     st.header(f"📊 {dataset_choice} Dataset")
@@ -361,13 +328,11 @@ def main():
 
 def load_dataset(dataset_name: str):
     """
-    Load the selected dataset using registry factory method.
-
-    NO MORE HARDCODED IF/ELSE! Registry auto-discovers and instantiates.
+    Load the selected dataset - only supports user uploads.
     """
     try:
-        # Use registry factory - completely dynamic
-        dataset = DatasetRegistry.get_dataset(dataset_name)
+        # All datasets are uploaded datasets
+        dataset = UploadedDatasetFactory.create_dataset(dataset_name)
 
         # Validate and load
         if not dataset.validate():
@@ -377,9 +342,6 @@ def load_dataset(dataset_name: str):
         dataset.load()
         return dataset
 
-    except KeyError as e:
-        st.error(f"Dataset '{dataset_name}' not found in registry: {str(e)}")
-        return None
     except Exception as e:
         st.error(f"Error loading dataset: {str(e)}")
         st.exception(e)

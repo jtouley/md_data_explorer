@@ -547,7 +547,8 @@ class NLQueryEngine:
 
         # Pattern: "which X was most Y" or "what was the most Y" - COUNT with grouping
         # This pattern asks for the top result by count, so it's a COUNT intent with grouping
-        # More flexible pattern to handle "which was the most Y", "what was the most Y", and "excluding X, which was the most Y"
+        # More flexible pattern to handle "which was the most Y", "what was the most Y",
+        # and "excluding X, which was the most Y"
         if (
             re.search(r"which\s+(?:\w+\s+)?(?:was|is)\s+the?\s+most\s+\w+", query_lower)
             or re.search(r"which\s+\w+(?:\s+\w+)*?\s+was\s+most\s+\w+", query_lower)
@@ -1380,7 +1381,8 @@ class NLQueryEngine:
         patterns = [
             # "which X was most Y" - captures X, Y can be any word (prescribed, common, used, frequent, etc.)
             r"which\s+(\w+(?:\s+\w+)*?)\s+was\s+most\s+\w+",
-            # "which was the most Y" - captures the grouping variable from context (e.g., "which was the most prescribed statin?")
+            # "which was the most Y" - captures the grouping variable from context
+            # (e.g., "which was the most prescribed statin?")
             r"which\s+was\s+the?\s+most\s+(\w+)",
             # "what was the most Y" - captures grouping variable (e.g., "what was the most common Current Regimen")
             r"what\s+was\s+the\s+most\s+\w+\s+(\w+(?:\s+\w+)*?)(?:\?|$)",

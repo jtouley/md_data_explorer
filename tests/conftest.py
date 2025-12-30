@@ -56,20 +56,6 @@ def temp_config_file():
     temp_path.unlink()
 
 
-@pytest.fixture
-def sample_covid_ms_path(test_data_dir):
-    """Return path to COVID-MS test data if available."""
-    path = test_data_dir / "covid_ms" / "GDSI_OpenDataset_Final.csv"
-    return path if path.exists() else None
-
-
-@pytest.fixture
-def sample_sepsis_path(test_data_dir):
-    """Return path to Sepsis test data if available."""
-    path = test_data_dir / "sepsis"
-    return path if path.exists() else None
-
-
 @pytest.fixture(scope="module")
 def ask_questions_page():
     """

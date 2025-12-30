@@ -19,13 +19,14 @@ def get_available_datasets():
     Helper to discover all available datasets from registry.
 
     Returns:
-        List of dataset names to test against (excludes special cases)
+        List of dataset names to test against (only user uploads, excludes built-in datasets)
     """
     DatasetRegistry.reset()
     DatasetRegistry.discover_datasets()
     DatasetRegistry.load_config()
-    # Skip special cases like "uploaded" which require user data
-    return [name for name in DatasetRegistry.list_datasets() if name != "uploaded"]
+    # Filter out built-in datasets (covid_ms, mimic3, sepsis) and uploaded class
+    datasets = DatasetRegistry.list_datasets()
+    return [name for name in datasets if name not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
 
 
 def get_sample_datasets():

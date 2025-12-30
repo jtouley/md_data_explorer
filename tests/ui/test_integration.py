@@ -20,17 +20,14 @@ def get_available_datasets():
     Helper to discover all available datasets from registry.
 
     Returns:
-        List of dataset names to test against (excludes special cases)
+        List of dataset names to test against (only user uploads, excludes built-in datasets)
     """
     DatasetRegistry.reset()
     DatasetRegistry.discover_datasets()
     DatasetRegistry.load_config()
-    # Skip special cases
-    return [
-        name
-        for name in DatasetRegistry.list_datasets()
-        if name not in ["uploaded", "mimic3"]  # uploaded needs upload_id, mimic3 needs DB
-    ]
+    # Filter out built-in datasets (covid_ms, mimic3, sepsis) and uploaded class
+    datasets = DatasetRegistry.list_datasets()
+    return [name for name in datasets if name not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
 
 
 def get_sample_datasets():
@@ -117,8 +114,8 @@ class TestUIDatasetIntegration:
 
         tested_count = 0
         for dataset_name in available_datasets:
-            # Skip special cases
-            if dataset_name in ["mimic3", "uploaded"]:
+            # Skip uploaded class (requires upload_id)
+            if dataset_name == "uploaded":
                 continue
 
             # Act: Create dataset instance (UI pattern)
@@ -187,20 +184,6 @@ class TestUIErrorHandling:
         # Act & Assert: Invalid name should raise KeyError
         with pytest.raises(KeyError):
             DatasetRegistry.get_dataset("nonexistent_dataset")
-
-    def test_dataset_without_data_can_be_created_but_validation_fails(self):
-        """Test that dataset without valid data fails appropriately."""
-        # Arrange: MIMIC3 without database connection
-        # Note: MIMIC3 may fail during instantiation if config is incomplete
-        try:
-            dataset = DatasetRegistry.get_dataset("mimic3")
-            # Assert: If instance created, validation should fail
-            assert dataset is not None
-            assert not dataset.validate(), "MIMIC3 should fail validation without DB connection"
-        except (ValueError, FileNotFoundError) as e:
-            # MIMIC3 may fail during init if config doesn't have proper source
-            # This is expected behavior for datasets requiring external resources
-            assert "mimic3" in str(e).lower() or "source" in str(e).lower()
 
 
 class TestUIFilterHandling:

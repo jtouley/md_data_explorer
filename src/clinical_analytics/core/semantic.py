@@ -603,7 +603,7 @@ class SemanticLayer:
         Get metadata for a specific column if available.
 
         For uploaded datasets, this accesses variable_types metadata from the upload metadata.
-        Falls back to None if metadata is not available (e.g., for built-in datasets).
+        Falls back to None if metadata is not available.
 
         Args:
             column_name: Canonical column name

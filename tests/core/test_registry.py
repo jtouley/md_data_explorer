@@ -27,9 +27,8 @@ def get_first_available_dataset():
     DatasetRegistry.discover_datasets()
     DatasetRegistry.load_config()
     datasets = DatasetRegistry.list_datasets()
-    # Prefer datasets that are likely to have data available
-    # Filter out special cases that require specific setup
-    available = [d for d in datasets if d not in ["uploaded", "mimic3"]]
+    # Filter out built-in datasets (covid_ms, mimic3, sepsis) and uploaded class
+    available = [d for d in datasets if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
     return available[0] if available else None
 
 
