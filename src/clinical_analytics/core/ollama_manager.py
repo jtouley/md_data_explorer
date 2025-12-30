@@ -126,7 +126,6 @@ class OllamaManager:
         if self._available_models is not None:
             return self._available_models
 
-        from clinical_analytics.core.llm_client import OllamaClient
 
         try:
             import requests
