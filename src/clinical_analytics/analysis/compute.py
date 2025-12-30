@@ -990,15 +990,27 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
             dtype = col_data.schema[var]
 
             # Check if already numeric
-            if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64, pl.Float32, pl.Float64):
+            numeric_types = (
+                pl.Int8,
+                pl.Int16,
+                pl.Int32,
+                pl.Int64,
+                pl.UInt8,
+                pl.UInt16,
+                pl.UInt32,
+                pl.UInt64,
+                pl.Float32,
+                pl.Float64,
+            )
+            if dtype in numeric_types:
                 numeric_variables.append(var)
             else:
                 # Try to convert to numeric (for string columns that might be numeric)
                 # Test on a sample to see if conversion is possible
                 sample = col_data.head(100)
                 try:
-                    # Try casting to float
-                    test_cast = sample.select(pl.col(var).cast(pl.Float64, strict=True))
+                    # Try casting to float (if it works, column is numeric)
+                    sample.select(pl.col(var).cast(pl.Float64, strict=True))
                     numeric_variables.append(var)
                 except Exception:
                     # Cannot convert to numeric
@@ -1008,13 +1020,17 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
             non_numeric_variables.append(var)
 
     if len(numeric_variables) < 2:
+        numeric_vars_str = ", ".join(numeric_variables) if numeric_variables else "none"
+        excluded_str = ", ".join(non_numeric_variables[:5])
+        if len(non_numeric_variables) > 5:
+            excluded_str += "..."
+        
         return {
             "type": "relationship",
             "error": (
                 f"Need at least 2 numeric variables for correlation analysis. "
-                f"Found {len(numeric_variables)} numeric variable(s): {', '.join(numeric_variables) if numeric_variables else 'none'}. "
-                f"Non-numeric variables excluded: {', '.join(non_numeric_variables[:5])}"
-                f"{'...' if len(non_numeric_variables) > 5 else ''}"
+                f"Found {len(numeric_variables)} numeric variable(s): {numeric_vars_str}. "
+                f"Non-numeric variables excluded: {excluded_str}"
             ),
             "numeric_variables": numeric_variables,
             "non_numeric_variables": non_numeric_variables,
