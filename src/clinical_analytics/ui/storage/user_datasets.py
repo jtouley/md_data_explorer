@@ -160,6 +160,111 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
         raise UploadError("Corrupted ZIP file")
 
 
+def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> int:
+    """
+    Intelligently detect the best header row in an Excel file.
+
+    Analyzes the first few rows to find which one looks most like column headers:
+    - Headers typically have many non-empty cells
+    - Headers are usually strings (not numeric data)
+    - Headers are relatively short
+    - Headers are unique/distinct
+
+    Args:
+        file_bytes: Excel file content
+        max_rows_to_check: Maximum number of rows to analyze (default 5)
+
+    Returns:
+        Row index (0-based) to use as header, or 0 if detection fails
+    """
+    import io
+    import pandas as pd
+
+    try:
+        # Read first few rows without headers to analyze them
+        file_io = io.BytesIO(file_bytes)
+        df_preview = pd.read_excel(file_io, engine="openpyxl", header=None, nrows=max_rows_to_check)
+
+        if df_preview.empty:
+            return 0
+
+        scores = []
+        for row_idx in range(min(max_rows_to_check, len(df_preview))):
+            row = df_preview.iloc[row_idx]
+
+            # Count non-empty cells
+            non_empty = row.notna().sum()
+            if non_empty == 0:
+                scores.append(0.0)
+                continue
+
+            # Calculate score components
+            score = 0.0
+
+            # 1. More non-empty cells = better (weight: 40%)
+            fill_ratio = non_empty / len(row)
+            score += fill_ratio * 0.4
+
+            # 2. Check if values look like headers (strings, not numeric data)
+            string_count = 0
+            avg_length = 0
+            unique_count = 0
+
+            for val in row.dropna():
+                val_str = str(val).strip()
+                if not val_str:
+                    continue
+
+                # Headers are usually strings, not pure numbers
+                try:
+                    float(val_str)  # If it's a number, less likely to be a header
+                    # But allow short numbers (like "1", "2" for coded values)
+                    if len(val_str) > 3:
+                        continue
+                except ValueError:
+                    string_count += 1
+
+                # Track length and uniqueness
+                avg_length += len(val_str)
+                unique_count += 1
+
+            if unique_count > 0:
+                avg_length = avg_length / unique_count
+                uniqueness_ratio = row.dropna().nunique() / unique_count
+
+                # 3. Higher string ratio = better (weight: 30%)
+                string_ratio = string_count / unique_count if unique_count > 0 else 0
+                score += string_ratio * 0.3
+
+                # 4. Reasonable length (not too short, not too long) (weight: 15%)
+                # Headers are usually 5-50 characters
+                if 5 <= avg_length <= 50:
+                    score += 0.15
+                elif avg_length < 5:
+                    score += (avg_length / 5) * 0.15
+                else:
+                    score += max(0, (50 / avg_length)) * 0.15
+
+                # 5. High uniqueness (headers should be distinct) (weight: 15%)
+                score += min(uniqueness_ratio, 1.0) * 0.15
+
+            scores.append(score)
+
+        # Find row with highest score
+        if scores and max(scores) > 0.3:  # Minimum threshold
+            best_row = scores.index(max(scores))
+            logger.debug(f"Detected header row: {best_row} (score: {max(scores):.2f})")
+            return best_row
+
+        # Default to row 0 if no good candidate found
+        logger.debug("No clear header row detected, using row 0")
+        return 0
+
+    except Exception as e:
+        logger.warning(f"Header detection failed: {e}, using default row 0")
+        return 0
+
+
 def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
     """
     Load single file (CSV, Excel, SPSS) as Polars DataFrame.
@@ -189,7 +294,16 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
         import pandas as pd
 
         try:
-            df_pandas = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+            # Intelligently detect the best header row
+            header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+            file_io = io.BytesIO(file_bytes)
+            df_pandas = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+
+            # Clean up any remaining "Unnamed" columns (from empty header cells)
+            df_pandas.columns = [
+                f"column_{i}" if str(col).startswith("Unnamed") else col for i, col in enumerate(df_pandas.columns)
+            ]
+
             df_polars = pl.from_pandas(df_pandas)
             logger.info(
                 f"Successfully loaded Excel file with pandas: {df_polars.height} rows, {df_polars.width} columns"

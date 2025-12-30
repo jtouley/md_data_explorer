@@ -12,6 +12,7 @@ import polars as pl
 import pytest
 
 from clinical_analytics.ui.components.data_validator import _ensure_polars
+from clinical_analytics.ui.storage.user_datasets import _detect_excel_header_row
 
 
 class TestPolarsExcelReading:
@@ -209,3 +210,59 @@ class TestExcelReadingIntegration:
         assert isinstance(df_final, pl.DataFrame)
         assert df_final.height == 3
         assert "viral_load" in df_final.columns
+
+
+class TestExcelHeaderDetection:
+    """Tests for intelligent Excel header row detection using fixtures from conftest.py."""
+
+    def test_detect_header_row_standard_format(self, synthetic_dexa_excel_file):
+        """Test header detection with standard format (header in row 0)."""
+        # Use fixture from conftest.py (DRY principle)
+        with open(synthetic_dexa_excel_file, "rb") as f:
+            file_bytes = f.read()
+
+        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+        assert header_row == 0, f"Expected header row 0, got {header_row}"
+
+        # Verify reading works correctly
+        file_io = io.BytesIO(file_bytes)
+        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+        assert df_read.shape[0] == 50
+        assert df_read.shape[1] == 10
+        assert "Race" in df_read.columns
+        assert "Age" in df_read.columns
+
+    def test_detect_header_row_with_empty_first_row(self, synthetic_statin_excel_file):
+        """Test header detection with empty first row (header in row 1)."""
+        # Use fixture from conftest.py (DRY principle)
+        with open(synthetic_statin_excel_file, "rb") as f:
+            file_bytes = f.read()
+
+        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+        assert header_row == 1, f"Expected header row 1, got {header_row}"
+
+        # Verify reading works correctly
+        file_io = io.BytesIO(file_bytes)
+        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+        assert df_read.shape[0] == 50
+        assert df_read.shape[1] == 15
+        assert "Race" in df_read.columns
+        assert "Age" in df_read.columns
+        assert "Most Recent VL copies/mL" in df_read.columns
+
+    def test_detect_header_row_with_metadata_rows(self, synthetic_complex_excel_file):
+        """Test header detection with metadata rows before headers."""
+        # Use fixture from conftest.py (DRY principle)
+        with open(synthetic_complex_excel_file, "rb") as f:
+            file_bytes = f.read()
+
+        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+        assert header_row == 1, f"Expected header row 1, got {header_row}"
+
+        # Verify reading works correctly
+        file_io = io.BytesIO(file_bytes)
+        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+        assert df_read.shape[0] == 45
+        assert df_read.shape[1] == 12
+        assert "Race" in df_read.columns
+        assert "Viral Load copies/mL" in df_read.columns
