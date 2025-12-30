@@ -1,7 +1,6 @@
 ---
 name: ADR003 Implementation Plan
 overview: "Implement ADR003: Clinical Trust Protocol + Adaptive Alias Persistence. Four phases: (0) Tier 3 LLM fallback with local Ollama, (1) Trust UI with verification expanders and patient-level export, (2) Adaptive alias persistence scoped per dataset, (3) Semantic layer QueryPlan execution with type-aware validation and confidence gating."
-progress: "Phase 0 ✅ (Commit f979c96) - 12/12 tests passing. Phase 1 ✅ (Commit af46ca9) - 11/11 tests passing. Phase 2 ✅ (Commit 063b3d6) - 8/8 tests passing. Phase 3 ✅ (Commit 3d4abdb) - 15/15 tests passing."
 todos:
   - id: phase0-tests
     content: Write Phase 0 test specifications (12 tests) in tests/core/test_llm_fallback.py

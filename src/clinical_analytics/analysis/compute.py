@@ -951,19 +951,46 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
     if len(variables) < 2:
         return {"type": "relationship", "error": "Need at least 2 variables to examine relationships"}
 
-    # Calculate correlations
-    analysis_df = df.select(variables).drop_nulls()
+    # Normalize variable names to match actual dataframe columns
+    # Handle cases where NLU extracted names don't exactly match column names (e.g., "BMI" vs "BMI ")
+    actual_columns = df.columns
+    normalized_variables = []
+    missing_variables = []
+
+    for var in variables:
+        # Use the same robust column matching as compute_descriptive_analysis
+        matched_col = _find_matching_column(var, actual_columns)
+        if matched_col:
+            normalized_variables.append(matched_col)
+        else:
+            missing_variables.append(var)
+
+    if missing_variables:
+        cols_preview = actual_columns[:10].tolist()
+        cols_str = ", ".join(cols_preview)
+        if len(actual_columns) > 10:
+            cols_str += "..."
+        return {
+            "type": "relationship",
+            "error": f"Variables not found in data: {', '.join(missing_variables)}. Available columns: {cols_str}",
+        }
+
+    if len(normalized_variables) < 2:
+        return {"type": "relationship", "error": "Need at least 2 valid variables to examine relationships"}
+
+    # Calculate correlations using normalized variable names
+    analysis_df = df.select(normalized_variables).drop_nulls()
 
     if analysis_df.height < 3:
         return {"type": "relationship", "error": "Need at least 3 observations"}
 
     # Cast to numeric for correlation
-    numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in variables])
+    numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in normalized_variables])
 
     # Compute correlation matrix using Polars
     corr_data = []
-    for i, var1 in enumerate(variables):
-        for j, var2 in enumerate(variables):
+    for i, var1 in enumerate(normalized_variables):
+        for j, var2 in enumerate(normalized_variables):
             if i <= j:
                 if i == j:
                     corr_val = 1.0
@@ -980,7 +1007,7 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
 
     return {
         "type": "relationship",
-        "variables": variables,
+        "variables": normalized_variables,  # Return actual column names used
         "correlations": corr_data,
         "strong_correlations": strong_correlations,
     }
