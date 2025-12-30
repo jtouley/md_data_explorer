@@ -714,6 +714,28 @@ def save_table_list(
         unified_df.write_csv(csv_path)
         logger.info(f"Saved unified cohort ({unified_df.height:,} rows) to {csv_path}")
 
+        # 4.5. Save to persistent DuckDB (Phase 2)
+        from clinical_analytics.storage.datastore import DataStore
+
+        # Get or create DataStore (persistent DuckDB at data/analytics.duckdb)
+        db_path = storage.upload_dir.parent / "analytics.duckdb"
+        datastore = DataStore(db_path)
+
+        try:
+            # Save all individual tables to DuckDB
+            for table in tables:
+                datastore.save_table(
+                    table_name=table["name"],
+                    data=table["data"],
+                    upload_id=upload_id,
+                    dataset_version=dataset_version,
+                )
+                logger.debug(f"Saved table '{table['name']}' to DuckDB")
+
+            logger.info(f"Saved {len(tables)} tables to persistent DuckDB at {db_path}")
+        finally:
+            datastore.close()
+
         # 5. Infer schema for unified cohort (if not already present)
         if "inferred_schema" not in metadata:
             from clinical_analytics.core.schema_inference import SchemaInferenceEngine

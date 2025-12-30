@@ -1,0 +1,176 @@
+"""
+DataStore Class - Persistent DuckDB Storage
+
+Manages persistent DuckDB storage for uploaded datasets.
+MVP scope: Basic save/load operations, lazy frame support.
+Deferred to Phase 5+: Table deduplication, storage optimization, compression.
+"""
+
+import logging
+from pathlib import Path
+
+import duckdb
+import polars as pl
+
+logger = logging.getLogger(__name__)
+
+
+class DataStore:
+    """
+    Manages persistent DuckDB storage.
+
+    Boundary: IO is eager (DuckDB writes), transforms are lazy (return LazyFrame).
+
+    MVP Features:
+    - Save tables to persistent DuckDB
+    - Load tables as Polars lazy frames
+    - List all datasets and tables
+    - ACID guarantees via DuckDB
+
+    Deferred to Phase 5+:
+    - Table deduplication (storage reuse)
+    - Compression strategies
+    - Archive old versions
+    """
+
+    def __init__(self, db_path: Path | str):
+        """
+        Initialize persistent DuckDB connection.
+
+        Args:
+            db_path: Path to DuckDB database file (will be created if not exists)
+        """
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create persistent connection
+        self.conn = duckdb.connect(str(self.db_path))
+        logger.info(f"Initialized DataStore with persistent DuckDB at {self.db_path}")
+
+    def save_table(
+        self,
+        table_name: str,
+        data: pl.DataFrame,
+        upload_id: str,
+        dataset_version: str,
+    ) -> None:
+        """
+        Save table to DuckDB with versioning.
+
+        Enforces persistence invariant: same (upload_id, dataset_version) → same table.
+
+        Table naming: {upload_id}_{table_name}_{dataset_version}
+
+        Args:
+            table_name: Original table name (e.g., "patients", "visits")
+            data: Polars DataFrame (eager - IO boundary)
+            upload_id: Upload identifier
+            dataset_version: Content-based dataset version
+
+        Note:
+            IO Boundary: Accepts eager DataFrame for DuckDB write.
+            Use collect() before calling if you have a LazyFrame.
+        """
+        # Build qualified table name
+        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+
+        # Create table in DuckDB (overwrite if exists for idempotency)
+        # Use CREATE OR REPLACE for MVP (deferred: IF NOT EXISTS + dedup logic)
+        self.conn.execute(f"CREATE OR REPLACE TABLE {qualified_name} AS SELECT * FROM data")
+
+        logger.info(f"Saved table '{table_name}' ({data.height:,} rows) to DuckDB as '{qualified_name}'")
+
+    def load_table(
+        self,
+        upload_id: str,
+        table_name: str,
+        dataset_version: str,
+    ) -> pl.LazyFrame:
+        """
+        Load table as Polars lazy frame.
+
+        Boundary: Returns LazyFrame (lazy transform), not eager DataFrame.
+
+        Args:
+            upload_id: Upload identifier
+            table_name: Original table name
+            dataset_version: Content-based dataset version
+
+        Returns:
+            Polars LazyFrame for lazy evaluation
+
+        Raises:
+            ValueError: If table not found
+        """
+        # Build qualified table name
+        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+
+        # Check if table exists
+        tables = self.list_tables()
+        if qualified_name not in tables:
+            raise ValueError(f"Table '{qualified_name}' not found in DuckDB. Available tables: {', '.join(tables)}")
+
+        # Load as lazy frame using pl.scan_sql() for deferred execution
+        # Note: pl.scan_sql() was added in Polars 0.20+, fallback to read_database if needed
+        lazy_df: pl.LazyFrame
+        try:
+            # Preferred: scan_sql for true lazy evaluation
+            lazy_df = pl.scan_sql(  # type: ignore[attr-defined]
+                query=f"SELECT * FROM {qualified_name}",
+                connection_uri=str(self.db_path),
+            )
+        except AttributeError:
+            # Fallback: read_database then convert to lazy (Polars < 0.20)
+            eager_df = pl.read_database(
+                query=f"SELECT * FROM {qualified_name}",
+                connection=self.conn,
+            )
+            lazy_df = eager_df.lazy()
+
+        logger.debug(f"Loaded table '{qualified_name}' as LazyFrame")
+        return lazy_df
+
+    def list_tables(self) -> list[str]:
+        """
+        List all tables in DuckDB.
+
+        Returns:
+            List of table names
+        """
+        result = self.conn.execute("SHOW TABLES").fetchall()
+        return [row[0] for row in result]
+
+    def list_datasets(self) -> list[dict]:
+        """
+        List all datasets (unique upload_ids) in DuckDB.
+
+        Returns:
+            List of dicts with upload_id and table_count
+
+        Example:
+            [
+                {"upload_id": "upload_001", "table_count": 2},
+                {"upload_id": "upload_002", "table_count": 1},
+            ]
+        """
+        tables = self.list_tables()
+
+        # Parse upload_id from table names (format: {upload_id}_{table_name}_{version})
+        upload_ids = {}
+        for table in tables:
+            # Extract upload_id by removing last two components (table_name + version)
+            # Example: "upload_001_patients_v1" → "upload_001"
+            parts = table.rsplit("_", 2)  # Split from right, max 2 splits
+            if len(parts) >= 1:
+                upload_id = parts[0]  # Everything before last two underscores
+                if upload_id not in upload_ids:
+                    upload_ids[upload_id] = 0
+                upload_ids[upload_id] += 1
+
+        return [{"upload_id": uid, "table_count": count} for uid, count in upload_ids.items()]
+
+    def close(self) -> None:
+        """Close DuckDB connection."""
+        if self.conn:
+            self.conn.close()
+            logger.debug(f"Closed DuckDB connection to {self.db_path}")

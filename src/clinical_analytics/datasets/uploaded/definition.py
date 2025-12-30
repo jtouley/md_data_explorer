@@ -464,30 +464,56 @@ class UploadedDataset(ClinicalDataset):
             duckdb_con = self.semantic.con.con
             safe_dataset_name = _safe_identifier(self.name)
 
+            # Phase 2: Try loading from persistent DuckDB first, fallback to CSV
+            from pathlib import Path
+
+            db_path = self.storage.upload_dir.parent / "analytics.duckdb"
+            dataset_version = self.metadata.get("dataset_version")
+            use_persistent_duckdb = db_path.exists() and dataset_version
+
+            if use_persistent_duckdb:
+                logger.info(f"Loading tables from persistent DuckDB: {db_path}")
+                # Attach persistent DuckDB to semantic layer's in-memory DuckDB
+                duckdb_con.execute(f"ATTACH '{db_path}' AS persistent_db")
+
             for table_name in table_names:  # Use metadata list, not directory listing
+                safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
+
+                # Phase 2: Try loading from persistent DuckDB first
+                if use_persistent_duckdb:
+                    # Table name in persistent DB: {upload_id}_{table_name}_{dataset_version}
+                    persistent_table_name = f"{self.upload_id}_{table_name}_{dataset_version}"
+
+                    # Check if table exists in persistent DB
+                    try:
+                        duckdb_con.execute(
+                            f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS "
+                            f"SELECT * FROM persistent_db.{persistent_table_name}"
+                        )
+                        logger.info(f"Registered table '{safe_table_name}' from persistent DuckDB")
+                        continue  # Successfully loaded from DuckDB, skip CSV fallback
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to load '{persistent_table_name}' from persistent DuckDB: {e}. "
+                            "Falling back to CSV."
+                        )
+
+                # Fallback: Load from CSV (migration path for old uploads)
                 table_path = tables_dir / f"{table_name}.csv"
                 if not table_path.exists():
                     raise FileNotFoundError(
                         f"Table file missing for upload {self.upload_id}, table '{table_name}': expected {table_path}"
                     )
 
-                safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
                 abs_path = str(table_path.resolve())
 
                 # CRITICAL FIX: Use IF NOT EXISTS instead of OR REPLACE
                 # Prevents data loss on semantic layer re-init within same session
-                #
-                # Idempotency assumption: Table names include upload_id via dataset_name,
-                # ensuring uniqueness across uploads. Same upload re-initialized uses same
-                # table name, so IF NOT EXISTS prevents clobbering existing data.
-                #
-                # Example: upload_id="abc123" -> dataset_name="my_data" -> table="my_data_patients"
-                # Re-init of same upload reuses "my_data_patients", skips CREATE if exists.
                 duckdb_con.execute(
                     f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS SELECT * FROM read_csv_auto(?)",
                     [abs_path],
                 )
-                logger.info(f"Registered table '{safe_table_name}' from {abs_path}")
+                logger.info(f"Registered table '{safe_table_name}' from CSV (fallback): {abs_path}")
 
             logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
         except Exception as e:
