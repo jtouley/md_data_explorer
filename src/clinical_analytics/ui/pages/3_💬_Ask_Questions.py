@@ -1356,7 +1356,9 @@ def main():
                         context.predictor_variables.append(context.grouping_variable)
                 elif not context.primary_variable and not context.grouping_variable:
                     # No variables extracted by NLU - ask user to select
-                    context.predictor_variables = QuestionEngine.select_predictor_variables(cohort, exclude=[], min_vars=2)
+                    context.predictor_variables = QuestionEngine.select_predictor_variables(
+                        cohort, exclude=[], min_vars=2
+                    )
 
         # Update context in session state
         st.session_state["analysis_context"] = context
