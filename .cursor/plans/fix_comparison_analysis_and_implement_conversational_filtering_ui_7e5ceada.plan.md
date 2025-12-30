@@ -97,7 +97,7 @@ todos:
       - phase3-ui-redesign
   - id: phase3-follow-ups
     content: Add follow-up question suggestions based on current analysis result
-    status: in_progress
+    status: completed
     dependencies:
       - phase3-inline-rendering
   - id: phase2-apply-filters
