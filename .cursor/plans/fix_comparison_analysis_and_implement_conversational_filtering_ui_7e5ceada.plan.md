@@ -52,7 +52,7 @@ todos:
       - phase1.5-count-intent
   - id: phase2-queryplan-conversion
     content: Convert QueryIntent to QueryPlan with FilterSpec objects in NL Query Engine
-    status: in_progress
+    status: completed
     dependencies:
       - phase2-filter-parsing
   - id: phase2-context-queryplan
