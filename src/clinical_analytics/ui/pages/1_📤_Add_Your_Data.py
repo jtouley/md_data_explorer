@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import polars as pl
 import streamlit as st
 
 # Add src to path
@@ -149,18 +148,36 @@ def render_upload_step():
                 elif file_ext in {".xlsx", ".xls"}:
                     # Use load_single_file from user_datasets for consistent Excel reading
                     # This includes intelligent header detection
-                    from clinical_analytics.ui.storage.user_datasets import load_single_file
-
-                    import io
                     import logging
 
+                    from clinical_analytics.ui.storage.user_datasets import load_single_file
+
                     logger = logging.getLogger(__name__)
+
+                    # Ensure we get bytes from Streamlit UploadedFile
                     file_bytes = uploaded_file.read()
+                    if not isinstance(file_bytes, bytes):
+                        # Convert to bytes if needed (handle edge cases)
+                        if hasattr(file_bytes, "read"):
+                            file_bytes = file_bytes.read()
+                        elif isinstance(file_bytes, (str, int, float)):
+                            logger.error(f"Unexpected file_bytes type: {type(file_bytes)}")
+                            st.error("Failed to read file: invalid file format")
+                            return None
+                        else:
+                            try:
+                                file_bytes = bytes(file_bytes)
+                            except (TypeError, ValueError) as e:
+                                logger.error(f"Could not convert file_bytes to bytes: {e}, type: {type(file_bytes)}")
+                                st.error("Failed to read file: invalid file format")
+                                return None
+
                     uploaded_file.seek(0)  # Reset for later use
 
                     try:
                         # Use the same Excel reading logic as upload (with header detection)
-                        df_polars = load_single_file(file_bytes, uploaded_file.name)
+                        filename = uploaded_file.name if uploaded_file.name else "upload.xlsx"
+                        df_polars = load_single_file(file_bytes, filename)
                         # Convert to pandas for compatibility with existing preview code
                         df = df_polars.to_pandas()
                         logger.info(

@@ -178,9 +178,17 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
         Row index (0-based) to use as header, or 0 if detection fails
     """
     import io
+
     import pandas as pd
 
     try:
+        # Ensure file_bytes is actually bytes
+        if not isinstance(file_bytes, bytes):
+            if hasattr(file_bytes, "read"):
+                file_bytes = file_bytes.read()
+            else:
+                raise TypeError(f"Expected bytes, got {type(file_bytes)}")
+
         # Read first few rows without headers to analyze them
         file_io = io.BytesIO(file_bytes)
         df_preview = pd.read_excel(file_io, engine="openpyxl", header=None, nrows=max_rows_to_check)
