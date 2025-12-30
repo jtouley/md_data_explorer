@@ -9,7 +9,6 @@ Tests verify:
 """
 
 
-
 class TestConversationHistoryDisplay:
     """Test conversation history display in UI."""
 

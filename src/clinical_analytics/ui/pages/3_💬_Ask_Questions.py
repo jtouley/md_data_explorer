@@ -35,13 +35,9 @@ from clinical_analytics.ui.components.question_engine import (
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 from clinical_analytics.ui.messages import (
-    CLEAR_RESULTS,
     COLLISION_SUGGESTION_WARNING,
-    CONFIRM_AND_RUN,
     LOW_CONFIDENCE_WARNING,
     NO_DATASETS_AVAILABLE,
-    RESULTS_CLEARED,
-    START_OVER,
 )
 
 # Page config
@@ -631,6 +627,7 @@ def execute_analysis_with_idempotency(
     run_key: str,
     dataset_version: str,
     query_text: str,
+    query_plan=None,
 ) -> None:
     """
     Execute analysis with idempotency guard and result persistence.
@@ -650,6 +647,10 @@ def execute_analysis_with_idempotency(
             intent_type=context.inferred_intent.value,
         )
         render_analysis_by_type(st.session_state[result_key], context.inferred_intent)
+
+        # Show transparent confidence and interpretation for cached results too
+        if query_plan:
+            _render_interpretation_and_confidence(query_plan, st.session_state[result_key])
         return
 
     # Not computed - compute and store
@@ -737,7 +738,79 @@ def execute_analysis_with_idempotency(
         # Render
         logger.debug("analysis_rendering_start", run_key=run_key)
         render_analysis_by_type(result, context.inferred_intent)
+
+        # Show transparent confidence and interpretation inline with results
+        if query_plan:
+            _render_interpretation_and_confidence(query_plan, result)
+
         logger.info("analysis_rendering_complete", run_key=run_key)
+
+
+def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
+    """
+    Show transparent interpretation and confidence inline with results.
+
+    This replaces blocking confirmation gates with data-driven transparency:
+    - Always execute regardless of confidence
+    - Show what was interpreted
+    - Display confidence level with appropriate visual indicator
+    - Explain why confidence might be low (if applicable)
+    """
+    from clinical_analytics.core.query_plan import QueryPlan
+
+    if not isinstance(query_plan, QueryPlan):
+        return
+
+    st.divider()
+    st.markdown("### 🔍 Interpretation & Confidence")
+
+    # Show confidence badge with appropriate visual indicator
+    confidence = query_plan.confidence
+    if confidence >= 0.75:
+        st.success(f"✅ **High confidence** ({confidence:.0%})")
+    elif confidence >= 0.5:
+        st.warning(f"⚠️ **Moderate confidence** ({confidence:.0%})")
+    else:
+        st.error(f"⚠️ **Low confidence** ({confidence:.0%})")
+
+    # Show what we interpreted (collapsible, expanded for low confidence)
+    expanded = confidence < 0.75
+    with st.expander("How I interpreted your question", expanded=expanded):
+        st.markdown(f"**Intent:** `{query_plan.intent}`")
+
+        if query_plan.metric:
+            st.markdown(f"**Metric:** `{query_plan.metric}`")
+
+        if query_plan.group_by:
+            st.markdown(f"**Group by:** `{query_plan.group_by}`")
+
+        if query_plan.filters:
+            st.markdown("**Filters applied:**")
+            for f in query_plan.filters:
+                op_text = {
+                    "==": "equals",
+                    "!=": "does not equal",
+                    "<": "less than",
+                    ">": "greater than",
+                    "<=": "at most",
+                    ">=": "at least",
+                    "IN": "in",
+                    "NOT_IN": "not in",
+                }.get(f.operator, f.operator)
+                st.markdown(f"- `{f.column}` {op_text} `{f.value}`")
+
+        # Show explanation (why confidence is what it is)
+        if query_plan.explanation:
+            st.info(f"**Note:** {query_plan.explanation}")
+
+    # Log confidence for analytics (helps identify improvement opportunities)
+    logger.info(
+        "confidence_displayed",
+        confidence=confidence,
+        intent=query_plan.intent,
+        has_filters=len(query_plan.filters) > 0,
+        has_explanation=bool(query_plan.explanation),
+    )
 
 
 def get_dataset_version(dataset, is_uploaded: bool, dataset_choice: str) -> str:
@@ -851,6 +924,15 @@ def main():
 
         # Show column count
         st.caption(f"{cohort.width} columns available")
+
+    # Conversation management in sidebar - Phase 3.4 Remove Buttons
+    with st.sidebar:
+        st.markdown("### Conversation")
+        if st.button("Clear Conversation", use_container_width=True):
+            st.session_state["conversation_history"] = []
+            st.session_state["analysis_context"] = None
+            st.session_state["intent_signal"] = None
+            st.rerun()
 
     st.divider()
 
@@ -1033,7 +1115,7 @@ def main():
         st.divider()
         QuestionEngine.render_progress_indicator(context)
 
-        # If complete, auto-execute or show confirmation
+        # If complete, always execute (transparent confidence display, no blocking gates)
         if context.is_complete_for_intent():
             # Get QueryPlan if available (preferred), otherwise fallback to context
             query_plan = getattr(context, "query_plan", None)
@@ -1049,233 +1131,156 @@ def main():
                 query_text = getattr(context, "research_question", "")
                 run_key = generate_run_key(dataset_version, query_text, context)
 
-            # Check if user has confirmed (for low confidence cases)
-            confirmation_key = f"confirmed_analysis:{dataset_version}:{run_key}"
-            user_confirmed = st.session_state.get(confirmation_key, False)
-
-            # Auto-execute if high confidence OR user confirmed
-            should_auto_execute = confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD or user_confirmed
-
             logger.info(
-                "analysis_execution_decision",
+                "analysis_execution_triggered",
                 intent_type=context.inferred_intent.value,
                 confidence=confidence,
                 threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
-                user_confirmed=user_confirmed,
-                should_auto_execute=should_auto_execute,
                 run_key=run_key,
                 dataset_version=dataset_version,
                 query=getattr(context, "research_question", ""),
             )
 
-            if should_auto_execute:
-                # Auto-execute with idempotency guard
-                st.divider()
-                logger.info("analysis_execution_triggered", run_key=run_key, dataset_version=dataset_version)
-                execute_analysis_with_idempotency(
-                    cohort, context, run_key, dataset_version, getattr(context, "research_question", "")
+            # Always execute (no blocking gates) - show transparent confidence inline with results
+            st.divider()
+            execute_analysis_with_idempotency(
+                cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
+            )
+
+        else:
+            # Context not complete - show variable selection UI (for missing required variables)
+            st.warning(LOW_CONFIDENCE_WARNING)
+
+            # Helper to get display name for a column
+            # Note: parse_column_name() doesn't require semantic layer, so no check needed
+            def get_display_name(canonical_name: str) -> str:
+                """Get display name for a column, falling back to canonical if parsing fails."""
+                try:
+                    meta = parse_column_name(canonical_name)
+                    return meta.display_name
+                except Exception:
+                    return canonical_name
+
+            # Show detected variables with display names and editable selectors
+            st.markdown("### Detected Variables")
+
+            available_cols = [c for c in cohort.columns if c not in ["patient_id", "time_zero"]]
+
+            # Primary variable
+            if context.inferred_intent in [AnalysisIntent.COMPARE_GROUPS, AnalysisIntent.FIND_PREDICTORS]:
+                primary_display = get_display_name(context.primary_variable) if context.primary_variable else None
+                primary_index = (
+                    available_cols.index(context.primary_variable) if context.primary_variable in available_cols else 0
                 )
+                selected_primary = st.selectbox(
+                    "**Primary Variable** (what you want to measure/compare):",
+                    options=available_cols,
+                    index=primary_index if primary_index < len(available_cols) else 0,
+                    key=f"low_conf_primary_{dataset_version}",
+                    help=f"Detected: {primary_display or context.primary_variable}"
+                    if context.primary_variable
+                    else None,
+                )
+                context.primary_variable = selected_primary
 
-            else:
-                # Low confidence: show QueryPlan confirmation UI
-                if query_plan:
-                    with st.chat_message("assistant"):
-                        st.warning(f"Confidence: {query_plan.confidence:.0%} - Please confirm interpretation")
+            # Grouping variable (for comparisons)
+            if context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
+                grouping_display = get_display_name(context.grouping_variable) if context.grouping_variable else None
+                grouping_index = (
+                    available_cols.index(context.grouping_variable)
+                    if context.grouping_variable in available_cols
+                    else 0
+                )
+                exclude_primary = [context.primary_variable] if context.primary_variable else []
+                grouping_options = [c for c in available_cols if c not in exclude_primary]
+                selected_grouping = st.selectbox(
+                    "**Grouping Variable** (groups to compare):",
+                    options=grouping_options,
+                    index=min(grouping_index, len(grouping_options) - 1)
+                    if context.grouping_variable in grouping_options
+                    else 0,
+                    key=f"low_conf_grouping_{dataset_version}",
+                    help=f"Detected: {grouping_display or context.grouping_variable}"
+                    if context.grouping_variable
+                    else None,
+                )
+                context.grouping_variable = selected_grouping
 
-                        # Show QueryPlan details
-                        with st.expander("🔍 How I interpreted your question", expanded=True):
-                            st.json(
-                                {
-                                    "intent": query_plan.intent,
-                                    "metric": query_plan.metric,
-                                    "group_by": query_plan.group_by,
-                                    "filters": [
-                                        {
-                                            "column": f.column,
-                                            "operator": f.operator,
-                                            "value": f.value,
-                                            "exclude_nulls": f.exclude_nulls,
-                                        }
-                                        for f in query_plan.filters
-                                    ],
-                                    "explanation": query_plan.explanation,
-                                }
-                            )
+            # Predictor variables (for regression)
+            if context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
+                predictor_display = (
+                    [get_display_name(p) for p in context.predictor_variables] if context.predictor_variables else []
+                )
+                exclude_primary = [context.primary_variable] if context.primary_variable else []
+                predictor_options = [c for c in available_cols if c not in exclude_primary]
+                selected_predictors = st.multiselect(
+                    "**Predictor Variables** (what might affect the outcome):",
+                    options=predictor_options,
+                    default=context.predictor_variables if context.predictor_variables else [],
+                    key=f"low_conf_predictors_{dataset_version}",
+                    help=f"Detected: {', '.join(predictor_display) if predictor_display else 'None'}",
+                )
+                context.predictor_variables = selected_predictors
 
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            if st.button("Confirm and Run", key=f"confirm_{run_key}", use_container_width=True):
-                                st.session_state[confirmation_key] = True
-                                st.rerun()
-                        with col2:
-                            if st.button("Cancel", key=f"cancel_{run_key}", use_container_width=True):
-                                st.session_state[confirmation_key] = False
-                                st.session_state["analysis_context"] = None
-                                st.rerun()
-                else:
-                    # Fallback: Low confidence without QueryPlan - show detected variables
-                    st.warning(LOW_CONFIDENCE_WARNING)
+            # Time and event variables (for survival)
+            if context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
+                col1, col2 = st.columns(2)
+                with col1:
+                    time_display = get_display_name(context.time_variable) if context.time_variable else None
+                    time_index = (
+                        available_cols.index(context.time_variable) if context.time_variable in available_cols else 0
+                    )
+                    selected_time = st.selectbox(
+                        "**Time Variable**:",
+                        options=available_cols,
+                        index=time_index if time_index < len(available_cols) else 0,
+                        key=f"low_conf_time_{dataset_version}",
+                        help=f"Detected: {time_display or context.time_variable}" if context.time_variable else None,
+                    )
+                    context.time_variable = selected_time
+                with col2:
+                    event_options = [c for c in available_cols if c != context.time_variable]
+                    event_display = get_display_name(context.event_variable) if context.event_variable else None
+                    event_index = (
+                        event_options.index(context.event_variable) if context.event_variable in event_options else 0
+                    )
+                    selected_event = st.selectbox(
+                        "**Event Variable**:",
+                        options=event_options,
+                        index=event_index if event_index < len(event_options) else 0,
+                        key=f"low_conf_event_{dataset_version}",
+                        help=f"Detected: {event_display or context.event_variable}" if context.event_variable else None,
+                    )
+                    context.event_variable = selected_event
 
-                    # Helper to get display name for a column
-                    # Note: parse_column_name() doesn't require semantic layer, so no check needed
-                    def get_display_name(canonical_name: str) -> str:
-                        """Get display name for a column, falling back to canonical if parsing fails."""
-                        try:
-                            meta = parse_column_name(canonical_name)
-                            return meta.display_name
-                        except Exception:
-                            return canonical_name
+            # Show collision suggestions if available
+            if context.match_suggestions:
+                st.warning(COLLISION_SUGGESTION_WARNING)
+                for query_term, suggestions in context.match_suggestions.items():
+                    suggestion_display = [get_display_name(s) for s in suggestions]
+                    selected = st.selectbox(
+                        f"**'{query_term}'** matches multiple columns. Which one did you mean?",
+                        options=["(Select one)"] + suggestions,
+                        key=f"collision_{query_term}_{dataset_version}",
+                        help=f"Options: {', '.join(suggestion_display)}",
+                    )
+                    if selected and selected != "(Select one)":
+                        # Update context with selected column based on intent
+                        if not context.primary_variable:
+                            context.primary_variable = selected
+                        elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS and not context.grouping_variable:
+                            context.grouping_variable = selected
+                        st.info(f"✅ Selected: {get_display_name(selected)}")
 
-                    # Show detected variables with display names and editable selectors
-                    st.markdown("### Detected Variables")
+            # Update context in session state after edits
+            st.session_state["analysis_context"] = context
 
-                    available_cols = [c for c in cohort.columns if c not in ["patient_id", "time_zero"]]
+            # Auto-execute after variable selection (no confirmation button needed)
+            # User has already made their selection, so proceed with execution
+            st.info("✅ Variables selected. Executing analysis...")
+            st.rerun()
 
-                    # Primary variable
-                    if context.inferred_intent in [AnalysisIntent.COMPARE_GROUPS, AnalysisIntent.FIND_PREDICTORS]:
-                        primary_display = (
-                            get_display_name(context.primary_variable) if context.primary_variable else None
-                        )
-                        primary_index = (
-                            available_cols.index(context.primary_variable)
-                            if context.primary_variable in available_cols
-                            else 0
-                        )
-                        selected_primary = st.selectbox(
-                            "**Primary Variable** (what you want to measure/compare):",
-                            options=available_cols,
-                            index=primary_index if primary_index < len(available_cols) else 0,
-                            key=f"low_conf_primary_{dataset_version}",
-                            help=f"Detected: {primary_display or context.primary_variable}"
-                            if context.primary_variable
-                            else None,
-                        )
-                        context.primary_variable = selected_primary
-
-                    # Grouping variable (for comparisons)
-                    if context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
-                        grouping_display = (
-                            get_display_name(context.grouping_variable) if context.grouping_variable else None
-                        )
-                        grouping_index = (
-                            available_cols.index(context.grouping_variable)
-                            if context.grouping_variable in available_cols
-                            else 0
-                        )
-                        exclude_primary = [context.primary_variable] if context.primary_variable else []
-                        grouping_options = [c for c in available_cols if c not in exclude_primary]
-                        selected_grouping = st.selectbox(
-                            "**Grouping Variable** (groups to compare):",
-                            options=grouping_options,
-                            index=min(grouping_index, len(grouping_options) - 1)
-                            if context.grouping_variable in grouping_options
-                            else 0,
-                            key=f"low_conf_grouping_{dataset_version}",
-                            help=f"Detected: {grouping_display or context.grouping_variable}"
-                            if context.grouping_variable
-                            else None,
-                        )
-                        context.grouping_variable = selected_grouping
-
-                    # Predictor variables (for regression)
-                    if context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
-                        predictor_display = (
-                            [get_display_name(p) for p in context.predictor_variables]
-                            if context.predictor_variables
-                            else []
-                        )
-                        exclude_primary = [context.primary_variable] if context.primary_variable else []
-                        predictor_options = [c for c in available_cols if c not in exclude_primary]
-                        selected_predictors = st.multiselect(
-                            "**Predictor Variables** (what might affect the outcome):",
-                            options=predictor_options,
-                            default=context.predictor_variables if context.predictor_variables else [],
-                            key=f"low_conf_predictors_{dataset_version}",
-                            help=f"Detected: {', '.join(predictor_display) if predictor_display else 'None'}",
-                        )
-                        context.predictor_variables = selected_predictors
-
-                    # Time and event variables (for survival)
-                    if context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            time_display = get_display_name(context.time_variable) if context.time_variable else None
-                            time_index = (
-                                available_cols.index(context.time_variable)
-                                if context.time_variable in available_cols
-                                else 0
-                            )
-                            selected_time = st.selectbox(
-                                "**Time Variable**:",
-                                options=available_cols,
-                                index=time_index if time_index < len(available_cols) else 0,
-                                key=f"low_conf_time_{dataset_version}",
-                                help=f"Detected: {time_display or context.time_variable}"
-                                if context.time_variable
-                                else None,
-                            )
-                            context.time_variable = selected_time
-                        with col2:
-                            event_options = [c for c in available_cols if c != context.time_variable]
-                            event_display = get_display_name(context.event_variable) if context.event_variable else None
-                            event_index = (
-                                event_options.index(context.event_variable)
-                                if context.event_variable in event_options
-                                else 0
-                            )
-                            selected_event = st.selectbox(
-                                "**Event Variable**:",
-                                options=event_options,
-                                index=event_index if event_index < len(event_options) else 0,
-                                key=f"low_conf_event_{dataset_version}",
-                                help=f"Detected: {event_display or context.event_variable}"
-                                if context.event_variable
-                                else None,
-                            )
-                            context.event_variable = selected_event
-
-                    # Show collision suggestions if available
-                    if context.match_suggestions:
-                        st.warning(COLLISION_SUGGESTION_WARNING)
-                        for query_term, suggestions in context.match_suggestions.items():
-                            suggestion_display = [get_display_name(s) for s in suggestions]
-                            selected = st.selectbox(
-                                f"**'{query_term}'** matches multiple columns. Which one did you mean?",
-                                options=["(Select one)"] + suggestions,
-                                key=f"collision_{query_term}_{dataset_version}",
-                                help=f"Options: {', '.join(suggestion_display)}",
-                            )
-                            if selected and selected != "(Select one)":
-                                # Update context with selected column based on intent
-                                if not context.primary_variable:
-                                    context.primary_variable = selected
-                                elif (
-                                    context.inferred_intent == AnalysisIntent.COMPARE_GROUPS
-                                    and not context.grouping_variable
-                                ):
-                                    context.grouping_variable = selected
-                                st.info(f"✅ Selected: {get_display_name(selected)}")
-
-                    # Update context in session state after edits
-                    st.session_state["analysis_context"] = context
-
-                    # Confirmation button
-                    if st.button(CONFIRM_AND_RUN, type="primary", use_container_width=True):
-                        st.session_state[confirmation_key] = True
-                        st.rerun()
-
-        # Action buttons
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button(START_OVER, use_container_width=True):
-                st.session_state["analysis_context"] = None
-                st.session_state["intent_signal"] = None
-                st.rerun()
-        with col2:
-            if st.button(CLEAR_RESULTS, use_container_width=True):
-                clear_all_results(dataset_version)
-                st.success(RESULTS_CLEARED)
-                st.rerun()
+        # Action buttons removed - replaced with sidebar conversation management (Phase 3.4)
 
     # Always show query input at bottom (sticky) - Phase 3.3 UI Redesign
     # This provides a conversational interface for follow-up questions
