@@ -911,6 +911,50 @@ def execute_analysis_with_idempotency(
         # Don't rerun - results are already rendered inline, conversation history will show on next query
 
 
+def _render_confirmation_ui(
+    query_plan,
+    failure_reason: str,
+    confidence: float,
+    threshold: float,
+    dataset_version: str,
+) -> None:
+    """
+    Render confirmation UI when confidence or completeness gating fails (ADR003 Phase 3).
+
+    Shows the QueryPlan details, confidence score, and requires explicit user confirmation
+    before execution.
+    """
+    from clinical_analytics.core.query_plan import QueryPlan
+
+    if not isinstance(query_plan, QueryPlan):
+        return
+
+    st.warning("⚠️ **Execution requires confirmation**")
+
+    # Show failure reason
+    st.info(f"**Reason:** {failure_reason}")
+
+    # Show QueryPlan details
+    with st.expander("📋 Query Plan Details", expanded=True):
+        st.write(f"**Intent:** {query_plan.intent}")
+        if query_plan.metric:
+            st.write(f"**Metric:** {query_plan.metric}")
+        if query_plan.group_by:
+            st.write(f"**Group By:** {query_plan.group_by}")
+        if query_plan.filters:
+            st.write("**Filters:**")
+            for f in query_plan.filters:
+                st.write(f"  - {f.column} {f.operator} {f.value}")
+        st.write(f"**Confidence:** {confidence:.0%} (threshold: {threshold:.0%})")
+        if query_plan.explanation:
+            st.write(f"**Explanation:** {query_plan.explanation}")
+
+    # Confirmation button
+    if st.button("✅ Confirm and Run", key=f"confirm_execution_{dataset_version}", type="primary"):
+        st.session_state[f"confirmed_execution_{dataset_version}"] = True
+        st.rerun()
+
+
 def _render_interpretation_inline_compact(query_plan) -> None:
     """Render compact interpretation inline directly under results."""
     confidence = query_plan.confidence
@@ -1311,7 +1355,7 @@ def main():
             st.divider()
             QuestionEngine.render_progress_indicator(context)
 
-        # If complete, always execute (transparent confidence display, no blocking gates)
+        # If complete, check confidence gating (ADR003 Phase 3)
         if context.is_complete_for_intent():
             # Get QueryPlan if available (preferred), otherwise fallback to context
             query_plan = getattr(context, "query_plan", None)
@@ -1337,11 +1381,58 @@ def main():
                 query=getattr(context, "research_question", ""),
             )
 
-            # Always execute (no blocking gates) - show transparent confidence inline with results
-            st.divider()
-            execute_analysis_with_idempotency(
-                cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
-            )
+            # ADR003 Phase 3: Use execute_query_plan() for confidence and completeness gating
+            # semantic_layer is already available from line 1291
+            if query_plan and semantic_layer:
+                query_text = getattr(context, "research_question", "")
+                execution_result = semantic_layer.execute_query_plan(
+                    query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
+                )
+
+                if execution_result.get("requires_confirmation"):
+                    # Gate failed - show confirmation UI
+                    st.divider()
+                    _render_confirmation_ui(
+                        query_plan,
+                        execution_result["failure_reason"],
+                        confidence,
+                        AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
+                        dataset_version,
+                    )
+                elif execution_result.get("success"):
+                    # Gate passed - execute analysis
+                    st.divider()
+                    # Update run_key from execution result if provided
+                    if execution_result.get("run_key"):
+                        run_key = execution_result["run_key"]
+                    execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text, query_plan)
+                else:
+                    # Execution failed - show error
+                    st.error(f"Execution failed: {execution_result.get('failure_reason', 'Unknown error')}")
+            else:
+                # Fallback: No QueryPlan or semantic_layer - use old path (for backward compatibility)
+                # But still check confidence threshold
+                if confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD:
+                    st.divider()
+                    execute_analysis_with_idempotency(
+                        cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
+                    )
+                else:
+                    st.divider()
+                    threshold_pct = f"{AUTO_EXECUTE_CONFIDENCE_THRESHOLD:.0%}"
+                    st.warning(
+                        f"⚠️ **Low confidence** ({confidence:.0%}) - below threshold ({threshold_pct}). "
+                        "Please refine your question or confirm execution."
+                    )
+                    if st.button("Confirm and Run Anyway", key=f"confirm_low_confidence_{run_key}"):
+                        execute_analysis_with_idempotency(
+                            cohort,
+                            context,
+                            run_key,
+                            dataset_version,
+                            getattr(context, "research_question", ""),
+                            query_plan,
+                        )
 
         else:
             # Context not complete - show variable selection UI (for missing required variables)

@@ -33,3 +33,8 @@ class QueryPlan:
     confidence: float = 0.0  # Parsing confidence (0.0-1.0)
     explanation: str = ""  # Human-readable explanation (shown in UI + logs)
     run_key: str | None = None  # Deterministic key for idempotent execution (includes dataset_version + plan hash)
+    # ADR003 Phase 3: Contract fields for execution validation
+    requires_filters: bool = False  # True if query explicitly requires filters
+    requires_grouping: bool = False  # True if query pattern implies breakdown
+    entity_key: str | None = None  # For COUNT: entity to count (e.g., "patient_id")
+    scope: Literal["all", "filtered"] = "all"  # For COUNT: count all rows vs filtered cohort
