@@ -1067,6 +1067,17 @@ class UserDatasetStorage:
         Uses upload_id as immutable storage key: always {upload_id}.csv
         Automatically migrates legacy single-table uploads to unified format.
 
+        IO Boundary Behavior:
+        - CSV files: When lazy=True, uses pl.scan_csv() for true lazy IO
+        - Excel files: Eagerly loaded via pandas (due to Polars Excel limitations),
+                      then converted to LazyFrame. Lazy execution applies from
+                      transformation/filtering onward, not from IO.
+        - SPSS files: Eagerly loaded via pyreadstat, then converted to LazyFrame.
+
+        Internal Representation:
+        - lazy=True: Returns pl.LazyFrame (recommended for internal use)
+        - lazy=False: Returns pd.DataFrame (for backward compatibility/UI boundaries)
+
         Args:
             upload_id: Upload identifier (immutable storage key)
             lazy: If True, return Polars LazyFrame (default). If False, return pandas DataFrame
@@ -1074,6 +1085,10 @@ class UserDatasetStorage:
 
         Returns:
             LazyFrame (if lazy=True), pandas DataFrame (if lazy=False), or None if not found
+
+        Note:
+            Excel eager read is due to Polars read_excel() limitations with complex files
+            (header detection, mixed types). See load_single_file() for details.
         """
         # Load metadata
         metadata = self.get_upload_metadata(upload_id)
