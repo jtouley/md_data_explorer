@@ -107,7 +107,7 @@ todos:
       - phase2-context-queryplan
   - id: phase4-tests
     content: Add comprehensive e2e tests for all phases with explicit feature parity verification (deferred to end)
-    status: pending
+    status: in_progress
     dependencies:
       - phase1-tests
       - phase1.5-count-intent
