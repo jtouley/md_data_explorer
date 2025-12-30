@@ -154,41 +154,13 @@ def render_upload_step():
 
                     logger = logging.getLogger(__name__)
 
-                    # Ensure we get bytes from Streamlit UploadedFile
-                    file_bytes = uploaded_file.read()
-                    file_len = len(file_bytes) if isinstance(file_bytes, bytes) else "N/A"
-                    logger.debug(f"Read file_bytes: type={type(file_bytes)}, len={file_len}")
-
-                    if not isinstance(file_bytes, bytes):
-                        # Convert to bytes if needed (handle edge cases)
-                        if hasattr(file_bytes, "read"):
-                            file_bytes = file_bytes.read()
-                        elif isinstance(file_bytes, (str, int, float)):
-                            logger.error(f"Unexpected file_bytes type: {type(file_bytes)}, value: {file_bytes}")
-                            st.error("Failed to read file: invalid file format")
-                            return None
-                        else:
-                            try:
-                                file_bytes = bytes(file_bytes)
-                            except (TypeError, ValueError) as e:
-                                logger.error(f"Could not convert file_bytes to bytes: {e}, type: {type(file_bytes)}")
-                                st.error("Failed to read file: invalid file format")
-                                return None
-
-                    # Final verification
-                    if not isinstance(file_bytes, bytes):
-                        logger.error(f"file_bytes is still not bytes after conversion: {type(file_bytes)}")
-                        st.error("Failed to read file: invalid file format")
-                        return None
-
-                    uploaded_file.seek(0)  # Reset for later use
+                    # Use file_bytes already read at line 98 via getvalue()
+                    # Don't call read() again - that can cause position issues
+                    logger.debug(f"Using file_bytes from getvalue(): type={type(file_bytes)}, len={len(file_bytes)}")
 
                     try:
                         # Use the same Excel reading logic as upload (with header detection)
                         filename = uploaded_file.name if uploaded_file.name else "upload.xlsx"
-                        logger.debug(
-                            f"Calling load_single_file with filename: {filename}, file_bytes type: {type(file_bytes)}"
-                        )
                         df_polars = load_single_file(file_bytes, filename)
                         # Convert to pandas for compatibility with existing preview code
                         df = df_polars.to_pandas()
