@@ -131,7 +131,7 @@ class TestMIMIC3Loader:
 
         assert isinstance(table_status, dict)
         assert table_status["patients"] is True
-        assert table_status["admissions"] is False  # Not created
+        assert table_status["admissions"] is True  # admissions table was created
         loader.disconnect()
 
     def test_context_manager(self, tmp_path):
