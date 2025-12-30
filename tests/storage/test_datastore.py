@@ -9,7 +9,6 @@ Tests follow AAA pattern (Arrange, Act, Assert) and MVP scope:
 - Deferred: Table deduplication, storage optimization (Phase 5+)
 """
 
-from pathlib import Path
 
 import polars as pl
 import pytest

@@ -14,6 +14,7 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from clinical_analytics.ui.app_utils import restore_datasets
 from clinical_analytics.ui.components.data_validator import DataQualityValidator
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 from clinical_analytics.ui.components.variable_mapper import VariableMappingWizard
@@ -27,7 +28,6 @@ st.set_page_config(page_title="Add Your Data | Clinical Analytics", page_icon="ð
 storage = UserDatasetStorage()
 
 # Phase 4: Session Recovery - Restore previous datasets on startup
-from clinical_analytics.ui.app_utils import restore_datasets
 
 db_path = storage.upload_dir.parent / "analytics.duckdb"
 previous_datasets = restore_datasets(storage, db_path)

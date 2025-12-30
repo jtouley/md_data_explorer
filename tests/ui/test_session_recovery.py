@@ -7,7 +7,6 @@ Tests follow AAA pattern and verify:
 - Dataset selection UI integration
 """
 
-from pathlib import Path
 
 import polars as pl
 import pytest

@@ -9,7 +9,6 @@ Tests follow AAA pattern and verify:
 """
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -35,7 +34,7 @@ class TestQueryLoggerBasics:
         assert not log_dir.exists()
 
         # Act
-        logger = QueryLogger(log_dir)
+        QueryLogger(log_dir)
 
         # Assert
         assert log_dir.exists()

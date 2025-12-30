@@ -465,7 +465,6 @@ class UploadedDataset(ClinicalDataset):
             safe_dataset_name = _safe_identifier(self.name)
 
             # Phase 2: Try loading from persistent DuckDB first, fallback to CSV
-            from pathlib import Path
 
             db_path = self.storage.upload_dir.parent / "analytics.duckdb"
             dataset_version = self.metadata.get("dataset_version")
