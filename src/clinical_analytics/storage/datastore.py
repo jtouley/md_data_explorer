@@ -169,6 +169,76 @@ class DataStore:
 
         return [{"upload_id": uid, "table_count": count} for uid, count in upload_ids.items()]
 
+    def export_to_parquet(
+        self,
+        upload_id: str,
+        table_name: str,
+        dataset_version: str,
+        parquet_dir: Path,
+    ) -> Path:
+        """
+        Export DuckDB table to Parquet file.
+
+        Phase 3: Columnar Parquet format enables lazy Polars scanning with predicate pushdown.
+
+        Args:
+            upload_id: Upload identifier
+            table_name: Original table name
+            dataset_version: Content-based dataset version
+            parquet_dir: Directory to store Parquet files
+
+        Returns:
+            Path to created Parquet file
+
+        Raises:
+            ValueError: If table not found in DuckDB
+        """
+        # Build qualified table name
+        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+
+        # Check if table exists
+        tables = self.list_tables()
+        if qualified_name not in tables:
+            raise ValueError(f"Table '{qualified_name}' not found in DuckDB. Available tables: {', '.join(tables)}")
+
+        # Create parquet directory
+        parquet_dir = Path(parquet_dir)
+        parquet_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build Parquet file path (same naming as DuckDB table)
+        parquet_path = parquet_dir / f"{qualified_name}.parquet"
+
+        # Export using DuckDB's COPY TO (efficient, uses compression)
+        self.conn.execute(f"COPY {qualified_name} TO '{parquet_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+
+        logger.info(f"Exported table '{qualified_name}' to Parquet: {parquet_path}")
+        return parquet_path
+
+    @staticmethod
+    def load_from_parquet(parquet_path: Path) -> pl.LazyFrame:
+        """
+        Load Parquet file as Polars lazy frame.
+
+        Static method - no DataStore instance required for loading Parquet files.
+
+        Args:
+            parquet_path: Path to Parquet file
+
+        Returns:
+            Polars LazyFrame for lazy evaluation
+
+        Raises:
+            FileNotFoundError: If Parquet file doesn't exist
+        """
+        parquet_path = Path(parquet_path)
+        if not parquet_path.exists():
+            raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+
+        # Use pl.scan_parquet() for true lazy IO (deferred read)
+        lazy_df = pl.scan_parquet(parquet_path)
+        logger.debug(f"Loaded Parquet file as LazyFrame: {parquet_path}")
+        return lazy_df
+
     def close(self) -> None:
         """Close DuckDB connection."""
         if self.conn:

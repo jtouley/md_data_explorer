@@ -214,3 +214,119 @@ class TestDataStoreListDatasets:
         # Assert: Returns table name
         assert len(tables) > 0
         assert "test_upload_patients_v1" in tables
+
+
+class TestDataStoreParquetExport:
+    """Test Parquet export functionality (Phase 3)."""
+
+    def test_export_to_parquet_creates_file(self, datastore, sample_table, tmp_path):
+        """Exporting to Parquet should create a valid Parquet file."""
+        # Arrange: Save table to DuckDB
+        upload_id = "parquet_test_001"
+        table_name = "patients"
+        dataset_version = "v1"
+
+        datastore.save_table(
+            table_name=table_name,
+            data=sample_table,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+        )
+
+        # Act: Export to Parquet
+        parquet_dir = tmp_path / "parquet"
+        parquet_path = datastore.export_to_parquet(
+            upload_id=upload_id,
+            table_name=table_name,
+            dataset_version=dataset_version,
+            parquet_dir=parquet_dir,
+        )
+
+        # Assert: Parquet file exists and is valid
+        assert parquet_path.exists()
+        assert parquet_path.suffix == ".parquet"
+
+        # Verify can be scanned by Polars
+        scanned = pl.scan_parquet(parquet_path)
+        loaded = scanned.collect()
+        assert loaded.height == sample_table.height
+        assert loaded.columns == sample_table.columns
+
+    def test_parquet_compression_smaller_than_csv(self, datastore, tmp_path):
+        """Parquet files should be ≥40% smaller than CSV."""
+        # Arrange: Create larger dataset for compression test
+        large_df = pl.DataFrame(
+            {
+                "patient_id": list(range(1000)),
+                "age": [25 + (i % 50) for i in range(1000)],
+                "diagnosis": ["Diagnosis_" + str(i % 10) for i in range(1000)],
+                "value": [100.5 + (i % 100) for i in range(1000)],
+            }
+        )
+
+        upload_id = "compression_test"
+        table_name = "large_table"
+        dataset_version = "v1"
+
+        datastore.save_table(
+            table_name=table_name,
+            data=large_df,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+        )
+
+        # Save CSV for comparison
+        csv_path = tmp_path / "test.csv"
+        large_df.write_csv(csv_path)
+        csv_size = csv_path.stat().st_size
+
+        # Act: Export to Parquet
+        parquet_dir = tmp_path / "parquet"
+        parquet_path = datastore.export_to_parquet(
+            upload_id=upload_id,
+            table_name=table_name,
+            dataset_version=dataset_version,
+            parquet_dir=parquet_dir,
+        )
+
+        # Assert: Parquet is ≥40% smaller than CSV
+        parquet_size = parquet_path.stat().st_size
+        compression_ratio = (csv_size - parquet_size) / csv_size
+
+        assert compression_ratio >= 0.40, (
+            f"Parquet compression ratio {compression_ratio:.1%} is less than 40%. "
+            f"CSV: {csv_size:,} bytes, Parquet: {parquet_size:,} bytes"
+        )
+
+    def test_load_from_parquet_returns_lazy_frame(self, datastore, sample_table, tmp_path):
+        """Loading from Parquet should return LazyFrame."""
+        # Arrange: Save and export to Parquet
+        upload_id = "lazy_test"
+        table_name = "patients"
+        dataset_version = "v1"
+
+        datastore.save_table(
+            table_name=table_name,
+            data=sample_table,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+        )
+
+        parquet_dir = tmp_path / "parquet"
+        parquet_path = datastore.export_to_parquet(
+            upload_id=upload_id,
+            table_name=table_name,
+            dataset_version=dataset_version,
+            parquet_dir=parquet_dir,
+        )
+
+        # Act: Load from Parquet
+        lazy_df = datastore.load_from_parquet(parquet_path)
+
+        # Assert: Returns LazyFrame
+        assert isinstance(lazy_df, pl.LazyFrame)
+
+        # Verify data matches
+        loaded = lazy_df.collect()
+        assert loaded.height == sample_table.height
+        assert loaded.to_dicts() == sample_table.to_dicts()
