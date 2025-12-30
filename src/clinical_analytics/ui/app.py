@@ -19,12 +19,12 @@ from clinical_analytics.ui.logging_config import configure_logging
 configure_logging()
 
 # Initialize Ollama LLM service (self-contained, like DuckDB)
-from clinical_analytics.ui.ollama_init import initialize_ollama
+from clinical_analytics.ui.ollama_init import initialize_ollama  # noqa: E402
 
 ollama_status = initialize_ollama()
 if not ollama_status["ready"]:
     # Log warning but don't block app startup
-    import logging
+    import logging  # noqa: E402
 
     logger = logging.getLogger(__name__)
     logger.info(f"Ollama initialization: {ollama_status['message']}")
