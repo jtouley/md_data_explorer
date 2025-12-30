@@ -187,4 +187,3 @@ class TestConversationHistory:
         # Assert: Entry has fallback headline
         assert entry["headline"] == "Analysis completed"
         assert isinstance(entry["headline"], str)
-

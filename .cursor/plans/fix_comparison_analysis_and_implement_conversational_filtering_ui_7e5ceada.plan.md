@@ -77,12 +77,12 @@ todos:
       - phase2-apply-filters
   - id: phase3-conversation-history
     content: Implement lightweight conversation history data structure (headline, not full result dicts)
-    status: in_progress
+    status: completed
     dependencies:
       - phase3-execution-gating
   - id: phase3-ui-redesign
     content: Redesign main() flow to show conversation history and always-visible query input
-    status: pending
+    status: in_progress
     dependencies:
       - phase3-conversation-history
   - id: phase3-remove-buttons
