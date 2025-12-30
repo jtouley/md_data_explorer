@@ -729,6 +729,12 @@ def execute_analysis_with_idempotency(
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
 
+        # ADR003 Phase 1: Trust UI (verify source patients, patient-level export)
+        # Note: cohort not available in cached path, skip trust UI for cached results
+        # Trust UI will be shown for fresh computations only
+        if query_plan:
+            st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
+
         # Suggest follow-up questions (only for current results, not history)
         # Use a session state flag to prevent duplicate rendering in same cycle
         follow_ups_key = f"followups_rendered_{run_key}"
@@ -828,6 +834,18 @@ def execute_analysis_with_idempotency(
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
+
+        # ADR003 Phase 1: Trust UI (verify source patients, patient-level export)
+        if query_plan:
+            from clinical_analytics.ui.components.trust_ui import TrustUI
+
+            TrustUI.render_verification(
+                query_plan=query_plan,
+                result=result,
+                cohort=cohort_pl,
+                dataset_version=dataset_version,
+                query_text=query_text,
+            )
 
         # Suggest follow-up questions (only for current results, not history)
         # Use a session state flag to prevent duplicate rendering in same cycle
