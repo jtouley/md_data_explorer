@@ -680,48 +680,91 @@ def render_survival_analysis(result: dict) -> None:
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display and seaborn
 # TODO: Remove when Streamlit supports Polars natively
 def render_relationship_analysis(result: dict) -> None:
-    """Render relationship analysis from serializable dict."""
+    """Render relationship analysis from serializable dict with clean, user-friendly output."""
     if "error" in result:
-        st.error(result["error"])
+        st.error(f"❌ **Analysis Error**: {result['error']}")
+        if "numeric_variables" in result:
+            st.info(f"✅ **Numeric variables found**: {', '.join(result['numeric_variables'][:5])}")
+        if "non_numeric_variables" in result:
+            excluded = result["non_numeric_variables"][:5]
+            st.info(f"ℹ️ **Non-numeric variables excluded** (cannot compute correlations): {', '.join(excluded)}")
         return
 
-    st.markdown("## 🔗 Relationships Between Variables")
-
+    # Show summary info
+    n_obs = result.get("n_observations", 0)
     variables = result["variables"]
+    non_numeric_excluded = result.get("non_numeric_excluded", [])
 
-    st.markdown("### Correlation Heatmap")
+    # Header with key info
+    st.markdown("### 🔗 Variable Relationships")
 
-    # Reconstruct correlation matrix for heatmap
-    corr_data = result["correlations"]
-    corr_matrix = pd.DataFrame(index=variables, columns=variables)
-    for item in corr_data:
-        corr_matrix.loc[item["var1"], item["var2"]] = item["correlation"]
-        corr_matrix.loc[item["var2"], item["var1"]] = item["correlation"]  # Symmetric
-    corr_matrix = corr_matrix.astype(float)
+    # Show what was analyzed
+    st.markdown(f"**Analyzed {len(variables)} numeric variable(s)** across **{n_obs} observations**")
 
-    # Simple heatmap
-    fig, ax = plt.subplots(figsize=(10, 8))
-    import seaborn as sns
+    # Warn if variables were excluded
+    if non_numeric_excluded:
+        excluded_preview = ", ".join(non_numeric_excluded[:3])
+        if len(non_numeric_excluded) > 3:
+            excluded_preview += f" and {len(non_numeric_excluded) - 3} more"
+        st.info(f"ℹ️ **Note**: {excluded_preview} were excluded (text/categorical variables cannot be correlated)")
 
-    sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="coolwarm", center=0, square=True, ax=ax)
-    ax.set_title("How Variables Relate")
-    st.pyplot(fig)
+    # Get correlations
+    strong_correlations = result.get("strong_correlations", [])
+    moderate_correlations = result.get("moderate_correlations", [])
+    corr_data = result.get("correlations", [])
 
-    # Highlight strong correlations
-    st.markdown("### Strong Relationships")
-
-    strong_correlations = result["strong_correlations"]
-
+    # Show key findings first (strong correlations)
     if strong_correlations:
+        st.markdown("#### 📊 Key Findings")
         for item in strong_correlations:
             var1 = item["var1"]
             var2 = item["var2"]
             corr_val = item["correlation"]
+
+            # Clean up variable names for display
+            var1_clean = var1.split(":")[0].strip() if ":" in var1 else var1
+            var2_clean = var2.split(":")[0].strip() if ":" in var2 else var2
+
+            direction = "increases together" if corr_val > 0 else "increases as the other decreases"
+            strength = "strongly" if abs(corr_val) >= 0.7 else "moderately"
+
+            st.markdown(
+                f"• **{var1_clean}** and **{var2_clean}** {strength} {direction} "
+                f"(correlation: {corr_val:.2f})"
+            )
+    elif moderate_correlations:
+        st.markdown("#### 📊 Findings")
+        st.info("No strong relationships found, but some moderate relationships exist:")
+        for item in moderate_correlations[:5]:  # Show top 5
+            var1 = item["var1"]
+            var2 = item["var2"]
+            corr_val = item["correlation"]
+
+            var1_clean = var1.split(":")[0].strip() if ":" in var1 else var1
+            var2_clean = var2.split(":")[0].strip() if ":" in var2 else var2
+
             direction = "positive" if corr_val > 0 else "negative"
-            strength = "strong" if abs(corr_val) >= 0.7 else "moderate"
-            st.markdown(f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})")
+            st.markdown(f"• **{var1_clean}** ↔ **{var2_clean}**: {direction} (r={corr_val:.2f})")
     else:
-        st.info("ℹ️ No strong correlations found (|r| >= 0.5)")
+        st.info("ℹ️ No strong or moderate correlations found between the analyzed variables.")
+
+    # Optional: Show correlation matrix in expander (less prominent)
+    if len(variables) <= 6 and corr_data:  # Only show for small number of variables
+        with st.expander("📈 View Correlation Matrix", expanded=False):
+            # Reconstruct correlation matrix for heatmap
+            corr_matrix = pd.DataFrame(index=variables, columns=variables)
+            for item in corr_data:
+                corr_matrix.loc[item["var1"], item["var2"]] = item["correlation"]
+                corr_matrix.loc[item["var2"], item["var1"]] = item["correlation"]  # Symmetric
+            corr_matrix = corr_matrix.astype(float)
+
+            # Simple heatmap
+            fig, ax = plt.subplots(figsize=(8, 6))
+            import seaborn as sns
+
+            sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="coolwarm", center=0, square=True, ax=ax)
+            ax.set_title("Correlation Matrix")
+            st.pyplot(fig)
 
 
 def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: str | None = None) -> None:

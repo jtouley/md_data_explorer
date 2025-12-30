@@ -978,19 +978,61 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
     if len(normalized_variables) < 2:
         return {"type": "relationship", "error": "Need at least 2 valid variables to examine relationships"}
 
-    # Calculate correlations using normalized variable names
-    analysis_df = df.select(normalized_variables).drop_nulls()
+    # Filter to only numeric variables (correlation requires numeric data)
+    # Check which variables are numeric or can be converted to numeric
+    numeric_variables = []
+    non_numeric_variables = []
+
+    for var in normalized_variables:
+        try:
+            # Try to get the column and check its type
+            col_data = df.select(pl.col(var))
+            dtype = col_data.schema[var]
+
+            # Check if already numeric
+            if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64, pl.Float32, pl.Float64):
+                numeric_variables.append(var)
+            else:
+                # Try to convert to numeric (for string columns that might be numeric)
+                # Test on a sample to see if conversion is possible
+                sample = col_data.head(100)
+                try:
+                    # Try casting to float
+                    test_cast = sample.select(pl.col(var).cast(pl.Float64, strict=True))
+                    numeric_variables.append(var)
+                except Exception:
+                    # Cannot convert to numeric
+                    non_numeric_variables.append(var)
+        except Exception:
+            # Column doesn't exist or other error - skip it
+            non_numeric_variables.append(var)
+
+    if len(numeric_variables) < 2:
+        return {
+            "type": "relationship",
+            "error": (
+                f"Need at least 2 numeric variables for correlation analysis. "
+                f"Found {len(numeric_variables)} numeric variable(s): {', '.join(numeric_variables) if numeric_variables else 'none'}. "
+                f"Non-numeric variables excluded: {', '.join(non_numeric_variables[:5])}"
+                f"{'...' if len(non_numeric_variables) > 5 else ''}"
+            ),
+            "numeric_variables": numeric_variables,
+            "non_numeric_variables": non_numeric_variables,
+        }
+
+    # Calculate correlations using only numeric variables
+    analysis_df = df.select(numeric_variables).drop_nulls()
 
     if analysis_df.height < 3:
-        return {"type": "relationship", "error": "Need at least 3 observations"}
+        return {"type": "relationship", "error": "Need at least 3 observations with complete data"}
 
-    # Cast to numeric for correlation
-    numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in normalized_variables])
+    # Cast to numeric for correlation (should all be numeric now, but ensure Float64)
+    numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in numeric_variables])
 
     # Compute correlation matrix using Polars
     corr_data = []
-    for i, var1 in enumerate(normalized_variables):
-        for j, var2 in enumerate(normalized_variables):
+    for i, var1 in enumerate(numeric_variables):
+        for j, var2 in enumerate(numeric_variables):
             if i <= j:
                 if i == j:
                     corr_val = 1.0
@@ -1000,14 +1042,24 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
                     corr_val = float(corr_result.item()) if corr_result.height > 0 else 0.0
                 corr_data.append({"var1": var1, "var2": var2, "correlation": corr_val})
 
-    # Find strong correlations
+    # Find strong correlations (|r| >= 0.5)
     strong_correlations = [
         item for item in corr_data if item["var1"] != item["var2"] and abs(item["correlation"]) >= 0.5
     ]
 
+    # Find moderate correlations (0.3 <= |r| < 0.5)
+    moderate_correlations = [
+        item
+        for item in corr_data
+        if item["var1"] != item["var2"] and 0.3 <= abs(item["correlation"]) < 0.5
+    ]
+
     return {
         "type": "relationship",
-        "variables": normalized_variables,  # Return actual column names used
+        "variables": numeric_variables,  # Return only numeric variables used
+        "non_numeric_excluded": non_numeric_variables,  # Inform user which variables were excluded
         "correlations": corr_data,
         "strong_correlations": strong_correlations,
+        "moderate_correlations": moderate_correlations,
+        "n_observations": analysis_df.height,
     }
