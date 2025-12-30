@@ -128,8 +128,6 @@ class OllamaManager:
 
         from clinical_analytics.core.llm_client import OllamaClient
 
-        client = OllamaClient(base_url=self.base_url, timeout=self.timeout)
-
         try:
             import requests
 
