@@ -864,6 +864,31 @@ def main():
     if "conversation_history" not in st.session_state:
         st.session_state["conversation_history"] = []
 
+    # Display conversation history (if any) - Phase 3.3 UI Redesign
+    if st.session_state.get("conversation_history"):
+        for entry in st.session_state["conversation_history"]:
+            with st.chat_message("user"):
+                st.write(entry["query"])
+
+            with st.chat_message("assistant"):
+                st.info(entry["headline"])
+
+                # Expandable details - reconstruct from run_key if available
+                if entry.get("run_key"):
+                    result_key = f"analysis_result:{dataset_version}:{entry['run_key']}"
+                    if result_key in st.session_state:
+                        with st.expander("View detailed results"):
+                            # Get intent from entry (stored as string)
+                            intent_str = entry.get("intent", "DESCRIBE")
+                            try:
+                                intent_enum = AnalysisIntent(intent_str)
+                            except (ValueError, KeyError):
+                                intent_enum = AnalysisIntent.DESCRIBE
+
+                            render_analysis_by_type(st.session_state[result_key], intent_enum)
+
+    st.divider()
+
     # Step 1: Ask question (NL or structured)
     if st.session_state["intent_signal"] is None:
         # Try free-form NL query first
@@ -1251,6 +1276,88 @@ def main():
                 clear_all_results(dataset_version)
                 st.success(RESULTS_CLEARED)
                 st.rerun()
+
+    # Always show query input at bottom (sticky) - Phase 3.3 UI Redesign
+    # This provides a conversational interface for follow-up questions
+    query = st.chat_input("Ask a question about your data...")
+
+    if query:
+        # Handle new query from chat input
+        try:
+            # Get semantic layer
+            semantic_layer = dataset.get_semantic_layer()
+
+            # Get dataset identifiers for structured logging
+            dataset_id = dataset.name if hasattr(dataset, "name") else None
+            upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+
+            logger.info(
+                "chat_input_query_received",
+                query=query,
+                dataset_id=dataset_id,
+                upload_id=upload_id,
+                dataset_version=dataset_version,
+            )
+
+            # Parse query directly (without UI components from ask_free_form_question)
+            from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+            nl_engine = NLQueryEngine(semantic_layer)
+            query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
+
+            if query_intent:
+                # Convert QueryIntent to AnalysisContext (similar to ask_free_form_question logic)
+                context = AnalysisContext()
+
+                # Map intent type
+                intent_map = {
+                    "DESCRIBE": AnalysisIntent.DESCRIBE,
+                    "COMPARE_GROUPS": AnalysisIntent.COMPARE_GROUPS,
+                    "FIND_PREDICTORS": AnalysisIntent.FIND_PREDICTORS,
+                    "SURVIVAL": AnalysisIntent.EXAMINE_SURVIVAL,
+                    "CORRELATIONS": AnalysisIntent.EXPLORE_RELATIONSHIPS,
+                    "COUNT": AnalysisIntent.COUNT,
+                }
+                context.inferred_intent = intent_map.get(query_intent.intent_type, AnalysisIntent.UNKNOWN)
+
+                # Map variables
+                context.research_question = query
+                context.primary_variable = query_intent.primary_variable
+                context.grouping_variable = query_intent.grouping_variable
+                context.predictor_variables = query_intent.predictor_variables
+                context.time_variable = query_intent.time_variable
+                context.event_variable = query_intent.event_variable
+
+                # Copy filters from QueryIntent to AnalysisContext
+                context.filters = query_intent.filters
+
+                # Convert QueryIntent to QueryPlan and store in context
+                if dataset_version and hasattr(nl_engine, "_intent_to_plan"):
+                    context.query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
+                    # Use QueryPlan confidence
+                    context.confidence = context.query_plan.confidence
+                else:
+                    # Fallback: use QueryIntent confidence
+                    context.confidence = query_intent.confidence
+
+                # Set flags based on intent
+                context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
+                context.find_predictors = query_intent.intent_type == "FIND_PREDICTORS"
+                context.time_to_event = query_intent.intent_type == "SURVIVAL"
+
+                # Store context and trigger analysis flow
+                st.session_state["analysis_context"] = context
+                st.session_state["intent_signal"] = "nl_parsed"
+                st.rerun()
+            else:
+                st.error("I couldn't understand your question. Please try rephrasing.")
+
+        except ValueError:
+            # Semantic layer not available
+            st.error("Natural language queries are only available for datasets with semantic layers.")
+        except Exception as e:
+            logger.error("chat_input_query_error", query=query, error=str(e), exc_info=True)
+            st.error(f"Error processing your question: {e}")
 
 
 if __name__ == "__main__":
