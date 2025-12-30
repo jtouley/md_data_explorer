@@ -547,7 +547,10 @@ class NLQueryEngine:
 
         # Pattern: "which X was most Y" - COUNT with grouping (e.g., "which statin was most prescribed?")
         # This pattern asks for the top result by count, so it's a COUNT intent with grouping
-        if re.search(r"which\s+\w+(?:\s+\w+)*?\s+was\s+most\s+\w+", query_lower):
+        # More flexible pattern to handle "which was the most Y" and "excluding X, which was the most Y"
+        if re.search(r"which\s+(?:\w+\s+)?(?:was|is)\s+the?\s+most\s+\w+", query_lower) or re.search(
+            r"which\s+\w+(?:\s+\w+)*?\s+was\s+most\s+\w+", query_lower
+        ):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
         # Pattern: "describe" or "summary"
@@ -909,6 +912,7 @@ class NLQueryEngine:
 
         # Pattern 1: Categorical filters with explicit values
         # "those that had X", "patients with X", "with X", "on X"
+        # "excluding those not on X" / "excluding X" - exclusion filters
         # Stop at common query continuation words: and, or, which, what, how, where, when
         categorical_patterns = [
             r"(?:those|patients|subjects|people)\s+(?:that|who)\s+(?:had|have|were|are)\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
@@ -918,10 +922,63 @@ class NLQueryEngine:
             r"were\s+on\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "were on statins"
         ]
 
+        # Pattern 1b: Exclusion filters - "excluding those not on X" or "excluding X"
+        # Order matters: more specific patterns first
+        exclusion_patterns = [
+            r"excluding\s+(?:those|patients|subjects|people)\s+(?:that|who)\s+(?:were|are)\s+not\s+on\s+(\w+)",  # "excluding those not on statins"
+            r"excluding\s+([^,\.\?]+?)(?:\s+(?:and|or|which|what|how|where|when|,|\.|\?)|$)",  # "excluding X" (fallback)
+        ]
+
+        # Process exclusion patterns first (they have higher priority)
+        for pattern in exclusion_patterns:
+            matches = re.finditer(pattern, query_lower)
+            for match in matches:
+                value_phrase = match.group(1).strip()
+
+                # For "excluding those not on X", we want to exclude code 0 (n/a)
+                # Find the column and create a filter to exclude 0
+                # Skip if this value_phrase looks like it contains multiple words (likely wrong match)
+                if len(value_phrase.split()) > 2:
+                    continue
+                    
+                column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
+                if column_name and conf > 0.5:
+                    # Check if this is a coded column
+                    if self._is_coded_column(column_name):
+                        # For exclusion filters on coded columns, exclude code 0 (n/a)
+                        filters.append(
+                            FilterSpec(
+                                column=column_name,
+                                operator="!=",
+                                value=0,
+                                exclude_nulls=True,
+                            )
+                        )
+                        # Skip processing this value_phrase in categorical patterns
+                        continue
+                    else:
+                        # For non-coded columns, use NOT_IN or != based on context
+                        filters.append(
+                            FilterSpec(
+                                column=column_name,
+                                operator="!=",
+                                value=value_phrase,
+                                exclude_nulls=True,
+                            )
+                        )
+                        continue
+
+        # Track which value phrases were already processed by exclusion patterns
+        processed_value_phrases = set()
+        
         for pattern in categorical_patterns:
             matches = re.finditer(pattern, query_lower)
             for match in matches:
                 value_phrase = match.group(1).strip()
+                
+                # Skip if this value phrase was already processed by exclusion patterns
+                if value_phrase in processed_value_phrases:
+                    continue
 
                 # Strategy 1: Try to match phrase as column name (for direct column filters)
                 # BUT: Skip this for coded columns - we need Strategy 2 to extract proper numeric codes
@@ -1276,39 +1333,52 @@ class NLQueryEngine:
 
         # Pattern 2: "which X was most Y" - semantic pattern (captures any superlative, not hardcoded words)
         # Uses "most" + any word pattern to be flexible with domain-specific terms
+        # Also handles "which was the most Y" and "excluding X, which was the most Y"
         patterns = [
             # "which X was most Y" - captures X, Y can be any word (prescribed, common, used, frequent, etc.)
             r"which\s+(\w+(?:\s+\w+)*?)\s+was\s+most\s+\w+",
+            # "which was the most Y" - captures the grouping variable from context (e.g., "which was the most prescribed statin?")
+            r"which\s+was\s+the?\s+most\s+(\w+)",
             # "and which X was most Y" - same pattern with conjunction
             r"and\s+which\s+(\w+(?:\s+\w+)*?)\s+was\s+most\s+\w+",
+            # "excluding X, which was the most Y" - handles exclusion + grouping
+            r"(?:excluding|excluding\s+those\s+not\s+on)\s+[^,]+,?\s*which\s+was\s+the?\s+most\s+(\w+)",
         ]
 
         for pattern in patterns:
             match = re.search(pattern, query_lower)
             if match:
                 group_phrase = match.group(1).strip()
-                # Try to match this phrase to a column name
-                column_name, conf, _ = self._fuzzy_match_variable(group_phrase)
-                if column_name and conf > 0.5:
+                # For "which was the most Y", we need to extract the grouping variable from context
+                # If group_phrase is just one word (like "prescribed"), we need to find the related column
+                # by looking for columns that contain this word or are related to the query context
+                if len(group_phrase.split()) == 1:
+                    # Single word like "prescribed" - try to find related column
+                    # Look for columns that contain this word or are related
+                    column_name = self._find_column_by_partial_match(group_phrase)
+                    if not column_name:
+                        # Try to find column by looking for the subject from earlier in the query
+                        # For "excluding those not on statins, which was the most prescribed statin?"
+                        # We want to find "statin" related column
+                        statin_match = re.search(r"(?:excluding|on|were\s+on)\s+(\w+)", query_lower)
+                        if statin_match:
+                            statin_phrase = statin_match.group(1).strip()
+                            column_name = self._find_column_by_partial_match(statin_phrase)
+                else:
+                    # Multi-word phrase - try direct matching
+                    column_name, conf, _ = self._fuzzy_match_variable(group_phrase)
+                    if not column_name or conf <= 0.5:
+                        column_name = self._find_column_by_partial_match(group_phrase)
+
+                if column_name:
                     logger.debug(
                         "grouping_extracted",
                         query=query,
                         group_phrase=group_phrase,
                         column_name=column_name,
-                        confidence=conf,
+                        confidence=0.7,
                     )
                     return column_name
-                # If fuzzy match failed, try partial matching
-                if not column_name or conf <= 0.5:
-                    column_name = self._find_column_by_partial_match(group_phrase)
-                    if column_name:
-                        logger.debug(
-                            "grouping_extracted_partial",
-                            query=query,
-                            group_phrase=group_phrase,
-                            column_name=column_name,
-                        )
-                        return column_name
 
         # Pattern 3: "which X" at the end of query (fallback - most general pattern)
         # This is semantic - captures any "which X" without hardcoding what follows
