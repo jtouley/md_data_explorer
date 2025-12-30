@@ -109,7 +109,9 @@ class TestUploadedDatasetLoadLazy:
         """Test that load() stores LazyFrame when using lazy backend."""
         # Arrange
         upload_id = create_upload(
-            "test_load_lazy", {"variable_mapping": sample_variable_mapping, "original_filename": "test.csv"}
+            "test_load_lazy",
+            df=None,
+            metadata_overrides={"variable_mapping": sample_variable_mapping, "original_filename": "test.csv"},
         )
         dataset = UploadedDataset(upload_id=upload_id, storage=upload_storage)
 
@@ -125,7 +127,7 @@ class TestUploadedDatasetLoadLazy:
     def test_load_with_legacy_pandas_backend(self, upload_storage, create_upload):
         """Test that load() handles pandas DataFrames for backward compatibility."""
         # Arrange
-        upload_id = create_upload("test_load_pandas", {"original_filename": "test.csv"})
+        upload_id = create_upload("test_load_pandas", df=None, metadata_overrides={"original_filename": "test.csv"})
 
         # Mock storage to return pandas DataFrame (simulating lazy=False)
         class PandasStorage(UserDatasetStorage):
@@ -147,7 +149,9 @@ class TestGetCohortLazyEvaluation:
     def test_get_cohort_with_lazy_frame_returns_pandas(self, upload_storage, create_upload, sample_variable_mapping):
         """Test that get_cohort() collects lazy frame and returns pandas DataFrame."""
         # Arrange
-        upload_id = create_upload("test_cohort_lazy", {"variable_mapping": sample_variable_mapping})
+        upload_id = create_upload(
+            "test_cohort_lazy", df=None, metadata_overrides={"variable_mapping": sample_variable_mapping}
+        )
         dataset = UploadedDataset(upload_id=upload_id, storage=upload_storage)
         dataset.load()
 
