@@ -659,3 +659,212 @@ def sample_context_direct():
     )
     context.confidence = 0.9
     return context
+
+
+# ============================================================================
+# Real-World Query Test Cases Fixture (ADR003 - Query Parsing Validation)
+# ============================================================================
+
+
+@pytest.fixture(scope="module")
+def real_world_query_test_cases():
+    """
+    Fixture providing real-world query test cases with expected outputs.
+
+    This fixture centralizes all real-world queries and their expected parsing results,
+    making it easy to:
+    - Track expected outputs
+    - Update expectations as parsing improves
+    - Add new queries without hardcoding
+    - Reuse across multiple test files
+
+    Structure:
+        Each test case is a dict with:
+        - query: str - The natural language query
+        - expected_intent: str - Expected intent type (COUNT, DESCRIBE, COMPARE_GROUPS, etc.)
+        - expected_primary_variable: str | None - Expected primary variable (canonical column name)
+        - expected_grouping_variable: str | None - Expected grouping variable (for breakdowns)
+        - expected_filters: list[dict] | None - Expected filter specifications
+        - min_confidence: float - Minimum acceptable confidence (0.0-1.0)
+        - parsing_tier: str | None - Expected parsing tier (pattern_match, semantic_match, llm_fallback)
+        - notes: str | None - Notes about the query or expected behavior
+
+    Returns:
+        dict: Test cases organized by category
+    """
+    return {
+        "count_queries": [
+            {
+                "query": "how many patients were on statins",
+                "expected_intent": "COUNT",
+                "expected_primary_variable": None,
+                "expected_grouping_variable": None,
+                "expected_filters": [{"column": "statins", "operator": "in", "values": ["yes", "1", "true"]}],
+                "min_confidence": 0.75,
+                "parsing_tier": "pattern_match",
+                "notes": "Simple count query with filter on statins",
+            },
+            {
+                "query": "which statin was most prescribed?",
+                "expected_intent": "COUNT",
+                "expected_primary_variable": None,
+                "expected_grouping_variable": "statins",  # Canonical column name (normalized from "statin")
+                "expected_filters": None,
+                "min_confidence": 0.75,
+                "parsing_tier": "pattern_match",
+                "notes": "Count with grouping to find most common statin",
+            },
+            {
+                "query": "what was the most common HIV regiment?",
+                "expected_intent": "COUNT",
+                "expected_primary_variable": None,
+                "expected_grouping_variable": "hiv_regiment",
+                "expected_filters": None,
+                "min_confidence": 0.75,
+                "parsing_tier": "pattern_match",
+                "notes": "Count with grouping to find most common regimen",
+            },
+            {
+                "query": "what was the most common Current Regimen",
+                "expected_intent": "COUNT",
+                "expected_primary_variable": None,
+                "expected_grouping_variable": "Current Regimen",
+                "expected_filters": None,
+                "min_confidence": 0.75,
+                "parsing_tier": "pattern_match",
+                "notes": "Count with grouping on Current Regimen column",
+            },
+            {
+                "query": "excluding those not on statins, which was the most prescribed statin?",
+                "expected_intent": "COUNT",
+                "expected_primary_variable": None,
+                "expected_grouping_variable": "statins",
+                "expected_filters": [{"column": "statins", "operator": "in", "values": ["yes", "1", "true"]}],
+                "min_confidence": 0.7,
+                "parsing_tier": "semantic_match",  # More complex, may need semantic matching
+                "notes": "Count with filter and grouping - complex query",
+            },
+            {
+                "query": "what statins were those patients on, broken down by count of patients per statin?",
+                "expected_intent": "COUNT",
+                "expected_primary_variable": None,
+                "expected_grouping_variable": "statins",
+                "expected_filters": None,
+                "min_confidence": 0.7,
+                "parsing_tier": "semantic_match",  # Complex phrasing
+                "notes": "Count breakdown by statin type",
+            },
+            {
+                "query": (
+                    "what statins were those patients on, broken down by count of patients by their Current Regimen"
+                ),
+                "expected_intent": "COUNT",
+                "expected_primary_variable": None,
+                "expected_grouping_variable": "Current Regimen",
+                "expected_filters": None,
+                "min_confidence": 0.7,
+                "parsing_tier": "semantic_match",  # Complex phrasing with multiple grouping hints
+                "notes": "Count breakdown by Current Regimen (complex query)",
+            },
+        ],
+        "describe_queries": [
+            {
+                "query": "average BMI of patients",
+                "expected_intent": "DESCRIBE",
+                "expected_primary_variable": "BMI",
+                "expected_grouping_variable": None,
+                "expected_filters": None,
+                "min_confidence": 0.85,
+                "parsing_tier": "pattern_match",
+                "notes": "Average/mean query - should extract BMI variable",
+            },
+            {
+                "query": "average ldl of all patients",
+                "expected_intent": "DESCRIBE",
+                "expected_primary_variable": "LDL mg/dL",
+                "expected_grouping_variable": None,
+                "expected_filters": None,
+                "min_confidence": 0.85,
+                "parsing_tier": "pattern_match",
+                "notes": "Average query with 'of all patients' phrasing",
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def semantic_layer_with_clinical_columns():
+    """
+    Create a mock semantic layer with clinical columns for real-world query testing.
+
+    Includes columns commonly found in clinical datasets:
+    - Statins-related columns
+    - HIV regimen columns
+    - Clinical measurements (BMI, LDL)
+    - Current Regimen
+    """
+    from unittest.mock import MagicMock
+
+    mock = MagicMock()
+
+    # Alias index with clinical column mappings
+    alias_index = {
+        # Statins
+        "statins": "statins",
+        "statin": "statins",
+        "on statins": "statins",
+        "statin medication": "statins",
+        # HIV Regimen
+        "hiv regiment": "hiv_regiment",
+        "hiv regimen": "hiv_regiment",
+        "hiv_regiment": "hiv_regiment",
+        # Current Regimen
+        "current regimen": "Current Regimen",
+        "current_regimen": "Current Regimen",
+        # Note: "regimen" intentionally omitted to avoid collision - tests handle this explicitly
+        # Clinical measurements
+        "bmi": "BMI",
+        "body mass index": "BMI",
+        "ldl": "LDL mg/dL",
+        "ldl cholesterol": "LDL mg/dL",
+        "ldl mg/dl": "LDL mg/dL",
+    }
+
+    mock.get_column_alias_index.return_value = alias_index
+    mock.get_collision_suggestions.return_value = None
+    mock.get_collision_warnings.return_value = set()
+    mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
+
+    def mock_fuzzy_match(term: str):
+        """Mock fuzzy matching for clinical variables."""
+        term_lower = term.lower().strip()
+        var_map = {
+            "bmi": ("BMI", 0.9, None),
+            "ldl": ("LDL mg/dL", 0.9, None),
+            "statins": ("statins", 0.9, None),
+            "statin": ("statins", 0.9, None),
+            "hiv regiment": ("hiv_regiment", 0.85, None),
+            "hiv_regiment": ("hiv_regiment", 0.9, None),
+            "regimen": ("hiv_regiment", 0.8, None),  # Lower confidence due to potential collision
+            "current regimen": ("Current Regimen", 0.9, None),
+            "current_regimen": ("Current Regimen", 0.9, None),
+        }
+        return var_map.get(term_lower, (None, 0.0, None))
+
+    mock._fuzzy_match_variable = mock_fuzzy_match
+
+    # Mock base view with clinical columns
+    base_view = pl.DataFrame(
+        {
+            "patient_id": ["P001", "P002", "P003"],
+            "statins": ["yes", "no", "yes"],
+            "statin": ["atorvastatin", "none", "simvastatin"],
+            "hiv_regiment": ["regimen_a", "regimen_b", "regimen_a"],
+            "Current Regimen": ["regimen_1", "regimen_2", "regimen_1"],
+            "BMI": [25.5, 28.3, 22.1],
+            "LDL mg/dL": [120, 150, 100],
+        }
+    )
+    mock.get_base_view.return_value = base_view
+
+    return mock

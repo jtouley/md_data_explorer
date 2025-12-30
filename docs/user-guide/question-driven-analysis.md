@@ -34,9 +34,12 @@ Uses sentence-transformers to match your question with similar queries:
 
 For complex or ambiguous queries:
 
-- Uses structured prompts with semantic layer context
+- Uses local Ollama LLM (privacy-preserving, no data leaves your machine)
+- Structured prompts with semantic layer context (RAG)
 - Requests structured JSON output
+- Automatically installed and configured on first run
 - Only used when Tier 1 and Tier 2 fail
+- Confidence threshold: 0.5 for parsing, 0.75 for auto-execution
 
 ### Variable Matching
 
@@ -98,9 +101,15 @@ The platform fuzzy-matches variable names in your question to actual column name
 "Correlation between age and outcome"
 "Show relationships between variables"
 "Association between X and Y"
+"How does BMI relate to CD4 counts and statin use?"
 ```
 
-**What it does:** Pearson or Spearman correlation depending on variable types, with scatter plots.
+**What it does:** 
+- Automatically filters to numeric variables only (text/categorical variables are excluded)
+- Computes correlation matrix for all numeric variables mentioned
+- Highlights strong correlations (|r| ≥ 0.5) and moderate correlations (0.3 ≤ |r| < 0.5)
+- Shows key findings in plain language
+- Displays correlation matrix visualization (for small variable sets)
 
 ## Confidence Scores
 

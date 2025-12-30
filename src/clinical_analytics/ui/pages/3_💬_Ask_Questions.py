@@ -184,6 +184,48 @@ def cleanup_old_results(dataset_version: str) -> None:
         )
 
 
+def _render_add_alias_ui(
+    unknown_term: str,
+    available_columns: list[str],
+    upload_id: str,
+    dataset_version: str,
+    semantic_layer,
+) -> None:
+    """
+    Render "Add alias?" UI for unknown terms (Phase 2 - ADR003).
+
+    Args:
+        unknown_term: Term that wasn't recognized
+        available_columns: List of available column names
+        upload_id: Upload identifier
+        dataset_version: Dataset version
+        semantic_layer: SemanticLayer instance
+    """
+    with st.expander(f"💡 Add alias for '{unknown_term}'?"):
+        st.info(f"**Unknown term**: '{unknown_term}'")
+        st.caption("Map this term to a column to use it in future queries.")
+
+        selected_column = st.selectbox(
+            "Map to column:",
+            options=["(Select column)"] + available_columns,
+            key=f"add_alias_{unknown_term}_{dataset_version}",
+        )
+
+        if st.button("Save Alias", key=f"save_alias_{unknown_term}_{dataset_version}"):
+            if selected_column and selected_column != "(Select column)":
+                try:
+                    semantic_layer.add_user_alias(unknown_term, selected_column, upload_id, dataset_version)
+                    st.success(f"✅ Alias saved! '{unknown_term}' now maps to '{selected_column}'. Retry your query.")
+                    st.rerun()
+                except ValueError as e:
+                    st.error(f"❌ Error saving alias: {e}")
+                except Exception as e:
+                    logger.error(f"Error adding user alias: {e}", exc_info=True)
+                    st.error(f"❌ Unexpected error: {e}")
+            else:
+                st.warning("Please select a column to map to.")
+
+
 def clear_all_results(dataset_version: str) -> None:
     """
     Clear all results and history for this dataset version.
@@ -235,6 +277,16 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
             if len(result["available_columns"]) > 20:
                 cols_str += "..."
             st.info(f"💡 **Available columns**: {cols_str}")
+
+        # Phase 2: Add "Add alias?" UI for unknown terms
+        if "unknown_term" in result:
+            _render_add_alias_ui(
+                unknown_term=result["unknown_term"],
+                available_columns=result.get("available_columns", []),
+                upload_id=result.get("upload_id"),
+                dataset_version=result.get("dataset_version"),
+                semantic_layer=result.get("semantic_layer"),
+            )
         return
 
     # Check if this is a focused single-variable analysis
@@ -628,48 +680,88 @@ def render_survival_analysis(result: dict) -> None:
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display and seaborn
 # TODO: Remove when Streamlit supports Polars natively
 def render_relationship_analysis(result: dict) -> None:
-    """Render relationship analysis from serializable dict."""
+    """Render relationship analysis from serializable dict with clean, user-friendly output."""
     if "error" in result:
-        st.error(result["error"])
+        st.error(f"❌ **Analysis Error**: {result['error']}")
+        if "numeric_variables" in result:
+            st.info(f"✅ **Numeric variables found**: {', '.join(result['numeric_variables'][:5])}")
+        if "non_numeric_variables" in result:
+            excluded = result["non_numeric_variables"][:5]
+            st.info(f"ℹ️ **Non-numeric variables excluded** (cannot compute correlations): {', '.join(excluded)}")
         return
 
-    st.markdown("## 🔗 Relationships Between Variables")
-
+    # Show summary info
+    n_obs = result.get("n_observations", 0)
     variables = result["variables"]
+    non_numeric_excluded = result.get("non_numeric_excluded", [])
 
-    st.markdown("### Correlation Heatmap")
+    # Header with key info
+    st.markdown("### 🔗 Variable Relationships")
 
-    # Reconstruct correlation matrix for heatmap
-    corr_data = result["correlations"]
-    corr_matrix = pd.DataFrame(index=variables, columns=variables)
-    for item in corr_data:
-        corr_matrix.loc[item["var1"], item["var2"]] = item["correlation"]
-        corr_matrix.loc[item["var2"], item["var1"]] = item["correlation"]  # Symmetric
-    corr_matrix = corr_matrix.astype(float)
+    # Show what was analyzed
+    st.markdown(f"**Analyzed {len(variables)} numeric variable(s)** across **{n_obs} observations**")
 
-    # Simple heatmap
-    fig, ax = plt.subplots(figsize=(10, 8))
-    import seaborn as sns
+    # Warn if variables were excluded
+    if non_numeric_excluded:
+        excluded_preview = ", ".join(non_numeric_excluded[:3])
+        if len(non_numeric_excluded) > 3:
+            excluded_preview += f" and {len(non_numeric_excluded) - 3} more"
+        st.info(f"ℹ️ **Note**: {excluded_preview} were excluded (text/categorical variables cannot be correlated)")
 
-    sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="coolwarm", center=0, square=True, ax=ax)
-    ax.set_title("How Variables Relate")
-    st.pyplot(fig)
+    # Get correlations
+    strong_correlations = result.get("strong_correlations", [])
+    moderate_correlations = result.get("moderate_correlations", [])
+    corr_data = result.get("correlations", [])
 
-    # Highlight strong correlations
-    st.markdown("### Strong Relationships")
-
-    strong_correlations = result["strong_correlations"]
-
+    # Show key findings first (strong correlations)
     if strong_correlations:
+        st.markdown("#### 📊 Key Findings")
         for item in strong_correlations:
             var1 = item["var1"]
             var2 = item["var2"]
             corr_val = item["correlation"]
+
+            # Clean up variable names for display
+            var1_clean = var1.split(":")[0].strip() if ":" in var1 else var1
+            var2_clean = var2.split(":")[0].strip() if ":" in var2 else var2
+
+            direction = "increases together" if corr_val > 0 else "increases as the other decreases"
+            strength = "strongly" if abs(corr_val) >= 0.7 else "moderately"
+
+            st.markdown(f"• **{var1_clean}** and **{var2_clean}** {strength} {direction} (correlation: {corr_val:.2f})")
+    elif moderate_correlations:
+        st.markdown("#### 📊 Findings")
+        st.info("No strong relationships found, but some moderate relationships exist:")
+        for item in moderate_correlations[:5]:  # Show top 5
+            var1 = item["var1"]
+            var2 = item["var2"]
+            corr_val = item["correlation"]
+
+            var1_clean = var1.split(":")[0].strip() if ":" in var1 else var1
+            var2_clean = var2.split(":")[0].strip() if ":" in var2 else var2
+
             direction = "positive" if corr_val > 0 else "negative"
-            strength = "strong" if abs(corr_val) >= 0.7 else "moderate"
-            st.markdown(f"**{var1}** and **{var2}**: {strength} {direction} relationship (r={corr_val:.2f})")
+            st.markdown(f"• **{var1_clean}** ↔ **{var2_clean}**: {direction} (r={corr_val:.2f})")
     else:
-        st.info("ℹ️ No strong correlations found (|r| >= 0.5)")
+        st.info("ℹ️ No strong or moderate correlations found between the analyzed variables.")
+
+    # Optional: Show correlation matrix in expander (less prominent)
+    if len(variables) <= 6 and corr_data:  # Only show for small number of variables
+        with st.expander("📈 View Correlation Matrix", expanded=False):
+            # Reconstruct correlation matrix for heatmap
+            corr_matrix = pd.DataFrame(index=variables, columns=variables)
+            for item in corr_data:
+                corr_matrix.loc[item["var1"], item["var2"]] = item["correlation"]
+                corr_matrix.loc[item["var2"], item["var1"]] = item["correlation"]  # Symmetric
+            corr_matrix = corr_matrix.astype(float)
+
+            # Simple heatmap
+            fig, ax = plt.subplots(figsize=(8, 6))
+            import seaborn as sns
+
+            sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap="coolwarm", center=0, square=True, ax=ax)
+            ax.set_title("Correlation Matrix")
+            st.pyplot(fig)
 
 
 def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: str | None = None) -> None:
@@ -728,6 +820,12 @@ def execute_analysis_with_idempotency(
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
+
+        # ADR003 Phase 1: Trust UI (verify source patients, patient-level export)
+        # Note: cohort not available in cached path, skip trust UI for cached results
+        # Trust UI will be shown for fresh computations only
+        if query_plan:
+            st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
 
         # Suggest follow-up questions (only for current results, not history)
         # Use a session state flag to prevent duplicate rendering in same cycle
@@ -829,6 +927,18 @@ def execute_analysis_with_idempotency(
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
 
+        # ADR003 Phase 1: Trust UI (verify source patients, patient-level export)
+        if query_plan:
+            from clinical_analytics.ui.components.trust_ui import TrustUI
+
+            TrustUI.render_verification(
+                query_plan=query_plan,
+                result=result,
+                cohort=cohort_pl,
+                dataset_version=dataset_version,
+                query_text=query_text,
+            )
+
         # Suggest follow-up questions (only for current results, not history)
         # Use a session state flag to prevent duplicate rendering in same cycle
         follow_ups_key = f"followups_rendered_{run_key}"
@@ -839,6 +949,50 @@ def execute_analysis_with_idempotency(
         logger.info("analysis_rendering_complete", run_key=run_key)
 
         # Don't rerun - results are already rendered inline, conversation history will show on next query
+
+
+def _render_confirmation_ui(
+    query_plan,
+    failure_reason: str,
+    confidence: float,
+    threshold: float,
+    dataset_version: str,
+) -> None:
+    """
+    Render confirmation UI when confidence or completeness gating fails (ADR003 Phase 3).
+
+    Shows the QueryPlan details, confidence score, and requires explicit user confirmation
+    before execution.
+    """
+    from clinical_analytics.core.query_plan import QueryPlan
+
+    if not isinstance(query_plan, QueryPlan):
+        return
+
+    st.warning("⚠️ **Execution requires confirmation**")
+
+    # Show failure reason
+    st.info(f"**Reason:** {failure_reason}")
+
+    # Show QueryPlan details
+    with st.expander("📋 Query Plan Details", expanded=True):
+        st.write(f"**Intent:** {query_plan.intent}")
+        if query_plan.metric:
+            st.write(f"**Metric:** {query_plan.metric}")
+        if query_plan.group_by:
+            st.write(f"**Group By:** {query_plan.group_by}")
+        if query_plan.filters:
+            st.write("**Filters:**")
+            for f in query_plan.filters:
+                st.write(f"  - {f.column} {f.operator} {f.value}")
+        st.write(f"**Confidence:** {confidence:.0%} (threshold: {threshold:.0%})")
+        if query_plan.explanation:
+            st.write(f"**Explanation:** {query_plan.explanation}")
+
+    # Confirmation button
+    if st.button("✅ Confirm and Run", key=f"confirm_execution_{dataset_version}", type="primary"):
+        st.session_state[f"confirmed_execution_{dataset_version}"] = True
+        st.rerun()
 
 
 def _render_interpretation_inline_compact(query_plan) -> None:
@@ -1229,8 +1383,22 @@ def main():
                 context.time_variable, context.event_variable = QuestionEngine.select_time_variables(cohort)
 
         elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
+            # For CORRELATIONS, NLU may extract variables as primary_variable + grouping_variable
+            # OR as predictor_variables. If we have primary+grouping but not enough predictors, use those.
             if len(context.predictor_variables) < 2:
-                context.predictor_variables = QuestionEngine.select_predictor_variables(cohort, exclude=[], min_vars=2)
+                # Check if we have primary + grouping variables from NLU extraction
+                if context.primary_variable and context.grouping_variable:
+                    # Merge primary and grouping with existing predictor_variables (avoiding duplicates)
+                    existing = set(context.predictor_variables)
+                    if context.primary_variable not in existing:
+                        context.predictor_variables.append(context.primary_variable)
+                    if context.grouping_variable not in existing:
+                        context.predictor_variables.append(context.grouping_variable)
+                elif not context.primary_variable and not context.grouping_variable:
+                    # No variables extracted by NLU - ask user to select
+                    context.predictor_variables = QuestionEngine.select_predictor_variables(
+                        cohort, exclude=[], min_vars=2
+                    )
 
         # Update context in session state
         st.session_state["analysis_context"] = context
@@ -1241,7 +1409,7 @@ def main():
             st.divider()
             QuestionEngine.render_progress_indicator(context)
 
-        # If complete, always execute (transparent confidence display, no blocking gates)
+        # If complete, check confidence gating (ADR003 Phase 3)
         if context.is_complete_for_intent():
             # Get QueryPlan if available (preferred), otherwise fallback to context
             query_plan = getattr(context, "query_plan", None)
@@ -1267,11 +1435,58 @@ def main():
                 query=getattr(context, "research_question", ""),
             )
 
-            # Always execute (no blocking gates) - show transparent confidence inline with results
-            st.divider()
-            execute_analysis_with_idempotency(
-                cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
-            )
+            # ADR003 Phase 3: Use execute_query_plan() for confidence and completeness gating
+            # semantic_layer is already available from line 1291
+            if query_plan and semantic_layer:
+                query_text = getattr(context, "research_question", "")
+                execution_result = semantic_layer.execute_query_plan(
+                    query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
+                )
+
+                if execution_result.get("requires_confirmation"):
+                    # Gate failed - show confirmation UI
+                    st.divider()
+                    _render_confirmation_ui(
+                        query_plan,
+                        execution_result["failure_reason"],
+                        confidence,
+                        AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
+                        dataset_version,
+                    )
+                elif execution_result.get("success"):
+                    # Gate passed - execute analysis
+                    st.divider()
+                    # Update run_key from execution result if provided
+                    if execution_result.get("run_key"):
+                        run_key = execution_result["run_key"]
+                    execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text, query_plan)
+                else:
+                    # Execution failed - show error
+                    st.error(f"Execution failed: {execution_result.get('failure_reason', 'Unknown error')}")
+            else:
+                # Fallback: No QueryPlan or semantic_layer - use old path (for backward compatibility)
+                # But still check confidence threshold
+                if confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD:
+                    st.divider()
+                    execute_analysis_with_idempotency(
+                        cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
+                    )
+                else:
+                    st.divider()
+                    threshold_pct = f"{AUTO_EXECUTE_CONFIDENCE_THRESHOLD:.0%}"
+                    st.warning(
+                        f"⚠️ **Low confidence** ({confidence:.0%}) - below threshold ({threshold_pct}). "
+                        "Please refine your question or confirm execution."
+                    )
+                    if st.button("Confirm and Run Anyway", key=f"confirm_low_confidence_{run_key}"):
+                        execute_analysis_with_idempotency(
+                            cohort,
+                            context,
+                            run_key,
+                            dataset_version,
+                            getattr(context, "research_question", ""),
+                            query_plan,
+                        )
 
         else:
             # Context not complete - show variable selection UI (for missing required variables)
@@ -1397,6 +1612,23 @@ def main():
                         elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS and not context.grouping_variable:
                             context.grouping_variable = selected
                         st.info(f"✅ Selected: {get_display_name(selected)}")
+
+            # Phase 2: Show "Add alias?" UI for unknown terms (no suggestions)
+            # Check if there are any terms in the query that have no matches
+            if hasattr(context, "unknown_terms") and context.unknown_terms:
+                for unknown_term in context.unknown_terms:
+                    # Get semantic layer and upload info
+                    upload_id = dataset.upload_id if hasattr(dataset, "upload_id") else None
+                    semantic_layer = dataset.semantic if hasattr(dataset, "semantic") else None
+
+                    if semantic_layer and upload_id:
+                        _render_add_alias_ui(
+                            unknown_term=unknown_term,
+                            available_columns=available_cols,
+                            upload_id=upload_id,
+                            dataset_version=dataset_version,
+                            semantic_layer=semantic_layer,
+                        )
 
             # Update context in session state after edits
             st.session_state["analysis_context"] = context

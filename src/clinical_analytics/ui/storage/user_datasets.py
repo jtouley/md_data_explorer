@@ -803,6 +803,14 @@ def save_table_list(
                 "tables": table_fingerprints,
             },
             "parquet_paths": parquet_paths,  # Phase 3: Parquet file paths for lazy loading
+            # Phase 2: Alias persistence structure (ADR003)
+            "alias_mappings": metadata.get(
+                "alias_mappings",
+                {
+                    "user_aliases": {},
+                    "system_aliases": {},
+                },
+            ),
         }
 
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
