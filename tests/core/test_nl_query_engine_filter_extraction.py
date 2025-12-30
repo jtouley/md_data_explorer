@@ -632,3 +632,65 @@ class TestExclusionFilters:
         assert exclusion_filter.value == 0
         # Should have grouping variable
         assert intent.grouping_variable == "statin_used"
+
+    def test_exclusion_filter_works_for_any_medication_type(self, mock_semantic_layer):
+        """Test that exclusion filters are generic and work for any medication/treatment type."""
+        # Arrange: Create semantic layer with diabetes medication column (different domain)
+        diabetes_column_value = "Diabetes Medication: 0: n/a 1: Metformin 2: Insulin 3: Glipizide"
+        mock = mock_semantic_layer(
+            columns={
+                diabetes_column_value: "diabetes_medication",  # alias -> canonical
+                "diabetes medication": "diabetes_medication",  # normalized alias -> canonical
+                "diabetes meds": "diabetes_medication",  # partial match -> canonical
+            }
+        )
+        # Mock metadata to indicate coded column
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from exclusion query (different domain)
+        query = "excluding those not on diabetes medication"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0 (generic, not hardcoded)
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filter = intent.filters[0]
+        assert exclusion_filter.column == "diabetes_medication"
+        assert exclusion_filter.operator == "!="
+        assert exclusion_filter.value == 0  # Generic: exclude code 0 (n/a)
+        assert exclusion_filter.exclude_nulls is True
+
+    def test_exclusion_filter_works_for_any_coded_column(self, mock_semantic_layer):
+        """Test that exclusion filters work for any coded column, not just medications."""
+        # Arrange: Create semantic layer with treatment column (different domain)
+        treatment_column_value = "Treatment Type: 0: None 1: Surgery 2: Chemotherapy 3: Radiation"
+        mock = mock_semantic_layer(
+            columns={
+                treatment_column_value: "treatment_type",  # alias -> canonical
+                "treatment type": "treatment_type",  # normalized alias -> canonical
+                "treatment": "treatment_type",  # partial match -> canonical
+            }
+        )
+        # Mock metadata to indicate coded column
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from exclusion query (different domain)
+        query = "excluding patients not on treatment"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0 (generic pattern)
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filter = intent.filters[0]
+        assert exclusion_filter.column == "treatment_type"
+        assert exclusion_filter.operator == "!="
+        assert exclusion_filter.value == 0  # Generic: exclude code 0 (n/a/None)
+        assert exclusion_filter.exclude_nulls is True
