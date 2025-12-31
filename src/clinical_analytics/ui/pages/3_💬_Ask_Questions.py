@@ -144,11 +144,11 @@ def normalize_query(q: str | None) -> str:
 
 def canonicalize_scope(scope: dict | None) -> dict:
     """
-    Canonicalize semantic scope dict for stable hashing.
+    Canonicalize semantic scope dict for stable hashing (Phase 1.4 - Recursive).
 
-    - Drops None values
-    - Sorts dictionary keys
-    - Sorts list values
+    - Drops None values recursively
+    - Sorts dictionary keys recursively
+    - Sorts list values recursively
     - Ensures stable JSON serialization
 
     Args:
@@ -165,8 +165,25 @@ def canonicalize_scope(scope: dict | None) -> dict:
         value = scope[key]
         if value is None:
             continue  # Drop None values
-        if isinstance(value, list):
-            canonical[key] = sorted(value)  # Sort lists for stability
+        elif isinstance(value, dict):
+            # Recursively canonicalize nested dicts
+            nested_canonical = canonicalize_scope(value)
+            if nested_canonical:  # Only add non-empty dicts
+                canonical[key] = nested_canonical
+        elif isinstance(value, list):
+            # Sort lists, recursively canonicalize list items if they are dicts
+            sorted_list = []
+            for item in value:
+                if isinstance(item, dict):
+                    sorted_list.append(canonicalize_scope(item))
+                else:
+                    sorted_list.append(item)
+            # Sort the list (works for primitives, dicts as JSON strings for comparison)
+            try:
+                canonical[key] = sorted(sorted_list, key=lambda x: str(x))
+            except TypeError:
+                # If sorting fails, keep original order
+                canonical[key] = sorted_list
         else:
             canonical[key] = value
 
@@ -1942,6 +1959,13 @@ def main():
         query = st.chat_input("Ask a question about your data...")
 
     if query:
+        # Phase 1.3: Normalize query and reject if empty
+        normalized_query = normalize_query(query)
+        if not normalized_query:
+            # Empty query after normalization - reject silently (don't process, don't log, don't compute)
+            logger.debug("empty_query_rejected_at_ingestion", raw_query=query)
+            st.rerun()  # Rerun to clear the input without processing
+
         # Handle new query from chat input
         try:
             # Get semantic layer (Phase 3: cached for performance)
@@ -1953,7 +1977,7 @@ def main():
 
             logger.info(
                 "chat_input_query_received",
-                query=query,
+                query=normalized_query,  # Log normalized query
                 dataset_id=dataset_id,
                 upload_id=upload_id,
                 dataset_version=dataset_version,
@@ -1963,7 +1987,7 @@ def main():
             from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
             nl_engine = NLQueryEngine(semantic_layer)
-            query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
+            query_intent = nl_engine.parse_query(normalized_query, dataset_id=dataset_id, upload_id=upload_id)
 
             if query_intent:
                 # Convert QueryIntent to AnalysisContext (similar to ask_free_form_question logic)
