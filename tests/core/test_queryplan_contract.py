@@ -15,16 +15,17 @@ from clinical_analytics.core.query_plan import QueryPlan
 class TestQueryPlanContractEnforcement:
     """Test suite for QueryPlan contract enforcement."""
 
-    def test_execute_query_plan_logs_execution_start(self, mock_semantic_layer, caplog):
+    def test_execute_query_plan_logs_execution_start(self, make_semantic_layer, caplog):
         """execute_query_plan() should log execution start for observability."""
         # Arrange: Valid QueryPlan
         plan = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
+        semantic_layer = make_semantic_layer()
 
         # Act
         import logging
 
         with caplog.at_level(logging.DEBUG):
-            mock_semantic_layer.execute_query_plan(plan)
+            semantic_layer.execute_query_plan(plan)
 
         # Assert: Should log execution (verify contract enforcement)
         log_messages = [record.message for record in caplog.records]
@@ -32,29 +33,32 @@ class TestQueryPlanContractEnforcement:
             "execute_query_plan should log execution for observability"
         )
 
-    def test_execute_query_plan_validates_plan_type(self, mock_semantic_layer):
+    def test_execute_query_plan_validates_plan_type(self, make_semantic_layer):
         """execute_query_plan() should reject non-QueryPlan inputs."""
         # Arrange: Invalid input (dict instead of QueryPlan)
         invalid_plan = {"intent": "COUNT", "entity_key": "patient_id"}
+        semantic_layer = make_semantic_layer()
 
         # Act & Assert: Should raise TypeError or AttributeError
         with pytest.raises((TypeError, AttributeError)):
-            mock_semantic_layer.execute_query_plan(invalid_plan)
+            semantic_layer.execute_query_plan(invalid_plan)
 
-    def test_execute_query_plan_validates_plan_intent(self, mock_semantic_layer):
+    def test_execute_query_plan_validates_plan_intent(self, make_semantic_layer):
         """execute_query_plan() should validate QueryPlan has intent field."""
         # Arrange: QueryPlan without intent (will fail at validation)
+        # Note: This test doesn't need semantic_layer since validation happens at QueryPlan construction
         with pytest.raises((TypeError, ValueError)):
             # QueryPlan requires intent, this should fail at construction
             QueryPlan(entity_key="patient_id", confidence=0.9)
 
-    def test_execute_query_plan_returns_standardized_result(self, mock_semantic_layer):
+    def test_execute_query_plan_returns_standardized_result(self, make_semantic_layer):
         """execute_query_plan() should return standardized result with required fields."""
         # Arrange: Valid QueryPlan
         plan = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
+        semantic_layer = make_semantic_layer()
 
         # Act
-        result = mock_semantic_layer.execute_query_plan(plan)
+        result = semantic_layer.execute_query_plan(plan)
 
         # Assert: Result has standard contract fields
         assert isinstance(result, dict), "Result should be dict"
@@ -67,78 +71,43 @@ class TestQueryPlanContractEnforcement:
         assert isinstance(result["warnings"], list), "warnings should be list"
         assert isinstance(result["steps"], list), "steps should be list"
 
-    def test_execute_query_plan_generates_deterministic_run_key(self, mock_semantic_layer):
+    def test_execute_query_plan_generates_deterministic_run_key(self, make_semantic_layer):
         """execute_query_plan() should generate deterministic run_key for same plan."""
         # Arrange: Same QueryPlan executed twice
         plan1 = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
         plan2 = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
+        semantic_layer = make_semantic_layer()
 
         # Act
-        result1 = mock_semantic_layer.execute_query_plan(plan1, query_text="test query")
-        result2 = mock_semantic_layer.execute_query_plan(plan2, query_text="test query")
+        result1 = semantic_layer.execute_query_plan(plan1, query_text="test query")
+        result2 = semantic_layer.execute_query_plan(plan2, query_text="test query")
 
         # Assert: Same run_key for identical plans
         assert result1["run_key"] == result2["run_key"], "run_key should be deterministic"
 
-    def test_execute_query_plan_different_run_key_for_different_plans(self, mock_semantic_layer):
+    def test_execute_query_plan_different_run_key_for_different_plans(self, make_semantic_layer):
         """execute_query_plan() should generate different run_key for different plans."""
         # Arrange: Different QueryPlans
         plan1 = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
         plan2 = QueryPlan(intent="DESCRIBE", metric="age", confidence=0.9)
+        semantic_layer = make_semantic_layer()
 
         # Act
-        result1 = mock_semantic_layer.execute_query_plan(plan1)
-        result2 = mock_semantic_layer.execute_query_plan(plan2)
+        result1 = semantic_layer.execute_query_plan(plan1)
+        result2 = semantic_layer.execute_query_plan(plan2)
 
         # Assert: Different run_keys for different plans
         assert result1["run_key"] != result2["run_key"], "Different plans should have different run_keys"
 
-    def test_execute_query_plan_uses_retry_logic(self, mock_semantic_layer):
+    def test_execute_query_plan_uses_retry_logic(self, make_semantic_layer):
         """execute_query_plan() should use _execute_plan_with_retry() internally."""
         # Arrange: Valid QueryPlan
         plan = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
+        semantic_layer = make_semantic_layer()
 
         # Act
-        result = mock_semantic_layer.execute_query_plan(plan)
+        result = semantic_layer.execute_query_plan(plan)
 
         # Assert: Execution succeeded (retry logic is tested separately)
         # This test verifies the integration - retry logic tests are in test_semantic_observability.py
         assert result["success"] is True
-
-
-@pytest.fixture
-def mock_semantic_layer(tmp_path):
-    """Create minimal semantic layer for testing."""
-    import pandas as pd
-
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    (workspace / "pyproject.toml").write_text("[project]\nname = 'test'")
-
-    data_dir = workspace / "data" / "raw" / "test_dataset"
-    data_dir.mkdir(parents=True)
-
-    test_csv = data_dir / "test.csv"
-    df = pd.DataFrame(
-        {
-            "patient_id": [1, 2, 3],
-            "age": [45, 62, 38],
-            "status": ["active", "inactive", "active"],
-        }
-    )
-    df.to_csv(test_csv, index=False)
-
-    config = {
-        "init_params": {"source_path": "data/raw/test_dataset/test.csv"},
-        "column_mapping": {"patient_id": "patient_id"},
-        "time_zero": {"value": "2024-01-01"},
-        "outcomes": {},
-        "analysis": {"default_outcome": "outcome"},
-    }
-
-    from clinical_analytics.core.semantic import SemanticLayer
-
-    semantic = SemanticLayer("test_dataset", config=config, workspace_root=workspace)
-    semantic.dataset_version = "test_v1"
-
-    return semantic
