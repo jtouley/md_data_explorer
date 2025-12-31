@@ -162,14 +162,19 @@ todos:
 
 **Progress**: 4/4 simple replacement files completed, ~120 lines of duplicate code eliminated
 
+#### Phase 1.3: Medium Complexity Fixtures (✅ COMPLETED)
+
+- ✅ **test_semantic_queryplan_execution.py**: Replaced 30-line fixture (15 tests ✓)
+- ✅ **test_semantic_run_key_determinism.py**: Replaced 37-line fixture (7 tests ✓)
+- ✅ **test_semantic_observability.py**: Replaced 34-line fixture (19 tests ✓)
+
+**Progress**: 3/3 medium complexity files, ~88 lines eliminated, 41 tests passing in 1.99s
+
+**Cumulative (Phases 1.1-1.3)**: 7 files, ~208 lines eliminated, 68 tests using shared fixtures
+
 ### Next Steps
 
-1. **Continue**: Phase 1.3 (medium complexity fixtures)
-
-   - test_semantic_queryplan_execution.py
-   - test_semantic_run_key_determinism.py  
-   - test_semantic_observability.py
-
+1. **Continue**: Phase 1.4 (complex fixtures - remaining 14 files)
 2. **Then**: Phase 2 (DataFrame factories)
 
 ---
