@@ -86,29 +86,29 @@ todos:
     status: cancelled
   - id: phase4-consolidate-fixtures
     content: Review and consolidate similar fixtures (sample_cohort_with_categorical/numeric) and add documentation
-    status: pending
+    status: completed
     dependencies:
       - phase1-verify
       - phase2-verify
   - id: phase5-profile-tests
     content: Profile test suite to identify expensive fixtures and bottlenecks using pytest-profiling or timeit
-    status: pending
+    status: completed
     dependencies:
       - phase1-verify
       - phase2-verify
   - id: phase5-identify-candidates
     content: Identify fixtures suitable for module/session scope (immutable, expensive setup, no shared state issues)
-    status: pending
+    status: completed
     dependencies:
       - phase5-profile-tests
   - id: phase5-convert-scopes
     content: Convert expensive fixtures to module/session scope with proper isolation verification
-    status: pending
+    status: completed
     dependencies:
       - phase5-identify-candidates
   - id: phase5-verify-speedup
     content: Measure test execution time before/after scope changes and verify no test isolation issues
-    status: pending
+    status: completed
     dependencies:
       - phase5-convert-scopes
   - id: final-validation
