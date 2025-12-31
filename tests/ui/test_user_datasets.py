@@ -683,6 +683,115 @@ class TestCrossDatasetDeduplication:
         assert "duplicate" not in msg2.lower(), f"Should not warn: {msg2}"
 
 
+class TestVersionHistoryMetadata:
+    """Test suite for version history metadata structure (Phase 2)."""
+
+    def test_metadata_includes_version_history(self, tmp_path):
+        """Metadata should include version_history array."""
+        # Arrange: Upload dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload
+        success, msg, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test_dataset"},
+        )
+        assert success is True
+
+        # Load metadata
+        metadata = storage.get_upload_metadata(upload_id)
+
+        # Assert: version_history exists and is a list
+        assert "version_history" in metadata, "Metadata should include version_history"
+        assert isinstance(metadata["version_history"], list), "version_history should be a list"
+        assert len(metadata["version_history"]) == 1, "Should have one version entry for initial upload"
+
+    def test_version_entry_has_canonical_tables_structure(self, tmp_path):
+        """Version entry should use tables map, not parquet_paths/duckdb_tables lists."""
+        # Arrange: Upload dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload
+        success, msg, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="patient_data.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Load metadata
+        metadata = storage.get_upload_metadata(upload_id)
+
+        # Assert: Version entry has canonical tables structure
+        assert "version_history" in metadata
+        version_entry = metadata["version_history"][0]
+
+        assert "tables" in version_entry, "Version entry should have 'tables' map"
+        assert isinstance(version_entry["tables"], dict), "tables should be a dict"
+
+        # Check table entry structure
+        table_keys = list(version_entry["tables"].keys())
+        assert len(table_keys) > 0, "Should have at least one table"
+
+        first_table = version_entry["tables"][table_keys[0]]
+        assert "parquet_path" in first_table, "Table should have parquet_path"
+        assert "duckdb_table" in first_table, "Table should have duckdb_table"
+        assert "row_count" in first_table, "Table should have row_count"
+        assert "column_count" in first_table, "Table should have column_count"
+        assert "schema_fingerprint" in first_table, "Table should have schema_fingerprint"
+
+    def test_stable_internal_table_identifier_preserved(self, tmp_path):
+        """Version entries should preserve stable internal identifier (table_0) for single-table uploads."""
+        # Arrange: Upload single-table dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload with specific filename
+        success, msg, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="MyPatientData.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Load metadata
+        metadata = storage.get_upload_metadata(upload_id)
+
+        # Assert: Internal identifier is stable (table_0 or original stem), not a generated name
+        version_entry = metadata["version_history"][0]
+        table_keys = list(version_entry["tables"].keys())
+
+        # For single-table uploads, should use original filename stem as key
+        # This is the stable internal identifier
+        assert len(table_keys) == 1
+        # The key should be the filename stem (MyPatientData), not a generated name
+        assert table_keys[0] == "MyPatientData", f"Should preserve filename stem as table key, got {table_keys[0]}"
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 

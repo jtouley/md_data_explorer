@@ -724,6 +724,33 @@ class UploadSecurityValidator:
         return True, ""
 
 
+def compute_schema_fingerprint(df: pl.DataFrame) -> str:
+    """
+    Compute deterministic schema fingerprint for a DataFrame.
+
+    Uses SHA256 hash of canonicalized schema JSON (sorted keys) to ensure
+    deterministic fingerprint over ordered columns/types.
+
+    Args:
+        df: Polars DataFrame
+
+    Returns:
+        Schema fingerprint (SHA256 hex digest)
+    """
+    # Extract schema as ordered list of (column_name, dtype_str)
+    schema_list = [(col, str(dtype)) for col, dtype in df.schema.items()]
+
+    # Sort by column name for determinism
+    schema_list.sort(key=lambda x: x[0])
+
+    # Create canonical JSON representation
+    schema_dict = {"columns": schema_list}
+    schema_json = json.dumps(schema_dict, sort_keys=True)
+
+    # Compute SHA256 hash
+    return hashlib.sha256(schema_json.encode()).hexdigest()
+
+
 def save_table_list(
     storage: "UserDatasetStorage",
     tables: list[dict[str, Any]],
@@ -886,7 +913,29 @@ def save_table_list(
             schema = engine.infer_schema(unified_df)
             metadata["inferred_schema"] = schema.to_dataset_config()
 
-        # 6. Save metadata with tables list, dataset_version, provenance, and Parquet paths
+        # Phase 2: Build canonical tables structure for version history
+        canonical_tables = {}
+        for table in tables:
+            table_name = table["name"]
+            table_df = table["data"]
+
+            canonical_tables[table_name] = {
+                "parquet_path": parquet_paths[table_name],
+                "duckdb_table": table_name,  # DuckDB table name (same as table_name for now)
+                "row_count": table_df.height,
+                "column_count": table_df.width,
+                "schema_fingerprint": compute_schema_fingerprint(table_df),
+            }
+
+        # Phase 2: Create initial version history entry
+        version_entry = {
+            "version": dataset_version,
+            "created_at": datetime.now().isoformat(),
+            "is_active": True,  # First version is always active
+            "tables": canonical_tables,
+        }
+
+        # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
             **metadata,
             "upload_id": upload_id,
@@ -909,6 +958,8 @@ def save_table_list(
                     "system_aliases": {},
                 },
             ),
+            # Phase 2: Version history
+            "version_history": [version_entry],
         }
 
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
