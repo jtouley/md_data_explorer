@@ -1663,14 +1663,37 @@ def main():
                     execution_result = st.session_state[exec_cache_key]
                     logger.debug("query_execution_cache_hit", cache_key=exec_cache_key, query_preview=query_text[:50])
 
-                # Execute if no cached result
+                # Phase 2.5.1: Progressive thinking indicator for query execution
                 if execution_result is None:
-                    execution_result = semantic_layer.execute_query_plan(
-                        query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
-                    )
+                    # Show thinking indicator for fresh execution (not cached)
+                    with st.status("🤔 Processing your question...", expanded=True) as status:
+                        # Step 1: Show query plan interpretation
+                        st.write(f"**Interpreting:** {query_plan.intent}")
+                        if query_plan.metric:
+                            st.write(f"- Analyzing: `{query_plan.metric}`")
+                        if query_plan.group_by:
+                            st.write(f"- Grouped by: `{query_plan.group_by}`")
+                        if query_plan.filters:
+                            st.write(f"- Filters: {len(query_plan.filters)} condition(s)")
+
+                        # Step 2: Execute query
+                        st.write("**Executing query...**")
+                        execution_result = semantic_layer.execute_query_plan(
+                            query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
+                        )
+
+                        # Step 3: Complete
+                        if execution_result.get("success"):
+                            status.update(label="✅ Query complete!", state="complete", expanded=False)
+                        else:
+                            status.update(label="❌ Query failed", state="error", expanded=True)
+
                     # Cache the execution result
                     st.session_state[exec_cache_key] = execution_result
                     logger.debug("query_execution_cache_miss", cache_key=exec_cache_key, query_preview=query_text[:50])
+                else:
+                    # Cached result - show brief indicator
+                    st.info("💡 Using cached result (click 'Re-run Query' below to refresh)")
 
                 # Clear force_rerun flag after use
                 if force_rerun:
