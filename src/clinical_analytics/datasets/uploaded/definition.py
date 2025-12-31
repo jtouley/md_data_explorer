@@ -13,6 +13,12 @@ import polars as pl
 
 from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
+    PatientIdRegenerationError,
+    can_regenerate_patient_id,
+    regenerate_patient_id,
+    validate_synthetic_id_metadata,
+)
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 logger = logging.getLogger(__name__)
@@ -66,6 +72,19 @@ class UploadedDataset(ClinicalDataset):
         self.metadata = storage.get_upload_metadata(upload_id)
         if not self.metadata:
             raise ValueError(f"Upload {upload_id} not found")
+
+        # Validate synthetic_id_metadata once at load time (not lazily during cohort)
+        # Staff Engineer Standard: Validate at boundaries
+        raw_synthetic_id_metadata = self.metadata.get("synthetic_id_metadata")
+        try:
+            self._validated_synthetic_id_metadata = validate_synthetic_id_metadata(raw_synthetic_id_metadata)
+        except PatientIdRegenerationError as e:
+            logger.warning(
+                "Invalid synthetic_id_metadata for upload %s: %s",
+                upload_id,
+                str(e),
+            )
+            self._validated_synthetic_id_metadata = {}
 
         # Initialize with upload info
         dataset_name = self.metadata.get("dataset_name", upload_id)
@@ -241,15 +260,42 @@ class UploadedDataset(ClinicalDataset):
                     # If patient_id was created synthetically, it should be in the CSV
                     # Check if it exists with different casing or was lost
                     if patient_id_col == "patient_id" and "patient_id" not in schema_names:
-                        # Try to regenerate it - materialize once for ID generation
+                        # Try to regenerate using centralized helper (DRY: single source of truth)
                         logger.warning("Synthetic patient_id not found in loaded data, regenerating...")
-                        from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
                         df_materialized = lf.collect()
-                        df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_materialized)
+
+                        # Use validated metadata from init (already validated at boundary)
+                        regen_result = can_regenerate_patient_id(df_materialized, self._validated_synthetic_id_metadata)
+
+                        if regen_result.can_regenerate:
+                            logger.info(
+                                "Regenerating patient_id: source=%s, columns=%s",
+                                regen_result.source_type,
+                                regen_result.source_columns,
+                            )
+                            df_with_id, id_metadata = regenerate_patient_id(
+                                df_materialized, self._validated_synthetic_id_metadata
+                            )
+                        elif regen_result.error_message:
+                            # Fail fast with explicit error
+                            raise PatientIdRegenerationError(
+                                f"Cannot regenerate patient_id: {regen_result.error_message}",
+                                metadata=self._validated_synthetic_id_metadata,
+                            )
+                        else:
+                            # No regeneration metadata - fall back to auto-detection
+                            from clinical_analytics.ui.components.variable_detector import (
+                                VariableTypeDetector,
+                            )
+
+                            logger.warning("No regeneration metadata, using auto-detection")
+                            df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_materialized)
+
                         logger.info(
-                            f"Regenerated patient_id: source={id_metadata['patient_id_source']}, "
-                            f"columns={id_metadata.get('patient_id_columns')}"
+                            "Regenerated patient_id: source=%s, columns=%s",
+                            id_metadata["patient_id_source"],
+                            id_metadata.get("patient_id_columns"),
                         )
 
                         # Persist as LazyFrame for future calls (avoids re-materialization)

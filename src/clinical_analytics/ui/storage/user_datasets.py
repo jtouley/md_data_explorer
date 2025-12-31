@@ -1139,7 +1139,10 @@ def _migrate_legacy_upload(
     if "variable_mapping" in metadata and "inferred_schema" not in metadata:
         from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
 
-        metadata["inferred_schema"] = convert_schema(metadata["variable_mapping"], df)
+        synthetic_id_metadata = metadata.get("synthetic_id_metadata")
+        metadata["inferred_schema"] = convert_schema(
+            metadata["variable_mapping"], df, synthetic_id_metadata=synthetic_id_metadata
+        )
         logger.info("Converted variable_mapping to inferred_schema")
 
     # Update metadata
