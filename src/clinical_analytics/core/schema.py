@@ -54,6 +54,23 @@ class SchemaValidationError(Exception):
         super().__init__(f"Schema validation failed: {'; '.join(errors)}")
 
 
+class DataQualityError(Exception):
+    """
+    Raised when data quality issues are detected during transformations.
+
+    This includes:
+    - Unmapped values in categorical mappings
+    - Invalid data ranges or formats
+    - Data integrity violations
+
+    Contains details about the specific data quality issues.
+    """
+
+    def __init__(self, message: str, unmapped_values: list | None = None):
+        self.unmapped_values = unmapped_values or []
+        super().__init__(message)
+
+
 def validate_unified_cohort_schema(
     df: pd.DataFrame,
     strict: bool = False,
