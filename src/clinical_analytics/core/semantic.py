@@ -1254,11 +1254,13 @@ class SemanticLayer:
 
         Phase 2.1: Added warnings infrastructure for observability.
         Phase 2.2: Removed gating logic - always execute, collect warnings only.
+        Phase 2.5.1: Returns step information for progressive thinking indicator (core layer).
 
         This method no longer blocks execution. Instead, it:
         - Collects warnings for low confidence, incompleteness, validation issues
         - Always attempts execution
         - Returns success=False only for actual execution errors
+        - Returns step information for UI rendering (Phase 2.5.1)
 
         Args:
             plan: QueryPlan to execute
@@ -1271,11 +1273,30 @@ class SemanticLayer:
             - "result": pd.DataFrame | None - Query results if successful
             - "run_key": str - Deterministic run key for idempotency
             - "warnings": list[str] - Warnings collected during execution
+            - "steps": list[dict] - Step information for progressive thinking indicator (Phase 2.5.1)
         """
+        # Phase 2.5.1: Initialize steps list (core layer generates step data)
+        steps: list[dict[str, Any]] = []
+
         # Phase 2.2: Initialize warnings list for observability
         warnings: list[str] = []
 
-        # Step 1: Confidence Check (warning only, no blocking)
+        # Step 1: Interpreting query (Phase 2.5.1)
+        step_details = {
+            "intent": plan.intent,
+            "metric": plan.metric,
+            "group_by": plan.group_by,
+            "filter_count": len(plan.filters) if plan.filters else 0,
+        }
+        steps.append(
+            {
+                "status": "processing",
+                "text": "Interpreting query",
+                "details": step_details,
+            }
+        )
+
+        # Step 2: Confidence Check (warning only, no blocking)
         if plan.confidence < confidence_threshold:
             warning_msg = (
                 f"Low confidence: {plan.confidence:.2f} (threshold: {confidence_threshold:.2f}). "
@@ -1283,39 +1304,87 @@ class SemanticLayer:
             )
             warnings.append(warning_msg)
 
-        # Step 2: Completeness Check (warning only, no blocking)
+        # Step 3: Completeness Check (warning only, no blocking)
         is_complete, completeness_error = self._check_plan_completeness(plan)
         if not is_complete:
             warning_msg = f"Incomplete plan: {completeness_error}"
             warnings.append(warning_msg)
 
-        # Step 3: Validation Check (warning only, no blocking)
+        # Step 4: Validation Check (warning only, no blocking)
         validation_result = self._validate_query_plan(plan)
         if not validation_result["valid"]:
             warning_msg = f"Validation failed: {validation_result['error']}"
             warnings.append(warning_msg)
 
-        # Step 4: Generate run_key (always generate)
+        # Step 5: Validating plan (Phase 2.5.1)
+        steps.append(
+            {
+                "status": "processing",
+                "text": "Validating plan",
+                "details": {
+                    "has_warnings": len(warnings) > 0,
+                    "warning_count": len(warnings),
+                },
+            }
+        )
+
+        # Step 6: Generate run_key (always generate)
         run_key = self._generate_run_key(plan, query_text)
 
-        # Step 5: Execute query with retry logic (Phase 2.5.2)
+        # Step 7: Executing query (Phase 2.5.1)
+        steps.append(
+            {
+                "status": "processing",
+                "text": "Executing query",
+                "details": {"run_key": run_key},
+            }
+        )
+
+        # Step 8: Execute query with retry logic (Phase 2.5.2)
         try:
             result_df = self._execute_plan_with_retry(plan)
+            # Step 9: Complete (Phase 2.5.1)
+            # Handle both DataFrame and scalar results
+            if result_df is not None:
+                if hasattr(result_df, "__len__"):
+                    result_rows = len(result_df)
+                else:
+                    # Scalar result (e.g., COUNT returns int)
+                    result_rows = 1
+            else:
+                result_rows = 0
+            steps.append(
+                {
+                    "status": "completed",
+                    "text": "Query complete",
+                    "details": {"result_rows": result_rows},
+                }
+            )
             return {
                 "success": True,
                 "result": result_df,
                 "run_key": run_key,
                 "warnings": warnings,
+                "steps": steps,  # Phase 2.5.1: Core provides step data
             }
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)
             warning_msg = f"Execution error: {str(e)}"
             warnings.append(warning_msg)
+            # Step 9: Failed (Phase 2.5.1)
+            steps.append(
+                {
+                    "status": "error",
+                    "text": "Query failed",
+                    "details": {"error": str(e)},
+                }
+            )
             return {
                 "success": False,
                 "result": None,
                 "run_key": run_key,
                 "warnings": warnings,
+                "steps": steps,  # Phase 2.5.1: Core provides step data
             }
 
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
