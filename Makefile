@@ -212,5 +212,5 @@ git-log-first: ## Show first 200 lines of commits since main branch
 	@git log main..HEAD --format="%h %s%n%b" | head -200
 
 git-log-rest: ## Show commits since main branch (from line 201 onwards)
-	@git log main..HEAD --format="%h %s%n%b" | head +201
+	@git log main..HEAD --format="%h %s%n%b" | tail -n +201
 
