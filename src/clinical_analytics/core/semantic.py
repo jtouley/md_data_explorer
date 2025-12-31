@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +24,8 @@ from clinical_analytics.core.schema import UnifiedCohort
 if TYPE_CHECKING:
     from clinical_analytics.core.dataset import Granularity
     from clinical_analytics.core.query_plan import QueryPlan
+else:
+    import polars as pl
 
 logger = logging.getLogger(__name__)
 
@@ -1163,84 +1166,415 @@ class SemanticLayer:
 
         logger.info(f"Added user alias '{term}' -> '{column}' for {upload_id}")
 
+    def _execute_plan_with_retry(
+        self, plan: "QueryPlan", max_retries: int = 3, initial_delay: float = 0.5
+    ) -> pd.DataFrame:
+        """
+        Execute query plan with exponential backoff retry for transient errors (Phase 2.5.2).
+
+        Handles backend initialization errors like AttributeError: '_record_batch_readers_consumed',
+        connection errors, and other transient execution failures.
+
+        Args:
+            plan: QueryPlan to execute
+            max_retries: Maximum retry attempts (default: 3)
+            initial_delay: Initial delay in seconds before first retry (default: 0.5s)
+
+        Returns:
+            pd.DataFrame: Query results
+
+        Raises:
+            Exception: Re-raises final exception if all retries exhausted
+        """
+        delay = initial_delay
+        last_exception: Exception | None = None
+
+        # Known transient error patterns for DuckDB/Ibis backends
+        # Narrow patterns to avoid retrying on deterministic failures
+        transient_patterns = [
+            "temporary",
+            "timeout",
+            "connection refused",
+            "connection reset",
+            "connection closed",
+            "database is locked",
+            "deadlock",
+            "service unavailable",
+            "temporarily unavailable",
+        ]
+
+        for attempt in range(max_retries + 1):  # +1 for initial attempt
+            try:
+                return self._execute_plan(plan)
+            except AttributeError as e:
+                # Backend initialization error: '_record_batch_readers_consumed'
+                last_exception = e
+                if "_record_batch_readers_consumed" in str(e) and attempt < max_retries:
+                    logger.warning(
+                        "backend_initialization_error_retry: attempt=%d/%d error_type=%s delay=%.1fs - %s",
+                        attempt + 1,
+                        max_retries + 1,
+                        type(e).__name__,
+                        delay,
+                        str(e),
+                        exc_info=True,
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    # Not a backend error or final retry - re-raise
+                    logger.error(
+                        "backend_initialization_error_final: attempt=%d error_type=%s - %s",
+                        attempt + 1,
+                        type(e).__name__,
+                        str(e),
+                        exc_info=True,
+                    )
+                    raise
+            except (ConnectionError, OSError, TimeoutError) as e:
+                # Connection/network errors - retry
+                last_exception = e
+                if attempt < max_retries:
+                    logger.warning(
+                        "connection_error_retry: attempt=%d/%d error_type=%s delay=%.1fs - %s",
+                        attempt + 1,
+                        max_retries + 1,
+                        type(e).__name__,
+                        delay,
+                        str(e),
+                        exc_info=True,
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    # Final retry - re-raise
+                    logger.error(
+                        "connection_error_final: attempt=%d error_type=%s - %s",
+                        attempt + 1,
+                        type(e).__name__,
+                        str(e),
+                        exc_info=True,
+                    )
+                    raise
+            except Exception as e:
+                # Check if it's a known transient error pattern (narrow matching)
+                error_msg = str(e).lower()
+                error_type = type(e).__name__
+                is_transient = any(pattern in error_msg for pattern in transient_patterns)
+
+                if is_transient and attempt < max_retries:
+                    last_exception = e
+                    matched = next((p for p in transient_patterns if p in error_msg), None)
+                    logger.warning(
+                        "transient_error_retry: attempt=%d/%d error_type=%s matched='%s' delay=%.1fs - %s",
+                        attempt + 1,
+                        max_retries + 1,
+                        error_type,
+                        matched,
+                        delay,
+                        str(e),
+                        exc_info=True,
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    # Not transient or final retry - re-raise
+                    if is_transient:
+                        logger.error(
+                            "transient_error_final: attempt=%d error_type=%s - %s",
+                            attempt + 1,
+                            error_type,
+                            str(e),
+                            exc_info=True,
+                        )
+                    else:
+                        logger.debug(
+                            "non_transient_error_no_retry: error_type=%s - %s",
+                            error_type,
+                            str(e),
+                            exc_info=True,
+                        )
+                    raise
+
+        # Should never reach here, but just in case
+        if last_exception:
+            logger.error(
+                "retry_exhausted",
+                max_attempts=max_retries + 1,
+                error_type=type(last_exception).__name__,
+                error_message=str(last_exception),
+                exc_info=True,
+            )
+            raise last_exception
+        raise RuntimeError("Unexpected retry loop exit")
+
     def execute_query_plan(
         self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
     ) -> dict[str, Any]:  # type: ignore[valid-type]
         """
-        Execute a QueryPlan with confidence and completeness gating (ADR003 Phase 3).
+        Execute a QueryPlan with warnings for observability (ADR003 Phase 3 + Phase 2.2).
 
-        This method enforces hard gates before execution:
-        - Confidence must be >= threshold
-        - Plan must be complete (all required fields present)
-        - Plan must pass validation (columns exist, operators valid, types compatible)
+        Phase 2.1: Added warnings infrastructure for observability.
+        Phase 2.2: Removed gating logic - always execute, collect warnings only.
+        Phase 2.5.1: Returns step information for progressive thinking indicator (core layer).
+
+        This method no longer blocks execution. Instead, it:
+        - Collects warnings for low confidence, incompleteness, validation issues
+        - Always attempts execution
+        - Returns success=False only for actual execution errors
+        - Returns step information for UI rendering (Phase 2.5.1)
 
         Args:
             plan: QueryPlan to execute
-            confidence_threshold: Minimum confidence required (default: 0.75)
+            confidence_threshold: Minimum confidence for warning threshold (default: 0.75)
             query_text: Optional query text for run_key generation
 
         Returns:
             dict with keys:
             - "success": bool - Whether execution succeeded
-            - "requires_confirmation": bool - True if gate failed (user must confirm)
-            - "failure_reason": str - Explanation if gate failed
             - "result": pd.DataFrame | None - Query results if successful
-            - "run_key": str | None - Deterministic run key for idempotency
+            - "run_key": str - Deterministic run key for idempotency
+            - "warnings": list[str] - Warnings collected during execution
+            - "steps": list[dict] - Step information for progressive thinking indicator (Phase 2.5.1)
         """
-        # Step 1: Confidence Gating
-        if plan.confidence < confidence_threshold:
-            return {
-                "success": False,
-                "requires_confirmation": True,
-                "failure_reason": f"Confidence {plan.confidence:.2f} below threshold {confidence_threshold:.2f}",
-                "result": None,
-                "run_key": None,
-            }
+        # Phase 2.5.1: Initialize steps list (core layer generates step data)
+        steps: list[dict[str, Any]] = []
 
-        # Step 2: Completeness Gating
+        # Phase 2.2: Initialize warnings list for observability
+        warnings: list[str] = []
+
+        # Step 1: Interpreting query (Phase 2.5.1)
+        step_details = {
+            "intent": plan.intent,
+            "metric": plan.metric,
+            "group_by": plan.group_by,
+            "filter_count": len(plan.filters) if plan.filters else 0,
+        }
+        steps.append(
+            {
+                "status": "processing",
+                "text": "Interpreting query",
+                "details": step_details,
+            }
+        )
+
+        # Step 2: Confidence Check (warning only, no blocking)
+        if plan.confidence < confidence_threshold:
+            warning_msg = (
+                f"Low confidence: {plan.confidence:.2f} (threshold: {confidence_threshold:.2f}). "
+                f"Query interpretation may be ambiguous or uncertain."
+            )
+            warnings.append(warning_msg)
+
+        # Step 3: Completeness Check (warning only, no blocking)
         is_complete, completeness_error = self._check_plan_completeness(plan)
         if not is_complete:
-            return {
-                "success": False,
-                "requires_confirmation": True,
-                "failure_reason": completeness_error,
-                "result": None,
-                "run_key": None,
-            }
+            warning_msg = f"Incomplete plan: {completeness_error}"
+            warnings.append(warning_msg)
 
-        # Step 3: Validation Gating
+        # Step 4: Validation Check (warning only, no blocking)
         validation_result = self._validate_query_plan(plan)
         if not validation_result["valid"]:
-            return {
-                "success": False,
-                "requires_confirmation": True,
-                "failure_reason": validation_result["error"],
-                "result": None,
-                "run_key": None,
-            }
+            warning_msg = f"Validation failed: {validation_result['error']}"
+            warnings.append(warning_msg)
 
-        # Step 4: Generate run_key
+        # Step 5: Validating plan (Phase 2.5.1)
+        steps.append(
+            {
+                "status": "processing",
+                "text": "Validating plan",
+                "details": {
+                    "has_warnings": len(warnings) > 0,
+                    "warning_count": len(warnings),
+                },
+            }
+        )
+
+        # Step 6: Generate run_key (always generate)
         run_key = self._generate_run_key(plan, query_text)
 
-        # Step 5: Execute query
+        # Step 7: Executing query (Phase 2.5.1)
+        steps.append(
+            {
+                "status": "processing",
+                "text": "Executing query",
+                "details": {"run_key": run_key},
+            }
+        )
+
+        # Step 8: Execute query with retry logic (Phase 2.5.2)
         try:
-            result_df = self._execute_plan(plan)
+            result_df = self._execute_plan_with_retry(plan)
+            # Step 9: Complete (Phase 2.5.1)
+            # Handle both DataFrame and scalar results
+            if result_df is not None:
+                if hasattr(result_df, "__len__"):
+                    result_rows = len(result_df)
+                else:
+                    # Scalar result (e.g., COUNT returns int)
+                    result_rows = 1
+            else:
+                result_rows = 0
+            steps.append(
+                {
+                    "status": "completed",
+                    "text": "Query complete",
+                    "details": {"result_rows": result_rows},
+                }
+            )
             return {
                 "success": True,
-                "requires_confirmation": False,
-                "failure_reason": None,
                 "result": result_df,
                 "run_key": run_key,
+                "warnings": warnings,
+                "steps": steps,  # Phase 2.5.1: Core provides step data
             }
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)
+            warning_msg = f"Execution error: {str(e)}"
+            warnings.append(warning_msg)
+            # Step 9: Failed (Phase 2.5.1)
+            steps.append(
+                {
+                    "status": "error",
+                    "text": "Query failed",
+                    "details": {"error": str(e)},
+                }
+            )
             return {
                 "success": False,
-                "requires_confirmation": True,
-                "failure_reason": f"Execution error: {str(e)}",
                 "result": None,
                 "run_key": run_key,
+                "warnings": warnings,
+                "steps": steps,  # Phase 2.5.1: Core provides step data
             }
+
+    def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:  # type: ignore[valid-type]
+        """
+        Format execution result from execute_query_plan() for UI consumption (Phase 3.1).
+
+        This is a transitional method that bridges QueryPlan execution to legacy result format.
+        Eventually this will be replaced by QueryPlan-driven formatting (Phase 3.3).
+
+        Args:
+            execution_result: Result dict from execute_query_plan()
+            context: AnalysisContext with intent and variables (for legacy compatibility)
+
+        Returns:
+            Formatted result dict compatible with render_analysis_by_type()
+        """
+        if not execution_result.get("success"):
+            return {
+                "type": "error",
+                "error": execution_result.get("warnings", ["Execution failed"])[0]
+                if execution_result.get("warnings")
+                else "Execution failed",
+            }
+
+        result_df = execution_result.get("result")
+        if result_df is None:
+            return {"type": "error", "error": "No result data"}
+
+        # Normalize result to Polars DataFrame (handle scalar edge cases)
+        # _execute_plan always returns pd.DataFrame, but normalize for safety
+        if isinstance(result_df, pd.DataFrame):
+            result_df_pl = pl.from_pandas(result_df)
+        elif isinstance(result_df, (int, float)):
+            # Scalar count result - convert to DataFrame for consistent handling
+            result_df_pl = pl.DataFrame({"count": [int(result_df)]})
+        elif isinstance(result_df, pl.DataFrame):
+            result_df_pl = result_df
+        else:
+            # Unknown type - try to convert
+            result_df_pl = pl.DataFrame({"value": [result_df]})
+
+        # Phase 3.1: Format result DataFrame directly (it's already aggregated from execute_query_plan)
+        # Do NOT call compute_analysis_by_type() - it expects raw cohort, not aggregated results
+        query_plan = getattr(context, "query_plan", None)
+        if not query_plan:
+            return {"type": "error", "error": "QueryPlan required for formatting"}
+
+        # Format based on intent
+        if query_plan.intent == "COUNT":
+            return self._format_count_result(result_df_pl, query_plan, context)
+        elif query_plan.intent == "DESCRIBE":
+            return self._format_describe_result(result_df_pl, query_plan, context)
+        else:
+            # For other intents, return basic format (will be enhanced in Phase 3.3)
+            return {
+                "type": "unknown",
+                "error": f"Formatting not yet implemented for intent: {query_plan.intent}",
+            }
+
+    def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
+        """Format COUNT result DataFrame to result dict format."""
+        # Note: result_df is always a DataFrame (normalized in format_execution_result)
+
+        # DataFrame result - check if grouped or simple count
+        if result_df.height == 1 and result_df.width == 1:
+            # Single value (total count as DataFrame)
+            total_count = int(result_df.item())
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "headline": f"Total count: **{total_count}**",
+            }
+
+        # Grouped count: result_df has [group_by_column, "count"]
+        if query_plan.group_by and query_plan.group_by in result_df.columns:
+            group_col = query_plan.group_by
+            # Convert to list of dicts
+            group_counts = result_df.to_dicts()
+            total_count = sum(item.get("count", 0) for item in group_counts)
+
+            # Check for "most" query pattern
+            query_text = getattr(context, "query_text", "") or getattr(context, "research_question", "")
+            is_most_query = False
+            if query_text:
+                query_lower = query_text.lower()
+                is_most_query = "most" in query_lower and ("which" in query_lower or "what" in query_lower)
+
+            # Create headline
+            if is_most_query and len(group_counts) > 0:
+                top_group = group_counts[0]
+                headline = f"**{top_group[group_col]}** with {top_group['count']} patients"
+            else:
+                headline = f"Total count: **{total_count}**"
+                if len(group_counts) > 0:
+                    top_group = group_counts[0]
+                    headline += f" (largest group: {top_group[group_col]} with {top_group['count']})"
+
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "grouped_by": group_col,
+                "group_counts": group_counts,
+                "headline": headline,
+                "is_most_query": is_most_query,
+            }
+        else:
+            # Simple count (no grouping)
+            total_count = result_df.height if result_df.height > 0 else 0
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "headline": f"Total count: **{total_count}**",
+            }
+
+    def _format_describe_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
+        """Format DESCRIBE result DataFrame to result dict format."""
+        # Phase 3.1: Basic formatting for DESCRIBE (will be enhanced in Phase 3.3)
+        if result_df.height == 0:
+            return {"type": "error", "error": "No data to describe"}
+
+        # Convert to dict format
+        result_dict = result_df.to_dicts()[0] if result_df.height == 1 else result_df.to_dicts()
+
+        return {
+            "type": "descriptive",
+            "summary": result_dict,
+            "headline": f"Descriptive statistics for {query_plan.metric or 'data'}",
+        }
 
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""

@@ -5,12 +5,11 @@ Ask questions, get answers. No statistical jargon - just tell me what you want t
 """
 
 import hashlib
-import json
 import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -22,8 +21,6 @@ import structlog
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import from config (single source of truth)
-# Import analysis compute functions (pure, no UI dependencies)
-from clinical_analytics.analysis.compute import compute_analysis_by_type
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
@@ -97,10 +94,15 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 # - Do NOT access st.session_state inside cached functions
 
 
-@st.cache_data(show_spinner="Loading semantic layer...")
+@st.cache_resource(show_spinner="Loading semantic layer...")
 def get_cached_semantic_layer(dataset_version: str, _dataset):
     """
-    Get semantic layer with caching (Phase 3).
+    Get semantic layer with caching (Phase 1.2 - PR20 P0 Fix).
+
+    IMPORTANT: Uses @st.cache_resource (not @st.cache_data) because:
+    - SemanticLayer contains non-picklable objects (DB connections, Ibis expressions)
+    - cache_data requires pickling, which fails with DuckDB/Ibis backends
+    - cache_resource stores objects in memory without serialization
 
     Cache key includes dataset_version to invalidate on dataset changes.
     Dataset object passed with _ prefix (not hashed, used for computation only).
@@ -139,11 +141,11 @@ def normalize_query(q: str | None) -> str:
 
 def canonicalize_scope(scope: dict | None) -> dict:
     """
-    Canonicalize semantic scope dict for stable hashing.
+    Canonicalize semantic scope dict for stable hashing (Phase 1.4 - Recursive).
 
-    - Drops None values
-    - Sorts dictionary keys
-    - Sorts list values
+    - Drops None values recursively
+    - Sorts dictionary keys recursively
+    - Sorts list values recursively
     - Ensures stable JSON serialization
 
     Args:
@@ -160,57 +162,29 @@ def canonicalize_scope(scope: dict | None) -> dict:
         value = scope[key]
         if value is None:
             continue  # Drop None values
-        if isinstance(value, list):
-            canonical[key] = sorted(value)  # Sort lists for stability
+        elif isinstance(value, dict):
+            # Recursively canonicalize nested dicts
+            nested_canonical = canonicalize_scope(value)
+            if nested_canonical:  # Only add non-empty dicts
+                canonical[key] = nested_canonical
+        elif isinstance(value, list):
+            # Sort lists, recursively canonicalize list items if they are dicts
+            sorted_list = []
+            for item in value:
+                if isinstance(item, dict):
+                    sorted_list.append(canonicalize_scope(item))
+                else:
+                    sorted_list.append(item)
+            # Sort the list (works for primitives, dicts as JSON strings for comparison)
+            try:
+                canonical[key] = sorted(sorted_list, key=lambda x: str(x))
+            except TypeError:
+                # If sorting fails, keep original order
+                canonical[key] = sorted_list
         else:
             canonical[key] = value
 
     return canonical
-
-
-def generate_run_key(
-    dataset_version: str,
-    query_text: str,  # Must be already normalized, never None
-    context: AnalysisContext,
-    scope: dict | None = None,
-) -> str:
-    """
-    Generate stable run key for idempotency.
-
-    Canonicalizes inputs to ensure same query + variables + scope = same key.
-
-    Args:
-        dataset_version: Dataset version identifier
-        query_text: Normalized query text (must be pre-normalized, never None)
-        context: Analysis context with variables
-        scope: Semantic scope dict (optional, will be canonicalized)
-
-    Returns:
-        SHA256 hash of canonicalized payload
-    """
-    # Extract material context variables (only those that affect computation)
-    material_vars = {
-        "primary": context.primary_variable or "",
-        "grouping": context.grouping_variable or "",
-        "predictors": sorted(context.predictor_variables or []),
-        "time": context.time_variable or "",
-        "event": context.event_variable or "",
-    }
-
-    # Build payload with canonicalized scope
-    payload = {
-        "dataset_version": dataset_version,
-        "query": query_text,  # Already normalized by caller
-        "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
-        "vars": material_vars,
-        "scope": canonicalize_scope(scope),  # Include canonicalized scope
-    }
-
-    # Stable JSON serialization
-    payload_str = json.dumps(payload, sort_keys=True)
-    run_key = hashlib.sha256(payload_str.encode()).hexdigest()
-
-    return run_key
 
 
 def remember_run(dataset_version: str, run_key: str) -> None:
@@ -951,83 +925,6 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                     st.write(text)
 
 
-def get_or_compute_result(
-    cohort: pl.DataFrame,
-    context: AnalysisContext,
-    run_key: str,
-    dataset_version: str,
-    query_text: str,
-) -> dict:
-    """
-    Get cached result or compute new one (pure computation, no UI).
-
-    Args:
-        cohort: Polars DataFrame with patient data
-        context: Analysis context with variables
-        run_key: Run key for this analysis
-        dataset_version: Dataset version identifier
-        query_text: Original query text
-
-    Returns:
-        Analysis result dict (serializable)
-    """
-    # Use dataset-scoped result key
-    result_key = f"analysis_result:{dataset_version}:{run_key}"
-
-    # Check if already computed
-    if result_key in st.session_state:
-        logger.info(
-            "analysis_result_cached",
-            run_key=run_key,
-            dataset_version=dataset_version,
-            intent_type=context.inferred_intent.value,
-        )
-        return st.session_state[result_key]
-
-    # Not computed - compute now
-    logger.info(
-        "analysis_execution_start",
-        intent=context.inferred_intent.value,
-        primary_variable=context.primary_variable,
-        grouping_variable=context.grouping_variable,
-        predictor_variables=context.predictor_variables,
-        dataset_version=dataset_version,
-        confidence=getattr(context, "confidence", 0.0),
-    )
-
-    # Convert cohort to Polars if needed (defensive)
-    if isinstance(cohort, pd.DataFrame):
-        cohort_pl = pl.from_pandas(cohort)
-    else:
-        cohort_pl = cohort
-
-    # Compute analysis (pure function, no UI dependencies)
-    logger.debug(
-        "analysis_computation_start",
-        run_key=run_key,
-        cohort_shape=(cohort_pl.height, cohort_pl.width),
-        intent_type=context.inferred_intent.value,
-    )
-    result = compute_analysis_by_type(cohort_pl, context)
-
-    logger.info(
-        "analysis_computation_complete",
-        run_key=run_key,
-        result_type=result.get("type", "unknown"),
-        has_error="error" in result,
-        dataset_version=dataset_version,
-    )
-
-    # Store result (serializable format)
-    st.session_state[result_key] = result
-    st.session_state[f"last_run_key:{dataset_version}"] = run_key
-
-    # Remember this run in history (O(1) eviction happens here)
-    remember_run(dataset_version, run_key)
-
-    return result
-
-
 def render_result(
     result: dict,
     context: AnalysisContext,
@@ -1089,12 +986,28 @@ def execute_analysis_with_idempotency(
     dataset_version: str,
     query_text: str,
     query_plan=None,
+    execution_result: dict | None = None,
+    semantic_layer=None,
 ) -> None:
     """
     Execute analysis with idempotency guard and result persistence.
 
     Checks if result already exists in session_state. If yes, renders from cache.
     If no, computes, stores, and renders.
+
+    Phase 3.1: Added execution_result and semantic_layer parameters to avoid re-execution.
+    If execution_result is provided (from execute_query_plan), uses its DataFrame
+    instead of re-executing via compute_analysis_by_type().
+
+    Args:
+        cohort: Cohort data (for Trust UI)
+        context: Analysis context
+        run_key: Run key for idempotency
+        dataset_version: Dataset version
+        query_text: Query text
+        query_plan: QueryPlan object (if available)
+        execution_result: Result from execute_query_plan() (Phase 3.1)
+        semantic_layer: SemanticLayer instance for formatting (Phase 3.1)
     """
     # Use dataset-scoped result key for trivial cleanup
     result_key = f"analysis_result:{dataset_version}:{run_key}"
@@ -1133,31 +1046,32 @@ def execute_analysis_with_idempotency(
 
     # Not computed - compute and store
     with st.spinner("Running analysis..."):
-        # Log execution start for observability (logger already defined at module level)
-        logger.info(
-            "analysis_execution_start",
-            intent=context.inferred_intent.value,
-            primary_variable=context.primary_variable,
-            grouping_variable=context.grouping_variable,
-            predictor_variables=context.predictor_variables,
-            dataset_version=dataset_version,
-            confidence=getattr(context, "confidence", 0.0),
-        )
+        # Phase 3.1: Use execution_result from execute_query_plan() if provided
+        if execution_result and semantic_layer:
+            # Execution already happened via execute_query_plan() - format its result
+            logger.info(
+                "analysis_using_execution_result",
+                run_key=run_key,
+                dataset_version=dataset_version,
+                intent_type=context.inferred_intent.value,
+            )
 
-        # Convert cohort to Polars if needed (defensive)
-        if isinstance(cohort, pd.DataFrame):
-            cohort_pl = pl.from_pandas(cohort)
+            # Format result via semantic layer (no re-execution, just formatting)
+            result = semantic_layer.format_execution_result(execution_result, context)
         else:
-            cohort_pl = cohort
-
-        # Compute analysis (pure function, no UI dependencies)
-        logger.debug(
-            "analysis_computation_start",
-            run_key=run_key,
-            cohort_shape=(cohort_pl.height, cohort_pl.width),
-            intent_type=context.inferred_intent.value,
-        )
-        result = compute_analysis_by_type(cohort_pl, context)
+            # Phase 3.1: No legacy path - execution_result is required
+            # All queries must go through execute_query_plan() first
+            logger.error(
+                "legacy_execution_path_blocked",
+                message="execute_analysis_with_idempotency requires execution_result from execute_query_plan()",
+                run_key=run_key,
+                dataset_version=dataset_version,
+            )
+            raise ValueError(
+                "Phase 3.1: Legacy execution path blocked. "
+                "execute_analysis_with_idempotency requires execution_result parameter. "
+                "All queries must go through semantic_layer.execute_query_plan() first."
+            )
 
         logger.info(
             "analysis_computation_complete",
@@ -1230,7 +1144,7 @@ def execute_analysis_with_idempotency(
             TrustUI.render_verification(
                 query_plan=query_plan,
                 result=result,
-                cohort=cohort_pl,
+                cohort=cohort,
                 dataset_version=dataset_version,
                 query_text=query_text,
             )
@@ -1245,50 +1159,6 @@ def execute_analysis_with_idempotency(
         logger.info("analysis_rendering_complete", run_key=run_key)
 
         # Don't rerun - results are already rendered inline, conversation history will show on next query
-
-
-def _render_confirmation_ui(
-    query_plan,
-    failure_reason: str,
-    confidence: float,
-    threshold: float,
-    dataset_version: str,
-) -> None:
-    """
-    Render confirmation UI when confidence or completeness gating fails (ADR003 Phase 3).
-
-    Shows the QueryPlan details, confidence score, and requires explicit user confirmation
-    before execution.
-    """
-    from clinical_analytics.core.query_plan import QueryPlan
-
-    if not isinstance(query_plan, QueryPlan):
-        return
-
-    st.warning("⚠️ **Execution requires confirmation**")
-
-    # Show failure reason
-    st.info(f"**Reason:** {failure_reason}")
-
-    # Show QueryPlan details
-    with st.expander("📋 Query Plan Details", expanded=True):
-        st.write(f"**Intent:** {query_plan.intent}")
-        if query_plan.metric:
-            st.write(f"**Metric:** {query_plan.metric}")
-        if query_plan.group_by:
-            st.write(f"**Group By:** {query_plan.group_by}")
-        if query_plan.filters:
-            st.write("**Filters:**")
-            for f in query_plan.filters:
-                st.write(f"  - {f.column} {f.operator} {f.value}")
-        st.write(f"**Confidence:** {confidence:.0%} (threshold: {threshold:.0%})")
-        if query_plan.explanation:
-            st.write(f"**Explanation:** {query_plan.explanation}")
-
-    # Confirmation button
-    if st.button("✅ Confirm and Run", key=f"confirm_execution_{dataset_version}", type="primary"):
-        st.session_state[f"confirmed_execution_{dataset_version}"] = True
-        st.rerun()
 
 
 def _render_interpretation_inline_compact(query_plan) -> None:
@@ -1323,6 +1193,67 @@ def _render_interpretation_inline_compact(query_plan) -> None:
         has_filters=len(query_plan.filters) > 0,
         has_explanation=bool(query_plan.explanation),
     )
+
+
+def _render_thinking_indicator(steps: list[dict[str, Any]]) -> None:
+    """
+    Render progressive thinking steps from core layer (Phase 2.5.1).
+
+    Displays step-by-step progress of query execution, showing query plan interpretation,
+    validation status, execution progress, and completion/failure state.
+
+    Args:
+        steps: List of step dicts from execute_query_plan() result.
+              Each step has:
+              - "status": str - One of "processing", "completed", "error"
+              - "text": str - Step description (e.g., "Interpreting query")
+              - "details": dict - Step-specific details (intent, metric, warnings, etc.)
+    """
+    if not steps:
+        return
+
+    # Determine final status from last step
+    last_step = steps[-1]
+    status_label = "🤔 Processing your question..."
+    status_state = "running"
+    expanded = True  # Default to expanded
+
+    if last_step["status"] == "completed":
+        status_label = "✅ Query complete!"
+        status_state = "complete"
+        expanded = False  # Auto-collapse when completed
+    elif last_step["status"] == "error":
+        status_label = "❌ Query failed"
+        status_state = "error"
+        expanded = True  # Keep expanded for errors
+
+    with st.status(status_label, expanded=expanded, state=status_state):
+        for step in steps:
+            # Render step text
+            st.write(f"**{step['text']}**")
+
+            # Render step details if available
+            if step.get("details"):
+                details = step["details"]
+                if step["text"] == "Interpreting query":
+                    # Show query plan interpretation
+                    if details.get("intent"):
+                        st.write(f"- Intent: `{details['intent']}`")
+                    if details.get("metric"):
+                        st.write(f"- Analyzing: `{details['metric']}`")
+                    if details.get("group_by"):
+                        st.write(f"- Grouped by: `{details['group_by']}`")
+                    if details.get("filter_count", 0) > 0:
+                        st.write(f"- Filters: {details['filter_count']} condition(s)")
+                elif step["text"] == "Validating plan":
+                    if details.get("has_warnings"):
+                        st.write(f"- ⚠️ {details.get('warning_count', 0)} warning(s) detected")
+                elif step["text"] == "Executing query":
+                    st.write(f"- Run key: `{details.get('run_key', 'N/A')[:16]}...`")
+                elif step["text"] == "Query complete":
+                    st.write(f"- Result: {details.get('result_rows', 0)} row(s)")
+                elif step["text"] == "Query failed":
+                    st.write(f"- Error: {details.get('error', 'Unknown error')}")
 
 
 def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
@@ -1463,7 +1394,8 @@ def _suggest_follow_ups(
                 # Use sanitized run_key (not hash) to prevent collisions while keeping it readable
                 # Sanitize run_key to remove special characters that might cause issues
                 run_key_safe = (run_key or "default").replace(":", "_").replace("/", "_").replace("-", "_")[:30]
-                suggestion_hash = hash(suggestion) % 1000000
+                # Use stable hash for suggestion button key
+                suggestion_hash = hashlib.sha256(suggestion.encode("utf-8")).hexdigest()[:8]
                 # Use render_context to distinguish between current result and history rendering
                 # Create a unique key that combines all these elements
                 button_key = f"followup_{render_context}_{run_key_safe}_{idx}_{suggestion_hash}"
@@ -1697,23 +1629,17 @@ def main():
             # Get confidence from QueryPlan or context (default to 0.0 if missing - fail closed)
             if query_plan:
                 confidence = query_plan.confidence
-                # Normalize query before generating run_key
-                raw_query = getattr(context, "research_question", "")
-                normalized_query = normalize_query(raw_query)
-                run_key = query_plan.run_key or generate_run_key(dataset_version, normalized_query, context)
             else:
                 confidence = getattr(context, "confidence", 0.0)
-                # Normalize query before generating run_key
-                raw_query = getattr(context, "research_question", "")
-                normalized_query = normalize_query(raw_query)
-                run_key = generate_run_key(dataset_version, normalized_query, context)
+
+            # Phase 1.1.5: Don't generate run_key before execution - semantic layer will generate it
+            # We'll get run_key from execution_result after execution
 
             logger.info(
                 "analysis_execution_triggered",
                 intent_type=context.inferred_intent.value,
                 confidence=confidence,
                 threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
-                run_key=run_key,
                 dataset_version=dataset_version,
                 query=getattr(context, "research_question", ""),
             )
@@ -1722,54 +1648,143 @@ def main():
             # semantic_layer is already available from line 1291
             if query_plan and semantic_layer:
                 query_text = getattr(context, "research_question", "")
-                execution_result = semantic_layer.execute_query_plan(
-                    query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
-                )
 
-                if execution_result.get("requires_confirmation"):
-                    # Gate failed - show confirmation UI
-                    st.divider()
-                    _render_confirmation_ui(
-                        query_plan,
-                        execution_result["failure_reason"],
-                        confidence,
-                        AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
-                        dataset_version,
+                # Phase 2.4: Cache execution results to prevent duplicate execute_query_plan() calls
+                # Use stable sha256 digest (not hash()) for deterministic cache keys across sessions
+                # run_key is only available after execution, so we use query hash for pre-execution cache lookup
+                # Normalize query text same way as semantic layer does for run_key generation
+                normalized_query = " ".join(query_text.lower().split()) if query_text else ""
+                query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
+                exec_cache_key = f"exec_result:{dataset_version}:{query_hash}"
+
+                # Check if user requested force rerun
+                force_rerun_key = f"force_rerun:{dataset_version}"
+                force_rerun = st.session_state.get(force_rerun_key, False)
+
+                # Try to get cached execution result (unless forcing rerun)
+                execution_result = None
+                if not force_rerun and exec_cache_key in st.session_state:
+                    execution_result = st.session_state[exec_cache_key]
+                    logger.debug("query_execution_cache_hit", cache_key=exec_cache_key, query_preview=query_text[:50])
+
+                # Phase 2.5.1: Progressive thinking indicator for query execution
+                if execution_result is None:
+                    # Execute query (core layer generates step information)
+                    execution_result = semantic_layer.execute_query_plan(
+                        query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
                     )
-                elif execution_result.get("success"):
-                    # Gate passed - execute analysis
-                    st.divider()
-                    # Update run_key from execution result if provided
-                    if execution_result.get("run_key"):
-                        run_key = execution_result["run_key"]
-                    execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text, query_plan)
-                else:
-                    # Execution failed - show error
-                    st.error(f"Execution failed: {execution_result.get('failure_reason', 'Unknown error')}")
-            else:
-                # Fallback: No QueryPlan or semantic_layer - use old path (for backward compatibility)
-                # But still check confidence threshold
-                if confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD:
-                    st.divider()
+
+                    # Cache the execution result
+                    st.session_state[exec_cache_key] = execution_result
+                    logger.debug("query_execution_cache_miss", cache_key=exec_cache_key, query_preview=query_text[:50])
+
+                # Phase 2.5.1: Render thinking indicator from core layer step data (UI only renders)
+                if execution_result.get("steps"):
+                    _render_thinking_indicator(execution_result["steps"])
+                elif execution_result is not None:
+                    # Cached result - show brief indicator (no steps available for cached results)
+                    st.info("💡 Using cached result (click 'Re-run Query' below to refresh)")
+
+                # Clear force_rerun flag after use
+                if force_rerun:
+                    st.session_state[force_rerun_key] = False
+
+                # Phase 2.3: Always execute, show warnings inline (no gating)
+                st.divider()
+
+                # Display warnings if present - group in expander to avoid cluttering UI
+                warnings = execution_result.get("warnings", [])
+                if warnings:
+                    # Categorize warnings by severity (info vs warning)
+                    info_warnings = []
+                    error_warnings = []
+                    for warning in warnings:
+                        warning_lower = warning.lower()
+                        if (
+                            "error" in warning_lower
+                            or "failed" in warning_lower
+                            or "validation failed" in warning_lower
+                        ):
+                            error_warnings.append(warning)
+                        else:
+                            info_warnings.append(warning)
+
+                    # Group warnings in expander (auto-collapsed if only info warnings)
+                    warning_count = len(warnings)
+                    warning_text = f"message{'s' if warning_count != 1 else ''}"
+                    with st.expander(
+                        f"ℹ️ Query Information ({warning_count} {warning_text})",
+                        expanded=len(error_warnings) > 0,
+                    ):
+                        # Show error-level warnings first
+                        for warning in error_warnings:
+                            st.error(f"❌ {warning}")
+                        # Then info-level warnings
+                        for warning in info_warnings:
+                            st.info(f"ℹ️ {warning}")
+
+                # Phase 1.1.5: Always use run_key from execution result (semantic layer generates it deterministically)
+                run_key = execution_result.get("run_key")
+                if not run_key:
+                    raise ValueError("Execution result must include run_key - semantic layer should always generate it")
+
+                # Proceed with analysis if successful
+                if execution_result.get("success"):
                     execute_analysis_with_idempotency(
-                        cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
+                        cohort,
+                        context,
+                        run_key,
+                        dataset_version,
+                        query_text,
+                        query_plan,
+                        execution_result,
+                        semantic_layer,
                     )
+
+                    # Phase 3.1: Add assistant message to chat if query came from chat input
+                    # Check if last chat message is user message (indicates chat input was used)
+                    chat = st.session_state.get("chat", [])
+                    if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
+                        # Query came from chat input - add assistant message with actual answer content
+                        # Get formatted result headline/summary (not the query text)
+                        result_key = f"analysis_result:{dataset_version}:{run_key}"
+                        result = st.session_state.get(result_key, {})
+                        assistant_text = result.get("headline") or result.get("headline_text") or "Analysis completed"
+
+                        assistant_msg: ChatMessage = {
+                            "role": "assistant",
+                            "text": assistant_text,  # Store actual answer content, not query text
+                            "run_key": run_key,
+                            "status": "completed",
+                            "created_at": time.time(),
+                        }
+                        st.session_state["chat"].append(assistant_msg)
+
+                    # Phase 2.4: Add "Re-run Query" button for explicit re-execution
+                    # Use stable hash for button key (same normalization as cache key)
+                    normalized_query = " ".join(query_text.lower().split()) if query_text else ""
+                    query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
+                    if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{query_hash}"):
+                        st.session_state[force_rerun_key] = True
+                        st.rerun()
                 else:
-                    st.divider()
-                    threshold_pct = f"{AUTO_EXECUTE_CONFIDENCE_THRESHOLD:.0%}"
-                    st.warning(
-                        f"⚠️ **Low confidence** ({confidence:.0%}) - below threshold ({threshold_pct}). "
-                        "Please refine your question or confirm execution."
-                    )
-                    if st.button("Confirm and Run Anyway", key=f"confirm_low_confidence_{run_key}"):
-                        execute_analysis_with_idempotency(
-                            cohort,
-                            context,
-                            run_key,
-                            dataset_version,
-                            getattr(context, "research_question", ""),
-                            query_plan,
-                        )
+                    # Execution failed - show error with details from warnings
+                    error_msg = "Execution failed"
+                    if execution_result.get("warnings"):
+                        error_msg += " - see warnings above for details"
+                    st.error(f"❌ {error_msg}")
+            else:
+                # Phase 3.1: No fallback - QueryPlan is required
+                st.error(
+                    "❌ Cannot execute query without QueryPlan. "
+                    "This indicates a problem with query parsing. Please try rephrasing your question."
+                )
+                logger.error(
+                    "query_execution_failed_no_queryplan",
+                    message="execute_query_plan requires QueryPlan - no fallback path available",
+                    has_semantic_layer=semantic_layer is not None,
+                    has_query_plan=query_plan is not None,
+                )
 
         else:
             # Context not complete - show variable selection UI (for missing required variables)
@@ -1937,6 +1952,13 @@ def main():
         query = st.chat_input("Ask a question about your data...")
 
     if query:
+        # Phase 1.3: Normalize query and reject if empty
+        normalized_query = normalize_query(query)
+        if not normalized_query:
+            # Empty query after normalization - reject silently (don't process, don't log, don't compute)
+            logger.debug("empty_query_rejected_at_ingestion", raw_query=query)
+            st.rerun()  # Rerun to clear the input without processing
+
         # Handle new query from chat input
         try:
             # Get semantic layer (Phase 3: cached for performance)
@@ -1948,7 +1970,7 @@ def main():
 
             logger.info(
                 "chat_input_query_received",
-                query=query,
+                query=normalized_query,  # Log normalized query
                 dataset_id=dataset_id,
                 upload_id=upload_id,
                 dataset_version=dataset_version,
@@ -1958,7 +1980,7 @@ def main():
             from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
             nl_engine = NLQueryEngine(semantic_layer)
-            query_intent = nl_engine.parse_query(query, dataset_id=dataset_id, upload_id=upload_id)
+            query_intent = nl_engine.parse_query(normalized_query, dataset_id=dataset_id, upload_id=upload_id)
 
             if query_intent:
                 # Convert QueryIntent to AnalysisContext (similar to ask_free_form_question logic)
@@ -2005,33 +2027,11 @@ def main():
                 st.session_state["analysis_context"] = context
                 st.session_state["intent_signal"] = "nl_parsed"
 
-                # If context is complete, execute immediately and render inline
+                # Phase 3.1: Chat handler should NOT execute - only parse and rerun
+                # Main flow (lines 1630-1720) will handle execution after rerun
                 if context.is_complete_for_intent():
-                    # Get QueryPlan if available (preferred), otherwise fallback to context
-                    query_plan = getattr(context, "query_plan", None)
-
-                    # Normalize query before generating run_key
-                    normalized_query = normalize_query(query)
-
-                    # Get confidence from QueryPlan or context (default to 0.0 if missing)
-                    if query_plan:
-                        confidence = query_plan.confidence
-                        run_key = query_plan.run_key or generate_run_key(dataset_version, normalized_query, context)
-                    else:
-                        confidence = getattr(context, "confidence", 0.0)
-                        run_key = generate_run_key(dataset_version, normalized_query, context)
-
-                    logger.info(
-                        "chat_input_analysis_execution_triggered",
-                        intent_type=context.inferred_intent.value,
-                        confidence=confidence,
-                        run_key=run_key,
-                        dataset_version=dataset_version,
-                        query=query,
-                    )
-
-                    # Phase 2: Append messages to transcript and rerun
-                    # Add user message to chat
+                    # Just set state and rerun - main flow will handle execution
+                    # Add user message to chat for display
                     user_msg: ChatMessage = {
                         "role": "user",
                         "text": query,
@@ -2041,50 +2041,7 @@ def main():
                     }
                     st.session_state["chat"].append(user_msg)
 
-                    # Compute result (no UI, pure computation)
-                    result = get_or_compute_result(
-                        cohort=cohort_pl,
-                        context=context,
-                        run_key=run_key,
-                        dataset_version=dataset_version,
-                        query_text=query,
-                    )
-
-                    # Add result to conversation history (backward compat)
-                    headline = result.get("headline") or result.get("headline_text") or "Analysis completed"
-                    filters_applied = []
-                    if context.query_plan and context.query_plan.filters:
-                        filters_applied = [f.__dict__ for f in context.query_plan.filters]
-                    elif context.filters:
-                        filters_applied = [f.__dict__ for f in context.filters]
-
-                    max_conversation_history = 20
-                    st.session_state["conversation_history"].append(
-                        {
-                            "query": query,
-                            "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
-                            "headline": headline,
-                            "run_key": run_key,
-                            "timestamp": time.time(),
-                            "filters_applied": filters_applied,
-                        }
-                    )
-                    if len(st.session_state["conversation_history"]) > max_conversation_history:
-                        st.session_state["conversation_history"] = st.session_state["conversation_history"][
-                            -max_conversation_history:
-                        ]
-
-                    # Add assistant message to chat
-                    assistant_msg: ChatMessage = {
-                        "role": "assistant",
-                        "text": query,  # Store query for reference
-                        "run_key": run_key,
-                        "status": "completed",
-                        "created_at": time.time(),
-                    }
-                    st.session_state["chat"].append(assistant_msg)
-
-                    # Rerun to render chat transcript
+                    # Rerun - main flow will execute query and render results
                     st.rerun()
                 else:
                     # Context not complete - need variable selection, rerun to show UI

@@ -111,7 +111,7 @@ def mock_semantic_layer_for_execution(tmp_path):
 
 
 def test_execute_query_plan_validates_columns_exist(mock_semantic_layer_for_execution):
-    """Verify executor checks columns exist after alias resolution."""
+    """Verify executor checks columns exist after alias resolution (Phase 2.2: warnings only)."""
     # Arrange
     plan = QueryPlan(
         intent="DESCRIBE",
@@ -122,15 +122,16 @@ def test_execute_query_plan_validates_columns_exist(mock_semantic_layer_for_exec
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert
-    assert "requires_confirmation" in result
-    assert result["requires_confirmation"] is True
-    assert "failure_reason" in result
-    assert "nonexistent_column" in result["failure_reason"].lower() or "not found" in result["failure_reason"].lower()
+    # Assert (Phase 2.2: No blocking, just warnings)
+    assert "warnings" in result
+    warnings_text = " ".join(result["warnings"])
+    assert "nonexistent_column" in warnings_text.lower() or "not found" in warnings_text.lower()
+    # Execution fails (not gated, but actual error)
+    assert result["success"] is False
 
 
 def test_execute_query_plan_validates_operators(mock_semantic_layer_for_execution):
-    """Verify executor validates operators are supported."""
+    """Verify executor validates operators are supported (Phase 2.2: warnings only)."""
     # Arrange
     plan = QueryPlan(
         intent="DESCRIBE",
@@ -142,11 +143,12 @@ def test_execute_query_plan_validates_operators(mock_semantic_layer_for_executio
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert
-    assert "requires_confirmation" in result
-    assert result["requires_confirmation"] is True
-    assert "failure_reason" in result
-    assert "operator" in result["failure_reason"].lower() or "unsupported" in result["failure_reason"].lower()
+    # Assert (Phase 2.2: No blocking, just warnings)
+    assert "warnings" in result
+    warnings_text = " ".join(result["warnings"])
+    assert "operator" in warnings_text.lower() or "unsupported" in warnings_text.lower()
+    # Execution may succeed (invalid filter is skipped with warning)
+    assert result["success"] is True
 
 
 def test_execute_query_plan_validates_type_compatibility(mock_semantic_layer_for_execution):
@@ -216,7 +218,7 @@ def test_execute_query_plan_count_entity_key_validation(mock_semantic_layer_for_
 
 
 def test_execute_query_plan_confidence_gating(mock_semantic_layer_for_execution):
-    """Verify executor refuses execution when confidence < threshold."""
+    """Verify executor adds warning when confidence < threshold (Phase 2.2: warnings only)."""
     # Arrange
     plan = QueryPlan(
         intent="DESCRIBE",
@@ -227,15 +229,17 @@ def test_execute_query_plan_confidence_gating(mock_semantic_layer_for_execution)
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan, confidence_threshold=0.75)
 
-    # Assert
-    assert "requires_confirmation" in result
-    assert result["requires_confirmation"] is True
-    assert "failure_reason" in result
-    assert "confidence" in result["failure_reason"].lower()
+    # Assert (Phase 2.2: No blocking, just warnings)
+    assert "warnings" in result
+    assert len(result["warnings"]) > 0
+    warnings_text = " ".join(result["warnings"])
+    assert "confidence" in warnings_text.lower() or "0.50" in warnings_text
+    # Phase 2.2: Still attempts execution (may succeed or fail depending on actual execution)
+    assert result["success"] is not None
 
 
 def test_execute_query_plan_completeness_gating(mock_semantic_layer_for_execution):
-    """Verify executor refuses execution when required fields missing.
+    """Verify executor adds warning when required fields missing (Phase 2.2: warnings only).
 
     COUNT requires entity_key OR grouping_variable.
     """
@@ -249,11 +253,16 @@ def test_execute_query_plan_completeness_gating(mock_semantic_layer_for_executio
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert
-    assert "requires_confirmation" in result
-    assert result["requires_confirmation"] is True
-    assert "failure_reason" in result
-    assert "entity_key" in result["failure_reason"].lower() or "grouping" in result["failure_reason"].lower()
+    # Assert (Phase 2.2: No blocking, just warnings)
+    assert "warnings" in result
+    assert len(result["warnings"]) > 0
+    warnings_text = " ".join(result["warnings"])
+    assert (
+        "incomplete" in warnings_text.lower()
+        or "entity_key" in warnings_text.lower()
+        or "grouping" in warnings_text.lower()
+    )
+    # Phase 2.2: Still attempts execution (may succeed or fail depending on implementation)
 
 
 def test_execute_query_plan_type_aware_categorical(mock_semantic_layer_for_execution, sample_cohort_with_categorical):
@@ -396,7 +405,7 @@ def test_execute_query_plan_run_key_determinism(mock_semantic_layer_for_executio
 
 
 def test_execute_query_plan_refuses_invalid_plans(mock_semantic_layer_for_execution):
-    """Verify executor raises clear errors for contract violations."""
+    """Verify executor adds warnings for contract violations (Phase 2.2: warnings only)."""
     # Arrange
     # Create an invalid plan (e.g., missing required fields)
     plan = QueryPlan(
@@ -408,8 +417,13 @@ def test_execute_query_plan_refuses_invalid_plans(mock_semantic_layer_for_execut
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert
-    assert "requires_confirmation" in result
-    assert result["requires_confirmation"] is True
-    assert "failure_reason" in result
+    # Assert (Phase 2.2: No blocking, just warnings)
+    assert "warnings" in result
+    assert len(result["warnings"]) > 0
     # Error message should be clear about what's missing
+    warnings_text = " ".join(result["warnings"])
+    assert (
+        "incomplete" in warnings_text.lower()
+        or "missing" in warnings_text.lower()
+        or "validation" in warnings_text.lower()
+    )

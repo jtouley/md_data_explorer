@@ -11,7 +11,7 @@ from typing import Any
 import polars as pl
 import yaml
 
-from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.core.schema import DataQualityError, UnifiedCohort
 
 
 class ColumnMapper:
@@ -64,6 +64,9 @@ class ColumnMapper:
 
         Returns:
             DataFrame with outcome columns added
+
+        Raises:
+            DataQualityError: If unmapped values are found in the source column
         """
         for outcome_name, outcome_spec in self.outcomes.items():
             source_col = outcome_spec["source_column"]
@@ -73,8 +76,54 @@ class ColumnMapper:
                 # Apply binary mapping (e.g., yes/no -> 1/0)
                 mapping = outcome_spec["mapping"]
 
+                # Validate: check for unmapped values before transformation
+                # Get all unique non-null values in source column
+                if source_col in df.columns:
+                    # Get unique values (excluding NULLs)
+                    unique_values = df.select(pl.col(source_col)).unique().drop_nulls()
+
+                    # Normalize mapping keys for comparison (lowercase strings)
+                    normalized_mapping = {}
+                    for key in mapping.keys():
+                        if isinstance(key, bool):
+                            normalized_mapping[key] = key
+                        elif isinstance(key, str):
+                            normalized_mapping[key.lower()] = key
+                        else:
+                            normalized_mapping[key] = key
+
+                    # Find unmapped values
+                    unmapped = []
+                    for row in unique_values.iter_rows():
+                        value = row[0]
+                        # Normalize value for comparison
+                        if isinstance(value, str):
+                            normalized_value = value.lower()
+                        elif isinstance(value, bool):
+                            normalized_value = value
+                        else:
+                            normalized_value = value
+
+                        # Check if value has a mapping
+                        if normalized_value not in normalized_mapping:
+                            unmapped.append(value)
+
+                    # Raise error if unmapped values found
+                    if unmapped:
+                        raise DataQualityError(
+                            f"Unmapped values found in column '{source_col}' for outcome '{outcome_name}': "
+                            f"{unmapped[:10]}{'...' if len(unmapped) > 10 else ''}. "
+                            f"Available mappings: {list(mapping.keys())}",
+                            unmapped_values=unmapped,
+                        )
+
                 # Build Polars expression for mapping
-                expr = pl.lit(0)  # default
+                # Default to NULL (not 0) to preserve data integrity:
+                # - Unmapped values remain NULL (explicit missing data)
+                # - Downstream code uses .drop_nulls() before aggregations (see compute.py)
+                # - Statistical analyses handle NULLs correctly (logistic regression, etc.)
+                # - Validation raises DataQualityError if unmapped non-null values exist
+                expr = pl.lit(None)  # default to NULL, not 0
                 for key, value in mapping.items():
                     # Handle both string and boolean keys
                     if isinstance(key, bool):
