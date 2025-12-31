@@ -20,8 +20,6 @@ import structlog
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import from config (single source of truth)
-# Import analysis compute functions (pure, no UI dependencies)
-from clinical_analytics.analysis.compute import compute_analysis_by_type
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
@@ -926,83 +924,6 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                     st.write(text)
 
 
-def get_or_compute_result(
-    cohort: pl.DataFrame,
-    context: AnalysisContext,
-    run_key: str,
-    dataset_version: str,
-    query_text: str,
-) -> dict:
-    """
-    Get cached result or compute new one (pure computation, no UI).
-
-    Args:
-        cohort: Polars DataFrame with patient data
-        context: Analysis context with variables
-        run_key: Run key for this analysis
-        dataset_version: Dataset version identifier
-        query_text: Original query text
-
-    Returns:
-        Analysis result dict (serializable)
-    """
-    # Use dataset-scoped result key
-    result_key = f"analysis_result:{dataset_version}:{run_key}"
-
-    # Check if already computed
-    if result_key in st.session_state:
-        logger.info(
-            "analysis_result_cached",
-            run_key=run_key,
-            dataset_version=dataset_version,
-            intent_type=context.inferred_intent.value,
-        )
-        return st.session_state[result_key]
-
-    # Not computed - compute now
-    logger.info(
-        "analysis_execution_start",
-        intent=context.inferred_intent.value,
-        primary_variable=context.primary_variable,
-        grouping_variable=context.grouping_variable,
-        predictor_variables=context.predictor_variables,
-        dataset_version=dataset_version,
-        confidence=getattr(context, "confidence", 0.0),
-    )
-
-    # Convert cohort to Polars if needed (defensive)
-    if isinstance(cohort, pd.DataFrame):
-        cohort_pl = pl.from_pandas(cohort)
-    else:
-        cohort_pl = cohort
-
-    # Compute analysis (pure function, no UI dependencies)
-    logger.debug(
-        "analysis_computation_start",
-        run_key=run_key,
-        cohort_shape=(cohort_pl.height, cohort_pl.width),
-        intent_type=context.inferred_intent.value,
-    )
-    result = compute_analysis_by_type(cohort_pl, context)
-
-    logger.info(
-        "analysis_computation_complete",
-        run_key=run_key,
-        result_type=result.get("type", "unknown"),
-        has_error="error" in result,
-        dataset_version=dataset_version,
-    )
-
-    # Store result (serializable format)
-    st.session_state[result_key] = result
-    st.session_state[f"last_run_key:{dataset_version}"] = run_key
-
-    # Remember this run in history (O(1) eviction happens here)
-    remember_run(dataset_version, run_key)
-
-    return result
-
-
 def render_result(
     result: dict,
     context: AnalysisContext,
@@ -1064,12 +985,28 @@ def execute_analysis_with_idempotency(
     dataset_version: str,
     query_text: str,
     query_plan=None,
+    execution_result: dict | None = None,
+    semantic_layer=None,
 ) -> None:
     """
     Execute analysis with idempotency guard and result persistence.
 
     Checks if result already exists in session_state. If yes, renders from cache.
     If no, computes, stores, and renders.
+
+    Phase 3.1: Added execution_result and semantic_layer parameters to avoid re-execution.
+    If execution_result is provided (from execute_query_plan), uses its DataFrame
+    instead of re-executing via compute_analysis_by_type().
+
+    Args:
+        cohort: Cohort data (for Trust UI)
+        context: Analysis context
+        run_key: Run key for idempotency
+        dataset_version: Dataset version
+        query_text: Query text
+        query_plan: QueryPlan object (if available)
+        execution_result: Result from execute_query_plan() (Phase 3.1)
+        semantic_layer: SemanticLayer instance for formatting (Phase 3.1)
     """
     # Use dataset-scoped result key for trivial cleanup
     result_key = f"analysis_result:{dataset_version}:{run_key}"
@@ -1108,31 +1045,32 @@ def execute_analysis_with_idempotency(
 
     # Not computed - compute and store
     with st.spinner("Running analysis..."):
-        # Log execution start for observability (logger already defined at module level)
-        logger.info(
-            "analysis_execution_start",
-            intent=context.inferred_intent.value,
-            primary_variable=context.primary_variable,
-            grouping_variable=context.grouping_variable,
-            predictor_variables=context.predictor_variables,
-            dataset_version=dataset_version,
-            confidence=getattr(context, "confidence", 0.0),
-        )
+        # Phase 3.1: Use execution_result from execute_query_plan() if provided
+        if execution_result and semantic_layer:
+            # Execution already happened via execute_query_plan() - format its result
+            logger.info(
+                "analysis_using_execution_result",
+                run_key=run_key,
+                dataset_version=dataset_version,
+                intent_type=context.inferred_intent.value,
+            )
 
-        # Convert cohort to Polars if needed (defensive)
-        if isinstance(cohort, pd.DataFrame):
-            cohort_pl = pl.from_pandas(cohort)
+            # Format result via semantic layer (no re-execution, just formatting)
+            result = semantic_layer.format_execution_result(execution_result, context)
         else:
-            cohort_pl = cohort
-
-        # Compute analysis (pure function, no UI dependencies)
-        logger.debug(
-            "analysis_computation_start",
-            run_key=run_key,
-            cohort_shape=(cohort_pl.height, cohort_pl.width),
-            intent_type=context.inferred_intent.value,
-        )
-        result = compute_analysis_by_type(cohort_pl, context)
+            # Phase 3.1: No legacy path - execution_result is required
+            # All queries must go through execute_query_plan() first
+            logger.error(
+                "legacy_execution_path_blocked",
+                message="execute_analysis_with_idempotency requires execution_result from execute_query_plan()",
+                run_key=run_key,
+                dataset_version=dataset_version,
+            )
+            raise ValueError(
+                "Phase 3.1: Legacy execution path blocked. "
+                "execute_analysis_with_idempotency requires execution_result parameter. "
+                "All queries must go through semantic_layer.execute_query_plan() first."
+            )
 
         logger.info(
             "analysis_computation_complete",
@@ -1205,7 +1143,7 @@ def execute_analysis_with_idempotency(
             TrustUI.render_verification(
                 query_plan=query_plan,
                 result=result,
-                cohort=cohort_pl,
+                cohort=cohort,
                 dataset_version=dataset_version,
                 query_text=query_text,
             )
@@ -1758,7 +1696,16 @@ def main():
 
                 # Proceed with analysis if successful
                 if execution_result.get("success"):
-                    execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text, query_plan)
+                    execute_analysis_with_idempotency(
+                        cohort,
+                        context,
+                        run_key,
+                        dataset_version,
+                        query_text,
+                        query_plan,
+                        execution_result,
+                        semantic_layer,
+                    )
 
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{hash(query_text)}"):
@@ -1771,17 +1718,16 @@ def main():
                         error_msg += " - see warnings above for details"
                     st.error(f"❌ {error_msg}")
             else:
-                # Fallback: No QueryPlan or semantic_layer - use old path (for backward compatibility)
-                st.divider()
-
-                # Show low confidence warning if applicable
-                if confidence < AUTO_EXECUTE_CONFIDENCE_THRESHOLD:
-                    threshold_pct = f"{AUTO_EXECUTE_CONFIDENCE_THRESHOLD:.0%}"
-                    st.warning(f"⚠️ **Low confidence** ({confidence:.0%}) - below threshold ({threshold_pct}).")
-
-                # Always execute (no confirmation required)
-                execute_analysis_with_idempotency(
-                    cohort, context, run_key, dataset_version, getattr(context, "research_question", ""), query_plan
+                # Phase 3.1: No fallback - QueryPlan is required
+                st.error(
+                    "❌ Cannot execute query without QueryPlan. "
+                    "This indicates a problem with query parsing. Please try rephrasing your question."
+                )
+                logger.error(
+                    "query_execution_failed_no_queryplan",
+                    message="execute_query_plan requires QueryPlan - no fallback path available",
+                    has_semantic_layer=semantic_layer is not None,
+                    has_query_plan=query_plan is not None,
                 )
 
         else:
@@ -2080,16 +2026,17 @@ def main():
                     }
                     st.session_state["chat"].append(user_msg)
 
-                    # Compute result (no UI, pure computation)
-                    # Phase 1.1.5: If we already have run_key from execute_query_plan(), use it
-                    # Otherwise, get_or_compute_result() will handle it (legacy path)
-                    result = get_or_compute_result(
-                        cohort=cohort_pl,
-                        context=context,
-                        run_key=run_key,
-                        dataset_version=dataset_version,
-                        query_text=query,
-                    )
+                    # Phase 3.1: Format result from execute_query_plan() (no re-execution)
+                    # Use semantic layer to format execution result
+                    result = semantic_layer.format_execution_result(execution_result, context)
+
+                    # Store formatted result in session_state for render_chat() to find
+                    result_key = f"analysis_result:{dataset_version}:{run_key}"
+                    st.session_state[result_key] = result
+                    st.session_state[f"last_run_key:{dataset_version}"] = run_key
+
+                    # Remember this run in history
+                    remember_run(dataset_version, run_key)
 
                     # Add result to conversation history (backward compat)
                     headline = result.get("headline") or result.get("headline_text") or "Analysis completed"
