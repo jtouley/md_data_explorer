@@ -323,6 +323,92 @@ class TestUserDatasetStorage:
         # Upload data should no longer exist
         assert storage.get_upload_data(upload_id) is None
 
+    def test_overwrite_preserves_version_history(self, tmp_path):
+        """Overwrite should preserve version history and add new version."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        # First upload
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+        )
+        assert success1 is True
+
+        # Get first version
+        metadata1 = storage.get_upload_metadata(id1)
+        version1 = metadata1["dataset_version"]
+
+        # Second upload with overwrite=True and different content
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [30 + i for i in range(150)],  # Different data
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+            overwrite=True,
+        )
+        assert success2 is True, f"Overwrite should succeed: {msg2}"
+
+        # Load metadata and verify version history
+        metadata2 = storage.get_upload_metadata(id2)
+        version2 = metadata2["dataset_version"]
+
+        assert "version_history" in metadata2
+        assert len(metadata2["version_history"]) == 2, "Should have 2 versions"
+
+        # Check that old version is preserved but not active
+        v1_entry = [v for v in metadata2["version_history"] if v["version"] == version1][0]
+        assert v1_entry["is_active"] is False, "Old version should not be active"
+
+        # Check that new version is active
+        v2_entry = [v for v in metadata2["version_history"] if v["version"] == version2][0]
+        assert v2_entry["is_active"] is True, "New version should be active"
+
+    def test_overwrite_without_flag_rejected(self, tmp_path):
+        """Uploading same name without overwrite=True should be rejected."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+        )
+        assert success1 is True
+
+        # Second upload without overwrite=True should be rejected
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+            # No overwrite parameter (defaults to False)
+        )
+        assert success2 is False, "Should reject duplicate name without overwrite=True"
+        assert "already exists" in msg2.lower()
+
     def test_duplicate_dataset_name_rejected(self, tmp_path):
         """Test that uploading a dataset with the same name is rejected."""
         storage = UserDatasetStorage(upload_dir=tmp_path)

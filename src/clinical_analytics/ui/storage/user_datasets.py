@@ -1017,13 +1017,23 @@ def save_table_list(
                 "schema_fingerprint": compute_schema_fingerprint(table_df),
             }
 
-        # Phase 2: Create initial version history entry
+        # Phase 2: Create version history entry
         version_entry = {
             "version": dataset_version,
             "created_at": datetime.now().isoformat(),
-            "is_active": True,  # First version is always active
+            "is_active": True,  # New version is always active
             "tables": canonical_tables,
         }
+
+        # Phase 4.2: Handle existing version history (overwrite case)
+        existing_version_history = metadata.pop("_existing_version_history", None)
+        if existing_version_history:
+            # Overwrite: append to existing history
+            version_history = existing_version_history + [version_entry]
+            logger.info(f"Appending to existing version history (now {len(version_history)} versions)")
+        else:
+            # Initial upload: create new history
+            version_history = [version_entry]
 
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
@@ -1048,8 +1058,8 @@ def save_table_list(
                     "system_aliases": {},
                 },
             ),
-            # Phase 2: Version history
-            "version_history": [version_entry],
+            # Phase 2/4.2: Version history (initial or appended)
+            "version_history": version_history,
         }
 
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
@@ -1211,6 +1221,7 @@ class UserDatasetStorage:
         original_filename: str,
         metadata: dict[str, Any],
         progress_cb: Callable[[int, str], None] | None = None,
+        overwrite: bool = False,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded file with security validation.
@@ -1223,6 +1234,7 @@ class UserDatasetStorage:
                 NOTE: This couples storage to UI (technical debt). Future: emit structured events instead.
                 Progress callbacks are best-effort: exceptions are caught and ignored to prevent UI errors
                 from breaking storage operations.
+            overwrite: If True, allow overwriting existing dataset with same name (Phase 4.2)
 
         Returns:
             Tuple of (success, message, upload_id)
@@ -1244,15 +1256,6 @@ class UserDatasetStorage:
                     pass  # Best-effort
             return False, error, None
 
-        # Generate upload ID
-        if progress_cb:
-            try:
-                progress_cb(10, "Generating unique upload identifier...")
-            except Exception:
-                pass  # Best-effort
-
-        upload_id = self.generate_upload_id(original_filename)
-
         try:
             # Sanitize filename
             safe_filename = UploadSecurityValidator.sanitize_filename(original_filename)
@@ -1265,16 +1268,47 @@ class UserDatasetStorage:
                 dataset_name = UploadSecurityValidator.sanitize_filename(original_filename)
                 dataset_name = Path(dataset_name).stem  # Remove extension
 
-            # Check for existing dataset with same name (prevent duplicates)
+            # Phase 4.2: Check for existing dataset with same name
             existing_uploads = self.list_uploads()
+            existing_upload_id = None
+            existing_version_history = None
+
             for existing_meta in existing_uploads:
                 if existing_meta.get("dataset_name") == dataset_name:
-                    return (
-                        False,
-                        f"Dataset '{dataset_name}' already exists. "
-                        "Use a different name or delete the existing dataset.",
-                        None,
-                    )
+                    if not overwrite:
+                        # Reject duplicate without overwrite flag
+                        return (
+                            False,
+                            f"Dataset '{dataset_name}' already exists. "
+                            "Use a different name or enable overwrite to update.",
+                            None,
+                        )
+                    else:
+                        # Overwrite mode: preserve existing upload_id and version_history
+                        existing_upload_id = existing_meta.get("upload_id")
+                        existing_version_history = existing_meta.get("version_history", [])
+                        logger.info(
+                            f"Overwriting existing dataset '{dataset_name}' "
+                            f"(upload_id={existing_upload_id}, "
+                            f"{len(existing_version_history)} versions)"
+                        )
+                        # Mark all existing versions as inactive
+                        for version_entry in existing_version_history:
+                            version_entry["is_active"] = False
+                        break
+
+            # Generate upload ID (or use existing if overwriting)
+            if progress_cb:
+                try:
+                    progress_cb(10, "Generating unique upload identifier...")
+                except Exception:
+                    pass  # Best-effort
+
+            # Phase 4.2: Use existing upload_id if overwriting
+            if existing_upload_id:
+                upload_id = existing_upload_id
+            else:
+                upload_id = self.generate_upload_id(original_filename)
 
             # Normalize upload to table list (unified entry point)
             if progress_cb:
@@ -1456,6 +1490,10 @@ class UserDatasetStorage:
                     },
                 }
             )
+
+            # Phase 4.2: Pass existing_version_history for overwrite
+            if existing_version_history is not None:
+                metadata["_existing_version_history"] = existing_version_history
 
             # Update table with validated data (convert back to Polars for save_table_list)
             if len(tables) == 1:
