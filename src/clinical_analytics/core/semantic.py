@@ -22,6 +22,8 @@ from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
 
 if TYPE_CHECKING:
+    import polars as pl
+
     from clinical_analytics.core.dataset import Granularity
     from clinical_analytics.core.query_plan import QueryPlan
 
@@ -1417,12 +1419,106 @@ class SemanticLayer:
         import polars as pl
 
         if isinstance(result_df, pd.DataFrame):
-            result_df = pl.from_pandas(result_df)
+            result_df_pl = pl.from_pandas(result_df)
+        else:
+            result_df_pl = result_df
 
-        # Use compute_analysis_by_type for formatting (transitional - Phase 3.1)
-        from clinical_analytics.analysis.compute import compute_analysis_by_type
+        # Phase 3.1: Format result DataFrame directly (it's already aggregated from execute_query_plan)
+        # Do NOT call compute_analysis_by_type() - it expects raw cohort, not aggregated results
+        query_plan = getattr(context, "query_plan", None)
+        if not query_plan:
+            return {"type": "error", "error": "QueryPlan required for formatting"}
 
-        return compute_analysis_by_type(result_df, context)
+        # Format based on intent
+        if query_plan.intent == "COUNT":
+            return self._format_count_result(result_df_pl, query_plan, context)
+        elif query_plan.intent == "DESCRIBE":
+            return self._format_describe_result(result_df_pl, query_plan, context)
+        else:
+            # For other intents, return basic format (will be enhanced in Phase 3.3)
+            return {
+                "type": "unknown",
+                "error": f"Formatting not yet implemented for intent: {query_plan.intent}",
+            }
+
+    def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
+        """Format COUNT result DataFrame to result dict format."""
+
+        # Check if result is scalar (total count) or DataFrame (grouped count)
+        if isinstance(result_df, (int, float)):
+            # Scalar result (total count)
+            total_count = int(result_df)
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "headline": f"Total count: **{total_count}**",
+            }
+
+        # DataFrame result - check if grouped or simple count
+        if result_df.height == 1 and result_df.width == 1:
+            # Single value (total count as DataFrame)
+            total_count = int(result_df.item())
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "headline": f"Total count: **{total_count}**",
+            }
+
+        # Grouped count: result_df has [group_by_column, "count"]
+        if query_plan.group_by and query_plan.group_by in result_df.columns:
+            group_col = query_plan.group_by
+            # Convert to list of dicts
+            group_counts = result_df.to_dicts()
+            total_count = sum(item.get("count", 0) for item in group_counts)
+
+            # Check for "most" query pattern
+            query_text = getattr(context, "query_text", "") or getattr(context, "research_question", "")
+            is_most_query = False
+            if query_text:
+                query_lower = query_text.lower()
+                is_most_query = "most" in query_lower and ("which" in query_lower or "what" in query_lower)
+
+            # Create headline
+            if is_most_query and len(group_counts) > 0:
+                top_group = group_counts[0]
+                headline = f"**{top_group[group_col]}** with {top_group['count']} patients"
+            else:
+                headline = f"Total count: **{total_count}**"
+                if len(group_counts) > 0:
+                    top_group = group_counts[0]
+                    headline += f" (largest group: {top_group[group_col]} with {top_group['count']})"
+
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "grouped_by": group_col,
+                "group_counts": group_counts,
+                "headline": headline,
+                "is_most_query": is_most_query,
+            }
+        else:
+            # Simple count (no grouping)
+            total_count = result_df.height if result_df.height > 0 else 0
+            return {
+                "type": "count",
+                "total_count": total_count,
+                "headline": f"Total count: **{total_count}**",
+            }
+
+    def _format_describe_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
+        """Format DESCRIBE result DataFrame to result dict format."""
+        # Phase 3.1: Basic formatting for DESCRIBE (will be enhanced in Phase 3.3)
+        if result_df.height == 0:
+            return {"type": "error", "error": "No data to describe"}
+
+        # Convert to dict format
+        result_dict = result_df.to_dicts()[0] if result_df.height == 1 else result_df.to_dicts()
+
+        return {
+            "type": "descriptive",
+            "summary": result_dict,
+            "headline": f"Descriptive statistics for {query_plan.metric or 'data'}",
+        }
 
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""

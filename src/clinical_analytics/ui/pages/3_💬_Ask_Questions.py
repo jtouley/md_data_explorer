@@ -1707,6 +1707,20 @@ def main():
                         semantic_layer,
                     )
 
+                    # Phase 3.1: Add assistant message to chat if query came from chat input
+                    # Check if last chat message is user message (indicates chat input was used)
+                    chat = st.session_state.get("chat", [])
+                    if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
+                        # Query came from chat input - add assistant message
+                        assistant_msg: ChatMessage = {
+                            "role": "assistant",
+                            "text": query_text,
+                            "run_key": run_key,
+                            "status": "completed",
+                            "created_at": time.time(),
+                        }
+                        st.session_state["chat"].append(assistant_msg)
+
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{hash(query_text)}"):
                         st.session_state[force_rerun_key] = True
@@ -1971,52 +1985,11 @@ def main():
                 st.session_state["analysis_context"] = context
                 st.session_state["intent_signal"] = "nl_parsed"
 
-                # If context is complete, execute immediately and render inline
+                # Phase 3.1: Chat handler should NOT execute - only parse and rerun
+                # Main flow (lines 1630-1720) will handle execution after rerun
                 if context.is_complete_for_intent():
-                    # Get QueryPlan if available (preferred), otherwise fallback to context
-                    query_plan = getattr(context, "query_plan", None)
-
-                    # Normalize query before generating run_key
-                    normalized_query = normalize_query(query)
-
-                    # Get confidence from QueryPlan or context (default to 0.0 if missing)
-                    if query_plan:
-                        confidence = query_plan.confidence
-                    else:
-                        confidence = getattr(context, "confidence", 0.0)
-
-                    # Phase 1.1.5: Always get run_key from execute_query_plan() when available
-                    # This ensures deterministic run_key generation across all execution paths
-                    run_key = None
-                    if query_plan and semantic_layer:
-                        # Use execute_query_plan() to get deterministic run_key
-                        execution_result = semantic_layer.execute_query_plan(
-                            query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query
-                        )
-                        run_key = execution_result.get("run_key")
-                        if not run_key:
-                            raise ValueError(
-                                "Execution result must include run_key - semantic layer should always generate it"
-                            )
-                    else:
-                        # Legacy path: This should not happen in Phase 3 (all paths should use QueryPlan)
-                        # For now, raise error to catch any remaining legacy paths
-                        raise ValueError(
-                            "Legacy execution path detected - query_plan and semantic_layer should always be "
-                            "available. This path will be removed in Phase 3."
-                        )
-
-                    logger.info(
-                        "chat_input_analysis_execution_triggered",
-                        intent_type=context.inferred_intent.value,
-                        confidence=confidence,
-                        run_key=run_key,
-                        dataset_version=dataset_version,
-                        query=query,
-                    )
-
-                    # Phase 2: Append messages to transcript and rerun
-                    # Add user message to chat
+                    # Just set state and rerun - main flow will handle execution
+                    # Add user message to chat for display
                     user_msg: ChatMessage = {
                         "role": "user",
                         "text": query,
@@ -2026,53 +1999,7 @@ def main():
                     }
                     st.session_state["chat"].append(user_msg)
 
-                    # Phase 3.1: Format result from execute_query_plan() (no re-execution)
-                    # Use semantic layer to format execution result
-                    result = semantic_layer.format_execution_result(execution_result, context)
-
-                    # Store formatted result in session_state for render_chat() to find
-                    result_key = f"analysis_result:{dataset_version}:{run_key}"
-                    st.session_state[result_key] = result
-                    st.session_state[f"last_run_key:{dataset_version}"] = run_key
-
-                    # Remember this run in history
-                    remember_run(dataset_version, run_key)
-
-                    # Add result to conversation history (backward compat)
-                    headline = result.get("headline") or result.get("headline_text") or "Analysis completed"
-                    filters_applied = []
-                    if context.query_plan and context.query_plan.filters:
-                        filters_applied = [f.__dict__ for f in context.query_plan.filters]
-                    elif context.filters:
-                        filters_applied = [f.__dict__ for f in context.filters]
-
-                    max_conversation_history = 20
-                    st.session_state["conversation_history"].append(
-                        {
-                            "query": query,
-                            "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
-                            "headline": headline,
-                            "run_key": run_key,
-                            "timestamp": time.time(),
-                            "filters_applied": filters_applied,
-                        }
-                    )
-                    if len(st.session_state["conversation_history"]) > max_conversation_history:
-                        st.session_state["conversation_history"] = st.session_state["conversation_history"][
-                            -max_conversation_history:
-                        ]
-
-                    # Add assistant message to chat
-                    assistant_msg: ChatMessage = {
-                        "role": "assistant",
-                        "text": query,  # Store query for reference
-                        "run_key": run_key,
-                        "status": "completed",
-                        "created_at": time.time(),
-                    }
-                    st.session_state["chat"].append(assistant_msg)
-
-                    # Rerun to render chat transcript
+                    # Rerun - main flow will execute query and render results
                     st.rerun()
                 else:
                     # Context not complete - need variable selection, rerun to show UI
