@@ -6,6 +6,8 @@ infers the appropriate statistical test, and dynamically configures analysis.
 Supports free-form natural language queries only.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 

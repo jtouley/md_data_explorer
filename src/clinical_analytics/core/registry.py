@@ -18,6 +18,15 @@ import yaml
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
+# Import UploadedDataset for type comparison (not __name__ string check)
+# Staff Engineer Standard: Avoid brittle string comparisons
+try:
+    from clinical_analytics.datasets.uploaded.definition import UploadedDataset
+
+    _UPLOADED_DATASET_CLASS = UploadedDataset
+except ImportError:
+    _UPLOADED_DATASET_CLASS = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,6 +177,22 @@ class DatasetRegistry:
 
         # Get config for this dataset if available
         config = cls._configs.get(name, {})
+
+        # Special handling for UploadedDataset: requires upload_id, not from config
+        # Use `is` comparison instead of __name__ string check (Staff Engineer Standard)
+        if _UPLOADED_DATASET_CLASS is not None and dataset_class is _UPLOADED_DATASET_CLASS:
+            # UploadedDataset requires upload_id as positional argument
+            # The name parameter IS the upload_id for uploaded datasets
+            if "upload_id" in override_params:
+                upload_id = override_params["upload_id"]
+            elif "upload_id" in config.get("init_params", {}):
+                upload_id = config["init_params"]["upload_id"]
+            else:
+                # Use the name as upload_id (registry key for uploaded datasets is upload_id)
+                upload_id = name
+
+            storage = override_params.get("storage") or config.get("init_params", {}).get("storage")
+            return dataset_class(upload_id=upload_id, storage=storage)
 
         # Merge config with override params
         params = {**config.get("init_params", {}), **override_params}

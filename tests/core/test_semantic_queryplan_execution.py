@@ -14,7 +14,6 @@ import polars as pl
 import pytest
 
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
-from clinical_analytics.core.semantic import SemanticLayer
 
 # ============================================================================
 # Fixtures (Phase 3)
@@ -74,35 +73,22 @@ def sample_cohort_with_numeric():
 
 
 @pytest.fixture
-def mock_semantic_layer_for_execution(tmp_path):
+def mock_semantic_layer_for_execution(make_semantic_layer):
     """Create a SemanticLayer instance for execution testing."""
-    workspace = tmp_path / "test_workspace"
-    workspace.mkdir()
-    (workspace / "pyproject.toml").write_text("[project]\nname = 'test'")
-
-    data_dir = workspace / "data" / "raw" / "test_dataset"
-    data_dir.mkdir(parents=True)
-
-    # Create test CSV
-    df = pl.DataFrame(
-        {
+    return make_semantic_layer(
+        dataset_name="test_dataset",
+        data={
             "patient_id": ["P001", "P002", "P003"],
             "BMI": [25.5, 28.3, 22.1],
             "treatment": ["A", "B", "A"],
             "status": ["1: Yes", "2: No", "1: Yes"],
-        }
+        },
+        config_overrides={
+            "column_mapping": {},
+            "outcomes": {},
+        },
+        workspace_name="test_workspace",
     )
-    df.write_csv(data_dir / "test.csv")
-
-    config = {
-        "init_params": {"source_path": "data/raw/test_dataset/test.csv"},
-        "column_mapping": {},
-        "outcomes": {},
-        "analysis": {"default_outcome": "outcome"},
-    }
-
-    layer = SemanticLayer(dataset_name="test_dataset", config=config, workspace_root=workspace)
-    return layer
 
 
 # ============================================================================

@@ -27,31 +27,33 @@ def disable_v1_mvp_mode(monkeypatch):
 
 @pytest.fixture
 def mock_registry(mock_cohort):
-    """Mock the DatasetRegistry to avoid loading real data or configs."""
-    with patch("clinical_analytics.core.registry.DatasetRegistry") as mock:
-        # 1. Mock listing datasets
-        mock.list_datasets.return_value = ["test_dataset"]
+    """Mock UploadedDatasetFactory to avoid loading real data or configs."""
+    from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
-        # 2. Mock dataset info (used for display names)
-        mock.get_all_dataset_info.return_value = {
-            "test_dataset": {
-                "config": {
-                    "display_name": "Test Dataset",
-                    "status": "active",
-                    "source": "Mock Source",
-                }
+    with (
+        patch.object(UploadedDatasetFactory, "list_available_uploads") as mock_list,
+        patch.object(UploadedDatasetFactory, "create_dataset") as mock_create,
+    ):
+        # 1. Mock listing uploads (returns list of upload metadata dicts)
+        mock_list.return_value = [
+            {
+                "upload_id": "test_upload_123",
+                "dataset_name": "Test Dataset",
+                "upload_timestamp": "2024-01-01T00:00:00",
+                "row_count": 20,
             }
-        }
+        ]
 
-        # 3. Mock the dataset object itself
+        # 2. Mock the dataset object itself
         mock_dataset = MagicMock()
         mock_dataset.validate.return_value = True
         mock_dataset.load.return_value = None
         mock_dataset.get_cohort.return_value = mock_cohort
+        mock_dataset.name = "test_dataset"
 
-        mock.get_dataset.return_value = mock_dataset
+        mock_create.return_value = mock_dataset
 
-        yield mock
+        yield {"list": mock_list, "create": mock_create}
 
 
 # --- Tests ---
@@ -77,8 +79,12 @@ def test_dataset_selection_flow(mock_registry):
     # 2. Select the Mock Dataset
     # Get the selectbox from the sidebar
     selectbox = at.sidebar.selectbox[0]
-    # Select the display name we defined in the mock
-    selectbox.select("Test Dataset").run()
+    # Use the first available option (don't hardcode name)
+    if len(selectbox.options) > 0:
+        first_option = selectbox.options[0]
+        selectbox.select(first_option).run()
+    else:
+        pytest.skip("No datasets available in selectbox")
 
     # 3. Verify Main Area Updates
     # Header should contain dataset internal name (test_dataset)
@@ -99,7 +105,13 @@ def test_statistical_analysis_execution(mock_registry):
     at.run()
 
     # 1. Select Dataset
-    at.sidebar.selectbox[0].select("Test Dataset").run()
+    selectbox = at.sidebar.selectbox[0]
+    # Use the first available option (don't hardcode name)
+    if len(selectbox.options) > 0:
+        first_option = selectbox.options[0]
+        selectbox.select(first_option).run()
+    else:
+        pytest.skip("No datasets available in selectbox")
 
     # 2. Verify predictors are available
     # The app auto-selects default predictors

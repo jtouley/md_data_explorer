@@ -18,7 +18,7 @@ from clinical_analytics.core.multi_table_handler import (
 class TestTableClassification:
     """Test suite for Milestone 1: Table Classification System."""
 
-    def test_bridge_detection_on_many_to_many_fixture(self):
+    def test_bridge_detection_on_many_to_many_fixture(self, make_multi_table_setup):
         """
         M1 Acceptance Test 1: Bridge table identified in synthetic many-to-many fixture.
 
@@ -32,41 +32,14 @@ class TestTableClassification:
         - patients classified as "dimension"
         - medications classified as "dimension" or "reference"
         """
-        # Arrange: Create synthetic many-to-many dataset
-        patients = pl.DataFrame(
-            {
-                "patient_id": ["P1", "P2", "P3"],
-                "name": ["Alice", "Bob", "Charlie"],
-                "age": [30, 45, 28],
-            }
-        )
+        # Arrange: Create synthetic many-to-many dataset using factory fixture
+        tables = make_multi_table_setup()
 
-        medications = pl.DataFrame(
-            {
-                "medication_id": ["M1", "M2", "M3"],
-                "drug_name": ["Aspirin", "Metformin", "Lisinopril"],
-                "dosage": ["100mg", "500mg", "10mg"],
-            }
+        # Extend bridge table with additional fields
+        patient_medications = tables["patient_medications"].with_columns(
+            pl.Series("dosage_override", [None, "250mg", None, None])
         )
-
-        # Bridge table: many-to-many relationship
-        # - patient_id is NOT unique (P1 has 2 medications)
-        # - medication_id is NOT unique (M1 prescribed to 2 patients)
-        # - BUT composite (patient_id, medication_id) IS unique
-        patient_medications = pl.DataFrame(
-            {
-                "patient_id": ["P1", "P1", "P2", "P3"],
-                "medication_id": ["M1", "M2", "M1", "M3"],
-                "start_date": ["2024-01-01", "2024-01-15", "2024-02-01", "2024-03-01"],
-                "dosage_override": [None, "250mg", None, None],
-            }
-        )
-
-        tables = {
-            "patients": patients,
-            "medications": medications,
-            "patient_medications": patient_medications,
-        }
+        tables["patient_medications"] = patient_medications
 
         # Act: Initialize handler and classify
         handler = MultiTableHandler(tables)
@@ -245,10 +218,11 @@ class TestTableClassification:
 
         handler.close()
 
-    def test_classification_rules(self):
+    def test_classification_rules(self, make_multi_table_setup):
         """Test classification rule priority."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         # High cardinality fact table (make it larger to avoid reference classification)
         # Need > 10 MB to avoid reference classification
@@ -1185,12 +1159,13 @@ class TestFactAggregation:
 class TestBuildUnifiedCohort:
     """Test suite for build_unified_cohort() aggregate-before-join refactor."""
 
-    def test_build_unified_cohort_does_not_use_legacy_duckdb_join(self):
+    def test_build_unified_cohort_does_not_use_legacy_duckdb_join(self, make_multi_table_setup):
         """Ensure build_unified_cohort() does not execute legacy DuckDB SQL join."""
         import duckdb
 
         # Arrange: Create handler with test data
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1225,10 +1200,11 @@ class TestBuildUnifiedCohort:
             duckdb.DuckDBPyConnection.execute = original_execute
             handler.close()
 
-    def test_feature_joins_preserve_row_count(self):
+    def test_feature_joins_preserve_row_count(self, make_multi_table_setup):
         """Feature joins should not change row count (1:1 validation)."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1268,10 +1244,11 @@ class TestBuildUnifiedCohort:
         with pytest.raises(pl.exceptions.ComputeError):
             left.join(right, on="patient_id", how="left", validate="1:1").collect()
 
-    def test_build_unified_cohort_deterministic_columns(self):
+    def test_build_unified_cohort_deterministic_columns(self, make_multi_table_setup):
         """Unified cohort should have deterministic column order."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1306,10 +1283,10 @@ class TestBuildUnifiedCohort:
 
         handler.close()
 
-    def test_build_unified_cohort_rejects_invalid_join_type(self):
+    def test_build_unified_cohort_rejects_invalid_join_type(self, make_multi_table_setup):
         """Invalid join_type should raise ValueError."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1322,10 +1299,10 @@ class TestBuildUnifiedCohort:
 
         handler.close()
 
-    def test_build_unified_cohort_accepts_case_insensitive_join_type(self):
+    def test_build_unified_cohort_accepts_case_insensitive_join_type(self, make_multi_table_setup):
         """join_type should normalize case-insensitively."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1345,10 +1322,11 @@ class TestBuildUnifiedCohort:
 class TestMaterializeMart:
     """Test suite for Milestone 5: Materialization and Planning."""
 
-    def test_materialize_mart_writes_parquet(self, tmp_path):
+    def test_materialize_mart_writes_parquet(self, tmp_path, make_multi_table_setup):
         """Verify materialize_mart() writes Parquet files correctly."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1382,10 +1360,10 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_materialize_mart_caching_works(self, tmp_path):
+    def test_materialize_mart_caching_works(self, tmp_path, make_multi_table_setup):
         """Verify caching works: skip recompute if run_id exists."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1408,10 +1386,11 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_materialize_mart_rowcount_matches_build_unified_cohort(self, tmp_path):
+    def test_materialize_mart_rowcount_matches_build_unified_cohort(self, tmp_path, make_multi_table_setup):
         """Verify materialized mart rowcount matches build_unified_cohort()."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1442,10 +1421,11 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_materialize_mart_patient_level_single_file(self, tmp_path):
+    def test_materialize_mart_patient_level_single_file(self, tmp_path, make_multi_table_setup):
         """Verify patient-level marts use single file (not partitioned)."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1503,12 +1483,12 @@ class TestMaterializeMart:
         handler1.close()
         handler2.close()
 
-    def test_ibis_connection_is_cached(self, tmp_path):
+    def test_ibis_connection_is_cached(self, tmp_path, make_multi_table_setup):
         """Verify Ibis connection is reused (cached on instance)."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1527,13 +1507,14 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_bucket_column_dropped_from_planned_table(self, tmp_path):
+    def test_bucket_column_dropped_from_planned_table(self, tmp_path, make_multi_table_setup):
         """Verify bucket column is dropped from planned tables (internal partition column)."""
         pytest.importorskip("ibis")
 
         # Arrange: Create event-level mart with hash bucketing
         # Note: This test simulates event-level partitioning by checking metadata schema
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         events = pl.DataFrame(
             {
@@ -1568,12 +1549,12 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_schema_version_used_in_run_id(self, tmp_path):
+    def test_schema_version_used_in_run_id(self, tmp_path, make_multi_table_setup):
         """Verify SCHEMA_VERSION constant is used in run_id computation."""
         from clinical_analytics.core.multi_table_handler import SCHEMA_VERSION
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1604,12 +1585,12 @@ class TestMaterializeMart:
 class TestPlanMart:
     """Test suite for Milestone 5: Planning over materialized Parquet."""
 
-    def test_plan_mart_returns_lazy_ibis_expression(self, tmp_path):
+    def test_plan_mart_returns_lazy_ibis_expression(self, tmp_path, make_multi_table_setup):
         """Verify plan_mart() returns lazy Ibis expression."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1629,12 +1610,12 @@ class TestPlanMart:
 
         handler.close()
 
-    def test_plan_mart_compiles_to_sql_without_executing(self, tmp_path):
+    def test_plan_mart_compiles_to_sql_without_executing(self, tmp_path, make_multi_table_setup):
         """Verify plan compiles to SQL without executing."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)

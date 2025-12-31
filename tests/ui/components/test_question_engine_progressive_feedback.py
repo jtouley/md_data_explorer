@@ -53,7 +53,20 @@ def test_progressive_feedback_tracks_all_attempts(mock_nl_engine):
     # Create a query that pattern match will fail but semantic might succeed
     query = "show me differences in outcomes across treatment groups"
 
-    with patch("streamlit.status") as mock_status:
+    # Mock the LLM tier to prevent Ollama timeout in tests
+    mock_llm_intent = QueryIntent(
+        intent_type="COMPARE_GROUPS",
+        primary_variable="outcomes",
+        grouping_variable="treatment",
+        confidence=0.7,
+        parsing_tier="llm_fallback",
+        parsing_attempts=[],
+    )
+
+    with (
+        patch("streamlit.status") as mock_status,
+        patch.object(mock_nl_engine, "_llm_parse", return_value=mock_llm_intent),
+    ):
         mock_status.return_value.__enter__.return_value.update = MagicMock()
         intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
 

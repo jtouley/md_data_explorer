@@ -111,11 +111,9 @@ class TestUploadedDatasetPatientId:
 
         # Create dataset and load
         dataset = UploadedDataset(upload_id=upload_id, storage=storage)
-        dataset.load()
-
-        # get_cohort should raise error if cannot create patient_id
-        with pytest.raises(ValueError, match="Failed to create patient_id"):
-            dataset.get_cohort()
+        # load() should raise error during migration (convert_schema validates)
+        with pytest.raises(ValueError, match="Patient ID column"):
+            dataset.load()
 
     def test_get_cohort_with_existing_patient_id_uses_it(self, tmp_path):
         """Test that get_cohort uses existing patient_id if present."""
@@ -196,11 +194,9 @@ class TestUploadedDatasetPatientId:
 
         # Create dataset and load
         dataset = UploadedDataset(upload_id=upload_id, storage=storage)
-        dataset.load()
-
-        # get_cohort should raise KeyError for wrong column name (not patient_id)
-        with pytest.raises(KeyError, match="nonexistent_column"):
-            dataset.get_cohort()
+        # load() should raise error during migration (convert_schema validates)
+        with pytest.raises(ValueError, match="Patient ID column"):
+            dataset.load()
 
     def test_get_cohort_with_renamed_patient_id_column_uses_patient_id(self, tmp_path):
         """
