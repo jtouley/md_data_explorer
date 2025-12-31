@@ -593,6 +593,111 @@ def make_semantic_layer(tmp_path):
 
 
 # ============================================================================
+# DataFrame Factory Fixtures (Test Suite DRY Refactoring - Phase 2.1)
+# ============================================================================
+
+
+@pytest.fixture
+def make_cohort_with_categorical():
+    """
+    Factory for cohort DataFrames with categorical encoding.
+
+    Eliminates duplicate DataFrame creation across test files with
+    common patterns like "1: Yes", "2: No" categorical variables.
+
+    Usage:
+        def test_example(make_cohort_with_categorical):
+            cohort = make_cohort_with_categorical(
+                patient_ids=["P001", "P002"],
+                treatment=["1: Yes", "2: No"],
+                ages=[45, 52]
+            )
+    """
+
+    def _make(
+        patient_ids: list[str] | None = None,
+        treatment: list[str] | None = None,
+        status: list[str] | None = None,
+        ages: list[int] | None = None,
+    ) -> pl.DataFrame:
+        if patient_ids is None:
+            patient_ids = [f"P{i:03d}" for i in range(1, 6)]
+        if treatment is None:
+            treatment = ["1: Yes", "2: No", "1: Yes", "1: Yes", "2: No"]
+        if status is None:
+            status = ["1: Active", "2: Inactive", "1: Active", "1: Active", "2: Inactive"]
+        if ages is None:
+            ages = [45, 52, 38, 61, 49]
+
+        return pl.DataFrame(
+            {
+                "patient_id": patient_ids,
+                "treatment": treatment,
+                "status": status,
+                "age": ages,
+            }
+        )
+
+    return _make
+
+
+@pytest.fixture
+def make_multi_table_setup():
+    """
+    Factory for multi-table test setups (patients, medications, bridge).
+
+    Eliminates duplicate multi-table DataFrame creation across test files.
+    Returns a dictionary with 3 DataFrames: patients, medications, patient_medications.
+
+    Usage:
+        def test_example(make_multi_table_setup):
+            tables = make_multi_table_setup(num_patients=5, num_medications=4)
+            patients = tables["patients"]
+            medications = tables["medications"]
+            bridge = tables["patient_medications"]
+    """
+
+    def _make(
+        num_patients: int = 3,
+        num_medications: int = 3,
+    ) -> dict[str, pl.DataFrame]:
+        patients = pl.DataFrame(
+            {
+                "patient_id": [f"P{i}" for i in range(1, num_patients + 1)],
+                "name": ["Alice", "Bob", "Charlie", "Diana", "Eve"][:num_patients],
+                "age": [30, 45, 28, 52, 39][:num_patients],
+            }
+        )
+
+        medications = pl.DataFrame(
+            {
+                "medication_id": [f"M{i}" for i in range(1, num_medications + 1)],
+                "drug_name": ["Aspirin", "Metformin", "Lisinopril", "Atorvastatin"][:num_medications],
+                "dosage": ["100mg", "500mg", "10mg", "20mg"][:num_medications],
+            }
+        )
+
+        # Default bridge: P1->M1,M2; P2->M1; P3->M3
+        patient_medications = pl.DataFrame(
+            {
+                "patient_id": ["P1", "P1", "P2", "P3"][: min(4, num_patients * num_medications)],
+                "medication_id": ["M1", "M2", "M1", "M3"][: min(4, num_patients * num_medications)],
+                "start_date": ["2024-01-01", "2024-01-15", "2024-02-01", "2024-03-01"][
+                    : min(4, num_patients * num_medications)
+                ],
+            }
+        )
+
+        return {
+            "patients": patients,
+            "medications": medications,
+            "patient_medications": patient_medications,
+        }
+
+    return _make
+
+
+# ============================================================================
 # Analysis Context Fixtures (for compute tests)
 # ============================================================================
 

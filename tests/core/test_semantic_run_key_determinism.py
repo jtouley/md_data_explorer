@@ -196,7 +196,6 @@ class TestRunKeyDeterminismAllExecutionPaths:
         data_dir.mkdir(parents=True)
 
         test_csv = data_dir / "test.csv"
-        import pandas as pd
 
         df = pd.DataFrame(
             {
@@ -215,7 +214,6 @@ class TestRunKeyDeterminismAllExecutionPaths:
             "analysis": {"default_outcome": "outcome"},
         }
 
-        from clinical_analytics.core.semantic import SemanticLayer
 
         semantic = SemanticLayer("test_dataset", config=config, workspace_root=workspace)
         semantic.dataset_version = "test_v1"
