@@ -951,6 +951,26 @@ All quality gates passing
    make test-ui
    ```
 
+**✅ PHASE 2.3 COMPLETED** (Commit: `69b8cb6` - Phase 2 complete)
+- Deleted `_render_confirmation_ui()` function from Ask_Questions.py (42 lines removed)
+- Removed all `requires_confirmation` checks from execution flow
+- Updated execution flow to always execute immediately with inline warnings
+- Removed fallback confirmation logic (replaced with immediate execution + warnings display)
+- No "Confirm and Run" buttons anywhere - all queries execute immediately
+- Warnings displayed inline using `st.warning()` before results
+- Simplified execution flow from 50+ lines to 24 lines (46% reduction)
+- All UI tests passing (no confirmation UI exists to test)
+
+**✅ PHASE 2 COMPLETE** (Commit: `69b8cb6`)
+**Summary**: Successfully removed all confirmation gating and added comprehensive observability
+- Phase 2.1: Added warnings infrastructure ✓
+- Phase 2.2: Removed gating logic, merged Phase 1.6 ✓
+- Phase 2.3: Deleted confirmation UI ✓
+- Test results: 355 passed, 9 failed (pre-existing), 26 skipped
+- Quality gates: formatting ✓, linting ✓, type-check (pre-existing errors)
+- Files modified: semantic.py, Ask_Questions.py, test_semantic_observability.py, test_semantic_queryplan_execution.py
+- Total lines changed: +136 insertions, -175 deletions (net -39 lines)
+
 ### Phase 2.4: Implement Pending State Pattern (Phase 1.5)
 
 **Files**:
