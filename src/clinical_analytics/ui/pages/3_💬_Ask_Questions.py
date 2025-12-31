@@ -8,7 +8,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -1256,6 +1256,64 @@ def _render_interpretation_inline_compact(query_plan) -> None:
     )
 
 
+def _render_thinking_indicator(steps: list[dict[str, Any]]) -> None:
+    """
+    Render progressive thinking steps from core layer (Phase 2.5.1).
+
+    Displays step-by-step progress of query execution, showing query plan interpretation,
+    validation status, execution progress, and completion/failure state.
+
+    Args:
+        steps: List of step dicts from execute_query_plan() result.
+              Each step has:
+              - "status": str - One of "processing", "completed", "error"
+              - "text": str - Step description (e.g., "Interpreting query")
+              - "details": dict - Step-specific details (intent, metric, warnings, etc.)
+    """
+    if not steps:
+        return
+
+    # Determine final status from last step
+    last_step = steps[-1]
+    status_label = "🤔 Processing your question..."
+    status_state = "running"
+
+    if last_step["status"] == "completed":
+        status_label = "✅ Query complete!"
+        status_state = "complete"
+    elif last_step["status"] == "error":
+        status_label = "❌ Query failed"
+        status_state = "error"
+
+    with st.status(status_label, expanded=True, state=status_state):
+        for step in steps:
+            # Render step text
+            st.write(f"**{step['text']}**")
+
+            # Render step details if available
+            if step.get("details"):
+                details = step["details"]
+                if step["text"] == "Interpreting query":
+                    # Show query plan interpretation
+                    if details.get("intent"):
+                        st.write(f"- Intent: `{details['intent']}`")
+                    if details.get("metric"):
+                        st.write(f"- Analyzing: `{details['metric']}`")
+                    if details.get("group_by"):
+                        st.write(f"- Grouped by: `{details['group_by']}`")
+                    if details.get("filter_count", 0) > 0:
+                        st.write(f"- Filters: {details['filter_count']} condition(s)")
+                elif step["text"] == "Validating plan":
+                    if details.get("has_warnings"):
+                        st.write(f"- ⚠️ {details.get('warning_count', 0)} warning(s) detected")
+                elif step["text"] == "Executing query":
+                    st.write(f"- Run key: `{details.get('run_key', 'N/A')[:16]}...`")
+                elif step["text"] == "Query complete":
+                    st.write(f"- Result: {details.get('result_rows', 0)} row(s)")
+                elif step["text"] == "Query failed":
+                    st.write(f"- Error: {details.get('error', 'Unknown error')}")
+
+
 def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
     """
     Show transparent interpretation and confidence inline with results.
@@ -1676,47 +1734,7 @@ def main():
 
                 # Phase 2.5.1: Render thinking indicator from core layer step data (UI only renders)
                 if execution_result.get("steps"):
-                    steps = execution_result["steps"]
-                    # Determine final status from last step
-                    last_step = steps[-1] if steps else None
-                    status_label = "🤔 Processing your question..."
-                    status_state = "running"
-                    if last_step:
-                        if last_step["status"] == "completed":
-                            status_label = "✅ Query complete!"
-                            status_state = "complete"
-                        elif last_step["status"] == "error":
-                            status_label = "❌ Query failed"
-                            status_state = "error"
-
-                    with st.status(status_label, expanded=True, state=status_state):
-                        for step in steps:
-                            # Render step text
-                            st.write(f"**{step['text']}**")
-
-                            # Render step details if available
-                            if step.get("details"):
-                                details = step["details"]
-                                if step["text"] == "Interpreting query":
-                                    # Show query plan interpretation
-                                    if details.get("intent"):
-                                        st.write(f"- Intent: `{details['intent']}`")
-                                    if details.get("metric"):
-                                        st.write(f"- Analyzing: `{details['metric']}`")
-                                    if details.get("group_by"):
-                                        st.write(f"- Grouped by: `{details['group_by']}`")
-                                    if details.get("filter_count", 0) > 0:
-                                        st.write(f"- Filters: {details['filter_count']} condition(s)")
-                                elif step["text"] == "Validating plan":
-                                    if details.get("has_warnings"):
-                                        st.write(f"- ⚠️ {details.get('warning_count', 0)} warning(s) detected")
-                                elif step["text"] == "Executing query":
-                                    st.write(f"- Run key: `{details.get('run_key', 'N/A')[:16]}...`")
-                                elif step["text"] == "Query complete":
-                                    st.write(f"- Result: {details.get('result_rows', 0)} row(s)")
-                                elif step["text"] == "Query failed":
-                                    st.write(f"- Error: {details.get('error', 'Unknown error')}")
-
+                    _render_thinking_indicator(execution_result["steps"])
                 elif execution_result is not None:
                     # Cached result - show brief indicator (no steps available for cached results)
                     st.info("💡 Using cached result (click 'Re-run Query' below to refresh)")
