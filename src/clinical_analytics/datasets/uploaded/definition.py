@@ -127,9 +127,11 @@ class UploadedDataset(ClinicalDataset):
         # Phase 8: Log active version being used for query
         active_version = self.storage.get_active_version(self.upload_id)
         if active_version:
+            # Guard against None values in version field
+            version_str = active_version.get("version") or "unknown"
+            version_display = version_str[:8] + "..." if len(version_str) > 8 else version_str
             logger.info(
-                f"Query using dataset {self.upload_id}, active version: "
-                f"{active_version.get('version', 'unknown')[:8]}..., "
+                f"Query using dataset {self.upload_id}, active version: {version_display}, "
                 f"event_type: {active_version.get('event_type', 'unknown')}"
             )
         else:

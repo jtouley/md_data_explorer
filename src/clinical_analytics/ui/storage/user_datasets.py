@@ -60,7 +60,10 @@ def file_lock(file_path: Path, timeout: float = 10.0):
     Provides exclusive file locking for metadata writes to prevent corruption
     from concurrent Streamlit reruns.
 
-    Uses fcntl (Unix/Linux/macOS) or msvcrt (Windows) for file locking.
+    Platform-specific behavior:
+    - Unix/Linux/macOS: Uses fcntl.flock() for full-file advisory lock
+    - Windows: Uses msvcrt.locking() to lock 1 byte at file start
+      (common hack for file-level locking on Windows, not a full mandatory lock)
 
     Args:
         file_path: Path to file to lock
@@ -1065,9 +1068,18 @@ def save_table_list(
             "version_history": version_history,
         }
 
+        # Phase 0/8: Thread-safe metadata write using file lock
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
-        with open(metadata_path, "w") as f:
-            json.dump(full_metadata, f, indent=2)
+        try:
+            with file_lock(metadata_path, timeout=10.0) as f:
+                # Use the locked file handle for atomic write
+                # Truncate and write from beginning
+                f.seek(0)
+                f.truncate()
+                json.dump(full_metadata, f, indent=2)
+                f.flush()  # Ensure write completes before lock releases
+        except FileLockTimeoutError:
+            raise RuntimeError(f"Failed to acquire lock on {metadata_path} (timeout after 10s)")
 
         logger.info(f"Saved {len(tables)} tables for upload {upload_id}")
         return True, f"Saved {len(tables)} tables"
@@ -1558,10 +1570,11 @@ class UserDatasetStorage:
 
         try:
             # Thread-safe metadata update using file lock
-            with file_lock(metadata_path, timeout=10.0):
-                # Load current metadata
-                with open(metadata_path) as f:
-                    metadata = json.load(f)
+            # Use locked file handle for both read and write (atomic read-modify-write)
+            with file_lock(metadata_path, timeout=10.0) as f:
+                # Load current metadata from locked file handle
+                f.seek(0)
+                metadata = json.load(f)
 
                 # Verify version_history exists
                 version_history = metadata.get("version_history", [])
@@ -1589,11 +1602,13 @@ class UserDatasetStorage:
                 # Mark target version as active
                 target_entry["is_active"] = True
 
-                # Create rollback event entry
+                # Create rollback event entry with unique version identifier
+                # Use "rollback:<event_id>" to avoid duplicate version values in history
+                rollback_event_id = str(uuid.uuid4())
                 rollback_event = {
-                    "version": target_version,
+                    "version": f"rollback:{rollback_event_id}",  # Unique version identifier
                     "created_at": datetime.now().isoformat(),
-                    "event_id": str(uuid.uuid4()),
+                    "event_id": rollback_event_id,
                     "event_type": "rollback",
                     "is_active": False,  # Event entry itself is not active
                     "rollback_target": target_version,  # Reference to which version was activated
@@ -1606,13 +1621,14 @@ class UserDatasetStorage:
                 # Validate metadata invariants
                 assert_metadata_invariants(metadata)
 
-                # Write metadata atomically
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata, f, indent=2)
+                # Write metadata atomically using locked file handle
+                f.seek(0)
+                f.truncate()
+                json.dump(metadata, f, indent=2)
+                f.flush()  # Ensure write completes before lock releases
 
                 logger.info(
-                    f"Rolled back dataset {upload_id} to version {target_version} "
-                    f"(event_id={rollback_event['event_id']})"
+                    f"Rolled back dataset {upload_id} to version {target_version} (event_id={rollback_event_id})"
                 )
 
                 return True, f"Successfully rolled back to version {target_version}"
@@ -1630,6 +1646,8 @@ class UserDatasetStorage:
         Returns the version entry from version_history that has is_active=True.
         Used by query execution to determine which schema version to use.
 
+        Defensive: Warns if multiple active versions detected (invariant violation).
+
         Args:
             upload_id: Upload identifier
 
@@ -1644,14 +1662,24 @@ class UserDatasetStorage:
         if not version_history:
             return None
 
-        # Find active version
-        for entry in version_history:
-            if entry.get("is_active") is True:
-                return entry
+        # Find all active versions (should be exactly one)
+        active_versions = [entry for entry in version_history if entry.get("is_active") is True]
 
-        # No active version found (should not happen if invariants are maintained)
-        logger.warning(f"No active version found for dataset {upload_id}")
-        return None
+        # Defensive: check for invariant violations
+        if len(active_versions) == 0:
+            logger.warning(f"No active version found for dataset {upload_id} (invariant violation)")
+            return None
+        elif len(active_versions) > 1:
+            logger.error(
+                f"Multiple active versions found for dataset {upload_id} "
+                f"(invariant violation): {len(active_versions)} active versions. "
+                f"Returning first one, but metadata is corrupted."
+            )
+            # Return first one but log the corruption
+            return active_versions[0]
+        else:
+            # Exactly one active version (expected case)
+            return active_versions[0]
 
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
         """
