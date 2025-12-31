@@ -1665,34 +1665,60 @@ def main():
 
                 # Phase 2.5.1: Progressive thinking indicator for query execution
                 if execution_result is None:
-                    # Show thinking indicator for fresh execution (not cached)
-                    with st.status("🤔 Processing your question...", expanded=True) as status:
-                        # Step 1: Show query plan interpretation
-                        st.write(f"**Interpreting:** {query_plan.intent}")
-                        if query_plan.metric:
-                            st.write(f"- Analyzing: `{query_plan.metric}`")
-                        if query_plan.group_by:
-                            st.write(f"- Grouped by: `{query_plan.group_by}`")
-                        if query_plan.filters:
-                            st.write(f"- Filters: {len(query_plan.filters)} condition(s)")
-
-                        # Step 2: Execute query
-                        st.write("**Executing query...**")
-                        execution_result = semantic_layer.execute_query_plan(
-                            query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
-                        )
-
-                        # Step 3: Complete
-                        if execution_result.get("success"):
-                            status.update(label="✅ Query complete!", state="complete", expanded=False)
-                        else:
-                            status.update(label="❌ Query failed", state="error", expanded=True)
+                    # Execute query (core layer generates step information)
+                    execution_result = semantic_layer.execute_query_plan(
+                        query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
+                    )
 
                     # Cache the execution result
                     st.session_state[exec_cache_key] = execution_result
                     logger.debug("query_execution_cache_miss", cache_key=exec_cache_key, query_preview=query_text[:50])
-                else:
-                    # Cached result - show brief indicator
+
+                # Phase 2.5.1: Render thinking indicator from core layer step data (UI only renders)
+                if execution_result.get("steps"):
+                    steps = execution_result["steps"]
+                    # Determine final status from last step
+                    last_step = steps[-1] if steps else None
+                    status_label = "🤔 Processing your question..."
+                    status_state = "running"
+                    if last_step:
+                        if last_step["status"] == "completed":
+                            status_label = "✅ Query complete!"
+                            status_state = "complete"
+                        elif last_step["status"] == "error":
+                            status_label = "❌ Query failed"
+                            status_state = "error"
+
+                    with st.status(status_label, expanded=True, state=status_state):
+                        for step in steps:
+                            # Render step text
+                            st.write(f"**{step['text']}**")
+
+                            # Render step details if available
+                            if step.get("details"):
+                                details = step["details"]
+                                if step["text"] == "Interpreting query":
+                                    # Show query plan interpretation
+                                    if details.get("intent"):
+                                        st.write(f"- Intent: `{details['intent']}`")
+                                    if details.get("metric"):
+                                        st.write(f"- Analyzing: `{details['metric']}`")
+                                    if details.get("group_by"):
+                                        st.write(f"- Grouped by: `{details['group_by']}`")
+                                    if details.get("filter_count", 0) > 0:
+                                        st.write(f"- Filters: {details['filter_count']} condition(s)")
+                                elif step["text"] == "Validating plan":
+                                    if details.get("has_warnings"):
+                                        st.write(f"- ⚠️ {details.get('warning_count', 0)} warning(s) detected")
+                                elif step["text"] == "Executing query":
+                                    st.write(f"- Run key: `{details.get('run_key', 'N/A')[:16]}...`")
+                                elif step["text"] == "Query complete":
+                                    st.write(f"- Result: {details.get('result_rows', 0)} row(s)")
+                                elif step["text"] == "Query failed":
+                                    st.write(f"- Error: {details.get('error', 'Unknown error')}")
+
+                elif execution_result is not None:
+                    # Cached result - show brief indicator (no steps available for cached results)
                     st.info("💡 Using cached result (click 'Re-run Query' below to refresh)")
 
                 # Clear force_rerun flag after use

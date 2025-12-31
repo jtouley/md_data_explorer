@@ -64,6 +64,35 @@ class TestSemanticLayerObservability:
         assert "warnings" in result
         assert isinstance(result["warnings"], list)
 
+    def test_execute_query_plan_includes_steps_field(self, semantic_layer):
+        """Execution result should include steps field for progressive thinking indicator (Phase 2.5.1)."""
+        # Arrange: Valid QueryPlan
+        plan = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
+
+        # Act
+        result = semantic_layer.execute_query_plan(plan)
+
+        # Assert: Steps field should exist (core layer provides step data)
+        assert "steps" in result
+        assert isinstance(result["steps"], list)
+        assert len(result["steps"]) > 0
+
+        # Assert: Steps should have required structure
+        for step in result["steps"]:
+            assert "status" in step
+            assert "text" in step
+            assert step["status"] in ["processing", "completed", "error"]
+            assert isinstance(step["text"], str)
+
+        # Assert: Last step should indicate completion or error
+        last_step = result["steps"][-1]
+        if result["success"]:
+            assert last_step["status"] == "completed"
+            assert "Query complete" in last_step["text"]
+        else:
+            assert last_step["status"] == "error"
+            assert "Query failed" in last_step["text"]
+
     def test_low_confidence_adds_warning_with_explanation(self, semantic_layer):
         """Low confidence should add warning with explanation (Phase 2.2)."""
         # Arrange: Low confidence plan
