@@ -1387,6 +1387,43 @@ class SemanticLayer:
                 "steps": steps,  # Phase 2.5.1: Core provides step data
             }
 
+    def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:  # type: ignore[valid-type]
+        """
+        Format execution result from execute_query_plan() for UI consumption (Phase 3.1).
+
+        This is a transitional method that bridges QueryPlan execution to legacy result format.
+        Eventually this will be replaced by QueryPlan-driven formatting (Phase 3.3).
+
+        Args:
+            execution_result: Result dict from execute_query_plan()
+            context: AnalysisContext with intent and variables (for legacy compatibility)
+
+        Returns:
+            Formatted result dict compatible with render_analysis_by_type()
+        """
+        if not execution_result.get("success"):
+            return {
+                "type": "error",
+                "error": execution_result.get("warnings", ["Execution failed"])[0]
+                if execution_result.get("warnings")
+                else "Execution failed",
+            }
+
+        result_df = execution_result.get("result")
+        if result_df is None:
+            return {"type": "error", "error": "No result data"}
+
+        # Convert to Polars if needed
+        import polars as pl
+
+        if isinstance(result_df, pd.DataFrame):
+            result_df = pl.from_pandas(result_df)
+
+        # Use compute_analysis_by_type for formatting (transitional - Phase 3.1)
+        from clinical_analytics.analysis.compute import compute_analysis_by_type
+
+        return compute_analysis_by_type(result_df, context)
+
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
         if plan.intent == "COUNT":
