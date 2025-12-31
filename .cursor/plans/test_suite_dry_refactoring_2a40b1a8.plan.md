@@ -65,12 +65,12 @@ todos:
       - phase2-dataframe-factories
   - id: phase2-refactor-relationship
     content: Refactor test_relationship_detector.py to use DataFrame factories (21 instances)
-    status: pending
+    status: completed
     dependencies:
       - phase2-dataframe-factories
   - id: phase2-refactor-schema
     content: Refactor test_schema_conversion.py to use DataFrame factories (19 instances)
-    status: pending
+    status: completed
     dependencies:
       - phase2-dataframe-factories
   - id: phase2-verify
