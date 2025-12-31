@@ -7,10 +7,14 @@ Handles secure storage, metadata management, and persistence of uploaded dataset
 import hashlib
 import json
 import logging
+import platform
+import time
 import uuid
 import zipfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +24,14 @@ import polars as pl
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
 logger = logging.getLogger(__name__)
+
+
+class SchemaDriftPolicy(Enum):
+    """Policy for handling schema drift during overwrites."""
+
+    REJECT = "reject"  # Reject overwrite if schema differs
+    WARN = "warn"  # Allow overwrite but warn user about schema drift
+    ALLOW = "allow"  # Allow overwrite silently (permissive)
 
 
 class SecurityError(Exception):
@@ -32,6 +44,104 @@ class UploadError(Exception):
     """Upload processing error (malformed files, invalid content, etc.)."""
 
     pass
+
+
+class FileLockTimeoutError(Exception):
+    """File lock acquisition timeout error."""
+
+    pass
+
+
+@contextmanager
+def file_lock(file_path: Path, timeout: float = 10.0):
+    """
+    Cross-platform file locking context manager.
+
+    Provides exclusive file locking for metadata writes to prevent corruption
+    from concurrent Streamlit reruns.
+
+    Platform-specific behavior:
+    - Unix/Linux/macOS: Uses fcntl.flock() for full-file advisory lock
+    - Windows: Uses msvcrt.locking() to lock 1 byte at file start
+      (common hack for file-level locking on Windows, not a full mandatory lock)
+
+    Args:
+        file_path: Path to file to lock
+        timeout: Maximum time to wait for lock acquisition (seconds)
+
+    Yields:
+        File handle (opened for read-write, will not truncate existing content)
+
+    Raises:
+        FileLockTimeoutError: If lock cannot be acquired within timeout
+
+    Example:
+        >>> with file_lock(metadata_path) as f:
+        ...     metadata = json.load(f)
+        ...     metadata['updated'] = True
+        ...     f.seek(0)
+        ...     f.truncate()
+        ...     json.dump(metadata, f)
+    """
+    file_path = Path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Open file for read-write, create if doesn't exist
+    # Use 'r+' mode if file exists, 'w+' if it doesn't (to create it)
+    if file_path.exists():
+        f = open(file_path, "r+")
+    else:
+        f = open(file_path, "w+")
+
+    try:
+        # Platform-specific locking
+        is_windows = platform.system() == "Windows"
+
+        if is_windows:
+            # Windows: Use msvcrt
+            import msvcrt
+
+            start_time = time.time()
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break  # Lock acquired
+                except OSError:
+                    if time.time() - start_time > timeout:
+                        raise FileLockTimeoutError(f"Could not acquire lock on {file_path} within {timeout}s")
+                    time.sleep(0.1)  # Wait and retry
+        else:
+            # Unix/Linux/macOS: Use fcntl
+            import fcntl
+
+            start_time = time.time()
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break  # Lock acquired
+                except BlockingIOError:
+                    if time.time() - start_time > timeout:
+                        raise FileLockTimeoutError(f"Could not acquire lock on {file_path} within {timeout}s")
+                    time.sleep(0.1)  # Wait and retry
+
+        # Lock acquired, yield file handle
+        yield f
+
+    finally:
+        # Release lock (automatic on file close, but explicit is better)
+        try:
+            if is_windows:
+                import msvcrt
+
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass  # Best-effort unlock
+
+        f.close()
 
 
 # Re-export schema conversion functions for backward compatibility
@@ -626,6 +736,114 @@ class UploadSecurityValidator:
         return True, ""
 
 
+def compute_schema_fingerprint(df: pl.DataFrame) -> str:
+    """
+    Compute deterministic schema fingerprint for a DataFrame.
+
+    Uses SHA256 hash of canonicalized schema JSON (sorted keys) to ensure
+    deterministic fingerprint over ordered columns/types.
+
+    Args:
+        df: Polars DataFrame
+
+    Returns:
+        Schema fingerprint (SHA256 hex digest)
+    """
+    # Extract schema as ordered list of (column_name, dtype_str)
+    schema_list = [(col, str(dtype)) for col, dtype in df.schema.items()]
+
+    # Sort by column name for determinism
+    schema_list.sort(key=lambda x: x[0])
+
+    # Create canonical JSON representation
+    schema_dict = {"columns": schema_list}
+    schema_json = json.dumps(schema_dict, sort_keys=True)
+
+    # Compute SHA256 hash
+    return hashlib.sha256(schema_json.encode()).hexdigest()
+
+
+def detect_schema_drift(schema1: dict[str, Any], schema2: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    """
+    Detect schema drift between two schemas.
+
+    Compares column names and types to detect additions, removals, and type changes.
+
+    Args:
+        schema1: First schema dict with 'columns' key (list of (name, type) tuples)
+        schema2: Second schema dict with 'columns' key (list of (name, type) tuples)
+
+    Returns:
+        Tuple of (has_drift, drift_details) where drift_details contains:
+        - added_columns: list of column names
+        - removed_columns: list of column names
+        - type_changes: dict of {column_name: (old_type, new_type)}
+    """
+    # Convert to dicts for easier comparison
+    cols1 = {col: dtype for col, dtype in schema1["columns"]}
+    cols2 = {col: dtype for col, dtype in schema2["columns"]}
+
+    # Detect drift
+    added_columns = [col for col in cols2 if col not in cols1]
+    removed_columns = [col for col in cols1 if col not in cols2]
+    type_changes = {col: (cols1[col], cols2[col]) for col in cols1 if col in cols2 and cols1[col] != cols2[col]}
+
+    has_drift = bool(added_columns or removed_columns or type_changes)
+
+    drift_details = {}
+    if added_columns:
+        drift_details["added_columns"] = added_columns
+    if removed_columns:
+        drift_details["removed_columns"] = removed_columns
+    if type_changes:
+        drift_details["type_changes"] = type_changes
+
+    return has_drift, drift_details
+
+
+def assert_metadata_invariants(metadata: dict[str, Any]) -> None:
+    """
+    Assert critical metadata invariants.
+
+    Validates that metadata satisfies required structural constraints before
+    operations that depend on version history (rollback, overwrite, etc.).
+
+    Args:
+        metadata: Dataset metadata to validate
+
+    Raises:
+        ValueError: If any invariant is violated
+
+    Invariants:
+    - version_history must exist and be non-empty
+    - Exactly one version must be marked is_active=True
+    - Active version must have valid tables structure
+    """
+    # Invariant 1: version_history must exist
+    if "version_history" not in metadata:
+        raise ValueError("Metadata missing required 'version_history' field")
+
+    version_history = metadata["version_history"]
+
+    # Invariant 2: version_history must be non-empty
+    if not version_history:
+        raise ValueError("version_history cannot be empty")
+
+    # Invariant 3: Exactly one active version
+    active_versions = [v for v in version_history if v.get("is_active", False)]
+    if len(active_versions) == 0:
+        raise ValueError("No active version found in version_history")
+    if len(active_versions) > 1:
+        raise ValueError(f"Multiple active versions found: {len(active_versions)} (should be exactly 1)")
+
+    # Invariant 4: Active version has valid structure
+    active_version = active_versions[0]
+    if "tables" not in active_version:
+        raise ValueError("Active version missing 'tables' field")
+    if not isinstance(active_version["tables"], dict):
+        raise ValueError("Active version 'tables' must be a dict")
+
+
 def save_table_list(
     storage: "UserDatasetStorage",
     tables: list[dict[str, Any]],
@@ -788,7 +1006,42 @@ def save_table_list(
             schema = engine.infer_schema(unified_df)
             metadata["inferred_schema"] = schema.to_dataset_config()
 
-        # 6. Save metadata with tables list, dataset_version, provenance, and Parquet paths
+        # Phase 2: Build canonical tables structure for version history
+        canonical_tables = {}
+        for table in tables:
+            table_name = table["name"]
+            table_df = table["data"]
+
+            canonical_tables[table_name] = {
+                "parquet_path": parquet_paths[table_name],
+                "duckdb_table": table_name,  # DuckDB table name (same as table_name for now)
+                "row_count": table_df.height,
+                "column_count": table_df.width,
+                "schema_fingerprint": compute_schema_fingerprint(table_df),
+            }
+
+        # Phase 2/5: Create version history entry with event metadata
+        event_type = "overwrite" if metadata.pop("_is_overwrite", False) else "upload"
+        version_entry = {
+            "version": dataset_version,
+            "created_at": datetime.now().isoformat(),
+            "event_id": str(uuid.uuid4()),  # Phase 5: Unique event identifier
+            "event_type": event_type,  # Phase 5: upload/overwrite/rollback
+            "is_active": True,  # New version is always active
+            "tables": canonical_tables,
+        }
+
+        # Phase 4.2: Handle existing version history (overwrite case)
+        existing_version_history = metadata.pop("_existing_version_history", None)
+        if existing_version_history:
+            # Overwrite: append to existing history
+            version_history = existing_version_history + [version_entry]
+            logger.info(f"Appending to existing version history (now {len(version_history)} versions)")
+        else:
+            # Initial upload: create new history
+            version_history = [version_entry]
+
+        # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
             **metadata,
             "upload_id": upload_id,
@@ -811,11 +1064,22 @@ def save_table_list(
                     "system_aliases": {},
                 },
             ),
+            # Phase 2/4.2: Version history (initial or appended)
+            "version_history": version_history,
         }
 
+        # Phase 0/8: Thread-safe metadata write using file lock
         metadata_path = storage.metadata_dir / f"{upload_id}.json"
-        with open(metadata_path, "w") as f:
-            json.dump(full_metadata, f, indent=2)
+        try:
+            with file_lock(metadata_path, timeout=10.0) as f:
+                # Use the locked file handle for atomic write
+                # Truncate and write from beginning
+                f.seek(0)
+                f.truncate()
+                json.dump(full_metadata, f, indent=2)
+                f.flush()  # Ensure write completes before lock releases
+        except FileLockTimeoutError:
+            raise RuntimeError(f"Failed to acquire lock on {metadata_path} (timeout after 10s)")
 
         logger.info(f"Saved {len(tables)} tables for upload {upload_id}")
         return True, f"Saved {len(tables)} tables"
@@ -940,12 +1204,42 @@ class UserDatasetStorage:
         file_hash = hashlib.md5(filename.encode()).hexdigest()[:8]
         return f"user_upload_{timestamp}_{file_hash}"
 
+    def find_datasets_by_content_hash(self, dataset_version: str) -> list[dict[str, Any]]:
+        """
+        Find all datasets with matching content hash (dataset_version).
+
+        Used for cross-dataset deduplication to warn users about duplicate content
+        with different names.
+
+        Args:
+            dataset_version: Content hash to search for
+
+        Returns:
+            List of metadata dicts for matching datasets
+        """
+        matching_datasets = []
+
+        for metadata_file in self.metadata_dir.glob("*.json"):
+            try:
+                with open(metadata_file) as f:
+                    metadata = json.load(f)
+
+                # Check if dataset_version matches
+                if metadata.get("dataset_version") == dataset_version:
+                    matching_datasets.append(metadata)
+            except Exception as e:
+                logger.warning(f"Error reading metadata file {metadata_file}: {e}")
+                continue
+
+        return matching_datasets
+
     def save_upload(
         self,
         file_bytes: bytes,
         original_filename: str,
         metadata: dict[str, Any],
         progress_cb: Callable[[int, str], None] | None = None,
+        overwrite: bool = False,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded file with security validation.
@@ -958,6 +1252,7 @@ class UserDatasetStorage:
                 NOTE: This couples storage to UI (technical debt). Future: emit structured events instead.
                 Progress callbacks are best-effort: exceptions are caught and ignored to prevent UI errors
                 from breaking storage operations.
+            overwrite: If True, allow overwriting existing dataset with same name (Phase 4.2)
 
         Returns:
             Tuple of (success, message, upload_id)
@@ -979,15 +1274,6 @@ class UserDatasetStorage:
                     pass  # Best-effort
             return False, error, None
 
-        # Generate upload ID
-        if progress_cb:
-            try:
-                progress_cb(10, "Generating unique upload identifier...")
-            except Exception:
-                pass  # Best-effort
-
-        upload_id = self.generate_upload_id(original_filename)
-
         try:
             # Sanitize filename
             safe_filename = UploadSecurityValidator.sanitize_filename(original_filename)
@@ -1000,16 +1286,47 @@ class UserDatasetStorage:
                 dataset_name = UploadSecurityValidator.sanitize_filename(original_filename)
                 dataset_name = Path(dataset_name).stem  # Remove extension
 
-            # Check for existing dataset with same name (prevent duplicates)
+            # Phase 4.2: Check for existing dataset with same name
             existing_uploads = self.list_uploads()
+            existing_upload_id = None
+            existing_version_history = None
+
             for existing_meta in existing_uploads:
                 if existing_meta.get("dataset_name") == dataset_name:
-                    return (
-                        False,
-                        f"Dataset '{dataset_name}' already exists. "
-                        "Use a different name or delete the existing dataset.",
-                        None,
-                    )
+                    if not overwrite:
+                        # Reject duplicate without overwrite flag
+                        return (
+                            False,
+                            f"Dataset '{dataset_name}' already exists. "
+                            "Use a different name or enable overwrite to update.",
+                            None,
+                        )
+                    else:
+                        # Overwrite mode: preserve existing upload_id and version_history
+                        existing_upload_id = existing_meta.get("upload_id")
+                        existing_version_history = existing_meta.get("version_history", [])
+                        logger.info(
+                            f"Overwriting existing dataset '{dataset_name}' "
+                            f"(upload_id={existing_upload_id}, "
+                            f"{len(existing_version_history)} versions)"
+                        )
+                        # Mark all existing versions as inactive
+                        for version_entry in existing_version_history:
+                            version_entry["is_active"] = False
+                        break
+
+            # Generate upload ID (or use existing if overwriting)
+            if progress_cb:
+                try:
+                    progress_cb(10, "Generating unique upload identifier...")
+                except Exception:
+                    pass  # Best-effort
+
+            # Phase 4.2: Use existing upload_id if overwriting
+            if existing_upload_id:
+                upload_id = existing_upload_id
+            else:
+                upload_id = self.generate_upload_id(original_filename)
 
             # Normalize upload to table list (unified entry point)
             if progress_cb:
@@ -1019,6 +1336,29 @@ class UserDatasetStorage:
                     pass  # Best-effort
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+
+            # Phase 1: Compute dataset_version early for cross-dataset deduplication
+            from clinical_analytics.storage.versioning import compute_dataset_version
+
+            table_dfs = [t["data"] for t in tables]
+            dataset_version = compute_dataset_version(table_dfs)
+            logger.info(f"Computed dataset_version: {dataset_version}")
+
+            # Phase 1: Check for duplicate content with different names (warn, don't block)
+            duplicate_datasets = self.find_datasets_by_content_hash(dataset_version)
+            duplicate_warning = None
+            if duplicate_datasets:
+                # Check if any duplicates have different names
+                different_name_duplicates = [d for d in duplicate_datasets if d.get("dataset_name") != dataset_name]
+                if different_name_duplicates:
+                    # Warn about duplicate content (UX polish - clinicians may intentionally duplicate)
+                    dup_names = [d.get("dataset_name") for d in different_name_duplicates]
+                    duplicate_warning = (
+                        f"⚠️ Warning: This file has the same content as existing dataset(s): "
+                        f"{', '.join(dup_names)}. "
+                        f"Upload will proceed, but you may want to use the existing dataset instead."
+                    )
+                    logger.info(f"Duplicate content detected: {dup_names}")
 
             # For single-table uploads, ensure patient_id exists (transparent to user)
             if len(tables) == 1:
@@ -1169,6 +1509,11 @@ class UserDatasetStorage:
                 }
             )
 
+            # Phase 4.2: Pass existing_version_history for overwrite
+            if existing_version_history is not None:
+                metadata["_existing_version_history"] = existing_version_history
+                metadata["_is_overwrite"] = True  # Phase 5: Mark as overwrite event
+
             # Update table with validated data (convert back to Polars for save_table_list)
             if len(tables) == 1:
                 # Convert validated pandas DataFrame back to Polars
@@ -1192,7 +1537,12 @@ class UserDatasetStorage:
                 except Exception:
                     pass  # Best-effort
 
-            return True, f"Upload successful: {upload_id}", upload_id
+            # Phase 1: Include duplicate warning in success message (if any)
+            success_message = f"Upload successful: {upload_id}"
+            if duplicate_warning:
+                success_message = f"{duplicate_warning} {success_message}"
+
+            return True, success_message, upload_id
 
         except Exception as e:
             if progress_cb:
@@ -1201,6 +1551,138 @@ class UserDatasetStorage:
                 except Exception:
                     pass  # Best-effort
             return False, f"Error saving upload: {str(e)}", None
+
+    def rollback_to_version(self, upload_id: str, target_version: str) -> tuple[bool, str]:
+        """
+        Rollback dataset to a specific version (Phase 6).
+
+        Atomically switches active version to target_version, marks all other versions
+        as inactive, and creates a rollback event entry in version_history.
+
+        Args:
+            upload_id: Upload identifier
+            target_version: The dataset_version to rollback to (must exist in version_history)
+
+        Returns:
+            Tuple of (success, message)
+        """
+        metadata_path = self.metadata_dir / f"{upload_id}.json"
+
+        if not metadata_path.exists():
+            return False, f"Dataset {upload_id} not found"
+
+        try:
+            # Thread-safe metadata update using file lock
+            # Use locked file handle for both read and write (atomic read-modify-write)
+            with file_lock(metadata_path, timeout=10.0) as f:
+                # Load current metadata from locked file handle
+                f.seek(0)
+                metadata = json.load(f)
+
+                # Verify version_history exists
+                version_history = metadata.get("version_history", [])
+                if not version_history:
+                    return False, f"No version history found for dataset {upload_id}"
+
+                # Find target version
+                target_entry = None
+                for entry in version_history:
+                    if entry.get("version") == target_version:
+                        target_entry = entry
+                        break
+
+                if not target_entry:
+                    available_versions = [v.get("version") for v in version_history]
+                    return False, (
+                        f"Version {target_version} not found in version history. "
+                        f"Available versions: {available_versions}"
+                    )
+
+                # Mark all versions as inactive
+                for entry in version_history:
+                    entry["is_active"] = False
+
+                # Mark target version as active
+                target_entry["is_active"] = True
+
+                # Create rollback event entry with unique version identifier
+                # Use "rollback:<event_id>" to avoid duplicate version values in history
+                rollback_event_id = str(uuid.uuid4())
+                rollback_event = {
+                    "version": f"rollback:{rollback_event_id}",  # Unique version identifier
+                    "created_at": datetime.now().isoformat(),
+                    "event_id": rollback_event_id,
+                    "event_type": "rollback",
+                    "is_active": False,  # Event entry itself is not active
+                    "rollback_target": target_version,  # Reference to which version was activated
+                }
+                version_history.append(rollback_event)
+
+                # Update metadata
+                metadata["version_history"] = version_history
+
+                # Validate metadata invariants
+                assert_metadata_invariants(metadata)
+
+                # Write metadata atomically using locked file handle
+                f.seek(0)
+                f.truncate()
+                json.dump(metadata, f, indent=2)
+                f.flush()  # Ensure write completes before lock releases
+
+                logger.info(
+                    f"Rolled back dataset {upload_id} to version {target_version} (event_id={rollback_event_id})"
+                )
+
+                return True, f"Successfully rolled back to version {target_version}"
+
+        except FileLockTimeoutError:
+            return False, "Failed to acquire lock on metadata file (timeout after 10s)"
+        except Exception as e:
+            logger.error(f"Error during rollback: {e}")
+            return False, f"Error during rollback: {str(e)}"
+
+    def get_active_version(self, upload_id: str) -> dict[str, Any] | None:
+        """
+        Get the currently active version entry for a dataset (Phase 7).
+
+        Returns the version entry from version_history that has is_active=True.
+        Used by query execution to determine which schema version to use.
+
+        Defensive: Warns if multiple active versions detected (invariant violation).
+
+        Args:
+            upload_id: Upload identifier
+
+        Returns:
+            Active version entry dict, or None if dataset not found or no active version
+        """
+        metadata = self.get_upload_metadata(upload_id)
+        if not metadata:
+            return None
+
+        version_history = metadata.get("version_history", [])
+        if not version_history:
+            return None
+
+        # Find all active versions (should be exactly one)
+        active_versions = [entry for entry in version_history if entry.get("is_active") is True]
+
+        # Defensive: check for invariant violations
+        if len(active_versions) == 0:
+            logger.warning(f"No active version found for dataset {upload_id} (invariant violation)")
+            return None
+        elif len(active_versions) > 1:
+            logger.error(
+                f"Multiple active versions found for dataset {upload_id} "
+                f"(invariant violation): {len(active_versions)} active versions. "
+                f"Returning first one, but metadata is corrupted."
+            )
+            # Return first one but log the corruption
+            return active_versions[0]
+        else:
+            # Exactly one active version (expected case)
+            return active_versions[0]
 
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
         """

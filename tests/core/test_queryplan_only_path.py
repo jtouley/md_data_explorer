@@ -14,24 +14,22 @@ from clinical_analytics.core.query_plan import QueryPlan
 class TestQueryPlanOnlyPath:
     """Test suite enforcing QueryPlan-only execution."""
 
-    def test_semantic_layer_execute_requires_queryplan(self, make_semantic_layer):
+    def test_semantic_layer_execute_requires_queryplan(self, mock_semantic_layer):
         """semantic_layer.execute_query_plan() should require QueryPlan instance."""
         # Arrange: Invalid input (not a QueryPlan)
         invalid_plan = {"intent": "COUNT"}  # dict, not QueryPlan
-        semantic_layer = make_semantic_layer()
 
         # Act & Assert: Should raise TypeError
         with pytest.raises((TypeError, AttributeError)):
-            semantic_layer.execute_query_plan(invalid_plan)
+            mock_semantic_layer.execute_query_plan(invalid_plan)
 
-    def test_execute_query_plan_accepts_only_queryplan_type(self, make_semantic_layer):
+    def test_execute_query_plan_accepts_only_queryplan_type(self, mock_semantic_layer):
         """execute_query_plan() should accept only QueryPlan instances."""
         # Arrange: Valid QueryPlan
         valid_plan = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
-        semantic_layer = make_semantic_layer()
 
         # Act: Should not raise
-        result = semantic_layer.execute_query_plan(valid_plan)
+        result = mock_semantic_layer.execute_query_plan(valid_plan)
 
         # Assert: Returns valid result
         assert result is not None
@@ -199,7 +197,7 @@ class TestQueryPlanOnlyPath:
             "compute_analysis_by_type() expects raw cohort data, not aggregated results."
         )
 
-    def test_format_execution_result_formats_count_result_correctly(self, make_semantic_layer):
+    def test_format_execution_result_formats_count_result_correctly(self, mock_semantic_layer):
         """format_execution_result() should format COUNT result DataFrame correctly."""
         # Arrange: COUNT query result (already aggregated)
         import pandas as pd
@@ -231,10 +229,9 @@ class TestQueryPlanOnlyPath:
         # Create QueryPlan
         query_plan = QueryPlan(intent="COUNT", group_by="Statin Used", confidence=0.9)
         context.query_plan = query_plan
-        semantic_layer = make_semantic_layer()
 
         # Act
-        formatted = semantic_layer.format_execution_result(execution_result, context)
+        formatted = mock_semantic_layer.format_execution_result(execution_result, context)
 
         # Assert: Should return count result format
         assert formatted["type"] == "count"
@@ -247,3 +244,41 @@ class TestQueryPlanOnlyPath:
         # Each group_count should have the group value and count
         assert all("Statin Used" in gc and "count" in gc for gc in formatted["group_counts"])
         assert "headline" in formatted
+
+
+@pytest.fixture
+def mock_semantic_layer(tmp_path):
+    """Create minimal semantic layer for testing."""
+    import pandas as pd
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "pyproject.toml").write_text("[project]\nname = 'test'")
+
+    data_dir = workspace / "data" / "raw" / "test_dataset"
+    data_dir.mkdir(parents=True)
+
+    test_csv = data_dir / "test.csv"
+    df = pd.DataFrame(
+        {
+            "patient_id": [1, 2, 3],
+            "age": [45, 62, 38],
+            "status": ["active", "inactive", "active"],
+        }
+    )
+    df.to_csv(test_csv, index=False)
+
+    config = {
+        "init_params": {"source_path": "data/raw/test_dataset/test.csv"},
+        "column_mapping": {"patient_id": "patient_id"},
+        "time_zero": {"value": "2024-01-01"},
+        "outcomes": {},
+        "analysis": {"default_outcome": "outcome"},
+    }
+
+    from clinical_analytics.core.semantic import SemanticLayer
+
+    semantic = SemanticLayer("test_dataset", config=config, workspace_root=workspace)
+    semantic.dataset_version = "test_v1"
+
+    return semantic

@@ -20,21 +20,37 @@ class TestSemanticLayerObservability:
     """Test suite for semantic layer observability features."""
 
     @pytest.fixture
-    def semantic_layer(self, make_semantic_layer):
+    def semantic_layer(self, tmp_path):
         """Create minimal semantic layer for testing."""
-        return make_semantic_layer(
-            dataset_name="test_dataset",
-            data={
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "pyproject.toml").write_text("[project]\nname = 'test'")
+
+        data_dir = workspace / "data" / "raw" / "test_dataset"
+        data_dir.mkdir(parents=True)
+
+        test_csv = data_dir / "test.csv"
+        df = pd.DataFrame(
+            {
                 "patient_id": [1, 2, 3],
                 "age": [45, 62, 38],
                 "status": ["active", "inactive", "active"],
-            },
-            config_overrides={
-                "column_mapping": {"patient_id": "patient_id"},
-                "time_zero": {"value": "2024-01-01"},
-            },
-            workspace_name="workspace",
+            }
         )
+        df.to_csv(test_csv, index=False)
+
+        config = {
+            "init_params": {"source_path": "data/raw/test_dataset/test.csv"},
+            "column_mapping": {"patient_id": "patient_id"},
+            "time_zero": {"value": "2024-01-01"},
+            "outcomes": {},
+            "analysis": {"default_outcome": "outcome"},
+        }
+
+        semantic = SemanticLayer("test_dataset", config=config, workspace_root=workspace)
+        semantic.dataset_version = "test_v1"
+
+        return semantic
 
     def test_execute_query_plan_includes_warnings_field(self, semantic_layer):
         """Execution result should include warnings field (Phase 2.1)."""

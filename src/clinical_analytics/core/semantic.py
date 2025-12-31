@@ -27,9 +27,6 @@ if TYPE_CHECKING:
 else:
     import polars as pl
 
-# Phase 3.3: Import chart spec generation
-from clinical_analytics.core.query_plan import generate_chart_spec
-
 logger = logging.getLogger(__name__)
 
 
@@ -1339,17 +1336,7 @@ class SemanticLayer:
             - "run_key": str - Deterministic run key for idempotency
             - "warnings": list[str] - Warnings collected during execution
             - "steps": list[dict] - Step information for progressive thinking indicator (Phase 2.5.1)
-            - "chart_spec": dict | None - Chart specification for visualization (Phase 3.3)
         """
-        # Phase 3.2: Log execution start for observability and contract enforcement
-        logger.debug(
-            "execute_query_plan_start: intent=%s confidence=%.2f has_filters=%s has_query_text=%s",
-            plan.intent,
-            plan.confidence,
-            bool(plan.filters),
-            bool(query_text),
-        )
-
         # Phase 2.5.1: Initialize steps list (core layer generates step data)
         steps: list[dict[str, Any]] = []
 
@@ -1406,20 +1393,6 @@ class SemanticLayer:
         # Step 6: Generate run_key (always generate)
         run_key = self._generate_run_key(plan, query_text)
 
-        # Phase 3.3: Generate chart_spec from QueryPlan (deterministic)
-        chart_spec_obj = generate_chart_spec(plan)
-        chart_spec = (
-            {
-                "type": chart_spec_obj.type,
-                "x": chart_spec_obj.x,
-                "y": chart_spec_obj.y,
-                "group_by": chart_spec_obj.group_by,
-                "title": chart_spec_obj.title,
-            }
-            if chart_spec_obj
-            else None
-        )
-
         # Step 7: Executing query (Phase 2.5.1)
         steps.append(
             {
@@ -1455,7 +1428,6 @@ class SemanticLayer:
                 "run_key": run_key,
                 "warnings": warnings,
                 "steps": steps,  # Phase 2.5.1: Core provides step data
-                "chart_spec": chart_spec,  # Phase 3.3: QueryPlan-driven visualization
             }
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)
@@ -1475,7 +1447,6 @@ class SemanticLayer:
                 "run_key": run_key,
                 "warnings": warnings,
                 "steps": steps,  # Phase 2.5.1: Core provides step data
-                "chart_spec": chart_spec,  # Phase 3.3: QueryPlan-driven visualization
             }
 
     def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:  # type: ignore[valid-type]
