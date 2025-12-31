@@ -1647,9 +1647,34 @@ def main():
             # semantic_layer is already available from line 1291
             if query_plan and semantic_layer:
                 query_text = getattr(context, "research_question", "")
-                execution_result = semantic_layer.execute_query_plan(
-                    query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
-                )
+
+                # Phase 2.4: Cache execution results to prevent duplicate execute_query_plan() calls
+                # Use hash of (query_text + dataset_version) as cache key prefix
+                # run_key is only available after execution, so we use query hash for pre-execution cache lookup
+                exec_cache_key = f"exec_result:{dataset_version}:{hash(query_text)}"
+
+                # Check if user requested force rerun
+                force_rerun_key = f"force_rerun:{dataset_version}"
+                force_rerun = st.session_state.get(force_rerun_key, False)
+
+                # Try to get cached execution result (unless forcing rerun)
+                execution_result = None
+                if not force_rerun and exec_cache_key in st.session_state:
+                    execution_result = st.session_state[exec_cache_key]
+                    logger.debug("query_execution_cache_hit", cache_key=exec_cache_key, query_preview=query_text[:50])
+
+                # Execute if no cached result
+                if execution_result is None:
+                    execution_result = semantic_layer.execute_query_plan(
+                        query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
+                    )
+                    # Cache the execution result
+                    st.session_state[exec_cache_key] = execution_result
+                    logger.debug("query_execution_cache_miss", cache_key=exec_cache_key, query_preview=query_text[:50])
+
+                # Clear force_rerun flag after use
+                if force_rerun:
+                    st.session_state[force_rerun_key] = False
 
                 # Phase 2.3: Always execute, show warnings inline (no gating)
                 st.divider()
@@ -1667,6 +1692,11 @@ def main():
                 # Proceed with analysis if successful
                 if execution_result.get("success"):
                     execute_analysis_with_idempotency(cohort, context, run_key, dataset_version, query_text, query_plan)
+
+                    # Phase 2.4: Add "Re-run Query" button for explicit re-execution
+                    if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{hash(query_text)}"):
+                        st.session_state[force_rerun_key] = True
+                        st.rerun()
                 else:
                     # Execution failed - show error with details from warnings
                     error_msg = "Execution failed"
