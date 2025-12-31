@@ -118,6 +118,11 @@ class ColumnMapper:
                         )
 
                 # Build Polars expression for mapping
+                # Default to NULL (not 0) to preserve data integrity:
+                # - Unmapped values remain NULL (explicit missing data)
+                # - Downstream code uses .drop_nulls() before aggregations (see compute.py)
+                # - Statistical analyses handle NULLs correctly (logistic regression, etc.)
+                # - Validation raises DataQualityError if unmapped non-null values exist
                 expr = pl.lit(None)  # default to NULL, not 0
                 for key, value in mapping.items():
                     # Handle both string and boolean keys
