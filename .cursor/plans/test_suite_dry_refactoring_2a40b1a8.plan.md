@@ -113,7 +113,7 @@ todos:
       - phase5-convert-scopes
   - id: final-validation
     content: Run make check, verify test count/grep metrics, and confirm compliance with AGENTS.md
-    status: pending
+    status: completed
     dependencies:
       - phase1-verify
       - phase2-verify
