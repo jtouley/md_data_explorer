@@ -798,6 +798,49 @@ def detect_schema_drift(schema1: dict[str, Any], schema2: dict[str, Any]) -> tup
     return has_drift, drift_details
 
 
+def assert_metadata_invariants(metadata: dict[str, Any]) -> None:
+    """
+    Assert critical metadata invariants.
+
+    Validates that metadata satisfies required structural constraints before
+    operations that depend on version history (rollback, overwrite, etc.).
+
+    Args:
+        metadata: Dataset metadata to validate
+
+    Raises:
+        ValueError: If any invariant is violated
+
+    Invariants:
+    - version_history must exist and be non-empty
+    - Exactly one version must be marked is_active=True
+    - Active version must have valid tables structure
+    """
+    # Invariant 1: version_history must exist
+    if "version_history" not in metadata:
+        raise ValueError("Metadata missing required 'version_history' field")
+
+    version_history = metadata["version_history"]
+
+    # Invariant 2: version_history must be non-empty
+    if not version_history:
+        raise ValueError("version_history cannot be empty")
+
+    # Invariant 3: Exactly one active version
+    active_versions = [v for v in version_history if v.get("is_active", False)]
+    if len(active_versions) == 0:
+        raise ValueError("No active version found in version_history")
+    if len(active_versions) > 1:
+        raise ValueError(f"Multiple active versions found: {len(active_versions)} (should be exactly 1)")
+
+    # Invariant 4: Active version has valid structure
+    active_version = active_versions[0]
+    if "tables" not in active_version:
+        raise ValueError("Active version missing 'tables' field")
+    if not isinstance(active_version["tables"], dict):
+        raise ValueError("Active version 'tables' must be a dict")
+
+
 def save_table_list(
     storage: "UserDatasetStorage",
     tables: list[dict[str, Any]],

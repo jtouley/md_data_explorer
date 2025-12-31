@@ -868,6 +868,82 @@ class TestSchemaDriftDetection:
         assert "age" in drift_details["type_changes"]
 
 
+class TestMetadataInvariants:
+    """Test suite for metadata invariants (Phase 4.1)."""
+
+    def test_assert_invariants_valid_metadata(self, tmp_path):
+        """Valid metadata should pass invariant assertions."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        # Arrange: Valid metadata
+        metadata = {
+            "upload_id": "test_upload_123",
+            "dataset_name": "test_dataset",
+            "dataset_version": "abc123",
+            "version_history": [
+                {
+                    "version": "abc123",
+                    "created_at": "2024-01-01T00:00:00",
+                    "is_active": True,
+                    "tables": {
+                        "test": {
+                            "parquet_path": "path/to/test.parquet",
+                            "duckdb_table": "test",
+                            "row_count": 100,
+                            "column_count": 5,
+                            "schema_fingerprint": "fingerprint123",
+                        }
+                    },
+                }
+            ],
+        }
+
+        # Act & Assert: Should not raise
+        assert_metadata_invariants(metadata)
+
+    def test_assert_invariants_missing_version_history(self, tmp_path):
+        """Missing version_history should raise ValueError."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        # Arrange: Metadata without version_history
+        metadata = {
+            "upload_id": "test_upload_123",
+            "dataset_name": "test_dataset",
+        }
+
+        # Act & Assert: Should raise ValueError
+        try:
+            assert_metadata_invariants(metadata)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "version_history" in str(e).lower()
+
+    def test_assert_invariants_no_active_version(self, tmp_path):
+        """No active version should raise ValueError."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        # Arrange: version_history with no active version
+        metadata = {
+            "upload_id": "test_upload_123",
+            "dataset_name": "test_dataset",
+            "version_history": [
+                {
+                    "version": "abc123",
+                    "created_at": "2024-01-01T00:00:00",
+                    "is_active": False,  # Not active
+                    "tables": {},
+                }
+            ],
+        }
+
+        # Act & Assert: Should raise ValueError
+        try:
+            assert_metadata_invariants(metadata)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "active version" in str(e).lower()
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 
