@@ -1159,12 +1159,13 @@ class TestFactAggregation:
 class TestBuildUnifiedCohort:
     """Test suite for build_unified_cohort() aggregate-before-join refactor."""
 
-    def test_build_unified_cohort_does_not_use_legacy_duckdb_join(self):
+    def test_build_unified_cohort_does_not_use_legacy_duckdb_join(self, make_multi_table_setup):
         """Ensure build_unified_cohort() does not execute legacy DuckDB SQL join."""
         import duckdb
 
         # Arrange: Create handler with test data
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1199,10 +1200,11 @@ class TestBuildUnifiedCohort:
             duckdb.DuckDBPyConnection.execute = original_execute
             handler.close()
 
-    def test_feature_joins_preserve_row_count(self):
+    def test_feature_joins_preserve_row_count(self, make_multi_table_setup):
         """Feature joins should not change row count (1:1 validation)."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1242,10 +1244,11 @@ class TestBuildUnifiedCohort:
         with pytest.raises(pl.exceptions.ComputeError):
             left.join(right, on="patient_id", how="left", validate="1:1").collect()
 
-    def test_build_unified_cohort_deterministic_columns(self):
+    def test_build_unified_cohort_deterministic_columns(self, make_multi_table_setup):
         """Unified cohort should have deterministic column order."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1280,10 +1283,10 @@ class TestBuildUnifiedCohort:
 
         handler.close()
 
-    def test_build_unified_cohort_rejects_invalid_join_type(self):
+    def test_build_unified_cohort_rejects_invalid_join_type(self, make_multi_table_setup):
         """Invalid join_type should raise ValueError."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1296,10 +1299,10 @@ class TestBuildUnifiedCohort:
 
         handler.close()
 
-    def test_build_unified_cohort_accepts_case_insensitive_join_type(self):
+    def test_build_unified_cohort_accepts_case_insensitive_join_type(self, make_multi_table_setup):
         """join_type should normalize case-insensitively."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1319,10 +1322,11 @@ class TestBuildUnifiedCohort:
 class TestMaterializeMart:
     """Test suite for Milestone 5: Materialization and Planning."""
 
-    def test_materialize_mart_writes_parquet(self, tmp_path):
+    def test_materialize_mart_writes_parquet(self, tmp_path, make_multi_table_setup):
         """Verify materialize_mart() writes Parquet files correctly."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1356,10 +1360,10 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_materialize_mart_caching_works(self, tmp_path):
+    def test_materialize_mart_caching_works(self, tmp_path, make_multi_table_setup):
         """Verify caching works: skip recompute if run_id exists."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1382,10 +1386,11 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_materialize_mart_rowcount_matches_build_unified_cohort(self, tmp_path):
+    def test_materialize_mart_rowcount_matches_build_unified_cohort(self, tmp_path, make_multi_table_setup):
         """Verify materialized mart rowcount matches build_unified_cohort()."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
@@ -1416,10 +1421,11 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_materialize_mart_patient_level_single_file(self, tmp_path):
+    def test_materialize_mart_patient_level_single_file(self, tmp_path, make_multi_table_setup):
         """Verify patient-level marts use single file (not partitioned)."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         vitals = pl.DataFrame(
             {
