@@ -171,6 +171,52 @@ else
     echo -e "${YELLOW}⚠ Sepsis dataset not found (will skip in UI)${NC}"
 fi
 
+# Check persistent storage (DuckDB and user uploads)
+echo ""
+echo -e "${YELLOW}💾 Checking persistent storage...${NC}"
+
+# Ensure data directory exists
+mkdir -p "$PROJECT_ROOT/data"
+mkdir -p "$PROJECT_ROOT/data/uploads/raw"
+mkdir -p "$PROJECT_ROOT/data/uploads/metadata"
+mkdir -p "$PROJECT_ROOT/data/parquet"
+
+# Check persistent DuckDB
+DB_PATH="$PROJECT_ROOT/data/analytics.duckdb"
+if [ -f "$DB_PATH" ]; then
+    # Get database size
+    DB_SIZE=$(du -h "$DB_PATH" 2>/dev/null | cut -f1 || echo "unknown")
+    echo -e "${GREEN}✓ Persistent DuckDB found (${DB_SIZE})${NC}"
+else
+    echo -e "${YELLOW}⚠ Persistent DuckDB not found (will be created on first upload)${NC}"
+fi
+
+# Check user uploads
+UPLOADS_DIR="$PROJECT_ROOT/data/uploads"
+METADATA_DIR="$UPLOADS_DIR/metadata"
+if [ -d "$METADATA_DIR" ]; then
+    # Count metadata files (each represents an upload)
+    UPLOAD_COUNT=$(find "$METADATA_DIR" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$UPLOAD_COUNT" -gt 0 ]; then
+        echo -e "${GREEN}✓ Found ${UPLOAD_COUNT} user upload(s)${NC}"
+    else
+        echo -e "${CYAN}ℹ No user uploads yet${NC}"
+    fi
+else
+    echo -e "${CYAN}ℹ Uploads directory ready (no uploads yet)${NC}"
+fi
+
+# Check Parquet exports
+PARQUET_DIR="$PROJECT_ROOT/data/parquet"
+if [ -d "$PARQUET_DIR" ]; then
+    PARQUET_COUNT=$(find "$PARQUET_DIR" -name "*.parquet" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$PARQUET_COUNT" -gt 0 ]; then
+        echo -e "${GREEN}✓ Found ${PARQUET_COUNT} Parquet export(s)${NC}"
+    fi
+fi
+
+echo -e "${CYAN}   Storage directories ready${NC}"
+
 # Check and install Ollama LLM service (self-contained, like DuckDB)
 echo ""
 echo -e "${YELLOW}🤖 Setting up Ollama LLM service...${NC}"
