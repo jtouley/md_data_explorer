@@ -1233,11 +1233,27 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                     # Try to infer column from earlier "on X" pattern in query
                     inferred_column = None
 
-                    # Check if value_phrase looks like a coded value (n/a, 0, etc.)
+                    # Extract actual value from phrases like "the n/a (0)" or "n/a (0)"
+                    # Try to find parenthesized number or standalone number/value
+                    value_str = value_phrase
+                    parenthesized_num = re.search(r"\((\d+)\)", value_phrase)
+                    if parenthesized_num:
+                        # Found "(0)" or "(1)" etc. - use that as the value
+                        value_str = parenthesized_num.group(1)
+                    elif "n/a" in value_phrase.lower() or "na" in value_phrase.lower():
+                        # Contains "n/a" or "na" - normalize to "n/a"
+                        value_str = "n/a"
+                    elif any(char.isdigit() for char in value_phrase):
+                        # Contains digits - extract just the digits
+                        digits_match = re.search(r"(\d+)", value_phrase)
+                        if digits_match:
+                            value_str = digits_match.group(1)
+
+                    # Check if value_str looks like a coded value (n/a, 0, etc.)
                     is_value = (
-                        value_phrase.lower() in ["n/a", "na", "none", "unknown"]
-                        or value_phrase.isdigit()
-                        or (value_phrase.startswith("0") and ":" in value_phrase)  # Coded value like "0: n/a"
+                        value_str.lower() in ["n/a", "na", "none", "unknown"]
+                        or value_str.isdigit()
+                        or (value_str.startswith("0") and ":" in value_str)  # Coded value like "0: n/a"
                     )
 
                     if is_value:
@@ -1253,10 +1269,11 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                                 # Map value to code
                                 # For "n/a", "na", "none" → code 0
                                 # For numeric strings → parse as int
-                                if value_phrase.lower() in ["n/a", "na", "none", "unknown"]:
+                                # Use value_str (extracted value) instead of value_phrase
+                                if value_str.lower() in ["n/a", "na", "none", "unknown"]:
                                     exclusion_value = 0
-                                elif value_phrase.isdigit():
-                                    exclusion_value = int(value_phrase)
+                                elif value_str.isdigit():
+                                    exclusion_value = int(value_str)
                                 else:
                                     # Unknown value, skip
                                     continue
