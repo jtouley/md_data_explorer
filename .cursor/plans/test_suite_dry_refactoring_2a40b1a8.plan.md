@@ -83,7 +83,7 @@ todos:
       - phase2-refactor-schema
   - id: phase3-import-cleanup
     content: Remove redundant import polars as pl from 32 test files (optional, verify conftest.py import works first)
-    status: pending
+    status: cancelled
   - id: phase4-consolidate-fixtures
     content: Review and consolidate similar fixtures (sample_cohort_with_categorical/numeric) and add documentation
     status: pending
