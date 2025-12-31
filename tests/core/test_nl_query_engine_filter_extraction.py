@@ -565,6 +565,98 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
 class TestExclusionFilters:
     """Test exclusion filter patterns like 'excluding those not on X'."""
 
+    def test_exclude_variant_creates_exclusion_filter(self, mock_semantic_layer):
+        """Test that 'exclude' variant (not just 'excluding') creates exclusion filter."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from query with "exclude" (not "excluding")
+        query = "only include patients on statins, exclude n/a"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0
+        assert intent is not None
+        assert len(intent.filters) > 0
+        # Find exclusion filter (operator "!=")
+        exclusion_filters = [f for f in intent.filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter for 'exclude n/a'"
+        # Filter should exclude code 0 (n/a)
+        na_filter = exclusion_filters[0]
+        assert na_filter.column == "statin_used"
+        assert na_filter.value == 0
+
+    def test_remove_pattern_creates_exclusion_filter(self, mock_semantic_layer):
+        """Test that 'remove' pattern creates exclusion filter."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from query with "remove" (provide context with "on statins")
+        query = "patients on statins, results are skewed, remove 0"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0
+        assert intent is not None
+        assert len(intent.filters) > 0
+        # Find exclusion filter (operator "!=")
+        exclusion_filters = [f for f in intent.filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter for 'remove 0'"
+        # Filter should exclude code 0
+        remove_filter = exclusion_filters[0]
+        assert remove_filter.value == 0
+
+    def test_exclude_na_value_maps_to_code_zero(self, mock_semantic_layer):
+        """Test that 'exclude n/a' maps to code 0 for coded columns."""
+        # Arrange: Create semantic layer with coded column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from query with explicit "n/a" value
+        query = "patients on statins exclude n/a"
+        intent = engine.parse_query(query)
+
+        # Assert: Should map "n/a" to code 0
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filters = [f for f in intent.filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter for 'exclude n/a'"
+        na_filter = exclusion_filters[0]
+        assert na_filter.value == 0, "Should map 'n/a' to code 0"
+
     def test_exclusion_filter_excludes_code_zero(self, mock_semantic_layer):
         """Test that 'excluding those not on X' creates a filter to exclude code 0."""
         # Arrange: Create semantic layer with statin column

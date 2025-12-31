@@ -1168,6 +1168,12 @@ Examples:
             r"excluding\s+(?:those|patients|subjects|people)\s+(?:(?:that|who)\s+)?(?:(?:were|are)\s+)?not\s+on\s+(\w+)",
             # "excluding X" (fallback, handles commas) - must stop at continuation words
             r"excluding\s+([^,\.\?]+?)(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            # Phase 4.1: Add "exclude" variant (not just "excluding")
+            # Handles: "exclude n/a", "exclude 0", etc.
+            r"exclude\s+([^,\.\?]+?)(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            # Phase 4.1: Add "remove" pattern for value exclusion
+            # Handles: "remove 0", "remove n/a", etc.
+            r"remove\s+([^,\.\?]+?)(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
         ]
 
         # Track which value phrases were already processed by exclusion patterns
@@ -1187,6 +1193,55 @@ Examples:
                     continue
 
                 column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
+
+                # Phase 4.1: Handle direct value exclusion (e.g., "exclude n/a", "remove 0")
+                # If fuzzy matching fails (value_phrase is a value, not a column name),
+                # try to infer the column from context
+                if not column_name or conf <= 0.5:
+                    # Value phrases like "n/a", "0", "na" indicate value exclusion
+                    # Try to infer column from earlier "on X" pattern in query
+                    inferred_column = None
+
+                    # Check if value_phrase looks like a coded value (n/a, 0, etc.)
+                    is_value = (
+                        value_phrase.lower() in ["n/a", "na", "none", "unknown"]
+                        or value_phrase.isdigit()
+                        or (value_phrase.startswith("0") and ":" in value_phrase)  # Coded value like "0: n/a"
+                    )
+
+                    if is_value:
+                        # Try to find "on X" pattern earlier in query to infer column
+                        on_pattern = r"on\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)"
+                        on_matches = list(re.finditer(on_pattern, query_lower))
+                        if on_matches:
+                            # Use the last "on X" match (most recent context)
+                            inferred_term = on_matches[-1].group(1).strip()
+                            inferred_column, inferred_conf, _ = self._fuzzy_match_variable(inferred_term)
+
+                            if inferred_column and inferred_conf > 0.5:
+                                # Map value to code
+                                # For "n/a", "na", "none" → code 0
+                                # For numeric strings → parse as int
+                                if value_phrase.lower() in ["n/a", "na", "none", "unknown"]:
+                                    exclusion_value = 0
+                                elif value_phrase.isdigit():
+                                    exclusion_value = int(value_phrase)
+                                else:
+                                    # Unknown value, skip
+                                    continue
+
+                                # Create exclusion filter with inferred column
+                                filters.append(
+                                    FilterSpec(
+                                        column=inferred_column,
+                                        operator="!=",
+                                        value=exclusion_value,
+                                        exclude_nulls=True,
+                                    )
+                                )
+                                processed_value_phrases.add(value_phrase)
+                                continue
+
                 if column_name and conf > 0.5:
                     # Normalize column name: if _fuzzy_match_variable returned full alias string,
                     # look up the canonical name from alias_index
