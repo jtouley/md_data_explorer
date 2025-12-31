@@ -62,48 +62,52 @@ class TestSemanticLayerObservability:
         assert isinstance(result["warnings"], list)
 
     def test_low_confidence_adds_warning_with_explanation(self, semantic_layer):
-        """Low confidence should add warning with explanation (Phase 2.1)."""
+        """Low confidence should add warning with explanation (Phase 2.2)."""
         # Arrange: Low confidence plan
         plan = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.3)
 
         # Act
         result = semantic_layer.execute_query_plan(plan, confidence_threshold=0.75)
 
-        # Assert: Warning should explain low confidence
+        # Assert: Warning should explain low confidence (Phase 2.2: no blocking)
         assert "warnings" in result
-        if not result.get("success", False):
-            # Gate still active, but we should start collecting warnings
-            assert "requires_confirmation" in result
-            # After Phase 2.1, warnings should be added alongside requires_confirmation
+        assert len(result["warnings"]) > 0
+        assert "Low confidence" in result["warnings"][0]
+        assert "0.30" in result["warnings"][0]
+        # Phase 2.2: Should still execute successfully despite low confidence
+        assert result["success"] is True
 
     def test_incomplete_plan_adds_warning_with_explanation(self, semantic_layer):
-        """Incomplete plan should add warning with explanation (Phase 2.1)."""
+        """Incomplete plan should add warning with explanation (Phase 2.2)."""
         # Arrange: Incomplete COUNT plan (no entity_key, no group_by)
         plan = QueryPlan(intent="COUNT", confidence=0.9)
 
         # Act
         result = semantic_layer.execute_query_plan(plan)
 
-        # Assert: Warning should explain incompleteness
+        # Assert: Warning should explain incompleteness (Phase 2.2: warning only, no blocking)
         assert "warnings" in result
-        if not result.get("success", False):
-            # Gate still active
-            assert "requires_confirmation" in result
-            assert "failure_reason" in result
+        assert len(result["warnings"]) > 0
+        assert "Incomplete plan" in result["warnings"][0]
+        # Phase 2.2: Still attempts execution (may succeed or fail depending on implementation)
+        # The key is that incompleteness doesn't block - it only warns
 
     def test_validation_failure_adds_warning_with_explanation(self, semantic_layer):
-        """Validation failure should add warning with explanation (Phase 2.1)."""
+        """Validation failure should add warning with explanation (Phase 2.2)."""
         # Arrange: Plan with nonexistent column
         plan = QueryPlan(intent="COUNT", entity_key="nonexistent_column", confidence=0.9)
 
         # Act
         result = semantic_layer.execute_query_plan(plan)
 
-        # Assert: Warning should explain validation failure
+        # Assert: Warning should explain validation failure (Phase 2.2: warnings collected, then execution fails)
         assert "warnings" in result
-        if not result.get("success", False):
-            assert "requires_confirmation" in result
-            assert "failure_reason" in result
+        assert len(result["warnings"]) >= 1  # At least one warning
+        # Should have validation warning (may also have execution error)
+        warnings_text = " ".join(result["warnings"])
+        assert "Validation failed" in warnings_text or "nonexistent_column" in warnings_text
+        # Phase 2.2: Execution will fail (not gated, but actual execution error)
+        assert result["success"] is False
 
     def test_successful_execution_has_empty_warnings(self, semantic_layer):
         """Successful execution with no issues should have empty warnings (Phase 2.1)."""

@@ -809,6 +809,18 @@ All quality gates passing
    make test-core
    ```
 
+**✅ PHASE 2.1 COMPLETED** (Commit: `c3694ba`)
+- Added warnings infrastructure to `execute_query_plan()` in semantic.py
+- Created `tests/core/test_semantic_observability.py` with 5 tests (all passing)
+- Return dict now includes `warnings: list[str]` field
+- Warnings include explanatory messages for:
+  - Low confidence: Shows actual vs threshold confidence values
+  - Incomplete plans: Explains missing required fields
+  - Validation failures: Details which columns/operators failed
+- All 5 observability tests passing
+- Quality gates passed (formatting, linting, type-checking had pre-existing errors)
+- Full test suite: 780 passed, 18 failed (pre-existing failures unrelated to Phase 2.1)
+
 ### Phase 2.2: Remove Gating Logic from execute_query_plan() (Includes Phase 1.6)
 
 **Files**:
@@ -881,6 +893,21 @@ All quality gates passing
    make test-core
    ```
 
+**✅ PHASE 2.2 COMPLETED** (Not yet committed - in progress)
+- Removed all gating logic from `execute_query_plan()` in semantic.py
+- Converted confidence, completeness, and validation gates to non-blocking warnings
+- Updated return signature: removed `requires_confirmation` and `failure_reason` fields
+- Always attempts execution now - only actual errors cause success=False
+- Updated `tests/core/test_semantic_observability.py` - all 5 tests passing
+- Updated `tests/core/test_semantic_queryplan_execution.py` - updated 5 tests:
+  - `test_execute_query_plan_validates_columns_exist` - expects warnings instead of blocking
+  - `test_execute_query_plan_validates_operators` - expects warnings instead of blocking
+  - `test_execute_query_plan_confidence_gating` - expects warnings, non-blocking execution
+  - `test_execute_query_plan_completeness_gating` - expects warnings for incomplete plans
+  - `test_execute_query_plan_refuses_invalid_plans` - expects warnings for contract violations
+- All Phase 2.2 tests passing (10/10)
+- Core test suite: 355 passed, 9 failed (pre-existing dataset availability issues), 26 skipped
+- Phase 2.2 successfully merged Phase 1.6 (move validation to warnings)
 
 ### Phase 2.3: Remove Confirmation UI
 

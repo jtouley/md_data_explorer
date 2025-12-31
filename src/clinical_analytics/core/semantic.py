@@ -1167,87 +1167,59 @@ class SemanticLayer:
         self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
     ) -> dict[str, Any]:  # type: ignore[valid-type]
         """
-        Execute a QueryPlan with confidence and completeness gating (ADR003 Phase 3 + Phase 2.1 Observability).
+        Execute a QueryPlan with warnings for observability (ADR003 Phase 3 + Phase 2.2).
 
-        Phase 2.1: Added warnings infrastructure for observability before removing gates.
+        Phase 2.1: Added warnings infrastructure for observability.
+        Phase 2.2: Removed gating logic - always execute, collect warnings only.
 
-        This method enforces hard gates before execution:
-        - Confidence must be >= threshold
-        - Plan must be complete (all required fields present)
-        - Plan must pass validation (columns exist, operators valid, types compatible)
+        This method no longer blocks execution. Instead, it:
+        - Collects warnings for low confidence, incompleteness, validation issues
+        - Always attempts execution
+        - Returns success=False only for actual execution errors
 
         Args:
             plan: QueryPlan to execute
-            confidence_threshold: Minimum confidence required (default: 0.75)
+            confidence_threshold: Minimum confidence for warning threshold (default: 0.75)
             query_text: Optional query text for run_key generation
 
         Returns:
             dict with keys:
             - "success": bool - Whether execution succeeded
-            - "requires_confirmation": bool - True if gate failed (user must confirm)
-            - "failure_reason": str - Explanation if gate failed
             - "result": pd.DataFrame | None - Query results if successful
-            - "run_key": str | None - Deterministic run key for idempotency
-            - "warnings": list[str] - Warnings collected during execution (Phase 2.1)
+            - "run_key": str - Deterministic run key for idempotency
+            - "warnings": list[str] - Warnings collected during execution
         """
-        # Phase 2.1: Initialize warnings list for observability
+        # Phase 2.2: Initialize warnings list for observability
         warnings: list[str] = []
 
-        # Step 1: Confidence Gating (with warning collection)
+        # Step 1: Confidence Check (warning only, no blocking)
         if plan.confidence < confidence_threshold:
             warning_msg = (
                 f"Low confidence: {plan.confidence:.2f} (threshold: {confidence_threshold:.2f}). "
                 f"Query interpretation may be ambiguous or uncertain."
             )
             warnings.append(warning_msg)
-            return {
-                "success": False,
-                "requires_confirmation": True,
-                "failure_reason": f"Confidence {plan.confidence:.2f} below threshold {confidence_threshold:.2f}",
-                "result": None,
-                "run_key": None,
-                "warnings": warnings,
-            }
 
-        # Step 2: Completeness Gating (with warning collection)
+        # Step 2: Completeness Check (warning only, no blocking)
         is_complete, completeness_error = self._check_plan_completeness(plan)
         if not is_complete:
             warning_msg = f"Incomplete plan: {completeness_error}"
             warnings.append(warning_msg)
-            return {
-                "success": False,
-                "requires_confirmation": True,
-                "failure_reason": completeness_error,
-                "result": None,
-                "run_key": None,
-                "warnings": warnings,
-            }
 
-        # Step 3: Validation Gating (with warning collection)
+        # Step 3: Validation Check (warning only, no blocking)
         validation_result = self._validate_query_plan(plan)
         if not validation_result["valid"]:
             warning_msg = f"Validation failed: {validation_result['error']}"
             warnings.append(warning_msg)
-            return {
-                "success": False,
-                "requires_confirmation": True,
-                "failure_reason": validation_result["error"],
-                "result": None,
-                "run_key": None,
-                "warnings": warnings,
-            }
 
-        # Step 4: Generate run_key
+        # Step 4: Generate run_key (always generate)
         run_key = self._generate_run_key(plan, query_text)
 
-        # Step 5: Execute query
+        # Step 5: Execute query (always attempt execution)
         try:
             result_df = self._execute_plan(plan)
-            # Success: no warnings
             return {
                 "success": True,
-                "requires_confirmation": False,
-                "failure_reason": None,
                 "result": result_df,
                 "run_key": run_key,
                 "warnings": warnings,
@@ -1258,8 +1230,6 @@ class SemanticLayer:
             warnings.append(warning_msg)
             return {
                 "success": False,
-                "requires_confirmation": True,
-                "failure_reason": f"Execution error: {str(e)}",
                 "result": None,
                 "run_key": run_key,
                 "warnings": warnings,
