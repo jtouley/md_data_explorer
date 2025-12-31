@@ -7,9 +7,12 @@ Handles secure storage, metadata management, and persistence of uploaded dataset
 import hashlib
 import json
 import logging
+import platform
+import time
 import uuid
 import zipfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -32,6 +35,101 @@ class UploadError(Exception):
     """Upload processing error (malformed files, invalid content, etc.)."""
 
     pass
+
+
+class FileLockTimeoutError(Exception):
+    """File lock acquisition timeout error."""
+
+    pass
+
+
+@contextmanager
+def file_lock(file_path: Path, timeout: float = 10.0):
+    """
+    Cross-platform file locking context manager.
+
+    Provides exclusive file locking for metadata writes to prevent corruption
+    from concurrent Streamlit reruns.
+
+    Uses fcntl (Unix/Linux/macOS) or msvcrt (Windows) for file locking.
+
+    Args:
+        file_path: Path to file to lock
+        timeout: Maximum time to wait for lock acquisition (seconds)
+
+    Yields:
+        File handle (opened for read-write, will not truncate existing content)
+
+    Raises:
+        FileLockTimeoutError: If lock cannot be acquired within timeout
+
+    Example:
+        >>> with file_lock(metadata_path) as f:
+        ...     metadata = json.load(f)
+        ...     metadata['updated'] = True
+        ...     f.seek(0)
+        ...     f.truncate()
+        ...     json.dump(metadata, f)
+    """
+    file_path = Path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Open file for read-write, create if doesn't exist
+    # Use 'r+' mode if file exists, 'w+' if it doesn't (to create it)
+    if file_path.exists():
+        f = open(file_path, "r+")
+    else:
+        f = open(file_path, "w+")
+
+    try:
+        # Platform-specific locking
+        is_windows = platform.system() == "Windows"
+
+        if is_windows:
+            # Windows: Use msvcrt
+            import msvcrt
+
+            start_time = time.time()
+            while True:
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    break  # Lock acquired
+                except OSError:
+                    if time.time() - start_time > timeout:
+                        raise FileLockTimeoutError(f"Could not acquire lock on {file_path} within {timeout}s")
+                    time.sleep(0.1)  # Wait and retry
+        else:
+            # Unix/Linux/macOS: Use fcntl
+            import fcntl
+
+            start_time = time.time()
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break  # Lock acquired
+                except BlockingIOError:
+                    if time.time() - start_time > timeout:
+                        raise FileLockTimeoutError(f"Could not acquire lock on {file_path} within {timeout}s")
+                    time.sleep(0.1)  # Wait and retry
+
+        # Lock acquired, yield file handle
+        yield f
+
+    finally:
+        # Release lock (automatic on file close, but explicit is better)
+        try:
+            if is_windows:
+                import msvcrt
+
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass  # Best-effort unlock
+
+        f.close()
 
 
 # Re-export schema conversion functions for backward compatibility

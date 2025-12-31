@@ -517,6 +517,63 @@ class TestSaveTableList:
         assert saved_metadata["tables"] == ["patients", "admissions"]
 
 
+class TestFileLocking:
+    """Test suite for file locking helper (Phase 0)."""
+
+    def test_file_lock_exclusive_access(self, tmp_path):
+        """File lock should provide exclusive access to metadata file."""
+        import threading
+        import time
+
+        from clinical_analytics.ui.storage.user_datasets import file_lock
+
+        # Arrange: Create a metadata file
+        metadata_file = tmp_path / "test_metadata.json"
+        metadata_file.write_text('{"test": "data"}')
+
+        # Track if second thread acquired lock
+        lock_acquired = {"value": False}
+
+        def try_acquire_lock():
+            # Try to acquire lock while main thread holds it
+            time.sleep(0.1)  # Give main thread time to acquire lock
+            try:
+                with file_lock(metadata_file, timeout=0.2):
+                    lock_acquired["value"] = True
+            except Exception:
+                # Expected: should timeout
+                pass
+
+        # Act: Main thread acquires lock, second thread tries
+        thread = threading.Thread(target=try_acquire_lock)
+        thread.start()
+
+        with file_lock(metadata_file):
+            # Hold lock for a bit
+            time.sleep(0.5)
+
+        thread.join()
+
+        # Assert: Second thread should not have acquired lock
+        assert lock_acquired["value"] is False, "Second thread should not acquire lock while first holds it"
+
+    def test_file_lock_platform_support(self, tmp_path):
+        """File lock should work on both Unix (fcntl) and Windows (msvcrt)."""
+        from clinical_analytics.ui.storage.user_datasets import file_lock
+
+        # Arrange: Create metadata file
+        metadata_file = tmp_path / "test_metadata.json"
+        metadata_file.write_text('{"test": "data"}')
+
+        # Act: Create lock helper (should auto-detect platform)
+        with file_lock(metadata_file):
+            # Assert: Lock acquired without error
+            assert metadata_file.exists()
+
+        # Verify correct module was used (indirect test via success)
+        # Direct module check would be implementation detail
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 
