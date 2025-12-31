@@ -1,28 +1,27 @@
-# Active Session: ADR001 Exclusion Filters Complete
+---
+description: Active development session reference
+globs: 
+alwaysApply: true
+---
 
-**Session ID**: `adr001-exclusion-filters-complete`
+# Active Session: pr21-feedback-merge-ready
 
-**Session File**: `.context/sessions/adr001-exclusion-filters-complete.yaml`
+## Session File
+`.context/sessions/pr21-feedback-merge-ready.yaml`
 
-**Status**: Complete - PR #16 open for review
+## Resume Prompt
+Resume PR21 feedback implementation session.
+Branch: feat/queryplan-as-product-critical-fixes
+Commit: 535a86a
+Status: All PR21 fixes implemented and verified. Ready for merge.
 
-**Resume Prompt**:
+Blockers addressed:
+1. hash(query_text) replaced with sha256 - verified no remaining hash() calls
+2. Mapper NULL handling - verified downstream consumers use drop_nulls()
 
-Resume ADR001 implementation work. The exclusion filter patterns for "excluding those not on X" queries have been completed and tested. All tests pass (20+ filter extraction tests, 4 exclusion filter tests proving extensibility). PR #16 is open for review.
+Next action: Merge PR or address any additional reviewer feedback.
 
-Key accomplishments:
-- Generic exclusion filter patterns (no hardcoding, works for any medication/treatment type)
-- Column name normalization to ensure canonical names in FilterSpec
-- Extensibility tests for diabetes meds and treatment types
-- All ADR001 phases complete (0-3)
-
-Next steps (out of scope for ADR001):
-- ADR002: Persistent storage, JSONL logging, lazy evaluation
-- ADR003: Trust UI, adaptive alias persistence, semantic layer execution
-
-Decision boundaries documented:
-- Pattern matching (Tier 1/1.5): 75% of queries
-- Semantic embeddings (Tier 2): When pattern matching fails
-- LLM (Tier 3): Only for complex multi-part queries
-- Polars expressions: Filter application and analysis
-- SQL/Ibis: Future optimization (ADR003 Phase 3)
+## Key Context
+- Semantic layer owns run_key generation (PR21 architecture)
+- 786 tests passing, 17 failing (dataset availability, not PR21-related)
+- All quality gates green (lint, format)

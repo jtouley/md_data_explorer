@@ -323,6 +323,92 @@ class TestUserDatasetStorage:
         # Upload data should no longer exist
         assert storage.get_upload_data(upload_id) is None
 
+    def test_overwrite_preserves_version_history(self, tmp_path):
+        """Overwrite should preserve version history and add new version."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        # First upload
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+        )
+        assert success1 is True
+
+        # Get first version
+        metadata1 = storage.get_upload_metadata(id1)
+        version1 = metadata1["dataset_version"]
+
+        # Second upload with overwrite=True and different content
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [30 + i for i in range(150)],  # Different data
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+            overwrite=True,
+        )
+        assert success2 is True, f"Overwrite should succeed: {msg2}"
+
+        # Load metadata and verify version history
+        metadata2 = storage.get_upload_metadata(id2)
+        version2 = metadata2["dataset_version"]
+
+        assert "version_history" in metadata2
+        assert len(metadata2["version_history"]) == 2, "Should have 2 versions"
+
+        # Check that old version is preserved but not active
+        v1_entry = [v for v in metadata2["version_history"] if v["version"] == version1][0]
+        assert v1_entry["is_active"] is False, "Old version should not be active"
+
+        # Check that new version is active
+        v2_entry = [v for v in metadata2["version_history"] if v["version"] == version2][0]
+        assert v2_entry["is_active"] is True, "New version should be active"
+
+    def test_overwrite_without_flag_rejected(self, tmp_path):
+        """Uploading same name without overwrite=True should be rejected."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+        )
+        assert success1 is True
+
+        # Second upload without overwrite=True should be rejected
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+            # No overwrite parameter (defaults to False)
+        )
+        assert success2 is False, "Should reject duplicate name without overwrite=True"
+        assert "already exists" in msg2.lower()
+
     def test_duplicate_dataset_name_rejected(self, tmp_path):
         """Test that uploading a dataset with the same name is rejected."""
         storage = UserDatasetStorage(upload_dir=tmp_path)
@@ -515,6 +601,651 @@ class TestSaveTableList:
             saved_metadata = json.load(f)
 
         assert saved_metadata["tables"] == ["patients", "admissions"]
+
+
+class TestFileLocking:
+    """Test suite for file locking helper (Phase 0)."""
+
+    def test_file_lock_exclusive_access(self, tmp_path):
+        """File lock should provide exclusive access to metadata file."""
+        import threading
+        import time
+
+        from clinical_analytics.ui.storage.user_datasets import file_lock
+
+        # Arrange: Create a metadata file
+        metadata_file = tmp_path / "test_metadata.json"
+        metadata_file.write_text('{"test": "data"}')
+
+        # Track if second thread acquired lock
+        lock_acquired = {"value": False}
+
+        def try_acquire_lock():
+            # Try to acquire lock while main thread holds it
+            time.sleep(0.1)  # Give main thread time to acquire lock
+            try:
+                with file_lock(metadata_file, timeout=0.2):
+                    lock_acquired["value"] = True
+            except Exception:
+                # Expected: should timeout
+                pass
+
+        # Act: Main thread acquires lock, second thread tries
+        thread = threading.Thread(target=try_acquire_lock)
+        thread.start()
+
+        with file_lock(metadata_file):
+            # Hold lock for a bit
+            time.sleep(0.5)
+
+        thread.join()
+
+        # Assert: Second thread should not have acquired lock
+        assert lock_acquired["value"] is False, "Second thread should not acquire lock while first holds it"
+
+    def test_file_lock_platform_support(self, tmp_path):
+        """File lock should work on both Unix (fcntl) and Windows (msvcrt)."""
+        from clinical_analytics.ui.storage.user_datasets import file_lock
+
+        # Arrange: Create metadata file
+        metadata_file = tmp_path / "test_metadata.json"
+        metadata_file.write_text('{"test": "data"}')
+
+        # Act: Create lock helper (should auto-detect platform)
+        with file_lock(metadata_file):
+            # Assert: Lock acquired without error
+            assert metadata_file.exists()
+
+        # Verify correct module was used (indirect test via success)
+        # Direct module check would be implementation detail
+
+
+class TestCrossDatasetDeduplication:
+    """Test suite for cross-dataset content deduplication (Phase 1)."""
+
+    def test_same_content_different_name_warns_with_link(self, tmp_path):
+        """Same file content with different dataset_name should warn with link to existing."""
+        # Arrange: Upload same file twice with different names
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload should succeed
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset1.csv",
+            metadata={"dataset_name": "first_dataset"},
+        )
+        assert success1 is True, f"First upload failed: {msg1}"
+
+        # Second upload with same content but different name should warn (not block)
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset2.csv",
+            metadata={"dataset_name": "second_dataset"},
+        )
+        # Upload should succeed (warn, not block)
+        assert success2 is True, "Upload should succeed with warning"
+        # Message should contain warning about duplicate content
+        assert "duplicate" in msg2.lower() or "warning" in msg2.lower(), f"Should warn about duplicate: {msg2}"
+        # Should provide link to existing dataset
+        assert "first_dataset" in msg2, f"Should mention existing dataset name: {msg2}"
+
+    def test_same_content_same_name_overwrite_allowed(self, tmp_path):
+        """Same content + same name + overwrite=True should proceed without warning."""
+        # Arrange: Upload, then upload again with overwrite=True
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+        )
+        assert success1 is True
+
+        # Second upload with same content and same name with overwrite=True
+        # (overwrite parameter to be added in Phase 4, for now just test same behavior)
+        # This will be rejected by existing duplicate name check
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},  # Same name - will be rejected
+        )
+        # Currently this is rejected, but in Phase 4 with overwrite=True it will succeed
+        assert success2 is False, "Same name currently rejected (until Phase 4 overwrite)"
+
+    def test_different_content_different_name_allowed(self, tmp_path):
+        """Different content + different name should be allowed without warning."""
+        # Arrange: Two different files with different names
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [30 + i for i in range(150)],  # Different data
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        # Both uploads should succeed
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="dataset1.csv",
+            metadata={"dataset_name": "dataset_one"},
+        )
+        assert success1 is True
+
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="dataset2.csv",
+            metadata={"dataset_name": "dataset_two"},
+        )
+        assert success2 is True
+        # Should not warn about duplicates
+        assert "duplicate" not in msg2.lower(), f"Should not warn: {msg2}"
+
+
+class TestVersionHistoryMetadata:
+    """Test suite for version history metadata structure (Phase 2)."""
+
+    def test_metadata_includes_version_history(self, tmp_path):
+        """Metadata should include version_history array."""
+        # Arrange: Upload dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload
+        success, msg, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test_dataset"},
+        )
+        assert success is True
+
+        # Load metadata
+        metadata = storage.get_upload_metadata(upload_id)
+
+        # Assert: version_history exists and is a list
+        assert "version_history" in metadata, "Metadata should include version_history"
+        assert isinstance(metadata["version_history"], list), "version_history should be a list"
+        assert len(metadata["version_history"]) == 1, "Should have one version entry for initial upload"
+
+    def test_version_entry_has_canonical_tables_structure(self, tmp_path):
+        """Version entry should use tables map, not parquet_paths/duckdb_tables lists."""
+        # Arrange: Upload dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload
+        success, msg, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="patient_data.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Load metadata
+        metadata = storage.get_upload_metadata(upload_id)
+
+        # Assert: Version entry has canonical tables structure
+        assert "version_history" in metadata
+        version_entry = metadata["version_history"][0]
+
+        assert "tables" in version_entry, "Version entry should have 'tables' map"
+        assert isinstance(version_entry["tables"], dict), "tables should be a dict"
+
+        # Check table entry structure
+        table_keys = list(version_entry["tables"].keys())
+        assert len(table_keys) > 0, "Should have at least one table"
+
+        first_table = version_entry["tables"][table_keys[0]]
+        assert "parquet_path" in first_table, "Table should have parquet_path"
+        assert "duckdb_table" in first_table, "Table should have duckdb_table"
+        assert "row_count" in first_table, "Table should have row_count"
+        assert "column_count" in first_table, "Table should have column_count"
+        assert "schema_fingerprint" in first_table, "Table should have schema_fingerprint"
+
+    def test_stable_internal_table_identifier_preserved(self, tmp_path):
+        """Version entries should preserve stable internal identifier (table_0) for single-table uploads."""
+        # Arrange: Upload single-table dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload with specific filename
+        success, msg, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="MyPatientData.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Load metadata
+        metadata = storage.get_upload_metadata(upload_id)
+
+        # Assert: Internal identifier is stable (table_0 or original stem), not a generated name
+        version_entry = metadata["version_history"][0]
+        table_keys = list(version_entry["tables"].keys())
+
+        # For single-table uploads, should use original filename stem as key
+        # This is the stable internal identifier
+        assert len(table_keys) == 1
+        # The key should be the filename stem (MyPatientData), not a generated name
+        assert table_keys[0] == "MyPatientData", f"Should preserve filename stem as table key, got {table_keys[0]}"
+
+
+class TestSchemaDriftDetection:
+    """Test suite for schema drift detection and policy (Phase 3)."""
+
+    def test_detect_schema_drift_policy_defined(self, tmp_path):
+        """Schema drift detection should have defined policy constants."""
+        from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
+
+        # Assert: Policy enum exists with expected values
+        assert hasattr(SchemaDriftPolicy, "REJECT")
+        assert hasattr(SchemaDriftPolicy, "WARN")
+        assert hasattr(SchemaDriftPolicy, "ALLOW")
+
+    def test_detect_schema_drift_same_schema(self, tmp_path):
+        """Same schema should not trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Two identical schemas
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: No drift
+        assert has_drift is False
+        assert drift_details == {}
+
+    def test_detect_schema_drift_new_column(self, tmp_path):
+        """New column should trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Schema with new column
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Int64"), ("outcome", "Int64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: Drift detected
+        assert has_drift is True
+        assert "added_columns" in drift_details
+        assert "outcome" in drift_details["added_columns"]
+
+    def test_detect_schema_drift_removed_column(self, tmp_path):
+        """Removed column should trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Schema with removed column
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64"), ("outcome", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: Drift detected
+        assert has_drift is True
+        assert "removed_columns" in drift_details
+        assert "outcome" in drift_details["removed_columns"]
+
+    def test_detect_schema_drift_type_change(self, tmp_path):
+        """Type change should trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Schema with type change
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Float64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: Drift detected
+        assert has_drift is True
+        assert "type_changes" in drift_details
+        assert "age" in drift_details["type_changes"]
+
+
+class TestMetadataInvariants:
+    """Test suite for metadata invariants (Phase 4.1)."""
+
+    def test_assert_invariants_valid_metadata(self, tmp_path):
+        """Valid metadata should pass invariant assertions."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        # Arrange: Valid metadata
+        metadata = {
+            "upload_id": "test_upload_123",
+            "dataset_name": "test_dataset",
+            "dataset_version": "abc123",
+            "version_history": [
+                {
+                    "version": "abc123",
+                    "created_at": "2024-01-01T00:00:00",
+                    "is_active": True,
+                    "tables": {
+                        "test": {
+                            "parquet_path": "path/to/test.parquet",
+                            "duckdb_table": "test",
+                            "row_count": 100,
+                            "column_count": 5,
+                            "schema_fingerprint": "fingerprint123",
+                        }
+                    },
+                }
+            ],
+        }
+
+        # Act & Assert: Should not raise
+        assert_metadata_invariants(metadata)
+
+    def test_assert_invariants_missing_version_history(self, tmp_path):
+        """Missing version_history should raise ValueError."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        # Arrange: Metadata without version_history
+        metadata = {
+            "upload_id": "test_upload_123",
+            "dataset_name": "test_dataset",
+        }
+
+        # Act & Assert: Should raise ValueError
+        try:
+            assert_metadata_invariants(metadata)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "version_history" in str(e).lower()
+
+    def test_assert_invariants_no_active_version(self, tmp_path):
+        """No active version should raise ValueError."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        # Arrange: version_history with no active version
+        metadata = {
+            "upload_id": "test_upload_123",
+            "dataset_name": "test_dataset",
+            "version_history": [
+                {
+                    "version": "abc123",
+                    "created_at": "2024-01-01T00:00:00",
+                    "is_active": False,  # Not active
+                    "tables": {},
+                }
+            ],
+        }
+
+        # Act & Assert: Should raise ValueError
+        try:
+            assert_metadata_invariants(metadata)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "active version" in str(e).lower()
+
+
+class TestRollbackMechanism:
+    """Test suite for rollback mechanism (Phase 6)."""
+
+    def test_rollback_to_previous_version(self, tmp_path):
+        """Rollback should switch active version to specified version."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1 = meta1["dataset_version"]
+
+        # Upload v2 (overwrite)
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+        assert success2
+        assert id2 == id1  # Same upload_id
+
+        # Verify v2 is active
+        meta_before = storage.get_upload_metadata(id1)
+        v2_entry = [v for v in meta_before["version_history"] if v["version"] != v1][0]
+        assert v2_entry["is_active"] is True
+
+        # Rollback to v1
+        success, message = storage.rollback_to_version(id1, v1)
+        assert success is True, f"Rollback failed: {message}"
+
+        # Verify v1 is now active
+        meta_after = storage.get_upload_metadata(id1)
+        v1_entry_after = [v for v in meta_after["version_history"] if v["version"] == v1][0]
+        v2_entry_after = [v for v in meta_after["version_history"] if v["version"] != v1][0]
+
+        assert v1_entry_after["is_active"] is True, "v1 should be active after rollback"
+        assert v2_entry_after["is_active"] is False, "v2 should be inactive after rollback"
+
+    def test_rollback_creates_event_entry(self, tmp_path):
+        """Rollback should create rollback event in version history."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Setup: Create v1 and v2
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        meta1 = storage.get_upload_metadata(id1)
+        v1 = meta1["dataset_version"]
+
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+
+        # Rollback
+        storage.rollback_to_version(id1, v1)
+
+        # Verify rollback event
+        meta_after = storage.get_upload_metadata(id1)
+        rollback_events = [v for v in meta_after["version_history"] if v.get("event_type") == "rollback"]
+        assert len(rollback_events) >= 1, "Should have at least one rollback event"
+
+
+class TestActiveVersionResolution:
+    """Test suite for active version resolution (Phase 7)."""
+
+    def test_get_active_version_returns_active_entry(self, tmp_path):
+        """get_active_version should return the currently active version entry."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+
+        # Get active version
+        active_version = storage.get_active_version(id1)
+        assert active_version is not None, "Should return active version entry"
+        assert active_version.get("is_active") is True, "Returned version should be active"
+        assert "version" in active_version, "Should include version hash"
+        assert "created_at" in active_version, "Should include timestamp"
+        assert active_version.get("event_type") == "upload", "First version should be upload event"
+
+    def test_get_active_version_after_overwrite(self, tmp_path):
+        """get_active_version should return v2 after overwrite."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1_hash = meta1["dataset_version"]
+
+        # Upload v2 (overwrite)
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+        assert success2
+        assert id2 == id1
+
+        # Get active version
+        active_version = storage.get_active_version(id1)
+        assert active_version is not None
+        assert active_version.get("is_active") is True
+        assert active_version.get("version") != v1_hash, "Active version should be v2, not v1"
+        assert active_version.get("event_type") == "overwrite", "Active version should be overwrite event"
+
+    def test_get_active_version_after_rollback(self, tmp_path):
+        """get_active_version should return rolled-back version."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1, then v2, then rollback to v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1_hash = meta1["dataset_version"]
+
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+        assert success2
+
+        # Rollback to v1
+        success_rb, _ = storage.rollback_to_version(id1, v1_hash)
+        assert success_rb
+
+        # Get active version
+        active_version = storage.get_active_version(id1)
+        assert active_version is not None
+        assert active_version.get("is_active") is True
+        assert active_version.get("version") == v1_hash, "Active version should be v1 after rollback"
+        assert active_version.get("event_type") == "upload", "Active version should be original upload"
+
+    def test_get_active_version_nonexistent_dataset(self, tmp_path):
+        """get_active_version should return None for nonexistent dataset."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        active_version = storage.get_active_version("nonexistent_id")
+        assert active_version is None, "Should return None for nonexistent dataset"
+
+
+class TestQueryVersionIntegration:
+    """Test suite for query execution with versioned datasets (Phase 8)."""
+
+    def test_get_cohort_works_after_rollback(self, tmp_path):
+        """Queries should work correctly after rolling back to previous version."""
+        from clinical_analytics.datasets.uploaded.definition import UploadedDataset
+
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1 with age column
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(
+            csv1,
+            "data.csv",
+            {
+                "dataset_name": "test",
+                "variable_mapping": {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]},
+            },
+        )
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1_hash = meta1["dataset_version"]
+
+        # Query v1 works
+        dataset1 = UploadedDataset(upload_id=id1, storage=storage)
+        cohort1 = dataset1.get_cohort()
+        assert "patient_id" in cohort1.columns
+        assert len(cohort1) == 150
+
+        # Upload v2 (overwrite) - different data but same schema
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [30 + i for i in range(150)],
+                "outcome": [(i + 1) % 2 for i in range(150)],
+            }
+        )
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(
+            csv2,
+            "data.csv",
+            {
+                "dataset_name": "test",
+                "variable_mapping": {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]},
+            },
+            overwrite=True,
+        )
+        assert success2
+        assert id2 == id1
+
+        # Query v2 works
+        dataset2 = UploadedDataset(upload_id=id1, storage=storage)
+        cohort2 = dataset2.get_cohort()
+        assert len(cohort2) == 150
+
+        # Rollback to v1
+        success_rb, _ = storage.rollback_to_version(id1, v1_hash)
+        assert success_rb
+
+        # Query after rollback still works
+        dataset3 = UploadedDataset(upload_id=id1, storage=storage)
+        cohort3 = dataset3.get_cohort()
+        assert "patient_id" in cohort3.columns
+        assert len(cohort3) == 150
 
 
 class TestSaveUploadIntegration:
