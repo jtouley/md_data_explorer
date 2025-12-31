@@ -169,6 +169,21 @@ class DatasetRegistry:
         # Get config for this dataset if available
         config = cls._configs.get(name, {})
 
+        # Special handling for UploadedDataset: requires upload_id, not from config
+        if dataset_class.__name__ == "UploadedDataset":
+            # UploadedDataset requires upload_id as positional argument
+            # The name parameter IS the upload_id for uploaded datasets
+            if "upload_id" in override_params:
+                upload_id = override_params["upload_id"]
+            elif "upload_id" in config.get("init_params", {}):
+                upload_id = config["init_params"]["upload_id"]
+            else:
+                # Use the name as upload_id (registry key for uploaded datasets is upload_id)
+                upload_id = name
+
+            storage = override_params.get("storage") or config.get("init_params", {}).get("storage")
+            return dataset_class(upload_id=upload_id, storage=storage)
+
         # Merge config with override params
         params = {**config.get("init_params", {}), **override_params}
 

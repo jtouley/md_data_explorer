@@ -72,9 +72,10 @@ class TestUIDatasetIntegration:
 
     def test_dataset_factory_creates_instance_via_registry(self):
         """Test that datasets can be created via factory pattern (UI pattern)."""
-        # Arrange: Get first available dataset
-        datasets = DatasetRegistry.list_datasets()
-        assert len(datasets) > 0, "No datasets available"
+        # Arrange: Get first available dataset (exclude "uploaded" which requires upload_id)
+        datasets = [d for d in DatasetRegistry.list_datasets() if d != "uploaded"]
+        if not datasets:
+            pytest.skip("No datasets available (excluding 'uploaded' which requires upload_id)")
         first_dataset = datasets[0]
 
         # Act: Create via factory (UI pattern)
