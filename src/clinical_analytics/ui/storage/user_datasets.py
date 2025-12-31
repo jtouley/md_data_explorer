@@ -1623,6 +1623,36 @@ class UserDatasetStorage:
             logger.error(f"Error during rollback: {e}")
             return False, f"Error during rollback: {str(e)}"
 
+    def get_active_version(self, upload_id: str) -> dict[str, Any] | None:
+        """
+        Get the currently active version entry for a dataset (Phase 7).
+
+        Returns the version entry from version_history that has is_active=True.
+        Used by query execution to determine which schema version to use.
+
+        Args:
+            upload_id: Upload identifier
+
+        Returns:
+            Active version entry dict, or None if dataset not found or no active version
+        """
+        metadata = self.get_upload_metadata(upload_id)
+        if not metadata:
+            return None
+
+        version_history = metadata.get("version_history", [])
+        if not version_history:
+            return None
+
+        # Find active version
+        for entry in version_history:
+            if entry.get("is_active") is True:
+                return entry
+
+        # No active version found (should not happen if invariants are maintained)
+        logger.warning(f"No active version found for dataset {upload_id}")
+        return None
+
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
         """
         Retrieve metadata for an upload.

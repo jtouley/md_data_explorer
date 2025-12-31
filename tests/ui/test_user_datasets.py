@@ -1093,6 +1093,88 @@ class TestRollbackMechanism:
         assert len(rollback_events) >= 1, "Should have at least one rollback event"
 
 
+class TestActiveVersionResolution:
+    """Test suite for active version resolution (Phase 7)."""
+
+    def test_get_active_version_returns_active_entry(self, tmp_path):
+        """get_active_version should return the currently active version entry."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+
+        # Get active version
+        active_version = storage.get_active_version(id1)
+        assert active_version is not None, "Should return active version entry"
+        assert active_version.get("is_active") is True, "Returned version should be active"
+        assert "version" in active_version, "Should include version hash"
+        assert "created_at" in active_version, "Should include timestamp"
+        assert active_version.get("event_type") == "upload", "First version should be upload event"
+
+    def test_get_active_version_after_overwrite(self, tmp_path):
+        """get_active_version should return v2 after overwrite."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1_hash = meta1["dataset_version"]
+
+        # Upload v2 (overwrite)
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+        assert success2
+        assert id2 == id1
+
+        # Get active version
+        active_version = storage.get_active_version(id1)
+        assert active_version is not None
+        assert active_version.get("is_active") is True
+        assert active_version.get("version") != v1_hash, "Active version should be v2, not v1"
+        assert active_version.get("event_type") == "overwrite", "Active version should be overwrite event"
+
+    def test_get_active_version_after_rollback(self, tmp_path):
+        """get_active_version should return rolled-back version."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1, then v2, then rollback to v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1_hash = meta1["dataset_version"]
+
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+        assert success2
+
+        # Rollback to v1
+        success_rb, _ = storage.rollback_to_version(id1, v1_hash)
+        assert success_rb
+
+        # Get active version
+        active_version = storage.get_active_version(id1)
+        assert active_version is not None
+        assert active_version.get("is_active") is True
+        assert active_version.get("version") == v1_hash, "Active version should be v1 after rollback"
+        assert active_version.get("event_type") == "upload", "Active version should be original upload"
+
+    def test_get_active_version_nonexistent_dataset(self, tmp_path):
+        """get_active_version should return None for nonexistent dataset."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        active_version = storage.get_active_version("nonexistent_id")
+        assert active_version is None, "Should return None for nonexistent dataset"
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 
