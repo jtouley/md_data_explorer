@@ -124,6 +124,17 @@ class UploadedDataset(ClinicalDataset):
         Returns:
             DataFrame conforming to UnifiedCohort schema (outcome column optional)
         """
+        # Phase 8: Log active version being used for query
+        active_version = self.storage.get_active_version(self.upload_id)
+        if active_version:
+            logger.info(
+                f"Query using dataset {self.upload_id}, active version: "
+                f"{active_version.get('version', 'unknown')[:8]}..., "
+                f"event_type: {active_version.get('event_type', 'unknown')}"
+            )
+        else:
+            logger.warning(f"No active version found for dataset {self.upload_id}")
+
         # Runtime validation: check if requested granularity is supported
         if granularity != "patient_level":
             # Get inferred_schema (or convert variable_mapping if needed)

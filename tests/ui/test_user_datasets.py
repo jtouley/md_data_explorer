@@ -1175,6 +1175,79 @@ class TestActiveVersionResolution:
         assert active_version is None, "Should return None for nonexistent dataset"
 
 
+class TestQueryVersionIntegration:
+    """Test suite for query execution with versioned datasets (Phase 8)."""
+
+    def test_get_cohort_works_after_rollback(self, tmp_path):
+        """Queries should work correctly after rolling back to previous version."""
+        from clinical_analytics.datasets.uploaded.definition import UploadedDataset
+
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1 with age column
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(
+            csv1,
+            "data.csv",
+            {
+                "dataset_name": "test",
+                "variable_mapping": {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]},
+            },
+        )
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1_hash = meta1["dataset_version"]
+
+        # Query v1 works
+        dataset1 = UploadedDataset(upload_id=id1, storage=storage)
+        cohort1 = dataset1.get_cohort()
+        assert "patient_id" in cohort1.columns
+        assert len(cohort1) == 150
+
+        # Upload v2 (overwrite) - different data but same schema
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [30 + i for i in range(150)],
+                "outcome": [(i + 1) % 2 for i in range(150)],
+            }
+        )
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(
+            csv2,
+            "data.csv",
+            {
+                "dataset_name": "test",
+                "variable_mapping": {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]},
+            },
+            overwrite=True,
+        )
+        assert success2
+        assert id2 == id1
+
+        # Query v2 works
+        dataset2 = UploadedDataset(upload_id=id1, storage=storage)
+        cohort2 = dataset2.get_cohort()
+        assert len(cohort2) == 150
+
+        # Rollback to v1
+        success_rb, _ = storage.rollback_to_version(id1, v1_hash)
+        assert success_rb
+
+        # Query after rollback still works
+        dataset3 = UploadedDataset(upload_id=id1, storage=storage)
+        cohort3 = dataset3.get_cohort()
+        assert "patient_id" in cohort3.columns
+        assert len(cohort3) == 150
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 
