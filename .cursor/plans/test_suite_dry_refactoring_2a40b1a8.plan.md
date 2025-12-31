@@ -155,14 +155,22 @@ todos:
 - ✅ **test_queryplan_contract.py**: Removed 35-line duplicate fixture, updated 7 test methods
 - ✅ **test_chart_spec.py**: Removed 35-line duplicate fixture, updated 6 test methods  
 - ✅ **test_queryplan_only_path.py**: Refactored 8 test methods
+- ✅ **test_queryplan_conversion.py**: Removed 15-line duplicate MagicMock fixture, updated 6 test methods
+  - Used existing `mock_semantic_layer` factory fixture from conftest.py
+  - Created module-level `semantic_mock` fixture with custom column mappings
+  - All 6 tests passing with parallel execution (1.63s with 8 workers)
 
-**Progress**: 3/3 simple replacement files completed, ~105 lines of duplicate code eliminated
+**Progress**: 4/4 simple replacement files completed, ~120 lines of duplicate code eliminated
 
 ### Next Steps
 
-1. **Immediate**: Complete Phase 1.2 - refactor test_queryplan_conversion.py
-2. **Continue**: Phase 1.3 (medium complexity fixtures)
-3. **Then**: Phase 2 (DataFrame factories)
+1. **Continue**: Phase 1.3 (medium complexity fixtures)
+
+   - test_semantic_queryplan_execution.py
+   - test_semantic_run_key_determinism.py  
+   - test_semantic_observability.py
+
+2. **Then**: Phase 2 (DataFrame factories)
 
 ---
 

@@ -6,7 +6,6 @@ Ensures chart_spec is deterministic from QueryPlan and included in result artifa
 Test name follows: test_unit_scenario_expectedBehavior
 """
 
-
 from clinical_analytics.core.query_plan import QueryPlan
 
 

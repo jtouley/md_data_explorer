@@ -14,30 +14,25 @@ from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 
 @pytest.fixture
-def mock_semantic_layer():
-    """Create mock semantic layer for testing."""
-    from unittest.mock import MagicMock
-
-    mock = MagicMock()
-    mock.get_column_alias_index.return_value = {
-        "mortality": "mortality",
-        "treatment": "treatment_arm",
-        "age": "age",
-        "statin_prescribed": "Statin Prescribed? 1: Yes 2: No",
-    }
-    mock.get_collision_suggestions.return_value = None
-    mock.get_collision_warnings.return_value = set()
-    mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
-    return mock
+def semantic_mock(mock_semantic_layer):
+    """Create mock semantic layer with custom column mappings for these tests."""
+    return mock_semantic_layer(
+        columns={
+            "mortality": "mortality",
+            "treatment": "treatment_arm",
+            "age": "age",
+            "statin_prescribed": "Statin Prescribed? 1: Yes 2: No",
+        }
+    )
 
 
 class TestQueryPlanConversion:
     """Test QueryIntent to QueryPlan conversion."""
 
-    def test_intent_to_plan_creates_queryplan_without_run_key(self, mock_semantic_layer):
+    def test_intent_to_plan_creates_queryplan_without_run_key(self, semantic_mock):
         """Test that _intent_to_plan creates QueryPlan with run_key=None (Phase 1.1.5)."""
         # Arrange: Create QueryIntent
-        engine = NLQueryEngine(mock_semantic_layer)
+        engine = NLQueryEngine(semantic_mock)
         intent = QueryIntent(
             intent_type="COUNT",
             confidence=0.9,
@@ -60,10 +55,10 @@ class TestQueryPlanConversion:
         assert plan1.confidence == 0.9
         assert len(plan1.filters) == 1
 
-    def test_intent_to_plan_does_not_set_run_key(self, mock_semantic_layer):
+    def test_intent_to_plan_does_not_set_run_key(self, semantic_mock):
         """Test that _intent_to_plan does not set run_key (Phase 1.1.5)."""
         # Arrange: Create QueryIntent
-        engine = NLQueryEngine(mock_semantic_layer)
+        engine = NLQueryEngine(semantic_mock)
         intent = QueryIntent(intent_type="DESCRIBE", primary_variable="age", confidence=0.9)
 
         # Act: Convert to QueryPlan with different dataset versions
@@ -76,10 +71,10 @@ class TestQueryPlanConversion:
         assert plan1.intent == plan2.intent
         assert plan1.metric == plan2.metric
 
-    def test_intent_to_plan_preserves_filters_without_run_key(self, mock_semantic_layer):
+    def test_intent_to_plan_preserves_filters_without_run_key(self, semantic_mock):
         """Test that filters are preserved but run_key is not set (Phase 1.1.5)."""
         # Arrange: Create QueryIntent with filters
-        engine = NLQueryEngine(mock_semantic_layer)
+        engine = NLQueryEngine(semantic_mock)
         intent1 = QueryIntent(
             intent_type="COUNT",
             filters=[FilterSpec(column="age", operator=">", value=50, exclude_nulls=True)],
@@ -102,10 +97,10 @@ class TestQueryPlanConversion:
         assert plan1.filters[0].value == 50
         assert plan2.filters[0].value == 60
 
-    def test_intent_to_plan_preserves_all_intent_fields(self, mock_semantic_layer):
+    def test_intent_to_plan_preserves_all_intent_fields(self, semantic_mock):
         """Test that all QueryIntent fields are preserved in QueryPlan."""
         # Arrange: Create QueryIntent with all fields
-        engine = NLQueryEngine(mock_semantic_layer)
+        engine = NLQueryEngine(semantic_mock)
         intent = QueryIntent(
             intent_type="COMPARE_GROUPS",
             primary_variable="mortality",
@@ -143,12 +138,12 @@ class TestAnalysisContextQueryPlan:
         assert hasattr(context, "query_plan")
         assert context.query_plan is None
 
-    def test_queryplan_can_be_assigned_to_analysiscontext(self, mock_semantic_layer):
+    def test_queryplan_can_be_assigned_to_analysiscontext(self, semantic_mock):
         """Test that QueryPlan can be assigned to AnalysisContext."""
         # Arrange
         from clinical_analytics.ui.components.question_engine import AnalysisContext
 
-        engine = NLQueryEngine(mock_semantic_layer)
+        engine = NLQueryEngine(semantic_mock)
         intent = QueryIntent(intent_type="COUNT", confidence=0.9)
         query_plan = engine._intent_to_plan(intent, "dataset_v1")
 
