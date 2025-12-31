@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1163,6 +1164,88 @@ class SemanticLayer:
 
         logger.info(f"Added user alias '{term}' -> '{column}' for {upload_id}")
 
+    def _execute_plan_with_retry(
+        self, plan: "QueryPlan", max_retries: int = 3, initial_delay: float = 0.5
+    ) -> pd.DataFrame:
+        """
+        Execute query plan with exponential backoff retry for transient errors (Phase 2.5.2).
+
+        Handles backend initialization errors like AttributeError: '_record_batch_readers_consumed',
+        connection errors, and other transient execution failures.
+
+        Args:
+            plan: QueryPlan to execute
+            max_retries: Maximum retry attempts (default: 3)
+            initial_delay: Initial delay in seconds before first retry (default: 0.5s)
+
+        Returns:
+            pd.DataFrame: Query results
+
+        Raises:
+            Exception: Re-raises final exception if all retries exhausted
+        """
+        delay = initial_delay
+        last_exception: Exception | None = None
+
+        for attempt in range(max_retries + 1):  # +1 for initial attempt
+            try:
+                return self._execute_plan(plan)
+            except AttributeError as e:
+                # Backend initialization error: '_record_batch_readers_consumed'
+                last_exception = e
+                if "_record_batch_readers_consumed" in str(e) and attempt < max_retries:
+                    logger.warning(
+                        f"Backend initialization error on attempt {attempt + 1}/{max_retries + 1}: {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    # Not a backend error or final retry - re-raise
+                    raise
+            except (ConnectionError, OSError, TimeoutError) as e:
+                # Connection/network errors - retry
+                last_exception = e
+                if attempt < max_retries:
+                    logger.warning(
+                        f"Connection error on attempt {attempt + 1}/{max_retries + 1}: {e}. Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    # Final retry - re-raise
+                    raise
+            except Exception as e:
+                # Check if it's a transient error message pattern
+                error_msg = str(e).lower()
+                is_transient = any(
+                    pattern in error_msg
+                    for pattern in [
+                        "temporary",
+                        "timeout",
+                        "connection",
+                        "lock",
+                        "deadlock",
+                        "unavailable",
+                    ]
+                )
+
+                if is_transient and attempt < max_retries:
+                    last_exception = e
+                    logger.warning(
+                        f"Transient error on attempt {attempt + 1}/{max_retries + 1}: {e}. Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
+                else:
+                    # Not transient or final retry - re-raise
+                    raise
+
+        # Should never reach here, but just in case
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("Unexpected retry loop exit")
+
     def execute_query_plan(
         self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
     ) -> dict[str, Any]:  # type: ignore[valid-type]
@@ -1215,9 +1298,9 @@ class SemanticLayer:
         # Step 4: Generate run_key (always generate)
         run_key = self._generate_run_key(plan, query_text)
 
-        # Step 5: Execute query (always attempt execution)
+        # Step 5: Execute query with retry logic (Phase 2.5.2)
         try:
-            result_df = self._execute_plan(plan)
+            result_df = self._execute_plan_with_retry(plan)
             return {
                 "success": True,
                 "result": result_df,
