@@ -66,18 +66,18 @@ test-integration: ## Run integration tests only
 	@echo "$(GREEN)Running integration tests...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v -m "integration"
 
-test-fast: ## Run fast tests (skip slow tests)
-	@echo "$(GREEN)Running fast tests...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow"
+test-fast: ## Run fast tests (skip slow tests) with parallel execution
+	@echo "$(GREEN)Running fast tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n auto
 
 # Module-specific test commands
-test-analysis: ensure-venv ## Run analysis module tests
-	@echo "$(GREEN)Running analysis module tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/analysis -v
+test-analysis: ensure-venv ## Run analysis module tests with parallel execution
+	@echo "$(GREEN)Running analysis module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/analysis -v -n auto
 
-test-core: ensure-venv ## Run core module tests
-	@echo "$(GREEN)Running core module tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/core -v
+test-core: ensure-venv ## Run core module tests with parallel execution
+	@echo "$(GREEN)Running core module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/core -v -n auto
 
 test-datasets: ensure-venv ## Run datasets module tests
 	@echo "$(GREEN)Running datasets module tests...$(NC)"

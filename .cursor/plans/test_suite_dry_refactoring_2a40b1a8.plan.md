@@ -1,13 +1,26 @@
 ---
 name: Test Suite DRY Refactoring
-overview: Refactor test suite to eliminate duplicate fixtures and hardcoded test data, consolidating common patterns into conftest.py per AGENTS.md guidelines. This will improve maintainability and reduce duplication across 21+ test files.
+overview: Refactor test suite to eliminate duplicate fixtures and hardcoded test data, consolidating common patterns into conftest.py per AGENTS.md guidelines. This will improve maintainability and reduce duplication across 21+ test files. Includes immediate speed improvements for TDD workflow.
 todos:
+  - id: phase0.5-add-pytest-xdist
+    content: Add pytest-xdist for parallel test execution and update Makefile test-fast command
+    status: pending
+  - id: phase0.5-profile-baseline
+    content: Profile current test suite to establish baseline execution times and identify bottlenecks
+    status: pending
+    dependencies:
+      - phase0.5-add-pytest-xdist
+  - id: phase0.5-quick-scope-wins
+    content: Convert obvious candidates (Excel fixtures, large data fixtures) to module scope for immediate speedup
+    status: pending
+    dependencies:
+      - phase0.5-profile-baseline
   - id: phase1-factory-fixture
     content: Add make_semantic_layer factory fixture to conftest.py with support for custom data, config, and workspace
-    status: pending
+    status: completed
   - id: phase1-replace-simple
     content: Replace simple mock_semantic_layer fixtures in test_queryplan_contract.py, test_queryplan_only_path.py, test_queryplan_conversion.py
-    status: pending
+    status: in_progress
     dependencies:
       - phase1-factory-fixture
   - id: phase1-replace-medium
@@ -98,6 +111,35 @@ todos:
       - phase5-verify-speedup
 ---
 
+## Current Progress
+
+**Last Updated**: Based on terminal history (commits 2a63f38, f370ab1)
+
+### Completed Work
+
+#### Phase 1.1: Factory Fixture (✅ COMPLETED)
+
+- ✅ Added `make_semantic_layer()` factory fixture to `conftest.py` (line 531)
+- ✅ Factory supports custom data, config overrides, and workspace names
+- ✅ Eliminates duplicate fixture setup code
+
+#### Phase 1.2: Simple Replacements (🔄 IN PROGRESS)
+
+- ✅ **test_queryplan_contract.py**: Removed 35-line duplicate fixture, updated 7 test methods
+- ✅ **test_chart_spec.py**: Removed 35-line duplicate fixture, updated 6 test methods  
+- 🔄 **test_queryplan_only_path.py**: Currently refactoring (8 test methods to update)
+- ⏳ **test_queryplan_conversion.py**: Pending (uses MagicMock, may need different approach)
+
+**Progress**: 2/3 simple replacement files completed, ~70 lines of duplicate code eliminated
+
+### Next Steps
+
+1. **Immediate**: Complete `test_queryplan_only_path.py` refactoring
+2. **Priority**: Add Phase 0.5 (parallel execution) for TDD speed improvements
+3. **Continue**: Phase 1.3 (medium complexity fixtures)
+
+---
+
 # Test Suite DRY Refactoring Plan
 
 ## Overview
@@ -124,6 +166,90 @@ Refactor the test suite to eliminate violations of AGENTS.md guidelines:
 4. **Multi-table setups**: patients, medications, bridge tables
 
 ## Implementation Plan
+
+### Phase 0.5: Immediate Speed Improvements for TDD (CRITICAL - DO FIRST)
+
+**Goal**: Achieve immediate 2-4x test speedup for TDD workflow through parallel execution and quick scope optimizations
+
+**Rationale**: Since you're doing TDD, fast test feedback is critical. This phase provides immediate wins before the comprehensive refactoring.
+
+#### Step 0.5.1: Add Parallel Test Execution
+
+**Add pytest-xdist**:
+
+```bash
+uv add --dev pytest-xdist
+```
+
+**Update Makefile** (`Makefile` line 69-71):
+
+```makefile
+test-fast: ## Run fast tests (skip slow tests)
+	@echo "$(GREEN)Running fast tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n auto  # auto = use all CPU cores
+```
+
+**Expected speedup**: 2-4x faster (depending on CPU cores)
+
+#### Step 0.5.2: Profile Current Test Suite
+
+Establish baseline and identify bottlenecks:
+
+```bash
+# See slowest tests
+uv run pytest tests/ --durations=10
+
+# Profile fixture creation
+uv run pytest tests/ --durations=0 | grep -E "fixture|test_" | head -20
+
+# Measure total execution time
+time make test-fast
+```
+
+#### Step 0.5.3: Quick Scope Wins
+
+Convert obvious candidates to module scope:
+
+**Already module-scoped** (good!):
+
+- `synthetic_dexa_excel_file` (line 229)
+- `synthetic_statin_excel_file` (line 264)  
+- `synthetic_complex_excel_file` (line 319)
+
+**Potential quick wins**:
+
+- Large CSV fixtures (`large_*_csv`) - if used multiple times per file
+- `ask_questions_page` fixture (already module-scoped ✅)
+
+**Pattern**:
+
+```python
+# If fixture is expensive and immutable, convert to module scope
+@pytest.fixture(scope="module")  # Changed from function scope
+def expensive_fixture(tmp_path_factory):
+    # Setup code
+    yield resource
+    # Optional cleanup
+```
+
+#### Step 0.5.4: Verify Speedup
+
+```bash
+# Before
+time make test-fast  # Record baseline
+
+# After parallel execution
+time make test-fast  # Should be 2-4x faster
+
+# After scope optimizations
+time make test-fast  # Additional 10-20% improvement
+```
+
+**Success criteria**:
+
+- ✅ Test execution 2-4x faster with parallel execution
+- ✅ All tests still pass
+- ✅ No flaky tests introduced
 
 ### Phase 1: Consolidate Semantic Layer Fixtures (HIGH PRIORITY)
 
@@ -578,12 +704,13 @@ make check
 
 ## Estimated Effort
 
-- **Phase 1**: 3-4 hours (21 files, ~30 min/file)
+- **Phase 0.5**: 1-2 hours (immediate speed improvements - CRITICAL for TDD)
+- **Phase 1**: 3-4 hours (21 files, ~30 min/file) - **In Progress**: ~30% complete (2/3 simple files done)
 - **Phase 2**: 4-6 hours (4 high-impact files, ~1-1.5 hours/file)
 - **Phase 3**: 1 hour (optional cleanup)
 - **Phase 4**: 1 hour (documentation and consolidation)
 - **Phase 5**: 3-5 hours (profiling, analysis, scope conversion, verification)
-- **Total**: 12-17 hours (Phases 1-4: 9-12 hours, Phase 5: 3-5 hours)
+- **Total**: 13-19 hours (Phase 0.5: 1-2 hours, Phases 1-4: 9-12 hours, Phase 5: 3-5 hours)
 
 ## Files to Modify
 
