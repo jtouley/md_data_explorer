@@ -67,6 +67,27 @@ todos:
     dependencies:
       - phase1-verify
       - phase2-verify
+  - id: phase5-profile-tests
+    content: Profile test suite to identify expensive fixtures and bottlenecks using pytest-profiling or timeit
+    status: pending
+    dependencies:
+      - phase1-verify
+      - phase2-verify
+  - id: phase5-identify-candidates
+    content: Identify fixtures suitable for module/session scope (immutable, expensive setup, no shared state issues)
+    status: pending
+    dependencies:
+      - phase5-profile-tests
+  - id: phase5-convert-scopes
+    content: Convert expensive fixtures to module/session scope with proper isolation verification
+    status: pending
+    dependencies:
+      - phase5-identify-candidates
+  - id: phase5-verify-speedup
+    content: Measure test execution time before/after scope changes and verify no test isolation issues
+    status: pending
+    dependencies:
+      - phase5-convert-scopes
   - id: final-validation
     content: Run make check, verify test count/grep metrics, and confirm compliance with AGENTS.md
     status: pending
@@ -74,11 +95,10 @@ todos:
       - phase1-verify
       - phase2-verify
       - phase4-consolidate-fixtures
+      - phase5-verify-speedup
 ---
 
 # Test Suite DRY Refactoring Plan
-
-
 
 ## Overview
 
@@ -177,8 +197,6 @@ def make_semantic_layer(tmp_path):
     return _make
 ```
 
-
-
 #### Step 1.2: Replace Duplicate Fixtures
 
 Replace fixtures in these files (in order of complexity):**Simple replacements** (direct SemanticLayer instances):
@@ -213,8 +231,6 @@ def test_example(make_semantic_layer):
     semantic = make_semantic_layer()
     # ... test code ...
 ```
-
-
 
 #### Step 1.3: Update Test Functions
 
@@ -312,8 +328,6 @@ def make_multi_table_setup():
     return _make
 ```
 
-
-
 #### Step 2.2: Refactor High-Impact Files
 
 Start with files that have the most hardcoded DataFrames:
@@ -354,8 +368,6 @@ def test_example(make_patients_df):
     )
 ```
 
-
-
 ### Phase 3: Clean Up Duplicate Imports (OPTIONAL)
 
 **Goal**: Remove redundant `import polars as pl` from test files
@@ -381,6 +393,141 @@ Review and potentially merge:
 
 Add docstring examples to factory fixtures showing common usage patterns.
 
+### Phase 5: Optimize Fixture Scopes for Performance (LATER PHASE)
+
+**Goal**: Improve test execution speed by using module/session-scoped fixtures for expensive, immutable resources
+
+**Note**: This phase should be executed after Phases 1-4 are complete and tests are stable. Requires careful analysis to ensure test isolation is maintained.
+
+#### Step 5.1: Profile Test Suite
+
+Identify expensive fixtures and bottlenecks:
+
+```bash
+# Install pytest-profiling (if not already available)
+uv add --dev pytest-profiling
+
+# Run tests with profiling
+uv run pytest tests/ --profile -o profile.txt
+
+# Or use timeit to measure fixture creation time
+uv run pytest tests/ --durations=10
+```
+
+**Key metrics to collect**:
+
+- Fixture creation time per test
+- Total test execution time
+- Most time-consuming fixtures
+- Tests that create same fixture multiple times
+
+#### Step 5.2: Identify Scope Optimization Candidates
+
+**Criteria for module/session scope**:
+
+- ✅ Expensive setup (file I/O, database connections, large data generation)
+- ✅ Immutable (doesn't change between tests)
+- ✅ No shared mutable state concerns
+- ✅ Used by multiple tests in same file/module
+
+**Potential candidates**:
+
+- `synthetic_dexa_excel_file` (already module-scoped ✅)
+- `synthetic_statin_excel_file` (already module-scoped ✅)
+- `synthetic_complex_excel_file` (already module-scoped ✅)
+- `make_semantic_layer` factory (if workspace setup is expensive)
+- Large DataFrame fixtures (if creation is slow)
+
+**Candidates to evaluate**:
+
+- SemanticLayer fixtures (if workspace setup is expensive)
+- Large test data fixtures
+- Excel file fixtures (some already module-scoped)
+
+#### Step 5.3: Convert Fixtures to Module/Session Scope
+
+**Pattern for conversion**:
+
+```python
+# BEFORE (function-scoped - created per test)
+@pytest.fixture
+def expensive_fixture(tmp_path):
+    # Expensive setup (file I/O, data generation)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    # ... 50+ lines of setup ...
+    return resource
+
+# AFTER (module-scoped - created once per test file)
+@pytest.fixture(scope="module")
+def expensive_fixture(tmp_path_factory):
+    """Expensive fixture shared across tests in module."""
+    workspace = tmp_path_factory.mktemp("workspace")
+    workspace.mkdir()
+    # ... 50+ lines of setup ...
+    yield resource
+    # Optional cleanup if needed
+```
+
+**Critical considerations**:
+
+1. **Test isolation**: Verify tests don't mutate shared state
+2. **Cleanup**: Use `yield` for proper teardown if needed
+3. **Dependencies**: Ensure dependent fixtures have compatible scopes
+4. **tmp_path**: Use `tmp_path_factory` for module/session scope
+
+#### Step 5.4: Verify Test Isolation
+
+After converting scopes, verify:
+
+```bash
+# Run tests multiple times to check for flakiness
+for i in {1..5}; do
+    make test-fast
+done
+
+# Run tests in random order
+uv run pytest tests/ --random-order
+
+# Check for shared state issues
+uv run pytest tests/ -v --tb=short
+```
+
+**Isolation checks**:
+
+- Tests pass when run individually
+- Tests pass when run in different orders
+- No test depends on execution order
+- No shared mutable state between tests
+
+#### Step 5.5: Measure Performance Improvement
+
+**Before/after comparison**:
+
+```bash
+# Before scope optimization
+time make test-fast  # Record baseline time
+
+# After scope optimization
+time make test-fast  # Compare improvement
+
+# Measure specific fixture creation time
+uv run pytest tests/ --durations=10 --durations-min=0.1
+```
+
+**Expected improvements**:
+
+- 10-30% faster test execution (depending on fixture complexity)
+- Reduced fixture creation overhead
+- Faster CI/CD pipeline
+
+**Success criteria**:
+
+- ✅ Test execution time reduced by 10%+ (or measurable improvement)
+- ✅ All tests still pass
+- ✅ No test isolation issues
+- ✅ No flaky tests introduced
+
 ## Testing Strategy
 
 ### After Each Phase
@@ -404,15 +551,23 @@ make test-fast
 make check
 ```
 
-
-
 ## Success Criteria
+
+### Phases 1-4 (DRY Compliance)
 
 - [ ] Zero duplicate `mock_semantic_layer`/`semantic_layer` fixtures outside `conftest.py`
 - [ ] Reduced hardcoded DataFrames by 50%+ (target: <150 instances)
 - [ ] All tests pass: `make test-fast` and `make check`
 - [ ] No regressions in test coverage
 - [ ] Factory fixtures documented with usage examples
+
+### Phase 5 (Performance Optimization)
+
+- [ ] Test execution time reduced by 10%+ (or measurable improvement)
+- [ ] Expensive fixtures converted to appropriate scopes
+- [ ] All tests still pass after scope changes
+- [ ] No test isolation issues or flaky tests introduced
+- [ ] Performance improvements documented with before/after metrics
 
 ## Risk Mitigation
 
@@ -427,7 +582,8 @@ make check
 - **Phase 2**: 4-6 hours (4 high-impact files, ~1-1.5 hours/file)
 - **Phase 3**: 1 hour (optional cleanup)
 - **Phase 4**: 1 hour (documentation and consolidation)
-- **Total**: 9-12 hours
+- **Phase 5**: 3-5 hours (profiling, analysis, scope conversion, verification)
+- **Total**: 12-17 hours (Phases 1-4: 9-12 hours, Phase 5: 3-5 hours)
 
 ## Files to Modify
 
