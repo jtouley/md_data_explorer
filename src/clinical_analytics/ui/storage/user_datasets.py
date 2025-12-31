@@ -1035,6 +1035,35 @@ class UserDatasetStorage:
         file_hash = hashlib.md5(filename.encode()).hexdigest()[:8]
         return f"user_upload_{timestamp}_{file_hash}"
 
+    def find_datasets_by_content_hash(self, dataset_version: str) -> list[dict[str, Any]]:
+        """
+        Find all datasets with matching content hash (dataset_version).
+
+        Used for cross-dataset deduplication to warn users about duplicate content
+        with different names.
+
+        Args:
+            dataset_version: Content hash to search for
+
+        Returns:
+            List of metadata dicts for matching datasets
+        """
+        matching_datasets = []
+
+        for metadata_file in self.metadata_dir.glob("*.json"):
+            try:
+                with open(metadata_file) as f:
+                    metadata = json.load(f)
+
+                # Check if dataset_version matches
+                if metadata.get("dataset_version") == dataset_version:
+                    matching_datasets.append(metadata)
+            except Exception as e:
+                logger.warning(f"Error reading metadata file {metadata_file}: {e}")
+                continue
+
+        return matching_datasets
+
     def save_upload(
         self,
         file_bytes: bytes,
@@ -1114,6 +1143,29 @@ class UserDatasetStorage:
                     pass  # Best-effort
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+
+            # Phase 1: Compute dataset_version early for cross-dataset deduplication
+            from clinical_analytics.storage.versioning import compute_dataset_version
+
+            table_dfs = [t["data"] for t in tables]
+            dataset_version = compute_dataset_version(table_dfs)
+            logger.info(f"Computed dataset_version: {dataset_version}")
+
+            # Phase 1: Check for duplicate content with different names (warn, don't block)
+            duplicate_datasets = self.find_datasets_by_content_hash(dataset_version)
+            duplicate_warning = None
+            if duplicate_datasets:
+                # Check if any duplicates have different names
+                different_name_duplicates = [d for d in duplicate_datasets if d.get("dataset_name") != dataset_name]
+                if different_name_duplicates:
+                    # Warn about duplicate content (UX polish - clinicians may intentionally duplicate)
+                    dup_names = [d.get("dataset_name") for d in different_name_duplicates]
+                    duplicate_warning = (
+                        f"⚠️ Warning: This file has the same content as existing dataset(s): "
+                        f"{', '.join(dup_names)}. "
+                        f"Upload will proceed, but you may want to use the existing dataset instead."
+                    )
+                    logger.info(f"Duplicate content detected: {dup_names}")
 
             # For single-table uploads, ensure patient_id exists (transparent to user)
             if len(tables) == 1:
@@ -1287,7 +1339,12 @@ class UserDatasetStorage:
                 except Exception:
                     pass  # Best-effort
 
-            return True, f"Upload successful: {upload_id}", upload_id
+            # Phase 1: Include duplicate warning in success message (if any)
+            success_message = f"Upload successful: {upload_id}"
+            if duplicate_warning:
+                success_message = f"{duplicate_warning} {success_message}"
+
+            return True, success_message, upload_id
 
         except Exception as e:
             if progress_cb:

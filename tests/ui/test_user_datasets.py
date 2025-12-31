@@ -574,6 +574,115 @@ class TestFileLocking:
         # Direct module check would be implementation detail
 
 
+class TestCrossDatasetDeduplication:
+    """Test suite for cross-dataset content deduplication (Phase 1)."""
+
+    def test_same_content_different_name_warns_with_link(self, tmp_path):
+        """Same file content with different dataset_name should warn with link to existing."""
+        # Arrange: Upload same file twice with different names
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload should succeed
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset1.csv",
+            metadata={"dataset_name": "first_dataset"},
+        )
+        assert success1 is True, f"First upload failed: {msg1}"
+
+        # Second upload with same content but different name should warn (not block)
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset2.csv",
+            metadata={"dataset_name": "second_dataset"},
+        )
+        # Upload should succeed (warn, not block)
+        assert success2 is True, "Upload should succeed with warning"
+        # Message should contain warning about duplicate content
+        assert "duplicate" in msg2.lower() or "warning" in msg2.lower(), f"Should warn about duplicate: {msg2}"
+        # Should provide link to existing dataset
+        assert "first_dataset" in msg2, f"Should mention existing dataset name: {msg2}"
+
+    def test_same_content_same_name_overwrite_allowed(self, tmp_path):
+        """Same content + same name + overwrite=True should proceed without warning."""
+        # Arrange: Upload, then upload again with overwrite=True
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # First upload
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},
+        )
+        assert success1 is True
+
+        # Second upload with same content and same name with overwrite=True
+        # (overwrite parameter to be added in Phase 4, for now just test same behavior)
+        # This will be rejected by existing duplicate name check
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="dataset.csv",
+            metadata={"dataset_name": "my_dataset"},  # Same name - will be rejected
+        )
+        # Currently this is rejected, but in Phase 4 with overwrite=True it will succeed
+        assert success2 is False, "Same name currently rejected (until Phase 4 overwrite)"
+
+    def test_different_content_different_name_allowed(self, tmp_path):
+        """Different content + different name should be allowed without warning."""
+        # Arrange: Two different files with different names
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [30 + i for i in range(150)],  # Different data
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        # Both uploads should succeed
+        success1, msg1, id1 = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="dataset1.csv",
+            metadata={"dataset_name": "dataset_one"},
+        )
+        assert success1 is True
+
+        success2, msg2, id2 = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="dataset2.csv",
+            metadata={"dataset_name": "dataset_two"},
+        )
+        assert success2 is True
+        # Should not warn about duplicates
+        assert "duplicate" not in msg2.lower(), f"Should not warn: {msg2}"
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 
