@@ -1030,6 +1030,69 @@ class TestMetadataInvariants:
             assert "active version" in str(e).lower()
 
 
+class TestRollbackMechanism:
+    """Test suite for rollback mechanism (Phase 6)."""
+
+    def test_rollback_to_previous_version(self, tmp_path):
+        """Rollback should switch active version to specified version."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Upload v1
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        assert success1
+        meta1 = storage.get_upload_metadata(id1)
+        v1 = meta1["dataset_version"]
+
+        # Upload v2 (overwrite)
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+        assert success2
+        assert id2 == id1  # Same upload_id
+
+        # Verify v2 is active
+        meta_before = storage.get_upload_metadata(id1)
+        v2_entry = [v for v in meta_before["version_history"] if v["version"] != v1][0]
+        assert v2_entry["is_active"] is True
+
+        # Rollback to v1
+        success, message = storage.rollback_to_version(id1, v1)
+        assert success is True, f"Rollback failed: {message}"
+
+        # Verify v1 is now active
+        meta_after = storage.get_upload_metadata(id1)
+        v1_entry_after = [v for v in meta_after["version_history"] if v["version"] == v1][0]
+        v2_entry_after = [v for v in meta_after["version_history"] if v["version"] != v1][0]
+
+        assert v1_entry_after["is_active"] is True, "v1 should be active after rollback"
+        assert v2_entry_after["is_active"] is False, "v2 should be inactive after rollback"
+
+    def test_rollback_creates_event_entry(self, tmp_path):
+        """Rollback should create rollback event in version history."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Setup: Create v1 and v2
+        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
+        csv1 = df1.to_csv(index=False).encode("utf-8")
+        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
+        meta1 = storage.get_upload_metadata(id1)
+        v1 = meta1["dataset_version"]
+
+        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
+        csv2 = df2.to_csv(index=False).encode("utf-8")
+        storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
+
+        # Rollback
+        storage.rollback_to_version(id1, v1)
+
+        # Verify rollback event
+        meta_after = storage.get_upload_metadata(id1)
+        rollback_events = [v for v in meta_after["version_history"] if v.get("event_type") == "rollback"]
+        assert len(rollback_events) >= 1, "Should have at least one rollback event"
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 

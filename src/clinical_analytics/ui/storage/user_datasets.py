@@ -1537,6 +1537,92 @@ class UserDatasetStorage:
                     pass  # Best-effort
             return False, f"Error saving upload: {str(e)}", None
 
+    def rollback_to_version(self, upload_id: str, target_version: str) -> tuple[bool, str]:
+        """
+        Rollback dataset to a specific version (Phase 6).
+
+        Atomically switches active version to target_version, marks all other versions
+        as inactive, and creates a rollback event entry in version_history.
+
+        Args:
+            upload_id: Upload identifier
+            target_version: The dataset_version to rollback to (must exist in version_history)
+
+        Returns:
+            Tuple of (success, message)
+        """
+        metadata_path = self.metadata_dir / f"{upload_id}.json"
+
+        if not metadata_path.exists():
+            return False, f"Dataset {upload_id} not found"
+
+        try:
+            # Thread-safe metadata update using file lock
+            with file_lock(metadata_path, timeout=10.0):
+                # Load current metadata
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+
+                # Verify version_history exists
+                version_history = metadata.get("version_history", [])
+                if not version_history:
+                    return False, f"No version history found for dataset {upload_id}"
+
+                # Find target version
+                target_entry = None
+                for entry in version_history:
+                    if entry.get("version") == target_version:
+                        target_entry = entry
+                        break
+
+                if not target_entry:
+                    available_versions = [v.get("version") for v in version_history]
+                    return False, (
+                        f"Version {target_version} not found in version history. "
+                        f"Available versions: {available_versions}"
+                    )
+
+                # Mark all versions as inactive
+                for entry in version_history:
+                    entry["is_active"] = False
+
+                # Mark target version as active
+                target_entry["is_active"] = True
+
+                # Create rollback event entry
+                rollback_event = {
+                    "version": target_version,
+                    "created_at": datetime.now().isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "event_type": "rollback",
+                    "is_active": False,  # Event entry itself is not active
+                    "rollback_target": target_version,  # Reference to which version was activated
+                }
+                version_history.append(rollback_event)
+
+                # Update metadata
+                metadata["version_history"] = version_history
+
+                # Validate metadata invariants
+                assert_metadata_invariants(metadata)
+
+                # Write metadata atomically
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata, f, indent=2)
+
+                logger.info(
+                    f"Rolled back dataset {upload_id} to version {target_version} "
+                    f"(event_id={rollback_event['event_id']})"
+                )
+
+                return True, f"Successfully rolled back to version {target_version}"
+
+        except FileLockTimeoutError:
+            return False, "Failed to acquire lock on metadata file (timeout after 10s)"
+        except Exception as e:
+            logger.error(f"Error during rollback: {e}")
+            return False, f"Error during rollback: {str(e)}"
+
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
         """
         Retrieve metadata for an upload.
