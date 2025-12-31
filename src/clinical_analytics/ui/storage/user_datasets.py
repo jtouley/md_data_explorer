@@ -1017,10 +1017,13 @@ def save_table_list(
                 "schema_fingerprint": compute_schema_fingerprint(table_df),
             }
 
-        # Phase 2: Create version history entry
+        # Phase 2/5: Create version history entry with event metadata
+        event_type = "overwrite" if metadata.pop("_is_overwrite", False) else "upload"
         version_entry = {
             "version": dataset_version,
             "created_at": datetime.now().isoformat(),
+            "event_id": str(uuid.uuid4()),  # Phase 5: Unique event identifier
+            "event_type": event_type,  # Phase 5: upload/overwrite/rollback
             "is_active": True,  # New version is always active
             "tables": canonical_tables,
         }
@@ -1494,6 +1497,7 @@ class UserDatasetStorage:
             # Phase 4.2: Pass existing_version_history for overwrite
             if existing_version_history is not None:
                 metadata["_existing_version_history"] = existing_version_history
+                metadata["_is_overwrite"] = True  # Phase 5: Mark as overwrite event
 
             # Update table with validated data (convert back to Polars for save_table_list)
             if len(tables) == 1:
