@@ -18,7 +18,7 @@ from clinical_analytics.core.multi_table_handler import (
 class TestTableClassification:
     """Test suite for Milestone 1: Table Classification System."""
 
-    def test_bridge_detection_on_many_to_many_fixture(self):
+    def test_bridge_detection_on_many_to_many_fixture(self, make_multi_table_setup):
         """
         M1 Acceptance Test 1: Bridge table identified in synthetic many-to-many fixture.
 
@@ -32,41 +32,14 @@ class TestTableClassification:
         - patients classified as "dimension"
         - medications classified as "dimension" or "reference"
         """
-        # Arrange: Create synthetic many-to-many dataset
-        patients = pl.DataFrame(
-            {
-                "patient_id": ["P1", "P2", "P3"],
-                "name": ["Alice", "Bob", "Charlie"],
-                "age": [30, 45, 28],
-            }
-        )
+        # Arrange: Create synthetic many-to-many dataset using factory fixture
+        tables = make_multi_table_setup()
 
-        medications = pl.DataFrame(
-            {
-                "medication_id": ["M1", "M2", "M3"],
-                "drug_name": ["Aspirin", "Metformin", "Lisinopril"],
-                "dosage": ["100mg", "500mg", "10mg"],
-            }
+        # Extend bridge table with additional fields
+        patient_medications = tables["patient_medications"].with_columns(
+            pl.Series("dosage_override", [None, "250mg", None, None])
         )
-
-        # Bridge table: many-to-many relationship
-        # - patient_id is NOT unique (P1 has 2 medications)
-        # - medication_id is NOT unique (M1 prescribed to 2 patients)
-        # - BUT composite (patient_id, medication_id) IS unique
-        patient_medications = pl.DataFrame(
-            {
-                "patient_id": ["P1", "P1", "P2", "P3"],
-                "medication_id": ["M1", "M2", "M1", "M3"],
-                "start_date": ["2024-01-01", "2024-01-15", "2024-02-01", "2024-03-01"],
-                "dosage_override": [None, "250mg", None, None],
-            }
-        )
-
-        tables = {
-            "patients": patients,
-            "medications": medications,
-            "patient_medications": patient_medications,
-        }
+        tables["patient_medications"] = patient_medications
 
         # Act: Initialize handler and classify
         handler = MultiTableHandler(tables)

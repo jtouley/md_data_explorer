@@ -214,7 +214,6 @@ class TestRunKeyDeterminismAllExecutionPaths:
             "analysis": {"default_outcome": "outcome"},
         }
 
-
         semantic = SemanticLayer("test_dataset", config=config, workspace_root=workspace)
         semantic.dataset_version = "test_v1"
 
