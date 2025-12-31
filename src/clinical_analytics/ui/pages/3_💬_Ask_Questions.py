@@ -4,8 +4,6 @@ Dynamic Analysis Page - Question-Driven Analytics
 Ask questions, get answers. No statistical jargon - just tell me what you want to know.
 """
 
-import hashlib
-import json
 import sys
 import time
 from collections import deque
@@ -188,51 +186,6 @@ def canonicalize_scope(scope: dict | None) -> dict:
             canonical[key] = value
 
     return canonical
-
-
-def generate_run_key(
-    dataset_version: str,
-    query_text: str,  # Must be already normalized, never None
-    context: AnalysisContext,
-    scope: dict | None = None,
-) -> str:
-    """
-    Generate stable run key for idempotency.
-
-    Canonicalizes inputs to ensure same query + variables + scope = same key.
-
-    Args:
-        dataset_version: Dataset version identifier
-        query_text: Normalized query text (must be pre-normalized, never None)
-        context: Analysis context with variables
-        scope: Semantic scope dict (optional, will be canonicalized)
-
-    Returns:
-        SHA256 hash of canonicalized payload
-    """
-    # Extract material context variables (only those that affect computation)
-    material_vars = {
-        "primary": context.primary_variable or "",
-        "grouping": context.grouping_variable or "",
-        "predictors": sorted(context.predictor_variables or []),
-        "time": context.time_variable or "",
-        "event": context.event_variable or "",
-    }
-
-    # Build payload with canonicalized scope
-    payload = {
-        "dataset_version": dataset_version,
-        "query": query_text,  # Already normalized by caller
-        "intent": context.inferred_intent.value if context.inferred_intent else "UNKNOWN",
-        "vars": material_vars,
-        "scope": canonicalize_scope(scope),  # Include canonicalized scope
-    }
-
-    # Stable JSON serialization
-    payload_str = json.dumps(payload, sort_keys=True)
-    run_key = hashlib.sha256(payload_str.encode()).hexdigest()
-
-    return run_key
 
 
 def remember_run(dataset_version: str, run_key: str) -> None:
@@ -1675,23 +1628,17 @@ def main():
             # Get confidence from QueryPlan or context (default to 0.0 if missing - fail closed)
             if query_plan:
                 confidence = query_plan.confidence
-                # Normalize query before generating run_key
-                raw_query = getattr(context, "research_question", "")
-                normalized_query = normalize_query(raw_query)
-                run_key = query_plan.run_key or generate_run_key(dataset_version, normalized_query, context)
             else:
                 confidence = getattr(context, "confidence", 0.0)
-                # Normalize query before generating run_key
-                raw_query = getattr(context, "research_question", "")
-                normalized_query = normalize_query(raw_query)
-                run_key = generate_run_key(dataset_version, normalized_query, context)
+
+            # Phase 1.1.5: Don't generate run_key before execution - semantic layer will generate it
+            # We'll get run_key from execution_result after execution
 
             logger.info(
                 "analysis_execution_triggered",
                 intent_type=context.inferred_intent.value,
                 confidence=confidence,
                 threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
-                run_key=run_key,
                 dataset_version=dataset_version,
                 query=getattr(context, "research_question", ""),
             )
@@ -1712,9 +1659,10 @@ def main():
                     for warning in execution_result["warnings"]:
                         st.warning(f"⚠️ {warning}")
 
-                # Update run_key from execution result if provided
-                if execution_result.get("run_key"):
-                    run_key = execution_result["run_key"]
+                # Phase 1.1.5: Always use run_key from execution result (semantic layer generates it deterministically)
+                run_key = execution_result.get("run_key")
+                if not run_key:
+                    raise ValueError("Execution result must include run_key - semantic layer should always generate it")
 
                 # Proceed with analysis if successful
                 if execution_result.get("success"):
@@ -1991,10 +1939,29 @@ def main():
                     # Get confidence from QueryPlan or context (default to 0.0 if missing)
                     if query_plan:
                         confidence = query_plan.confidence
-                        run_key = query_plan.run_key or generate_run_key(dataset_version, normalized_query, context)
                     else:
                         confidence = getattr(context, "confidence", 0.0)
-                        run_key = generate_run_key(dataset_version, normalized_query, context)
+
+                    # Phase 1.1.5: Always get run_key from execute_query_plan() when available
+                    # This ensures deterministic run_key generation across all execution paths
+                    run_key = None
+                    if query_plan and semantic_layer:
+                        # Use execute_query_plan() to get deterministic run_key
+                        execution_result = semantic_layer.execute_query_plan(
+                            query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query
+                        )
+                        run_key = execution_result.get("run_key")
+                        if not run_key:
+                            raise ValueError(
+                                "Execution result must include run_key - semantic layer should always generate it"
+                            )
+                    else:
+                        # Legacy path: This should not happen in Phase 3 (all paths should use QueryPlan)
+                        # For now, raise error to catch any remaining legacy paths
+                        raise ValueError(
+                            "Legacy execution path detected - query_plan and semantic_layer should always be "
+                            "available. This path will be removed in Phase 3."
+                        )
 
                     logger.info(
                         "chat_input_analysis_execution_triggered",
@@ -2017,6 +1984,8 @@ def main():
                     st.session_state["chat"].append(user_msg)
 
                     # Compute result (no UI, pure computation)
+                    # Phase 1.1.5: If we already have run_key from execute_query_plan(), use it
+                    # Otherwise, get_or_compute_result() will handle it (legacy path)
                     result = get_or_compute_result(
                         cohort=cohort_pl,
                         context=context,

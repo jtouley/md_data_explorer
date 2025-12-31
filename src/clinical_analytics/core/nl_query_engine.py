@@ -14,7 +14,6 @@ Example:
     'COMPARE_GROUPS'
 """
 
-import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -832,7 +831,6 @@ Examples:
         Returns:
             QueryIntent if valid, None if parsing fails
         """
-        import json
 
         try:
             data = json.loads(response)
@@ -1755,14 +1753,18 @@ Examples:
 
     def _intent_to_plan(self, intent: QueryIntent, dataset_version: str) -> QueryPlan:
         """
-        Convert QueryIntent to QueryPlan with deterministic run_key.
+        Convert QueryIntent to QueryPlan.
+
+        Phase 1.1.5: run_key is NOT set here - semantic layer will generate it deterministically
+        using _generate_run_key() which includes normalized query text. This ensures all execution
+        paths produce the same run_key.
 
         Args:
             intent: QueryIntent from parse_query()
             dataset_version: Dataset version identifier (upload_id or dataset_id)
 
         Returns:
-            QueryPlan with deterministic run_key for idempotent execution
+            QueryPlan with run_key=None (semantic layer will generate it)
         """
         # Create QueryPlan from intent
         plan = QueryPlan(
@@ -1772,31 +1774,12 @@ Examples:
             filters=intent.filters,  # Already FilterSpec objects
             confidence=intent.confidence,
             explanation="",  # Will be populated from intent if available
-            run_key=None,  # Will be set below
+            run_key=None,  # Phase 1.1.5: Semantic layer will generate run_key deterministically
         )
-
-        # Generate deterministic run_key: hash of (dataset_version, normalized_plan)
-        normalized_plan = {
-            "intent": plan.intent,
-            "metric": plan.metric,
-            "group_by": plan.group_by,
-            "filters": [
-                {
-                    "column": f.column,
-                    "operator": f.operator,
-                    "value": f.value,
-                    "exclude_nulls": f.exclude_nulls,
-                }
-                for f in plan.filters
-            ],
-        }
-        plan_hash = hashlib.sha256(json.dumps(normalized_plan, sort_keys=True).encode()).hexdigest()[:16]
-        plan.run_key = f"{dataset_version}_{plan_hash}"
 
         logger.debug(
             "intent_converted_to_plan",
             intent_type=intent.intent_type,
-            run_key=plan.run_key,
             filter_count=len(plan.filters),
         )
 
