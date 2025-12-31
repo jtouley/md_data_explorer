@@ -23,14 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 # Import from config (single source of truth)
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
     AnalysisContext,
     AnalysisIntent,
     QuestionEngine,
 )
 from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
-from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 from clinical_analytics.ui.messages import (
     COLLISION_SUGGESTION_WARNING,
     LOW_CONFIDENCE_WARNING,
@@ -1425,35 +1424,92 @@ def get_dataset_version(dataset, dataset_choice: str) -> str:
 
 
 def main():
+    """
+    Ask Questions Page - Question-Driven Analytics with NL Query Engine.
+
+    ## Session State Machine
+
+    This page manages complex state transitions for natural language query processing.
+    Understanding this state machine is critical for debugging and maintenance.
+
+    ### State Keys
+
+    1. **`analysis_context`** (AnalysisContext | None)
+       - Current analysis context (intent, variables, filters, etc.)
+       - Set during NL parsing, used during execution
+       - Cleared on dataset change or new query
+
+    2. **`intent_signal`** (str | None)
+       - State transition signal: None → "nl_parsed" → "executed"
+       - Drives rendering and execution flow
+       - Fragile: Order of operations matters!
+
+    3. **`use_nl_query`** (bool)
+       - True: NL query mode (QueryPlan-driven execution)
+       - False: Legacy manual mode (direct column selection)
+       - Set by user via radio button
+
+    4. **`chat`** (list[ChatMessage])
+       - Chat transcript with run keys for result lookup
+       - Persists across reruns for conversation history
+
+    5. **`pending`** (Pending | None)
+       - Pending computation state (run_key, context, query_plan)
+       - Set when user clicks "Execute" on parsed query
+       - Cleared after execution completes
+
+    ### State Transitions
+
+    ```
+    None (initial state)
+      ↓ [User enters query + parses]
+    "nl_parsed" (query parsed, awaiting confirmation)
+      ↓ [User clicks "Execute this analysis"]
+    "executed" (execution complete, results rendered)
+      ↓ [User enters new query]
+    None (reset to initial state)
+    ```
+
+    ### Fragility Notes
+
+    **WARNING**: This state machine is fragile and order-dependent!
+
+    1. **Rerun Invalidation**: Streamlit reruns invalidate assumptions
+       - Widget state changes trigger full page rerun
+       - State transitions must be idempotent
+       - Side effects (execute, store results) must be guarded
+
+    2. **Order Matters**:
+       - `intent_signal` must be checked BEFORE rendering widgets
+       - Execution must happen BEFORE chat rendering
+       - Chat rendering must happen LAST (uses stored results)
+
+    3. **Dataset Change Edge Case**:
+       - Dataset change clears ALL state (context, chat, pending)
+       - But widget values persist across dataset changes!
+       - Must explicitly clear widget-dependent state
+
+    ### Future Refactor (ADR008)
+
+    This state management should be extracted into a dedicated StateMachine class:
+    - Explicit state enum (IDLE, PARSED, EXECUTING, COMPLETED)
+    - Transition validation (prevent invalid transitions)
+    - Side effect isolation (execute only on valid transitions)
+    - Testing: State machine unit tests separate from UI tests
+
+    See ADR008 for full refactor plan.
+    """
     st.title("💬 Ask Questions")
     st.markdown("""
     Ask questions about your data in plain English. I'll figure out the right analysis and explain the results.
     """)
 
-    # Dataset selection
-    st.sidebar.header("Data Selection")
+    # Dataset selection (Phase 8.2: Use reusable component)
+    result = render_dataset_selector(show_semantic_scope=True)
+    if result is None:
+        return  # No datasets available (error message already shown)
 
-    # Load datasets - only user uploads
-    dataset_display_names = {}
-    uploaded_datasets = {}
-    try:
-        uploads = UploadedDatasetFactory.list_available_uploads()
-        for upload in uploads:
-            upload_id = upload["upload_id"]
-            dataset_name = upload.get("dataset_name", upload_id)
-            display_name = f"📤 {dataset_name}"
-            dataset_display_names[display_name] = upload_id
-            uploaded_datasets[upload_id] = upload
-    except Exception as e:
-        st.sidebar.warning(f"Could not load uploaded datasets: {e}")
-
-    if not dataset_display_names:
-        st.error("No datasets found! Please upload data using the 'Add Your Data' page.")
-        st.info("👈 Go to **Add Your Data** to upload your first dataset")
-        return
-
-    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
-    dataset_choice = dataset_display_names[dataset_choice_display]
+    dataset, cohort_pd, dataset_choice, dataset_version = result
 
     # Initialize chat transcript and pending state (Phase 2)
     if "chat" not in st.session_state:
@@ -1475,51 +1531,9 @@ def main():
         st.session_state["pending"] = None
         st.session_state["last_dataset_choice"] = dataset_choice
 
-    # Load dataset (always uploaded)
-    with st.spinner(f"Loading {dataset_choice_display}..."):
-        try:
-            dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
-            dataset.load()
-            cohort_pd = dataset.get_cohort()
-        except Exception as e:
-            st.error(f"Error loading dataset: {e}")
-            st.stop()
-
-    # Convert to Polars for compute functions
+    # Convert to Polars for compute functions (page-specific logic)
     cohort = pl.from_pandas(cohort_pd)
     cohort_pl = cohort  # Alias for clarity in Phase 2
-
-    # Get dataset version for lifecycle management
-    dataset_version = get_dataset_version(dataset, dataset_choice)
-
-    # Show Semantic Scope in sidebar
-    with st.sidebar.expander("🔍 Semantic Scope", expanded=False):
-        st.markdown("**V1 Cohort-First Mode**")
-
-        # Cohort table status
-        st.markdown(f"✅ **Cohort Table**: {cohort.height:,} rows")
-
-        # Multi-table status
-        if MULTI_TABLE_ENABLED:
-            st.markdown("⚠️ **Multi-Table**: Experimental")
-        else:
-            st.markdown("⏸️ **Multi-Table**: Disabled (V2)")
-
-        # Detected grain
-        grain = "patient_level"  # Default for V1
-        st.markdown(f"📊 **Grain**: {grain}")
-
-        # Outcome column (if detected)
-        outcome_cols = [
-            c for c in cohort.columns if "outcome" in c.lower() or "death" in c.lower() or "mortality" in c.lower()
-        ]
-        if outcome_cols:
-            st.markdown(f"🎯 **Outcome**: `{outcome_cols[0]}`")
-        else:
-            st.markdown("🎯 **Outcome**: Not specified")
-
-        # Show column count
-        st.caption(f"{cohort.width} columns available")
 
     # Conversation management in sidebar - Phase 3.4 Remove Buttons
     with st.sidebar:
