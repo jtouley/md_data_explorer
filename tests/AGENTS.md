@@ -16,6 +16,45 @@
 
 ---
 
+## ⚠️ MANDATORY AGENT RULES (Updated 2025-01)
+
+**These rules are ENFORCED. Violations will result in rejected changes.**
+
+### Rule 1: Factory Fixtures MUST Be Used
+- ✅ **MUST** use `make_semantic_layer` for any SemanticLayer test setup
+- ✅ **MUST** use `make_cohort_with_categorical` for patient cohorts with categorical variables
+- ✅ **MUST** use `make_multi_table_setup` for 3-table relationship tests
+- ❌ **FORBIDDEN** to create inline SemanticLayer instances when factory exists
+- ❌ **FORBIDDEN** to create duplicate fixture definitions
+
+### Rule 2: Fixture Discovery Is MANDATORY
+- ✅ **MUST** search `conftest.py` before creating any fixture
+- ✅ **MUST** use existing fixtures even if "almost" matches (use parameters)
+- ❌ **FORBIDDEN** to create duplicate fixtures across test files
+- ❌ **FORBIDDEN** to hardcode test data when a fixture exists
+
+### Rule 3: Makefile Commands Are MANDATORY
+- ✅ **MUST** use `make test`, `make test-fast`, or module-specific commands
+- ✅ **MUST** use `make format`, `make lint-fix` before commits
+- ❌ **FORBIDDEN** to run `pytest` directly
+- ❌ **FORBIDDEN** to run `uv run pytest` directly
+- ❌ **FORBIDDEN** to commit without running `make check-fast`
+
+### Rule 4: Test Isolation Is MANDATORY
+- ✅ **MUST** use AAA pattern (Arrange-Act-Assert) with clear separation
+- ✅ **MUST** ensure tests are independent (no shared mutable state)
+- ✅ **MUST** use descriptive names: `test_unit_scenario_expectedBehavior`
+- ❌ **FORBIDDEN** to create tests that depend on execution order
+- ❌ **FORBIDDEN** to use global state or class-level mutable variables
+
+### Rule 5: Polars-First Is MANDATORY
+- ✅ **MUST** use `pl.testing.assert_frame_equal` for DataFrame comparisons
+- ✅ **MUST** use `df.height`, `df.width`, `df.to_dicts()` (Polars attributes)
+- ❌ **FORBIDDEN** to use pandas for new test code (exceptions require comment)
+- ❌ **FORBIDDEN** to use `len(df)` instead of `df.height`
+
+---
+
 ## Table of Contents
 
 1. [Test Structure: AAA Pattern](#test-structure-aaa-pattern)
@@ -587,12 +626,48 @@ See `tests/conftest.py` for complete list. Key fixtures:
 
 - `temp_config_file`: Temporary config file for testing
 
+#### Factory Fixtures (MUST USE THESE - Added 2025-01 Refactoring)
+
+**Semantic Layer Factories:**
+- `make_semantic_layer`: **MANDATORY** factory for SemanticLayer instances
+  - Creates SemanticLayer with custom data, config, workspace
+  - **Use for**: Any test requiring SemanticLayer setup
+  - **Example**: `layer = make_semantic_layer(dataset_name="test", data={"patient_id": [1,2,3]})`
+  - **Rule**: ❌ NEVER create SemanticLayer instances inline
+
+- `mock_semantic_layer`: Factory for mock SemanticLayer with configurable column mappings
+  - Creates MagicMock with column alias index
+  - **Use for**: Tests that don't need real data loading
+  - **Example**: `mock = mock_semantic_layer(columns={"age": "age", "status": "status"})`
+
+**DataFrame Factories:**
+- `make_cohort_with_categorical`: **MANDATORY** factory for patient cohorts
+  - Creates cohorts with categorical variables ("1: Yes", "2: No" patterns)
+  - **Use for**: Tests requiring patient cohorts with categorical encoding
+  - **Example**: `cohort = make_cohort_with_categorical(patient_ids=["P001"], ages=[45])`
+  - **Rule**: ❌ NEVER hardcode categorical cohort DataFrames
+
+- `make_multi_table_setup`: **MANDATORY** factory for multi-table tests
+  - Creates 3-table setup: patients, medications, patient_medications (bridge)
+  - **Returns**: `{"patients": df, "medications": df, "patient_medications": df}`
+  - **Example**: `tables = make_multi_table_setup(num_patients=5, num_medications=4)`
+  - **Rule**: ❌ NEVER create patients/medications/bridge tables inline
+
+**Analysis Context Fixtures:**
+- `sample_context`: Direct AnalysisContext (DESCRIBE intent, confidence=0.9)
+- `low_confidence_context`: AnalysisContext with confidence=0.4
+- `high_confidence_context`: AnalysisContext with confidence=0.9
+- `sample_context_describe`, `sample_context_compare`, `sample_context_predictor`: Intent-specific contexts
+
 #### DataFrame Fixtures
 
 - `sample_patients_df`: Sample patients DataFrame
 - `sample_admissions_df`: Sample admissions DataFrame
 - `sample_upload_df`: Sample upload DataFrame
 - `sample_upload_metadata`: Sample upload metadata
+- `sample_cohort`: Standard cohort (integer IDs, binary outcomes)
+- `mock_cohort`: Pandas cohort for Streamlit UI tests
+- `sample_numeric_df`, `sample_categorical_df`, `sample_mixed_df`: Compute test fixtures
 
 #### Large Data Fixtures (for performance testing)
 
@@ -609,10 +684,31 @@ See `tests/conftest.py` for complete list. Key fixtures:
 
 ### When to Use Each Fixture
 
-- **Use `sample_patients_df`** for basic DataFrame tests
+**⚠️ MANDATORY: Check Factory Fixtures First!**
+
+**Factory Fixtures (ALWAYS prefer these for variations):**
+1. **`make_semantic_layer`** - ✅ REQUIRED for any SemanticLayer test
+2. **`make_cohort_with_categorical`** - ✅ REQUIRED for patient cohorts with categorical vars
+3. **`make_multi_table_setup`** - ✅ REQUIRED for patients/medications/bridge table tests
+4. **`mock_semantic_layer`** - ✅ REQUIRED for mocked semantic layer (no data loading)
+
+**Direct Fixtures (Use for standard cases):**
+- **Use `sample_patients_df`** for basic DataFrame tests (3 patients)
+- **Use `sample_cohort`** for standard cohort tests (5 patients, binary outcome)
 - **Use `sample_upload_df`** for testing lazy frame operations
-- **Use `large_*` fixtures** for performance/streaming tests
+- **Use `large_*` fixtures** for performance/streaming tests (1M records)
 - **Use `synthetic_*_excel_file`** for Excel parsing tests
+
+**Analysis Context Fixtures:**
+- **Use `sample_context`** for default DESCRIBE analysis
+- **Use `low_confidence_context`** for testing clarifying questions
+- **Use `high_confidence_context`** for testing auto-execution
+
+**🚨 RULE OF THUMB:** 
+- If you need variations → Use **factory fixtures**
+- If standard data suffices → Use **direct fixtures**
+- If unsure → **Search `conftest.py` first!**
+- **NEVER create inline data** when a fixture exists
 
 ---
 
@@ -837,3 +933,102 @@ For detailed information, consult these project rules:
 **Use the Makefile**: `make test`, not `pytest`.
 
 **Follow the Standards**: AAA pattern, descriptive names, isolation, Polars assertions.
+
+---
+
+## 🚨 ENFORCEMENT: Violation Examples
+
+### ❌ VIOLATION: Creating inline SemanticLayer when factory exists
+
+```python
+# WRONG - Will be REJECTED
+def test_my_feature(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    # ... 20 lines of setup code ...
+    semantic = SemanticLayer(dataset_name="test", config=config, workspace_root=workspace)
+```
+
+```python
+# CORRECT - REQUIRED
+def test_my_feature(make_semantic_layer):
+    semantic = make_semantic_layer(dataset_name="test", data={"patient_id": [1,2,3]})
+```
+
+### ❌ VIOLATION: Creating duplicate fixture
+
+```python
+# WRONG - Will be REJECTED
+# In test_analysis.py
+@pytest.fixture
+def sample_cohort():  # Already exists in conftest.py!
+    return pl.DataFrame({...})
+```
+
+```python
+# CORRECT - REQUIRED
+# In test_analysis.py
+def test_analysis(sample_cohort):  # Use fixture from conftest.py
+    result = analyze(sample_cohort)
+```
+
+### ❌ VIOLATION: Running pytest directly
+
+```bash
+# WRONG - Will be REJECTED
+pytest tests/
+uv run pytest tests/core/
+
+# CORRECT - REQUIRED
+make test-fast
+make test-core
+```
+
+### ❌ VIOLATION: Using pandas assertions for Polars
+
+```python
+# WRONG - Will be REJECTED
+import pandas.testing as pdt
+pdt.assert_frame_equal(result, expected)
+
+# CORRECT - REQUIRED
+import polars.testing as plt
+plt.assert_frame_equal(result, expected)
+```
+
+### ❌ VIOLATION: Creating multi-table setup inline
+
+```python
+# WRONG - Will be REJECTED
+def test_relationships():
+    patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+    medications = pl.DataFrame({"medication_id": ["M1", "M2"], "drug_name": ["A", "B"]})
+    # ... more setup ...
+```
+
+```python
+# CORRECT - REQUIRED
+def test_relationships(make_multi_table_setup):
+    tables = make_multi_table_setup(num_patients=2, num_medications=2)
+    patients = tables["patients"]
+    medications = tables["medications"]
+```
+
+---
+
+## 🤖 AI Agent Compliance Checklist
+
+Before submitting ANY test code, verify:
+
+- [ ] ✅ Searched `conftest.py` for existing fixtures
+- [ ] ✅ Used factory fixtures (`make_*`) for all eligible tests
+- [ ] ✅ No duplicate fixture definitions created
+- [ ] ✅ All tests use `make` commands (verified in commit)
+- [ ] ✅ AAA pattern followed with clear separation
+- [ ] ✅ Test names follow `test_unit_scenario_expectedBehavior`
+- [ ] ✅ Polars assertions used (`plt.assert_frame_equal`)
+- [ ] ✅ No inline SemanticLayer, cohort, or multi-table setup
+- [ ] ✅ Ran `make format && make lint-fix` before commit
+- [ ] ✅ Ran `make check-fast` - all tests passing
+
+**Failure to comply = Changes will be rejected and must be redone.**
