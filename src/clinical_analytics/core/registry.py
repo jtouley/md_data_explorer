@@ -18,6 +18,15 @@ import yaml
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
+# Import UploadedDataset for type comparison (not __name__ string check)
+# Staff Engineer Standard: Avoid brittle string comparisons
+try:
+    from clinical_analytics.datasets.uploaded.definition import UploadedDataset
+
+    _UPLOADED_DATASET_CLASS = UploadedDataset
+except ImportError:
+    _UPLOADED_DATASET_CLASS = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,7 +179,8 @@ class DatasetRegistry:
         config = cls._configs.get(name, {})
 
         # Special handling for UploadedDataset: requires upload_id, not from config
-        if dataset_class.__name__ == "UploadedDataset":
+        # Use `is` comparison instead of __name__ string check (Staff Engineer Standard)
+        if _UPLOADED_DATASET_CLASS is not None and dataset_class is _UPLOADED_DATASET_CLASS:
             # UploadedDataset requires upload_id as positional argument
             # The name parameter IS the upload_id for uploaded datasets
             if "upload_id" in override_params:

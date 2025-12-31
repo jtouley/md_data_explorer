@@ -8,6 +8,11 @@ from typing import Any
 
 import polars as pl
 
+from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
+    PatientIdRegenerationError,
+    can_regenerate_patient_id,
+)
+
 
 def is_categorical(col: pl.Series) -> bool:
     """
@@ -93,13 +98,10 @@ def convert_schema(
         },
     }
 
-    # Map patient_id
+    # Map patient_id - use centralized regeneration logic (DRY: single source of truth)
     if patient_id_col := variable_mapping.get("patient_id"):
-        # Check if patient_id can be regenerated (synthetic_id_metadata present)
-        can_regenerate = False
-        if synthetic_id_metadata:
-            patient_id_metadata = synthetic_id_metadata.get("patient_id", {})
-            can_regenerate = patient_id_metadata.get("patient_id_source") in ["composite", "single_column"]
+        # Check if patient_id can be regenerated using centralized helper
+        regen_result = can_regenerate_patient_id(df, synthetic_id_metadata)
 
         # Defensive: check column exists
         if patient_id_col not in df.columns:
@@ -107,11 +109,20 @@ def convert_schema(
             if "patient_id" in df.columns:
                 # Use patient_id directly (was renamed during ingestion)
                 inferred["column_mapping"]["patient_id"] = "patient_id"
-            # Allow missing patient_id if regeneration is possible
-            elif can_regenerate:
+            # Allow missing patient_id if regeneration is possible AND validated
+            elif regen_result.can_regenerate:
+                # Regeneration is validated - downstream will regenerate it
                 # Don't set column_mapping - get_cohort() will regenerate it
                 pass
+            elif regen_result.error_message:
+                # Fail fast: regeneration was expected but validation failed
+                raise PatientIdRegenerationError(
+                    f"Patient ID column '{patient_id_col}' not found and regeneration failed: "
+                    f"{regen_result.error_message}",
+                    metadata=synthetic_id_metadata,
+                )
             else:
+                # No regeneration metadata and column missing - fail fast
                 available_cols = list(df.columns)
                 raise ValueError(
                     f"Patient ID column '{patient_id_col}' not found in DataFrame. Available columns: {available_cols}"
