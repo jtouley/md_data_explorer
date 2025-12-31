@@ -1327,7 +1327,13 @@ def _suggest_follow_ups(
     context: AnalysisContext, result: dict, run_key: str | None = None, render_context: str = "current"
 ) -> None:
     """
-    Suggest natural follow-up questions based on current result.
+    DISABLED: Hardcoded follow-ups removed per user request.
+
+    Previously suggested natural follow-up questions based on current result.
+    Now disabled - only show LLM-generated follow-ups in future.
+
+    TODO: Add follow_ups field to QueryPlan schema and LLM prompt.
+    Then implement: if plan.follow_ups: _suggest_follow_ups_from_llm(plan.follow_ups)
 
     Args:
         context: Analysis context
@@ -1335,6 +1341,9 @@ def _suggest_follow_ups(
         run_key: Run key for this analysis
         render_context: Context identifier ("current" or "history") to ensure unique button keys
     """
+    # DISABLED per user request - hardcoded follow-ups removed
+    return
+
     suggestions = []
 
     # Generate suggestions based on intent and result
