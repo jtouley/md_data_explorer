@@ -1,6 +1,6 @@
 # ADR008 Implementation Progress
 
-## Status: Phase 4.1 Complete (4/9 phases, 44%)
+## Status: Phase 4.2 Complete (5/9 phases, 56%)
 
 ### Completed Phases ✅
 
@@ -39,40 +39,65 @@
 - 3/3 tests passing
 - Commit: 484cc9e
 
-### Remaining Phases
+**Phase 4.2: Overwrite Behavior**
+- Added `overwrite` parameter to save_upload()
+- Preserves existing upload_id when overwriting
+- Loads and appends to existing version_history
+- Marks all old versions as is_active=False
+- Marks new version as is_active=True
+- 2/2 tests passing
+- Commit: 1cafbad
 
-**Phase 4.2: Overwrite Behavior** (NEXT)
-- Add `overwrite` parameter to save_upload()
-- Preserve version history on overwrite
-- Add new version entry with is_active=True
-- Mark old version as is_active=False
-- Handle schema drift per policy
+### Remaining Phases (4 phases)
 
-**Phase 5: Event Logging**
-- Add event_id and timestamp to version entries
-- Log upload/overwrite/rollback events
+**Phase 5: Event Logging** (Simple - ~30min)
+- Add event_id (UUID) to version entries
+- Add event_type field (upload/overwrite/rollback)
+- Already have created_at timestamps
+- Estimated: ~1 simple test, ~10K tokens
 
-**Phase 6: Rollback Mechanism**
-- Implement `rollback_to_version()` method
-- Switch active version
-- Update metadata atomically with file_lock()
+**Phase 6: Rollback Mechanism** (Critical - ~45min)
+- Implement `rollback_to_version(upload_id, version)` method
+- Switch is_active flags atomically
+- Use file_lock() for thread safety
+- Validate with assert_metadata_invariants()
+- Estimated: ~2-3 tests, ~15K tokens
 
-**Phase 7: Active Version Resolution**
-- Implement `get_active_version()` algorithm
+**Phase 7: Active Version Resolution** (Simple - ~20min)
+- Implement `get_active_version(upload_id)` helper
 - Return active version entry from version_history
+- Used by query execution
+- Estimated: ~1-2 tests, ~8K tokens
 
-**Phase 8: Query Validation**
-- Validate queries against active schema
-- Prevent queries on rolled-back schemas
+**Phase 8: Query Validation** (Medium - ~30min)
+- Add schema validation against active version
+- Prevent queries on inactive schemas
+- Integration with query execution path
+- Estimated: ~2 tests, ~12K tokens
 
-**Phase 9: UI Integration**
+**Phase 9: UI Integration** (Complex - Can be separate PR)
 - Add overwrite checkbox to upload UI
-- Display version history
-- Add rollback button
-- Manual testing
+- Display version history in dataset view
+- Add rollback button with confirmation
+- Manual testing required
+- Could be deferred to follow-up PR
+- Estimated: ~15K tokens if included
 
-## Technical Debt / Notes
+## Resource Status
+**Tokens Used:** 138K / 200K (69%)
+**Tokens Remaining:** 62K (31%)
+**Tests Passing:** 18/18 (100%)
+**Commits:** 6 (one per phase 0-4.2)
+**Estimated for Phases 5-8:** ~45K tokens
+**Buffer:** ~17K tokens
+
+## Recommendation
+Continue with Phases 5-8 (core functionality). Should fit comfortably in remaining budget.
+Defer Phase 9 (UI integration) to separate PR if approaching token limit.
+
+## Technical Notes
 - Type checker has 246 pre-existing errors (not from ADR008 code)
 - All ADR008 code passes lint, format, and tests
 - Using test-first development methodology
 - Commits after each phase with quality gates
+- Branch: feat/adr008-versioned-dataset-persistence-rollback
