@@ -1167,7 +1167,9 @@ class SemanticLayer:
         self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
     ) -> dict[str, Any]:  # type: ignore[valid-type]
         """
-        Execute a QueryPlan with confidence and completeness gating (ADR003 Phase 3).
+        Execute a QueryPlan with confidence and completeness gating (ADR003 Phase 3 + Phase 2.1 Observability).
+
+        Phase 2.1: Added warnings infrastructure for observability before removing gates.
 
         This method enforces hard gates before execution:
         - Confidence must be >= threshold
@@ -1186,37 +1188,53 @@ class SemanticLayer:
             - "failure_reason": str - Explanation if gate failed
             - "result": pd.DataFrame | None - Query results if successful
             - "run_key": str | None - Deterministic run key for idempotency
+            - "warnings": list[str] - Warnings collected during execution (Phase 2.1)
         """
-        # Step 1: Confidence Gating
+        # Phase 2.1: Initialize warnings list for observability
+        warnings: list[str] = []
+
+        # Step 1: Confidence Gating (with warning collection)
         if plan.confidence < confidence_threshold:
+            warning_msg = (
+                f"Low confidence: {plan.confidence:.2f} (threshold: {confidence_threshold:.2f}). "
+                f"Query interpretation may be ambiguous or uncertain."
+            )
+            warnings.append(warning_msg)
             return {
                 "success": False,
                 "requires_confirmation": True,
                 "failure_reason": f"Confidence {plan.confidence:.2f} below threshold {confidence_threshold:.2f}",
                 "result": None,
                 "run_key": None,
+                "warnings": warnings,
             }
 
-        # Step 2: Completeness Gating
+        # Step 2: Completeness Gating (with warning collection)
         is_complete, completeness_error = self._check_plan_completeness(plan)
         if not is_complete:
+            warning_msg = f"Incomplete plan: {completeness_error}"
+            warnings.append(warning_msg)
             return {
                 "success": False,
                 "requires_confirmation": True,
                 "failure_reason": completeness_error,
                 "result": None,
                 "run_key": None,
+                "warnings": warnings,
             }
 
-        # Step 3: Validation Gating
+        # Step 3: Validation Gating (with warning collection)
         validation_result = self._validate_query_plan(plan)
         if not validation_result["valid"]:
+            warning_msg = f"Validation failed: {validation_result['error']}"
+            warnings.append(warning_msg)
             return {
                 "success": False,
                 "requires_confirmation": True,
                 "failure_reason": validation_result["error"],
                 "result": None,
                 "run_key": None,
+                "warnings": warnings,
             }
 
         # Step 4: Generate run_key
@@ -1225,21 +1243,26 @@ class SemanticLayer:
         # Step 5: Execute query
         try:
             result_df = self._execute_plan(plan)
+            # Success: no warnings
             return {
                 "success": True,
                 "requires_confirmation": False,
                 "failure_reason": None,
                 "result": result_df,
                 "run_key": run_key,
+                "warnings": warnings,
             }
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)
+            warning_msg = f"Execution error: {str(e)}"
+            warnings.append(warning_msg)
             return {
                 "success": False,
                 "requires_confirmation": True,
                 "failure_reason": f"Execution error: {str(e)}",
                 "result": None,
                 "run_key": run_key,
+                "warnings": warnings,
             }
 
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
