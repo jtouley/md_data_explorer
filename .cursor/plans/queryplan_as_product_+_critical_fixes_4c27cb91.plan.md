@@ -971,38 +971,57 @@ All quality gates passing
 - Files modified: semantic.py, Ask_Questions.py, test_semantic_observability.py, test_semantic_queryplan_execution.py
 - Total lines changed: +136 insertions, -175 deletions (net -39 lines)
 
-### Phase 2.4: Implement Pending State Pattern (Phase 1.5)
+### Phase 2.4: Implement Pending State Pattern (Phase 1.5) - RESCOPED
 
 **Files**:
 
 - `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py` - Execution flow
 
-**Note**: This is **Phase 1.5** moved to Phase 2.4. It runs after confirmation UI is removed, providing a way to prevent accidental execution when warnings are present.
+**Note**: This is **Phase 1.5** moved to Phase 2.4. After Phase 2.3 removed confirmation UI and made execution immediate, this phase is **rescoped** to prevent duplicate/re-execution of the same query via session state management.
+
+**Original Intent (Pre-Phase 2.3)**: Prevent accidental execution when warnings present by requiring confirmation.
+
+**Rescoped Intent (Post-Phase 2.3)**: Prevent duplicate execution of the same query by caching execution state in session. Initial execution is always immediate (Phase 2.3), but re-execution is prevented unless user explicitly requests it.
 
 **Test-First Approach**:
 
 1. **Write tests** (`tests/ui/pages/test_ask_questions_pending_state.py`):
    ```python
-   def test_pending_plan_stored_in_session_state():
-       """Pending plan with warnings should be stored in session state."""
-       # Arrange: QueryPlan with warnings
-       plan = QueryPlan(intent="COUNT", confidence=0.5)  # Low confidence
-       execution_result = {"success": False, "warnings": ["Low confidence"]}
-       
-       # Act: Simulate UI flow
-       # (Use mock for Streamlit session state)
-       
-       # Assert: Pending plan stored
-       assert f"pending_plan_{dataset_version}" in st.session_state
-   
-   def test_pending_plan_requires_explicit_confirmation():
-       """Pending plan should not execute until explicit confirmation."""
-       # Arrange: Pending plan in session state
-       st.session_state[f"pending_plan_{dataset_version}"] = plan
-       
-       # Act: Attempt execution
-       
-       # Assert: Execution blocked until confirmation
+   def test_execution_state_stored_in_session():
+       """Execution result should be stored in session state to prevent re-execution."""
+       # Arrange: QueryPlan with run_key
+       plan = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)
+       run_key = "test_run_key_123"
+       execution_result = {"success": True, "run_key": run_key, "result": df, "warnings": []}
+
+       # Act: Simulate execution flow
+       # Store execution result in session state
+
+       # Assert: Execution result stored with run_key
+       assert f"execution_{run_key}" in st.session_state
+       assert st.session_state[f"execution_{run_key}"]["success"] is True
+
+   def test_duplicate_execution_prevented():
+       """Same query should not re-execute if result already in session state."""
+       # Arrange: Execution result already in session
+       run_key = "test_run_key_123"
+       st.session_state[f"execution_{run_key}"] = execution_result
+
+       # Act: Attempt re-execution with same run_key
+
+       # Assert: Uses cached result, does not re-execute
+       # (Can verify by mocking execute_query_plan and checking call count)
+
+   def test_explicit_rerun_bypasses_cache():
+       """User-requested rerun should bypass cache and re-execute."""
+       # Arrange: Execution result in session + user clicks "Re-run" button
+       run_key = "test_run_key_123"
+       st.session_state[f"execution_{run_key}"] = execution_result
+       st.session_state[f"force_rerun_{run_key}"] = True
+
+       # Act: Re-execution flow
+
+       # Assert: execute_query_plan called again despite cache
    ```
 
 2. **Run tests**:
@@ -1012,16 +1031,19 @@ All quality gates passing
 
 3. **Implement fix**:
 
-   - Store pending plan in `st.session_state[f"pending_plan_{dataset_version}"]` when warnings present
-   - Check if plan is pending before re-executing
-   - Only execute on explicit "Confirm and Run" button click (or similar user action)
-   - Clear pending state after confirmation
-   - Display warnings inline with pending plan
+   - Store execution result in `st.session_state[f"execution_{run_key}"]` after initial execution
+   - Before executing, check if `run_key` already has cached result in session state
+   - If cached result exists and no force_rerun flag, use cached result instead of re-executing
+   - Add "Re-run Query" button that sets `st.session_state[f"force_rerun_{run_key}"] = True`
+   - Clear force_rerun flag after re-execution completes
+   - Maintain warnings in cached result for transparency
 
 4. **Run tests again**:
    ```bash
    make test-ui
    ```
+
+**Note**: This pattern prevents wasteful re-execution on Streamlit reruns while still allowing user-initiated re-runs when needed.
 
 
 ### Phase 2 Commit
