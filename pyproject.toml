@@ -3,7 +3,7 @@ name = "clinical-analytics"
 version = "0.1.0"
 description = "Multi-dataset clinical analytics platform"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "pandas>=2.1.0",
     "polars>=0.19.0",

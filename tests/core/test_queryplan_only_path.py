@@ -247,4 +247,3 @@ class TestQueryPlanOnlyPath:
         # Each group_count should have the group value and count
         assert all("Statin Used" in gc and "count" in gc for gc in formatted["group_counts"])
         assert "headline" in formatted
-
