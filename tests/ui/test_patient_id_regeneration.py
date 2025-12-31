@@ -6,6 +6,7 @@ for all patient ID regeneration decisions and validation.
 """
 
 import polars as pl
+import polars.testing as plt
 import pytest
 
 from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
@@ -331,8 +332,8 @@ class TestRegeneratePatientId:
         df_with_id_1, _ = regenerate_patient_id(df, metadata)
         df_with_id_2, _ = regenerate_patient_id(df, metadata)
 
-        # Assert - should be identical
-        assert df_with_id_1["patient_id"].to_list() == df_with_id_2["patient_id"].to_list()
+        # Assert - should be identical (use Polars-native assertion)
+        plt.assert_frame_equal(df_with_id_1, df_with_id_2)
 
     def test_invalid_source_type_raises_error(self):
         """Invalid source type should raise PatientIdRegenerationError."""

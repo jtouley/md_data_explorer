@@ -458,17 +458,34 @@ def test_aggregation_handles_null_values(df_with_nulls):
 
 > **Reference**: [.cursor/rules/100-polars-first.mdc](../.cursor/rules/100-polars-first.mdc), [.cursor/rules/104-plan-execution-hygiene.mdc](../.cursor/rules/104-plan-execution-hygiene.mdc)
 
-### Use Polars-Native Assertions
+### MANDATORY: Use Polars-Native Assertions for DataFrame Comparisons
+
+**Rule: ALWAYS use `pl.testing.assert_frame_equal()` when comparing entire DataFrames**
 
 ```python
 import polars.testing as plt
 
-# CORRECT: Use Polars testing assertions
+# ✅ CORRECT: Use Polars testing assertions for DataFrames
 plt.assert_frame_equal(result, expected)
 
-# WRONG: Never use pandas assertions for Polars DataFrames
+# ❌ WRONG: Never use list comparisons for DataFrame equality
+# assert df1["col"].to_list() == df2["col"].to_list()  # NO!
+
+# ❌ WRONG: Never use pandas assertions
 # pd.testing.assert_frame_equal(result, expected)  # NO!
 ```
+
+**Why**: `assert_frame_equal()` properly handles:
+- Schema differences (missing/extra columns)
+- Type mismatches (int vs float vs string)
+- Null value semantics
+- Float precision issues
+- Column order differences
+
+**When List Comparison is OK**:
+- Single scalar value: `assert result == 42`
+- Simple list of scalars: `assert [1, 2, 3] == [1, 2, 3]`
+- String content: `assert "error message" in str(exception)`
 
 ### Polars Attribute Usage
 

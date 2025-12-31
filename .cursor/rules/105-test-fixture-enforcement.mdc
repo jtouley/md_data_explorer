@@ -199,6 +199,30 @@ uv run pytest tests/
 python -m pytest tests/
 ```
 
+### Before Asserting DataFrame Equality
+
+**MANDATORY: Use `pl.testing.assert_frame_equal()` for DataFrame comparisons**
+
+**CHECKLIST**:
+
+1. If comparing **entire DataFrames**: ✅ Use `pl.testing.assert_frame_equal(df1, df2)`
+2. If comparing **single values**: ✅ Use `assert result == value`
+3. If comparing **simple lists**: ✅ Use `assert [1, 2, 3] == [1, 2, 3]`
+4. **NEVER use list comparisons for DataFrame columns**: ❌ `assert df1["col"].to_list() == df2["col"].to_list()`
+
+**Example**:
+
+```python
+import polars.testing as plt
+
+# ✅ CORRECT - Comprehensive DataFrame comparison
+plt.assert_frame_equal(result_df, expected_df)
+
+# ❌ WRONG - Misses schema/type differences
+assert result_df["col"].to_list() == expected_df["col"].to_list()
+```
+```
+
 ### Before Committing
 
 **MANDATORY PRE-COMMIT SEQUENCE**:

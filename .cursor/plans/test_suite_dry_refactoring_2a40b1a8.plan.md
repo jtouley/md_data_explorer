@@ -130,17 +130,17 @@ todos:
 #### Phase 0.5: Parallel Test Execution (✅ COMPLETED)
 
 - ✅ **Python version pinned**: `requires-python = ">=3.11,<3.14"` in pyproject.toml
-  - Avoids pytest-xdist deadlock with Python 3.14 import lock changes
-  - Codebase verified to use no Python 3.14-specific features
+- Avoids pytest-xdist deadlock with Python 3.14 import lock changes
+- Codebase verified to use no Python 3.14-specific features
 - ✅ **Parallel execution enabled**: Updated Makefile commands
-  - `make test-fast`: Added `-n auto` for parallel execution (8 workers)
-  - `make test-core`: Added `-n auto` for parallel execution
-  - `make test-analysis`: Added `-n auto` for parallel execution
-  - Added `make test-fast-serial` for debugging (sequential fallback)
+- `make test-fast`: Added `-n auto` for parallel execution (8 workers)
+- `make test-core`: Added `-n auto` for parallel execution
+- `make test-analysis`: Added `-n auto` for parallel execution
+- Added `make test-fast-serial` for debugging (sequential fallback)
 - ✅ **Verified working**: Tests run successfully in parallel
-  - 14 tests passed in 2.27s with 8 workers
-  - No deadlocks or import errors
-  - Python 3.13.11 confirmed (not 3.14)
+- 14 tests passed in 2.27s with 8 workers
+- No deadlocks or import errors
+- Python 3.13.11 confirmed (not 3.14)
 
 **Impact**: Immediate 2-4x speedup for TDD feedback loop
 
@@ -156,9 +156,9 @@ todos:
 - ✅ **test_chart_spec.py**: Removed 35-line duplicate fixture, updated 6 test methods  
 - ✅ **test_queryplan_only_path.py**: Refactored 8 test methods
 - ✅ **test_queryplan_conversion.py**: Removed 15-line duplicate MagicMock fixture, updated 6 test methods
-  - Used existing `mock_semantic_layer` factory fixture from conftest.py
-  - Created module-level `semantic_mock` fixture with custom column mappings
-  - All 6 tests passing with parallel execution (1.63s with 8 workers)
+- Used existing `mock_semantic_layer` factory fixture from conftest.py
+- Created module-level `semantic_mock` fixture with custom column mappings
+- All 6 tests passing with parallel execution (1.63s with 8 workers)
 
 **Progress**: 4/4 simple replacement files completed, ~120 lines of duplicate code eliminated
 
@@ -168,19 +168,17 @@ todos:
 - ✅ **test_semantic_run_key_determinism.py**: Replaced 37-line fixture (7 tests ✓)
 - ✅ **test_semantic_observability.py**: Replaced 34-line fixture (19 tests ✓)
 
-**Progress**: 3/3 medium complexity files, ~88 lines eliminated, 41 tests passing in 1.99s
-
-**Cumulative (Phases 1.1-1.3)**: 7 files, ~208 lines eliminated, 68 tests using shared fixtures
+**Progress**: 3/3 medium complexity files, ~88 lines eliminated, 41 tests passing in 1.99s**Cumulative (Phases 1.1-1.3)**: 7 files, ~208 lines eliminated, 68 tests using shared fixtures
 
 #### Phase 2.1: DataFrame Factory Fixtures (✅ COMPLETED)
 
 - ✅ **Added `make_cohort_with_categorical()` factory** to `conftest.py`
-  - Eliminates duplicate DataFrame creation with "1: Yes", "2: No" categorical patterns
-  - Supports custom patient_ids, treatment, status, ages parameters
+- Eliminates duplicate DataFrame creation with "1: Yes", "2: No" categorical patterns
+- Supports custom patient_ids, treatment, status, ages parameters
 - ✅ **Added `make_multi_table_setup()` factory** to `conftest.py`
-  - Creates 3-table setup: patients, medications, patient_medications (bridge)
-  - Supports custom num_patients, num_medications parameters
-  - Returns dict with all 3 DataFrames
+- Creates 3-table setup: patients, medications, patient_medications (bridge)
+- Supports custom num_patients, num_medications parameters
+- Returns dict with all 3 DataFrames
 - ✅ **Quality gates passed**: format, lint, type-check
 - ✅ **Tests verified**: 798 tests passing serially (21 pre-existing failures)
 
@@ -192,9 +190,9 @@ todos:
 - ✅ **~120 lines of duplicate DataFrame code eliminated**
 - ✅ **All refactored tests passing** (verified individually and in test class)
 - ℹ️ **Remaining 13 tests** have complex custom patterns (large datasets, specific vitals data)
-  - These tests require custom DataFrame structures beyond factory capabilities
-  - Refactoring them would require overly complex factory parameters
-  - Following DRY principle: don't abstract prematurely (Rule of Three)
+- These tests require custom DataFrame structures beyond factory capabilities
+- Refactoring them would require overly complex factory parameters
+- Following DRY principle: don't abstract prematurely (Rule of Three)
 
 **Impact**: Significant reduction in boilerplate for standard 3-table test patterns
 
@@ -263,25 +261,17 @@ Refactor the test suite to eliminate violations of AGENTS.md guidelines:
 
 ### Phase 0.5: Immediate Speed Improvements for TDD (CRITICAL - DO FIRST)
 
-**Goal**: Achieve immediate 2-4x test speedup for TDD workflow through parallel execution and quick scope optimizations
-
-**Rationale**: Since you're doing TDD, fast test feedback is critical. This phase provides immediate wins before the comprehensive refactoring.
-
-**⚠️ Python 3.14 Safety**: Python 3.14 introduces import lock changes that cause deadlocks with pytest-xdist and NumPy. This phase requires pinning Python to `<3.14` to avoid deadlock issues. The codebase uses no Python 3.14-specific features, so this is safe.
+**Goal**: Achieve immediate 2-4x test speedup for TDD workflow through parallel execution and quick scope optimizations**Rationale**: Since you're doing TDD, fast test feedback is critical. This phase provides immediate wins before the comprehensive refactoring.**⚠️ Python 3.14 Safety**: Python 3.14 introduces import lock changes that cause deadlocks with pytest-xdist and NumPy. This phase requires pinning Python to `<3.14` to avoid deadlock issues. The codebase uses no Python 3.14-specific features, so this is safe.
 
 #### Step 0.5.0: Pin Python Version (REQUIRED FIRST STEP)
 
-**Pin Python to avoid pytest-xdist deadlocks**:
-
-Update `pyproject.toml`:
+**Pin Python to avoid pytest-xdist deadlocks**:Update `pyproject.toml`:
 
 ```toml
 requires-python = ">=3.11,<3.14"
 ```
 
-**Why**: Python 3.14's import lock changes cause `_DeadlockError` and `RecursionError` in numpy.linalg when using pytest-xdist parallel workers. The codebase uses no Python 3.14-specific features (verified: only uses 3.8+ features like walrus operator, 3.10+ union types).
-
-**Status**: ✅ pytest-xdist already installed (from previous attempt)
+**Why**: Python 3.14's import lock changes cause `_DeadlockError` and `RecursionError` in numpy.linalg when using pytest-xdist parallel workers. The codebase uses no Python 3.14-specific features (verified: only uses 3.8+ features like walrus operator, 3.10+ union types).**Status**: ✅ pytest-xdist already installed (from previous attempt)
 
 #### Step 0.5.1: Enable Parallel Test Execution
 
@@ -302,9 +292,7 @@ test-fast-serial: ## Run fast tests serially (for debugging)
 - `test-core`: Add `-n auto` for parallel execution
 - `test-analysis`: Add `-n auto` for parallel execution
 
-**Expected speedup**: 2-4x faster (depending on CPU cores)
-
-**Previous attempt**: Parallel execution was added in commit a60fcd0 but reverted in e11078c due to Python 3.14 incompatibility. With Python pinned to `<3.14`, parallel execution is safe.
+**Expected speedup**: 2-4x faster (depending on CPU cores)**Previous attempt**: Parallel execution was added in commit a60fcd0 but reverted in e11078c due to Python 3.14 incompatibility. With Python pinned to `<3.14`, parallel execution is safe.
 
 #### Step 0.5.2: Profile Current Test Suite
 
@@ -320,6 +308,8 @@ uv run pytest tests/ --durations=0 | grep -E "fixture|test_" | head -20
 # Measure total execution time
 time make test-fast
 ```
+
+
 
 #### Step 0.5.3: Quick Scope Wins
 
@@ -344,6 +334,8 @@ def expensive_fixture(tmp_path_factory):
     yield resource
     # Optional cleanup
 ```
+
+
 
 #### Step 0.5.4: Verify Speedup
 
@@ -436,6 +428,8 @@ def make_semantic_layer(tmp_path):
     return _make
 ```
 
+
+
 #### Step 1.2: Replace Duplicate Fixtures
 
 Replace fixtures in these files (in order of complexity):**Simple replacements** (direct SemanticLayer instances):
@@ -470,6 +464,8 @@ def test_example(make_semantic_layer):
     semantic = make_semantic_layer()
     # ... test code ...
 ```
+
+
 
 #### Step 1.3: Update Test Functions
 
@@ -567,6 +563,8 @@ def make_multi_table_setup():
     return _make
 ```
 
+
+
 #### Step 2.2: Refactor High-Impact Files
 
 Start with files that have the most hardcoded DataFrames:
@@ -606,6 +604,8 @@ def test_example(make_patients_df):
         ages=[30, 45, 28]
     )
 ```
+
+
 
 ### Phase 3: Clean Up Duplicate Imports (OPTIONAL)
 
@@ -788,6 +788,8 @@ make test-fast
 make check
 ```
 
+
+
 ## Success Criteria
 
 ### Phases 1-4 (DRY Compliance)
@@ -826,5 +828,3 @@ make check
 ## Files to Modify
 
 ### Primary Changes
-
-- `tests/conftest.py` - Add factory fixtures
