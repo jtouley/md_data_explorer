@@ -22,10 +22,10 @@ from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
 
 if TYPE_CHECKING:
-    import polars as pl
-
     from clinical_analytics.core.dataset import Granularity
     from clinical_analytics.core.query_plan import QueryPlan
+else:
+    import polars as pl
 
 logger = logging.getLogger(__name__)
 
@@ -1189,6 +1189,20 @@ class SemanticLayer:
         delay = initial_delay
         last_exception: Exception | None = None
 
+        # Known transient error patterns for DuckDB/Ibis backends
+        # Narrow patterns to avoid retrying on deterministic failures
+        transient_patterns = [
+            "temporary",
+            "timeout",
+            "connection refused",
+            "connection reset",
+            "connection closed",
+            "database is locked",
+            "deadlock",
+            "service unavailable",
+            "temporarily unavailable",
+        ]
+
         for attempt in range(max_retries + 1):  # +1 for initial attempt
             try:
                 return self._execute_plan(plan)
@@ -1197,54 +1211,100 @@ class SemanticLayer:
                 last_exception = e
                 if "_record_batch_readers_consumed" in str(e) and attempt < max_retries:
                     logger.warning(
-                        f"Backend initialization error on attempt {attempt + 1}/{max_retries + 1}: {e}. "
-                        f"Retrying in {delay}s..."
+                        "backend_initialization_error_retry: attempt=%d/%d error_type=%s delay=%.1fs - %s",
+                        attempt + 1,
+                        max_retries + 1,
+                        type(e).__name__,
+                        delay,
+                        str(e),
+                        exc_info=True,
                     )
                     time.sleep(delay)
                     delay *= 2  # Exponential backoff
                 else:
                     # Not a backend error or final retry - re-raise
+                    logger.error(
+                        "backend_initialization_error_final: attempt=%d error_type=%s - %s",
+                        attempt + 1,
+                        type(e).__name__,
+                        str(e),
+                        exc_info=True,
+                    )
                     raise
             except (ConnectionError, OSError, TimeoutError) as e:
                 # Connection/network errors - retry
                 last_exception = e
                 if attempt < max_retries:
                     logger.warning(
-                        f"Connection error on attempt {attempt + 1}/{max_retries + 1}: {e}. Retrying in {delay}s..."
+                        "connection_error_retry: attempt=%d/%d error_type=%s delay=%.1fs - %s",
+                        attempt + 1,
+                        max_retries + 1,
+                        type(e).__name__,
+                        delay,
+                        str(e),
+                        exc_info=True,
                     )
                     time.sleep(delay)
                     delay *= 2  # Exponential backoff
                 else:
                     # Final retry - re-raise
+                    logger.error(
+                        "connection_error_final: attempt=%d error_type=%s - %s",
+                        attempt + 1,
+                        type(e).__name__,
+                        str(e),
+                        exc_info=True,
+                    )
                     raise
             except Exception as e:
-                # Check if it's a transient error message pattern
+                # Check if it's a known transient error pattern (narrow matching)
                 error_msg = str(e).lower()
-                is_transient = any(
-                    pattern in error_msg
-                    for pattern in [
-                        "temporary",
-                        "timeout",
-                        "connection",
-                        "lock",
-                        "deadlock",
-                        "unavailable",
-                    ]
-                )
+                error_type = type(e).__name__
+                is_transient = any(pattern in error_msg for pattern in transient_patterns)
 
                 if is_transient and attempt < max_retries:
                     last_exception = e
+                    matched = next((p for p in transient_patterns if p in error_msg), None)
                     logger.warning(
-                        f"Transient error on attempt {attempt + 1}/{max_retries + 1}: {e}. Retrying in {delay}s..."
+                        "transient_error_retry: attempt=%d/%d error_type=%s matched='%s' delay=%.1fs - %s",
+                        attempt + 1,
+                        max_retries + 1,
+                        error_type,
+                        matched,
+                        delay,
+                        str(e),
+                        exc_info=True,
                     )
                     time.sleep(delay)
                     delay *= 2  # Exponential backoff
                 else:
                     # Not transient or final retry - re-raise
+                    if is_transient:
+                        logger.error(
+                            "transient_error_final: attempt=%d error_type=%s - %s",
+                            attempt + 1,
+                            error_type,
+                            str(e),
+                            exc_info=True,
+                        )
+                    else:
+                        logger.debug(
+                            "non_transient_error_no_retry: error_type=%s - %s",
+                            error_type,
+                            str(e),
+                            exc_info=True,
+                        )
                     raise
 
         # Should never reach here, but just in case
         if last_exception:
+            logger.error(
+                "retry_exhausted",
+                max_attempts=max_retries + 1,
+                error_type=type(last_exception).__name__,
+                error_message=str(last_exception),
+                exc_info=True,
+            )
             raise last_exception
         raise RuntimeError("Unexpected retry loop exit")
 
@@ -1415,13 +1475,18 @@ class SemanticLayer:
         if result_df is None:
             return {"type": "error", "error": "No result data"}
 
-        # Convert to Polars if needed
-        import polars as pl
-
+        # Normalize result to Polars DataFrame (handle scalar edge cases)
+        # _execute_plan always returns pd.DataFrame, but normalize for safety
         if isinstance(result_df, pd.DataFrame):
             result_df_pl = pl.from_pandas(result_df)
-        else:
+        elif isinstance(result_df, (int, float)):
+            # Scalar count result - convert to DataFrame for consistent handling
+            result_df_pl = pl.DataFrame({"count": [int(result_df)]})
+        elif isinstance(result_df, pl.DataFrame):
             result_df_pl = result_df
+        else:
+            # Unknown type - try to convert
+            result_df_pl = pl.DataFrame({"value": [result_df]})
 
         # Phase 3.1: Format result DataFrame directly (it's already aggregated from execute_query_plan)
         # Do NOT call compute_analysis_by_type() - it expects raw cohort, not aggregated results
@@ -1443,16 +1508,7 @@ class SemanticLayer:
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
         """Format COUNT result DataFrame to result dict format."""
-
-        # Check if result is scalar (total count) or DataFrame (grouped count)
-        if isinstance(result_df, (int, float)):
-            # Scalar result (total count)
-            total_count = int(result_df)
-            return {
-                "type": "count",
-                "total_count": total_count,
-                "headline": f"Total count: **{total_count}**",
-            }
+        # Note: result_df is always a DataFrame (normalized in format_execution_result)
 
         # DataFrame result - check if grouped or simple count
         if result_df.height == 1 and result_df.width == 1:

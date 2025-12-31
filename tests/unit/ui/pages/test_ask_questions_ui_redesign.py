@@ -169,9 +169,12 @@ class TestChatInputHandling:
         if query_intent and hasattr(nl_engine, "_intent_to_plan"):
             query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
 
-            # Assert: QueryPlan created with run_key
+            # Assert: QueryPlan created (run_key is None - semantic layer owns it per PR21)
             assert query_plan is not None
-            assert query_plan.run_key is not None
+            assert query_plan.run_key is None, (
+                "nl_query_engine._intent_to_plan() should not set run_key - "
+                "semantic layer generates it during execute_query_plan() (PR21)"
+            )
             assert query_plan.intent == "COUNT" or query_plan.intent == query_intent.intent_type
 
     def test_chat_input_query_handles_parsing_errors_gracefully(self):

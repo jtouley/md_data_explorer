@@ -117,6 +117,7 @@ class RelationshipDetector:
         Verify referential integrity between parent and child tables.
 
         Calculates what percentage of child FK values exist in parent PK.
+        Uses sampling for large tables to improve performance.
 
         Args:
             parent_df: Parent table DataFrame
@@ -146,6 +147,31 @@ class RelationshipDetector:
             f"Parent values dtype: {parent_values.dtype}, len: {parent_values.len()}, "
             f"sample: {parent_values.head(3).to_list()}"
         )
+
+        # Performance optimization: Use sampling for large tables
+        # Sample size threshold: if child has > 100k values, sample 10k for estimation
+        max_sample_size = 10_000
+        large_table_threshold = 100_000
+
+        use_sampling = child_values.len() > large_table_threshold
+
+        if use_sampling:
+            logger.debug(
+                f"Large table detected ({child_values.len()} rows), sampling {max_sample_size} for integrity check"
+            )
+            child_values = child_values.sample(n=max_sample_size, seed=42)  # Deterministic sampling
+
+        # Short-circuit: If parent has very high cardinality and child is small, likely no FK relationship
+        parent_cardinality = parent_values.n_unique()
+        child_cardinality = child_values.n_unique()
+
+        # If parent has >> child cardinality, likely not a FK relationship
+        if parent_cardinality > child_cardinality * 10 and child_cardinality < 100:
+            logger.debug(
+                f"Short-circuit: parent cardinality ({parent_cardinality}) >> child ({child_cardinality}), "
+                "likely not FK relationship"
+            )
+            return 0.0
 
         # Cast both to string for type-safe comparison using pure Polars operations
         # This handles cases where one table has int64 and another has string
@@ -188,7 +214,7 @@ class RelationshipDetector:
             logger.debug(f"Found {matches} matches out of {child_str.len()} child values")
 
             ratio = float(matches) / float(child_str.len()) if child_str.len() > 0 else 0.0
-            logger.debug(f"Match ratio: {ratio:.4f}")
+            logger.debug(f"Match ratio: {ratio:.4f} (sampled: {use_sampling})")
             return ratio
 
         except Exception as e:

@@ -4,6 +4,7 @@ Dynamic Analysis Page - Question-Driven Analytics
 Ask questions, get answers. No statistical jargon - just tell me what you want to know.
 """
 
+import hashlib
 import sys
 import time
 from collections import deque
@@ -1215,15 +1216,18 @@ def _render_thinking_indicator(steps: list[dict[str, Any]]) -> None:
     last_step = steps[-1]
     status_label = "🤔 Processing your question..."
     status_state = "running"
+    expanded = True  # Default to expanded
 
     if last_step["status"] == "completed":
         status_label = "✅ Query complete!"
         status_state = "complete"
+        expanded = False  # Auto-collapse when completed
     elif last_step["status"] == "error":
         status_label = "❌ Query failed"
         status_state = "error"
+        expanded = True  # Keep expanded for errors
 
-    with st.status(status_label, expanded=True, state=status_state):
+    with st.status(status_label, expanded=expanded, state=status_state):
         for step in steps:
             # Render step text
             st.write(f"**{step['text']}**")
@@ -1390,7 +1394,8 @@ def _suggest_follow_ups(
                 # Use sanitized run_key (not hash) to prevent collisions while keeping it readable
                 # Sanitize run_key to remove special characters that might cause issues
                 run_key_safe = (run_key or "default").replace(":", "_").replace("/", "_").replace("-", "_")[:30]
-                suggestion_hash = hash(suggestion) % 1000000
+                # Use stable hash for suggestion button key
+                suggestion_hash = hashlib.sha256(suggestion.encode("utf-8")).hexdigest()[:8]
                 # Use render_context to distinguish between current result and history rendering
                 # Create a unique key that combines all these elements
                 button_key = f"followup_{render_context}_{run_key_safe}_{idx}_{suggestion_hash}"
@@ -1645,9 +1650,12 @@ def main():
                 query_text = getattr(context, "research_question", "")
 
                 # Phase 2.4: Cache execution results to prevent duplicate execute_query_plan() calls
-                # Use hash of (query_text + dataset_version) as cache key prefix
+                # Use stable sha256 digest (not hash()) for deterministic cache keys across sessions
                 # run_key is only available after execution, so we use query hash for pre-execution cache lookup
-                exec_cache_key = f"exec_result:{dataset_version}:{hash(query_text)}"
+                # Normalize query text same way as semantic layer does for run_key generation
+                normalized_query = " ".join(query_text.lower().split()) if query_text else ""
+                query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
+                exec_cache_key = f"exec_result:{dataset_version}:{query_hash}"
 
                 # Check if user requested force rerun
                 force_rerun_key = f"force_rerun:{dataset_version}"
@@ -1684,10 +1692,36 @@ def main():
                 # Phase 2.3: Always execute, show warnings inline (no gating)
                 st.divider()
 
-                # Display warnings if present
-                if execution_result.get("warnings"):
-                    for warning in execution_result["warnings"]:
-                        st.warning(f"⚠️ {warning}")
+                # Display warnings if present - group in expander to avoid cluttering UI
+                warnings = execution_result.get("warnings", [])
+                if warnings:
+                    # Categorize warnings by severity (info vs warning)
+                    info_warnings = []
+                    error_warnings = []
+                    for warning in warnings:
+                        warning_lower = warning.lower()
+                        if (
+                            "error" in warning_lower
+                            or "failed" in warning_lower
+                            or "validation failed" in warning_lower
+                        ):
+                            error_warnings.append(warning)
+                        else:
+                            info_warnings.append(warning)
+
+                    # Group warnings in expander (auto-collapsed if only info warnings)
+                    warning_count = len(warnings)
+                    warning_text = f"message{'s' if warning_count != 1 else ''}"
+                    with st.expander(
+                        f"ℹ️ Query Information ({warning_count} {warning_text})",
+                        expanded=len(error_warnings) > 0,
+                    ):
+                        # Show error-level warnings first
+                        for warning in error_warnings:
+                            st.error(f"❌ {warning}")
+                        # Then info-level warnings
+                        for warning in info_warnings:
+                            st.info(f"ℹ️ {warning}")
 
                 # Phase 1.1.5: Always use run_key from execution result (semantic layer generates it deterministically)
                 run_key = execution_result.get("run_key")
@@ -1711,10 +1745,15 @@ def main():
                     # Check if last chat message is user message (indicates chat input was used)
                     chat = st.session_state.get("chat", [])
                     if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
-                        # Query came from chat input - add assistant message
+                        # Query came from chat input - add assistant message with actual answer content
+                        # Get formatted result headline/summary (not the query text)
+                        result_key = f"analysis_result:{dataset_version}:{run_key}"
+                        result = st.session_state.get(result_key, {})
+                        assistant_text = result.get("headline") or result.get("headline_text") or "Analysis completed"
+
                         assistant_msg: ChatMessage = {
                             "role": "assistant",
-                            "text": query_text,
+                            "text": assistant_text,  # Store actual answer content, not query text
                             "run_key": run_key,
                             "status": "completed",
                             "created_at": time.time(),
@@ -1722,7 +1761,10 @@ def main():
                         st.session_state["chat"].append(assistant_msg)
 
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
-                    if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{hash(query_text)}"):
+                    # Use stable hash for button key (same normalization as cache key)
+                    normalized_query = " ".join(query_text.lower().split()) if query_text else ""
+                    query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
+                    if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{query_hash}"):
                         st.session_state[force_rerun_key] = True
                         st.rerun()
                 else:
