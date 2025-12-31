@@ -34,8 +34,8 @@ def mock_semantic_layer():
 class TestQueryPlanConversion:
     """Test QueryIntent to QueryPlan conversion."""
 
-    def test_intent_to_plan_creates_queryplan_with_deterministic_run_key(self, mock_semantic_layer):
-        """Test that _intent_to_plan creates QueryPlan with deterministic run_key."""
+    def test_intent_to_plan_creates_queryplan_without_run_key(self, mock_semantic_layer):
+        """Test that _intent_to_plan creates QueryPlan with run_key=None (Phase 1.1.5)."""
         # Arrange: Create QueryIntent
         engine = NLQueryEngine(mock_semantic_layer)
         intent = QueryIntent(
@@ -48,16 +48,20 @@ class TestQueryPlanConversion:
         plan1 = engine._intent_to_plan(intent, "dataset_v1")
         plan2 = engine._intent_to_plan(intent, "dataset_v1")
 
-        # Assert: Same plan produces same run_key
+        # Assert: Phase 1.1.5 - nl_query_engine should NOT set run_key (semantic layer will generate it)
         assert isinstance(plan1, QueryPlan)
-        assert plan1.run_key is not None
-        assert plan1.run_key == plan2.run_key  # Deterministic
+        assert plan1.run_key is None, (
+            "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
+        )
+        assert plan2.run_key is None, (
+            "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
+        )
         assert plan1.intent == "COUNT"
         assert plan1.confidence == 0.9
         assert len(plan1.filters) == 1
 
-    def test_intent_to_plan_different_dataset_versions_produce_different_run_keys(self, mock_semantic_layer):
-        """Test that different dataset versions produce different run_keys."""
+    def test_intent_to_plan_does_not_set_run_key(self, mock_semantic_layer):
+        """Test that _intent_to_plan does not set run_key (Phase 1.1.5)."""
         # Arrange: Create QueryIntent
         engine = NLQueryEngine(mock_semantic_layer)
         intent = QueryIntent(intent_type="DESCRIBE", primary_variable="age", confidence=0.9)
@@ -66,13 +70,14 @@ class TestQueryPlanConversion:
         plan1 = engine._intent_to_plan(intent, "dataset_v1")
         plan2 = engine._intent_to_plan(intent, "dataset_v2")
 
-        # Assert: Different dataset versions produce different run_keys
-        assert plan1.run_key != plan2.run_key
+        # Assert: Phase 1.1.5 - run_key should be None (semantic layer will generate it deterministically)
+        assert plan1.run_key is None, "Phase 1.1.5: nl_query_engine should not set run_key"
+        assert plan2.run_key is None, "Phase 1.1.5: nl_query_engine should not set run_key"
         assert plan1.intent == plan2.intent
         assert plan1.metric == plan2.metric
 
-    def test_intent_to_plan_includes_filters_in_run_key(self, mock_semantic_layer):
-        """Test that filters are included in run_key generation."""
+    def test_intent_to_plan_preserves_filters_without_run_key(self, mock_semantic_layer):
+        """Test that filters are preserved but run_key is not set (Phase 1.1.5)."""
         # Arrange: Create QueryIntent with filters
         engine = NLQueryEngine(mock_semantic_layer)
         intent1 = QueryIntent(
@@ -88,8 +93,14 @@ class TestQueryPlanConversion:
         plan1 = engine._intent_to_plan(intent1, "dataset_v1")
         plan2 = engine._intent_to_plan(intent2, "dataset_v1")
 
-        # Assert: Different filters produce different run_keys
-        assert plan1.run_key != plan2.run_key
+        # Assert: Phase 1.1.5 - run_key should be None (semantic layer will generate it)
+        assert plan1.run_key is None, "Phase 1.1.5: nl_query_engine should not set run_key"
+        assert plan2.run_key is None, "Phase 1.1.5: nl_query_engine should not set run_key"
+        # Filters should be preserved
+        assert len(plan1.filters) == 1
+        assert len(plan2.filters) == 1
+        assert plan1.filters[0].value == 50
+        assert plan2.filters[0].value == 60
 
     def test_intent_to_plan_preserves_all_intent_fields(self, mock_semantic_layer):
         """Test that all QueryIntent fields are preserved in QueryPlan."""
@@ -149,4 +160,5 @@ class TestAnalysisContextQueryPlan:
         # Assert
         assert context.query_plan is not None
         assert context.query_plan.intent == "COUNT"
-        assert context.query_plan.run_key is not None
+        # Phase 1.1.5: run_key should be None (semantic layer will generate it)
+        assert context.query_plan.run_key is None, "Phase 1.1.5: nl_query_engine should not set run_key"

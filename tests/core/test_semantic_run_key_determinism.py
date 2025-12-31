@@ -201,3 +201,131 @@ class TestRunKeyDeterminism:
 
         # Assert: Different scope should produce different keys
         assert key1 != key2
+
+
+class TestRunKeyDeterminismAllExecutionPaths:
+    """Test suite for Phase 1.1.5: Verify run_key determinism across all execution paths."""
+
+    @pytest.fixture
+    def semantic_layer(self, tmp_path):
+        """Create minimal semantic layer for testing run_key generation."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "pyproject.toml").write_text("[project]\nname = 'test'")
+
+        data_dir = workspace / "data" / "raw" / "test_dataset"
+        data_dir.mkdir(parents=True)
+
+        test_csv = data_dir / "test.csv"
+        import pandas as pd
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [1, 2, 3],
+                "age": [45, 62, 38],
+                "status": ["active", "inactive", "active"],
+            }
+        )
+        df.to_csv(test_csv, index=False)
+
+        config = {
+            "init_params": {"source_path": "data/raw/test_dataset/test.csv"},
+            "column_mapping": {"patient_id": "patient_id"},
+            "time_zero": {"value": "2024-01-01"},
+            "outcomes": {},
+            "analysis": {"default_outcome": "outcome"},
+        }
+
+        from clinical_analytics.core.semantic import SemanticLayer
+
+        semantic = SemanticLayer("test_dataset", config=config, workspace_root=workspace)
+        semantic.dataset_version = "test_v1"
+
+        return semantic
+
+    def test_all_execution_paths_produce_same_run_key(self, semantic_layer):
+        """All execution paths should produce same run_key for same query (Phase 1.1.5)."""
+        # Arrange: Same query, same plan
+        query = "average age by status"
+        plan = QueryPlan(intent="COUNT", metric="age", group_by="status", entity_key="patient_id", confidence=0.9)
+
+        # Act: Generate run_key from different paths
+        # Path 1: semantic._generate_run_key() directly
+        key1 = semantic_layer._generate_run_key(plan, query)
+
+        # Path 2: execute_query_plan() (which calls _generate_run_key())
+        result = semantic_layer.execute_query_plan(plan, query_text=query)
+        key2 = result["run_key"]
+
+        # Assert: All paths produce same key
+        assert key1 == key2, f"Run keys should match: {key1} != {key2}"
+        assert result["success"] is True, "Execution should succeed"
+
+    def test_query_plan_run_key_always_from_semantic_layer(self, semantic_layer):
+        """QueryPlan.run_key should always come from semantic layer, never from nl_query_engine (Phase 1.1.5)."""
+        # Arrange: QueryIntent from nl_query_engine
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
+
+        engine = NLQueryEngine(semantic_layer)
+        intent = QueryIntent(
+            intent_type="COUNT",
+            primary_variable="age",
+            grouping_variable="status",
+            confidence=0.9,
+        )
+
+        # Act: Convert to plan
+        plan = engine._intent_to_plan(intent, "test_v1")
+
+        # Assert: run_key should be None (semantic layer will generate it)
+        assert plan.run_key is None, "nl_query_engine should not set run_key - semantic layer will generate it"
+
+    def test_execute_query_plan_always_generates_run_key(self, semantic_layer):
+        """execute_query_plan() should always generate run_key even if plan.run_key is None (Phase 1.1.5)."""
+        # Arrange: Plan with run_key=None (as nl_query_engine should produce)
+        plan = QueryPlan(intent="COUNT", metric="age", group_by="status", entity_key="patient_id", run_key=None)
+        query = "average age by status"
+
+        # Act
+        result = semantic_layer.execute_query_plan(plan, query_text=query)
+
+        # Assert: Execution result should always include run_key
+        assert "run_key" in result, "Execution result must include run_key"
+        assert result["run_key"] is not None, "Run key should not be None"
+        assert len(result["run_key"]) > 0, "Run key should not be empty"
+        assert result["success"] is True, "Execution should succeed"
+
+    def test_execute_query_plan_run_key_matches_direct_generation(self, semantic_layer):
+        """execute_query_plan() run_key should match direct _generate_run_key() call (Phase 1.1.5)."""
+        # Arrange: Same plan and query
+        plan = QueryPlan(intent="COUNT", metric="age", group_by="status", entity_key="patient_id", confidence=0.9)
+        query = "average age by status"
+
+        # Act: Generate run_key directly
+        direct_key = semantic_layer._generate_run_key(plan, query)
+
+        # Act: Generate run_key via execute_query_plan()
+        result = semantic_layer.execute_query_plan(plan, query_text=query)
+        execution_key = result["run_key"]
+
+        # Assert: Keys should match
+        assert direct_key == execution_key, (
+            f"Direct generation and execution should produce same key: {direct_key} != {execution_key}"
+        )
+
+    def test_run_key_deterministic_across_multiple_executions(self, semantic_layer):
+        """Same query executed multiple times should produce same run_key (Phase 1.1.5)."""
+        # Arrange: Same plan and query
+        plan = QueryPlan(intent="COUNT", metric="age", group_by="status", entity_key="patient_id", confidence=0.9)
+        query = "average age by status"
+
+        # Act: Execute multiple times
+        result1 = semantic_layer.execute_query_plan(plan, query_text=query)
+        result2 = semantic_layer.execute_query_plan(plan, query_text=query)
+        result3 = semantic_layer.execute_query_plan(plan, query_text=query)
+
+        # Assert: All executions should produce same run_key
+        assert result1["run_key"] == result2["run_key"] == result3["run_key"], (
+            "Multiple executions should produce same run_key: "
+            f"{result1['run_key']} != {result2['run_key']} != {result3['run_key']}"
+        )
