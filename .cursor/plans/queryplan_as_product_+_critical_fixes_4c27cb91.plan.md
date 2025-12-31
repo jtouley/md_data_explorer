@@ -1192,6 +1192,30 @@ Tests: 6 tests passing (test_thinking_indicator, test_retry_logic)
 All quality gates passing
 ```
 
+**✅ COMPLETED** (commit: 7932819)
+
+**Implementation Details**:
+- **Phase 2.5.1**: Added `st.status()` wrapper in Ask_Questions.py around query execution
+  - Shows progressive steps: query plan interpretation → execution → completion
+  - Displays intent, metric, group_by, filters while processing
+  - Updates status label and state on completion/failure
+  - Shows cache indicator when using cached results
+- **Phase 2.5.2**: Added `_execute_plan_with_retry()` method in semantic.py
+  - Implements exponential backoff (0.5s → 1s → 2s)
+  - Handles backend initialization errors (AttributeError: '_record_batch_readers_consumed')
+  - Retries on ConnectionError, OSError, TimeoutError
+  - Pattern-matches transient error messages (temporary, timeout, connection, lock, deadlock, unavailable)
+  - Logs retry attempts with structured logging
+  - Non-transient errors fail immediately without retry
+- **Tests**: Added 6 comprehensive retry logic tests in test_semantic_observability.py
+  - Backend error recovery
+  - Connection error recovery
+  - Transient error pattern matching
+  - Max retry exhaustion
+  - Non-transient error handling
+  - Exponential backoff timing verification
+- **Quality**: All 91 semantic layer tests pass
+
 ---
 
 ## Phase 3: Make QueryPlan the Only Execution Path
