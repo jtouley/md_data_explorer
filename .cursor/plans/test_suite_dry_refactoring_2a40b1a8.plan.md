@@ -60,7 +60,7 @@ todos:
       - phase2-dataframe-factories
   - id: phase2-refactor-compute
     content: Refactor test_compute.py to extract common DataFrame patterns (32 instances)
-    status: pending
+    status: completed
     dependencies:
       - phase2-dataframe-factories
   - id: phase2-refactor-relationship
