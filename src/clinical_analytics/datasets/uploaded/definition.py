@@ -233,7 +233,34 @@ class UploadedDataset(ClinicalDataset):
                         from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
                         df_materialized = lf.collect()
-                        df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_materialized)
+
+                        # Check if metadata specifies how to regenerate (composite ID)
+                        synthetic_id_metadata = self.metadata.get("synthetic_id_metadata", {})
+                        patient_id_metadata = synthetic_id_metadata.get("patient_id", {})
+
+                        if patient_id_metadata.get("patient_id_source") == "composite":
+                            # Use metadata-specified columns instead of auto-detection
+                            # This preserves original columns (race, gender) instead of renaming one
+                            source_columns = patient_id_metadata.get("patient_id_columns", [])
+                            if source_columns and all(col in df_materialized.columns for col in source_columns):
+                                logger.info(f"Regenerating composite patient_id from metadata: {source_columns}")
+                                df_with_id = VariableTypeDetector.create_synthetic_patient_id(
+                                    df_materialized, source_columns
+                                )
+                                id_metadata = {
+                                    "patient_id_source": "composite",
+                                    "patient_id_columns": source_columns,
+                                }
+                            else:
+                                # Fall back to auto-detection if metadata columns don't exist
+                                logger.warning(
+                                    f"Metadata columns {source_columns} not all present, using auto-detection"
+                                )
+                                df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_materialized)
+                        else:
+                            # No metadata or single-column - use auto-detection
+                            df_with_id, id_metadata = VariableTypeDetector.ensure_patient_id(df_materialized)
+
                         logger.info(
                             f"Regenerated patient_id: source={id_metadata['patient_id_source']}, "
                             f"columns={id_metadata.get('patient_id_columns')}"

@@ -114,8 +114,7 @@ def convert_schema(
             else:
                 available_cols = list(df.columns)
                 raise ValueError(
-                    f"Patient ID column '{patient_id_col}' not found in DataFrame. "
-                    f"Available columns: {available_cols}"
+                    f"Patient ID column '{patient_id_col}' not found in DataFrame. Available columns: {available_cols}"
                 )
         else:
             inferred["column_mapping"][patient_id_col] = "patient_id"
