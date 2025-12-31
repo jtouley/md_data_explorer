@@ -122,7 +122,7 @@ Remove all execution gating (confidence thresholds, completeness checks, validat
 - Execution error occurs
 - UI shows blocking confirmation UI with "Confirm and Run" button
 - Simple `st.spinner("Running analysis...")` for progress
-- Backend AttributeError: `'Backend' object has no attribute '_record_batch_readers_consumed'` (Ibis/DuckDB version issue)
+- **Critical Backend Error**: `AttributeError: 'Backend' object has no attribute '_record_batch_readers_consumed'` at line 1522 in `_execute_plan()` when calling `result.execute()` - this plan fixes this error with backend initialization and retry logic
 
 ## Architecture Changes
 
@@ -172,9 +172,9 @@ def _execute_plan_with_retry(self, plan: "QueryPlan", max_retries: int = 3) -> p
     Execute plan with retry logic for backend errors.
     
     Handles:
- - AttributeError: '_record_batch_readers_consumed' (Ibis backend init issue)
- - Connection errors
- - Transient execution errors
+  - AttributeError: '_record_batch_readers_consumed' (Ibis backend init issue)
+  - Connection errors
+  - Transient execution errors
     """
 ```
 
@@ -205,9 +205,7 @@ Retry strategy:
 
 ### 6. Comprehensive Logging
 
-**Files**: All modified files
-
-Add structured logging throughout execution flow:
+**Files**: All modified filesAdd structured logging throughout execution flow:
 
 - **Query parsing**: Log query text, parsing tier used, confidence score, intent detected
 - **Query plan building**: Log plan details (intent, metric, group_by, filters, entity_key)
@@ -254,33 +252,54 @@ Add structured logging throughout execution flow:
 }
 ```
 
-### Phase 2: Add Retry Logic
+### Phase 2: Add Retry Logic and Fix Backend Error
 
 **Files**:
 
 - `src/clinical_analytics/core/semantic.py`
 
+**Critical Fix**: This phase solves the `AttributeError: 'Backend' object has no attribute '_record_batch_readers_consumed'` error that occurs at line 1522 in `_execute_plan()` when calling `result.execute()`.
+
+**Root Cause**: The Ibis DuckDB backend requires `_record_batch_readers_consumed` to be initialized before execution, but it's not always present on the backend object.
+
 **Changes**:
 
-1. Add `_execute_plan_with_retry()` method
-2. Detect `AttributeError: '_record_batch_readers_consumed'`
-3. Reinitialize backend if attribute missing:
+1. **Fix backend initialization** in `_execute_plan()` at line 1522 (before `result.execute()`):
    ```python
-         if not hasattr(backend, '_record_batch_readers_consumed'):
-             backend._record_batch_readers_consumed = {}
+   # In _execute_plan(), before line 1522 (result.execute()):
+   # Get backend and ensure _record_batch_readers_consumed exists
+   try:
+       backend = result._find_backend(use_default=True)
+       if not hasattr(backend, '_record_batch_readers_consumed'):
+           logger.debug(
+               "backend_missing_attribute_initializing",
+               attribute="_record_batch_readers_consumed",
+               backend_type=type(backend).__name__,
+           )
+           backend._record_batch_readers_consumed = {}
+   except Exception as e:
+       logger.warning(
+           "backend_initialization_warning",
+           error=str(e),
+           error_type=type(e).__name__,
+       )
+   # Now safe to execute (line 1522)
+   return result.execute()
    ```
 
+2. Add `_execute_plan_with_retry()` method that wraps `_execute_plan()`
+3. In retry logic, catch `AttributeError: '_record_batch_readers_consumed'` and retry with backend reinitialization
 4. Implement exponential backoff (1s, 2s, 4s)
 5. Only retry on specific errors (AttributeError, connection errors)
-6. Update `_execute_plan()` to use retry wrapper
+6. Update `execute_query_plan()` to use `_execute_plan_with_retry()` instead of direct `_execute_plan()` call
 7. **Add logging**:
 
-                                                - Log retry attempt start (attempt number, max retries, error type, error message)
-                                                - Log backend reinitialization when `_record_batch_readers_consumed` missing
-                                                - Log backoff delay before each retry
-                                                - Log retry success/failure with attempt number
-                                                - Log final failure after max retries with all error context
-                                                - Use structured logging with context (run_key, plan intent, error details)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log retry attempt start (attempt number, max retries, error type, error message)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log backend reinitialization when `_record_batch_readers_consumed` missing
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log backoff delay before each retry
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log retry success/failure with attempt number
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log final failure after max retries with all error context
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Use structured logging with context (run_key, plan intent, error details)
 
 ### Phase 3: Progressive Thinking Indicator
 
@@ -304,12 +323,12 @@ Add structured logging throughout execution flow:
 5. Update `get_or_compute_result()` to emit progress steps
 6. **Add logging**:
 
-                                                - Log each thinking step start (step name, step details)
-                                                - Log query plan details as they're built (intent, metric, group_by, filters, confidence)
-                                                - Log validation results (columns checked, operators validated, types verified)
-                                                - Log each thinking step completion (step name, duration)
-                                                - Log progress transitions between steps
-                                                - Use structured logging with context (run_key, query_text, step sequence)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log each thinking step start (step name, step details)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log query plan details as they're built (intent, metric, group_by, filters, confidence)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log validation results (columns checked, operators validated, types verified)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log each thinking step completion (step name, duration)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log progress transitions between steps
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Use structured logging with context (run_key, query_text, step sequence)
 
 **Visual Design**:
 
@@ -332,27 +351,27 @@ Add structured logging throughout execution flow:
 3. Remove fallback confirmation logic (lines 1757-1772)
 4. Update execution flow to always proceed:
    ```python
-         # Always execute, show warnings inline
-         execution_result = semantic_layer.execute_query_plan(...)
-         
-         if execution_result.get("warnings"):
-             for warning in execution_result["warnings"]:
-                 st.warning(f"⚠️ {warning}")
-         
-         if execution_result.get("success"):
-             # Proceed with analysis
-         else:
-             # Show error with retry option
+            # Always execute, show warnings inline
+            execution_result = semantic_layer.execute_query_plan(...)
+            
+            if execution_result.get("warnings"):
+                for warning in execution_result["warnings"]:
+                    st.warning(f"⚠️ {warning}")
+            
+            if execution_result.get("success"):
+                # Proceed with analysis
+            else:
+                # Show error with retry option
    ```
 
 5. **Add logging**:
 
-                                                - Log immediate execution start (no confirmation required)
-                                                - Log warnings displayed to user (warning count, warning types)
-                                                - Log execution outcome (success/failure, result metadata)
-                                                - Log user retry actions (retry button clicks, manual retries)
-                                                - Log thinking indicator rendering (steps shown, current step)
-                                                - Use structured logging with context (run_key, dataset_version, query_text)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log immediate execution start (no confirmation required)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log warnings displayed to user (warning count, warning types)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log execution outcome (success/failure, result metadata)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log user retry actions (retry button clicks, manual retries)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Log thinking indicator rendering (steps shown, current step)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Use structured logging with context (run_key, dataset_version, query_text)
 
 ### Phase 5: Update Tests
 
@@ -390,7 +409,11 @@ flowchart TD
 
 ### Backend Errors
 
-- **AttributeError: '_record_batch_readers_consumed'**: Reinitialize backend attribute, retry
+- **AttributeError: '_record_batch_readers_consumed'** (CRITICAL - line 1522): 
+        - **Root cause**: Ibis DuckDB backend missing required attribute before execution
+        - **Fix**: Initialize `backend._record_batch_readers_consumed = {}` before calling `result.execute()`
+        - **Location**: In `_execute_plan_with_retry()`, check and initialize before execution
+        - **Retry**: If error still occurs, retry with backend reinitialization
 - **Connection errors**: Retry with exponential backoff
 - **Validation errors**: Show as warning, still attempt execution
 - **Execution errors**: Show error with retry button
@@ -410,6 +433,7 @@ flowchart TD
 - [ ] Progressive thinking indicator shows query plan steps
 - [ ] Warnings displayed inline (non-blocking)
 - [ ] Backend errors trigger retry logic
+- [ ] **Backend AttributeError fixed**: `_record_batch_readers_consumed` initialized before execution (solves line 1522 error)
 - [ ] Retry attempts visible in thinking indicator
 - [ ] Comprehensive logging at all execution points (parsing, planning, validation, execution, retries, thinking steps)
 - [ ] Structured logging with consistent context fields (run_key, dataset_version, query_text, etc.)
@@ -431,6 +455,8 @@ flowchart TD
 - Test full execution flow with low confidence queries
 - Test retry logic with actual backend errors
 - Test warning display for incomplete plans
+- **Test backend AttributeError fix**: Verify `_record_batch_readers_consumed` is initialized before execution
+- **Test backend error recovery**: Verify retry logic handles missing attribute and reinitializes backend
 
 ### Manual Testing
 
@@ -446,7 +472,7 @@ flowchart TD
 
 - Update `execute_query_plan()` (remove gating, add warnings)
 - Add `_execute_plan_with_retry()` method
-- Fix backend initialization issue
+- **Fix backend initialization issue** (line 1522): Initialize `_record_batch_readers_consumed` before `result.execute()` call
 
 2. **`src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`**
 
@@ -492,48 +518,48 @@ All logging must use structured logging (structlog) with consistent context fiel
 
 1. **Query Parsing** (INFO):
 
-                                                - Query received, parsing tier used, confidence score, intent detected
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Query received, parsing tier used, confidence score, intent detected
 
 2. **Query Plan Building** (DEBUG/INFO):
 
-                                                - Plan details: intent, metric, group_by, filters, entity_key, scope
-                                                - Confidence score, completeness status
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Plan details: intent, metric, group_by, filters, entity_key, scope
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Confidence score, completeness status
 
 3. **Validation** (DEBUG):
 
-                                                - Column existence checks, operator validation, type compatibility checks
-                                                - Validation results (pass/fail with details)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Column existence checks, operator validation, type compatibility checks
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Validation results (pass/fail with details)
 
 4. **Warnings** (WARNING):
 
-                                                - Each warning generated with context (confidence below threshold, missing fields, validation issues)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Each warning generated with context (confidence below threshold, missing fields, validation issues)
 
 5. **Execution Start** (INFO):
 
-                                                - Run key, plan summary, dataset version, warnings present
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Run key, plan summary, dataset version, warnings present
 
 6. **Retry Logic** (INFO/WARNING):
 
-                                                - Retry attempt start (attempt number, error type, error message)
-                                                - Backend reinitialization (when `_record_batch_readers_consumed` missing)
-                                                - Backoff delay before retry
-                                                - Retry success/failure
-                                                - Final failure after max retries
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Retry attempt start (attempt number, error type, error message)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Backend reinitialization (when `_record_batch_readers_consumed` missing)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Backoff delay before retry
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Retry success/failure
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Final failure after max retries
 
 7. **Thinking Steps** (INFO):
 
-                                                - Step start (step name, step details)
-                                                - Step completion (step name, duration)
-                                                - Progress transitions
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Step start (step name, step details)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Step completion (step name, duration)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Progress transitions
 
 8. **Execution Completion** (INFO/ERROR):
 
-                                                - Success: result row count, execution duration, warnings shown
-                                                - Failure: error type, error message, retry attempts made
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Success: result row count, execution duration, warnings shown
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Failure: error type, error message, retry attempts made
 
 9. **User Actions** (INFO):
 
-                                                - Retry button clicks, manual retries
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                - Retry button clicks, manual retries
 
 ### Example Log Statements
 
@@ -595,4 +621,3 @@ logger.info(
 - Backend retry handles transient errors automatically
 - Thinking indicator provides transparency without blocking
 - All operations must be logged for observability and debugging
-- Structured logging enables querying and analysis of execution patterns
