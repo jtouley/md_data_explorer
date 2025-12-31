@@ -792,6 +792,82 @@ class TestVersionHistoryMetadata:
         assert table_keys[0] == "MyPatientData", f"Should preserve filename stem as table key, got {table_keys[0]}"
 
 
+class TestSchemaDriftDetection:
+    """Test suite for schema drift detection and policy (Phase 3)."""
+
+    def test_detect_schema_drift_policy_defined(self, tmp_path):
+        """Schema drift detection should have defined policy constants."""
+        from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
+
+        # Assert: Policy enum exists with expected values
+        assert hasattr(SchemaDriftPolicy, "REJECT")
+        assert hasattr(SchemaDriftPolicy, "WARN")
+        assert hasattr(SchemaDriftPolicy, "ALLOW")
+
+    def test_detect_schema_drift_same_schema(self, tmp_path):
+        """Same schema should not trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Two identical schemas
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: No drift
+        assert has_drift is False
+        assert drift_details == {}
+
+    def test_detect_schema_drift_new_column(self, tmp_path):
+        """New column should trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Schema with new column
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Int64"), ("outcome", "Int64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: Drift detected
+        assert has_drift is True
+        assert "added_columns" in drift_details
+        assert "outcome" in drift_details["added_columns"]
+
+    def test_detect_schema_drift_removed_column(self, tmp_path):
+        """Removed column should trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Schema with removed column
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64"), ("outcome", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: Drift detected
+        assert has_drift is True
+        assert "removed_columns" in drift_details
+        assert "outcome" in drift_details["removed_columns"]
+
+    def test_detect_schema_drift_type_change(self, tmp_path):
+        """Type change should trigger drift detection."""
+        from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
+
+        # Arrange: Schema with type change
+        schema1 = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        schema2 = {"columns": [("patient_id", "Utf8"), ("age", "Float64")]}
+
+        # Act: Check for drift
+        has_drift, drift_details = detect_schema_drift(schema1, schema2)
+
+        # Assert: Drift detected
+        assert has_drift is True
+        assert "type_changes" in drift_details
+        assert "age" in drift_details["type_changes"]
+
+
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 

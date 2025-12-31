@@ -14,6 +14,7 @@ import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,14 @@ import polars as pl
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
 logger = logging.getLogger(__name__)
+
+
+class SchemaDriftPolicy(Enum):
+    """Policy for handling schema drift during overwrites."""
+
+    REJECT = "reject"  # Reject overwrite if schema differs
+    WARN = "warn"  # Allow overwrite but warn user about schema drift
+    ALLOW = "allow"  # Allow overwrite silently (permissive)
 
 
 class SecurityError(Exception):
@@ -749,6 +758,44 @@ def compute_schema_fingerprint(df: pl.DataFrame) -> str:
 
     # Compute SHA256 hash
     return hashlib.sha256(schema_json.encode()).hexdigest()
+
+
+def detect_schema_drift(schema1: dict[str, Any], schema2: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    """
+    Detect schema drift between two schemas.
+
+    Compares column names and types to detect additions, removals, and type changes.
+
+    Args:
+        schema1: First schema dict with 'columns' key (list of (name, type) tuples)
+        schema2: Second schema dict with 'columns' key (list of (name, type) tuples)
+
+    Returns:
+        Tuple of (has_drift, drift_details) where drift_details contains:
+        - added_columns: list of column names
+        - removed_columns: list of column names
+        - type_changes: dict of {column_name: (old_type, new_type)}
+    """
+    # Convert to dicts for easier comparison
+    cols1 = {col: dtype for col, dtype in schema1["columns"]}
+    cols2 = {col: dtype for col, dtype in schema2["columns"]}
+
+    # Detect drift
+    added_columns = [col for col in cols2 if col not in cols1]
+    removed_columns = [col for col in cols1 if col not in cols2]
+    type_changes = {col: (cols1[col], cols2[col]) for col in cols1 if col in cols2 and cols1[col] != cols2[col]}
+
+    has_drift = bool(added_columns or removed_columns or type_changes)
+
+    drift_details = {}
+    if added_columns:
+        drift_details["added_columns"] = added_columns
+    if removed_columns:
+        drift_details["removed_columns"] = removed_columns
+    if type_changes:
+        drift_details["type_changes"] = type_changes
+
+    return has_drift, drift_details
 
 
 def save_table_list(
