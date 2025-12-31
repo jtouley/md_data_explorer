@@ -562,6 +562,20 @@ class NLQueryEngine:
         if any(re.search(pattern, query_lower) for pattern in count_patterns):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
+        # Pattern: "what X were/was Y on" - COUNT with grouping
+        # Examples: "what statins were patients on?", "what treatments were they on?"
+        # This asks for a breakdown/distribution, so it's a COUNT intent
+        what_were_on = re.search(r"what\s+(\w+(?:\s+\w+)?)\s+(?:were|was)\s+(?:\w+\s+)?on", query_lower)
+        if what_were_on:
+            variable_term = what_were_on.group(1).strip()
+            matched_var, _, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                return QueryIntent(
+                    intent_type="COUNT",
+                    grouping_variable=matched_var,
+                    confidence=0.9,
+                )
+
         # Pattern: "which X was most Y" or "what was the most Y" - COUNT with grouping
         # This pattern asks for the top result by count, so it's a COUNT intent with grouping
         # More flexible pattern to handle "which was the most Y", "what was the most Y",
@@ -576,11 +590,39 @@ class NLQueryEngine:
         ):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
+        # Pattern: "what is the average/mean X" - DESCRIBE with variable extraction
+        # Examples: "what is the average age?", "what is the mean BMI?", "what is the mean and median age?"
+        what_is_match = re.search(
+            r"what\s+is\s+the\s+(?:(?:average|mean|median)(?:\s+and\s+(?:average|mean|median))*\s+)(\w+(?:\s+\w+)*?)(?:\?|$)",
+            query_lower,
+        )
+        if what_is_match:
+            variable_term = what_is_match.group(1).strip()
+            # Remove common trailing words
+            variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases|all|the)$", "", variable_term)
+            variable_term = variable_term.strip()
+
+            # Try to match the variable
+            matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                logger.debug(
+                    "pattern_match_what_is_average",
+                    variable_term=variable_term,
+                    matched_var=matched_var,
+                    confidence=var_conf,
+                )
+                return QueryIntent(
+                    intent_type="DESCRIBE",
+                    primary_variable=matched_var,
+                    confidence=0.9,
+                )
+
         # Pattern: "average X" or "mean X" or "avg X" - DESCRIBE with variable extraction
         # Examples: "average BMI of patients", "mean age", "avg ldl", "average ldl of all patients"
-        # Match: "average/mean/avg" + optional "of" + variable + optional trailing phrase
+        # Match: "average/mean/avg" + optional "of" + variable + stop at grouping keywords like "by"
         avg_match = re.search(
-            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)(?:\s+of|\s+in|\s+for|\s+all|\s+the|$)", query_lower
+            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)(?:\s+of|\s+in|\s+for|\s+by|\s+across|\s+between|\s+all|\s+the|$)",
+            query_lower,
         )
         if avg_match:
             variable_term = avg_match.group(2).strip()
@@ -591,15 +633,24 @@ class NLQueryEngine:
             # Try to match the variable
             matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
             if matched_var:
+                # Check for grouping pattern "by X" or "across X"
+                grouping_match = re.search(r"(?:by|across)\s+(\w+(?:\s+\w+)?)", query_lower)
+                group_var = None
+                if grouping_match:
+                    group_term = grouping_match.group(1).strip()
+                    group_var, _, _ = self._fuzzy_match_variable(group_term)
+
                 logger.debug(
                     "pattern_match_average_with_variable",
                     variable_term=variable_term,
                     matched_var=matched_var,
                     confidence=var_conf,
+                    grouping=group_var,
                 )
                 return QueryIntent(
                     intent_type="DESCRIBE",
                     primary_variable=matched_var,
+                    grouping_variable=group_var,
                     confidence=0.9,
                 )
             else:
@@ -611,9 +662,68 @@ class NLQueryEngine:
                 )
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.85)
 
-        # Pattern: "describe" or "summary"
+        # Pattern: "describe X" or "summary of X" - DESCRIBE with variable extraction
+        describe_match = re.search(
+            r"\b(describe|summarize?|overview of)\s+(\w+(?:\s+\w+)*?)"
+            r"(?:\s+statistics|\s+levels|\s+values|\s+distribution|\s+for|\s+by|\s+across|$)",
+            query_lower,
+        )
+        if describe_match:
+            variable_term = describe_match.group(2).strip()
+            # Remove common trailing words
+            variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases)$", "", variable_term)
+            variable_term = variable_term.strip()
+
+            # Try to match the variable
+            matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                logger.debug(
+                    "pattern_match_describe_with_variable",
+                    variable_term=variable_term,
+                    matched_var=matched_var,
+                    confidence=var_conf,
+                )
+                return QueryIntent(
+                    intent_type="DESCRIBE",
+                    primary_variable=matched_var,
+                    confidence=0.9,
+                )
+
+        # Pattern: "describe" or "summary" (no variable extracted)
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
             return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
+
+        # Pattern: "compare X across/between Y" - COMPARE_GROUPS
+        # Examples: "compare age across different statuses", "compare LDL between treatment groups"
+        compare_match = re.search(
+            r"\bcompare\s+(\w+(?:\s+\w+)*?)\s+(?:across|between)\s+(?:different\s+)?(\w+(?:\s+\w+)*?)(?:\s+and|$)",
+            query_lower,
+        )
+        if compare_match:
+            primary_term = compare_match.group(1).strip()
+            group_term = compare_match.group(2).strip()
+
+            # Remove common trailing words
+            group_term = re.sub(r"\s+(groups?|categories|types?)$", "", group_term)
+            group_term = group_term.strip()
+
+            primary_var, _, _ = self._fuzzy_match_variable(primary_term)
+            group_var, _, _ = self._fuzzy_match_variable(group_term)
+
+            if primary_var and group_var:
+                logger.debug(
+                    "pattern_match_compare_across",
+                    primary_term=primary_term,
+                    group_term=group_term,
+                    primary_var=primary_var,
+                    group_var=group_var,
+                )
+                return QueryIntent(
+                    intent_type="COMPARE_GROUPS",
+                    primary_variable=primary_var,
+                    grouping_variable=group_var,
+                    confidence=0.95,
+                )
 
         # Pattern: "difference" implies comparison
         match = re.search(r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)", query_lower)
@@ -1561,30 +1671,43 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
 
         # Pattern 2: Numeric range filters
         # "below X", "above X", "less than X", "greater than X", "> X", "< X"
+        # "patients over X" / "patients under X" → age filter (medical context)
         numeric_patterns = [
-            (r"(\w+(?:\s+\w+)*)\s+below\s+([0-9]+\.?[0-9]*)", "<"),
-            (r"(\w+(?:\s+\w+)*)\s+above\s+([0-9]+\.?[0-9]*)", ">"),
-            (r"(\w+(?:\s+\w+)*)\s+less\s+than\s+([0-9]+\.?[0-9]*)", "<"),
-            (r"(\w+(?:\s+\w+)*)\s+greater\s+than\s+([0-9]+\.?[0-9]*)", ">"),
-            (r"(\w+(?:\s+\w+)*)\s+<=\s+([0-9]+\.?[0-9]*)", "<="),
-            (r"(\w+(?:\s+\w+)*)\s+>=\s+([0-9]+\.?[0-9]*)", ">="),
-            (r"(\w+(?:\s+\w+)*)\s+<\s+([0-9]+\.?[0-9]*)", "<"),
-            (r"(\w+(?:\s+\w+)*)\s+>\s+([0-9]+\.?[0-9]*)", ">"),
-            (r"scores?\s+below\s+([0-9\-]+\.?[0-9]*)", "<"),  # "scores below -2.5"
-            (r"scores?\s+above\s+([0-9\-]+\.?[0-9]*)", ">"),
+            (r"(?:patients|subjects|people)\s+over\s+([0-9]+)", ">", "age"),  # "patients over 50"
+            (r"(?:patients|subjects|people)\s+under\s+([0-9]+)", "<", "age"),  # "patients under 30"
+            (r"(\w+(?:\s+\w+)*)\s+below\s+([0-9]+\.?[0-9]*)", "<", None),
+            (r"(\w+(?:\s+\w+)*)\s+above\s+([0-9]+\.?[0-9]*)", ">", None),
+            (r"(\w+(?:\s+\w+)*)\s+less\s+than\s+([0-9]+\.?[0-9]*)", "<", None),
+            (r"(\w+(?:\s+\w+)*)\s+greater\s+than\s+([0-9]+\.?[0-9]*)", ">", None),
+            (r"(\w+(?:\s+\w+)*)\s+<=\s+([0-9]+\.?[0-9]*)", "<=", None),
+            (r"(\w+(?:\s+\w+)*)\s+>=\s+([0-9]+\.?[0-9]*)", ">=", None),
+            (r"(\w+(?:\s+\w+)*)\s+<\s+([0-9]+\.?[0-9]*)", "<", None),
+            (r"(\w+(?:\s+\w+)*)\s+>\s+([0-9]+\.?[0-9]*)", ">", None),
+            (r"scores?\s+below\s+([0-9\-]+\.?[0-9]*)", "<", "score"),  # "scores below -2.5"
+            (r"scores?\s+above\s+([0-9\-]+\.?[0-9]*)", ">", "score"),
         ]
 
-        for pattern, operator in numeric_patterns:
+        for pattern_info in numeric_patterns:
+            if len(pattern_info) == 3:
+                pattern, operator, default_column = pattern_info
+            else:
+                pattern, operator = pattern_info
+                default_column = None
+
             matches = re.finditer(pattern, query_lower)
             for match in matches:
                 if len(match.groups()) == 2:
                     column_phrase = match.group(1).strip()
                     value_str = match.group(2).strip()
+                elif len(match.groups()) == 1:
+                    # Pattern with default column (e.g., "patients over 50" → age)
+                    value_str = match.group(1).strip()
+                    column_phrase = default_column if default_column else "score"
                 else:
                     # Pattern like "scores below -2.5" (no column name, just value)
                     # Try to find a score column
                     value_str = match.group(1).strip()
-                    column_phrase = "score"  # Default to "score"
+                    column_phrase = default_column if default_column else "score"
 
                 # Try to match column phrase to actual column
                 column_name, conf, _ = self._fuzzy_match_variable(column_phrase)
