@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui
+.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui git-log-first git-log-rest
 
 # Default target
 .DEFAULT_GOAL := help
@@ -203,4 +203,10 @@ diff: ## Generate diff files for tracking changes
 	@echo "   - lastcommit.diff: All uncommitted changes vs HEAD"
 	@echo "   - currentbranch.diff: Current branch vs main (committed only)"
 	@echo "   - current.diff: Current state vs main (including uncommitted)"
+
+git-log-first: ## Show first 200 lines of commits since main branch
+	@git log main..HEAD --format="%h %s%n%b" | head -200
+
+git-log-rest: ## Show commits since main branch (from line 201 onwards)
+	@git log main..HEAD --format="%h %s%n%b" | head +201
 

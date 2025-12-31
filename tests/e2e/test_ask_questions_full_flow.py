@@ -4,11 +4,15 @@ End-to-end tests for Ask Questions page - full conversational flow.
 Tests verify meaningful behavior that unit tests don't cover:
 - Complete NL query → parse → execute flow (integration)
 - Filter extraction stops at continuation words (catches real bugs)
-- QueryPlan deterministic run_key (idempotency guarantee)
+- QueryPlan deterministic run_key (via semantic layer, not nl_query_engine)
 - Feature parity: identical behavior for both upload types
 
 Note: Filter application, COUNT with filters, etc. are already tested in test_compute.py.
 These tests focus on integration and behavior that spans multiple components.
+
+PR21 refactor: run_key generation moved to semantic layer.
+nl_query_engine._intent_to_plan() should NOT set run_key (semantic layer owns it).
+Run key determinism tests are in tests/core/test_semantic_run_key_determinism.py.
 """
 
 from unittest.mock import MagicMock
@@ -66,38 +70,42 @@ class TestE2EFullQueryFlow:
         dataset_version = "test_dataset_v1"
         query_plan = engine._intent_to_plan(query_intent, dataset_version)
 
-        # Assert: QueryPlan has grouping variable extracted
-        # This verifies the integration between parse_query and _extract_grouping_from_compound_query
+        # Assert: QueryPlan has correct intent
         assert query_plan.intent == "COUNT"
-        assert query_plan.run_key is not None
+
+        # PR21: run_key should be None from nl_query_engine (semantic layer generates it)
+        assert query_plan.run_key is None, (
+            "nl_query_engine._intent_to_plan() should not set run_key - "
+            "semantic layer is the single source of truth (PR21)"
+        )
+
         # Grouping should be extracted (statin_used or similar)
         if query_plan.group_by:
             assert "statin" in query_plan.group_by.lower(), (
                 f"Grouping variable should be statin-related, got: {query_plan.group_by}"
             )
 
-    def test_e2e_queryplan_deterministic_run_key(self, mock_semantic_layer_with_statin):
-        """Test that same QueryPlan produces same run_key (idempotency)."""
-        # Arrange: Same query, same dataset version
+    def test_e2e_queryplan_run_key_is_none_from_nl_query_engine(self, mock_semantic_layer_with_statin):
+        """Test that nl_query_engine does NOT set run_key (semantic layer owns it).
+
+        PR21 refactor: run_key determinism is now tested in:
+        tests/core/test_semantic_run_key_determinism.py
+        """
+        # Arrange: Same query
         query = "how many patients were on statins"
         engine = NLQueryEngine(mock_semantic_layer_with_statin)
 
-        # Act: Parse twice
-        intent1 = engine.parse_query(query)
-        intent2 = engine.parse_query(query)
-
+        # Act: Parse and convert to plan
+        intent = engine.parse_query(query)
         dataset_version = "test_dataset_v1"
-        plan1 = engine._intent_to_plan(intent1, dataset_version)
-        plan2 = engine._intent_to_plan(intent2, dataset_version)
+        plan = engine._intent_to_plan(intent, dataset_version)
 
-        # Assert: Same run_key (idempotency)
-        assert plan1.run_key == plan2.run_key, "Same query should produce same run_key"
-
-        # Act: Different dataset version
-        plan3 = engine._intent_to_plan(intent1, "test_dataset_v2")
-
-        # Assert: Different run_key for different dataset
-        assert plan1.run_key != plan3.run_key, "Different dataset should produce different run_key"
+        # Assert: run_key should be None (semantic layer generates it later)
+        assert plan.run_key is None, (
+            "nl_query_engine._intent_to_plan() should not set run_key. "
+            "The semantic layer's execute_query_plan() generates run_key deterministically. "
+            "See tests/core/test_semantic_run_key_determinism.py for run_key tests."
+        )
 
 
 class TestE2EFilterExtraction:
