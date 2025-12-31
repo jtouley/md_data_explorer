@@ -1483,12 +1483,12 @@ class TestMaterializeMart:
         handler1.close()
         handler2.close()
 
-    def test_ibis_connection_is_cached(self, tmp_path):
+    def test_ibis_connection_is_cached(self, tmp_path, make_multi_table_setup):
         """Verify Ibis connection is reused (cached on instance)."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1507,13 +1507,14 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_bucket_column_dropped_from_planned_table(self, tmp_path):
+    def test_bucket_column_dropped_from_planned_table(self, tmp_path, make_multi_table_setup):
         """Verify bucket column is dropped from planned tables (internal partition column)."""
         pytest.importorskip("ibis")
 
         # Arrange: Create event-level mart with hash bucketing
         # Note: This test simulates event-level partitioning by checking metadata schema
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         events = pl.DataFrame(
             {
@@ -1548,12 +1549,12 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_schema_version_used_in_run_id(self, tmp_path):
+    def test_schema_version_used_in_run_id(self, tmp_path, make_multi_table_setup):
         """Verify SCHEMA_VERSION constant is used in run_id computation."""
         from clinical_analytics.core.multi_table_handler import SCHEMA_VERSION
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1584,12 +1585,12 @@ class TestMaterializeMart:
 class TestPlanMart:
     """Test suite for Milestone 5: Planning over materialized Parquet."""
 
-    def test_plan_mart_returns_lazy_ibis_expression(self, tmp_path):
+    def test_plan_mart_returns_lazy_ibis_expression(self, tmp_path, make_multi_table_setup):
         """Verify plan_mart() returns lazy Ibis expression."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1609,12 +1610,12 @@ class TestPlanMart:
 
         handler.close()
 
-    def test_plan_mart_compiles_to_sql_without_executing(self, tmp_path):
+    def test_plan_mart_compiles_to_sql_without_executing(self, tmp_path, make_multi_table_setup):
         """Verify plan compiles to SQL without executing."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = make_multi_table_setup(num_patients=2)["patients"]
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
