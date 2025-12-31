@@ -816,7 +816,8 @@ Aliases: {aliases}
 Examples:
 {examples}
 
-IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by), not legacy names (intent_type, primary_variable, grouping_variable).""".format(
+IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by),
+not legacy names (intent_type, primary_variable, grouping_variable).""".format(
             columns=", ".join(context["columns"]),
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),

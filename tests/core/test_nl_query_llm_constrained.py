@@ -11,10 +11,7 @@ Ensures:
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
-from clinical_analytics.core.query_plan import QueryPlan
 
 
 class TestLLMQueryPlanSchema:
@@ -51,9 +48,7 @@ class TestLLMQueryPlanSchema:
 
         # Verify QueryPlan schema is being used by checking field list
         assert "- intent: One of" in system_prompt, "Should specify intent field with allowed values"
-        assert "- metric: Main variable" in system_prompt or "- metric:" in system_prompt, (
-            "Should specify metric field"
-        )
+        assert "- metric: Main variable" in system_prompt or "- metric:" in system_prompt, "Should specify metric field"
         assert "- group_by: Variable to group by" in system_prompt or "- group_by:" in system_prompt, (
             "Should specify group_by field"
         )
@@ -68,14 +63,16 @@ class TestLLMQueryPlanSchema:
         engine = NLQueryEngine(mock)
 
         # Phase 5.1: Valid LLM JSON response using QueryPlan schema fields
-        llm_response = json.dumps({
-            "intent": "DESCRIBE",  # QueryPlan field (not intent_type)
-            "metric": "age",  # QueryPlan field (not primary_variable)
-            "group_by": None,  # QueryPlan field (not grouping_variable)
-            "filters": [],  # QueryPlan field
-            "confidence": 0.9,
-            "explanation": "Describe age statistics",
-        })
+        llm_response = json.dumps(
+            {
+                "intent": "DESCRIBE",  # QueryPlan field (not intent_type)
+                "metric": "age",  # QueryPlan field (not primary_variable)
+                "group_by": None,  # QueryPlan field (not grouping_variable)
+                "filters": [],  # QueryPlan field
+                "confidence": 0.9,
+                "explanation": "Describe age statistics",
+            }
+        )
 
         # Act: Extract QueryIntent from LLM response
         result = engine._extract_query_intent_from_llm_response(llm_response)
@@ -94,14 +91,16 @@ class TestLLMQueryPlanSchema:
         engine = NLQueryEngine(mock)
 
         # Phase 5.1: Invalid intent (using QueryPlan schema)
-        llm_response = json.dumps({
-            "intent": "INVALID_INTENT",  # Invalid value
-            "metric": None,
-            "group_by": None,
-            "filters": [],
-            "confidence": 0.9,
-            "explanation": "",
-        })
+        llm_response = json.dumps(
+            {
+                "intent": "INVALID_INTENT",  # Invalid value
+                "metric": None,
+                "group_by": None,
+                "filters": [],
+                "confidence": 0.9,
+                "explanation": "",
+            }
+        )
 
         # Act: Extract QueryIntent
         result = engine._extract_query_intent_from_llm_response(llm_response)
@@ -132,12 +131,14 @@ class TestLLMQueryPlanSchema:
         engine = NLQueryEngine(mock)
 
         # Phase 5.1: Missing required 'intent' field
-        llm_response = json.dumps({
-            "metric": "age",
-            "group_by": None,
-            "confidence": 0.9,
-            # Missing 'intent' - required field
-        })
+        llm_response = json.dumps(
+            {
+                "metric": "age",
+                "group_by": None,
+                "confidence": 0.9,
+                # Missing 'intent' - required field
+            }
+        )
 
         # Act: Extract QueryIntent
         result = engine._extract_query_intent_from_llm_response(llm_response)
@@ -150,9 +151,7 @@ class TestLLMConstrainedOutput:
     """Test that LLM output is constrained to QueryPlan schema."""
 
     @patch("clinical_analytics.core.ollama_manager.get_ollama_manager")
-    def test_llm_fallback_returns_valid_queryplan_compatible_dict(
-        self, mock_get_manager, mock_semantic_layer
-    ):
+    def test_llm_fallback_returns_valid_queryplan_compatible_dict(self, mock_get_manager, mock_semantic_layer):
         """LLM fallback should return QueryPlan JSON schema (Phase 5.1)."""
         # Arrange: Mock Ollama manager and client
         mock_manager = MagicMock()
@@ -161,14 +160,16 @@ class TestLLMConstrainedOutput:
         # Configure mock client to return QueryPlan schema JSON
         mock_client.is_available.return_value = True
         # Phase 5.1: Return QueryPlan schema fields
-        mock_client.generate.return_value = json.dumps({
-            "intent": "DESCRIBE",  # QueryPlan field
-            "metric": "age",  # QueryPlan field
-            "group_by": None,  # QueryPlan field
-            "filters": [],
-            "confidence": 0.85,
-            "explanation": "Describe age statistics",
-        })
+        mock_client.generate.return_value = json.dumps(
+            {
+                "intent": "DESCRIBE",  # QueryPlan field
+                "metric": "age",  # QueryPlan field
+                "group_by": None,  # QueryPlan field
+                "filters": [],
+                "confidence": 0.85,
+                "explanation": "Describe age statistics",
+            }
+        )
 
         mock_manager.get_client.return_value = mock_client
         mock_get_manager.return_value = mock_manager
@@ -193,14 +194,16 @@ class TestLLMConstrainedOutput:
         engine = NLQueryEngine(mock)
 
         # Phase 5.1: Confidence > 1.0 (using QueryPlan schema)
-        llm_response = json.dumps({
-            "intent": "DESCRIBE",
-            "metric": None,
-            "group_by": None,
-            "filters": [],
-            "confidence": 1.5,  # Invalid: > 1.0
-            "explanation": "",
-        })
+        llm_response = json.dumps(
+            {
+                "intent": "DESCRIBE",
+                "metric": None,
+                "group_by": None,
+                "filters": [],
+                "confidence": 1.5,  # Invalid: > 1.0
+                "explanation": "",
+            }
+        )
 
         # Act
         result = engine._extract_query_intent_from_llm_response(llm_response)
@@ -210,14 +213,16 @@ class TestLLMConstrainedOutput:
         assert result.confidence == 1.0, "Confidence should be clamped to 1.0"
 
         # Phase 5.1: Confidence < 0.0 (using QueryPlan schema)
-        llm_response = json.dumps({
-            "intent": "DESCRIBE",
-            "metric": None,
-            "group_by": None,
-            "filters": [],
-            "confidence": -0.5,  # Invalid: < 0.0
-            "explanation": "",
-        })
+        llm_response = json.dumps(
+            {
+                "intent": "DESCRIBE",
+                "metric": None,
+                "group_by": None,
+                "filters": [],
+                "confidence": -0.5,  # Invalid: < 0.0
+                "explanation": "",
+            }
+        )
 
         result = engine._extract_query_intent_from_llm_response(llm_response)
 

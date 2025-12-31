@@ -79,9 +79,7 @@ class QueryPlan:
         # Validate intent is one of allowed values
         valid_intents = ["COUNT", "DESCRIBE", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]
         if intent not in valid_intents:
-            raise ValueError(
-                f"Invalid intent '{intent}'. Must be one of {valid_intents}"
-            )
+            raise ValueError(f"Invalid intent '{intent}'. Must be one of {valid_intents}")
 
         # Extract and validate confidence
         confidence = float(data.get("confidence", 0.0))

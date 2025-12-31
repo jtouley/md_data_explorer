@@ -18,7 +18,6 @@ import pandas.testing as pdt
 import pytest
 
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
-from clinical_analytics.core.semantic import SemanticLayer
 
 
 class TestDeterministicCompilation:
@@ -93,9 +92,7 @@ class TestDeterministicCompilation:
             intent="DESCRIBE",
             metric="age",
             group_by=None,
-            filters=[
-                FilterSpec(column="status", operator="==", value="active", exclude_nulls=True)
-            ],
+            filters=[FilterSpec(column="status", operator="==", value="active", exclude_nulls=True)],
             confidence=0.9,
         )
 
