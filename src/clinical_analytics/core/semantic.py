@@ -1337,6 +1337,15 @@ class SemanticLayer:
             - "warnings": list[str] - Warnings collected during execution
             - "steps": list[dict] - Step information for progressive thinking indicator (Phase 2.5.1)
         """
+        # Phase 3.2: Log execution start for observability and contract enforcement
+        logger.debug(
+            "execute_query_plan_start: intent=%s confidence=%.2f has_filters=%s has_query_text=%s",
+            plan.intent,
+            plan.confidence,
+            bool(plan.filters),
+            bool(query_text),
+        )
+
         # Phase 2.5.1: Initialize steps list (core layer generates step data)
         steps: list[dict[str, Any]] = []
 
