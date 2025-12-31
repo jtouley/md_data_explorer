@@ -218,10 +218,11 @@ class TestTableClassification:
 
         handler.close()
 
-    def test_classification_rules(self):
+    def test_classification_rules(self, make_multi_table_setup):
         """Test classification rule priority."""
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        tables = make_multi_table_setup()
+        patients = tables["patients"]
 
         # High cardinality fact table (make it larger to avoid reference classification)
         # Need > 10 MB to avoid reference classification
