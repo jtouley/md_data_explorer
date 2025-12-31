@@ -791,6 +791,8 @@ class NLQueryEngine:
         """
         Build structured prompts for LLM.
 
+        Phase 5.1: Request QueryPlan JSON schema instead of legacy QueryIntent.
+
         Args:
             query: User's question
             context: RAG context with columns, aliases, examples
@@ -800,17 +802,21 @@ class NLQueryEngine:
         """
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 
-Return JSON with these fields:
-- intent_type: One of ["DESCRIBE", "COMPARE_GROUPS", "COUNT", "FIND_PREDICTORS", "SURVIVAL", "CORRELATIONS"]
-- primary_variable: Main variable of interest (or null)
-- grouping_variable: Variable to group by (or null)
+Return JSON matching the QueryPlan schema with these REQUIRED fields:
+- intent: One of ["COUNT", "DESCRIBE", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]
+- metric: Main variable to analyze (string or null)
+- group_by: Variable to group by (string or null)
+- filters: List of filter objects (empty list if none)
 - confidence: Your confidence 0.0-1.0
+- explanation: Brief explanation of what the query asks for
 
 Available columns: {columns}
 Aliases: {aliases}
 
 Examples:
-{examples}""".format(
+{examples}
+
+IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by), not legacy names (intent_type, primary_variable, grouping_variable).""".format(
             columns=", ".join(context["columns"]),
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
@@ -824,6 +830,8 @@ Examples:
         """
         Extract QueryIntent from LLM JSON response with retries.
 
+        Phase 5.1: Parse QueryPlan JSON schema and validate using QueryPlan.from_dict()
+
         Args:
             response: JSON string from LLM
             max_retries: Maximum retry attempts (not used in this version)
@@ -835,27 +843,49 @@ Examples:
         try:
             data = json.loads(response)
 
-            # Validate required fields
-            if "intent_type" not in data:
-                logger.warning("llm_response_missing_intent_type", response=response[:100])
-                return None
+            # Phase 5.1: Validate using QueryPlan.from_dict() (raises on invalid schema)
+            try:
+                query_plan = QueryPlan.from_dict(data)
 
-            # Extract fields with defaults
-            intent_type = data.get("intent_type", "DESCRIBE")
-            primary_variable = data.get("primary_variable")
-            grouping_variable = data.get("grouping_variable")
-            confidence = float(data.get("confidence", 0.5))
+                # Convert validated QueryPlan back to QueryIntent for backward compatibility
+                return QueryIntent(
+                    intent_type=query_plan.intent,  # type: ignore[arg-type]
+                    primary_variable=query_plan.metric,
+                    grouping_variable=query_plan.group_by,
+                    confidence=query_plan.confidence,
+                    parsing_tier="llm_fallback",
+                    filters=query_plan.filters,  # Preserve validated filters
+                )
 
-            # Clamp confidence to valid range
-            confidence = max(0.0, min(1.0, confidence))
+            except (ValueError, KeyError) as validation_error:
+                # If QueryPlan validation fails, try legacy QueryIntent format for backward compatibility
+                logger.warning(
+                    "llm_queryplan_validation_failed_trying_legacy_format",
+                    error=str(validation_error),
+                    response=response[:100],
+                )
 
-            return QueryIntent(
-                intent_type=intent_type,
-                primary_variable=primary_variable,
-                grouping_variable=grouping_variable,
-                confidence=confidence,
-                parsing_tier="llm_fallback",
-            )
+                # Legacy format fallback
+                if "intent_type" not in data:
+                    logger.warning("llm_response_missing_required_fields", response=response[:100])
+                    return None
+
+                # Extract fields with defaults (legacy format)
+                intent_type = data.get("intent_type", "DESCRIBE")
+                primary_variable = data.get("primary_variable")
+                grouping_variable = data.get("grouping_variable")
+                confidence = float(data.get("confidence", 0.5))
+
+                # Clamp confidence to valid range
+                confidence = max(0.0, min(1.0, confidence))
+
+                return QueryIntent(
+                    intent_type=intent_type,
+                    primary_variable=primary_variable,
+                    grouping_variable=grouping_variable,
+                    confidence=confidence,
+                    parsing_tier="llm_fallback",
+                )
 
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             logger.warning(
