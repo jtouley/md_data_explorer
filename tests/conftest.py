@@ -816,26 +816,6 @@ def mock_session_state():
     return {}
 
 
-@pytest.fixture
-def sample_context_direct():
-    """
-    Direct AnalysisContext fixture (not a factory) for tests that expect it ready-to-use.
-
-    Returns AnalysisContext with default DESCRIBE intent and confidence=0.9.
-    Use this when you need a simple context object without customization.
-
-    For customization, use the sample_context() factory fixture instead.
-    """
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
-
-    context = AnalysisContext(
-        inferred_intent=AnalysisIntent.DESCRIBE,
-        primary_variable="all",
-    )
-    context.confidence = 0.9
-    return context
-
-
 # ============================================================================
 # Real-World Query Test Cases Fixture (ADR003 - Query Parsing Validation)
 # ============================================================================
