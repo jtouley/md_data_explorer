@@ -97,10 +97,15 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 # - Do NOT access st.session_state inside cached functions
 
 
-@st.cache_data(show_spinner="Loading semantic layer...")
+@st.cache_resource(show_spinner="Loading semantic layer...")
 def get_cached_semantic_layer(dataset_version: str, _dataset):
     """
-    Get semantic layer with caching (Phase 3).
+    Get semantic layer with caching (Phase 1.2 - PR20 P0 Fix).
+
+    IMPORTANT: Uses @st.cache_resource (not @st.cache_data) because:
+    - SemanticLayer contains non-picklable objects (DB connections, Ibis expressions)
+    - cache_data requires pickling, which fails with DuckDB/Ibis backends
+    - cache_resource stores objects in memory without serialization
 
     Cache key includes dataset_version to invalidate on dataset changes.
     Dataset object passed with _ prefix (not hashed, used for computation only).
