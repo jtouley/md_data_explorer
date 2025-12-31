@@ -12,7 +12,7 @@ import pytest
 
 from clinical_analytics.core.mapper import ColumnMapper, get_global_config, load_dataset_config
 from clinical_analytics.core.registry import DatasetRegistry
-from clinical_analytics.core.schema import UnifiedCohort
+from clinical_analytics.core.schema import DataQualityError, UnifiedCohort
 
 
 def get_first_available_dataset_config():
@@ -397,6 +397,78 @@ class TestColumnMapper:
         )
 
         assert cohort1.equals(cohort2)
+
+
+class TestValueMappingDataQuality:
+    """Test suite for Phase 0.1: value mapping data quality fixes."""
+
+    def test_unmapped_values_raise_data_quality_error(self):
+        """Unmapped values should raise DataQualityError with examples (Phase 0.1)."""
+        # Arrange: DataFrame with unmapped values
+        config = {
+            "outcomes": {
+                "outcome": {
+                    "source_column": "status",
+                    "type": "binary",
+                    "mapping": {"yes": 1, "no": 0},
+                }
+            }
+        }
+        mapper = ColumnMapper(config)
+        df = pl.DataFrame({"status": ["yes", "no", "unknown", "pending"]})
+
+        # Act & Assert
+        with pytest.raises(DataQualityError) as exc_info:
+            mapper.apply_outcome_transformations(df)
+
+        # Verify error message contains unmapped values
+        assert "unknown" in str(exc_info.value) or "unknown" in exc_info.value.unmapped_values
+        assert "pending" in str(exc_info.value) or "pending" in exc_info.value.unmapped_values
+
+    def test_all_mapped_values_no_error(self):
+        """All mapped values should not raise error (Phase 0.1)."""
+        # Arrange: DataFrame with all mapped values
+        config = {
+            "outcomes": {
+                "outcome": {
+                    "source_column": "status",
+                    "type": "binary",
+                    "mapping": {"yes": 1, "no": 0},
+                }
+            }
+        }
+        mapper = ColumnMapper(config)
+        df = pl.DataFrame({"status": ["yes", "no", "yes", "No", "YES"]})  # Case variations
+
+        # Act - should not raise
+        result = mapper.apply_outcome_transformations(df)
+
+        # Assert: All values mapped correctly
+        assert result["outcome"].null_count() == 0
+        assert len(result) == 5
+
+    def test_null_values_allowed_no_error(self):
+        """NULL values in source should be allowed and map to NULL (Phase 0.1)."""
+        # Arrange: DataFrame with NULL values
+        config = {
+            "outcomes": {
+                "outcome": {
+                    "source_column": "status",
+                    "type": "binary",
+                    "mapping": {"yes": 1, "no": 0},
+                }
+            }
+        }
+        mapper = ColumnMapper(config)
+        df = pl.DataFrame({"status": ["yes", None, "no", None]})
+
+        # Act - should not raise (NULL is allowed)
+        result = mapper.apply_outcome_transformations(df)
+
+        # Assert: NULLs preserved
+        assert result["outcome"].null_count() == 2
+        assert (result["outcome"] == 1).sum() == 1
+        assert (result["outcome"] == 0).sum() == 1
 
 
 class TestConfigLoading:
