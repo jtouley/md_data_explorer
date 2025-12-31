@@ -7,7 +7,6 @@ Ensures:
 - Results include intent match, confidence, and correctness
 """
 
-
 import pytest
 
 from clinical_analytics.core.eval_harness import EvalHarness, load_golden_questions
