@@ -38,6 +38,8 @@ class TestReporter:
                 "slow_tests": 2,
                 "total_duration": 36.5,
                 "average_duration": 18.25,
+                "min_duration": 1.5,
+                "max_duration": 35.0,
             },
         }
 
@@ -50,6 +52,9 @@ class TestReporter:
         assert "2025-01-15T10:30:00" in report
         assert "Total Tests: 2" in report or "2" in report
         assert "Slow Tests: 2" in report or "2" in report
+        assert "Mean Duration" in report or "Average Duration" in report
+        assert "Min Duration" in report
+        assert "Max Duration" in report
         assert "test_example" in report
 
     def test_reporter_generate_markdown_report_with_empty_data(self):
@@ -63,6 +68,8 @@ class TestReporter:
                 "slow_tests": 0,
                 "total_duration": 0.0,
                 "average_duration": 0.0,
+                "min_duration": 0.0,
+                "max_duration": 0.0,
             },
         }
 
@@ -93,6 +100,8 @@ class TestReporter:
                 "slow_tests": 1,
                 "total_duration": 1.5,
                 "average_duration": 1.5,
+                "min_duration": 1.5,
+                "max_duration": 1.5,
             },
         }
 
@@ -134,6 +143,8 @@ class TestReporter:
                 "slow_tests": 1,
                 "total_duration": 50.1,
                 "average_duration": 25.05,
+                "min_duration": 0.1,
+                "max_duration": 50.0,
             },
         }
 

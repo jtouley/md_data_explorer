@@ -38,6 +38,8 @@ class TestStorageReadWrite:
                 "slow_tests": 1,
                 "total_duration": 1.5,
                 "average_duration": 1.5,
+                "min_duration": 1.5,
+                "max_duration": 1.5,
             },
         }
 
@@ -71,8 +73,63 @@ class TestStorageReadWrite:
                 "slow_tests": 0,
                 "total_duration": 0.0,
                 "average_duration": 0.0,
+                "min_duration": 0.0,
+                "max_duration": 0.0,
             },
         }
+
+    def test_storage_summary_includes_min_max_duration(self):
+        """Test that performance data summary includes min and max duration."""
+        # Arrange
+        test_data = {
+            "run_id": "2025-01-15T10:30:00",
+            "tests": [
+                {
+                    "nodeid": "tests/core/test_fast.py::test_example",
+                    "duration": 0.5,
+                    "markers": [],
+                    "module": "core",
+                    "status": "passed",
+                },
+                {
+                    "nodeid": "tests/core/test_medium.py::test_example",
+                    "duration": 2.0,
+                    "markers": [],
+                    "module": "core",
+                    "status": "passed",
+                },
+                {
+                    "nodeid": "tests/core/test_slow.py::test_example",
+                    "duration": 5.0,
+                    "markers": ["slow"],
+                    "module": "core",
+                    "status": "passed",
+                },
+            ],
+            "summary": {
+                "total_tests": 3,
+                "slow_tests": 1,
+                "total_duration": 7.5,
+                "average_duration": 2.5,
+                "min_duration": 0.5,
+                "max_duration": 5.0,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_file = Path(tmpdir) / ".performance_data.json"
+
+            # Act
+            save_performance_data(test_data, data_file)
+            loaded_data = load_performance_data(data_file)
+
+            # Assert: Verify min/max are included and correct
+            summary = loaded_data["summary"]
+            assert "min_duration" in summary
+            assert "max_duration" in summary
+            assert summary["min_duration"] == 0.5
+            assert summary["max_duration"] == 5.0
+            assert summary["average_duration"] == 2.5
 
     def test_storage_load_corrupted_json_returns_empty_structure(self):
         """Test that loading corrupted JSON returns empty structure."""
@@ -93,6 +150,8 @@ class TestStorageReadWrite:
                     "slow_tests": 0,
                     "total_duration": 0.0,
                     "average_duration": 0.0,
+                    "min_duration": 0.0,
+                    "max_duration": 0.0,
                 },
             }
 
