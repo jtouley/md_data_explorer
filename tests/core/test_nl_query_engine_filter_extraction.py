@@ -786,3 +786,151 @@ class TestExclusionFilters:
         assert exclusion_filter.operator == "!="
         assert exclusion_filter.value == 0  # Generic: exclude code 0 (n/a/None)
         assert exclusion_filter.exclude_nulls is True
+
+    def test_dont_want_pattern_with_context_creates_exclusion_filter(self, mock_semantic_layer):
+        """Test that 'i don't want the 0 results' creates exclusion filter when context is available."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from query with "don't want" pattern and context
+        query = "what statins were patients on, i don't want the 0 results"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filters = [f for f in intent.filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter for 'don't want the 0'"
+        # Filter should exclude code 0
+        dont_want_filter = exclusion_filters[0]
+        assert dont_want_filter.value == 0, "Should exclude code 0 for 'don't want the 0'"
+
+    def test_dont_want_zero_with_context_creates_exclusion_filter(self, mock_semantic_layer):
+        """Test that 'don't want 0' creates exclusion filter when context from 'on X' is available."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from query with "don't want" and context
+        query = "patients on statins, don't want 0"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filters = [f for f in intent.filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter for 'don't want 0'"
+        dont_want_filter = exclusion_filters[0]
+        assert dont_want_filter.value == 0, "Should exclude code 0"
+
+    def test_do_not_want_na_creates_exclusion_filter(self, mock_semantic_layer):
+        """Test that 'do not want n/a' creates exclusion filter when context is available."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from query with "do not want" pattern
+        query = "patients on statins, do not want n/a"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter to exclude code 0 (n/a maps to 0)
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filters = [f for f in intent.filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter for 'do not want n/a'"
+        na_filter = exclusion_filters[0]
+        assert na_filter.value == 0, "Should map 'n/a' to code 0"
+
+    def test_dont_want_with_grouping_variable_uses_context(self, mock_semantic_layer):
+        """Test that 'don't want' pattern uses grouping_variable parameter for follow-up queries."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters with grouping_variable parameter (simulating follow-up query)
+        # This simulates a follow-up query where grouping_variable is available from previous query
+        query = "i don't want the 0 results"
+        filters = engine._extract_filters(query, grouping_variable="statin_used")
+
+        # Assert: Should extract filter using grouping_variable for column inference
+        assert len(filters) > 0, "Should extract filter when grouping_variable is provided"
+        exclusion_filters = [f for f in filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter"
+        dont_want_filter = exclusion_filters[0]
+        assert dont_want_filter.column == "statin_used", "Should use grouping_variable for column"
+        assert dont_want_filter.value == 0, "Should exclude code 0"
+
+    def test_dont_want_strips_the_prefix_from_value(self, mock_semantic_layer):
+        """Test that 'don't want the 0' correctly strips 'the' prefix from value."""
+        # Arrange: Create semantic layer with statin column
+        statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
+        mock = mock_semantic_layer(
+            columns={
+                statin_column_value: "statin_used",
+                "statin used": "statin_used",
+                "statins": "statin_used",
+            }
+        )
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2]},
+        }
+        engine = NLQueryEngine(mock)
+
+        # Act: Extract filters from query with "the 0" (should strip "the")
+        query = "patients on statins, i don't want the 0 results"
+        intent = engine.parse_query(query)
+
+        # Assert: Should extract filter with value 0 (not "the 0")
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filters = [f for f in intent.filters if f.operator == "!="]
+        assert len(exclusion_filters) > 0, "Should have exclusion filter"
+        dont_want_filter = exclusion_filters[0]
+        assert isinstance(dont_want_filter.value, int), "Value should be int, not string"
+        assert dont_want_filter.value == 0, "Should extract 0, not 'the 0'"

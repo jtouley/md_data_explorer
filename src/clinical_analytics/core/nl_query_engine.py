@@ -444,7 +444,7 @@ class NLQueryEngine:
 
         # Extract filters from query (applies to all intent types)
         if intent:
-            intent.filters = self._extract_filters(query)
+            intent.filters = self._extract_filters(query, grouping_variable=intent.grouping_variable)
             if intent.filters:
                 logger.debug(
                     "filters_extracted_in_parse",
@@ -1265,7 +1265,7 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
 
         return has_code_pattern or has_coded_indicators
 
-    def _extract_filters(self, query: str) -> list[FilterSpec]:
+    def _extract_filters(self, query: str, grouping_variable: str | None = None) -> list[FilterSpec]:
         """
         Extract filter conditions from query text.
 
@@ -1274,9 +1274,11 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
         - "scores below/above X" → numeric range filter
         - "with X" / "without X" → presence filter
         - "on statins" / "were on statins" → categorical filter (value matching)
+        - "don't want X" / "exclude X" → exclusion filter
 
         Args:
             query: User's natural language query
+            grouping_variable: Optional grouping variable from query intent (for follow-up queries)
 
         Returns:
             List of FilterSpec objects
@@ -1315,6 +1317,9 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
             # Phase 4.1: Add "remove" pattern for value exclusion
             # Handles: "remove 0", "remove n/a", etc.
             r"remove\s+([^,\.\?]+?)(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            # Add "don't want" / "do not want" / "i don't want" patterns
+            # Handles: "i don't want the 0 results", "don't want 0", "do not want n/a", etc.
+            r"(?:i\s+)?(?:don'?t|do\s+not)\s+want\s+(?:the\s+)?([^,\.\?]+?)(?:\s+(?:results|values|rows|entries)?(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)|$)",
         ]
 
         # Track which value phrases were already processed by exclusion patterns
@@ -1343,19 +1348,21 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                     # Try to infer column from earlier "on X" pattern in query
                     inferred_column = None
 
-                    # Extract actual value from phrases like "the n/a (0)" or "n/a (0)"
+                    # Extract actual value from phrases like "the n/a (0)" or "n/a (0)" or "the 0"
                     # Try to find parenthesized number or standalone number/value
-                    value_str = value_phrase
-                    parenthesized_num = re.search(r"\((\d+)\)", value_phrase)
+                    # Strip "the" prefix if present
+                    value_phrase_clean = re.sub(r"^the\s+", "", value_phrase, flags=re.IGNORECASE).strip()
+                    value_str = value_phrase_clean
+                    parenthesized_num = re.search(r"\((\d+)\)", value_phrase_clean)
                     if parenthesized_num:
                         # Found "(0)" or "(1)" etc. - use that as the value
                         value_str = parenthesized_num.group(1)
-                    elif "n/a" in value_phrase.lower() or "na" in value_phrase.lower():
+                    elif "n/a" in value_phrase_clean.lower() or "na" in value_phrase_clean.lower():
                         # Contains "n/a" or "na" - normalize to "n/a"
                         value_str = "n/a"
-                    elif any(char.isdigit() for char in value_phrase):
+                    elif any(char.isdigit() for char in value_phrase_clean):
                         # Contains digits - extract just the digits
-                        digits_match = re.search(r"(\d+)", value_phrase)
+                        digits_match = re.search(r"(\d+)", value_phrase_clean)
                         if digits_match:
                             value_str = digits_match.group(1)
 
@@ -1367,7 +1374,10 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                     )
 
                     if is_value:
-                        # Try to find "on X" pattern earlier in query to infer column
+                        inferred_column = None
+                        inferred_conf = 0.0
+
+                        # Strategy 1: Try to find "on X" pattern earlier in query to infer column
                         on_pattern = r"on\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)"
                         on_matches = list(re.finditer(on_pattern, query_lower))
                         if on_matches:
@@ -1375,30 +1385,59 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                             inferred_term = on_matches[-1].group(1).strip()
                             inferred_column, inferred_conf, _ = self._fuzzy_match_variable(inferred_term)
 
-                            if inferred_column and inferred_conf > 0.5:
-                                # Map value to code
-                                # For "n/a", "na", "none" → code 0
-                                # For numeric strings → parse as int
-                                # Use value_str (extracted value) instead of value_phrase
-                                if value_str.lower() in ["n/a", "na", "none", "unknown"]:
-                                    exclusion_value = 0
-                                elif value_str.isdigit():
-                                    exclusion_value = int(value_str)
-                                else:
-                                    # Unknown value, skip
-                                    continue
+                        # Strategy 2: If no "on X" pattern, try to find grouping variable from query
+                        # Look for "by X", "per X", "broken down by X" patterns
+                        if not inferred_column or inferred_conf <= 0.5:
+                            grouping_patterns = [
+                                r"by\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                                r"per\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                                r"broken\s+down\s+by\s+(?:count\s+of\s+)?(?:\w+\s+)*?per\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                                r"broken\s+down\s+by\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                            ]
+                            for gp in grouping_patterns:
+                                gp_match = re.search(gp, query_lower)
+                                if gp_match:
+                                    group_term = gp_match.group(1).strip()
+                                    inferred_column, inferred_conf, _ = self._fuzzy_match_variable(group_term)
+                                    if inferred_column and inferred_conf > 0.5:
+                                        break
 
-                                # Create exclusion filter with inferred column
-                                filters.append(
-                                    FilterSpec(
-                                        column=inferred_column,
-                                        operator="!=",
-                                        value=exclusion_value,
-                                        exclude_nulls=True,
-                                    )
-                                )
-                                processed_value_phrases.add(value_phrase)
+                        # Strategy 3: If still no column, use grouping_variable from query intent
+                        # This helps with follow-up queries like "i don't want the 0 results"
+                        # where the grouping variable from the previous query is available
+                        if (not inferred_column or inferred_conf <= 0.5) and grouping_variable:
+                            inferred_column = grouping_variable
+                            inferred_conf = 0.8  # High confidence since it's from the query intent
+
+                        # Strategy 4: If still no column, skip creating a filter
+                        # This is better than creating a wrong filter
+                        if not inferred_column or inferred_conf <= 0.5:
+                            continue
+
+                        if inferred_column and inferred_conf > 0.5:
+                            # Map value to code
+                            # For "n/a", "na", "none" → code 0
+                            # For numeric strings → parse as int
+                            # Use value_str (extracted value) instead of value_phrase
+                            if value_str.lower() in ["n/a", "na", "none", "unknown"]:
+                                exclusion_value = 0
+                            elif value_str.isdigit():
+                                exclusion_value = int(value_str)
+                            else:
+                                # Unknown value, skip
                                 continue
+
+                            # Create exclusion filter with inferred column
+                            filters.append(
+                                FilterSpec(
+                                    column=inferred_column,
+                                    operator="!=",
+                                    value=exclusion_value,
+                                    exclude_nulls=True,
+                                )
+                            )
+                            processed_value_phrases.add(value_phrase)
+                            continue
 
                 if column_name and conf > 0.5:
                     # Normalize column name: if _fuzzy_match_variable returned full alias string,
