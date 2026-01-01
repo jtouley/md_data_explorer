@@ -22,8 +22,8 @@ class TestTranslateErrorWithLLM:
         technical_error = "ColumnNotFoundError: Column 'ldl_cholesterol' not found in schema"
 
         mock_llm_result = LLMCallResult(
-            raw_text='{"friendly_message": "I couldn\'t find a column called \'ldl_cholesterol\'. '
-            'Try \'LDL mg/dL\' instead."}',
+            raw_text="{\"friendly_message\": \"I couldn't find a column called 'ldl_cholesterol'. "
+            "Try 'LDL mg/dL' instead.\"}",
             payload={"friendly_message": "I couldn't find a column called 'ldl_cholesterol'. Try 'LDL mg/dL' instead."},
             latency_ms=100.0,
             timed_out=False,

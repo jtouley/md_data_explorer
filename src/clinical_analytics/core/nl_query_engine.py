@@ -945,7 +945,16 @@ Follow-up generation guidelines:
 - Examples: "What predicts X?", "Compare by Y group", "Are there outliers?"
 
 IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by),
-not legacy names (intent_type, primary_variable, grouping_variable).""".format(
+not legacy names (intent_type, primary_variable, grouping_variable).
+
+Filter extraction (ADR009 Phase 5):
+- Extract filter conditions from queries like "get rid of the n/a", "exclude missing", "remove 0"
+- For exclusion patterns ("get rid of", "exclude", "remove"), use operator "!=" with value 0 (n/a code)
+- For coded columns, use numeric codes (0=n/a, 1=first value, etc.)
+- Examples:
+  * "get rid of the n/a" → {{"column": "treatment_group", "operator": "!=", "value": 0}}
+  * "exclude missing values" → {{"column": "treatment_group", "operator": "!=", "value": 0}}
+  * "patients on statins" → {{"column": "statin_prescribed", "operator": "==", "value": 1}}""".format(
             columns=", ".join(context["columns"]),
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
@@ -1075,6 +1084,45 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
             if intent is None:
                 logger.info("llm_parse_extraction_failed_fallback_to_stub", query=query)
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # ADR009 Phase 5: Extract filters using LLM (for complex patterns)
+            from clinical_analytics.core.filter_extraction import _extract_filters_with_llm
+
+            llm_filters, confidence_delta, validation_failures = _extract_filters_with_llm(
+                query, self.semantic_layer, current_confidence=intent.confidence
+            )
+
+            # Merge LLM-extracted filters with filters from main parse
+            # Deduplicate: if same column+operator+value exists, keep only one
+            existing_filter_keys = {
+                (f.column, f.operator, str(f.value) if not isinstance(f.value, list) else tuple(sorted(f.value)))
+                for f in intent.filters
+            }
+            for llm_filter in llm_filters:
+                filter_key = (
+                    llm_filter.column,
+                    llm_filter.operator,
+                    str(llm_filter.value)
+                    if not isinstance(llm_filter.value, list)
+                    else tuple(sorted(llm_filter.value)),
+                )
+                if filter_key not in existing_filter_keys:
+                    intent.filters.append(llm_filter)
+                    existing_filter_keys.add(filter_key)
+
+            # Update confidence based on filter validation results
+            if confidence_delta < 0:
+                intent.confidence = max(0.6, intent.confidence + confidence_delta)  # Cap at 0.6 minimum
+                if validation_failures:
+                    # Add validation failures to confidence explanation
+                    if intent.confidence_explanation:
+                        intent.confidence_explanation += (
+                            f" Filter validation issues: {len(validation_failures)} invalid filter(s)."
+                        )
+                    else:
+                        intent.confidence_explanation = (
+                            f"Filter validation issues: {len(validation_failures)} invalid filter(s)."
+                        )
 
             # Step 7: Validate confidence meets minimum threshold
             if intent.confidence < TIER_3_MIN_CONFIDENCE:
