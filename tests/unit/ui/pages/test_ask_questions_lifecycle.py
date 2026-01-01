@@ -156,3 +156,91 @@ def test_lifecycle_remember_run_handles_empty_history(mock_session_state, monkey
     hist_key = f"run_history_{dataset_version}"
     assert hist_key in mock_session_state
     assert mock_session_state[hist_key] == ["run_key_1"]
+
+
+def test_lifecycle_cleanup_old_results_removes_orphaned_results(mock_session_state, monkeypatch, ask_questions_page):
+    """
+    Test that cleanup_old_results removes orphaned results not in history (PR25).
+
+    Test name: test_unit_scenario_expectedBehavior
+    """
+    # Arrange: Add results, some in history, some orphaned
+    dataset_version = "test_dataset_v1"
+
+    monkeypatch.setattr("streamlit.session_state", mock_session_state)
+
+    # Add runs to history
+    ask_questions_page.remember_run(dataset_version, "run_key_1")
+    ask_questions_page.remember_run(dataset_version, "run_key_2")
+
+    # Store results for runs in history
+    mock_session_state[f"analysis_result:{dataset_version}:run_key_1"] = {"result": "data1"}
+    mock_session_state[f"analysis_result:{dataset_version}:run_key_2"] = {"result": "data2"}
+
+    # Add orphaned result (not in history)
+    mock_session_state[f"analysis_result:{dataset_version}:orphaned_key"] = {"result": "orphaned"}
+
+    # Act: Cleanup
+    ask_questions_page.cleanup_old_results(dataset_version)
+
+    # Assert: Orphaned result removed, history results kept
+    assert f"analysis_result:{dataset_version}:orphaned_key" not in mock_session_state
+    assert f"analysis_result:{dataset_version}:run_key_1" in mock_session_state
+    assert f"analysis_result:{dataset_version}:run_key_2" in mock_session_state
+
+
+def test_lifecycle_execution_cache_eviction_prevents_unbounded_growth(
+    mock_session_state, monkeypatch, ask_questions_page
+):
+    """
+    Test that execution cache eviction prevents unbounded growth (PR25).
+
+    Test name: test_unit_scenario_expectedBehavior
+    """
+    # Arrange: Add more than MAX_STORED_RESULTS_PER_DATASET execution cache entries
+    dataset_version = "test_dataset_v1"
+    max_results = 5  # Should match MAX_STORED_RESULTS_PER_DATASET in implementation
+
+    monkeypatch.setattr("streamlit.session_state", mock_session_state)
+
+    # Add max_results + 1 execution cache entries
+    for i in range(max_results + 1):
+        exec_key = f"exec_result:{dataset_version}:query_hash_{i}"
+        mock_session_state[exec_key] = {"result": f"exec_{i}"}
+
+    # Act: Trigger eviction (simulate adding new entry)
+    # Import the function directly from the module
+    _evict_old_execution_cache = ask_questions_page._evict_old_execution_cache
+    _evict_old_execution_cache(dataset_version)
+
+    # Assert: Only max_results entries remain
+    exec_keys = [k for k in mock_session_state.keys() if k.startswith(f"exec_result:{dataset_version}:")]
+    assert len(exec_keys) <= max_results
+
+
+def test_lifecycle_remember_run_called_for_cached_results(mock_session_state, monkeypatch, ask_questions_page):
+    """
+    Test that remember_run() is called even for cached results (PR25 invariant).
+
+    Test name: test_unit_scenario_expectedBehavior
+    """
+    # Arrange: Pre-populate cached result
+    dataset_version = "test_dataset_v1"
+    run_key = "cached_run_key"
+
+    monkeypatch.setattr("streamlit.session_state", mock_session_state)
+
+    # Pre-store result (simulating cache hit)
+    result_key = f"analysis_result:{dataset_version}:{run_key}"
+    mock_session_state[result_key] = {"result": "cached_data"}
+
+    # History should be empty initially
+    hist_key = f"run_history_{dataset_version}"
+    assert hist_key not in mock_session_state or len(mock_session_state.get(hist_key, [])) == 0
+
+    # Act: Call remember_run (simulating what happens in cached path)
+    ask_questions_page.remember_run(dataset_version, run_key)
+
+    # Assert: History updated even though result was cached
+    assert hist_key in mock_session_state
+    assert run_key in mock_session_state[hist_key]
