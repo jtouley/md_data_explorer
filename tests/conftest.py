@@ -513,10 +513,18 @@ def mock_semantic_layer():
             "treatment": "treatment_arm",
             "age": "age",
         }
-        mock.get_column_alias_index.return_value = columns or default_columns
+        column_map = columns or default_columns
+        mock.get_column_alias_index.return_value = column_map
         mock.get_collision_suggestions.return_value = collision_suggestions
         mock.get_collision_warnings.return_value = set()
         mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
+
+        # Mock get_base_view() for filter validation
+        # Filter validation checks if column exists in view.columns
+        base_view_mock = MagicMock()
+        base_view_mock.columns = list(column_map.values())  # Use actual column names
+        mock.get_base_view.return_value = base_view_mock
+
         return mock
 
     return _make
