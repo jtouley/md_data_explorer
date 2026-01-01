@@ -1207,6 +1207,24 @@ OPTIONAL fields for enhanced UX (ADR009):
 - interpretation: Human-readable explanation of what the query is asking (helps user understand parsing)
 - confidence_explanation: Brief explanation of why the confidence score is what it is
 
+CRITICAL: Your JSON response must be FLAT with these fields at the TOP LEVEL.
+NEVER create nested objects like {{ "query": {{ ... }} }} or {{ "action": {{ ... }} }}.
+
+INVALID EXAMPLES (DO NOT DO THIS):
+❌ {{ "query": {{ "remove": ["n/a"], "recalc": true }} }}
+❌ {{ "action": {{ "type": "exclude", "value": "n/a" }} }}
+❌ {{ "refinement": {{ "previous": "...", "change": "..." }} }}
+
+VALID EXAMPLE:
+✅ {{
+  "intent": "COUNT",
+  "metric": null,
+  "group_by": "statin_used",
+  "filters": [{{"column": "statin_used", "operator": "!=", "value": 0}}],
+  "confidence": 0.85,
+  "explanation": "Count by statin type, excluding n/a"
+}}
+
 Available columns: {columns}
 Aliases: {aliases}
 
