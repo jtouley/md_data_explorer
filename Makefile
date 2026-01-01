@@ -99,6 +99,30 @@ test-ui: ensure-venv ## Run UI module tests
 	@echo "$(GREEN)Running UI module tests...$(NC)"
 	$(PYTEST) $(TEST_DIR)/ui -v
 
+test-performance: ensure-venv ## Run tests with performance tracking
+	@echo "$(GREEN)Running tests with performance tracking...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v --track-performance
+
+performance-report: ## Generate performance report
+	@echo "$(GREEN)Generating performance report...$(NC)"
+	$(PYTHON_RUN) scripts/generate_performance_report.py --format markdown
+
+performance-update-docs: ## Update PERFORMANCE.md with current benchmarks
+	@echo "$(GREEN)Updating PERFORMANCE.md...$(NC)"
+	$(PYTHON_RUN) scripts/generate_performance_report.py --update-docs
+
+performance-baseline: ## Create or update performance baseline
+	@echo "$(GREEN)Creating performance baseline...$(NC)"
+	@if [ ! -f tests/.performance_data.json ]; then \
+		echo "$(RED)Error: No performance data found. Run 'make test-performance' first.$(NC)"; \
+		exit 1; \
+	fi
+	$(PYTHON_RUN) scripts/generate_performance_report.py --create-baseline
+
+performance-regression: ensure-venv ## Run performance regression tests
+	@echo "$(GREEN)Running performance regression tests...$(NC)"
+	$(PYTEST) tests/test_performance_regression.py -v
+
 test-cov: ## Run tests with coverage report
 	@echo "$(GREEN)Running tests with coverage...$(NC)"
 	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing

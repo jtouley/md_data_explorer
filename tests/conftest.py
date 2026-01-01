@@ -1096,3 +1096,16 @@ def discovered_datasets():
         "configs": configs,
         "all_datasets": all_datasets,
     }
+
+
+# ============================================================================
+# Performance Tracking Plugin Registration
+# ============================================================================
+
+
+def pytest_configure(config):
+    """Register performance tracking plugin if --track-performance flag is set."""
+    if config.getoption("--track-performance", default=False):
+        # Import the plugin to register its hooks
+        # The plugin's pytest_addoption and pytest_configure will be called automatically
+        import performance.plugin  # noqa: F401

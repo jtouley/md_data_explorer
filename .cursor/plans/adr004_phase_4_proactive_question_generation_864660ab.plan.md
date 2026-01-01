@@ -124,7 +124,15 @@ todos:
   - id: "2.11"
     content: Write failing test for infer_schema_with_context() - doc_context populates DictionaryMetadata with codebooks, descriptions, units
     status: pending
+  - id: "2.11a"
+    content: Write failing test for DictionaryMetadata.codebooks field - dataclass has codebooks: dict[str, dict[str, str]] field
+    status: pending
   - id: "2.12"
+    content: Add codebooks field to DictionaryMetadata dataclass - codebooks: dict[str, dict[str, str]] = field(default_factory=dict)
+    status: pending
+    dependencies:
+      - "2.11a"
+  - id: "2.12a"
     content: Implement doc_context parsing in infer_schema() - populate DictionaryMetadata with codebooks, descriptions, units
     status: pending
     dependencies:
@@ -133,6 +141,7 @@ todos:
       - "2.8"
       - "2.10"
       - "2.11"
+      - "2.12"
   - id: "2.13"
     content: Write failing test for to_dataset_config() - populates variable_types with codebooks, descriptions, units
     status: pending
@@ -683,8 +692,11 @@ def extract_markdown_text(md_path: Path) -> str:
    - `test_infer_schema_accepts_doc_context()` - signature accepts doc_context
    - `test_parse_dictionary_text_parses_plain_text()` - parse text (not just PDF)
    - `test_parse_dictionary_extracts_codebooks()` - extract codebooks from "1: Yes, 2: No" patterns
+   - `test_parse_dictionary_extracts_codebooks_multiple_formats()` - test comma-separated, space-separated, reverse format
+   - `test_dictionary_metadata_has_codebooks_field()` - verify DictionaryMetadata.codebooks field exists
    - `test_parse_dictionary_extracts_descriptions()` - extract column descriptions
-   - `test_parse_dictionary_extracts_units()` - extract units (mg/dL, %, etc.)
+   - `test_parse_dictionary_extracts_units_from_column_names()` - extract units from column names (reuse column_parser)
+   - `test_parse_dictionary_extracts_units_from_documentation()` - extract units from documentation patterns
    - `test_infer_schema_with_doc_context_populates_dictionary_metadata()` - doc_context → DictionaryMetadata
    - `test_schema_inference_with_doc_context_improves_confidence()` - confidence scores improved
    - `test_to_dataset_config_populates_variable_types_with_codebooks()` - codebooks in variable_types
@@ -751,9 +763,12 @@ def extract_markdown_text(md_path: Path) -> str:
 
 - Update `infer_schema()` signature: `def infer_schema(self, df: pl.DataFrame, doc_context: str | None = None) -> InferredSchema`
 - **Refactor `parse_dictionary_pdf()` → `parse_dictionary_text()`**: New signature `def parse_dictionary_text(self, source: Path | str) -> DictionaryMetadata | None` (accepts both Path and str, removes old method)
-- **Extract codebooks from documentation**: Parse patterns like "1: Biktarvy, 2: Symtuza" → `{"1": "Biktarvy", "2": "Symtuza"}`
+- **Add `codebooks` field to DictionaryMetadata**: Add `codebooks: dict[str, dict[str, str]] = field(default_factory=dict)` to dataclass. Structure: `{column_name: {"1": "Biktarvy", "2": "Symtuza", ...}}`
+- **Extract codebooks from documentation**: Parse patterns like "1: Biktarvy, 2: Symtuza" → `{"1": "Biktarvy", "2": "Symtuza"}`. Consider reusing `_extract_value_mapping()` from `column_parser.py` to avoid duplication.
 - **Extract column descriptions**: Parse "Column: Description" patterns from documentation
-- **Extract units**: Parse units from column names (mg/dL, %, etc.) or documentation
+- **Extract units**: 
+  - From column names: Reuse `_extract_unit()` from `column_parser.py` 
+  - From documentation: Parse patterns like "Units: mg/dL" or "measured in mg/dL"
 - Use `doc_context` to populate `DictionaryMetadata` with codebooks, descriptions, units
 - **Enhance `InferredSchema.to_dataset_config()`**: Populate `variable_types` dict with:
   ```python
@@ -779,7 +794,19 @@ def extract_markdown_text(md_path: Path) -> str:
 **Implementation Notes**:
 
 - **Codebook Extraction**: Parse patterns like "1: Biktarvy, 2: Symtuza" or "1: Yes, 2: No, 0: n/a" from documentation. Store as `{"1": "Biktarvy", "2": "Symtuza", ...}` in `DictionaryMetadata.codebooks` dict.
+  - **Reuse existing patterns**: Consider reusing/extending `_extract_value_mapping()` from `src/clinical_analytics/core/column_parser.py` (lines 49-77) to avoid duplication
+  - **Pattern formats**: Handle multiple formats:
+    - `"1: Biktarvy, 2: Symtuza"` (comma-separated)
+    - `"1: Yes 2: No"` (space-separated)
+    - `"0: n/a 1: Atorvastatin"` (with n/a)
+    - `"Yes:1 No:2"` (reverse format - less common)
+  - **Regex pattern**: Use pattern like `r"(\d+)\s*:\s*([^,0-9]+)"` to extract code-value pairs
+  - **Store structure**: `DictionaryMetadata.codebooks[column_name] = {"1": "Biktarvy", "2": "Symtuza", ...}`
 - **Dictionary Text Format**: Plain text dictionaries should follow patterns like "Column: Description" or "Column Name | Type | Description". If format is unclear, log warning and use data-driven inference only.
+- **Units Extraction**: 
+  - **From column names**: Reuse `_extract_unit()` from `src/clinical_analytics/core/column_parser.py` (line 69) which extracts units like "mg/dL", "%", etc. from column names
+  - **From documentation**: Parse patterns like "Units: mg/dL" or "measured in mg/dL" or "(mg/dL)" in column descriptions
+  - **Priority**: Column name extraction takes precedence (more reliable), fallback to documentation parsing
 - **Merging Strategy**: Dictionary metadata takes precedence over data-driven inference when both are available. Use dictionary descriptions to improve confidence scores.
 - **Semantic Layer Integration**: Enhanced `variable_types` stored in metadata JSON flows into `SemanticLayer.config["variable_types"]`, which is used by:
   - `get_column_metadata()` - returns codebooks, descriptions, units for Ibis/DuckDB queries
@@ -865,7 +892,8 @@ def extract_markdown_text(md_path: Path) -> str:
    - `test_autocontext_dataclass()` - AutoContext structure
    - `test_build_autocontext_extracts_entity_keys()` - entity key extraction
    - `test_build_autocontext_builds_column_catalog()` - column catalog with aliases
-   - `test_build_autocontext_extracts_glossary()` - glossary from doc_context
+   - `test_build_autocontext_extracts_glossary()` - glossary from doc_context (abbreviations, definitions)
+   - `test_build_autocontext_glossary_limited_to_top_50()` - verify glossary truncation for token budget
    - `test_build_autocontext_enforces_token_budget()` - token budget truncation
    - `test_build_autocontext_no_row_level_data()` - privacy validation
 
@@ -970,6 +998,11 @@ def build_autocontext(
     #    - Get codebooks (from column name patterns: "1: Yes 2: No" - deterministic parsing)
     #    - Get lightweight stats (min/max/mean for numeric, top N for categorical - deterministic aggregation)
     # 3. Extract glossary from doc_context (abbreviations, definitions - deterministic text extraction)
+    #    Glossary extraction pattern:
+    #    - Look for sections with headers like "Abbreviations", "Definitions", "Glossary", "Notes"
+    #    - Extract key-value pairs: "BMI: Body Mass Index" or "LDL: Low-density lipoprotein"
+    #    - Limit to top 50 terms (token budget)
+    #    - Structure: {"BMI": "Body Mass Index", "LDL": "Low-density lipoprotein", ...}
     # 4. Filter columns by relevance if query_terms provided (lexical + alias match - deterministic)
     # 5. Enforce token budget (truncate if needed - deterministic truncation strategy)
     # 6. Validate no row-level data included (assertion check)
@@ -1003,20 +1036,39 @@ def extract_column_metadata(self, column_name: str) -> dict[str, Any] | None:
     Extract column metadata compatible with ColumnContext construction.
     
     Uses existing get_column_metadata() internally but formats for AutoContext use.
-    Returns dict with keys: name, normalized_name, dtype, units, codebook (if available).
     
     Args:
         column_name: Canonical column name
         
     Returns:
         Dict compatible with ColumnContext construction, or None if metadata unavailable
+        
+    Example return structure:
+        {
+            "name": "Current Regimen",
+            "normalized_name": "current_regimen",  # lowercase, underscore-normalized
+            "dtype": "coded",  # Maps from variable_types["type"]: "numeric"|"categorical"|"coded"|"datetime"|"text"
+            "units": None,  # From variable_types["units"] if available
+            "codebook": {"1": "Biktarvy", "2": "Symtuza", ...},  # From variable_types["codebook"] if available
+        }
+    
+    Dtype mapping:
+        - "numeric" → "numeric"
+        - "categorical" (with numeric=True) → "coded"
+        - "categorical" (with numeric=False) → "categorical"
+        - "datetime" → "datetime"
+        - "text" → "categorical" (fallback)
+        - "id" → "id" (for patient_id columns)
+    
+    Normalized name: lowercase, replace spaces/special chars with underscores
     """
 ```
 
 **Token Budget Implementation Notes**:
-- Token counting: Approximate 1 token ≈ 4 characters
-- Truncation strategy: Least relevant columns first (by query_terms match score)
-- Relevance filtering: Lexical match + alias match (deterministic scoring)
+- **Token counting method**: Use character count / 4 approximation (1 token ≈ 4 characters). This is sufficient for deterministic truncation. No need for tiktoken library (adds dependency, approximation is acceptable for token budget enforcement).
+- **Truncation strategy**: Least relevant columns first (by query_terms match score)
+- **Relevance filtering**: Lexical match + alias match (deterministic scoring)
+- **Test requirement**: Add test with known token counts to verify budget enforcement (e.g., 100-column schema with 4000 token budget should truncate to ~50 most relevant columns)
 
 **Success Criteria:**
 - [ ] AutoContext pack built deterministically (no LLM in construction)
@@ -1329,20 +1381,29 @@ def _validate_questions_bounded(
     Filters out questions that reference columns not in semantic layer.
     This prevents hallucination.
     
+    **Validation Strategy**: 
+    - Primary: Substring matching (case-insensitive) - fast and sufficient for most cases
+    - Future enhancement: Could use NLQueryEngine's column matching logic for more sophisticated parsing
+    - Edge cases: Partial matches (e.g., "age" matches "age_group") are acceptable (conservative filtering)
+    
+    Args:
+        questions: List of generated questions
+        available_columns: List of canonical column names (hard boundary)
+        available_aliases: List of alias names (hard boundary)
+    
     Returns:
-        Filtered list of questions (only those referencing known columns)
+        Filtered list of questions (only those referencing known columns/aliases)
     """
-    # Simple validation: check if question mentions any known column/alias
-    # More sophisticated: parse question and extract column references
     validated = []
     all_valid_names = set(available_columns + available_aliases)
     
     for question in questions:
-        # Check if question mentions any valid column/alias (case-insensitive)
+        # Check if question mentions any valid column/alias (case-insensitive substring match)
         question_lower = question.lower()
         if any(name.lower() in question_lower for name in all_valid_names):
             validated.append(question)
-        # TODO: More sophisticated parsing to extract column references
+        # Note: Substring matching is sufficient for MVP. More sophisticated parsing (extracting
+        # column references via NLQueryEngine) can be added in future if needed.
     
     return validated
 
@@ -1387,23 +1448,62 @@ def _build_cache_key(
     run_key: str | None,
     normalized_query: str | None,
 ) -> str:
-    """Build cache key for idempotency."""
-    # Key format: "proactive_questions:{dataset_version}:{run_key}:{query_hash}"
+    """
+    Build cache key for idempotency.
+    
+    Uses same pattern as execution result caching in 03_💬_Ask_Questions.py:
+    - Key format: "{dataset_version}:{run_key}:{query_hash}"
+    - query_hash: SHA256 hash of normalized_query (first 16 chars, same as exec_result caching)
+    - Full session state key: f"proactive_questions:{cache_key}"
+    
+    Args:
+        dataset_version: Dataset version identifier
+        run_key: Run key for idempotency
+        normalized_query: Normalized query text (for hashing)
+        
+    Returns:
+        Cache key string (without "proactive_questions:" prefix - added in _get_cached_questions/_cache_questions)
+    """
     import hashlib
-    query_hash = hashlib.md5(normalized_query.encode() if normalized_query else b"").hexdigest()[:8]
-    return f"proactive_questions:{dataset_version or 'unknown'}:{run_key or 'unknown'}:{query_hash}"
+    # Use SHA256 (same as exec_result caching) for deterministic hashing
+    query_hash = hashlib.sha256(normalized_query.encode() if normalized_query else b"").hexdigest()[:16]
+    return f"{dataset_version or 'unknown'}:{run_key or 'unknown'}:{query_hash}"
 
 def _get_cached_questions(cache_key: str) -> list[str] | None:
-    """Get cached questions if available."""
-    # Use session state or persistent cache (same pattern as result caching)
-    # TODO: Implement cache retrieval
-    return None
+    """
+    Get cached questions from Streamlit session state.
+    
+    Uses same pattern as execution result caching in 03_💬_Ask_Questions.py:
+    - Key format: f"proactive_questions:{cache_key}"
+    - Cache key includes dataset_version, run_key, query_hash for idempotency
+    - Returns None if not cached (allows LLM generation)
+    
+    Args:
+        cache_key: Cache key built from (dataset_version, run_key, query_hash)
+        
+    Returns:
+        Cached questions list or None if not cached
+    """
+    import streamlit as st
+    session_key = f"proactive_questions:{cache_key}"
+    return st.session_state.get(session_key)
 
 def _cache_questions(cache_key: str, questions: list[str]) -> None:
-    """Cache questions for idempotency."""
-    # Use session state or persistent cache (same pattern as result caching)
-    # TODO: Implement cache storage
-    pass
+    """
+    Cache questions in Streamlit session state for idempotency.
+    
+    Uses same pattern as execution result caching in 03_💬_Ask_Questions.py:
+    - Key format: f"proactive_questions:{cache_key}"
+    - Prevents duplicate question generation on Streamlit reruns
+    - Cache persists for session lifetime (cleared on page refresh)
+    
+    Args:
+        cache_key: Cache key built from (dataset_version, run_key, query_hash)
+        questions: Generated questions to cache
+    """
+    import streamlit as st
+    session_key = f"proactive_questions:{cache_key}"
+    st.session_state[session_key] = questions
 
 def _log_question_generation(
     questions: list[str],
@@ -1485,7 +1585,7 @@ def _validate_privacy_safe_stats(stats: dict[str, Any]) -> None:
 - [ ] Question generator module created with LLM + deterministic fallback
 - [ ] **Semantic layer bounding**: Questions only reference known columns/aliases (no hallucination)
 - [ ] **Confidence gating**: Respects deterministic thresholds (≥0.85 free, 0.5-0.85 clarification only, <0.5 none)
-- [ ] **Idempotency**: Questions cached by (dataset_version, run_key, normalized_query) to prevent duplicates
+- [ ] **Idempotency**: Questions cached by (dataset_version, run_key, normalized_query) using st.session_state with key format `f"proactive_questions:{cache_key}"` (same pattern as exec_result caching)
 - [ ] **Time budget**: Hard timeout of 5.0s (same as parsing tiers)
 - [ ] **Observability**: Logs `proactive_questions_generated`, `proactive_question_selected`, `proactive_question_dismissed` events
 - [ ] **Clinical safety**: Prompts emphasize analysis navigation only, not medical advice

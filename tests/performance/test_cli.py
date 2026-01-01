@@ -2,11 +2,7 @@
 
 import json
 import sys
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 # Add tests to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -82,8 +78,9 @@ class TestCLI:
         data_file.write_text(json.dumps(performance_data))
 
         # Act - Test baseline creation logic
-        from performance.storage import load_performance_data, save_baseline
         from datetime import date
+
+        from performance.storage import load_performance_data, save_baseline
 
         data = load_performance_data(data_file)
 
@@ -124,4 +121,3 @@ class TestCLI:
         assert "baseline_date" in loaded_baseline
         assert "tests/core/test_example.py::test_example" in loaded_baseline["tests"]
         assert loaded_baseline["tests"]["tests/core/test_example.py::test_example"]["duration"] == 10.0
-
