@@ -126,49 +126,82 @@ def _extract_filters_with_llm(
     timeout_s = min(LLM_TIMEOUT_FILTER_EXTRACTION_S, LLM_TIMEOUT_MAX_S)
 
     # Build prompt with filter extraction instructions
-    system_prompt = """You are a helpful assistant that extracts filter conditions from natural language queries.
+    system_prompt = """You are an expert at extracting filter conditions from clinical queries.
 
-Extract filter conditions from the user's query and return them as a JSON array.
+Your task: Extract filter conditions and return them as JSON.
 
-Filter format:
+Output format:
 {
   "filters": [
     {
-      "column": "column_name",  // Canonical column name (must exist in dataset)
+      "column": "exact_column_name_from_dataset",
       "operator": "==" | "!=" | ">" | ">=" | "<" | "<=" | "IN" | "NOT_IN",
-      "value": value,  // Filter value (string, number, or array for IN/NOT_IN)
-      "exclude_nulls": true  // Whether to exclude nulls (default: true)
+      "value": value_matching_column_type,
+      "exclude_nulls": true | false
     }
   ]
 }
 
+CRITICAL RULES:
+1. Column names MUST be exact matches from the available columns list
+2. For coded/categorical columns (like "Statin Used: 0=n/a, 1=Atorvastatin..."):
+   - Use the NUMERIC CODE as the value (e.g., 0 for n/a)
+   - "remove the n/a" → value: 0 (not "n/a" string)
+   - "exclude missing" → value: 0 (not "missing" string)
+3. For numeric columns, use numeric values (not strings)
+4. When user says "exclude" or "remove", use operator "!="
+5. When user says "only" or "just", use operator "=="
+6. Infer column from context if value reference like "n/a" lacks explicit column name
+7. Return empty array if no clear filters can be extracted
+
 Examples:
-- "get rid of the n/a" → {"column": "treatment_group", "operator": "!=", "value": 0}
-- "exclude missing values" → {"column": "treatment_group", "operator": "!=", "value": 0}
-- "patients on statins" → {"column": "statin_prescribed", "operator": "==", "value": 1}
-- "age above 50" → {"column": "age", "operator": ">", "value": 50}
+- Query: "remove the n/a"
+  Context: "Statin Used: 0=n/a, 1=Atorvastatin, 2=Rosuvastatin"
+  Result: {"column": "Statin Used", "operator": "!=", "value": 0}
 
-Important:
-- Use canonical column names (not aliases)
-- For coded columns, use numeric codes (0=n/a, 1=first value, etc.)
-- For exclusion patterns ("get rid of", "exclude", "remove"), use operator "!=" with value 0
-- Return empty array if no filters found"""
+- Query: "exclude missing values"
+  Context: Column "Status" has codes 0=unknown
+  Result: {"column": "Status", "operator": "!=", "value": 0}
 
-    # Get available columns for context
+- Query: "only on statins"
+  Context: Column "Statin Prescribed?" with codes 0=no, 1=yes
+  Result: {"column": "Statin Prescribed?", "operator": "==", "value": 1}"""
+
+    # Get available columns with their metadata for context
     try:
         view = semantic_layer.get_base_view()
-        available_columns = list(view.columns)[:20]  # Limit to first 20 for prompt size
-        columns_context = ", ".join(available_columns)
+        all_columns = list(view.columns)
+
+        # Build column descriptions including any metadata about coded values
+        column_descriptions = []
+        for col in all_columns[:30]:  # Limit for prompt size
+            try:
+                col_metadata = semantic_layer.get_column_metadata(col)
+                col_type = col_metadata.get("type", "unknown")
+
+                # If this is a categorical column with codes, include the code descriptions
+                if col_type == "categorical" and ":" in col:
+                    column_descriptions.append(f"  - {col}")
+                else:
+                    column_descriptions.append(f"  - {col} ({col_type})")
+            except Exception:
+                column_descriptions.append(f"  - {col}")
+
+        columns_context = "\n".join(column_descriptions)
     except Exception:
         columns_context = "columns not available"
 
-    user_prompt = f"""Extract filter conditions from this query:
+    user_prompt = f"""Extract filter conditions from this clinical query:
 
-Query: {query}
+Query: "{query}"
 
-Available columns: {columns_context}
+Available columns in the dataset:
+{columns_context}
 
-Return JSON with "filters" array. Each filter must have column, operator, and value fields."""
+IMPORTANT: Look for keywords like "remove", "exclude", "only", "get rid of", "without" which indicate filtering intent.
+For vague references like "the n/a" or "missing values", infer the most relevant column from the context.
+
+Return JSON with "filters" array. Use EXACT column names from the list above."""
 
     # Call LLM
     result = call_llm(
