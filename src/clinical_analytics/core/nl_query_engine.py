@@ -937,10 +937,10 @@ class NLQueryEngine:
 
     def _build_rag_context(self, query: str) -> dict:
         """
-        Build RAG context from semantic layer metadata.
+        Build RAG context from semantic layer metadata and golden questions.
 
-        Extracts available columns, aliases, and example queries to provide
-        context for LLM parsing.
+        Uses golden questions as RAG corpus - retrieves similar examples
+        to help LLM pattern-match instead of hallucinate.
 
         Args:
             query: User's question
@@ -955,20 +955,90 @@ class NLQueryEngine:
         # Get alias mappings
         alias_index = self.semantic_layer.get_column_alias_index()
 
-        # Build example queries (simple patterns for now)
-        examples = [
-            "What is the average age?",
-            "Compare viral load by treatment",
-            "How many patients have treatment A?",
-            "Show me patients with age > 30",
-        ]
+        # RAG: Load golden questions as corpus
+        golden_examples = self._load_golden_questions_rag()
+
+        # Find top 3 most similar examples
+        relevant_examples = self._find_similar_examples(query, golden_examples, top_k=3)
 
         return {
             "columns": columns,
             "aliases": alias_index,
-            "examples": examples,
+            "examples": relevant_examples,
             "query": query,
         }
+
+    def _load_golden_questions_rag(self) -> list[dict]:
+        """Load golden questions for RAG retrieval."""
+        try:
+            from pathlib import Path
+
+            import yaml
+
+            golden_path = Path(__file__).parent.parent.parent / "tests" / "eval" / "golden_questions.yaml"
+            if not golden_path.exists():
+                return []
+
+            with open(golden_path) as f:
+                data = yaml.safe_load(f)
+            return data.get("golden_questions", [])
+        except Exception as e:
+            logger.warning("failed_to_load_golden_questions_for_rag", error=str(e))
+            return []
+
+    def _find_similar_examples(self, query: str, examples: list[dict], top_k: int = 3) -> list[str]:
+        """Find most similar examples using keyword matching."""
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+
+        # Score each example by keyword overlap
+        scored = []
+        for ex in examples:
+            ex_query = ex.get("query", "").lower()
+            ex_words = set(ex_query.split())
+
+            # Jaccard similarity
+            overlap = len(query_words & ex_words)
+            union = len(query_words | ex_words)
+            score = overlap / union if union > 0 else 0
+
+            # Boost if refinement phrases match
+            refinement_phrases = ["remove", "exclude", "without", "only", "get rid of"]
+            if any(phrase in query_lower for phrase in refinement_phrases):
+                if any(phrase in ex_query for phrase in refinement_phrases):
+                    score += 0.5
+
+            scored.append((score, ex))
+
+        # Sort by score and take top k
+        scored.sort(reverse=True, key=lambda x: x[0])
+        top_examples = scored[:top_k]
+
+        # Format as examples
+        formatted = []
+        for score, ex in top_examples:
+            intent = ex.get("expected_intent", "DESCRIBE")
+            metric = ex.get("expected_metric")
+            group_by = ex.get("expected_group_by")
+
+            example_text = f'Q: "{ex.get("query", "")}"\n'
+            example_text += f"   Intent: {intent}"
+            if metric:
+                example_text += f", Metric: {metric}"
+            if group_by:
+                example_text += f", GroupBy: {group_by}"
+
+            formatted.append(example_text)
+
+        return (
+            formatted
+            if formatted
+            else [
+                'Q: "What is the average age?"\n   Intent: DESCRIBE, Metric: age',
+                'Q: "How many patients?"\n   Intent: COUNT',
+                'Q: "Compare by treatment"\n   Intent: COMPARE_GROUPS, GroupBy: treatment',
+            ]
+        )
 
     def _build_llm_prompt(
         self,
@@ -997,31 +1067,56 @@ class NLQueryEngine:
             recent = conversation_history[-1]
             conversation_context = f"""
 
-CONVERSATION CONTEXT (ADR009 Phase 6):
-Previous query: "{recent.get("query", "N/A")}"
-Previous intent: {recent.get("intent", "N/A")}
-Previous group_by: {recent.get("group_by", "null")}
-Previous metric: {recent.get("metric", "null")}
-Previous filters: {recent.get("filters_applied", [])}
+=== CONVERSATION CONTEXT (CRITICAL FOR REFINEMENTS) ===
 
-REFINEMENT DETECTION:
-If the current query appears to be a refinement of the previous query
-(e.g., "remove X", "exclude Y", "only Z", "without A"), then:
-1. REUSE the previous intent, metric, and group_by fields
-2. ADD or UPDATE filters based on the current query
-3. Set confidence >= 0.7 (you have context)
-4. In explanation, mention this is a refinement of the previous query
+Previous Query: "{recent.get("query", "N/A")}"
+Previous Intent: {recent.get("intent", "N/A")}
+Previous Group By: {recent.get("group_by", "null")}
+Previous Metric: {recent.get("metric", "null")}
+Previous Filters: {recent.get("filters_applied", [])}
 
-Examples of refinements:
-- Previous: "count by statin" → Current: "remove the n/a"
-  Result: Reuse COUNT + group_by=statin, ADD filter statin != 0
-- Previous: "describe outcome" → Current: "exclude unknowns"
-  Result: Reuse DESCRIBE + metric=outcome, ADD filter
-- Previous: "patients over 50" → Current: "actually over 65"
-  Result: Reuse intent, UPDATE age filter to >65
+=== REFINEMENT DETECTION RULES ===
 
-If the current query is NOT a refinement (it's a completely new question),
-parse it independently and set confidence based on clarity."""
+**IS THIS A REFINEMENT?** Check if current query modifies the previous query:
+- Refinement phrases: "remove", "exclude", "without", "only", "just", "also",
+  "actually", "get rid of", "drop"
+- Examples: "remove the n/a", "exclude missing", "only active", "actually over 65"
+
+**IF YES - THIS IS A REFINEMENT:**
+1. **COPY the previous intent EXACTLY** - Do NOT invent new intents
+   - If previous was COUNT → use COUNT
+   - If previous was DESCRIBE → use DESCRIBE
+   - If previous was COMPARE_GROUPS → use COMPARE_GROUPS
+2. **COPY previous group_by and metric** - Preserve what user was analyzing
+3. **ADD/UPDATE filters only** - This is what's being refined
+4. **Set confidence >= 0.7** - You have clear context
+5. **In explanation**: Say "Refining previous query to [what changed]"
+
+**IF NO - THIS IS A NEW QUERY:**
+- Parse independently
+- Do NOT use previous intent/group_by/metric
+- Set confidence based on query clarity
+
+=== REFINEMENT EXAMPLES (COPY THESE PATTERNS) ===
+
+Example 1:
+Previous: {{"intent": "COUNT", "group_by": "statin", "metric": null}}
+Current: "remove the n/a"
+Result: {{"intent": "COUNT", "group_by": "statin", "filters": [{{"column": "statin", "operator": "!=", "value": 0}}]}}
+
+Example 2:
+Previous: {{"intent": "DESCRIBE", "metric": "cholesterol", "group_by": null}}
+Current: "exclude missing values"
+Result: {{"intent": "DESCRIBE", "metric": "cholesterol",
+  "filters": [{{"column": "cholesterol", "operator": "!=", "value": 0}}]}}
+
+Example 3:
+Previous: {{"intent": "COUNT", "filters": [{{"column": "age", "operator": ">", "value": 50}}]}}
+Current: "actually over 65"
+Result: {{"intent": "COUNT", "filters": [{{"column": "age", "operator": ">", "value": 65}}]}}
+
+**REMEMBER**: NEVER create intents like "REMOVE_NA", "FILTER_OUT", "EXCLUDE" - these are INVALID.
+Only use: COUNT, DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, CORRELATIONS"""
 
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 

@@ -247,3 +247,110 @@ questions:
     expected_metric: null
     expected_group_by: null
     notes: "Refinement WITHOUT context - should have low confidence (<0.75)"
+
+  # Real production queries from user logs
+  - id: prod_statin_count_simple
+    query: "how many patients were on statins"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: null
+    notes: "Real production query - simple count with filter inference"
+
+  - id: prod_most_prescribed_statin_with_filter
+    query: "excluding those not on statins, which was the most prescribed statin?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin"
+    notes: "Real production query - count with exclusion filter and implicit ordering"
+
+  - id: prod_statin_breakdown
+    query: "what statins were those patients on, broken down by count of patients per statin?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin"
+    notes: "Real production query - count by statin type"
+
+  - id: prod_most_prescribed_statin
+    query: "which statin was most prescribed?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin"
+    notes: "Real production query - superlative query (most)"
+
+  - id: prod_most_common_hiv_regimen
+    query: "what was the most common HIV regiment?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "HIV_regimen"
+    notes: "Real production query - typo 'regiment' should map to 'regimen'"
+
+  - id: prod_average_bmi
+    query: "average BMI of patients"
+    expected_intent: DESCRIBE
+    expected_metric: "BMI"
+    expected_group_by: null
+    notes: "Real production query - simple average"
+
+  - id: prod_average_ldl
+    query: "average ldl of all patients"
+    expected_intent: DESCRIBE
+    expected_metric: "LDL"
+    expected_group_by: null
+    notes: "Real production query - average with 'all patients' phrase"
+
+  - id: prod_most_common_current_regimen
+    query: "what was the most common Current Regimen"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "current_regimen"
+    notes: "Real production query - most common with capitalized column name"
+
+  - id: prod_statin_by_regimen
+    query: "what statins were those patients on, broken down by count of patients by their Current Regimen"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin"
+    notes: "Real production query - statin count grouped by regimen (multi-grouping)"
+
+  - id: prod_correlations_multi_variable
+    query: "how does bmi, statin use relate to the regiment that the person is on and their cd4 counts?"
+    expected_intent: CORRELATIONS
+    expected_metric: null
+    expected_group_by: null
+    notes: "Real production query - multi-variable correlation analysis"
+
+  # Complex multi-step queries
+  - id: complex_predictive_modeling
+    query: "what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months?"
+    expected_intent: FIND_PREDICTORS
+    expected_metric: "virologic_failure"
+    expected_group_by: null
+    notes: "Complex query - multiple predictors with temporal outcome"
+
+  - id: complex_survival_stratified
+    query: "time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100"
+    expected_intent: FIND_PREDICTORS
+    expected_metric: "cardiovascular_event"
+    expected_group_by: "statin_use"
+    notes: "Complex query - survival analysis with stratification and filters"
+
+  - id: complex_compare_with_filters
+    query: "compare average cd4 change from baseline to 6 months between hiv regimens, only for those on statins with bmi > 25"
+    expected_intent: COMPARE_GROUPS
+    expected_metric: "cd4_change"
+    expected_group_by: "hiv_regimen"
+    notes: "Complex query - comparison with multiple filters and temporal logic"
+
+  - id: complex_correlation_interactions
+    query: "how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?"
+    expected_intent: CORRELATIONS
+    expected_metric: null
+    expected_group_by: null
+    notes: "Complex query - correlation with interaction effects"
+
+  - id: complex_count_nested
+    query: "among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin_use"
+    notes: "Complex query - count with nested conditions and multiple breakdowns"

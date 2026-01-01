@@ -278,9 +278,7 @@ def test_llm_recognizes_refinement_patterns(
         assert len(result.filters) >= 1, f"Should have filter for: {refinement_query}"
 
 
-def test_llm_refinement_with_coded_categorical_column(
-    make_cohort_with_categorical, make_semantic_layer
-):
+def test_llm_refinement_with_coded_categorical_column(make_cohort_with_categorical, make_semantic_layer):
     """Test LLM handles refinement with coded categorical columns correctly."""
     # Arrange: Use factory fixture for categorical cohort
     cohort = make_cohort_with_categorical(
