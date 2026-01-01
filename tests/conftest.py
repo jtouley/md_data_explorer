@@ -15,6 +15,10 @@ import yaml
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Register performance tracking plugin
+# Plugin checks --track-performance flag internally and only tracks when enabled
+pytest_plugins = ["performance.plugin"]
+
 
 @pytest.fixture(scope="session")
 def project_root():
@@ -1103,9 +1107,10 @@ def discovered_datasets():
 # ============================================================================
 
 
-def pytest_configure(config):
-    """Register performance tracking plugin if --track-performance flag is set."""
-    if config.getoption("--track-performance", default=False):
-        # Import the plugin to register its hooks
-        # The plugin's pytest_addoption and pytest_configure will be called automatically
-        import performance.plugin  # noqa: F401
+# Import performance plugin to register pytest_addoption hook
+# The plugin checks --track-performance flag internally
+try:
+    import performance.plugin  # noqa: F401
+except ImportError:
+    # Plugin not available, skip
+    pass
