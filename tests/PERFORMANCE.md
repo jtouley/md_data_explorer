@@ -162,10 +162,119 @@ make test-integration  # Only integration tests
 make test-core PYTEST_ARGS="tests/core/test_mapper.py::TestColumnMapper::test_mapper_initialization_with_config -xvs"
 ```
 
+## Automated Performance Tracking
+
+The platform includes an automated performance tracking system that monitors test execution times, detects regressions, and generates reports.
+
+### Features
+
+- **Automatic Duration Tracking**: Tracks test execution times when `--track-performance` flag is used
+- **Regression Detection**: Compares current performance against baseline with configurable thresholds
+- **Report Generation**: Generates markdown and JSON reports with slowest tests and statistics
+- **Baseline Management**: Create and update performance baselines for regression testing
+- **Parallel Execution Support**: Handles pytest-xdist parallel execution with worker file aggregation
+
+### Usage
+
+#### 1. Run Tests with Performance Tracking
+
+```bash
+make test-performance
+```
+
+This runs all tests with the `--track-performance` flag, generating `tests/.performance_data.json`.
+
+#### 2. Generate Performance Report
+
+```bash
+make performance-report
+```
+
+Generates a markdown report showing:
+- Summary statistics (total tests, slow tests, average duration)
+- Slowest tests (>30 seconds)
+- Top 10 slowest tests overall
+
+#### 3. Create Performance Baseline
+
+```bash
+make performance-baseline
+```
+
+Creates `tests/.performance_baseline.json` from current performance data. This baseline is used for regression detection.
+
+#### 4. Check for Performance Regressions
+
+```bash
+make performance-regression
+```
+
+Runs regression tests that compare current performance against baseline:
+- Individual test threshold: 20% increase (configurable)
+- Suite-level threshold: 15% increase (configurable)
+- Fails with clear error messages if regressions detected
+
+#### 5. Update Documentation
+
+```bash
+make performance-update-docs
+```
+
+Updates `tests/PERFORMANCE.md` with current performance benchmarks.
+
+### Configuration
+
+Performance tracking thresholds are configured in `pyproject.toml`:
+
+```toml
+[tool.performance]
+individual_test_threshold = 20.0  # Percentage increase threshold
+suite_threshold = 15.0            # Suite-level threshold
+slow_test_threshold_seconds = 30.0 # Threshold for "slow" test classification
+baseline_file = "tests/.performance_baseline.json"
+data_file = "tests/.performance_data.json"
+```
+
+### Workflow
+
+1. **Initial Setup**: Run `make test-performance` to generate initial performance data
+2. **Create Baseline**: Run `make performance-baseline` to create baseline (commit to git)
+3. **Regular Monitoring**: Run `make test-performance` periodically to track performance
+4. **Regression Detection**: Run `make performance-regression` to detect regressions
+5. **Update Baseline**: After performance improvements, run `make performance-baseline` to update baseline
+
+### File Locations
+
+- **Performance Data**: `tests/.performance_data.json` (gitignored)
+- **Worker Files**: `tests/.performance_data_worker_*.json` (gitignored, auto-cleaned)
+- **Baseline**: `tests/.performance_baseline.json` (tracked in git)
+
+### CLI Tool
+
+The `scripts/generate_performance_report.py` tool provides additional options:
+
+```bash
+# Generate JSON report
+python scripts/generate_performance_report.py --format json
+
+# Compare against baseline
+python scripts/generate_performance_report.py --compare-baseline
+
+# Create baseline with custom thresholds
+python scripts/generate_performance_report.py --create-baseline --individual-threshold 25.0 --suite-threshold 20.0
+```
+
+### Notes
+
+- Performance tracking is opt-in via `--track-performance` flag (no overhead on normal test runs)
+- Performance system tests (`tests/performance/test_*.py`) are excluded from tracking to avoid recursion
+- Worker files are automatically aggregated and cleaned up after parallel test runs
+- Baseline should be updated after significant performance improvements or test changes
+
 ## Future Optimizations
 
 1. **Mock LLM Responses**: Consider mocking LLM calls for unit tests, keeping real calls only for integration tests
-2. **Parallel Test Execution**: Use `pytest-xdist` for parallel test execution
+2. **Parallel Test Execution**: Use `pytest-xdist` for parallel test execution (already implemented)
 3. **Test Data Caching**: Cache test data files to avoid repeated generation
 4. **Selective Dataset Loading**: Only load datasets needed for specific tests
 
