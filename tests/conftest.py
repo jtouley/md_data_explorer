@@ -20,6 +20,137 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 pytest_plugins = ["performance.plugin"]
 
 
+# ============================================================================
+# LLM Mocking Fixture (Phase 2.1: Performance Optimization)
+# ============================================================================
+
+
+@pytest.fixture
+def mock_llm_calls():
+    """
+    Explicit fixture to mock LLM calls for unit tests.
+
+    Usage: Add 'mock_llm_calls' to test function parameters.
+    Integration tests should NOT use this fixture to get real LLM calls.
+
+    This fixture mocks all LLMFeature types with realistic responses,
+    providing 30-50x speedup (10-30s → <1s per test).
+    """
+    from unittest.mock import patch
+
+    from clinical_analytics.core.llm_feature import LLMCallResult, LLMFeature
+
+    # Patch call_llm in all modules that import it
+    patches = [
+        patch("clinical_analytics.core.llm_feature.call_llm"),
+        patch("clinical_analytics.core.filter_extraction.call_llm"),
+        patch("clinical_analytics.core.result_interpretation.call_llm"),
+        patch("clinical_analytics.core.error_translation.call_llm"),
+        patch("clinical_analytics.core.golden_question_generator.call_llm"),
+        # Also patch OllamaClient.generate() for code that uses it directly (e.g., NLQueryEngine)
+        patch("clinical_analytics.core.llm_client.OllamaClient.generate"),
+    ]
+
+    # Start all patches
+    mock_objects = [p.start() for p in patches]
+
+    # Use the first mock as the main one
+    mock_call_llm = mock_objects[0]
+
+    # Mock for OllamaClient.generate() - returns raw JSON string
+    def _mock_ollama_generate(self, prompt, system_prompt=None, json_mode=False):
+        """Mock OllamaClient.generate() to return JSON string."""
+        # Return appropriate JSON based on prompt content (heuristic)
+        if "refinement" in prompt.lower() or "remove" in prompt.lower() or "exclude" in prompt.lower():
+            # Refinement query - return query plan with filters
+            return (
+                '{"intent": "COUNT", "confidence": 0.8, '
+                '"filters": [{"column": "statin_used", "operator": "!=", "value": 0}]}'
+            )
+        elif "filter" in prompt.lower():
+            # Filter extraction
+            return '{"filters": []}'
+        elif "follow" in prompt.lower():
+            # Follow-ups
+            return '{"follow_ups": []}'
+        else:
+            # Default parse response
+            return '{"intent": "DESCRIBE", "confidence": 0.8}'
+
+    # Set the OllamaClient.generate mock (last one)
+    if len(mock_objects) > 5:
+        mock_objects[5].side_effect = _mock_ollama_generate
+
+    # Mock responses for all LLMFeature types
+    def _mock_call_llm(feature, system, user, timeout_s, model=None):
+        if feature == LLMFeature.PARSE:
+            return LLMCallResult(
+                raw_text='{"intent": "DESCRIBE", "confidence": 0.8}',
+                payload={"intent": "DESCRIBE", "confidence": 0.8},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.FILTER_EXTRACTION:
+            return LLMCallResult(
+                raw_text='{"filters": []}',
+                payload={"filters": []},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.FOLLOWUPS:
+            return LLMCallResult(
+                raw_text='{"follow_ups": []}',
+                payload={"follow_ups": []},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.RESULT_INTERPRETATION:
+            return LLMCallResult(
+                raw_text='{"interpretation": "Test interpretation"}',
+                payload={"interpretation": "Test interpretation"},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.ERROR_TRANSLATION:
+            return LLMCallResult(
+                raw_text='{"translation": "Test error translation"}',
+                payload={"translation": "Test error translation"},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.INTERPRETATION:
+            return LLMCallResult(
+                raw_text='{"interpretation": "Test interpretation", "confidence": 0.8}',
+                payload={"interpretation": "Test interpretation", "confidence": 0.8},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        # Default fallback
+        return LLMCallResult(
+            raw_text="{}",
+            payload={},
+            latency_ms=10.0,
+            timed_out=False,
+            error=None,
+        )
+
+    # Set side_effect on all mocks
+    for mock in mock_objects:
+        mock.side_effect = _mock_call_llm
+
+    yield mock_call_llm
+
+    # Stop all patches
+    for p in patches:
+        p.stop()
+
+
 @pytest.fixture(scope="session")
 def project_root():
     """Return project root directory."""
