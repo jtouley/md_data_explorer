@@ -819,29 +819,51 @@ def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
 
 **Expected Impact**: 10-30% overall test speedup
 
-#### 2.5: Parallel Execution Optimization (ALREADY PARTIALLY DONE)
+#### 2.5: Parallel Execution Safety Audit and Fix (CRITICAL - BLOCKING)
 
-**Problem**: Some tests may not be parallel-safe (file I/O, shared state).
+**Problem**: Parallel execution is currently default, but safety issues identified:
+- Hardcoded filesystem paths (`/tmp/nl_query_learning/`, `/tmp/test_logs`) can collide in parallel runs
+- No `@pytest.mark.serial` markers for unsafe tests
+- No parallel-safety verification (flake rate, random order testing)
+- Risk of nondeterministic failures in parallel execution
 
-**Solution**: Audit and optimize parallel execution.
+**Solution**: Switch to serial-by-default, fix issues, verify safety, then re-enable parallel.
 
 **Implementation**:
 
-1. **Audit tests for parallel-safety**:
-   - Identify tests with file I/O
-   - Identify tests with shared state
-   - Mark non-parallel-safe tests with `@pytest.mark.serial`
+**Phase 1: Fix Hardcoded Paths** (IMMEDIATE):
+- Replace `/tmp/nl_query_learning/` with `tmp_path` fixture in `test_nl_query_engine_self_improvement.py`
+- Replace `/tmp/test_logs` with `tmp_path` fixture in `test_prompt_optimizer.py`
+- Audit all tests for hardcoded paths (grep for `/tmp/`, `/var/`, absolute paths)
 
-2. **Optimize Makefile**:
-   - Ensure parallel execution excludes serial tests
-   - Optimize worker count based on CPU cores
+**Phase 2: Add Serial Markers**:
+- Identify tests that can't run in parallel (shared DB, ports, file locks)
+- Mark with `@pytest.mark.serial`
+- Update Makefile to exclude serial tests from parallel runs
+
+**Phase 3: Verify Parallel-Safety**:
+- Run with random order: `pytest --random-order`
+- Run multiple times: `for i in {1..10}; do pytest -n auto; done`
+- Monitor flake rate (target: <1% over 100+ runs)
+- Check for shared state issues
+
+**Phase 4: Re-enable Parallel as Default** (AFTER VERIFICATION):
+- Only after: zero hardcoded paths, serial markers in place, flake rate <1%
+- Switch Makefile back to parallel-by-default
+- Document parallel-safety guarantees
+
+**Current Status**: 
+- ⚠️ **BLOCKING**: Parallel is default but unsafe
+- **Action**: Switch to serial-by-default immediately, then fix issues
 
 **Success Criteria**:
-- [ ] All parallel-safe tests run in parallel
-- [ ] Serial tests excluded from parallel runs
-- [ ] Maintain 2-4x parallel speedup
+- [ ] All hardcoded paths replaced with `tmp_path` fixtures
+- [ ] Serial markers on all unsafe tests
+- [ ] Flake rate <1% over 100+ parallel runs
+- [ ] Random order testing passes consistently
+- [ ] Parallel re-enabled as default (after verification)
 
-**Expected Impact**: Maintain 2-4x parallel speedup (already achieved)
+**Expected Impact**: Safe parallel execution with 2-4x speedup (after fixes)
 
 ### Phase 3: Automated Test Categorization (LOW EFFORT, HIGH VALUE)
 
@@ -1228,10 +1250,14 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
    - **Success Criteria**: 10-30% overall speedup
    - **Expected**: Reduced fixture recreation overhead
 
-5. **2.5: Parallel Execution Audit** (MAINTAIN EXISTING)
+5. **2.5: Parallel Execution Safety Fix** (CRITICAL - BLOCKING)
    - **TDD**: Write tests for parallel-safety detection
-   - **Success Criteria**: Maintain 2-4x speedup
-   - **Expected**: No regressions in parallel execution
+   - **Phase 1**: Fix hardcoded paths (IMMEDIATE)
+   - **Phase 2**: Add serial markers
+   - **Phase 3**: Verify parallel-safety
+   - **Phase 4**: Re-enable parallel as default (after verification)
+   - **Success Criteria**: Zero hardcoded paths, flake rate <1%, safe parallel execution
+   - **Expected**: Safe 2-4x speedup after fixes
 
 ### Phase 3: Automated Categorization (After optimizations)
 

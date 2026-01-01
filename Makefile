@@ -54,54 +54,90 @@ install-dev: ## Install all dependencies including dev tools
 	@echo "  • Docs tools: mkdocs and related packages (from dependency-groups)"
 	$(UV) sync --extra dev --group dev
 
-test: ensure-venv ## Run all tests in parallel
-	@echo "$(GREEN)Running all tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -n auto
+test: ensure-venv ## Run all tests (serial - safe default)
+	@echo "$(GREEN)Running all tests...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v
 
-test-unit: ## Run unit tests only in parallel
+test-parallel: ensure-venv ## Run all tests in parallel (use when verified safe)
+	@echo "$(GREEN)Running all tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -n auto -m "not serial"
+
+test-unit: ## Run unit tests only (serial - safe default)
+	@echo "$(GREEN)Running unit tests...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not integration"
+
+test-unit-parallel: ## Run unit tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running unit tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not integration" -n auto
+	$(PYTEST) $(TEST_DIR) -v -m "not integration and not serial" -n auto
 
 test-integration: ## Run integration tests only (serial - may test parallel in future)
 	@echo "$(GREEN)Running integration tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v -m "integration"
 
-test-fast: ## Run fast tests (skip slow tests) in parallel
+test-fast: ## Run fast tests (skip slow tests) - serial default
+	@echo "$(GREEN)Running fast tests...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not slow"
+
+test-fast-parallel: ## Run fast tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running fast tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n auto  # auto = use all CPU cores
+	$(PYTEST) $(TEST_DIR) -v -m "not slow and not serial" -n auto
 
-test-fast-serial: ## Run fast tests serially (for debugging)
-	@echo "$(GREEN)Running fast tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n 0
+# Module-specific test commands (serial by default)
+test-analysis: ensure-venv ## Run analysis module tests (serial - safe default)
+	@echo "$(GREEN)Running analysis module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/analysis -v
 
-# Module-specific test commands
-test-analysis: ensure-venv ## Run analysis module tests in parallel
+test-analysis-parallel: ensure-venv ## Run analysis module tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running analysis module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/analysis -v -n auto
+	$(PYTEST) $(TEST_DIR)/analysis -v -n auto -m "not serial"
 
-test-core: ensure-venv ## Run core module tests in parallel
+test-core: ensure-venv ## Run core module tests (serial - safe default)
+	@echo "$(GREEN)Running core module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/core -v
+
+test-core-parallel: ensure-venv ## Run core module tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running core module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/core -v -n auto
+	$(PYTEST) $(TEST_DIR)/core -v -n auto -m "not serial"
 
-test-datasets: ensure-venv ## Run datasets module tests in parallel
+test-datasets: ensure-venv ## Run datasets module tests (serial - safe default)
+	@echo "$(GREEN)Running datasets module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/datasets -v
+
+test-datasets-parallel: ensure-venv ## Run datasets module tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running datasets module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/datasets -v -n auto
+	$(PYTEST) $(TEST_DIR)/datasets -v -n auto -m "not serial"
 
-test-e2e: ensure-venv ## Run end-to-end tests in parallel
+test-e2e: ensure-venv ## Run end-to-end tests (serial - safe default)
+	@echo "$(GREEN)Running end-to-end tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/e2e -v
+
+test-e2e-parallel: ensure-venv ## Run end-to-end tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running end-to-end tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/e2e -v -n auto
+	$(PYTEST) $(TEST_DIR)/e2e -v -n auto -m "not serial"
 
-test-loader: ensure-venv ## Run loader module tests in parallel
+test-loader: ensure-venv ## Run loader module tests (serial - safe default)
+	@echo "$(GREEN)Running loader module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/loader -v
+
+test-loader-parallel: ensure-venv ## Run loader module tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running loader module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/loader -v -n auto
+	$(PYTEST) $(TEST_DIR)/loader -v -n auto -m "not serial"
 
-test-ui: ensure-venv ## Run UI module tests in parallel
+test-ui: ensure-venv ## Run UI module tests (serial - safe default)
+	@echo "$(GREEN)Running UI module tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/ui -v
+
+test-ui-parallel: ensure-venv ## Run UI module tests in parallel (use when verified safe)
 	@echo "$(GREEN)Running UI module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/ui -v -n auto
+	$(PYTEST) $(TEST_DIR)/ui -v -n auto -m "not serial"
 
-test-performance: ensure-venv ## Run tests with performance tracking in parallel
+test-performance: ensure-venv ## Run tests with performance tracking (serial - safe default)
+	@echo "$(GREEN)Running tests with performance tracking...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v --track-performance
+
+test-performance-parallel: ensure-venv ## Run tests with performance tracking in parallel (use when verified safe)
 	@echo "$(GREEN)Running tests with performance tracking in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v --track-performance -n auto
+	$(PYTEST) $(TEST_DIR) -v --track-performance -n auto -m "not serial"
 
 performance-report: ## Generate performance report
 	@echo "$(GREEN)Generating performance report...$(NC)"
