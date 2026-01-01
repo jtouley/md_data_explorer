@@ -24,7 +24,9 @@ def generate_markdown_report(performance_data: dict[str, Any]) -> str:
     report_lines.append(f"- **Total Tests**: {summary.get('total_tests', 0)}")
     report_lines.append(f"- **Slow Tests** (>30s): {summary.get('slow_tests', 0)}")
     report_lines.append(f"- **Total Duration**: {summary.get('total_duration', 0.0):.2f}s")
-    report_lines.append(f"- **Average Duration**: {summary.get('average_duration', 0.0):.2f}s\n")
+    report_lines.append(f"- **Mean Duration**: {summary.get('average_duration', 0.0):.2f}s")
+    report_lines.append(f"- **Min Duration**: {summary.get('min_duration', 0.0):.2f}s")
+    report_lines.append(f"- **Max Duration**: {summary.get('max_duration', 0.0):.2f}s\n")
 
     # Slowest tests section
     tests = performance_data.get("tests", [])

@@ -34,6 +34,8 @@ class TestCLI:
                 "slow_tests": 1,
                 "total_duration": 1.5,
                 "average_duration": 1.5,
+                "min_duration": 1.5,
+                "max_duration": 1.5,
             },
         }
 
@@ -70,6 +72,8 @@ class TestCLI:
                 "slow_tests": 0,
                 "total_duration": 10.0,
                 "average_duration": 10.0,
+                "min_duration": 10.0,
+                "max_duration": 10.0,
             },
         }
 

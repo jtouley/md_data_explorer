@@ -1,6 +1,8 @@
 ---
 name: Comprehensive Test Performance System
 overview: Implement comprehensive test performance system that both tracks performance AND optimizes slow tests. Includes automated monitoring, regression detection, reporting tools, LLM mocking, test data caching, selective dataset loading, fixture scope optimization, and documentation updates.
+
+**Note**: All test commands run in parallel by default (`-n auto`) for maximum speed. Integration tests run serially to avoid conflicts with external services.
 todos:
   - id: "1"
     content: Create performance tracking module structure (__init__.py, plugin.py, storage.py, regression.py, reporter.py)
@@ -81,22 +83,22 @@ todos:
       - "13"
   - id: "15"
     content: Phase 2.1: Add mock_llm_calls fixture to conftest.py for unit tests
-    status: pending
+    status: completed
     dependencies:
       - "14"
   - id: "16"
     content: Phase 2.1: Refactor test_nl_query_refinement.py to use mocked LLM (create integration test file for real LLM)
-    status: pending
+    status: completed
     dependencies:
       - "15"
   - id: "17"
     content: Phase 2.1: Refactor test_nl_query_engine_filter_extraction.py to use mocked LLM
-    status: pending
+    status: completed
     dependencies:
       - "15"
   - id: "18"
     content: Phase 2.1: Verify LLM unit tests run <1s each (30-50x speedup)
-    status: pending
+    status: completed
     dependencies:
       - "16"
       - "17"

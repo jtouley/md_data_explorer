@@ -54,16 +54,16 @@ install-dev: ## Install all dependencies including dev tools
 	@echo "  • Docs tools: mkdocs and related packages (from dependency-groups)"
 	$(UV) sync --extra dev --group dev
 
-test: ensure-venv ## Run all tests
-	@echo "$(GREEN)Running all tests...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v
+test: ensure-venv ## Run all tests in parallel
+	@echo "$(GREEN)Running all tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -n auto
 
-test-unit: ## Run unit tests only
-	@echo "$(GREEN)Running unit tests...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not integration"
+test-unit: ## Run unit tests only in parallel
+	@echo "$(GREEN)Running unit tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not integration" -n auto
 
-test-integration: ## Run integration tests only
-	@echo "$(GREEN)Running integration tests...$(NC)"
+test-integration: ## Run integration tests only (serial - may test parallel in future)
+	@echo "$(GREEN)Running integration tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v -m "integration"
 
 test-fast: ## Run fast tests (skip slow tests) in parallel
@@ -83,25 +83,25 @@ test-core: ensure-venv ## Run core module tests in parallel
 	@echo "$(GREEN)Running core module tests in parallel...$(NC)"
 	$(PYTEST) $(TEST_DIR)/core -v -n auto
 
-test-datasets: ensure-venv ## Run datasets module tests
-	@echo "$(GREEN)Running datasets module tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/datasets -v
+test-datasets: ensure-venv ## Run datasets module tests in parallel
+	@echo "$(GREEN)Running datasets module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/datasets -v -n auto
 
-test-e2e: ensure-venv ## Run end-to-end tests
-	@echo "$(GREEN)Running end-to-end tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/e2e -v
+test-e2e: ensure-venv ## Run end-to-end tests in parallel
+	@echo "$(GREEN)Running end-to-end tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/e2e -v -n auto
 
-test-loader: ensure-venv ## Run loader module tests
-	@echo "$(GREEN)Running loader module tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/loader -v
+test-loader: ensure-venv ## Run loader module tests in parallel
+	@echo "$(GREEN)Running loader module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/loader -v -n auto
 
-test-ui: ensure-venv ## Run UI module tests
-	@echo "$(GREEN)Running UI module tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/ui -v
+test-ui: ensure-venv ## Run UI module tests in parallel
+	@echo "$(GREEN)Running UI module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/ui -v -n auto
 
-test-performance: ensure-venv ## Run tests with performance tracking
-	@echo "$(GREEN)Running tests with performance tracking...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v --track-performance
+test-performance: ensure-venv ## Run tests with performance tracking in parallel
+	@echo "$(GREEN)Running tests with performance tracking in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v --track-performance -n auto
 
 performance-report: ## Generate performance report
 	@echo "$(GREEN)Generating performance report...$(NC)"

@@ -31,6 +31,8 @@ def _empty_performance_data() -> dict[str, Any]:
             "slow_tests": 0,
             "total_duration": 0.0,
             "average_duration": 0.0,
+            "min_duration": 0.0,
+            "max_duration": 0.0,
         },
     }
 

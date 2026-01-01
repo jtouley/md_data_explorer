@@ -157,7 +157,12 @@ def pytest_sessionfinish(session, exitstatus):
     total_tests = len(all_test_results)
     slow_tests = sum(1 for t in all_test_results if t.get("duration", 0) > 30.0)
     total_duration = sum(t.get("duration", 0) for t in all_test_results)
+
+    # Extract all durations for statistics
+    durations = [t.get("duration", 0) for t in all_test_results]
     average_duration = total_duration / total_tests if total_tests > 0 else 0.0
+    min_duration = min(durations) if durations else 0.0
+    max_duration = max(durations) if durations else 0.0
 
     # Create final performance data
     performance_data = {
@@ -168,6 +173,8 @@ def pytest_sessionfinish(session, exitstatus):
             "slow_tests": slow_tests,
             "total_duration": round(total_duration, 3),
             "average_duration": round(average_duration, 3),
+            "min_duration": round(min_duration, 3),
+            "max_duration": round(max_duration, 3),
         },
     }
 
@@ -187,6 +194,8 @@ def pytest_sessionfinish(session, exitstatus):
         slow_tests=slow_tests,
         total_duration=total_duration,
         average_duration=average_duration,
+        min_duration=min_duration,
+        max_duration=max_duration,
     )
 
 
@@ -232,6 +241,13 @@ def _write_worker_file():
     if not _worker_file or not _test_results:
         return
 
+    # Calculate statistics for worker
+    durations = [t.get("duration", 0) for t in _test_results]
+    total_duration = sum(durations)
+    average_duration = total_duration / len(_test_results) if _test_results else 0.0
+    min_duration = min(durations) if durations else 0.0
+    max_duration = max(durations) if durations else 0.0
+
     # Create performance data structure for worker
     worker_data = {
         "run_id": datetime.now().isoformat(),
@@ -239,11 +255,10 @@ def _write_worker_file():
         "summary": {
             "total_tests": len(_test_results),
             "slow_tests": sum(1 for t in _test_results if t.get("duration", 0) > 30.0),
-            "total_duration": round(sum(t.get("duration", 0) for t in _test_results), 3),
-            "average_duration": round(
-                sum(t.get("duration", 0) for t in _test_results) / len(_test_results) if _test_results else 0.0,
-                3,
-            ),
+            "total_duration": round(total_duration, 3),
+            "average_duration": round(average_duration, 3),
+            "min_duration": round(min_duration, 3),
+            "max_duration": round(max_duration, 3),
         },
     }
 

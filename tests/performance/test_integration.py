@@ -46,6 +46,8 @@ class TestPerformanceIntegration:
                 "slow_tests": 1,
                 "total_duration": 15.0,
                 "average_duration": 7.5,
+                "min_duration": 5.0,
+                "max_duration": 10.0,
             },
         }
 
@@ -134,6 +136,8 @@ class TestPerformanceIntegration:
                 "slow_tests": 1,
                 "total_duration": 20.0,
                 "average_duration": 10.0,
+                "min_duration": 5.0,
+                "max_duration": 15.0,
             },
         }
 
