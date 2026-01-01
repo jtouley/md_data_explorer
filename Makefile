@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui git-log-first git-log-rest
+.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui test-fast-serial git-log-first git-log-rest
 
 # Default target
 .DEFAULT_GOAL := help
@@ -66,18 +66,22 @@ test-integration: ## Run integration tests only
 	@echo "$(GREEN)Running integration tests...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v -m "integration"
 
-test-fast: ## Run fast tests (skip slow tests)
-	@echo "$(GREEN)Running fast tests...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow"
+test-fast: ## Run fast tests (skip slow tests) in parallel
+	@echo "$(GREEN)Running fast tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n auto  # auto = use all CPU cores
+
+test-fast-serial: ## Run fast tests serially (for debugging)
+	@echo "$(GREEN)Running fast tests serially...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n 0
 
 # Module-specific test commands
-test-analysis: ensure-venv ## Run analysis module tests
-	@echo "$(GREEN)Running analysis module tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/analysis -v
+test-analysis: ensure-venv ## Run analysis module tests in parallel
+	@echo "$(GREEN)Running analysis module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/analysis -v -n auto
 
-test-core: ensure-venv ## Run core module tests
-	@echo "$(GREEN)Running core module tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/core -v
+test-core: ensure-venv ## Run core module tests in parallel
+	@echo "$(GREEN)Running core module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/core -v -n auto
 
 test-datasets: ensure-venv ## Run datasets module tests
 	@echo "$(GREEN)Running datasets module tests...$(NC)"
