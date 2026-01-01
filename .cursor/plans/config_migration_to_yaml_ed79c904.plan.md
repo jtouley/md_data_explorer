@@ -259,24 +259,28 @@ def load_logging_config(config_path: Path | None = None) -> dict[str, Any]:
 - `MAX_UPLOAD_SIZE_MB` → `max_upload_size_mb` (int)
 
 **Type Coercion Rules**:
+
 - String "30.0" → float 30.0
 - String "true"/"false" → bool True/False (case-insensitive)
 - String "123" → int 123
 - Missing env var → use YAML value → use default
 
 **Error Handling**:
+
 - Missing YAML file → log warning, use defaults
 - Invalid YAML → raise ValueError with clear message
 - Schema validation failure → raise ValueError with field-level errors
 - Type coercion failure → raise ValueError with field name and expected type
 
 **Project Root Detection**:
+
 - Use `Path(__file__).parent.parent.parent.parent` pattern (match existing codebase pattern)
 - Config loader located at `src/clinical_analytics/core/config_loader.py`
 - Project root = `config_loader.py` → `core/` → `clinical_analytics/` → `src/` → project root
 - Config files at `{project_root}/config/*.yaml`
 
 **Schema Validation Approach**:
+
 - Use dataclasses + manual validation (match existing codebase patterns, no Pydantic dependency)
 - Create dataclass for each config type with validation methods
 - Validate required fields, types, and value ranges
@@ -286,81 +290,91 @@ def load_logging_config(config_path: Path | None = None) -> dict[str, Any]:
 **TDD Workflow**: Red → Green → Refactor
 
 1. **Create `config/` folder and README** (Todo 1)
-   - Create `config/README.md` with documentation
-   - Document config structure, environment variable precedence, schema validation
-   - Document project root detection strategy
-   - **No tests needed** (documentation only)
+
+- Create `config/README.md` with documentation
+- Document config structure, environment variable precedence, schema validation
+- Document project root detection strategy
+- **No tests needed** (documentation only)
 
 2. **Write failing tests for config_loader** (Todo 2 - TDD Red Phase)
-   - Create `tests/core/test_config_loader.py`
-   - Test cases:
-     - `test_load_nl_query_config_loads_from_yaml_file`
-     - `test_load_nl_query_config_env_var_overrides_yaml`
-     - `test_load_nl_query_config_missing_file_uses_defaults`
-     - `test_load_nl_query_config_invalid_yaml_raises_valueerror`
-     - `test_load_nl_query_config_type_coercion_string_to_float`
-     - `test_load_nl_query_config_type_coercion_string_to_bool`
-     - `test_load_ui_config_loads_from_yaml_file`
-     - `test_load_logging_config_loads_from_yaml_file`
-     - `test_get_project_root_returns_correct_path`
-   - **Run test**: `make test-core PYTEST_ARGS="tests/core/test_config_loader.py -xvs"`
-   - **Verify**: All tests fail (Red phase confirmed)
+
+- Create `tests/core/test_config_loader.py`
+- Test cases:
+    - `test_load_nl_query_config_loads_from_yaml_file`
+    - `test_load_nl_query_config_env_var_overrides_yaml`
+    - `test_load_nl_query_config_missing_file_uses_defaults`
+    - `test_load_nl_query_config_invalid_yaml_raises_valueerror`
+    - `test_load_nl_query_config_type_coercion_string_to_float`
+    - `test_load_nl_query_config_type_coercion_string_to_bool`
+    - `test_load_ui_config_loads_from_yaml_file`
+    - `test_load_logging_config_loads_from_yaml_file`
+    - `test_get_project_root_returns_correct_path`
+- **Run test**: `make test-core PYTEST_ARGS="tests/core/test_config_loader.py -xvs"`
+- **Verify**: All tests fail (Red phase confirmed)
 
 3. **Create config_loader.py module** (Todo 3 - TDD Green Phase)
-   - Implement `src/clinical_analytics/core/config_loader.py`
-   - Implement all functions to pass tests
-   - Use dataclasses for schema validation (match existing patterns)
-   - **Run test**: `make test-core PYTEST_ARGS="tests/core/test_config_loader.py -xvs"`
-   - **Verify**: All tests pass (Green phase confirmed)
+
+- Implement `src/clinical_analytics/core/config_loader.py`
+- Implement all functions to pass tests
+- Use dataclasses for schema validation (match existing patterns)
+- **Run test**: `make test-core PYTEST_ARGS="tests/core/test_config_loader.py -xvs"`
+- **Verify**: All tests pass (Green phase confirmed)
 
 4. **Fix quality issues** (Todo 4 - TDD Refactor Phase)
-   - Run: `make format`
-   - Run: `make lint-fix`
-   - Run: `make type-check`
-   - Fix any remaining issues
-   - **Run test**: `make test-core`
-   - **Verify**: All tests pass, no regressions
-   - **Commit**: `feat: Phase 1 - Config loader infrastructure
 
+- Run: `make format`
+- Run: `make lint-fix`
+- Run: `make type-check`
+- Fix any remaining issues
+- **Run test**: `make test-core`
+- **Verify**: All tests pass, no regressions
+- **Commit**: `feat: Phase 1 - Config loader infrastructure
 - Add config_loader.py with YAML loading and env var support
 - Add comprehensive test suite (9 tests passing)
 - Use dataclasses for schema validation (match existing patterns)
 
 All tests passing: 9/9
+
 Following TDD: Red-Green-Refactor`
 
 ### Phase 2: Move Existing YAML Files (Before Creating New Ones)
 
 5. **Move ollama_config.yaml** (Todo 5)
-   - Move `ollama_config.yaml` → `config/ollama.yaml`
-   - Update any hardcoded paths (if any)
-   - **Run test**: `make test-core` (verify no breakage)
-   - **Commit**: `refactor: Move ollama_config.yaml to config/ollama.yaml`
+
+- Move `ollama_config.yaml` → `config/ollama.yaml`
+- Update any hardcoded paths (if any)
+- **Run test**: `make test-core` (verify no breakage)
+- **Commit**: `refactor: Move ollama_config.yaml to config/ollama.yaml`
 
 6. **Move prompt_learning_config.yaml** (Todo 6)
-   - Move `src/clinical_analytics/core/prompt_learning_config.yaml` → `config/prompt_learning.yaml`
-   - **Run test**: `make test-core` (verify no breakage)
-   - **Commit**: `refactor: Move prompt_learning_config.yaml to config/prompt_learning.yaml`
+
+- Move `src/clinical_analytics/core/prompt_learning_config.yaml` → `config/prompt_learning.yaml`
+- **Run test**: `make test-core` (verify no breakage)
+- **Commit**: `refactor: Move prompt_learning_config.yaml to config/prompt_learning.yaml`
 
 7. **Move datasets.yaml** (Todo 7)
-   - Move `data/configs/datasets.yaml` → `config/datasets.yaml`
-   - **Run test**: `make test-core` (verify no breakage)
-   - **Commit**: `refactor: Move datasets.yaml to config/datasets.yaml`
+
+- Move `data/configs/datasets.yaml` → `config/datasets.yaml`
+- **Run test**: `make test-core` (verify no breakage)
+- **Commit**: `refactor: Move datasets.yaml to config/datasets.yaml`
 
 ### Phase 3: Create New YAML Configuration Files
 
 8. **Create config/nl_query.yaml** (Todo 8)
-   - Extract all constants from `nl_query_config.py`
-   - Preserve all comments as YAML comments
-   - Structure matches API contract return type
-   - **No tests needed** (YAML file creation)
+
+- Extract all constants from `nl_query_config.py`
+- Preserve all comments as YAML comments
+- Structure matches API contract return type
+- **No tests needed** (YAML file creation)
 
 9. **Create config/ui.yaml** (Todo 9)
-   - Extract from `ui/config.py`
-   - Structure matches API contract return type
-   - **No tests needed** (YAML file creation)
+
+- Extract from `ui/config.py`
+- Structure matches API contract return type
+- **No tests needed** (YAML file creation)
 
 10. **Create config/logging.yaml** (Todo 10)
+
     - Extract config values from `logging_config.py`
     - Structure matches API contract return type
     - **No tests needed** (YAML file creation)
@@ -370,16 +384,18 @@ Following TDD: Red-Green-Refactor`
 **Sub-Phase 4a: Refactor nl_query_config.py**
 
 11. **Write failing tests for nl_query_config refactor** (Todo 11 - TDD Red Phase)
+
     - Update `tests/core/test_nl_query_config.py`
     - Test cases:
-      - `test_nl_query_config_constants_match_yaml_values`
-      - `test_nl_query_config_env_var_overrides_yaml`
-      - `test_nl_query_config_backward_compatibility_all_constants_exist`
-      - `test_nl_query_config_auto_execute_threshold_matches_semantic_threshold`
+    - `test_nl_query_config_constants_match_yaml_values`
+    - `test_nl_query_config_env_var_overrides_yaml`
+    - `test_nl_query_config_backward_compatibility_all_constants_exist`
+    - `test_nl_query_config_auto_execute_threshold_matches_semantic_threshold`
     - **Run test**: `make test-core PYTEST_ARGS="tests/core/test_nl_query_config.py -xvs"`
     - **Verify**: Tests fail (Red phase confirmed)
 
 12. **Refactor nl_query_config.py** (Todo 12 - TDD Green Phase)
+
     - Replace hardcoded constants with `config_loader.load_nl_query_config()`
     - Maintain same public API (same constant names exported)
     - Preserve environment variable precedence
@@ -388,32 +404,33 @@ Following TDD: Red-Green-Refactor`
     - **Verify**: All tests pass (Green phase confirmed)
 
 13. **Fix quality issues** (Todo 13 - TDD Refactor Phase)
+
     - Run: `make format`
     - Run: `make lint-fix`
     - Run: `make type-check`
     - **Run test**: `make test-core`
     - **Verify**: All tests pass, no regressions
     - **Commit**: `feat: Phase 4a - Refactor nl_query_config.py to load from YAML
-
 - Replace hardcoded constants with config_loader.load_nl_query_config()
 - Maintain backward compatibility (all constants exported)
 - Add comprehensive test suite (4 tests passing)
 
 All tests passing: X/Y
-Following TDD: Red-Green-Refactor`
 
-**Sub-Phase 4b: Refactor ui/config.py**
+Following TDD: Red-Green-Refactor`**Sub-Phase 4b: Refactor ui/config.py**
 
 14. **Write failing tests for ui/config refactor** (Todo 14 - TDD Red Phase)
+
     - Create/update `tests/ui/test_config.py`
     - Test cases:
-      - `test_ui_config_constants_match_yaml_values`
-      - `test_ui_config_env_var_overrides_yaml`
-      - `test_ui_config_backward_compatibility_all_constants_exist`
+    - `test_ui_config_constants_match_yaml_values`
+    - `test_ui_config_env_var_overrides_yaml`
+    - `test_ui_config_backward_compatibility_all_constants_exist`
     - **Run test**: `make test-ui PYTEST_ARGS="tests/ui/test_config.py -xvs"`
     - **Verify**: Tests fail (Red phase confirmed)
 
 15. **Refactor ui/config.py** (Todo 15 - TDD Green Phase)
+
     - Replace constants with `config_loader.load_ui_config()`
     - Maintain same public API
     - Preserve environment variable precedence
@@ -421,32 +438,33 @@ Following TDD: Red-Green-Refactor`
     - **Verify**: All tests pass (Green phase confirmed)
 
 16. **Fix quality issues** (Todo 16 - TDD Refactor Phase)
+
     - Run: `make format`
     - Run: `make lint-fix`
     - Run: `make type-check`
     - **Run test**: `make test-ui`
     - **Verify**: All tests pass, no regressions
     - **Commit**: `feat: Phase 4b - Refactor ui/config.py to load from YAML
-
 - Replace constants with config_loader.load_ui_config()
 - Maintain backward compatibility
 - Add comprehensive test suite (3 tests passing)
 
 All tests passing: X/Y
-Following TDD: Red-Green-Refactor`
 
-**Sub-Phase 4c: Refactor logging_config.py**
+Following TDD: Red-Green-Refactor`**Sub-Phase 4c: Refactor logging_config.py**
 
 17. **Write failing tests for logging_config refactor** (Todo 17 - TDD Red Phase)
+
     - Create/update `tests/ui/test_logging_config.py`
     - Test cases:
-      - `test_logging_config_loads_from_yaml`
-      - `test_configure_logging_is_idempotent`
-      - `test_configure_logging_applies_yaml_settings`
+    - `test_logging_config_loads_from_yaml`
+    - `test_configure_logging_is_idempotent`
+    - `test_configure_logging_applies_yaml_settings`
     - **Run test**: `make test-ui PYTEST_ARGS="tests/ui/test_logging_config.py -xvs"`
     - **Verify**: Tests fail (Red phase confirmed)
 
 18. **Refactor logging_config.py** (Todo 18 - TDD Green Phase)
+
     - Extract config values to `config/logging.yaml`
     - Keep `configure_logging()` function
     - Load config from YAML, apply via function
@@ -455,30 +473,31 @@ Following TDD: Red-Green-Refactor`
     - **Verify**: All tests pass (Green phase confirmed)
 
 19. **Fix quality issues** (Todo 19 - TDD Refactor Phase)
+
     - Run: `make format`
     - Run: `make lint-fix`
     - Run: `make type-check`
     - **Run test**: `make test-ui`
     - **Verify**: All tests pass, no regressions
     - **Commit**: `feat: Phase 4c - Refactor logging_config.py to load from YAML
-
 - Extract config values to config/logging.yaml
 - Keep configure_logging() function for orchestration
 - Maintain idempotency
 - Add comprehensive test suite (3 tests passing)
 
 All tests passing: X/Y
-Following TDD: Red-Green-Refactor`
 
-**Sub-Phase 4d: Update Path References**
+Following TDD: Red-Green-Refactor`**Sub-Phase 4d: Update Path References**
 
 20. **Update prompt_optimizer.py** (Todo 20)
+
     - Update path to `config/prompt_learning.yaml`
     - **Run test**: `make test-core`
     - **Verify**: No breakage
     - **Commit**: `refactor: Update prompt_optimizer.py to use config/prompt_learning.yaml`
 
 21. **Update mapper.py** (Todo 21)
+
     - Update path to `config/datasets.yaml`
     - **Run test**: `make test-core`
     - **Verify**: No breakage
@@ -489,78 +508,78 @@ Following TDD: Red-Green-Refactor`
 **Sub-Phase 5a: Update nl_query_config imports**
 
 22. **Update nl_query_config import statements** (Todo 22)
+
     - Update 8 files importing from `nl_query_config`:
-      - `src/clinical_analytics/core/nl_query_engine.py`
-      - `src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py`
-      - `src/clinical_analytics/core/filter_extraction.py`
-      - `src/clinical_analytics/core/golden_question_generator.py`
-      - `src/clinical_analytics/core/error_translation.py`
-      - `src/clinical_analytics/core/result_interpretation.py`
-      - `src/clinical_analytics/core/llm_feature.py`
-      - `src/clinical_analytics/core/ollama_manager.py`
-      - `src/clinical_analytics/core/clarifying_questions.py`
-      - `src/clinical_analytics/ui/components/question_engine.py`
+    - `src/clinical_analytics/core/nl_query_engine.py`
+    - `src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py`
+    - `src/clinical_analytics/core/filter_extraction.py`
+    - `src/clinical_analytics/core/golden_question_generator.py`
+    - `src/clinical_analytics/core/error_translation.py`
+    - `src/clinical_analytics/core/result_interpretation.py`
+    - `src/clinical_analytics/core/llm_feature.py`
+    - `src/clinical_analytics/core/ollama_manager.py`
+    - `src/clinical_analytics/core/clarifying_questions.py`
+    - `src/clinical_analytics/ui/components/question_engine.py`
     - **Run test**: `make test-core` and `make test-ui`
     - **Verify**: All imports work, no breakage
     - **Commit**: `refactor: Update nl_query_config import statements (8 files)
-
 - All imports continue to work without changes
 - Backward compatibility maintained`
 
 **Sub-Phase 5b: Update ui.config imports**
 
 23. **Update ui.config import statements** (Todo 23)
+
     - Update 5 files importing from `ui.config`:
-      - `src/clinical_analytics/ui/app.py`
-      - `src/clinical_analytics/ui/pages/01_📤_Add_Your_Data.py`
-      - `src/clinical_analytics/ui/components/dataset_loader.py`
-      - `src/clinical_analytics/ui/storage/user_datasets.py`
-      - `src/clinical_analytics/ui/helpers.py`
+    - `src/clinical_analytics/ui/app.py`
+    - `src/clinical_analytics/ui/pages/01_📤_Add_Your_Data.py`
+    - `src/clinical_analytics/ui/components/dataset_loader.py`
+    - `src/clinical_analytics/ui/storage/user_datasets.py`
+    - `src/clinical_analytics/ui/helpers.py`
     - **Run test**: `make test-ui`
     - **Verify**: All imports work, no breakage
     - **Commit**: `refactor: Update ui.config import statements (5 files)
-
 - All imports continue to work without changes
 - Backward compatibility maintained`
 
 **Sub-Phase 5c: Update logging_config imports**
 
 24. **Update logging_config import statements** (Todo 24)
+
     - Update 2 files importing from `logging_config`:
-      - `src/clinical_analytics/ui/app.py`
+    - `src/clinical_analytics/ui/app.py`
     - **Run test**: `make test-ui`
     - **Verify**: All imports work, no breakage
     - **Commit**: `refactor: Update logging_config import statements
-
 - All imports continue to work without changes
 - Backward compatibility maintained`
 
 ### Phase 6: Backward Compatibility Verification and Final Testing
 
 25. **Add backward compatibility integration test** (Todo 25)
+
     - Create `tests/integration/test_config_backward_compatibility.py`
     - Test cases:
-      - `test_all_nl_query_constants_importable_and_match_yaml`
-      - `test_all_ui_constants_importable_and_match_yaml`
-      - `test_all_import_sites_work_without_changes`
-      - `test_environment_variables_override_yaml_correctly`
-      - `test_missing_yaml_files_fallback_to_defaults`
+    - `test_all_nl_query_constants_importable_and_match_yaml`
+    - `test_all_ui_constants_importable_and_match_yaml`
+    - `test_all_import_sites_work_without_changes`
+    - `test_environment_variables_override_yaml_correctly`
+    - `test_missing_yaml_files_fallback_to_defaults`
     - **Run test**: `make test-integration`
     - **Verify**: All backward compatibility tests pass
     - **Commit**: `test: Add backward compatibility integration tests
-
 - Verify all constants importable and match YAML values
 - Verify all import sites work without changes
 - Verify environment variable precedence
 - Add comprehensive test suite (5 tests passing)`
 
 26. **Run full test suite** (Todo 26)
+
     - Run: `make test`
     - **Verify**: All tests pass
     - Run: `make check` (full quality gate)
     - **Verify**: All quality gates pass
     - **Final commit**: `feat: Complete config migration to YAML
-
 - All configuration migrated to YAML in config/ folder
 - Backward compatibility maintained (100%)
 - All tests passing: X/Y
@@ -628,15 +647,19 @@ Following TDD: Red-Green-Refactor`
 ## Testing Strategy
 
 1. **Unit Tests**: Config loader, schema validation, env var overrides
-   - Test loading from YAML file
-   - Test environment variable override
-   - Test missing file → defaults
-   - Test invalid YAML → error handling
-   - Test type coercion (string "30.0" → float 30.0, string "true" → bool True)
+
+- Test loading from YAML file
+- Test environment variable override
+- Test missing file → defaults
+- Test invalid YAML → error handling
+- Test type coercion (string "30.0" → float 30.0, string "true" → bool True)
+
 2. **Integration Tests**: Full config loading, all imports work
-   - Test all constants importable and match YAML values
-   - Test all import sites work without changes
-   - Test environment variable precedence
+
+- Test all constants importable and match YAML values
+- Test all import sites work without changes
+- Test environment variable precedence
+
 3. **Regression Tests**: Existing tests still pass
 4. **Edge Cases**: Missing files, invalid YAML, missing keys, type coercion failures
 
@@ -647,4 +670,3 @@ Following TDD: Red-Green-Refactor`
 - Environment variables continue to work
 - Git branch strategy: Use feature branch for migration
 - Rollback plan: If migration fails, revert commits and restore old config files
-- Verification: Run backward compatibility integration tests before final commit

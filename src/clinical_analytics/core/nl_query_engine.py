@@ -1307,7 +1307,10 @@ Filter extraction (ADR009 Phase 5):
                 logger.warning(
                     "llm_queryplan_validation_failed_trying_legacy_format",
                     error=str(validation_error),
-                    response=response[:100],
+                    error_type=type(validation_error).__name__,
+                    response=response[:200] if len(response) > 200 else response,
+                    response_length=len(response),
+                    parsed_data_keys=list(data.keys()) if isinstance(data, dict) else None,
                 )
 
                 # Legacy format fallback
@@ -1336,7 +1339,9 @@ Filter extraction (ADR009 Phase 5):
             logger.warning(
                 "llm_response_parse_failed",
                 error=str(e),
-                response=response[:100],
+                error_type=type(e).__name__,
+                response=response[:200] if len(response) > 200 else response,
+                response_length=len(response),
             )
             return None
 
@@ -1376,6 +1381,20 @@ Filter extraction (ADR009 Phase 5):
             # Step 4: Build structured prompts
             system_prompt, user_prompt = self._build_llm_prompt(query, context, conversation_history)
 
+            # Log conversation context for refinement debugging
+            if conversation_history:
+                logger.info(
+                    "llm_refinement_parsing_started",
+                    query=query,
+                    conversation_history_count=len(conversation_history),
+                    previous_query=conversation_history[-1].get("query") if conversation_history else None,
+                    previous_intent=conversation_history[-1].get("intent") if conversation_history else None,
+                    previous_group_by=conversation_history[-1].get("group_by") if conversation_history else None,
+                    previous_filters=conversation_history[-1].get("filters_applied", [])
+                    if conversation_history
+                    else [],
+                )
+
             # Step 5: Call Ollama with JSON mode
             response = client.generate(user_prompt, system_prompt=system_prompt, json_mode=True)
 
@@ -1383,8 +1402,40 @@ Filter extraction (ADR009 Phase 5):
                 logger.info("ollama_generate_failed_fallback_to_stub", query=query)
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
+            # Log raw LLM response for debugging
+            logger.debug(
+                "llm_raw_response_received",
+                query=query,
+                response_length=len(response),
+                response_preview=response[:200] if len(response) > 200 else response,
+                has_conversation_history=bool(conversation_history),
+            )
+
             # Step 6: Extract QueryIntent from response
             intent = self._extract_query_intent_from_llm_response(response)
+
+            # Log extracted intent for refinement debugging
+            if conversation_history and intent:
+                previous_intent = conversation_history[-1].get("intent") if conversation_history else None
+                previous_group_by = conversation_history[-1].get("group_by") if conversation_history else None
+
+                logger.info(
+                    "llm_refinement_parsing_completed",
+                    query=query,
+                    extracted_intent=intent.intent_type,
+                    extracted_group_by=intent.grouping_variable,
+                    extracted_filters_count=len(intent.filters),
+                    extracted_confidence=intent.confidence,
+                    previous_intent=previous_intent,
+                    previous_group_by=previous_group_by,
+                    intent_matches_previous=intent.intent_type == previous_intent if previous_intent else None,
+                    group_by_matches_previous=intent.grouping_variable == previous_group_by
+                    if previous_group_by
+                    else None,
+                    filters_extracted=[
+                        {"column": f.column, "operator": f.operator, "value": f.value} for f in intent.filters
+                    ],
+                )
 
             if intent is None:
                 logger.info("llm_parse_extraction_failed_fallback_to_stub", query=query)

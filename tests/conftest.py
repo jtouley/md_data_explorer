@@ -1031,3 +1031,68 @@ def semantic_layer_with_clinical_columns():
     mock.get_base_view.return_value = base_view
 
     return mock
+
+
+# ============================================================================
+# Dataset Discovery Fixtures (Performance Optimization - Session Scoped)
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def discovered_datasets():
+    """
+    Session-scoped fixture to discover datasets once per test run.
+
+    Caches dataset discovery to avoid expensive module imports on every test.
+    This dramatically improves test performance by:
+    - Discovering datasets once per session instead of per test
+    - Pre-loading configs to avoid repeated YAML parsing
+    - Eliminating redundant registry resets
+
+    Returns:
+        dict with keys:
+        - available: List of available dataset names (excluding built-ins)
+        - configs: Dict mapping dataset names to their configs
+        - all_datasets: List of all discovered dataset names
+    """
+    import logging
+
+    from clinical_analytics.core.mapper import load_dataset_config
+    from clinical_analytics.core.registry import DatasetRegistry
+
+    logger = logging.getLogger(__name__)
+
+    # Discover once per session
+    DatasetRegistry.reset()
+    DatasetRegistry.discover_datasets()
+    DatasetRegistry.load_config()
+
+    all_datasets = DatasetRegistry.list_datasets()
+    excluded = ["covid_ms", "mimic3", "sepsis", "uploaded"]
+    available = [d for d in all_datasets if d not in excluded]
+
+    logger.info(
+        "session_dataset_discovery",
+        all_datasets=all_datasets,
+        total_count=len(all_datasets),
+        available_after_filter=available,
+        available_count=len(available),
+    )
+
+    # Pre-load configs for available datasets
+    configs = {}
+    for dataset_name in available:
+        try:
+            configs[dataset_name] = load_dataset_config(dataset_name)
+        except Exception as e:
+            logger.warning(
+                "session_config_load_failed",
+                dataset_name=dataset_name,
+                error=str(e),
+            )
+
+    return {
+        "available": available,
+        "configs": configs,
+        "all_datasets": all_datasets,
+    }

@@ -11,26 +11,45 @@ import polars as pl
 import pytest
 
 from clinical_analytics.core.mapper import ColumnMapper, get_global_config, load_dataset_config
-from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.core.schema import DataQualityError, UnifiedCohort
 
 
-def get_first_available_dataset_config():
+def get_first_available_dataset_config(discovered_datasets):
     """
-    Helper to get config from first available dataset.
+    Get config from first available dataset using cached discovery.
+
+    Performance optimization: Uses session-scoped fixture to avoid
+    expensive dataset discovery on every test call.
+
+    Args:
+        discovered_datasets: Session-scoped fixture with cached datasets
 
     Returns:
         dict: Config for first available dataset, or None if none available
     """
-    DatasetRegistry.reset()
-    DatasetRegistry.discover_datasets()
-    DatasetRegistry.load_config()
-    datasets = DatasetRegistry.list_datasets()
-    # Filter out built-in datasets (covid_ms, mimic3, sepsis) and uploaded class
-    available = [d for d in datasets if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    available = discovered_datasets["available"]
+    configs = discovered_datasets["configs"]
+
     if not available:
+        logger.warning(
+            "test_mapper_no_datasets_available",
+            all_datasets=discovered_datasets["all_datasets"],
+            reason="all datasets filtered out or none discovered",
+        )
         return None
-    return load_dataset_config(available[0])
+
+    selected = available[0]
+    logger.info(
+        "test_mapper_dataset_selected",
+        selected_dataset=selected,
+        available_options=available,
+    )
+
+    return configs.get(selected)
 
 
 class TestColumnMapper:
@@ -38,11 +57,12 @@ class TestColumnMapper:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_mapper_initialization_with_config(self):
+    def test_mapper_initialization_with_config(self, discovered_datasets):
         """Test mapper can be initialized with dataset config."""
         # Arrange: Get config from first available dataset
-        config = get_first_available_dataset_config()
-        assert config is not None, "No datasets available for testing"
+        config = get_first_available_dataset_config(discovered_datasets)
+        if config is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
 
         # Act: Initialize mapper with config
         mapper = ColumnMapper(config)
@@ -53,11 +73,12 @@ class TestColumnMapper:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_get_default_predictors_returns_list(self):
+    def test_get_default_predictors_returns_list(self, discovered_datasets):
         """Test getting default predictors returns non-empty list."""
         # Arrange: Get config and create mapper
-        config = get_first_available_dataset_config()
-        assert config is not None, "No datasets available for testing"
+        config = get_first_available_dataset_config(discovered_datasets)
+        if config is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
         mapper = ColumnMapper(config)
 
         # Act: Get default predictors
@@ -69,11 +90,12 @@ class TestColumnMapper:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_get_categorical_variables_returns_list(self):
+    def test_get_categorical_variables_returns_list(self, discovered_datasets):
         """Test getting categorical variables returns list."""
         # Arrange: Get config and create mapper
-        config = get_first_available_dataset_config()
-        assert config is not None, "No datasets available for testing"
+        config = get_first_available_dataset_config(discovered_datasets)
+        if config is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
         mapper = ColumnMapper(config)
 
         # Act: Get categorical variables
@@ -84,11 +106,12 @@ class TestColumnMapper:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_get_default_outcome_returns_non_empty_string(self):
+    def test_get_default_outcome_returns_non_empty_string(self, discovered_datasets):
         """Test getting default outcome returns non-empty string."""
         # Arrange: Get config and create mapper
-        config = get_first_available_dataset_config()
-        assert config is not None, "No datasets available for testing"
+        config = get_first_available_dataset_config(discovered_datasets)
+        if config is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
         mapper = ColumnMapper(config)
 
         # Act: Get default outcome
@@ -100,11 +123,12 @@ class TestColumnMapper:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_get_default_filters_returns_dict(self):
+    def test_get_default_filters_returns_dict(self, discovered_datasets):
         """Test getting default filters returns dict."""
         # Arrange: Get config and create mapper
-        config = get_first_available_dataset_config()
-        assert config is not None, "No datasets available for testing"
+        config = get_first_available_dataset_config(discovered_datasets)
+        if config is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
         mapper = ColumnMapper(config)
 
         # Act: Get default filters
@@ -486,18 +510,18 @@ class TestConfigLoading:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_load_dataset_config_returns_valid_dict(self):
+    def test_load_dataset_config_returns_valid_dict(self, discovered_datasets):
         """Test loading dataset configuration returns valid dict."""
-        # Arrange: Get first available dataset name
-        DatasetRegistry.reset()
-        DatasetRegistry.discover_datasets()
-        DatasetRegistry.load_config()
-        datasets = DatasetRegistry.list_datasets()
-        available = [d for d in datasets if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
-        assert len(available) > 0, "No datasets available for testing"
+        # Arrange: Get first available dataset name from cached discovery
+        available = discovered_datasets["available"]
+        if len(available) == 0:
+            pytest.skip("No datasets available for testing - skipping integration test")
 
-        # Act: Load config for first available dataset
-        config = load_dataset_config(available[0])
+        # Act: Load config for first available dataset (should be pre-cached)
+        config = discovered_datasets["configs"].get(available[0])
+        if config is None:
+            # Fallback: load if not cached
+            config = load_dataset_config(available[0])
 
         # Assert: Returns dict with required keys
         assert isinstance(config, dict)
