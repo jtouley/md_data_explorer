@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -22,6 +23,30 @@ from clinical_analytics.core.eval_harness import EvalHarness
 from clinical_analytics.core.prompt_optimizer import PromptOptimizer
 
 logger = structlog.get_logger(__name__)
+
+
+def write_prompt_overlay(prompt_additions: str, overlay_path: Path) -> None:
+    """
+    Write prompt additions atomically to overlay file.
+
+    Uses temp + replace to prevent race conditions if engine reads
+    while script is writing.
+
+    Args:
+        prompt_additions: Generated fixes from failure patterns
+        overlay_path: Target overlay file path
+    """
+    # Ensure parent directory exists
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Write to temp file
+    tmp = overlay_path.with_suffix(".tmp")
+    tmp.write_text(prompt_additions, encoding="utf-8")
+
+    # Atomic replace (POSIX guarantee)
+    os.replace(tmp, overlay_path)
+
+    logger.info("prompt_overlay_written", path=str(overlay_path), length=len(prompt_additions))
 
 
 def load_golden_questions(questions_file: Path) -> list[dict]:
@@ -125,11 +150,35 @@ def main():
 
         logger.info("failure_patterns_detected", iteration=iteration, pattern_count=len(patterns))
 
+        # Cap patterns to top 5 by priority (Fix #7)
+        patterns.sort(key=lambda p: (p.priority, -p.count))
+        patterns = patterns[:5]
+
         # Generate prompt improvements
         prompt_additions = optimizer.generate_improved_prompt_additions(patterns)
 
+        # Hard cap overlay length (prevent bloat) (Fix #7)
+        MAX_OVERLAY_LENGTH = 8000
+        if len(prompt_additions) > MAX_OVERLAY_LENGTH:
+            prompt_additions = prompt_additions[:MAX_OVERLAY_LENGTH]
+            logger.warning(
+                "prompt_overlay_truncated",
+                original_length=len(prompt_additions),
+                capped_length=MAX_OVERLAY_LENGTH,
+            )
+
+        # Write overlay atomically (Fix #3)
+        overlay_path = Path(os.getenv("NL_PROMPT_OVERLAY_PATH", "/tmp/nl_query_learning/prompt_overlay.txt"))
+        write_prompt_overlay(prompt_additions, overlay_path)
+
         # Log iteration
         optimizer.log_iteration(iteration, accuracy, patterns, prompt_additions)
+
+        logger.info(
+            "prompt_improvements_applied",
+            iteration=iteration,
+            additions_length=len(prompt_additions),
+        )
 
         # Display progress
         print(f"\nIteration {iteration}/{args.max_iterations}:")
@@ -137,27 +186,12 @@ def main():
         print(f"  Patterns detected: {len(patterns)}")
         for pattern in patterns:
             print(f"    - {pattern.pattern_type}: {pattern.count} failures")
+        print(f"\n📝 Prompt improvements applied:")
+        print(f"   {len(prompt_additions)} characters written to {overlay_path.name}")
+        print(f"   Top {len(patterns)} patterns addressed")
+        print(f"   Re-running evaluation with updated prompt...")
 
-        # Update prompt (in real implementation, this would modify nl_query_engine.py)
-        logger.info(
-            "prompt_improvements_generated",
-            iteration=iteration,
-            additions_length=len(prompt_additions),
-        )
-
-        # In production, we would:
-        # 1. Update nl_query_engine.py with prompt_additions
-        # 2. Reload NLQueryEngine
-        # 3. Continue loop
-        # For now, we just log and break after first iteration
-        logger.warning(
-            "manual_intervention_required",
-            message="Prompt improvements generated but not automatically applied. "
-            "Update nl_query_engine.py manually with improvements.",
-        )
-        print(f"\n📝 Prompt improvements:")
-        print(prompt_additions)
-        break
+        # NO BREAK - let loop continue to next iteration
 
     # Max iterations reached without achieving target
     logger.warning(
