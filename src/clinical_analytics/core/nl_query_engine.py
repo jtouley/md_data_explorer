@@ -14,10 +14,13 @@ Example:
     'COMPARE_GROUPS'
 """
 
+import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from difflib import get_close_matches
+from pathlib import Path
 
 import structlog
 
@@ -34,6 +37,19 @@ VALID_INTENT_TYPES = [
     "CORRELATIONS",
     "COUNT",
 ]
+
+
+def _stable_hash(s: str) -> str:
+    """
+    Stable hash for metrics (SHA256, not Python's randomized hash()).
+
+    Args:
+        s: String to hash
+
+    Returns:
+        First 12 chars of SHA256 hex digest
+    """
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass
@@ -110,8 +126,65 @@ class NLQueryEngine:
         self.encoder = None  # Lazy load
         self.template_embeddings = None  # Lazy load
 
+        # Overlay cache (mtime-based hot reload)
+        self._overlay_cache_text = ""
+        self._overlay_cache_mtime_ns = 0
+
         # Build query templates from metadata
         self._build_query_templates()
+
+    def _prompt_overlay_path(self) -> Path:
+        """
+        Get overlay file path (configurable via env var).
+
+        Defaults to /tmp/nl_query_learning/prompt_overlay.txt to keep
+        learning artifacts out of source tree.
+
+        Returns:
+            Path to overlay file
+        """
+        # Prefer explicit override
+        p = os.getenv("NL_PROMPT_OVERLAY_PATH")
+        if p:
+            return Path(p)
+
+        # Default: same directory as self-improve logs
+        # (keeps artifacts out of source tree)
+        return Path("/tmp/nl_query_learning/prompt_overlay.txt")
+
+    def _load_prompt_overlay(self) -> str:
+        """
+        Load prompt overlay from disk with mtime-based caching.
+
+        Only re-reads file if modified since last load (hot reload).
+
+        Returns:
+            Overlay text to append to system prompt, or empty string
+        """
+        p = self._prompt_overlay_path()
+
+        try:
+            st = p.stat()
+        except FileNotFoundError:
+            self._overlay_cache_text = ""
+            self._overlay_cache_mtime_ns = 0
+            return ""
+
+        # Cache hit: file unchanged since last load
+        if st.st_mtime_ns == self._overlay_cache_mtime_ns:
+            return self._overlay_cache_text
+
+        # Cache miss: file changed, reload
+        try:
+            text = p.read_text(encoding="utf-8").strip()
+            self._overlay_cache_text = text
+            self._overlay_cache_mtime_ns = st.st_mtime_ns
+            if text:
+                logger.info("prompt_overlay_loaded", path=str(p), length=len(text))
+            return text
+        except Exception as e:
+            logger.warning("prompt_overlay_load_failed", path=str(p), error=str(e))
+            return ""
 
     def _build_query_templates(self):
         """Build query templates from semantic layer metadata."""

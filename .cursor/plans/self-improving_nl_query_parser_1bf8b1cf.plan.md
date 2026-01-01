@@ -11,32 +11,52 @@ todos:
   - id: model-availability
     content: Ensure llama3.1:8b model is installed
     status: in_progress
-  - id: overlay-load
-    content: Add _load_prompt_overlay() method to NLQueryEngine
+  - id: overlay-cache-init
+    content: Add overlay cache fields to __init__ (Fix #2)
+    status: pending
+  - id: overlay-path-resolver
+    content: Add _prompt_overlay_path() with env var support (Fix #1)
+    status: pending
+  - id: overlay-load-cached
+    content: Add _load_prompt_overlay() with mtime caching (Fix #2)
     status: pending
     dependencies:
-      - model-availability
+      - overlay-cache-init
+      - overlay-path-resolver
   - id: overlay-inject
     content: Modify _build_llm_prompt() to append overlay to system prompt
     status: pending
     dependencies:
-      - overlay-load
-  - id: overlay-write
-    content: Add write_prompt_overlay() function to self_improve_nl_parsing.py
+      - overlay-load-cached
+  - id: stable-hash-helper
+    content: Add _stable_hash() function using SHA256 (Fix #5)
     status: pending
-  - id: remove-break
-    content: Remove break statement and manual intervention code from main loop
+  - id: granular-instrumentation
+    content: Add granular checkpoints in parse_query (Fix #5, #6)
     status: pending
     dependencies:
-      - overlay-write
-  - id: instrumentation
-    content: Add parse outcome logging in parse_query method
+      - stable-hash-helper
+  - id: overlay-write-atomic
+    content: Add write_prompt_overlay() with atomic writes (Fix #3)
+    status: pending
+  - id: overlay-size-capping
+    content: Cap patterns + overlay length in main loop (Fix #7)
+    status: pending
+    dependencies:
+      - overlay-write-atomic
+  - id: remove-break
+    content: Remove break statement from main loop
+    status: pending
+    dependencies:
+      - overlay-size-capping
+  - id: fresh-engine
+    content: Force EvalHarness to create fresh engine (Fix #4)
     status: pending
   - id: metrics-script
-    content: Create analyze_parse_outcomes.py script for metrics
+    content: Create analyze_parse_outcomes.py with granular checkpoints
     status: pending
     dependencies:
-      - instrumentation
+      - granular-instrumentation
 ---
 
 # Self-Improving NL Query Parser
@@ -98,52 +118,98 @@ Implement a hot-reload overlay system where learned fixes are written to a file 
 3. **Verify RAG working**: Check `_load_golden_questions_rag()` and `_find_similar_examples()` methods exist
 4. **Run baseline test**: `make test` to establish current accuracy with 8b model
 
-## Step 1: Add Prompt Overlay Support in NLQueryEngine
+## Step 1 (REVISED): Add Prompt Overlay Support with Caching
 
 **File**: [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py)
 
-**Note**: RAG system already implemented (2026-01-01). Overlay will build on top of RAG-provided examples.
+**Critical Fix #1**: Use configurable env var path (default `/tmp/nl_query_learning/`) instead of source tree
+**Critical Fix #2**: Add mtime-based caching to avoid disk I/O on every parse
 
-### 1.1 Add overlay loading method
+### 1.1 Update `__init__` to add cache fields
 
-Add new method after `__init__` (around line 115):
+In `__init__` method (around line 100), add overlay cache fields:
+
+```python
+def __init__(self, semantic_layer, embedding_model: str = "all-MiniLM-L6-v2"):
+    # ... existing fields ...
+    
+    # Overlay cache (mtime-based hot reload)
+    self._overlay_cache_text = ""
+    self._overlay_cache_mtime_ns = 0
+```
+
+### 1.2 Add overlay path resolver (env var support)
+
+Add method after `__init__`:
+
+```python
+def _prompt_overlay_path(self) -> Path:
+    """
+    Get overlay file path (configurable via env var).
+    
+    Defaults to /tmp/nl_query_learning/prompt_overlay.txt to keep
+    learning artifacts out of source tree.
+    
+    Returns:
+        Path to overlay file
+    """
+    import os
+    from pathlib import Path
+    
+    # Prefer explicit override
+    p = os.getenv("NL_PROMPT_OVERLAY_PATH")
+    if p:
+        return Path(p)
+    
+    # Default: same directory as self-improve logs
+    # (keeps artifacts out of source tree)
+    return Path("/tmp/nl_query_learning/prompt_overlay.txt")
+```
+
+### 1.3 Add overlay loader with mtime caching
 
 ```python
 def _load_prompt_overlay(self) -> str:
     """
-    Load prompt overlay from disk if it exists.
+    Load prompt overlay from disk with mtime-based caching.
     
-    The overlay file is written by the self-improvement script and contains
-    auto-generated fixes from failure pattern analysis.
+    Only re-reads file if modified since last load (hot reload).
     
     Returns:
-        Overlay text to append to system prompt, or empty string if no overlay exists
+        Overlay text to append to system prompt, or empty string
     """
-    from pathlib import Path
-    
-    overlay_path = Path(__file__).parent / "prompt_overlay.txt"
-    
-    if not overlay_path.exists():
-        return ""
+    p = self._prompt_overlay_path()
     
     try:
-        overlay_text = overlay_path.read_text()
-        logger.info("prompt_overlay_loaded", length=len(overlay_text))
-        return overlay_text
+        st = p.stat()
+    except FileNotFoundError:
+        self._overlay_cache_text = ""
+        self._overlay_cache_mtime_ns = 0
+        return ""
+    
+    # Cache hit: file unchanged since last load
+    if st.st_mtime_ns == self._overlay_cache_mtime_ns:
+        return self._overlay_cache_text
+    
+    # Cache miss: file changed, reload
+    try:
+        text = p.read_text(encoding="utf-8").strip()
+        self._overlay_cache_text = text
+        self._overlay_cache_mtime_ns = st.st_mtime_ns
+        if text:
+            logger.info("prompt_overlay_loaded", path=str(p), length=len(text))
+        return text
     except Exception as e:
-        logger.warning("prompt_overlay_load_failed", error=str(e))
+        logger.warning("prompt_overlay_load_failed", path=str(p), error=str(e))
         return ""
 ```
 
-### 1.2 Modify `_build_llm_prompt` to use overlay
+### 1.4 Modify `_build_llm_prompt` to append overlay
 
-In [`_build_llm_prompt`](src/clinical_analytics/core/nl_query_engine.py:1043), append overlay **before** returning the prompt (around line 1260):
+In [`_build_llm_prompt`](src/clinical_analytics/core/nl_query_engine.py:1043), append overlay **after** constructing full prompt (around line 1260):
 
 ```python
-# Existing system_prompt construction...
-system_prompt = """You are a medical data query parser...
-[existing prompt content]
-"""
+# ... existing system_prompt construction ...
 
 # Load and append overlay (auto-generated fixes)
 overlay = self._load_prompt_overlay()
@@ -155,31 +221,66 @@ return system_prompt, user_prompt
 
 ---
 
-## Step 2: Write Overlay File Each Iteration
+## Step 2 (REVISED): Atomic Overlay Writes + Size Capping
 
 **File**: [`scripts/self_improve_nl_parsing.py`](scripts/self_improve_nl_parsing.py)
 
-### 2.1 Add overlay writer function
+**Critical Fix #3**: Atomic writes via temp + replace to prevent race conditions
+**Critical Fix #7**: Cap overlay to top 5 patterns, max 8KB length
+
+### 2.1 Add atomic overlay writer
 
 Add after imports (around line 25):
 
 ```python
-def write_prompt_overlay(prompt_additions: str) -> None:
-    """Write prompt additions to overlay file that NLQueryEngine loads."""
-    from pathlib import Path
+def write_prompt_overlay(prompt_additions: str, overlay_path: Path) -> None:
+    """
+    Write prompt additions atomically to overlay file.
     
-    overlay_path = Path(__file__).parent.parent / "src" / "clinical_analytics" / "core" / "prompt_overlay.txt"
-    overlay_path.write_text(prompt_additions)
+    Uses temp + replace to prevent race conditions if engine reads
+    while script is writing.
+    
+    Args:
+        prompt_additions: Generated fixes from failure patterns
+        overlay_path: Target overlay file path
+    """
+    import os
+    
+    # Ensure parent directory exists
+    overlay_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Write to temp file
+    tmp = overlay_path.with_suffix(".tmp")
+    tmp.write_text(prompt_additions, encoding="utf-8")
+    
+    # Atomic replace (POSIX guarantee)
+    os.replace(tmp, overlay_path)
+    
     logger.info("prompt_overlay_written", path=str(overlay_path), length=len(prompt_additions))
 ```
 
-### 2.2 Write overlay in main loop
+### 2.2 Update main loop with capping + atomic writes
 
-Replace lines 141-160 (the manual intervention section) with:
+Replace lines 122-160 with:
 
 ```python
-# Write prompt improvements to overlay file
-write_prompt_overlay(prompt_additions)
+# Cap patterns to top 5 by priority
+patterns.sort(key=lambda p: (p.priority, -p.count))
+patterns = patterns[:5]
+
+# Generate prompt improvements
+prompt_additions = optimizer.generate_improved_prompt_additions(patterns)
+
+# Hard cap overlay length (prevent bloat)
+MAX_OVERLAY_LENGTH = 8000
+if len(prompt_additions) > MAX_OVERLAY_LENGTH:
+    prompt_additions = prompt_additions[:MAX_OVERLAY_LENGTH]
+    logger.warning("prompt_overlay_truncated", original_length=len(prompt_additions), capped_length=MAX_OVERLAY_LENGTH)
+
+# Write overlay atomically
+import os
+overlay_path = Path(os.getenv("NL_PROMPT_OVERLAY_PATH", "/tmp/nl_query_learning/prompt_overlay.txt"))
+write_prompt_overlay(prompt_additions, overlay_path)
 
 logger.info(
     "prompt_improvements_applied",
@@ -189,65 +290,133 @@ logger.info(
 
 # Display progress
 print(f"\n📝 Prompt improvements applied:")
-print(f"   {len(prompt_additions)} characters written to prompt_overlay.txt")
+print(f"   {len(prompt_additions)} characters written to {overlay_path.name}")
+print(f"   Top {len(patterns)} patterns addressed")
 print(f"   Re-running evaluation with updated prompt...")
+
+# NO BREAK - let loop continue
 ```
 
 ---
 
-## Step 3: Remove the Break Statement
+## Step 3 (REVISED): Force Fresh Engine Each Iteration
 
-**File**: [`scripts/self_improve_nl_parsing.py`](scripts/self_improve_nl_parsing.py)Delete the `break` statement (line 160) that prevents iteration.After Step 2 changes, there should be **no break** - let the loop continue to next iteration.---
+**File**: [`src/clinical_analytics/core/eval_harness.py`](src/clinical_analytics/core/eval_harness.py)
 
-## Step 4: Re-run Eval Automatically
+**Critical Fix #4**: EvalHarness must create fresh engine each iteration (picks up new overlay)
 
-**No changes needed** - evaluation already runs at the start of each iteration (line 105).The loop will now:
+### 3.1 Update `run_evaluation()` to create fresh engine
 
-1. Run eval
-2. Detect patterns
-3. Write overlay
-4. Loop back to step 1 (eval with new overlay)
-
----
-
-## Step 5: Add Pipeline Instrumentation
-
-If accuracy still doesn't improve after Steps 1-4, it means the LLM path isn't being exercised or is being rejected. Instrument to measure:**File**: [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py)
-
-### 5.1 Add instrumentation counters
-
-In `parse_query` method (around line 250), add counters after tier decisions:
+Ensure `EvalHarness.run_evaluation()` creates a fresh `NLQueryEngine` instance:
 
 ```python
-# After tier 1 attempt (around line 270)
-if tier1_match:
-    logger.info("parse_outcome", tier="tier1", success=True, query_hash=hash(query))
-    # existing return...
-
-# After tier 2 attempt (around line 340)
-if tier2_match:
-    logger.info("parse_outcome", tier="tier2", success=True, query_hash=hash(query))
-    # existing return...
-
-# In tier 3 LLM path (around line 1284)
-logger.info("parse_outcome", tier="tier3", llm_called=True, query_hash=hash(query))
-
-# After LLM response (around line 1286)
-if response is None:
-    logger.info("parse_outcome", tier="tier3", llm_call_success=False, query_hash=hash(query))
-else:
-    logger.info("parse_outcome", tier="tier3", llm_call_success=True, query_hash=hash(query))
-
-# After JSON parsing (around line 1291)
-if intent is None:
-    logger.info("parse_outcome", tier="tier3", json_parse_success=False, schema_validate_success=False)
-else:
-    logger.info("parse_outcome", tier="tier3", json_parse_success=True, schema_validate_success=True)
+def run_evaluation(self, questions: list[dict], verbose: bool = False) -> dict:
+    """
+    Run evaluation with golden questions.
+    
+    Creates fresh NLQueryEngine instance to pick up overlay changes.
+    """
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+    
+    # Create FRESH engine (picks up current overlay state)
+    engine = NLQueryEngine(self.semantic_layer)
+    
+    # ... rest of evaluation logic ...
 ```
 
-### 5.2 Add metrics aggregation script
+**Note**: Break statement already removed in Step 2.2 - loop continues automatically.
 
-Create [`scripts/analyze_parse_outcomes.py`](scripts/analyze_parse_outcomes.py):
+---
+
+## Step 4 (REVISED): Stable Hashing + Granular Checkpoints
+
+**File**: [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py)
+
+**Critical Fix #5**: Use stable SHA256 hashing (not Python's randomized hash()) + granular success checkpoints
+**Critical Fix #6**: Keep instrumentation even with 8b model (verify, don't assume)
+
+### 4.1 Add stable hash helper
+
+Add at module level (after imports, around line 27):
+
+```python
+import hashlib
+
+def _stable_hash(s: str) -> str:
+    """
+    Stable hash for metrics (SHA256, not Python's randomized hash()).
+    
+    Returns:
+        First 12 chars of SHA256 hex digest
+    """
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
+```
+
+### 4.2 Add granular instrumentation in `parse_query`
+
+In `parse_query` method, add checkpoints at each decision point:
+
+```python
+# After tier 1 pattern match (around line 270)
+if tier1_match:
+    logger.info("parse_outcome", 
+                tier="tier1", 
+                success=True, 
+                query_hash=_stable_hash(query))
+    return tier1_result
+
+# After tier 2 semantic match (around line 340)
+if tier2_match:
+    logger.info("parse_outcome", 
+                tier="tier2", 
+                success=True, 
+                query_hash=_stable_hash(query))
+    return tier2_result
+
+# Tier 3 LLM fallback (around line 1270)
+logger.info("parse_outcome", 
+            tier="tier3", 
+            llm_called=True, 
+            query_hash=_stable_hash(query))
+
+# After LLM call (around line 1284)
+response = client.generate(...)
+llm_http_success = response is not None
+
+logger.info("parse_outcome", 
+            tier="tier3", 
+            llm_http_success=llm_http_success, 
+            query_hash=_stable_hash(query))
+
+if not llm_http_success:
+    return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+# After JSON parsing (before schema validation, around line 1290)
+try:
+    raw_json = json.loads(response.get("response", "{}"))
+    json_parse_success = True
+except json.JSONDecodeError:
+    json_parse_success = False
+
+logger.info("parse_outcome", 
+            tier="tier3", 
+            json_parse_success=json_parse_success, 
+            query_hash=_stable_hash(query))
+
+# After schema validation (around line 1295)
+intent = self._extract_query_intent_from_llm_response(response)
+schema_validate_success = intent is not None
+
+logger.info("parse_outcome", 
+            tier="tier3", 
+            schema_validate_success=schema_validate_success,
+            final_returned_from_tier3=schema_validate_success,
+            query_hash=_stable_hash(query))
+```
+
+### 4.3 Update metrics aggregation script
+
+Create [`scripts/analyze_parse_outcomes.py`](scripts/analyze_parse_outcomes.py) with granular checkpoints:
 
 ```python
 #!/usr/bin/env python3
@@ -258,7 +427,7 @@ from collections import Counter
 from pathlib import Path
 
 def analyze_logs(log_file: Path):
-    """Parse structlog output and compute metrics."""
+    """Parse structlog output and compute metrics with granular checkpoints."""
     outcomes = []
     
     with open(log_file) as f:
@@ -280,9 +449,12 @@ def analyze_logs(log_file: Path):
     tier3_outcomes = [o for o in outcomes if o.get("tier") == "tier3"]
     tier3_total = len(tier3_outcomes)
     
-    llm_success = sum(1 for o in tier3_outcomes if o.get("llm_call_success"))
-    json_success = sum(1 for o in tier3_outcomes if o.get("json_parse_success"))
-    schema_success = sum(1 for o in tier3_outcomes if o.get("schema_validate_success"))
+    # Granular checkpoints
+    llm_called = sum(1 for o in tier3_outcomes if o.get("llm_called"))
+    llm_http_success = sum(1 for o in tier3_outcomes if o.get("llm_http_success"))
+    json_parse_success = sum(1 for o in tier3_outcomes if o.get("json_parse_success"))
+    schema_validate_success = sum(1 for o in tier3_outcomes if o.get("schema_validate_success"))
+    final_returned = sum(1 for o in tier3_outcomes if o.get("final_returned_from_tier3"))
     
     print(f"Parse Outcome Analysis")
     print(f"=" * 50)
@@ -293,15 +465,18 @@ def analyze_logs(log_file: Path):
     print(f"  Tier 3 (LLM): {tier3_total} ({tier3_total/total*100:.1f}%)")
     
     if tier3_total > 0:
-        print(f"\nTier 3 Success Rates:")
-        print(f"  LLM call success: {llm_success}/{tier3_total} ({llm_success/tier3_total*100:.1f}%)")
-        print(f"  JSON parse success: {json_success}/{tier3_total} ({json_success/tier3_total*100:.1f}%)")
-        print(f"  Schema validate success: {schema_success}/{tier3_total} ({schema_success/tier3_total*100:.1f}%)")
+        print(f"\nTier 3 Pipeline (Granular Checkpoints):")
+        print(f"  LLM called: {llm_called}/{tier3_total} ({llm_called/tier3_total*100:.1f}%)")
+        print(f"  LLM HTTP success: {llm_http_success}/{tier3_total} ({llm_http_success/tier3_total*100:.1f}%)")
+        print(f"  JSON parse success: {json_parse_success}/{tier3_total} ({json_parse_success/tier3_total*100:.1f}%)")
+        print(f"  Schema validate success: {schema_validate_success}/{tier3_total} ({schema_validate_success/tier3_total*100:.1f}%)")
+        print(f"  Final returned: {final_returned}/{tier3_total} ({final_returned/tier3_total*100:.1f}%)")
     
-    print(f"\nIf Tier 3 rate is <10%, the LLM path is being bypassed.")
-    print(f"If LLM success <80%, prompts aren't reaching the LLM.")
-    print(f"If JSON success <80%, the LLM is returning invalid JSON.")
-    print(f"If schema success <80%, the JSON doesn't match QueryPlan schema.")
+    print(f"\nDiagnostics:")
+    print(f"  Tier 3 rate <10%: LLM path bypassed (lower tier thresholds)")
+    print(f"  LLM HTTP <80%: Ollama unavailable/timing out")
+    print(f"  JSON parse <80%: LLM returning invalid JSON (check model size)")
+    print(f"  Schema validate <80%: Invalid intents (model hallucinating, need 8b+)")
 
 if __name__ == "__main__":
     log_file = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/nl_query.log")
@@ -354,11 +529,26 @@ error="Invalid intent 'FILTER_OUT'..."
 
 ---
 
+---
+
+## Minimal Patch Checklist (All 7 Staff-Level Fixes)
+
+- [ ] **Fix #1**: Engine reads overlay from env var path (`/tmp/nl_query_learning/prompt_overlay.txt` default)
+- [ ] **Fix #2**: Engine caches overlay by mtime (hot reload without disk thrashing)
+- [ ] **Fix #3**: Script writes overlay atomically (temp + replace)
+- [ ] **Fix #4**: EvalHarness creates fresh engine each iteration
+- [ ] **Fix #5**: Use stable SHA256 hashing + granular checkpoints (llm_called, llm_http_success, json_parse_success, schema_validate_success)
+- [ ] **Fix #6**: Keep overlay + instrumentation even with 8b model (verify, don't assume)
+- [ ] **Fix #7**: Cap overlay to top 5 patterns, max 8KB length
+
+---
+
 ## Files Changed
 
-1. [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py) - Add overlay loading
-2. [`scripts/self_improve_nl_parsing.py`](scripts/self_improve_nl_parsing.py) - Write overlay, remove break
-3. [`scripts/analyze_parse_outcomes.py`](scripts/analyze_parse_outcomes.py) - New instrumentation script
+1. [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py) - Overlay loading with caching, stable hashing, granular instrumentation
+2. [`src/clinical_analytics/core/eval_harness.py`](src/clinical_analytics/core/eval_harness.py) - Force fresh engine creation
+3. [`scripts/self_improve_nl_parsing.py`](scripts/self_improve_nl_parsing.py) - Atomic writes, size capping, remove break
+4. [`scripts/analyze_parse_outcomes.py`](scripts/analyze_parse_outcomes.py) - Granular checkpoint metrics
 
 ## Testing Strategy
 
