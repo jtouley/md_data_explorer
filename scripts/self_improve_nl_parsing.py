@@ -125,9 +125,20 @@ def main():
     for iteration in range(1, args.max_iterations + 1):
         logger.info("iteration_start", iteration=iteration)
 
-        # Run evaluation
-        harness = EvalHarness()
-        eval_results = harness.run_evaluation(questions, verbose=False)
+        # Run evaluation with FRESH engine (Fix #4 - picks up overlay changes)
+        # Note: EvalHarness needs semantic_layer - using mock for self-improvement
+        from clinical_analytics.core.semantic import SemanticLayer
+        from unittest.mock import MagicMock
+        
+        # Create mock semantic layer for golden question testing
+        mock_layer = MagicMock(spec=SemanticLayer)
+        mock_layer.get_column_alias_index.return_value = {}
+        mock_layer.available_columns = []
+        
+        harness = EvalHarness(mock_layer)
+        results = harness.evaluate_batch(questions)
+        summary = harness.get_summary(results)
+        eval_results = {"results": results, "summary": summary}
 
         accuracy = eval_results.get("summary", {}).get("accuracy", 0.0)
         logger.info("iteration_evaluation_complete", iteration=iteration, accuracy=accuracy)

@@ -1240,6 +1240,11 @@ Filter extraction (ADR009 Phase 5):
 
         user_prompt = f"Parse this query: {query}"
 
+        # Load and append overlay (auto-generated fixes from self-improvement)
+        overlay = self._load_prompt_overlay()
+        if overlay:
+            system_prompt = system_prompt + "\n\n" + overlay
+
         return (system_prompt, user_prompt)
 
     def _extract_query_intent_from_llm_response(self, response: str, max_retries: int = 3) -> QueryIntent | None:
