@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import from config (single source of truth)
 from clinical_analytics.core.column_parser import parse_column_name
+from clinical_analytics.core.error_translation import translate_error_with_llm
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
@@ -408,7 +409,8 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
     """
     # Check for error results first
     if "error" in result:
-        st.error(f"❌ **Analysis Error**: {result['error']}")
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"], prefix="❌ **Analysis Error**")
         if "available_columns" in result:
             cols_preview = result["available_columns"][:20]
             cols_str = ", ".join(cols_preview)
@@ -621,7 +623,8 @@ def render_count_analysis(result: dict) -> None:
 def render_comparison_analysis(result: dict) -> None:
     """Render comparison analysis from serializable dict inline."""
     if "error" in result:
-        st.error(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"])
         return
 
     st.markdown("#### 📈 Group Comparison")
@@ -714,7 +717,8 @@ def render_comparison_analysis(result: dict) -> None:
 def render_predictor_analysis(result: dict) -> None:
     """Render predictor analysis from serializable dict."""
     if "error" in result:
-        st.error(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"])
         return
 
     st.markdown("## 🎯 Finding Predictors")
@@ -785,7 +789,8 @@ def render_predictor_analysis(result: dict) -> None:
 def render_survival_analysis(result: dict) -> None:
     """Render survival analysis from serializable dict."""
     if "error" in result:
-        st.error(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"])
         if "unique_values" in result:
             st.info(f"Event values found: {result['unique_values']}")
         return
@@ -820,7 +825,8 @@ def render_survival_analysis(result: dict) -> None:
 def render_relationship_analysis(result: dict) -> None:
     """Render relationship analysis from serializable dict with clean, user-friendly output."""
     if "error" in result:
-        st.error(f"❌ **Analysis Error**: {result['error']}")
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"], prefix="❌ **Analysis Error**")
         if "numeric_variables" in result:
             st.info(f"✅ **Numeric variables found**: {', '.join(result['numeric_variables'][:5])}")
         if "non_numeric_variables" in result:
@@ -919,9 +925,10 @@ def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: st
     elif result_type == "count":
         render_count_analysis(result)
     else:
-        st.error(f"Unknown result type: {result_type}")
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(f"Unknown result type: {result_type}", prefix="❌ **Unknown Result Type**")
         if "error" in result:
-            st.error(result["error"])
+            _render_error_with_translation(result["error"])
 
 
 def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
@@ -952,7 +959,8 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                 if status == "pending":
                     st.info("💭 Thinking...")
                 elif status == "error":
-                    st.error(f"❌ Error: {text}")
+                    # ADR009 Phase 4: Show error with LLM translation
+                    _render_error_with_translation(text, prefix="❌ Error")
                 elif status == "completed" and run_key:
                     # Load result from session_state
                     result_key = f"analysis_result:{dataset_version}:{run_key}"
@@ -1401,6 +1409,27 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
         has_filters=len(query_plan.filters) > 0,
         has_explanation=bool(query_plan.explanation),
     )
+
+
+# ADR009 Phase 4: Error Translation
+def _render_error_with_translation(technical_error: str, prefix: str = "❌ **Error**") -> None:
+    """
+    Render error with optional LLM translation (ADR009 Phase 4).
+
+    Shows technical error first, then attempts to provide user-friendly
+    translation if LLM is available.
+
+    Args:
+        technical_error: Technical error message
+        prefix: Prefix for error display (e.g., "❌ **Error**")
+    """
+    # Always show technical error first
+    st.error(f"{prefix}: {technical_error}")
+
+    # Attempt LLM translation (graceful degradation if fails)
+    friendly_message = translate_error_with_llm(technical_error)
+    if friendly_message:
+        st.info(f"💡 **In plain language**: {friendly_message}")
 
 
 # ADR009 Phase 3: Result Interpretation
@@ -1949,12 +1978,15 @@ def main():
                     error_msg = "Execution failed"
                     if execution_result.get("warnings"):
                         error_msg += " - see warnings above for details"
-                    st.error(f"❌ {error_msg}")
+                    # ADR009 Phase 4: Show error with LLM translation
+                    _render_error_with_translation(error_msg, prefix="❌")
             else:
                 # Phase 3.1: No fallback - QueryPlan is required
-                st.error(
-                    "❌ Cannot execute query without QueryPlan. "
-                    "This indicates a problem with query parsing. Please try rephrasing your question."
+                # ADR009 Phase 4: Show error with LLM translation
+                _render_error_with_translation(
+                    "Cannot execute query without QueryPlan. "
+                    "This indicates a problem with query parsing. Please try rephrasing your question.",
+                    prefix="❌",
                 )
                 logger.error(
                     "query_execution_failed_no_queryplan",
@@ -2224,14 +2256,19 @@ def main():
                     # Context not complete - need variable selection, rerun to show UI
                     st.rerun()
             else:
-                st.error("I couldn't understand your question. Please try rephrasing.")
+                # ADR009 Phase 4: Show error with LLM translation
+                _render_error_with_translation("I couldn't understand your question. Please try rephrasing.")
 
         except ValueError:
             # Semantic layer not available
-            st.error("Natural language queries are only available for datasets with semantic layers.")
+            # ADR009 Phase 4: Show error with LLM translation
+            _render_error_with_translation(
+                "Natural language queries are only available for datasets with semantic layers."
+            )
         except Exception as e:
             logger.error("chat_input_query_error", query=query, error=str(e), exc_info=True)
-            st.error(f"Error processing your question: {e}")
+            # ADR009 Phase 4: Show error with LLM translation
+            _render_error_with_translation(f"Error processing your question: {e}")
 
 
 if __name__ == "__main__":
