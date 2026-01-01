@@ -64,6 +64,9 @@ class QueryIntent:
     parsing_attempts: list[dict] = field(default_factory=list)  # What was tried
     failure_reason: str | None = None  # Why it failed
     suggestions: list[str] = field(default_factory=list)  # How to improve query
+    # ADR009 Phase 1: LLM-generated follow-up questions
+    follow_ups: list[str] = field(default_factory=list)  # Context-aware follow-up questions
+    follow_up_explanation: str = ""  # Why these follow-ups are relevant
 
     def __post_init__(self):
         """Validate intent_type."""
@@ -920,11 +923,21 @@ Return JSON matching the QueryPlan schema with these REQUIRED fields:
 - confidence: Your confidence 0.0-1.0
 - explanation: Brief explanation of what the query asks for
 
+OPTIONAL fields for enhanced UX (ADR009):
+- follow_ups: Array of 2-3 context-aware follow-up questions (as suggestions, not endorsements)
+- follow_up_explanation: Brief explanation of why these follow-ups are relevant
+
 Available columns: {columns}
 Aliases: {aliases}
 
 Examples:
 {examples}
+
+Follow-up generation guidelines:
+- Provide 2-3 exploratory questions that build on the current query
+- Questions should be helpful suggestions, not authoritative recommendations
+- Avoid clinical advice territory - focus on data exploration
+- Examples: "What predicts X?", "Compare by Y group", "Are there outliers?"
 
 IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by),
 not legacy names (intent_type, primary_variable, grouping_variable).""".format(
@@ -959,6 +972,7 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                 query_plan = QueryPlan.from_dict(data)
 
                 # Convert validated QueryPlan back to QueryIntent for backward compatibility
+                # ADR009 Phase 1: Preserve follow_ups fields
                 return QueryIntent(
                     intent_type=query_plan.intent,  # type: ignore[arg-type]
                     primary_variable=query_plan.metric,
@@ -966,6 +980,8 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                     confidence=query_plan.confidence,
                     parsing_tier="llm_fallback",
                     filters=query_plan.filters,  # Preserve validated filters
+                    follow_ups=query_plan.follow_ups,  # Preserve LLM-generated follow-ups
+                    follow_up_explanation=query_plan.follow_up_explanation,
                 )
 
             except (ValueError, KeyError) as validation_error:

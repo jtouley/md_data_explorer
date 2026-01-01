@@ -1033,8 +1033,9 @@ def render_result(
     elif query_plan:
         st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
 
-        # PR25: _suggest_follow_ups() removed (disabled partial feature)
-        # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
+    # ADR009 Phase 1: Render LLM-generated follow-up questions
+    if query_plan and query_plan.follow_ups:
+        _render_llm_follow_ups(query_plan, run_key)
 
 
 def execute_analysis_with_idempotency(
@@ -1377,9 +1378,50 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
     )
 
 
-# PR25: _suggest_follow_ups() removed - disabled partial feature
-# Follow-ups will be implemented via LLM-generated QueryPlan.follow_ups field in future
-# When implemented, add: if plan.follow_ups: _render_llm_follow_ups(plan.follow_ups)
+# ADR009 Phase 1: LLM-Generated Follow-Ups
+def _render_llm_follow_ups(plan, run_key: str) -> None:
+    """
+    Render LLM-generated follow-up questions (ADR009 Phase 1).
+
+    Displays context-aware follow-up questions as clickable buttons that prefill
+    the query input. Follow-ups are treated as suggestions, not endorsements.
+
+    Args:
+        plan: QueryPlan with follow_ups and follow_up_explanation fields
+        run_key: Current query run key for logging
+    """
+    if not plan.follow_ups:
+        return  # No follow-ups to render
+
+    st.markdown("---")
+    st.subheader("💡 Explore Further")
+
+    if plan.follow_up_explanation:
+        st.caption(plan.follow_up_explanation)
+
+    # Render follow-up questions as buttons in columns
+    cols = st.columns(min(len(plan.follow_ups), 3))
+    for idx, follow_up in enumerate(plan.follow_ups):
+        col_idx = idx % 3
+        with cols[col_idx]:
+            # Use button with unique key
+            button_key = f"followup_{run_key}_{idx}"
+            if st.button(
+                follow_up,
+                key=button_key,
+                use_container_width=True,
+                help="Click to explore this question",
+            ):
+                # Prefill query input with follow-up question
+                st.session_state["prefilled_query"] = follow_up
+                st.rerun()
+
+    logger.info(
+        "llm_followups_rendered",
+        run_key=run_key,
+        follow_up_count=len(plan.follow_ups),
+        has_explanation=bool(plan.follow_up_explanation),
+    )
 
 
 def get_dataset_version(dataset, dataset_choice: str) -> str:
