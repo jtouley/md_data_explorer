@@ -71,13 +71,12 @@ class Mimic3Dataset(ClinicalDataset):
 
     def get_cohort(self, granularity: Granularity = "patient_level", **filters) -> pd.DataFrame:
         """
-        Return analysis cohort using semantic layer (standard pattern).
+        Return analysis cohort using semantic layer.
 
-        All logic comes from datasets.yaml config.
+        MIMIC-III is patient-level only (for now).
 
         Args:
-            granularity: Grain level (patient_level, admission_level, event_level)
-                        MIMIC-III is patient-level only (for now)
+            granularity: Grain level (must be "patient_level")
             **filters: Optional filters
         """
         # Validate: MIMIC-III is patient-level only (for now)
@@ -88,8 +87,5 @@ class Mimic3Dataset(ClinicalDataset):
             # Return empty DataFrame with correct schema
             return pd.DataFrame(columns=UnifiedCohort.REQUIRED_COLUMNS)
 
-        # Delegate to semantic layer (standard pattern)
-        outcome_col = filters.get("target_outcome")
-        filter_only = {k: v for k, v in filters.items() if k != "target_outcome"}
-
-        return self.semantic.get_cohort(granularity=granularity, outcome_col=outcome_col, filters=filter_only)
+        # Delegate to base class implementation
+        return super().get_cohort(granularity=granularity, **filters)
