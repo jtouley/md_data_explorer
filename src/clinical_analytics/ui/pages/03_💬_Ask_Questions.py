@@ -9,7 +9,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -37,14 +37,31 @@ from clinical_analytics.ui.messages import (
 
 
 # TypedDict schemas for chat transcript and pending state
-class ChatMessage(TypedDict):
-    """Schema for chat transcript messages."""
+class ChatMessage(TypedDict, total=False):
+    """
+    Schema for chat transcript messages.
 
-    role: str  # "user" or "assistant"
-    text: str  # Message text
+    Phase 9 enhancements (Staff Feedback):
+    - Added query_text, assistant_text for better history UX
+    - Added intent, confidence for display without recompute
+    - Made fields optional (total=False) for backward compatibility
+
+    Phase 12 type improvements (Staff Feedback):
+    - Use Literal types for role and status (better type safety)
+    """
+
+    # Core fields (Phase 12: Literal types for better type safety)
+    role: Literal["user", "assistant"]  # Message role
+    text: str  # Message text (user query or assistant response)
     run_key: str | None  # Run key for assistant messages (None for user messages)
-    status: str  # "pending", "completed", "error"
+    status: Literal["pending", "completed", "error"]  # Message status
     created_at: float  # Unix timestamp
+
+    # Phase 9 additions (optional for backward compat)
+    query_text: str | None  # Original user query that produced this result
+    assistant_text: str | None  # What was displayed to user (may differ from text)
+    intent: str | None  # Intent classification (e.g., "DESCRIBE", "COMPARE_GROUPS")
+    confidence: float | None  # Confidence score (0.0-1.0)
 
 
 class Pending(TypedDict):
@@ -1545,6 +1562,50 @@ def main():
             st.rerun()
 
     st.divider()
+
+    # ============================================================================
+    # STATE MACHINE DOCUMENTATION (Per Staff Engineer Feedback)
+    # ============================================================================
+    # The Ask Questions page uses Streamlit session state as a mini state machine
+    # to manage analysis context and execution flow. This is fragile but acceptable for MVP.
+    #
+    # State Keys:
+    #   - analysis_context: AnalysisContext | None
+    #       Stores the current analysis configuration (variables, intent, filters)
+    #       Set when NL query is parsed or user answers clarifying questions
+    #   - intent_signal: "nl_parsed" | None
+    #       Signals that NL parsing completed and context is ready
+    #       Used to trigger analysis execution flow
+    #   - use_nl_query: bool (legacy, may be removed in future)
+    #       Legacy flag for NL query mode (kept for backward compatibility)
+    #
+    # Allowed Transitions:
+    #   1. None -> "nl_parsed"
+    #      Trigger: User submits NL query, parsing succeeds
+    #      Action: Set analysis_context, set intent_signal="nl_parsed"
+    #      Location: After successful NL query parsing (~line 1990)
+    #
+    #   2. "nl_parsed" -> None
+    #      Trigger: User changes dataset, clears conversation, or resets
+    #      Action: Clear analysis_context, set intent_signal=None
+    #      Location: Clear conversation button (~line 1543), dataset change detection
+    #
+    #   3. "nl_parsed" -> "executed" (implicit)
+    #      Trigger: Context is complete, analysis executes
+    #      Action: Execute analysis, render results, keep context for follow-ups
+    #      Location: Analysis execution block (~line 1574-1700)
+    #
+    # Fragility Notes:
+    #   - Order matters: Must check intent_signal before accessing analysis_context
+    #   - Reruns can invalidate assumptions if state is modified mid-cycle
+    #   - Future contributors will break this accidentally without explicit docs
+    #   - State is not validated - invalid states can cause silent failures
+    #
+    # Future Refactor (Post-MVP, see ADR008):
+    #   - Extract to StateManager class with explicit transition methods
+    #   - Add state validation and transition guards
+    #   - Use state machine library (e.g., transitions) for robustness
+    # ============================================================================
 
     # Initialize session state for context
     if "analysis_context" not in st.session_state:

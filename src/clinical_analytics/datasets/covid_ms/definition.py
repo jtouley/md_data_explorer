@@ -51,12 +51,10 @@ class CovidMSDataset(ClinicalDataset):
         """
         Return analysis cohort - SQL generated behind the scenes via Ibis.
 
-        All logic comes from datasets.yaml config. The semantic layer compiles
-        the config into SQL and executes it on-demand.
+        Single-table datasets only support patient_level granularity.
 
         Args:
-            granularity: Grain level (patient_level, admission_level, event_level)
-                        For single-table datasets, defaults to patient_level
+            granularity: Grain level (must be "patient_level" for single-table datasets)
             **filters: Optional filters
         """
         # Validate: single-table datasets only support patient_level
@@ -65,16 +63,5 @@ class CovidMSDataset(ClinicalDataset):
                 f"{self.__class__.__name__} only supports patient_level granularity. Requested: {granularity}"
             )
 
-        # Extract outcome override if provided
-        outcome_col = filters.get("target_outcome")
-
-        # Remove target_outcome from filters (it's not a data filter)
-        filter_only = {k: v for k, v in filters.items() if k != "target_outcome"}
-
-        # Delegate to semantic layer - it generates SQL and executes
-        return self.semantic.get_cohort(
-            granularity=granularity,
-            outcome_col=outcome_col,
-            filters=filter_only,
-            show_sql=False,  # Set to True for debugging
-        )
+        # Delegate to base class implementation
+        return super().get_cohort(granularity=granularity, **filters)

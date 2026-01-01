@@ -1707,7 +1707,23 @@ class SemanticLayer:
         return {"valid": True, "error": None}
 
     def _generate_run_key(self, plan: "QueryPlan", query_text: str | None = None) -> str:
-        """Generate deterministic run_key from canonical plan + query text."""
+        """
+        Generate deterministic run_key from canonical plan + query text.
+
+        Runtime guardrails (Phase 8 - Staff Feedback):
+        - Validates query_text is normalized (if provided)
+        - Enforces contract that query text must be pre-normalized by caller
+
+        Args:
+            plan: QueryPlan to generate key for
+            query_text: Optional query text (must be normalized if provided)
+
+        Returns:
+            str: Deterministic hash key for caching
+
+        Raises:
+            ValueError: If query_text is provided but not normalized
+        """
         # Build canonical plan JSON (sorted for determinism)
         canonical_plan = {
             "intent": plan.intent,
@@ -1729,9 +1745,30 @@ class SemanticLayer:
         }
         canonical_json = json.dumps(canonical_plan, sort_keys=True)
 
-        # Normalize query text
+        # Runtime guardrails: validate query_text is normalized (if provided)
         query_signature = ""
         if query_text:
+            # Check for normalization violations
+            if query_text != query_text.strip():
+                raise ValueError(
+                    f"Query text not normalized: has leading/trailing spaces. "
+                    f"Got: {repr(query_text)}. "
+                    f"Call normalize_query() before passing to _generate_run_key()"
+                )
+            if "  " in query_text:
+                raise ValueError(
+                    f"Query text not normalized: contains double spaces. "
+                    f"Got: {repr(query_text)}. "
+                    f"Call normalize_query() before passing to _generate_run_key()"
+                )
+            if query_text != query_text.lower():
+                raise ValueError(
+                    f"Query text not normalized: not lowercase. "
+                    f"Got: {repr(query_text)}. "
+                    f"Call normalize_query() before passing to _generate_run_key()"
+                )
+
+            # Query is normalized - generate signature
             query_signature = " ".join(query_text.lower().split())
 
         # Build hash

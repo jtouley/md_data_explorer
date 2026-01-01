@@ -1,6 +1,6 @@
 ---
-name: "Address Staff Engineer Feedback: State Machine Documentation and UI DRY Refactoring"
-overview: Address staff engineer feedback by documenting the session state machine, extracting duplicated dataset loading logic into a reusable component, and documenting technical debt for future refactoring. This plan prioritizes high-ROI fixes (UI duplication) while properly documenting architectural debt (state machine, god objects) without premature refactoring. Also includes PR20 fixes: cache primitive correction, empty query rejection, scope canonicalization, runtime guardrails, transcript schema enhancements, pending lifecycle validation, and integration tests.
+name: ""
+overview: "Address staff engineer feedback by documenting the session state machine, extracting duplicated dataset loading logic into a reusable component, and documenting technical debt for future refactoring. This plan prioritizes high-ROI fixes (UI duplication) while properly documenting architectural debt (state machine, god objects) without premature refactoring. Also includes PR20 fixes: cache primitive correction, empty query rejection, scope canonicalization, runtime guardrails, transcript schema enhancements, pending lifecycle validation, and integration tests."
 todos: []
 ---
 
@@ -30,20 +30,21 @@ Staff engineer identified:
 
 ### PR20 Staff Engineer Review (Ask Questions chat transcript + run_key)
 
-Additional feedback on PR20 identified critical fixes needed:
+Additional feedback on PR20 identified critical fixes needed:**P0 (Must-fix)**:
 
-**P0 (Must-fix)**:
 - `st.cache_data` wrong for semantic layer (should be `st.cache_resource`)
 - Empty query rejection at ingestion (normalize returns `""` for `None`, but should reject)
 - Scope canonicalization needs recursive determinism
 
 **P1 (Should-fix)**:
+
 - Runtime guardrails for normalized-only contract (assertions, not just comments)
 - Transcript message schema needs enhancement (query_text, assistant_text, intent, confidence)
 - Pending lifecycle must be proven safe (no infinite rerun loops)
 - Integration tests missing for rerun artifacts
 
 **P2 (Nits)**:
+
 - Type improvements (Literal types, QueryPlan Protocol, Pandas/Polars consistency)
 
 **Verdict**: Approve with changes - architecture shift is correct, but fix cache primitive and empty-query ingestion behavior.
@@ -406,15 +407,11 @@ Staff engineer review identified several architectural concerns that are accepta
 - ADR007: Feature Parity Architecture
 ```
 
+
+
 ### Phase 5: Fix Cache Primitive for Semantic Layer (P0 - Must Fix)
 
-**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
-
-**Issue**: `st.cache_data` is wrong for semantic layer objects. If `get_cached_semantic_layer()` returns non-trivially picklable objects (DB/ibis connections, lazy backends), `st.cache_data` will fail at runtime.
-
-**Fix**: Change from `@st.cache_data` to `@st.cache_resource` for long-lived objects/resources.
-
-**Location**: Find `get_cached_semantic_layer()` function and change decorator:
+**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`**Issue**: `st.cache_data` is wrong for semantic layer objects. If `get_cached_semantic_layer()` returns non-trivially picklable objects (DB/ibis connections, lazy backends), `st.cache_data` will fail at runtime.**Fix**: Change from `@st.cache_data` to `@st.cache_resource` for long-lived objects/resources.**Location**: Find `get_cached_semantic_layer()` function and change decorator:
 
 ```python
 # BEFORE
@@ -435,22 +432,20 @@ def get_cached_semantic_layer(...):
 ```
 
 **Testing**:
+
 - Verify semantic layer caching works correctly
 - Test that connections/backends are preserved across reruns
 - Ensure no pickling errors occur
 
 ### Phase 6: Reject Empty Queries at Ingestion (P0 - Must Fix)
 
-**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
+**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`**Issue**: `normalize_query()` returns `""` for `None`, but the ingestion contract should reject empty queries. Currently, empty queries can:
 
-**Issue**: `normalize_query()` returns `""` for `None`, but the ingestion contract should reject empty queries. Currently, empty queries can:
 - Generate a run_key for `""`
 - Append transcript messages for `""`
 - Attempt computation for `""`
 
-**Fix**: Add early return/no-op for empty normalized queries in the main flow.
-
-**Location**: After query normalization, before run_key generation:
+**Fix**: Add early return/no-op for empty normalized queries in the main flow.**Location**: After query normalization, before run_key generation:
 
 ```python
 # After normalize_query() call
@@ -466,6 +461,7 @@ run_key = generate_run_key(normalized_query, scope)
 ```
 
 **Testing**:
+
 - Test that `None` input is rejected (no run_key, no message, no compute)
 - Test that `""` input is rejected
 - Test that whitespace-only queries are rejected
@@ -473,9 +469,8 @@ run_key = generate_run_key(normalized_query, scope)
 
 ### Phase 7: Recursive Deterministic Scope Canonicalization (P0 - Must Fix)
 
-**File**: `src/clinical_analytics/core/nl_query.py` (or wherever `canonicalize_scope()` lives)
+**File**: `src/clinical_analytics/core/nl_query.py` (or wherever `canonicalize_scope()` lives)**Issue**: Current `canonicalize_scope()` only handles shallow cases (key order, list order). Needs to handle:
 
-**Issue**: Current `canonicalize_scope()` only handles shallow cases (key order, list order). Needs to handle:
 - Nested dict/list structures
 - Non-JSON-native values (enums, dataclasses)
 - Semantically equivalent scopes producing stable output
@@ -526,6 +521,7 @@ def canonicalize_scope(scope: dict | None) -> dict:
 ```
 
 **Testing**:
+
 - Test nested dicts (2+ levels deep)
 - Test nested lists
 - Test mixed dict/list structures
@@ -536,11 +532,7 @@ def canonicalize_scope(scope: dict | None) -> dict:
 
 ### Phase 8: Runtime Guardrails for Normalized-Only Contract (P1 - Should Fix)
 
-**File**: `src/clinical_analytics/core/nl_query.py` (or wherever `generate_run_key()` lives)
-
-**Issue**: Comments don't enforce contracts. `generate_run_key()` should assert that input is already normalized.
-
-**Fix**: Add cheap validation assertions:
+**File**: `src/clinical_analytics/core/nl_query.py` (or wherever `generate_run_key()` lives)**Issue**: Comments don't enforce contracts. `generate_run_key()` should assert that input is already normalized.**Fix**: Add cheap validation assertions:
 
 ```python
 def generate_run_key(
@@ -585,15 +577,15 @@ def generate_run_key(
 ```
 
 **Testing**:
+
 - Test that non-normalized queries raise ValueError
 - Test that normalized queries work correctly
 - Test error messages are clear
 
 ### Phase 9: Enhance Transcript Message Schema (P1 - Should Fix)
 
-**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
+**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`**Issue**: Current `ChatMessage` schema only stores `text` and `run_key`. Future needs:
 
-**Issue**: Current `ChatMessage` schema only stores `text` and `run_key`. Future needs:
 - `query_text`: Original user query that produced this result
 - `assistant_text`: What was displayed to user
 - `intent` / `confidence`: For history UX without recompute
@@ -632,21 +624,19 @@ assistant_message: ChatMessage = {
 ```
 
 **Testing**:
+
 - Test that new fields are populated correctly
 - Test backward compatibility (old messages without new fields)
 - Test that history UX can use intent/confidence without recompute
 
 ### Phase 10: Prove Pending Lifecycle (No Infinite Reruns) (P1 - Should Fix)
 
-**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`
+**File**: `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py`**Issue**: Pending lifecycle must be proven safe. Flow must be:
 
-**Issue**: Pending lifecycle must be proven safe. Flow must be:
 1. Set pending -> `st.rerun()`
 2. On next run, detect pending -> compute -> clear pending -> append assistant message -> `st.rerun()` (optional)
 
-If pending is not cleared on all code paths (error/exception), infinite rerun loops occur.
-
-**Fix**: Add comprehensive error handling and state machine validation:
+If pending is not cleared on all code paths (error/exception), infinite rerun loops occur.**Fix**: Add comprehensive error handling and state machine validation:
 
 ```python
 # Pending state machine
@@ -689,6 +679,7 @@ if "pending_query" in st.session_state:
 ```
 
 **Testing**:
+
 - Test normal flow: pending -> compute -> clear -> message
 - Test error flow: pending -> exception -> clear -> error message (no infinite loop)
 - Test stuck pending detection and cleanup
@@ -696,9 +687,8 @@ if "pending_query" in st.session_state:
 
 ### Phase 11: Integration Tests for Rerun Artifacts (P1 - Should Fix)
 
-**New File**: `tests/ui/test_ask_questions_rerun.py`
+**New File**: `tests/ui/test_ask_questions_rerun.py`**Issue**: Unit tests cover hashing, but integration tests are missing for the original regression:
 
-**Issue**: Unit tests cover hashing, but integration tests are missing for the original regression:
 - "rerun does not create empty emoji containers"
 - "two different queries do not collide run_key (BMI vs LDL style case)"
 
@@ -802,17 +792,20 @@ def test_same_query_different_scope_different_key():
 ```
 
 **Testing**:
+
 - Run integration tests with `make test-integration`
 - Verify all regression cases are covered
 - Ensure tests catch the original bugs if reintroduced
 
 ### Phase 12: Type Improvements (P2 - Nits)
 
-**Files**: 
+**Files**:
+
 - `src/clinical_analytics/ui/pages/3_💬_Ask_Questions.py` (ChatMessage, Pending)
 - Any files using Pandas/Polars interchangeably
 
-**Issue**: 
+**Issue**:
+
 1. `role` and `status` fields should be `Literal` types, not `str`
 2. `Pending.query_plan: object | None` is a smell - should use proper type or Protocol
 3. Avoid passing Pandas/Polars interchangeably unless necessary
@@ -864,6 +857,7 @@ st.dataframe(display_df)
 ```
 
 **Testing**:
+
 - Run `make type-check` to verify type improvements
 - Ensure no type errors introduced
 - Verify Polars-first pattern is followed
@@ -1023,4 +1017,3 @@ st.dataframe(display_df)
 ## Related Work
 
 - ADR001: Query Plan Producer (state machine context)
-- PR20: Ask Questions chat transcript + run_key fixes (Phases 5-12 address staff feedback)

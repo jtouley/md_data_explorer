@@ -365,7 +365,7 @@ def test_execute_query_plan_filter_deduplication(mock_semantic_layer_for_executi
 
 
 def test_execute_query_plan_run_key_determinism(mock_semantic_layer_for_execution):
-    """Verify run_key generated deterministically from canonical plan + query text."""
+    """Verify run_key generated deterministically from canonical plan + query text (Phase 8)."""
     # Arrange
     plan1 = QueryPlan(
         intent="DESCRIBE",
@@ -380,9 +380,12 @@ def test_execute_query_plan_run_key_determinism(mock_semantic_layer_for_executio
         explanation="Describe BMI",
     )
 
+    # Phase 8: Query text must be normalized before passing to execute_query_plan
+    query_text = "average bmi"  # Normalized: lowercase, no extra spaces
+
     # Act
-    result1 = mock_semantic_layer_for_execution.execute_query_plan(plan1, query_text="average BMI")
-    result2 = mock_semantic_layer_for_execution.execute_query_plan(plan2, query_text="average BMI")
+    result1 = mock_semantic_layer_for_execution.execute_query_plan(plan1, query_text=query_text)
+    result2 = mock_semantic_layer_for_execution.execute_query_plan(plan2, query_text=query_text)
 
     # Assert
     # Same plan + same query text should generate same run_key

@@ -86,7 +86,6 @@ class ClinicalDataset(ABC):
         """
         pass
 
-    @abstractmethod
     def get_cohort(
         self,
         granularity: Granularity = "patient_level",
@@ -94,6 +93,10 @@ class ClinicalDataset(ABC):
     ) -> pd.DataFrame:
         """
         Return a standardized analysis dataframe conformant to UnifiedCohort schema.
+
+        Default implementation using semantic layer. Most datasets can use this
+        implementation. Override only if custom logic needed (e.g., granularity
+        validation, special preprocessing).
 
         Args:
             granularity:
@@ -105,7 +108,22 @@ class ClinicalDataset(ABC):
         Returns:
             pd.DataFrame: A DataFrame containing at least the required UnifiedCohort columns.
         """
-        raise NotImplementedError  # Alternative: use ... (ellipsis) for pure style
+        # Extract outcome override if provided
+        outcome_col = filters.pop("target_outcome", None)
+
+        # Delegate to semantic layer - it generates SQL and executes
+        if self._semantic is None:
+            raise ValueError(
+                f"Dataset '{self.name}' does not have semantic layer initialized. "
+                "Call load() first, or override get_cohort() for custom behavior."
+            )
+
+        return self.semantic.get_cohort(
+            granularity=granularity,
+            outcome_col=outcome_col,
+            filters=filters,
+            show_sql=False,
+        )
 
     @classmethod
     def _map_granularity_to_grain(cls, granularity: Granularity) -> Grain:
