@@ -425,3 +425,42 @@ def test_optimizer_full_workflow_analyzes_and_generates_fixes(
     assert log_file.exists()
     log_data = json.loads(log_file.read_text())
     assert log_data["accuracy"] == 0.67
+
+
+def test_optimizer_analyze_failures_with_none_intent_filters_none_values(sample_learning_config):
+    """Test that optimizer filters None from invalid_intents set without crashing."""
+    # Arrange: Create optimizer and test results with None actual_intent
+    optimizer = PromptOptimizer(config=sample_learning_config)
+    test_results = [
+        {
+            "query": "remove the n/a",
+            "expected_intent": "COUNT",
+            "actual_intent": None,  # None value that causes TypeError
+            "passed": False,
+        },
+        {
+            "query": "exclude unknowns",
+            "expected_intent": "DESCRIBE",
+            "actual_intent": None,  # Another None value
+            "passed": False,
+        },
+        {
+            "query": "filter out invalid",
+            "expected_intent": "COUNT",
+            "actual_intent": "FILTER_OUT",  # Valid invalid intent
+            "passed": False,
+        },
+    ]
+
+    # Act: Analyze failures (should not crash with TypeError)
+    patterns = optimizer.analyze_failures(test_results)
+
+    # Assert: Patterns detected without crash
+    assert len(patterns) >= 1
+    invalid_patterns = [p for p in patterns if p.pattern_type == "invalid_intent"]
+    assert len(invalid_patterns) == 1
+
+    # Assert: Generated fix only contains non-None invalid intents
+    fix_text = invalid_patterns[0].suggested_fix
+    assert "FILTER_OUT" in fix_text
+    assert "None" not in fix_text  # None should be filtered out

@@ -12,13 +12,13 @@ todos:
     content: Ensure llama3.1:8b model is installed
     status: in_progress
   - id: overlay-cache-init
-    content: Add overlay cache fields to __init__ (Fix #2)
+    content: Add overlay cache fields to __init__ (Fix
     status: pending
   - id: overlay-path-resolver
-    content: Add _prompt_overlay_path() with env var support (Fix #1)
+    content: Add _prompt_overlay_path() with env var support (Fix
     status: pending
   - id: overlay-load-cached
-    content: Add _load_prompt_overlay() with mtime caching (Fix #2)
+    content: Add _load_prompt_overlay() with mtime caching (Fix
     status: pending
     dependencies:
       - overlay-cache-init
@@ -29,18 +29,18 @@ todos:
     dependencies:
       - overlay-load-cached
   - id: stable-hash-helper
-    content: Add _stable_hash() function using SHA256 (Fix #5)
+    content: Add _stable_hash() function using SHA256 (Fix
     status: pending
   - id: granular-instrumentation
-    content: Add granular checkpoints in parse_query (Fix #5, #6)
+    content: Add granular checkpoints in parse_query (Fix
     status: pending
     dependencies:
       - stable-hash-helper
   - id: overlay-write-atomic
-    content: Add write_prompt_overlay() with atomic writes (Fix #3)
+    content: Add write_prompt_overlay() with atomic writes (Fix
     status: pending
   - id: overlay-size-capping
-    content: Cap patterns + overlay length in main loop (Fix #7)
+    content: Cap patterns + overlay length in main loop (Fix
     status: pending
     dependencies:
       - overlay-write-atomic
@@ -50,7 +50,7 @@ todos:
     dependencies:
       - overlay-size-capping
   - id: fresh-engine
-    content: Force EvalHarness to create fresh engine (Fix #4)
+    content: Force EvalHarness to create fresh engine (Fix
     status: pending
   - id: metrics-script
     content: Create analyze_parse_outcomes.py with granular checkpoints
@@ -85,17 +85,13 @@ The self-improvement script detects failure patterns and generates prompt fixes,
 
 ### RAG System Implemented ✅
 
-**What**: Loads `golden_questions.yaml` as corpus, retrieves similar examples for LLM
-
-**How**: Jaccard similarity on keywords, boosts refinement patterns
-
-**Results**: Modest improvement with 3b model, expect larger gains with 8b
+**What**: Loads `golden_questions.yaml` as corpus, retrieves similar examples for LLM**How**: Jaccard similarity on keywords, boosts refinement patterns**Results**: Modest improvement with 3b model, expect larger gains with 8b
 
 ### Validation
 
 From test logs showing 3b model failures:
 
-```
+```javascript
 [warning] llm_queryplan_validation_failed_trying_legacy_format 
 error="Invalid intent 'FILTER_OUT'. Must be one of ['COUNT'...]"
 
@@ -120,10 +116,7 @@ Implement a hot-reload overlay system where learned fixes are written to a file 
 
 ## Step 1 (REVISED): Add Prompt Overlay Support with Caching
 
-**File**: [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py)
-
-**Critical Fix #1**: Use configurable env var path (default `/tmp/nl_query_learning/`) instead of source tree
-**Critical Fix #2**: Add mtime-based caching to avoid disk I/O on every parse
+**File**: [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py)**Critical Fix #1**: Use configurable env var path (default `/tmp/nl_query_learning/`) instead of source tree**Critical Fix #2**: Add mtime-based caching to avoid disk I/O on every parse
 
 ### 1.1 Update `__init__` to add cache fields
 
@@ -137,6 +130,8 @@ def __init__(self, semantic_layer, embedding_model: str = "all-MiniLM-L6-v2"):
     self._overlay_cache_text = ""
     self._overlay_cache_mtime_ns = 0
 ```
+
+
 
 ### 1.2 Add overlay path resolver (env var support)
 
@@ -165,6 +160,8 @@ def _prompt_overlay_path(self) -> Path:
     # (keeps artifacts out of source tree)
     return Path("/tmp/nl_query_learning/prompt_overlay.txt")
 ```
+
+
 
 ### 1.3 Add overlay loader with mtime caching
 
@@ -204,6 +201,8 @@ def _load_prompt_overlay(self) -> str:
         return ""
 ```
 
+
+
 ### 1.4 Modify `_build_llm_prompt` to append overlay
 
 In [`_build_llm_prompt`](src/clinical_analytics/core/nl_query_engine.py:1043), append overlay **after** constructing full prompt (around line 1260):
@@ -223,10 +222,7 @@ return system_prompt, user_prompt
 
 ## Step 2 (REVISED): Atomic Overlay Writes + Size Capping
 
-**File**: [`scripts/self_improve_nl_parsing.py`](scripts/self_improve_nl_parsing.py)
-
-**Critical Fix #3**: Atomic writes via temp + replace to prevent race conditions
-**Critical Fix #7**: Cap overlay to top 5 patterns, max 8KB length
+**File**: [`scripts/self_improve_nl_parsing.py`](scripts/self_improve_nl_parsing.py)**Critical Fix #3**: Atomic writes via temp + replace to prevent race conditions**Critical Fix #7**: Cap overlay to top 5 patterns, max 8KB length
 
 ### 2.1 Add atomic overlay writer
 
@@ -258,6 +254,8 @@ def write_prompt_overlay(prompt_additions: str, overlay_path: Path) -> None:
     
     logger.info("prompt_overlay_written", path=str(overlay_path), length=len(prompt_additions))
 ```
+
+
 
 ### 2.2 Update main loop with capping + atomic writes
 
@@ -301,9 +299,7 @@ print(f"   Re-running evaluation with updated prompt...")
 
 ## Step 3 (REVISED): Force Fresh Engine Each Iteration
 
-**File**: [`src/clinical_analytics/core/eval_harness.py`](src/clinical_analytics/core/eval_harness.py)
-
-**Critical Fix #4**: EvalHarness must create fresh engine each iteration (picks up new overlay)
+**File**: [`src/clinical_analytics/core/eval_harness.py`](src/clinical_analytics/core/eval_harness.py)**Critical Fix #4**: EvalHarness must create fresh engine each iteration (picks up new overlay)
 
 ### 3.1 Update `run_evaluation()` to create fresh engine
 
@@ -324,16 +320,11 @@ def run_evaluation(self, questions: list[dict], verbose: bool = False) -> dict:
     # ... rest of evaluation logic ...
 ```
 
-**Note**: Break statement already removed in Step 2.2 - loop continues automatically.
-
----
+**Note**: Break statement already removed in Step 2.2 - loop continues automatically.---
 
 ## Step 4 (REVISED): Stable Hashing + Granular Checkpoints
 
-**File**: [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py)
-
-**Critical Fix #5**: Use stable SHA256 hashing (not Python's randomized hash()) + granular success checkpoints
-**Critical Fix #6**: Keep instrumentation even with 8b model (verify, don't assume)
+**File**: [`src/clinical_analytics/core/nl_query_engine.py`](src/clinical_analytics/core/nl_query_engine.py)**Critical Fix #5**: Use stable SHA256 hashing (not Python's randomized hash()) + granular success checkpoints**Critical Fix #6**: Keep instrumentation even with 8b model (verify, don't assume)
 
 ### 4.1 Add stable hash helper
 
@@ -351,6 +342,8 @@ def _stable_hash(s: str) -> str:
     """
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
 ```
+
+
 
 ### 4.2 Add granular instrumentation in `parse_query`
 
@@ -413,6 +406,8 @@ logger.info("parse_outcome",
             final_returned_from_tier3=schema_validate_success,
             query_hash=_stable_hash(query))
 ```
+
+
 
 ### 4.3 Update metrics aggregation script
 
@@ -506,6 +501,8 @@ flowchart TD
     style done fill:#90EE90
 ```
 
+
+
 ### Instrumentation Signals
 
 If accuracy doesn't improve, check metrics:
@@ -520,16 +517,12 @@ If accuracy doesn't improve, check metrics:
 
 If you see these in logs, model is too small:
 
-```
+```javascript
 llm_queryplan_validation_failed_trying_legacy_format 
 error="Invalid intent 'FILTER_OUT'..."
 ```
 
-**Solution**: Upgrade to llama3.1:8b, not more prompt engineering.
-
----
-
----
+**Solution**: Upgrade to llama3.1:8b, not more prompt engineering.------
 
 ## Minimal Patch Checklist (All 7 Staff-Level Fixes)
 
@@ -578,5 +571,3 @@ If accuracy doesn't improve after 3 iterations with 8b model:
 
 1. Check instrumentation metrics
 2. Verify overlay is being loaded
-3. Manually inspect generated fixes
-4. Consider 70b model if available (overkill but guaranteed to work)

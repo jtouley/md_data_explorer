@@ -53,7 +53,7 @@ def load_golden_questions(questions_file: Path) -> list[dict]:
     """Load golden questions from YAML file."""
     with open(questions_file) as f:
         data = yaml.safe_load(f)
-    return data.get("golden_questions", [])
+    return data.get("questions", [])
 
 
 def convert_eval_results_to_optimizer_format(eval_results: dict) -> list[dict]:

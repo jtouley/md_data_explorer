@@ -191,7 +191,7 @@ class PromptOptimizer:
 
         # Add pattern-specific replacements
         if pattern_type == "invalid_intent":
-            invalid_intents = {f.get("actual_intent") for f in failures}
+            invalid_intents = {f.get("actual_intent") for f in failures if f.get("actual_intent") is not None}
             replacements["invalid_intent"] = ", ".join(invalid_intents)
 
         elif pattern_type == "intent_mismatch":
