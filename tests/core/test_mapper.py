@@ -36,6 +36,8 @@ def get_first_available_dataset_config():
 class TestColumnMapper:
     """Test suite for ColumnMapper."""
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_mapper_initialization_with_config(self):
         """Test mapper can be initialized with dataset config."""
         # Arrange: Get config from first available dataset
@@ -49,6 +51,8 @@ class TestColumnMapper:
         assert mapper.config is not None
         assert mapper.column_mapping is not None
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_default_predictors_returns_list(self):
         """Test getting default predictors returns non-empty list."""
         # Arrange: Get config and create mapper
@@ -63,6 +67,8 @@ class TestColumnMapper:
         assert isinstance(predictors, list)
         assert len(predictors) > 0
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_categorical_variables_returns_list(self):
         """Test getting categorical variables returns list."""
         # Arrange: Get config and create mapper
@@ -76,6 +82,8 @@ class TestColumnMapper:
         # Assert: Returns list (may be empty if no categoricals defined)
         assert isinstance(categoricals, list)
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_default_outcome_returns_non_empty_string(self):
         """Test getting default outcome returns non-empty string."""
         # Arrange: Get config and create mapper
@@ -90,6 +98,8 @@ class TestColumnMapper:
         assert isinstance(outcome, str)
         assert len(outcome) > 0
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_default_filters_returns_dict(self):
         """Test getting default filters returns dict."""
         # Arrange: Get config and create mapper
@@ -474,6 +484,8 @@ class TestValueMappingDataQuality:
 class TestConfigLoading:
     """Test suite for config loading functions."""
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_load_dataset_config_returns_valid_dict(self):
         """Test loading dataset configuration returns valid dict."""
         # Arrange: Get first available dataset name
