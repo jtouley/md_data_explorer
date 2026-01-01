@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import from config (single source of truth)
 from clinical_analytics.core.column_parser import parse_column_name
-from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
+from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
+from clinical_analytics.core.result_interpretation import interpret_result_with_llm
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
     AnalysisContext,
@@ -1014,6 +1015,9 @@ def render_result(
     # Render main results inline (no expander, no extra headers)
     render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
 
+    # ADR009 Phase 3: Render LLM result interpretation
+    _render_result_interpretation(result)
+
     # Show interpretation inline (compact, directly under results)
     if query_plan:
         _render_interpretation_inline_compact(query_plan)
@@ -1093,6 +1097,9 @@ def execute_analysis_with_idempotency(
         # Render main results inline (no expander, no extra headers)
         render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
 
+        # ADR009 Phase 3: Render LLM result interpretation
+        _render_result_interpretation(result)
+
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
@@ -1143,6 +1150,17 @@ def execute_analysis_with_idempotency(
             has_error="error" in result,
             dataset_version=dataset_version,
         )
+
+        # ADR009 Phase 3: Generate LLM result interpretation (if enabled)
+        if ENABLE_RESULT_INTERPRETATION and "error" not in result:
+            interpretation = interpret_result_with_llm(result)
+            if interpretation:
+                result["llm_interpretation"] = interpretation
+                logger.debug(
+                    "result_interpretation_added",
+                    run_key=run_key,
+                    interpretation_length=len(interpretation),
+                )
 
         # Store result (serializable format)
         st.session_state[result_key] = result
@@ -1195,6 +1213,9 @@ def execute_analysis_with_idempotency(
 
         # Render main results inline (no expander, no extra headers)
         render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
+
+        # ADR009 Phase 3: Render LLM result interpretation
+        _render_result_interpretation(result)
 
         # Show interpretation inline (compact, directly under results)
         if query_plan:
@@ -1380,6 +1401,24 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
         has_filters=len(query_plan.filters) > 0,
         has_explanation=bool(query_plan.explanation),
     )
+
+
+# ADR009 Phase 3: Result Interpretation
+def _render_result_interpretation(result: dict) -> None:
+    """
+    Render LLM-generated result interpretation (ADR009 Phase 3).
+
+    Displays clinical insights and explanations for the analysis results,
+    helping users understand what the data shows and what it means.
+
+    Args:
+        result: Analysis result dict with optional llm_interpretation field
+    """
+    if not result.get("llm_interpretation"):
+        return  # No interpretation to render
+
+    st.markdown("### 💡 What This Means")
+    st.info(result["llm_interpretation"])
 
 
 # ADR009 Phase 2: Query Interpretation
