@@ -46,7 +46,7 @@ def sample_learning_config():
             },
         ],
         prompt_template="Template: {dynamic_fixes}",
-        logging_config={"enabled": True, "log_dir": "/tmp/test_logs"},
+        logging_config={"enabled": True, "log_dir": None},  # Tests should override with tmp_path
     )
 
 

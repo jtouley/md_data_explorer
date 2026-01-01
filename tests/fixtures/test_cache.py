@@ -8,7 +8,6 @@ Tests verify:
 - Cache invalidation works when data changes
 """
 
-
 import polars as pl
 
 
