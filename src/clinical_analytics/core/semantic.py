@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 else:
     import polars as pl
 
+# Phase 3.3: Import chart_spec generation function
+from clinical_analytics.core.query_plan import generate_chart_spec
+
 logger = logging.getLogger(__name__)
 
 
@@ -1336,7 +1339,14 @@ class SemanticLayer:
             - "run_key": str - Deterministic run key for idempotency
             - "warnings": list[str] - Warnings collected during execution
             - "steps": list[dict] - Step information for progressive thinking indicator (Phase 2.5.1)
+            - "chart_spec": dict | None - Chart specification for visualization (Phase 3.3)
         """
+        # Phase 3.2: Log execution start for contract enforcement and observability
+        logger.debug(
+            f"execute_query_plan called: intent={plan.intent}, metric={plan.metric}, "
+            f"group_by={plan.group_by}, confidence={plan.confidence:.2f}"
+        )
+
         # Phase 2.5.1: Initialize steps list (core layer generates step data)
         steps: list[dict[str, Any]] = []
 
@@ -1393,6 +1403,21 @@ class SemanticLayer:
         # Step 6: Generate run_key (always generate)
         run_key = self._generate_run_key(plan, query_text)
 
+        # Phase 3.3: Generate chart_spec from QueryPlan (deterministic, tied to plan)
+        chart_spec_obj = generate_chart_spec(plan)
+        # Convert ChartSpec dataclass to dict (or None if not visualizable)
+        chart_spec = (
+            {
+                "type": chart_spec_obj.type,
+                "x": chart_spec_obj.x,
+                "y": chart_spec_obj.y,
+                "group_by": chart_spec_obj.group_by,
+                "title": chart_spec_obj.title,
+            }
+            if chart_spec_obj
+            else None
+        )
+
         # Step 7: Executing query (Phase 2.5.1)
         steps.append(
             {
@@ -1428,6 +1453,7 @@ class SemanticLayer:
                 "run_key": run_key,
                 "warnings": warnings,
                 "steps": steps,  # Phase 2.5.1: Core provides step data
+                "chart_spec": chart_spec,  # Phase 3.3: Chart specification for visualization
             }
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)
@@ -1447,6 +1473,7 @@ class SemanticLayer:
                 "run_key": run_key,
                 "warnings": warnings,
                 "steps": steps,  # Phase 2.5.1: Core provides step data
+                "chart_spec": chart_spec,  # Phase 3.3: Chart specification (still included on error)
             }
 
     def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:  # type: ignore[valid-type]
@@ -1462,18 +1489,23 @@ class SemanticLayer:
 
         Returns:
             Formatted result dict compatible with render_analysis_by_type()
+            Phase 3.3: Now includes chart_spec from execution_result
         """
+        # Phase 3.3: Extract chart_spec from execution_result
+        chart_spec = execution_result.get("chart_spec")
+
         if not execution_result.get("success"):
             return {
                 "type": "error",
                 "error": execution_result.get("warnings", ["Execution failed"])[0]
                 if execution_result.get("warnings")
                 else "Execution failed",
+                "chart_spec": chart_spec,  # Phase 3.3: Include chart_spec even on error
             }
 
         result_df = execution_result.get("result")
         if result_df is None:
-            return {"type": "error", "error": "No result data"}
+            return {"type": "error", "error": "No result data", "chart_spec": chart_spec}
 
         # Normalize result to Polars DataFrame (handle scalar edge cases)
         # _execute_plan always returns pd.DataFrame, but normalize for safety
@@ -1492,19 +1524,24 @@ class SemanticLayer:
         # Do NOT call compute_analysis_by_type() - it expects raw cohort, not aggregated results
         query_plan = getattr(context, "query_plan", None)
         if not query_plan:
-            return {"type": "error", "error": "QueryPlan required for formatting"}
+            return {"type": "error", "error": "QueryPlan required for formatting", "chart_spec": chart_spec}
 
         # Format based on intent
+        # Phase 3.3: Pass chart_spec to formatting methods
         if query_plan.intent == "COUNT":
-            return self._format_count_result(result_df_pl, query_plan, context)
+            formatted = self._format_count_result(result_df_pl, query_plan, context)
         elif query_plan.intent == "DESCRIBE":
-            return self._format_describe_result(result_df_pl, query_plan, context)
+            formatted = self._format_describe_result(result_df_pl, query_plan, context)
         else:
             # For other intents, return basic format (will be enhanced in Phase 3.3)
-            return {
+            formatted = {
                 "type": "unknown",
                 "error": f"Formatting not yet implemented for intent: {query_plan.intent}",
             }
+
+        # Phase 3.3: Add chart_spec to formatted result
+        formatted["chart_spec"] = chart_spec
+        return formatted
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
         """Format COUNT result DataFrame to result dict format."""

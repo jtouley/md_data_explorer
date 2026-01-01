@@ -50,6 +50,75 @@ class QueryPlan:
     entity_key: str | None = None  # For COUNT: entity to count (e.g., "patient_id")
     scope: Literal["all", "filtered"] = "all"  # For COUNT: count all rows vs filtered cohort
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "QueryPlan":
+        """
+        Create QueryPlan from dictionary with validation (Phase 5.2).
+
+        Validates:
+        - Intent is one of allowed values
+        - Confidence is in [0.0, 1.0]
+        - All required fields are present
+
+        Args:
+            data: Dictionary with QueryPlan fields
+
+        Returns:
+            QueryPlan instance
+
+        Raises:
+            ValueError: If validation fails
+            KeyError: If required fields are missing
+        """
+        # Validate required field: intent
+        if "intent" not in data:
+            raise ValueError("QueryPlan requires 'intent' field")
+
+        intent = data["intent"]
+
+        # Validate intent is one of allowed values
+        valid_intents = ["COUNT", "DESCRIBE", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]
+        if intent not in valid_intents:
+            raise ValueError(f"Invalid intent '{intent}'. Must be one of {valid_intents}")
+
+        # Extract and validate confidence
+        confidence = float(data.get("confidence", 0.0))
+        # Clamp confidence to [0.0, 1.0]
+        confidence = max(0.0, min(1.0, confidence))
+
+        # Extract filters (convert dicts to FilterSpec if needed)
+        filters_data = data.get("filters", [])
+        filters = []
+        if isinstance(filters_data, list):
+            for f in filters_data:
+                if isinstance(f, FilterSpec):
+                    filters.append(f)
+                elif isinstance(f, dict):
+                    # Convert dict to FilterSpec
+                    filters.append(
+                        FilterSpec(
+                            column=f["column"],
+                            operator=f["operator"],
+                            value=f["value"],
+                            exclude_nulls=f.get("exclude_nulls", True),
+                        )
+                    )
+
+        # Create QueryPlan with validated fields
+        return cls(
+            intent=intent,
+            metric=data.get("metric"),
+            group_by=data.get("group_by"),
+            filters=filters,
+            confidence=confidence,
+            explanation=data.get("explanation", ""),
+            run_key=data.get("run_key"),
+            requires_filters=data.get("requires_filters", False),
+            requires_grouping=data.get("requires_grouping", False),
+            entity_key=data.get("entity_key"),
+            scope=data.get("scope", "all"),
+        )
+
 
 def generate_chart_spec(plan: QueryPlan) -> ChartSpec | None:
     """

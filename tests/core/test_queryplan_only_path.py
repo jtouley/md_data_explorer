@@ -43,7 +43,7 @@ class TestQueryPlanOnlyPath:
         from pathlib import Path
 
         ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "3_💬_Ask_Questions.py"
+        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
 
         # Read and parse the file
         with open(ask_questions_file) as f:
@@ -69,7 +69,7 @@ class TestQueryPlanOnlyPath:
         from pathlib import Path
 
         ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "3_💬_Ask_Questions.py"
+        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
 
         with open(ask_questions_file) as f:
             tree = ast.parse(f.read())
@@ -91,7 +91,7 @@ class TestQueryPlanOnlyPath:
         from pathlib import Path
 
         ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "3_💬_Ask_Questions.py"
+        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
 
         with open(ask_questions_file) as f:
             source = f.read()
@@ -118,7 +118,7 @@ class TestQueryPlanOnlyPath:
         from pathlib import Path
 
         ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "3_💬_Ask_Questions.py"
+        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
 
         with open(ask_questions_file) as f:
             source = f.read()

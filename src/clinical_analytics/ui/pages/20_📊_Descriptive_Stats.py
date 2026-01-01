@@ -136,7 +136,7 @@ def main():
     gate_v1_mvp_legacy_page()  # Stops execution if gated
 
     # NOW do heavy imports (after gate)
-    from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+    from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 
     st.title("📊 Descriptive Statistics")
     st.markdown("""
@@ -144,51 +144,16 @@ def main():
     No statistical tests, just clear descriptions of your data.
     """)
 
-    # Dataset selection in sidebar
-    st.sidebar.header("Data Selection")
+    # Dataset selection (Phase 8.2: Use reusable component)
+    result = render_dataset_selector(show_semantic_scope=False)
+    if result is None:
+        return  # No datasets available (error message already shown)
 
-    # Load available datasets - only user uploads
-    dataset_display_names = {}
-    uploaded_datasets = {}
-    try:
-        uploads = UploadedDatasetFactory.list_available_uploads()
-        for upload in uploads:
-            upload_id = upload["upload_id"]
-            dataset_name = upload.get("dataset_name", upload_id)
-            display_name = f"📤 {dataset_name}"
-            dataset_display_names[display_name] = upload_id
-            uploaded_datasets[upload_id] = upload
-    except Exception as e:
-        st.sidebar.warning(f"Could not load uploaded datasets: {e}")
+    dataset, cohort, dataset_choice, dataset_version = result
 
-    if not dataset_display_names:
-        st.error("No datasets found! Please upload data using the 'Add Your Data' page.")
-        st.info("👈 Go to **Add Your Data** to upload your first dataset")
+    if cohort.empty:
+        st.error("No data in dataset")
         return
-
-    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
-
-    dataset_choice = dataset_display_names[dataset_choice_display]
-
-    # Load dataset (always uploaded)
-    with st.spinner(f"Loading {dataset_choice_display}..."):
-        try:
-            dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
-            dataset.load()
-            cohort = dataset.get_cohort()
-
-            if cohort.empty:
-                st.error("No data in dataset")
-                return
-        except Exception as e:
-            st.error(f"Error loading dataset: {str(e)}")
-            st.exception(e)
-            return
-
-        except Exception as e:
-            st.error(f"Error loading dataset: {e}")
-            st.exception(e)
-            return
 
     # Show data overview
     st.markdown("## 📋 Data Overview")
