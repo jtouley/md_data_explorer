@@ -50,7 +50,7 @@ def _load_ollama_config() -> dict[str, Any]:
         "base_url": "http://localhost:11434",
         "default_model": "llama3.1:8b",
         "fallback_model": "llama3.2:3b",
-        "timeout_seconds": 5.0,
+        "timeout_seconds": 30.0,
         "max_retries": 3,
         "json_mode": True,
         "min_confidence": 0.5,
@@ -116,3 +116,23 @@ OLLAMA_JSON_MODE = (
 # Tier 3 confidence thresholds (Phase 0 success vs Phase 3 execution gate)
 TIER_3_MIN_CONFIDENCE = _ollama_config["min_confidence"]
 TIER_3_EXECUTION_THRESHOLD = _ollama_config["execution_threshold"]
+
+# ADR009: LLM Feature-Specific Timeout Configuration (Pre-Phase)
+# Each feature has its own timeout based on complexity
+# Error translation should be fast (5s) - users are already frustrated by error
+# Result interpretation can be longer (20s) - users expect thoughtful analysis
+# Query parsing is most complex (30s) - requires understanding schema and intent
+LLM_TIMEOUT_PARSE_S: float = float(os.getenv("LLM_TIMEOUT_PARSE_S", "30.0"))
+LLM_TIMEOUT_FOLLOWUPS_S: float = float(os.getenv("LLM_TIMEOUT_FOLLOWUPS_S", "30.0"))
+LLM_TIMEOUT_INTERPRETATION_S: float = float(os.getenv("LLM_TIMEOUT_INTERPRETATION_S", "30.0"))
+LLM_TIMEOUT_RESULT_INTERPRETATION_S: float = float(os.getenv("LLM_TIMEOUT_RESULT_INTERPRETATION_S", "20.0"))
+LLM_TIMEOUT_ERROR_TRANSLATION_S: float = float(os.getenv("LLM_TIMEOUT_ERROR_TRANSLATION_S", "5.0"))
+LLM_TIMEOUT_FILTER_EXTRACTION_S: float = float(os.getenv("LLM_TIMEOUT_FILTER_EXTRACTION_S", "30.0"))
+
+# Hard cap: prevents increasing timeouts to "fix" issues
+# If any feature needs more than 30s, investigate model size or prompt complexity
+LLM_TIMEOUT_MAX_S: float = float(os.getenv("LLM_TIMEOUT_MAX_S", "30.0"))
+
+# ADR009: Feature Flags
+# Enable/disable LLM-enhanced features independently
+ENABLE_RESULT_INTERPRETATION: bool = os.getenv("ENABLE_RESULT_INTERPRETATION", "true").lower() == "true"

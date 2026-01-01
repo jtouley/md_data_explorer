@@ -22,7 +22,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import from config (single source of truth)
 from clinical_analytics.core.column_parser import parse_column_name
-from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
+from clinical_analytics.core.error_translation import translate_error_with_llm
+from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
+from clinical_analytics.core.result_interpretation import interpret_result_with_llm
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
     AnalysisContext,
@@ -407,7 +409,8 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
     """
     # Check for error results first
     if "error" in result:
-        st.error(f"❌ **Analysis Error**: {result['error']}")
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"], prefix="❌ **Analysis Error**")
         if "available_columns" in result:
             cols_preview = result["available_columns"][:20]
             cols_str = ", ".join(cols_preview)
@@ -620,7 +623,8 @@ def render_count_analysis(result: dict) -> None:
 def render_comparison_analysis(result: dict) -> None:
     """Render comparison analysis from serializable dict inline."""
     if "error" in result:
-        st.error(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"])
         return
 
     st.markdown("#### 📈 Group Comparison")
@@ -713,7 +717,8 @@ def render_comparison_analysis(result: dict) -> None:
 def render_predictor_analysis(result: dict) -> None:
     """Render predictor analysis from serializable dict."""
     if "error" in result:
-        st.error(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"])
         return
 
     st.markdown("## 🎯 Finding Predictors")
@@ -784,7 +789,8 @@ def render_predictor_analysis(result: dict) -> None:
 def render_survival_analysis(result: dict) -> None:
     """Render survival analysis from serializable dict."""
     if "error" in result:
-        st.error(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"])
         if "unique_values" in result:
             st.info(f"Event values found: {result['unique_values']}")
         return
@@ -819,7 +825,8 @@ def render_survival_analysis(result: dict) -> None:
 def render_relationship_analysis(result: dict) -> None:
     """Render relationship analysis from serializable dict with clean, user-friendly output."""
     if "error" in result:
-        st.error(f"❌ **Analysis Error**: {result['error']}")
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(result["error"], prefix="❌ **Analysis Error**")
         if "numeric_variables" in result:
             st.info(f"✅ **Numeric variables found**: {', '.join(result['numeric_variables'][:5])}")
         if "non_numeric_variables" in result:
@@ -918,9 +925,10 @@ def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: st
     elif result_type == "count":
         render_count_analysis(result)
     else:
-        st.error(f"Unknown result type: {result_type}")
+        # ADR009 Phase 4: Show error with LLM translation
+        _render_error_with_translation(f"Unknown result type: {result_type}", prefix="❌ **Unknown Result Type**")
         if "error" in result:
-            st.error(result["error"])
+            _render_error_with_translation(result["error"])
 
 
 def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
@@ -951,7 +959,8 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                 if status == "pending":
                     st.info("💭 Thinking...")
                 elif status == "error":
-                    st.error(f"❌ Error: {text}")
+                    # ADR009 Phase 4: Show error with LLM translation
+                    _render_error_with_translation(text, prefix="❌ Error")
                 elif status == "completed" and run_key:
                     # Load result from session_state
                     result_key = f"analysis_result:{dataset_version}:{run_key}"
@@ -1014,6 +1023,9 @@ def render_result(
     # Render main results inline (no expander, no extra headers)
     render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
 
+    # ADR009 Phase 3: Render LLM result interpretation
+    _render_result_interpretation(result)
+
     # Show interpretation inline (compact, directly under results)
     if query_plan:
         _render_interpretation_inline_compact(query_plan)
@@ -1033,8 +1045,13 @@ def render_result(
     elif query_plan:
         st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
 
-        # PR25: _suggest_follow_ups() removed (disabled partial feature)
-        # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
+    # ADR009 Phase 2: Render LLM-generated query interpretation
+    if query_plan:
+        _render_query_interpretation(query_plan)
+
+    # ADR009 Phase 1: Render LLM-generated follow-up questions
+    if query_plan and query_plan.follow_ups:
+        _render_llm_follow_ups(query_plan, run_key)
 
 
 def execute_analysis_with_idempotency(
@@ -1088,6 +1105,9 @@ def execute_analysis_with_idempotency(
         # Render main results inline (no expander, no extra headers)
         render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
 
+        # ADR009 Phase 3: Render LLM result interpretation
+        _render_result_interpretation(result)
+
         # Show interpretation inline (compact, directly under results)
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
@@ -1139,6 +1159,17 @@ def execute_analysis_with_idempotency(
             dataset_version=dataset_version,
         )
 
+        # ADR009 Phase 3: Generate LLM result interpretation (if enabled)
+        if ENABLE_RESULT_INTERPRETATION and "error" not in result:
+            interpretation = interpret_result_with_llm(result)
+            if interpretation:
+                result["llm_interpretation"] = interpretation
+                logger.debug(
+                    "result_interpretation_added",
+                    run_key=run_key,
+                    interpretation_length=len(interpretation),
+                )
+
         # Store result (serializable format)
         st.session_state[result_key] = result
         st.session_state[f"last_run_key:{dataset_version}"] = run_key
@@ -1162,6 +1193,7 @@ def execute_analysis_with_idempotency(
         # Add entry (lightweight: headline, not full result dict)
         # Limit to last 20 queries to prevent memory bloat
         max_conversation_history = 20
+        # Add to conversation history with context for refinement detection (ADR009 Phase 6)
         st.session_state["conversation_history"].append(
             {
                 "query": query_text,
@@ -1170,6 +1202,9 @@ def execute_analysis_with_idempotency(
                 "run_key": run_key,
                 "timestamp": time.time(),
                 "filters_applied": filters_applied,
+                # Add group_by and metric for refinement context
+                "group_by": context.group_by_var if hasattr(context, "group_by_var") else None,
+                "metric": context.primary_var if hasattr(context, "primary_var") else None,
             }
         )
 
@@ -1190,6 +1225,9 @@ def execute_analysis_with_idempotency(
 
         # Render main results inline (no expander, no extra headers)
         render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
+
+        # ADR009 Phase 3: Render LLM result interpretation
+        _render_result_interpretation(result)
 
         # Show interpretation inline (compact, directly under results)
         if query_plan:
@@ -1377,9 +1415,113 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
     )
 
 
-# PR25: _suggest_follow_ups() removed - disabled partial feature
-# Follow-ups will be implemented via LLM-generated QueryPlan.follow_ups field in future
-# When implemented, add: if plan.follow_ups: _render_llm_follow_ups(plan.follow_ups)
+# ADR009 Phase 4: Error Translation
+def _render_error_with_translation(technical_error: str, prefix: str = "❌ **Error**") -> None:
+    """
+    Render error with optional LLM translation (ADR009 Phase 4).
+
+    Shows technical error first, then attempts to provide user-friendly
+    translation if LLM is available.
+
+    Args:
+        technical_error: Technical error message
+        prefix: Prefix for error display (e.g., "❌ **Error**")
+    """
+    # Always show technical error first
+    st.error(f"{prefix}: {technical_error}")
+
+    # Attempt LLM translation (graceful degradation if fails)
+    friendly_message = translate_error_with_llm(technical_error)
+    if friendly_message:
+        st.info(f"💡 **In plain language**: {friendly_message}")
+
+
+# ADR009 Phase 3: Result Interpretation
+def _render_result_interpretation(result: dict) -> None:
+    """
+    Render LLM-generated result interpretation (ADR009 Phase 3).
+
+    Displays clinical insights and explanations for the analysis results,
+    helping users understand what the data shows and what it means.
+
+    Args:
+        result: Analysis result dict with optional llm_interpretation field
+    """
+    if not result.get("llm_interpretation"):
+        return  # No interpretation to render
+
+    st.markdown("### 💡 What This Means")
+    st.info(result["llm_interpretation"])
+
+
+# ADR009 Phase 2: Query Interpretation
+def _render_query_interpretation(plan) -> None:
+    """
+    Render LLM-generated query interpretation (ADR009 Phase 2).
+
+    Displays human-readable explanation of what the query is asking and why
+    the confidence score is what it is. Helps users understand how their
+    question was parsed without needing to inspect technical QueryPlan fields.
+
+    Args:
+        plan: QueryPlan with interpretation and confidence_explanation fields
+    """
+    if not plan.interpretation and not plan.confidence_explanation:
+        return  # No interpretation to render
+
+    # Only show interpretation section if we have content
+    if plan.interpretation:
+        st.info(f"**Understanding your question:** {plan.interpretation}")
+
+    # Show confidence explanation if confidence is not high or if explanation exists
+    if plan.confidence_explanation and plan.confidence < 0.9:
+        st.caption(f"*Confidence note:* {plan.confidence_explanation}")
+
+
+# ADR009 Phase 1: LLM-Generated Follow-Ups
+def _render_llm_follow_ups(plan, run_key: str) -> None:
+    """
+    Render LLM-generated follow-up questions (ADR009 Phase 1).
+
+    Displays context-aware follow-up questions as clickable buttons that prefill
+    the query input. Follow-ups are treated as suggestions, not endorsements.
+
+    Args:
+        plan: QueryPlan with follow_ups and follow_up_explanation fields
+        run_key: Current query run key for logging
+    """
+    if not plan.follow_ups:
+        return  # No follow-ups to render
+
+    st.markdown("---")
+    st.subheader("💡 Explore Further")
+
+    if plan.follow_up_explanation:
+        st.caption(plan.follow_up_explanation)
+
+    # Render follow-up questions as buttons in columns
+    cols = st.columns(min(len(plan.follow_ups), 3))
+    for idx, follow_up in enumerate(plan.follow_ups):
+        col_idx = idx % 3
+        with cols[col_idx]:
+            # Use button with unique key
+            button_key = f"followup_{run_key}_{idx}"
+            if st.button(
+                follow_up,
+                key=button_key,
+                use_container_width=True,
+                help="Click to explore this question",
+            ):
+                # Prefill query input with follow-up question
+                st.session_state["prefilled_query"] = follow_up
+                st.rerun()
+
+    logger.info(
+        "llm_followups_rendered",
+        run_key=run_key,
+        follow_up_count=len(plan.follow_ups),
+        has_explanation=bool(plan.follow_up_explanation),
+    )
 
 
 def get_dataset_version(dataset, dataset_choice: str) -> str:
@@ -1840,12 +1982,15 @@ def main():
                     error_msg = "Execution failed"
                     if execution_result.get("warnings"):
                         error_msg += " - see warnings above for details"
-                    st.error(f"❌ {error_msg}")
+                    # ADR009 Phase 4: Show error with LLM translation
+                    _render_error_with_translation(error_msg, prefix="❌")
             else:
                 # Phase 3.1: No fallback - QueryPlan is required
-                st.error(
-                    "❌ Cannot execute query without QueryPlan. "
-                    "This indicates a problem with query parsing. Please try rephrasing your question."
+                # ADR009 Phase 4: Show error with LLM translation
+                _render_error_with_translation(
+                    "Cannot execute query without QueryPlan. "
+                    "This indicates a problem with query parsing. Please try rephrasing your question.",
+                    prefix="❌",
                 )
                 logger.error(
                     "query_execution_failed_no_queryplan",
@@ -2048,7 +2193,18 @@ def main():
             from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
             nl_engine = NLQueryEngine(semantic_layer)
-            query_intent = nl_engine.parse_query(normalized_query, dataset_id=dataset_id, upload_id=upload_id)
+
+            # Get conversation history for context-aware parsing (ADR009 Phase 6)
+            # Limit to last 3 queries for performance and relevance
+            conversation_history = st.session_state.get("conversation_history", [])
+            recent_history = conversation_history[-3:] if len(conversation_history) > 3 else conversation_history
+
+            query_intent = nl_engine.parse_query(
+                normalized_query,
+                dataset_id=dataset_id,
+                upload_id=upload_id,
+                conversation_history=recent_history,
+            )
 
             if query_intent:
                 # Convert QueryIntent to AnalysisContext (similar to ask_free_form_question logic)
@@ -2115,14 +2271,19 @@ def main():
                     # Context not complete - need variable selection, rerun to show UI
                     st.rerun()
             else:
-                st.error("I couldn't understand your question. Please try rephrasing.")
+                # ADR009 Phase 4: Show error with LLM translation
+                _render_error_with_translation("I couldn't understand your question. Please try rephrasing.")
 
         except ValueError:
             # Semantic layer not available
-            st.error("Natural language queries are only available for datasets with semantic layers.")
+            # ADR009 Phase 4: Show error with LLM translation
+            _render_error_with_translation(
+                "Natural language queries are only available for datasets with semantic layers."
+            )
         except Exception as e:
             logger.error("chat_input_query_error", query=query, error=str(e), exc_info=True)
-            st.error(f"Error processing your question: {e}")
+            # ADR009 Phase 4: Show error with LLM translation
+            _render_error_with_translation(f"Error processing your question: {e}")
 
 
 if __name__ == "__main__":

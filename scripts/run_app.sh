@@ -19,6 +19,45 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
+# Global variables for cleanup
+OLLAMA_PID=""
+STOP_OLLAMA_ON_EXIT="${STOP_OLLAMA_ON_EXIT:-true}"
+
+# Cleanup function - called on script exit
+cleanup() {
+    echo ""
+    echo -e "${YELLOW}🛑 Shutting down...${NC}"
+    
+    # Stop Ollama if we started it AND flag is set
+    if [ -n "$OLLAMA_PID" ] && [ "$STOP_OLLAMA_ON_EXIT" = "true" ]; then
+        echo -e "${YELLOW}   Stopping Ollama service (PID: $OLLAMA_PID)...${NC}"
+        kill "$OLLAMA_PID" 2>/dev/null || true
+        
+        # Also stop any running models gracefully
+        if command -v ollama >/dev/null 2>&1; then
+            # Get list of running models and stop them
+            ollama ps --format json 2>/dev/null | \
+                python3 -c "import sys, json; models=json.load(sys.stdin).get('models', []); [print(m['name']) for m in models]" 2>/dev/null | \
+                while read -r model; do
+                    if [ -n "$model" ]; then
+                        echo -e "${CYAN}     Stopping model: $model${NC}"
+                        ollama stop "$model" 2>/dev/null || true
+                    fi
+                done
+        fi
+        
+        echo -e "${GREEN}✓ Ollama stopped${NC}"
+    elif [ -n "$OLLAMA_PID" ]; then
+        echo -e "${CYAN}ℹ Keeping Ollama service running (PID: $OLLAMA_PID)${NC}"
+    fi
+    
+    echo -e "${GREEN}✓ Cleanup complete${NC}"
+    exit 0
+}
+
+# Register cleanup on script exit
+trap cleanup EXIT INT TERM
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -89,20 +128,22 @@ install_ollama() {
 start_ollama_service() {
     # Check if service is already running
     if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ Ollama service already running${NC}"
+        # Don't set OLLAMA_PID - we didn't start it
         return 0
     fi
     
     echo -e "${YELLOW}🚀 Starting Ollama service...${NC}"
     
-    # Start Ollama in background
-    nohup ollama serve > /tmp/ollama.log 2>&1 &
+    # Start Ollama in background (remove nohup to allow cleanup)
+    ollama serve > /tmp/ollama.log 2>&1 &
     OLLAMA_PID=$!
     
     # Wait for service to start (max 10 seconds)
     for i in {1..10}; do
         sleep 1
         if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-            echo -e "${GREEN}✓ Ollama service started${NC}"
+            echo -e "${GREEN}✓ Ollama service started (PID: $OLLAMA_PID)${NC}"
             return 0
         fi
     done

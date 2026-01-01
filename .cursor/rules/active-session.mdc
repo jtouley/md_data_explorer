@@ -1,27 +1,35 @@
----
-description: Active development session reference
-globs: 
-alwaysApply: true
----
+# Active Session Rule
 
-# Active Session: pr21-feedback-merge-ready
+**Session ID**: `llm_nested_json_fix_complete`
 
-## Session File
-`.context/sessions/pr21-feedback-merge-ready.yaml`
+**Status**: COMPLETE
+
+**Session File**: `.context/sessions/llm_nested_json_fix_complete.yaml`
 
 ## Resume Prompt
-Resume PR21 feedback implementation session.
-Branch: feat/queryplan-as-product-critical-fixes
-Commit: 535a86a
-Status: All PR21 fixes implemented and verified. Ready for merge.
 
-Blockers addressed:
-1. hash(query_text) replaced with sha256 - verified no remaining hash() calls
-2. Mapper NULL handling - verified downstream consumers use drop_nulls()
+Session resumed: LLM nested JSON fix complete
 
-Next action: Merge PR or address any additional reviewer feedback.
+Root cause: LLM was generating invalid nested structures like:
+{ "query": { "remove": [...], "recalc": true } }
+instead of flat QueryPlan schema with top-level "intent" field.
 
-## Key Context
-- Semantic layer owns run_key generation (PR21 architecture)
-- 786 tests passing, 17 failing (dataset availability, not PR21-related)
-- All quality gates green (lint, format)
+Solution implemented:
+- Added test: test_llm_rejects_nested_query_object_structure (PASSED)
+- Strengthened LLM prompt with explicit FLAT JSON requirement
+- Added anti-pattern examples in prompt showing invalid nested structures
+- Enhanced conversation context with clear refinement detection rules
+
+Test results: 589/610 passing (21 pre-existing failures, no regressions)
+Commit: 877a052 pushed to feat/adr009-llm-enhanced-ux
+
+This session is complete. LLM prompt now explicitly rejects nested structures.
+
+## Context
+
+- **Ticket**: LLM generating invalid nested JSON structures for refinement queries
+- **Gate**: implementation_complete
+- **Key Files**: 
+  - tests/core/test_nl_query_llm_constrained.py
+  - src/clinical_analytics/core/nl_query_engine.py
+- **ADRs**: ADR009 (LLM-enhanced UX)

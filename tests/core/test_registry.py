@@ -16,20 +16,41 @@ from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.registry import DatasetRegistry
 
 
-def get_first_available_dataset():
+def get_first_available_dataset(discovered_datasets):
     """
-    Helper to get first available dataset from registry.
+    Get first available dataset from cached discovery.
+
+    Performance optimization: Uses session-scoped fixture to avoid
+    expensive dataset discovery on every test call.
+
+    Args:
+        discovered_datasets: Session-scoped fixture with cached datasets
 
     Returns:
         str: Name of first available dataset, or None if none available
     """
-    DatasetRegistry.reset()
-    DatasetRegistry.discover_datasets()
-    DatasetRegistry.load_config()
-    datasets = DatasetRegistry.list_datasets()
-    # Filter out built-in datasets (covid_ms, mimic3, sepsis) and uploaded class
-    available = [d for d in datasets if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]]
-    return available[0] if available else None
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    available = discovered_datasets["available"]
+
+    if not available:
+        logger.warning(
+            "test_registry_no_datasets_available",
+            all_datasets=discovered_datasets["all_datasets"],
+            reason="all datasets filtered out or none discovered",
+        )
+        return None
+
+    selected = available[0]
+    logger.info(
+        "test_registry_dataset_selected",
+        selected_dataset=selected,
+        available_options=available,
+    )
+
+    return selected
 
 
 class TestDatasetRegistry:
@@ -83,11 +104,12 @@ class TestDatasetRegistry:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_get_dataset_factory_creates_instance(self):
+    def test_get_dataset_factory_creates_instance(self, discovered_datasets):
         """Test factory method creates dataset instance."""
         # Arrange
-        dataset_name = get_first_available_dataset()
-        assert dataset_name is not None, "No datasets available for testing"
+        dataset_name = get_first_available_dataset(discovered_datasets)
+        if dataset_name is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
 
         # Act: Create dataset via factory
         dataset = DatasetRegistry.get_dataset(dataset_name)
@@ -208,11 +230,12 @@ class TestDatasetRegistry:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_get_dataset_with_override_params_applies_overrides(self):
+    def test_get_dataset_with_override_params_applies_overrides(self, discovered_datasets):
         """Test getting dataset with override parameters applies overrides."""
         # Arrange
-        dataset_name = get_first_available_dataset()
-        assert dataset_name is not None, "No datasets available for testing"
+        dataset_name = get_first_available_dataset(discovered_datasets)
+        if dataset_name is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
 
         # Act: Get dataset with override params
         dataset = DatasetRegistry.get_dataset(dataset_name, source_path="/custom/path")
@@ -224,11 +247,12 @@ class TestDatasetRegistry:
 
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_registry_filters_unsupported_params_without_error(self, caplog):
+    def test_registry_filters_unsupported_params_without_error(self, discovered_datasets, caplog):
         """Test that registry filters out unsupported init params without error."""
         # Arrange
-        dataset_name = get_first_available_dataset()
-        assert dataset_name is not None, "No datasets available for testing"
+        dataset_name = get_first_available_dataset(discovered_datasets)
+        if dataset_name is None:
+            pytest.skip("No datasets available for testing - skipping integration test")
 
         # Act: Get dataset with extra params that may not be supported
         with caplog.at_level("INFO"):

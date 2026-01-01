@@ -22,12 +22,23 @@ configure_logging()
 from clinical_analytics.ui.ollama_init import initialize_ollama  # noqa: E402
 
 ollama_status = initialize_ollama()
+
+# Show prominent UI feedback about Ollama status
 if not ollama_status["ready"]:
-    # Log warning but don't block app startup
+    # Log warning
     import logging  # noqa: E402
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Ollama initialization: {ollama_status['message']}")
+    logger.warning(f"Ollama not ready: {ollama_status['message']}")
+
+    # Show warning banner in UI (after streamlit imports below)
+    # This will be displayed at the top of every page
+elif ollama_status.get("auto_downloaded"):
+    # Success! Auto-download worked
+    import logging  # noqa: E402
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Ollama auto-download successful: {ollama_status['message']}")
 
 # Imports after logging config (intentional - logging must be configured first)
 from clinical_analytics.analysis.stats import run_logistic_regression  # noqa: E402
@@ -36,6 +47,25 @@ from clinical_analytics.core.schema import UnifiedCohort  # noqa: E402
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory  # noqa: E402
 from clinical_analytics.ui.config import V1_MVP_MODE  # noqa: E402
 from clinical_analytics.ui.helpers import require_outcome  # noqa: E402
+
+
+def show_ollama_status_banner():
+    """Display Ollama status banner at top of app."""
+    if not ollama_status["ready"]:
+        # Not ready - show prominent warning
+        st.warning(
+            f"🤖 **LLM Models Not Available**\n\n"
+            f"{ollama_status['message']}\n\n"
+            f"Natural language queries will use basic pattern matching until models are ready. "
+            f"For best results, ensure Ollama is properly configured.",
+            icon="⚠️",
+        )
+    elif ollama_status.get("auto_downloaded"):
+        # Just downloaded - show success message
+        st.success(
+            f"✅ {ollama_status['message']}\n\nAdvanced natural language query parsing is now available!",
+            icon="✅",
+        )
 
 
 def display_data_profiling(cohort: pd.DataFrame, dataset_name: str):
@@ -218,6 +248,10 @@ def main():
 
     # Development/testing mode: Keep existing dataset selection
     st.title("🏥 Clinical Analytics Platform")
+
+    # Show Ollama status banner
+    show_ollama_status_banner()
+
     st.markdown("Multi-dataset clinical analytics with unified schema")
 
     # DYNAMIC DATASET DISCOVERY - Only user uploads
