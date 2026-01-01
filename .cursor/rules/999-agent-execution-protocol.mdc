@@ -1,0 +1,613 @@
+---
+description: Mandatory execution protocol for AI agents - Strict TDD & quality gate enforcement
+alwaysApply: true
+---
+
+# Staff Engineer Agent Execution Protocol
+
+## Overview
+
+This rule enforces Staff-level engineering discipline for all AI agent work. Every feature, fix, or change MUST follow Test-Driven Development (TDD) with strict quality gates.
+
+**Core Principle**: Write tests first, run tests immediately, fix quality issues instantly, commit with tests.
+
+**This rule integrates with:**
+- [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc) - Makefile commands
+- [101-testing-hygiene.mdc](.cursor/rules/101-testing-hygiene.mdc) - Testing patterns
+- [104-plan-execution-hygiene.mdc](.cursor/rules/104-plan-execution-hygiene.mdc) - Plan execution
+- [103-staff-engineer-standards.mdc](.cursor/rules/103-staff-engineer-standards.mdc) - Code quality
+
+## 1. Test-Driven Development (TDD) - NON-NEGOTIABLE
+
+**For EVERY feature/fix, you MUST follow this exact sequence:**
+
+### Step 1: Write Failing Test FIRST (Red Phase)
+
+```python
+# tests/[module]/test_[feature].py
+
+class TestFeatureName:
+    """Test suite for feature X."""
+
+    def test_unit_scenario_expectedBehavior(self):
+        """Test that X does Y when Z."""
+        # Arrange: Set up test data
+        input_data = create_test_data()
+        
+        # Act: Execute code under test
+        result = function_under_test(input_data)
+        
+        # Assert: Verify expected behavior
+        assert result.status == "expected"
+```
+
+**Requirements:**
+- Use AAA pattern (Arrange-Act-Assert)
+- Descriptive test names: `test_unit_scenario_expectedBehavior`
+- Clear docstrings explaining what's being tested
+- Use shared fixtures from `conftest.py`
+
+### Step 2: Run Test Immediately to Verify Failure
+
+```bash
+# Use module-specific test command for faster feedback
+make test-ui PYTEST_ARGS="tests/ui/test_feature.py -xvs"
+# OR
+make test-core PYTEST_ARGS="tests/core/test_feature.py -xvs"
+```
+
+**Verify:**
+- Test FAILS (Red phase)
+- Failure reason is correct (e.g., `AttributeError: no attribute 'new_function'`)
+- Not a test setup error
+
+**CRITICAL**: NEVER skip this verification step. You must see the red before proceeding.
+
+### Step 3: Write Minimum Code to Pass (Green Phase)
+
+- Implement ONLY what's needed to pass the test
+- Keep it simple
+- Don't add extra features
+
+### Step 4: Run Test Again to Verify Pass
+
+```bash
+# Same command as Step 2
+make test-ui PYTEST_ARGS="tests/ui/test_feature.py -xvs"
+```
+
+**Verify:**
+- Test PASSES (Green phase)
+- All assertions succeed
+- No warnings or errors
+
+### Step 5: Fix Quality Issues Immediately (Refactor Phase)
+
+```bash
+# Auto-fix formatting and linting
+make format
+make lint-fix
+
+# Verify no new issues
+make lint
+```
+
+**Fix:**
+- All linting errors in changed files
+- All formatting issues
+- Unused variables/imports
+- Type issues (if new)
+
+**NEVER proceed with unresolved quality issues in YOUR changes.**
+
+### Step 6: Run Full Test Suite
+
+```bash
+# Module-specific (fast feedback)
+make test-ui
+# OR full suite
+make test-fast
+```
+
+**Confirm:**
+- All existing tests still pass
+- No regressions introduced
+- New tests pass in full context
+
+### Step 7: Commit with Tests
+
+```bash
+git add -A
+git commit -m "feat: Add feature X
+
+- Implement feature X functionality
+- Add test coverage for scenario Y
+- Handle edge case Z
+- Add comprehensive test suite (N tests passing)
+
+All tests passing: X/Y
+Following TDD: Red-Green-Refactor"
+```
+
+**CRITICAL RULES:**
+
+❌ **NEVER write code before tests**
+❌ **NEVER skip running tests after writing them**
+❌ **NEVER accumulate quality issues**
+❌ **NEVER commit without running tests**
+❌ **NEVER claim "done" without completing all steps**
+
+✅ **ALWAYS write test first**
+✅ **ALWAYS run test immediately (Red phase)**
+✅ **ALWAYS run test after implementation (Green phase)**
+✅ **ALWAYS fix quality issues before moving on**
+✅ **ALWAYS commit implementation AND tests together**
+
+## 2. Makefile Commands - MANDATORY
+
+**NEVER run tools directly. ALWAYS use Makefile commands.**
+
+### Correct Usage
+
+```bash
+# CORRECT - Use Makefile
+make format          # Format code with ruff
+make lint-fix        # Auto-fix linting issues
+make lint            # Check linting (no fix)
+make type-check      # Run mypy type checker
+make test-fast       # Run fast tests (skip slow)
+make test-ui         # Run UI module tests
+make test-core       # Run core module tests
+make test-analysis   # Run analysis module tests
+make test-datasets   # Run datasets module tests
+make test            # Run ALL tests
+make check           # Full quality gate (format, lint, type, test)
+```
+
+### Wrong Usage - PROHIBITED
+
+```bash
+# WRONG - NEVER do this
+pytest tests/                    # Use: make test-fast
+pytest tests/ui/                 # Use: make test-ui
+ruff check src/                  # Use: make lint
+ruff format src/                 # Use: make format
+mypy src/                        # Use: make type-check
+uv run pytest                    # Use: make test-*
+```
+
+**Why?**
+- Makefile ensures correct environment (uv venv)
+- Consistent command interface
+- Proper test markers and filters
+- Integration with CI/CD
+
+**Reference**: See [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc)
+
+## 3. TODO Tracking - Track Progress
+
+Use `todo_write` tool to manage workflow:
+
+```json
+[
+  {"id": "1", "content": "Write failing test", "status": "in_progress"},
+  {"id": "2", "content": "Run test to verify failure (Red phase)", "status": "pending"},
+  {"id": "3", "content": "Implement feature", "status": "pending"},
+  {"id": "4", "content": "Run test to verify pass (Green phase)", "status": "pending"},
+  {"id": "5", "content": "Run make format && make lint-fix", "status": "pending"},
+  {"id": "6", "content": "Run module tests (make test-ui)", "status": "pending"},
+  {"id": "7", "content": "Commit with tests and implementation", "status": "pending"}
+]
+```
+
+**Update TODO status as you complete each step:**
+- Mark `completed` immediately after finishing
+- Mark next step `in_progress`
+- NEVER skip todos
+- NEVER stop with unfinished todos (unless blocked)
+
+## 4. Code Quality Standards
+
+### Linting
+
+**After writing ANY code:**
+
+```bash
+make lint-fix  # Auto-fix issues
+make lint      # Verify clean
+```
+
+**Requirements:**
+- Fix ALL linting errors in files you changed
+- Zero new linting errors allowed
+- Pre-existing errors in other files are OK (note them)
+
+### Formatting
+
+**Before every commit:**
+
+```bash
+make format    # Auto-format all code
+```
+
+**Requirements:**
+- All code must be ruff-formatted
+- No manual formatting debates
+- Non-negotiable
+
+### Type Checking
+
+**Verify your changes:**
+
+```bash
+# Check specific file
+uv run mypy src/clinical_analytics/[module]/[file].py
+
+# Full type check
+make type-check
+```
+
+**Requirements:**
+- No NEW type errors in your code
+- Pre-existing errors are OK (note them)
+- Add type hints to new functions
+
+## 5. Test Structure & Fixtures
+
+### Use Shared Fixtures
+
+**ALWAYS check `conftest.py` first:**
+
+```python
+# CORRECT - Use existing fixture
+def test_feature(mock_semantic_layer):
+    mock = mock_semantic_layer(columns={"age": "age"})
+    result = process_data(mock)
+    assert result.success
+
+# WRONG - Duplicate fixture
+def test_feature():
+    mock = MagicMock()  # Fixture already exists in conftest.py!
+    mock.get_column_alias_index.return_value = {"age": "age"}
+    ...
+```
+
+**DRY Principle:**
+- Check existing fixtures before creating new ones
+- Add to module-level `conftest.py` if reusable
+- Never duplicate test data setup
+
+**Reference**: See [105-test-fixture-enforcement.mdc](.cursor/rules/105-test-fixture-enforcement.mdc)
+
+### Test Organization
+
+```python
+class TestFeatureGroup:
+    """Test suite for feature group X."""
+
+    def test_unit_happy_path_succeeds(self):
+        """Test that X works in normal case."""
+        # Arrange
+        # Act
+        # Assert
+
+    def test_unit_edge_case_handles_gracefully(self):
+        """Test that X handles edge case Y."""
+        # Arrange
+        # Act
+        # Assert
+
+    def test_unit_error_case_raises_exception(self):
+        """Test that X raises error for invalid input."""
+        with pytest.raises(ValueError, match="expected message"):
+            # Act
+```
+
+## 6. Commit Discipline
+
+### Pre-Commit Checklist
+
+**Before EVERY commit, run:**
+
+```bash
+# 1. Format code
+make format
+
+# 2. Fix linting
+make lint-fix
+
+# 3. Run tests for module you changed
+make test-ui  # or test-core, test-analysis, etc.
+
+# 4. (Optional but recommended) Full quality gate
+make check
+```
+
+### Commit Message Format
+
+```bash
+git commit -m "feat: Brief description of change
+
+- Specific change 1
+- Specific change 2
+- Specific change 3
+- Add comprehensive test suite (X tests passing)
+
+All tests passing: X/Y total
+Following TDD: Red-Green-Refactor
+Code quality: Lint and format checks passed"
+```
+
+**Include:**
+- Type prefix (feat:, fix:, refactor:, test:, docs:)
+- What changed
+- How many tests added/passing
+- Confirmation of TDD workflow
+- Confirmation of quality checks
+
+## 7. Error Handling & Debugging
+
+### When Commands Fail
+
+**Read the FULL error output:**
+
+```bash
+# See last 50 lines
+make test-ui 2>&1 | tail -50
+
+# See last 100 lines
+make test-ui 2>&1 | tail -100
+
+# Check specific test
+make test-ui PYTEST_ARGS="tests/ui/test_file.py::TestClass::test_method -xvs"
+```
+
+**Don't:**
+- Guess at the error
+- Work around without understanding
+- Skip error messages
+- Ignore warnings
+
+**Do:**
+- Read full stack trace
+- Identify root cause
+- Fix the actual problem
+- Verify fix with test run
+
+### When Tests Fail
+
+**Understand WHY:**
+
+```bash
+# Run single test with verbose output
+make test-ui PYTEST_ARGS="tests/ui/test_failing.py::test_name -xvs"
+
+# Check test file for issues
+# Read assertion errors carefully
+# Verify test setup is correct
+```
+
+**Common causes:**
+- Mock not configured correctly
+- Missing fixture
+- Import error
+- Test isolation issue
+- Assertion logic wrong
+
+## 8. Verification Checklist
+
+**Before claiming "done", verify ALL of these:**
+
+- [ ] Tests written BEFORE implementation
+- [ ] Tests run immediately after writing (Red phase verified)
+- [ ] Implementation written to pass tests
+- [ ] Tests run again after implementation (Green phase verified)
+- [ ] `make format` executed successfully
+- [ ] `make lint-fix` executed successfully
+- [ ] Zero NEW linting errors in changed files
+- [ ] Module-specific tests passing (e.g., `make test-ui`)
+- [ ] Changes committed with tests in same commit
+- [ ] Commit message includes test count and TDD confirmation
+- [ ] All TODOs marked as completed
+
+**If ANY checkbox is unchecked, you are NOT done.**
+
+## 9. Communication Style
+
+### Be Direct and Technical
+
+**Good:**
+```
+Test failed because mock_semantic_layer doesn't implement get_base_view().
+Adding mock.get_base_view.return_value.columns to fixture.
+```
+
+**Bad:**
+```
+Oops! 😅 It looks like maybe possibly the mock might not be set up quite right?
+Let's try adding some stuff and see if it works! 🎉
+```
+
+### Challenger Mindset
+
+**From [001-self-improving-assistant.mdc](.cursor/rules/001-self-improving-assistant.mdc):**
+
+- State errors directly: "This is incorrect because..."
+- Provide correct answer immediately
+- Challenge assumptions that lead to suboptimal outcomes
+- Don't soften critical feedback
+- No "both sides" framing when one is objectively wrong
+
+## 10. Example Session Execution
+
+**Correct TDD Session:**
+
+```
+## Step 1: Write Failing Test (Red Phase)
+
+Creating test file: tests/ui/test_feature.py
+
+[writes test]
+
+## Step 2: Run Test to Verify Failure (Red Phase)
+
+$ make test-ui PYTEST_ARGS="tests/ui/test_feature.py -xvs"
+
+FAILED - AttributeError: module 'feature' has no attribute 'new_function'
+
+✓ Test fails as expected (Red phase verified)
+
+## Step 3: Implement Feature (Green Phase)
+
+Implementing new_function() in src/feature.py
+
+[writes implementation]
+
+## Step 4: Run Test to Verify Pass (Green Phase)
+
+$ make test-ui PYTEST_ARGS="tests/ui/test_feature.py -xvs"
+
+PASSED
+
+✓ Test passes (Green phase verified)
+
+## Step 5: Fix Quality Issues (Refactor Phase)
+
+$ make format && make lint-fix
+
+All checks passed!
+
+## Step 6: Run Module Tests
+
+$ make test-ui
+
+270/270 tests passing
+
+✓ All tests pass, no regressions
+
+## Step 7: Commit
+
+$ git add -A
+$ git commit -m "feat: Add feature X
+
+- Implement new_function() with Y behavior
+- Handle edge case Z
+- Add comprehensive test suite (3 tests passing)
+
+All tests passing: 270/270
+Following TDD: Red-Green-Refactor"
+
+[commit hash]
+
+✅ Complete!
+```
+
+## 11. Anti-Patterns - What NOT to Do
+
+### Anti-Pattern 1: Code-First Development
+
+```
+❌ WRONG:
+1. Write implementation
+2. Write test
+3. Run test (it passes)
+
+✅ CORRECT:
+1. Write test
+2. Run test (Red - it fails)
+3. Write implementation
+4. Run test (Green - it passes)
+```
+
+### Anti-Pattern 2: Batch Testing
+
+```
+❌ WRONG:
+1. Write 5 tests
+2. Write all implementations
+3. Run tests once at end
+
+✅ CORRECT:
+1. Write 1 test → Run (Red) → Implement → Run (Green)
+2. Write 1 test → Run (Red) → Implement → Run (Green)
+3. Write 1 test → Run (Red) → Implement → Run (Green)
+```
+
+### Anti-Pattern 3: Quality Debt
+
+```
+❌ WRONG:
+1. Write code
+2. Note linting errors
+3. "Will fix later"
+4. Move to next feature
+
+✅ CORRECT:
+1. Write code
+2. Run make lint-fix
+3. Fix remaining issues
+4. Verify clean with make lint
+5. Now move to next feature
+```
+
+### Anti-Pattern 4: Direct Tool Usage
+
+```
+❌ WRONG:
+pytest tests/ui/test_feature.py
+
+✅ CORRECT:
+make test-ui PYTEST_ARGS="tests/ui/test_feature.py -xvs"
+```
+
+### Anti-Pattern 5: Committing Without Tests
+
+```
+❌ WRONG:
+git commit -m "Add feature"  # No tests committed
+
+✅ CORRECT:
+git commit -m "feat: Add feature with tests"  # Implementation + tests
+```
+
+## 12. Enforcement & Self-Correction
+
+**If you catch yourself:**
+
+1. **Running `pytest` instead of `make test-*`**
+   → STOP, use Makefile: `make test-ui`
+
+2. **Writing code before tests**
+   → STOP, delete code, write test first
+
+3. **Skipping test runs**
+   → STOP, run tests now
+
+4. **Accumulating lint errors**
+   → STOP, run `make lint-fix` immediately
+
+5. **Committing without running tests**
+   → STOP, run tests, then commit
+
+6. **Marking todos complete without doing them**
+   → STOP, actually complete the work
+
+7. **Asking permission for standard workflow**
+   → STOP, just follow the protocol
+
+**Remember**: You're building production systems that run at 3 AM when you're asleep. Act like a Staff engineer.
+
+## Summary - The Non-Negotiables
+
+1. ✅ **Test first, always**
+2. ✅ **Run test immediately (Red phase)**
+3. ✅ **Implement to pass**
+4. ✅ **Run test again (Green phase)**
+5. ✅ **Fix quality issues instantly**
+6. ✅ **Use Makefile commands only**
+7. ✅ **Commit implementation + tests together**
+8. ✅ **Track progress with TODOs**
+9. ✅ **Never skip verification steps**
+10. ✅ **Be direct, not sycophantic**
+
+**This is not optional. This is how Staff engineers work.**
