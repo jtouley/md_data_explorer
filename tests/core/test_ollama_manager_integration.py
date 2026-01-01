@@ -100,6 +100,7 @@ def test_ollama_manager_setup_instructions(ollama_manager):
     assert "Ollama" in instructions
 
 
+@pytest.mark.slow
 def test_ollama_manager_end_to_end(ollama_manager):
     """End-to-end test: verify OllamaManager can generate a response."""
     status = ollama_manager.get_status()

@@ -27,7 +27,7 @@ class TestQueryNormalization:
             / "clinical_analytics"
             / "ui"
             / "pages"
-            / "3_💬_Ask_Questions.py"
+            / "03_💬_Ask_Questions.py"
         )
         spec = importlib.util.spec_from_file_location("ask_questions", page_path)
         ask_questions = importlib.util.module_from_spec(spec)
@@ -53,7 +53,7 @@ class TestQueryNormalization:
             / "clinical_analytics"
             / "ui"
             / "pages"
-            / "3_💬_Ask_Questions.py"
+            / "03_💬_Ask_Questions.py"
         )
         spec = importlib.util.spec_from_file_location("ask_questions", page_path)
         ask_questions = importlib.util.module_from_spec(spec)
@@ -78,7 +78,7 @@ class TestQueryNormalization:
             / "clinical_analytics"
             / "ui"
             / "pages"
-            / "3_💬_Ask_Questions.py"
+            / "03_💬_Ask_Questions.py"
         )
         spec = importlib.util.spec_from_file_location("ask_questions", page_path)
         ask_questions = importlib.util.module_from_spec(spec)
@@ -104,7 +104,7 @@ class TestQueryNormalization:
             / "clinical_analytics"
             / "ui"
             / "pages"
-            / "3_💬_Ask_Questions.py"
+            / "03_💬_Ask_Questions.py"
         )
         spec = importlib.util.spec_from_file_location("ask_questions", page_path)
         ask_questions = importlib.util.module_from_spec(spec)
@@ -130,7 +130,7 @@ class TestQueryNormalization:
             / "clinical_analytics"
             / "ui"
             / "pages"
-            / "3_💬_Ask_Questions.py"
+            / "03_💬_Ask_Questions.py"
         )
         spec = importlib.util.spec_from_file_location("ask_questions", page_path)
         ask_questions = importlib.util.module_from_spec(spec)
@@ -156,7 +156,7 @@ class TestQueryNormalization:
             / "clinical_analytics"
             / "ui"
             / "pages"
-            / "3_💬_Ask_Questions.py"
+            / "03_💬_Ask_Questions.py"
         )
         spec = importlib.util.spec_from_file_location("ask_questions", page_path)
         ask_questions = importlib.util.module_from_spec(spec)

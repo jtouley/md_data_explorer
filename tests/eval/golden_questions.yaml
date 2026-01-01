@@ -1,0 +1,167 @@
+# Golden Questions - Regression Test Suite
+#
+# These are known-good queries that should parse correctly.
+# Use eval harness to track parsing accuracy over time:
+#   python tests/eval/run_eval.py tests/eval/golden_questions.yaml
+#
+# Format:
+#   - id: unique identifier
+#     query: natural language query
+#     expected_intent: COUNT | DESCRIBE | COMPARE_GROUPS | FIND_PREDICTORS | CORRELATIONS
+#     expected_metric: column name or null
+#     expected_group_by: column name or null
+#     expected_filters: list of filter specs (optional)
+#     notes: explanation (optional)
+
+questions:
+  # COUNT queries
+  - id: count_all_basic
+    query: "how many patients?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: null
+    notes: "Basic count - no grouping, no filters"
+
+  - id: count_with_grouping
+    query: "how many patients by status?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "status"
+    notes: "Count with breakdown by categorical variable"
+
+  - id: count_with_breakdown_keyword
+    query: "how many patients broken down by treatment?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "treatment"
+    notes: "Broken down variant of grouping"
+
+  # DESCRIBE queries
+  - id: describe_single_variable
+    query: "what is the average age?"
+    expected_intent: DESCRIBE
+    expected_metric: "age"
+    expected_group_by: null
+    notes: "Simple descriptive stats for one variable"
+
+  - id: describe_with_grouping
+    query: "average age by gender"
+    expected_intent: DESCRIBE
+    expected_metric: "age"
+    expected_group_by: "gender"
+    notes: "Descriptive stats with grouping"
+
+  - id: describe_distribution
+    query: "describe cholesterol levels"
+    expected_intent: DESCRIBE
+    expected_metric: "cholesterol"
+    expected_group_by: null
+    notes: "Full distribution (mean, median, std)"
+
+  # COMPARE_GROUPS queries
+  - id: compare_two_groups
+    query: "compare LDL between treatment and control"
+    expected_intent: COMPARE_GROUPS
+    expected_metric: "LDL"
+    expected_group_by: "treatment"
+    notes: "Statistical comparison between groups"
+
+  - id: compare_by_status
+    query: "compare age across different statuses"
+    expected_intent: COMPARE_GROUPS
+    expected_metric: "age"
+    expected_group_by: "status"
+    notes: "Multi-group comparison"
+
+  # Queries with filters
+  - id: count_with_categorical_filter
+    query: "how many active patients?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: null
+    # NOTE: Filter extraction for "active" without explicit column name requires schema knowledge
+    # This is a known limitation - parser would need to infer that "active" maps to "status" column
+    notes: "Count query - filter extraction requires schema knowledge"
+
+  - id: describe_with_numeric_filter
+    query: "average cholesterol for patients over 50"
+    expected_intent: DESCRIBE
+    expected_metric: "cholesterol"
+    expected_group_by: null
+    expected_filters:
+      - column: "age"
+        operator: ">"
+        value: 50
+    notes: "Descriptive stats with numeric filter"
+
+  - id: count_with_exclusion_filter
+    query: "how many patients excluding those with missing data?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: null
+    # NOTE: Filter extraction requires knowing which column has "missing data" - needs schema knowledge
+    notes: "Count query - filter extraction requires schema knowledge"
+
+  # Edge cases
+  - id: count_with_breakdown_and_filter
+    query: "how many active patients by treatment group?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "treatment"
+    # NOTE: Filter extraction for "active" requires schema knowledge
+    notes: "COUNT with grouping - filter extraction requires schema knowledge"
+
+  - id: describe_with_multiple_keywords
+    query: "what is the mean and median age?"
+    expected_intent: DESCRIBE
+    expected_metric: "age"
+    expected_group_by: null
+    notes: "Multiple statistical keywords (both map to DESCRIBE)"
+
+  - id: count_total_variant
+    query: "total number of patients"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: null
+    notes: "Alternative phrasing for count"
+
+  - id: describe_summary_stats
+    query: "summarize BMI statistics"
+    expected_intent: DESCRIBE
+    expected_metric: "BMI"
+    expected_group_by: null
+    notes: "Summary/summarize keyword → DESCRIBE"
+
+  # Real production queries (from user logs)
+  - id: statin_count_breakdown
+    query: "what statins were those patients on, broken down by count of patients per statin?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin"
+    notes: "Real user query - count by statin type"
+
+  - id: exclude_na_statin_count
+    query: "remove the n/a (0) - what statins were patients on?"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin"
+    expected_filters:
+      - column: "statin"
+        operator: "!="
+        value: 0
+    notes: "Real user query - exclude n/a values (regression test for filter extraction bug)"
+
+  # Ambiguous queries (low confidence expected)
+  - id: ambiguous_breakdown
+    query: "show me the data"
+    expected_intent: DESCRIBE
+    expected_metric: null
+    expected_group_by: null
+    notes: "Vague query - should have low confidence"
+
+  - id: ambiguous_comparison
+    query: "compare the groups"
+    expected_intent: COMPARE_GROUPS
+    expected_metric: null
+    expected_group_by: null
+    notes: "Vague comparison - missing which variable to compare"

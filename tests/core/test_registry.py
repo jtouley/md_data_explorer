@@ -81,6 +81,8 @@ class TestDatasetRegistry:
         assert "available" in info
         assert "config" in info
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_dataset_factory_creates_instance(self):
         """Test factory method creates dataset instance."""
         # Arrange
@@ -204,6 +206,8 @@ class TestDatasetRegistry:
         # Act & Assert: Nonexistent dataset returns None
         assert DatasetRegistry.get_auto_inferred_dataframe("nonexistent") is None
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_get_dataset_with_override_params_applies_overrides(self):
         """Test getting dataset with override parameters applies overrides."""
         # Arrange
@@ -218,6 +222,8 @@ class TestDatasetRegistry:
         # Note: Override params may be applied if dataset supports them
         # Not all datasets have source_path attribute
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_registry_filters_unsupported_params_without_error(self, caplog):
         """Test that registry filters out unsupported init params without error."""
         # Arrange

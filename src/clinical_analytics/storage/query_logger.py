@@ -56,6 +56,7 @@ class QueryLogger:
         query_text: str,
         timestamp: str | None = None,
         query_id: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> None:
         """
         Log a user query (natural language input).
@@ -65,6 +66,7 @@ class QueryLogger:
             query_text: Natural language query from user
             timestamp: ISO 8601 timestamp (auto-generated if not provided)
             query_id: Optional query identifier for correlation
+            context: Optional query context (matched vars, confidence, execution path, aliasing, etc.)
         """
         if timestamp is None:
             timestamp = datetime.now().isoformat()
@@ -79,6 +81,9 @@ class QueryLogger:
         if query_id:
             entry["query_id"] = query_id
 
+        if context:
+            entry["context"] = context
+
         self._append_entry(upload_id, entry)
 
     def log_execution(
@@ -88,6 +93,8 @@ class QueryLogger:
         query_plan: dict[str, Any],
         execution_time_ms: float,
         timestamp: str | None = None,
+        warnings: list[str] | None = None,
+        run_key: str | None = None,
     ) -> None:
         """
         Log query execution details (parsing + execution).
@@ -98,6 +105,8 @@ class QueryLogger:
             query_plan: Parsed query plan (intent, variables, filters, etc.)
             execution_time_ms: Execution time in milliseconds
             timestamp: ISO 8601 timestamp (auto-generated if not provided)
+            warnings: Optional list of warnings during execution
+            run_key: Optional deterministic run key for idempotent execution
         """
         if timestamp is None:
             timestamp = datetime.now().isoformat()
@@ -110,6 +119,12 @@ class QueryLogger:
             "execution_time_ms": execution_time_ms,
             "timestamp": timestamp,
         }
+
+        if warnings:
+            entry["warnings"] = warnings
+
+        if run_key:
+            entry["run_key"] = run_key
 
         self._append_entry(upload_id, entry)
 
@@ -142,6 +157,50 @@ class QueryLogger:
             "result_summary": result_summary,
             "timestamp": timestamp,
         }
+
+        self._append_entry(upload_id, entry)
+
+    def log_failure(
+        self,
+        upload_id: str,
+        query_text: str,
+        failure_reason: str,
+        query_id: str | None = None,
+        parsing_tier: str | None = None,
+        suggested_fixes: list[str] | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        """
+        Log a query failure with debugging information.
+
+        Args:
+            upload_id: Upload identifier
+            query_text: Natural language query that failed
+            failure_reason: Explanation of why the query failed
+            query_id: Optional query identifier for correlation
+            parsing_tier: Optional parsing tier where failure occurred (pattern_match, llm_fallback, etc.)
+            suggested_fixes: Optional list of suggested fixes for the user
+            timestamp: ISO 8601 timestamp (auto-generated if not provided)
+        """
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+
+        entry = {
+            "event_type": "failure",
+            "upload_id": upload_id,
+            "query_text": query_text,
+            "failure_reason": failure_reason,
+            "timestamp": timestamp,
+        }
+
+        if query_id:
+            entry["query_id"] = query_id
+
+        if parsing_tier:
+            entry["parsing_tier"] = parsing_tier
+
+        if suggested_fixes:
+            entry["suggested_fixes"] = suggested_fixes
 
         self._append_entry(upload_id, entry)
 

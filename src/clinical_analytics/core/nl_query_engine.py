@@ -444,7 +444,7 @@ class NLQueryEngine:
 
         # Extract filters from query (applies to all intent types)
         if intent:
-            intent.filters = self._extract_filters(query)
+            intent.filters = self._extract_filters(query, grouping_variable=intent.grouping_variable)
             if intent.filters:
                 logger.debug(
                     "filters_extracted_in_parse",
@@ -562,6 +562,20 @@ class NLQueryEngine:
         if any(re.search(pattern, query_lower) for pattern in count_patterns):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
+        # Pattern: "what X were/was Y on" - COUNT with grouping
+        # Examples: "what statins were patients on?", "what treatments were they on?"
+        # This asks for a breakdown/distribution, so it's a COUNT intent
+        what_were_on = re.search(r"what\s+(\w+(?:\s+\w+)?)\s+(?:were|was)\s+(?:\w+\s+)?on", query_lower)
+        if what_were_on:
+            variable_term = what_were_on.group(1).strip()
+            matched_var, _, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                return QueryIntent(
+                    intent_type="COUNT",
+                    grouping_variable=matched_var,
+                    confidence=0.9,
+                )
+
         # Pattern: "which X was most Y" or "what was the most Y" - COUNT with grouping
         # This pattern asks for the top result by count, so it's a COUNT intent with grouping
         # More flexible pattern to handle "which was the most Y", "what was the most Y",
@@ -576,11 +590,39 @@ class NLQueryEngine:
         ):
             return QueryIntent(intent_type="COUNT", confidence=0.9)
 
+        # Pattern: "what is the average/mean X" - DESCRIBE with variable extraction
+        # Examples: "what is the average age?", "what is the mean BMI?", "what is the mean and median age?"
+        what_is_match = re.search(
+            r"what\s+is\s+the\s+(?:(?:average|mean|median)(?:\s+and\s+(?:average|mean|median))*\s+)(\w+(?:\s+\w+)*?)(?:\?|$)",
+            query_lower,
+        )
+        if what_is_match:
+            variable_term = what_is_match.group(1).strip()
+            # Remove common trailing words
+            variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases|all|the)$", "", variable_term)
+            variable_term = variable_term.strip()
+
+            # Try to match the variable
+            matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                logger.debug(
+                    "pattern_match_what_is_average",
+                    variable_term=variable_term,
+                    matched_var=matched_var,
+                    confidence=var_conf,
+                )
+                return QueryIntent(
+                    intent_type="DESCRIBE",
+                    primary_variable=matched_var,
+                    confidence=0.9,
+                )
+
         # Pattern: "average X" or "mean X" or "avg X" - DESCRIBE with variable extraction
         # Examples: "average BMI of patients", "mean age", "avg ldl", "average ldl of all patients"
-        # Match: "average/mean/avg" + optional "of" + variable + optional trailing phrase
+        # Match: "average/mean/avg" + optional "of" + variable + stop at grouping keywords like "by"
         avg_match = re.search(
-            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)(?:\s+of|\s+in|\s+for|\s+all|\s+the|$)", query_lower
+            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)(?:\s+of|\s+in|\s+for|\s+by|\s+across|\s+between|\s+all|\s+the|$)",
+            query_lower,
         )
         if avg_match:
             variable_term = avg_match.group(2).strip()
@@ -591,15 +633,24 @@ class NLQueryEngine:
             # Try to match the variable
             matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
             if matched_var:
+                # Check for grouping pattern "by X" or "across X"
+                grouping_match = re.search(r"(?:by|across)\s+(\w+(?:\s+\w+)?)", query_lower)
+                group_var = None
+                if grouping_match:
+                    group_term = grouping_match.group(1).strip()
+                    group_var, _, _ = self._fuzzy_match_variable(group_term)
+
                 logger.debug(
                     "pattern_match_average_with_variable",
                     variable_term=variable_term,
                     matched_var=matched_var,
                     confidence=var_conf,
+                    grouping=group_var,
                 )
                 return QueryIntent(
                     intent_type="DESCRIBE",
                     primary_variable=matched_var,
+                    grouping_variable=group_var,
                     confidence=0.9,
                 )
             else:
@@ -611,9 +662,68 @@ class NLQueryEngine:
                 )
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.85)
 
-        # Pattern: "describe" or "summary"
+        # Pattern: "describe X" or "summary of X" - DESCRIBE with variable extraction
+        describe_match = re.search(
+            r"\b(describe|summarize?|overview of)\s+(\w+(?:\s+\w+)*?)"
+            r"(?:\s+statistics|\s+levels|\s+values|\s+distribution|\s+for|\s+by|\s+across|$)",
+            query_lower,
+        )
+        if describe_match:
+            variable_term = describe_match.group(2).strip()
+            # Remove common trailing words
+            variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases)$", "", variable_term)
+            variable_term = variable_term.strip()
+
+            # Try to match the variable
+            matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
+            if matched_var:
+                logger.debug(
+                    "pattern_match_describe_with_variable",
+                    variable_term=variable_term,
+                    matched_var=matched_var,
+                    confidence=var_conf,
+                )
+                return QueryIntent(
+                    intent_type="DESCRIBE",
+                    primary_variable=matched_var,
+                    confidence=0.9,
+                )
+
+        # Pattern: "describe" or "summary" (no variable extracted)
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
             return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
+
+        # Pattern: "compare X across/between Y" - COMPARE_GROUPS
+        # Examples: "compare age across different statuses", "compare LDL between treatment groups"
+        compare_match = re.search(
+            r"\bcompare\s+(\w+(?:\s+\w+)*?)\s+(?:across|between)\s+(?:different\s+)?(\w+(?:\s+\w+)*?)(?:\s+and|$)",
+            query_lower,
+        )
+        if compare_match:
+            primary_term = compare_match.group(1).strip()
+            group_term = compare_match.group(2).strip()
+
+            # Remove common trailing words
+            group_term = re.sub(r"\s+(groups?|categories|types?)$", "", group_term)
+            group_term = group_term.strip()
+
+            primary_var, _, _ = self._fuzzy_match_variable(primary_term)
+            group_var, _, _ = self._fuzzy_match_variable(group_term)
+
+            if primary_var and group_var:
+                logger.debug(
+                    "pattern_match_compare_across",
+                    primary_term=primary_term,
+                    group_term=group_term,
+                    primary_var=primary_var,
+                    group_var=group_var,
+                )
+                return QueryIntent(
+                    intent_type="COMPARE_GROUPS",
+                    primary_variable=primary_var,
+                    grouping_variable=group_var,
+                    confidence=0.95,
+                )
 
         # Pattern: "difference" implies comparison
         match = re.search(r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)", query_lower)
@@ -791,6 +901,8 @@ class NLQueryEngine:
         """
         Build structured prompts for LLM.
 
+        Phase 5.1: Request QueryPlan JSON schema instead of legacy QueryIntent.
+
         Args:
             query: User's question
             context: RAG context with columns, aliases, examples
@@ -800,17 +912,22 @@ class NLQueryEngine:
         """
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 
-Return JSON with these fields:
-- intent_type: One of ["DESCRIBE", "COMPARE_GROUPS", "COUNT", "FIND_PREDICTORS", "SURVIVAL", "CORRELATIONS"]
-- primary_variable: Main variable of interest (or null)
-- grouping_variable: Variable to group by (or null)
+Return JSON matching the QueryPlan schema with these REQUIRED fields:
+- intent: One of ["COUNT", "DESCRIBE", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]
+- metric: Main variable to analyze (string or null)
+- group_by: Variable to group by (string or null)
+- filters: List of filter objects (empty list if none)
 - confidence: Your confidence 0.0-1.0
+- explanation: Brief explanation of what the query asks for
 
 Available columns: {columns}
 Aliases: {aliases}
 
 Examples:
-{examples}""".format(
+{examples}
+
+IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by),
+not legacy names (intent_type, primary_variable, grouping_variable).""".format(
             columns=", ".join(context["columns"]),
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
@@ -824,6 +941,8 @@ Examples:
         """
         Extract QueryIntent from LLM JSON response with retries.
 
+        Phase 5.1: Parse QueryPlan JSON schema and validate using QueryPlan.from_dict()
+
         Args:
             response: JSON string from LLM
             max_retries: Maximum retry attempts (not used in this version)
@@ -835,27 +954,49 @@ Examples:
         try:
             data = json.loads(response)
 
-            # Validate required fields
-            if "intent_type" not in data:
-                logger.warning("llm_response_missing_intent_type", response=response[:100])
-                return None
+            # Phase 5.1: Validate using QueryPlan.from_dict() (raises on invalid schema)
+            try:
+                query_plan = QueryPlan.from_dict(data)
 
-            # Extract fields with defaults
-            intent_type = data.get("intent_type", "DESCRIBE")
-            primary_variable = data.get("primary_variable")
-            grouping_variable = data.get("grouping_variable")
-            confidence = float(data.get("confidence", 0.5))
+                # Convert validated QueryPlan back to QueryIntent for backward compatibility
+                return QueryIntent(
+                    intent_type=query_plan.intent,  # type: ignore[arg-type]
+                    primary_variable=query_plan.metric,
+                    grouping_variable=query_plan.group_by,
+                    confidence=query_plan.confidence,
+                    parsing_tier="llm_fallback",
+                    filters=query_plan.filters,  # Preserve validated filters
+                )
 
-            # Clamp confidence to valid range
-            confidence = max(0.0, min(1.0, confidence))
+            except (ValueError, KeyError) as validation_error:
+                # If QueryPlan validation fails, try legacy QueryIntent format for backward compatibility
+                logger.warning(
+                    "llm_queryplan_validation_failed_trying_legacy_format",
+                    error=str(validation_error),
+                    response=response[:100],
+                )
 
-            return QueryIntent(
-                intent_type=intent_type,
-                primary_variable=primary_variable,
-                grouping_variable=grouping_variable,
-                confidence=confidence,
-                parsing_tier="llm_fallback",
-            )
+                # Legacy format fallback
+                if "intent_type" not in data:
+                    logger.warning("llm_response_missing_required_fields", response=response[:100])
+                    return None
+
+                # Extract fields with defaults (legacy format)
+                intent_type = data.get("intent_type", "DESCRIBE")
+                primary_variable = data.get("primary_variable")
+                grouping_variable = data.get("grouping_variable")
+                confidence = float(data.get("confidence", 0.5))
+
+                # Clamp confidence to valid range
+                confidence = max(0.0, min(1.0, confidence))
+
+                return QueryIntent(
+                    intent_type=intent_type,
+                    primary_variable=primary_variable,
+                    grouping_variable=grouping_variable,
+                    confidence=confidence,
+                    parsing_tier="llm_fallback",
+                )
 
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             logger.warning(
@@ -1124,7 +1265,7 @@ Examples:
 
         return has_code_pattern or has_coded_indicators
 
-    def _extract_filters(self, query: str) -> list[FilterSpec]:
+    def _extract_filters(self, query: str, grouping_variable: str | None = None) -> list[FilterSpec]:
         """
         Extract filter conditions from query text.
 
@@ -1133,9 +1274,11 @@ Examples:
         - "scores below/above X" → numeric range filter
         - "with X" / "without X" → presence filter
         - "on statins" / "were on statins" → categorical filter (value matching)
+        - "don't want X" / "exclude X" → exclusion filter
 
         Args:
             query: User's natural language query
+            grouping_variable: Optional grouping variable from query intent (for follow-up queries)
 
         Returns:
             List of FilterSpec objects
@@ -1168,6 +1311,15 @@ Examples:
             r"excluding\s+(?:those|patients|subjects|people)\s+(?:(?:that|who)\s+)?(?:(?:were|are)\s+)?not\s+on\s+(\w+)",
             # "excluding X" (fallback, handles commas) - must stop at continuation words
             r"excluding\s+([^,\.\?]+?)(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            # Phase 4.1: Add "exclude" variant (not just "excluding")
+            # Handles: "exclude n/a", "exclude 0", etc.
+            r"exclude\s+([^,\.\?]+?)(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            # Phase 4.1: Add "remove" pattern for value exclusion
+            # Handles: "remove 0", "remove n/a", etc.
+            r"remove\s+([^,\.\?]+?)(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)",
+            # Add "don't want" / "do not want" / "i don't want" patterns
+            # Handles: "i don't want the 0 results", "don't want 0", "do not want n/a", etc.
+            r"(?:i\s+)?(?:don'?t|do\s+not)\s+want\s+(?:the\s+)?([^,\.\?]+?)(?:\s+(?:results|values|rows|entries)?(?:\s*(?:and|or|which|what|how|where|when|,|\.|\?)|$)|$)",
         ]
 
         # Track which value phrases were already processed by exclusion patterns
@@ -1187,6 +1339,106 @@ Examples:
                     continue
 
                 column_name, conf, _ = self._fuzzy_match_variable(value_phrase)
+
+                # Phase 4.1: Handle direct value exclusion (e.g., "exclude n/a", "remove 0")
+                # If fuzzy matching fails (value_phrase is a value, not a column name),
+                # try to infer the column from context
+                if not column_name or conf <= 0.5:
+                    # Value phrases like "n/a", "0", "na" indicate value exclusion
+                    # Try to infer column from earlier "on X" pattern in query
+                    inferred_column = None
+
+                    # Extract actual value from phrases like "the n/a (0)" or "n/a (0)" or "the 0"
+                    # Try to find parenthesized number or standalone number/value
+                    # Strip "the" prefix if present
+                    value_phrase_clean = re.sub(r"^the\s+", "", value_phrase, flags=re.IGNORECASE).strip()
+                    value_str = value_phrase_clean
+                    parenthesized_num = re.search(r"\((\d+)\)", value_phrase_clean)
+                    if parenthesized_num:
+                        # Found "(0)" or "(1)" etc. - use that as the value
+                        value_str = parenthesized_num.group(1)
+                    elif "n/a" in value_phrase_clean.lower() or "na" in value_phrase_clean.lower():
+                        # Contains "n/a" or "na" - normalize to "n/a"
+                        value_str = "n/a"
+                    elif any(char.isdigit() for char in value_phrase_clean):
+                        # Contains digits - extract just the digits
+                        digits_match = re.search(r"(\d+)", value_phrase_clean)
+                        if digits_match:
+                            value_str = digits_match.group(1)
+
+                    # Check if value_str looks like a coded value (n/a, 0, etc.)
+                    is_value = (
+                        value_str.lower() in ["n/a", "na", "none", "unknown"]
+                        or value_str.isdigit()
+                        or (value_str.startswith("0") and ":" in value_str)  # Coded value like "0: n/a"
+                    )
+
+                    if is_value:
+                        inferred_column = None
+                        inferred_conf = 0.0
+
+                        # Strategy 1: Try to find "on X" pattern earlier in query to infer column
+                        on_pattern = r"on\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)"
+                        on_matches = list(re.finditer(on_pattern, query_lower))
+                        if on_matches:
+                            # Use the last "on X" match (most recent context)
+                            inferred_term = on_matches[-1].group(1).strip()
+                            inferred_column, inferred_conf, _ = self._fuzzy_match_variable(inferred_term)
+
+                        # Strategy 2: If no "on X" pattern, try to find grouping variable from query
+                        # Look for "by X", "per X", "broken down by X" patterns
+                        if not inferred_column or inferred_conf <= 0.5:
+                            grouping_patterns = [
+                                r"by\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                                r"per\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                                r"broken\s+down\s+by\s+(?:count\s+of\s+)?(?:\w+\s+)*?per\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                                r"broken\s+down\s+by\s+(\w+(?:\s+\w+)*?)(?:\?|$)",
+                            ]
+                            for gp in grouping_patterns:
+                                gp_match = re.search(gp, query_lower)
+                                if gp_match:
+                                    group_term = gp_match.group(1).strip()
+                                    inferred_column, inferred_conf, _ = self._fuzzy_match_variable(group_term)
+                                    if inferred_column and inferred_conf > 0.5:
+                                        break
+
+                        # Strategy 3: If still no column, use grouping_variable from query intent
+                        # This helps with follow-up queries like "i don't want the 0 results"
+                        # where the grouping variable from the previous query is available
+                        if (not inferred_column or inferred_conf <= 0.5) and grouping_variable:
+                            inferred_column = grouping_variable
+                            inferred_conf = 0.8  # High confidence since it's from the query intent
+
+                        # Strategy 4: If still no column, skip creating a filter
+                        # This is better than creating a wrong filter
+                        if not inferred_column or inferred_conf <= 0.5:
+                            continue
+
+                        if inferred_column and inferred_conf > 0.5:
+                            # Map value to code
+                            # For "n/a", "na", "none" → code 0
+                            # For numeric strings → parse as int
+                            # Use value_str (extracted value) instead of value_phrase
+                            if value_str.lower() in ["n/a", "na", "none", "unknown"]:
+                                exclusion_value = 0
+                            elif value_str.isdigit():
+                                exclusion_value = int(value_str)
+                            else:
+                                # Unknown value, skip
+                                continue
+
+                            # Create exclusion filter with inferred column
+                            filters.append(
+                                FilterSpec(
+                                    column=inferred_column,
+                                    operator="!=",
+                                    value=exclusion_value,
+                                    exclude_nulls=True,
+                                )
+                            )
+                            processed_value_phrases.add(value_phrase)
+                            continue
+
                 if column_name and conf > 0.5:
                     # Normalize column name: if _fuzzy_match_variable returned full alias string,
                     # look up the canonical name from alias_index
@@ -1458,30 +1710,43 @@ Examples:
 
         # Pattern 2: Numeric range filters
         # "below X", "above X", "less than X", "greater than X", "> X", "< X"
+        # "patients over X" / "patients under X" → age filter (medical context)
         numeric_patterns = [
-            (r"(\w+(?:\s+\w+)*)\s+below\s+([0-9]+\.?[0-9]*)", "<"),
-            (r"(\w+(?:\s+\w+)*)\s+above\s+([0-9]+\.?[0-9]*)", ">"),
-            (r"(\w+(?:\s+\w+)*)\s+less\s+than\s+([0-9]+\.?[0-9]*)", "<"),
-            (r"(\w+(?:\s+\w+)*)\s+greater\s+than\s+([0-9]+\.?[0-9]*)", ">"),
-            (r"(\w+(?:\s+\w+)*)\s+<=\s+([0-9]+\.?[0-9]*)", "<="),
-            (r"(\w+(?:\s+\w+)*)\s+>=\s+([0-9]+\.?[0-9]*)", ">="),
-            (r"(\w+(?:\s+\w+)*)\s+<\s+([0-9]+\.?[0-9]*)", "<"),
-            (r"(\w+(?:\s+\w+)*)\s+>\s+([0-9]+\.?[0-9]*)", ">"),
-            (r"scores?\s+below\s+([0-9\-]+\.?[0-9]*)", "<"),  # "scores below -2.5"
-            (r"scores?\s+above\s+([0-9\-]+\.?[0-9]*)", ">"),
+            (r"(?:patients|subjects|people)\s+over\s+([0-9]+)", ">", "age"),  # "patients over 50"
+            (r"(?:patients|subjects|people)\s+under\s+([0-9]+)", "<", "age"),  # "patients under 30"
+            (r"(\w+(?:\s+\w+)*)\s+below\s+([0-9]+\.?[0-9]*)", "<", None),
+            (r"(\w+(?:\s+\w+)*)\s+above\s+([0-9]+\.?[0-9]*)", ">", None),
+            (r"(\w+(?:\s+\w+)*)\s+less\s+than\s+([0-9]+\.?[0-9]*)", "<", None),
+            (r"(\w+(?:\s+\w+)*)\s+greater\s+than\s+([0-9]+\.?[0-9]*)", ">", None),
+            (r"(\w+(?:\s+\w+)*)\s+<=\s+([0-9]+\.?[0-9]*)", "<=", None),
+            (r"(\w+(?:\s+\w+)*)\s+>=\s+([0-9]+\.?[0-9]*)", ">=", None),
+            (r"(\w+(?:\s+\w+)*)\s+<\s+([0-9]+\.?[0-9]*)", "<", None),
+            (r"(\w+(?:\s+\w+)*)\s+>\s+([0-9]+\.?[0-9]*)", ">", None),
+            (r"scores?\s+below\s+([0-9\-]+\.?[0-9]*)", "<", "score"),  # "scores below -2.5"
+            (r"scores?\s+above\s+([0-9\-]+\.?[0-9]*)", ">", "score"),
         ]
 
-        for pattern, operator in numeric_patterns:
+        for pattern_info in numeric_patterns:
+            if len(pattern_info) == 3:
+                pattern, operator, default_column = pattern_info
+            else:
+                pattern, operator = pattern_info
+                default_column = None
+
             matches = re.finditer(pattern, query_lower)
             for match in matches:
                 if len(match.groups()) == 2:
                     column_phrase = match.group(1).strip()
                     value_str = match.group(2).strip()
+                elif len(match.groups()) == 1:
+                    # Pattern with default column (e.g., "patients over 50" → age)
+                    value_str = match.group(1).strip()
+                    column_phrase = default_column if default_column else "score"
                 else:
                     # Pattern like "scores below -2.5" (no column name, just value)
                     # Try to find a score column
                     value_str = match.group(1).strip()
-                    column_phrase = "score"  # Default to "score"
+                    column_phrase = default_column if default_column else "score"
 
                 # Try to match column phrase to actual column
                 column_name, conf, _ = self._fuzzy_match_variable(column_phrase)

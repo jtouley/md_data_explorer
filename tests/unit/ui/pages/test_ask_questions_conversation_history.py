@@ -27,7 +27,7 @@ class TestConversationHistory:
         project_root = Path(__file__).parent.parent.parent.parent.parent
         sys.path.insert(0, str(project_root / "src"))
 
-        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "3_💬_Ask_Questions.py"
+        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "03_💬_Ask_Questions.py"
         spec = importlib.util.spec_from_file_location("ask_questions_page", page_path)
         ask_questions_page = importlib.util.module_from_spec(spec)
 

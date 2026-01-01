@@ -13,8 +13,7 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
+from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 
 # Page config
 st.set_page_config(page_title="Your Dataset | Clinical Analytics", page_icon="📊", layout="wide")
@@ -26,69 +25,17 @@ def main():
     Overview of your dataset: patient counts, outcomes, and data quality.
     """)
 
-    # Dataset selection
-    st.sidebar.header("Data Selection")
+    # Dataset selection (Phase 8.2: Use reusable component)
+    result = render_dataset_selector(show_semantic_scope=True)
+    if result is None:
+        return  # No datasets available (error message already shown)
 
-    # Load datasets - only user uploads
-    dataset_display_names = {}
-    uploaded_datasets = {}
-    try:
-        uploads = UploadedDatasetFactory.list_available_uploads()
-        for upload in uploads:
-            upload_id = upload["upload_id"]
-            dataset_name = upload.get("dataset_name", upload_id)
-            display_name = f"📤 {dataset_name}"
-            dataset_display_names[display_name] = upload_id
-            uploaded_datasets[upload_id] = upload
-    except Exception as e:
-        st.sidebar.warning(f"Could not load uploaded datasets: {e}")
+    dataset, cohort, dataset_choice, dataset_version = result
 
-    if not dataset_display_names:
-        st.error("No datasets available. Please upload data first.")
-        st.info("👈 Go to **Add Your Data** to upload your first dataset")
-        return
-
-    dataset_choice_display = st.sidebar.selectbox("Choose Dataset", list(dataset_display_names.keys()))
-    dataset_choice = dataset_display_names[dataset_choice_display]
-
-    # Load dataset (always uploaded)
-    with st.spinner(f"Loading {dataset_choice_display}..."):
-        try:
-            dataset = UploadedDatasetFactory.create_dataset(dataset_choice)
-            dataset.load()
-            cohort = dataset.get_cohort()
-        except Exception as e:
-            st.error(f"Error loading dataset: {e}")
-            st.stop()
-
-    # Show Semantic Scope in sidebar
-    with st.sidebar.expander("🔍 Semantic Scope", expanded=False):
-        st.markdown("**V1 Cohort-First Mode**")
-
-        # Cohort table status
-        st.markdown(f"✅ **Cohort Table**: {len(cohort):,} rows")
-
-        # Multi-table status
-        if MULTI_TABLE_ENABLED:
-            st.markdown("⚠️ **Multi-Table**: Experimental")
-        else:
-            st.markdown("⏸️ **Multi-Table**: Disabled (V2)")
-
-        # Detected grain
-        grain = "patient_level"  # Default for V1
-        st.markdown(f"📊 **Grain**: {grain}")
-
-        # Outcome column (if detected)
-        outcome_cols = [
-            c for c in cohort.columns if "outcome" in c.lower() or "death" in c.lower() or "mortality" in c.lower()
-        ]
-        if outcome_cols:
-            st.markdown(f"🎯 **Outcome**: `{outcome_cols[0]}`")
-        else:
-            st.markdown("🎯 **Outcome**: Not specified")
-
-        # Show column count
-        st.caption(f"{len(cohort.columns)} columns available")
+    # Detect outcome columns (needed for metrics below)
+    outcome_cols = [
+        c for c in cohort.columns if "outcome" in c.lower() or "death" in c.lower() or "mortality" in c.lower()
+    ]
 
     st.divider()
 

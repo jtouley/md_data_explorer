@@ -213,7 +213,7 @@ def main():
 
     # V1 MVP: Redirect to Upload page (landing page)
     if V1_MVP_MODE:
-        st.switch_page("pages/1_📤_Add_Your_Data.py")
+        st.switch_page("pages/01_📤_Add_Your_Data.py")
         return
 
     # Development/testing mode: Keep existing dataset selection
