@@ -16,10 +16,12 @@ and context awareness."
 
 import pytest
 
-from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-
-def test_parse_query_with_refinement_context_adds_filter(make_semantic_layer):
+def test_parse_query_with_refinement_context_adds_filter(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test that LLM recognizes refinement and merges with previous query."""
     # Arrange: Create semantic layer with statin column
     semantic = make_semantic_layer(
@@ -30,7 +32,7 @@ def test_parse_query_with_refinement_context_adds_filter(make_semantic_layer):
             "age": [45, 52, 38, 61],
         },
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     # Previous query: count by statin (all values including n/a)
     conversation_history = [
@@ -73,14 +75,18 @@ def test_parse_query_with_refinement_context_adds_filter(make_semantic_layer):
     assert result.confidence >= 0.7, "LLM should be confident with context"
 
 
-def test_parse_query_refinement_without_context_has_low_confidence(make_semantic_layer):
+def test_parse_query_refinement_without_context_has_low_confidence(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test that refinement query without context has low confidence."""
     # Arrange
     semantic = make_semantic_layer(
         dataset_name="test",
         data={"patient_id": ["P1", "P2"], "outcome": [0, 1]},
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     # Act: Parse "remove the n/a" with NO conversation history
     result = engine.parse_query(
@@ -92,7 +98,11 @@ def test_parse_query_refinement_without_context_has_low_confidence(make_semantic
     assert result.confidence < 0.75, "Should have low confidence without context"
 
 
-def test_parse_query_refinement_merges_with_existing_filters(make_semantic_layer):
+def test_parse_query_refinement_merges_with_existing_filters(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test that LLM merges refinement filter with existing filters."""
     # Arrange
     semantic = make_semantic_layer(
@@ -103,7 +113,7 @@ def test_parse_query_refinement_merges_with_existing_filters(make_semantic_layer
             "status": [0, 1, 1],  # 0=unknown, 1=active
         },
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     # Previous query already had an age filter
     conversation_history = [
@@ -143,7 +153,11 @@ def test_parse_query_refinement_merges_with_existing_filters(make_semantic_layer
     assert len(status_filters) >= 1
 
 
-def test_parse_query_refinement_updates_same_column_filter(make_semantic_layer):
+def test_parse_query_refinement_updates_same_column_filter(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test that LLM replaces filter on same column when refined."""
     # Arrange
     semantic = make_semantic_layer(
@@ -153,7 +167,7 @@ def test_parse_query_refinement_updates_same_column_filter(make_semantic_layer):
             "age": [45, 52, 68],
         },
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     conversation_history = [
         {
@@ -182,7 +196,11 @@ def test_parse_query_refinement_updates_same_column_filter(make_semantic_layer):
     assert age_filters[0].value == 65, "Should use updated value"
 
 
-def test_parse_query_non_refinement_with_history_works_normally(make_semantic_layer):
+def test_parse_query_non_refinement_with_history_works_normally(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test that new queries work normally even with conversation history."""
     # Arrange
     semantic = make_semantic_layer(
@@ -193,7 +211,7 @@ def test_parse_query_non_refinement_with_history_works_normally(make_semantic_la
             "outcome": [0, 1],
         },
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     conversation_history = [
         {
@@ -214,14 +232,18 @@ def test_parse_query_non_refinement_with_history_works_normally(make_semantic_la
     assert result.grouping_variable != "age", "Should not inherit previous grouping"
 
 
-def test_parse_query_backward_compatible_without_history(make_semantic_layer):
+def test_parse_query_backward_compatible_without_history(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test that parse_query works without conversation_history (backward compat)."""
     # Arrange
     semantic = make_semantic_layer(
         dataset_name="test",
         data={"patient_id": ["P1", "P2"], "outcome": [0, 1]},
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     # Act: Parse query without conversation_history parameter
     result = engine.parse_query(query="describe outcome")
@@ -244,6 +266,8 @@ def test_parse_query_backward_compatible_without_history(make_semantic_layer):
 )
 def test_llm_recognizes_refinement_patterns(
     make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
     refinement_query,
     expected_intent,
 ):
@@ -256,7 +280,7 @@ def test_llm_recognizes_refinement_patterns(
             "status": [0, 1],
         },
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     conversation_history = [
         {
@@ -278,20 +302,25 @@ def test_llm_recognizes_refinement_patterns(
         assert len(result.filters) >= 1, f"Should have filter for: {refinement_query}"
 
 
-def test_llm_refinement_with_coded_categorical_column(make_cohort_with_categorical, make_semantic_layer):
+def test_llm_refinement_with_coded_categorical_column(
+    make_cohort_with_categorical,
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test LLM handles refinement with coded categorical columns correctly."""
     # Arrange: Use factory fixture for categorical cohort
     cohort = make_cohort_with_categorical(
         patient_ids=["P1", "P2", "P3", "P4"],
         ages=[45, 52, 38, 61],
-        treatment_groups=["1: Control", "2: Treatment A", "1: Control", "2: Treatment A"],
+        treatment=["1: Control", "2: Treatment A", "1: Control", "2: Treatment A"],
     )
 
     semantic = make_semantic_layer(
         dataset_name="test_coded",
         data=cohort.to_dict(),
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     conversation_history = [
         {
@@ -314,14 +343,18 @@ def test_llm_refinement_with_coded_categorical_column(make_cohort_with_categoric
     assert len(result.filters) >= 1
 
 
-def test_llm_provides_explanation_for_refinement(make_semantic_layer):
+def test_llm_provides_explanation_for_refinement(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """Test that LLM provides explanation when handling refinement."""
     # Arrange
     semantic = make_semantic_layer(
         dataset_name="test",
         data={"patient_id": ["P1", "P2"], "status": [0, 1]},
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     conversation_history = [
         {
@@ -337,16 +370,21 @@ def test_llm_provides_explanation_for_refinement(make_semantic_layer):
     )
 
     # Assert: LLM should provide explanation of refinement
-    assert result.explanation, "Should have explanation"
-    assert len(result.explanation) > 10, "Explanation should be meaningful"
-    # Explanation should mention refinement or filter
-    explanation_lower = result.explanation.lower()
-    assert any(word in explanation_lower for word in ["filter", "exclude", "refin", "previous"]), (
-        "Explanation should describe the refinement"
+    # QueryIntent uses 'interpretation' field, not 'explanation'
+    assert result.interpretation, "Should have interpretation"
+    assert len(result.interpretation) > 10, "Interpretation should be meaningful"
+    # Interpretation should mention refinement or filter
+    interpretation_lower = result.interpretation.lower()
+    assert any(word in interpretation_lower for word in ["filter", "exclude", "refin", "previous"]), (
+        "Interpretation should describe the refinement"
     )
 
 
-def test_parse_query_refinement_handles_llm_failure_with_fallback(make_semantic_layer):
+def test_parse_query_refinement_handles_llm_failure_with_fallback(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
     """
     Test that refinement queries work even when LLM returns invalid response.
 
@@ -367,7 +405,7 @@ def test_parse_query_refinement_handles_llm_failure_with_fallback(make_semantic_
             "age": [45, 52, 38, 61],
         },
     )
-    engine = NLQueryEngine(semantic_layer=semantic)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
 
     # Previous query: count by statin (all values including n/a)
     conversation_history = [

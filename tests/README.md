@@ -1,6 +1,14 @@
 # Test Organization
 
+**Source of Truth**: This document provides high-level test organization. For comprehensive testing guidelines, decision criteria, and enforcement rules, see **[tests/AGENTS.md](./AGENTS.md)**.
+
 Tests follow a **registry-based, generic approach** that avoids hardcoded dataset dependencies. All integration tests use dynamic dataset discovery to ensure tests work across all available datasets.
+
+## Quick Reference
+
+- **Unit Tests**: Test code logic with mocks (fast, <1s each). Use `mock_llm_calls` and `nl_query_engine_with_cached_model` fixtures.
+- **Integration Tests**: Test real external services (slow, 10-30s each). Mark with `@pytest.mark.integration` and `@pytest.mark.slow`.
+- **Decision Criteria**: See [Unit Tests vs Integration Tests](./AGENTS.md#unit-tests-vs-integration-tests-decision-criteria) in AGENTS.md.
 
 For detailed testing guidelines, see [tests/AGENTS.md](./AGENTS.md).
 
