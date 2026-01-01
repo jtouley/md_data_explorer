@@ -11,6 +11,7 @@ Cache location: tests/.test_cache/
 
 import hashlib
 import shutil
+from io import BytesIO
 from pathlib import Path
 
 import polars as pl
@@ -30,7 +31,9 @@ def hash_dataframe(df: pl.DataFrame) -> str:
         Hexadecimal hash string
     """
     # Convert to parquet bytes for consistent hashing
-    parquet_bytes = df.write_parquet()
+    buffer = BytesIO()
+    df.write_parquet(buffer)
+    parquet_bytes = buffer.getvalue()
     return hashlib.sha256(parquet_bytes).hexdigest()
 
 
