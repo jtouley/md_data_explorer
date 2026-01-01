@@ -59,6 +59,14 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 
+[tool.performance]
+# Regression thresholds (percentage increase)
+individual_test_threshold = 20.0
+suite_threshold = 15.0
+slow_test_threshold_seconds = 30.0
+baseline_file = "tests/.performance_baseline.json"
+data_file = "tests/.performance_data.json"
+
 [tool.uv.workspace]
 members = [
     "docs",
