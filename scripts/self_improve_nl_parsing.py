@@ -56,6 +56,90 @@ def load_golden_questions(questions_file: Path) -> list[dict]:
     return data.get("questions", [])
 
 
+def generate_golden_questions_from_logs(
+    log_file: Path,
+    min_confidence: float = 0.8,
+    lookback_days: int = 7,
+) -> list[dict]:
+    """
+    Mine successful queries from logs to generate golden question candidates.
+
+    Args:
+        log_file: Path to structured log file
+        min_confidence: Minimum confidence threshold for candidates
+        lookback_days: How many days back to look in logs
+
+    Returns:
+        List of candidate golden questions with query, expected_intent, etc.
+    """
+    # Placeholder implementation - Phase 6 full integration
+    # In production, this would:
+    # 1. Parse structlog JSON lines from log_file
+    # 2. Filter by confidence >= min_confidence
+    # 3. Group by query pattern
+    # 4. Return top N unique queries as candidates
+
+    logger.info(
+        "golden_question_generation_placeholder",
+        log_file=str(log_file),
+        min_confidence=min_confidence,
+        lookback_days=lookback_days,
+    )
+
+    return []  # Placeholder - no candidates for now
+
+
+def refresh_golden_questions_from_logs(
+    log_file: Path,
+    golden_questions_file: Path,
+    min_confidence: float = 0.8,
+    max_new_questions: int = 10,
+) -> int:
+    """
+    Mine successful queries from logs and add to golden questions.
+
+    Integrates ADR009 Phase 6 golden question generation into
+    self-improvement loop.
+
+    Args:
+        log_file: Path to query logs
+        golden_questions_file: Path to golden_questions.yaml
+        min_confidence: Minimum confidence for candidates
+        max_new_questions: Maximum new questions to add per refresh
+
+    Returns:
+        Number of new questions added
+    """
+    # Load existing corpus
+    if not golden_questions_file.exists():
+        existing_data = {"questions": []}
+    else:
+        with open(golden_questions_file) as f:
+            existing_data = yaml.safe_load(f) or {"questions": []}
+
+    existing_queries = {q["query"].lower() for q in existing_data.get("questions", [])}
+
+    # Generate candidates from logs
+    candidates = generate_golden_questions_from_logs(
+        log_file=log_file,
+        min_confidence=min_confidence,
+        lookback_days=7,  # Last week's queries
+    )
+
+    # Deduplicate and limit
+    new_questions = [
+        c for c in candidates if c["query"].lower() not in existing_queries
+    ][:max_new_questions]
+
+    if new_questions:
+        existing_data["questions"].extend(new_questions)
+        with open(golden_questions_file, "w") as f:
+            yaml.dump(existing_data, f)
+        logger.info("golden_questions_refreshed", count=len(new_questions))
+
+    return len(new_questions)
+
+
 def convert_eval_results_to_optimizer_format(eval_results: dict) -> list[dict]:
     """Convert eval harness results to prompt optimizer format."""
     test_results = []
@@ -114,6 +198,18 @@ def main():
         target_accuracy=args.target_accuracy,
         max_iterations=args.max_iterations,
     )
+
+    # Step 0: Refresh golden questions from production logs (Phase 6 integration)
+    log_file = Path("/tmp/nl_query.log")
+    if log_file.exists():
+        new_count = refresh_golden_questions_from_logs(
+            log_file=log_file,
+            golden_questions_file=args.questions_file,
+            min_confidence=0.8,
+            max_new_questions=5,  # Add up to 5 new questions per run
+        )
+        if new_count > 0:
+            print(f"📚 Added {new_count} new golden questions from logs")
 
     # Initialize components
     optimizer = PromptOptimizer(log_dir=args.log_dir)

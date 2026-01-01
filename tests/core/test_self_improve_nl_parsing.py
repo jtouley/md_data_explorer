@@ -5,9 +5,13 @@ Tests cover:
 - Atomic overlay writes (temp + replace)
 - Size capping (top N patterns, max overlay length)
 - No leftover temp files
+- Golden questions refresh from logs (Phase 6 integration)
 """
 
 from pathlib import Path
+from unittest.mock import patch
+
+import yaml
 
 
 class TestAtomicOverlayWrite:
@@ -147,3 +151,169 @@ class TestOverlaySizeCapping:
         # Assert: Content unchanged
         assert capped_content == small_content
         assert len(capped_content) < max_overlay_length
+
+
+class TestGoldenQuestionsRefresh:
+    """Test refresh_golden_questions_from_logs() function (Phase 6 integration)."""
+
+    def test_refresh_golden_questions_adds_new_questions_from_logs(self, tmp_path):
+        """Test that refresh adds new high-confidence questions from logs."""
+        # Arrange: Import function
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+        from self_improve_nl_parsing import refresh_golden_questions_from_logs
+
+        # Create existing golden questions file
+        golden_questions_file = tmp_path / "golden_questions.yaml"
+        existing_data = {
+            "questions": [
+                {"query": "how many patients?", "expected_intent": "COUNT"},
+            ]
+        }
+        golden_questions_file.write_text(yaml.dump(existing_data))
+
+        # Create mock log file (placeholder - actual log parsing will be implemented)
+        log_file = tmp_path / "test.log"
+        log_file.write_text("")  # Placeholder for now
+
+        # Mock the golden question generator (to be implemented)
+        mock_candidates = [
+            {"query": "average age by gender", "expected_intent": "DESCRIBE"},
+            {"query": "compare treatment groups", "expected_intent": "COMPARE_GROUPS"},
+        ]
+
+        with patch(
+            "self_improve_nl_parsing.generate_golden_questions_from_logs",
+            return_value=mock_candidates,
+        ):
+            # Act: Refresh golden questions
+            new_count = refresh_golden_questions_from_logs(
+                log_file=log_file,
+                golden_questions_file=golden_questions_file,
+                min_confidence=0.8,
+                max_new_questions=10,
+            )
+
+            # Assert: New questions added
+            assert new_count == 2
+            updated_data = yaml.safe_load(golden_questions_file.read_text())
+            assert len(updated_data["questions"]) == 3
+            assert any(q["query"] == "average age by gender" for q in updated_data["questions"])
+
+    def test_refresh_golden_questions_deduplicates_existing_queries(self, tmp_path):
+        """Test that refresh doesn't add duplicate questions."""
+        # Arrange: Import function
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+        from self_improve_nl_parsing import refresh_golden_questions_from_logs
+
+        # Create existing golden questions with a question
+        golden_questions_file = tmp_path / "golden_questions.yaml"
+        existing_data = {
+            "questions": [
+                {"query": "how many patients?", "expected_intent": "COUNT"},
+                {"query": "average age", "expected_intent": "DESCRIBE"},
+            ]
+        }
+        golden_questions_file.write_text(yaml.dump(existing_data))
+
+        # Create mock log file
+        log_file = tmp_path / "test.log"
+        log_file.write_text("")
+
+        # Mock candidates include duplicate (case-insensitive)
+        mock_candidates = [
+            {"query": "How Many Patients?", "expected_intent": "COUNT"},  # Duplicate (different case)
+            {"query": "compare treatment groups", "expected_intent": "COMPARE_GROUPS"},  # New
+        ]
+
+        with patch(
+            "self_improve_nl_parsing.generate_golden_questions_from_logs",
+            return_value=mock_candidates,
+        ):
+            # Act: Refresh golden questions
+            new_count = refresh_golden_questions_from_logs(
+                log_file=log_file,
+                golden_questions_file=golden_questions_file,
+                min_confidence=0.8,
+                max_new_questions=10,
+            )
+
+            # Assert: Only non-duplicate added
+            assert new_count == 1
+            updated_data = yaml.safe_load(golden_questions_file.read_text())
+            assert len(updated_data["questions"]) == 3
+            assert sum(1 for q in updated_data["questions"] if "how many patients" in q["query"].lower()) == 1
+
+    def test_refresh_golden_questions_respects_max_limit(self, tmp_path):
+        """Test that refresh enforces max_new_questions limit."""
+        # Arrange: Import function
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+        from self_improve_nl_parsing import refresh_golden_questions_from_logs
+
+        # Create existing golden questions
+        golden_questions_file = tmp_path / "golden_questions.yaml"
+        existing_data = {"questions": [{"query": "existing query", "expected_intent": "COUNT"}]}
+        golden_questions_file.write_text(yaml.dump(existing_data))
+
+        # Create mock log file
+        log_file = tmp_path / "test.log"
+        log_file.write_text("")
+
+        # Mock candidates (10 new questions)
+        mock_candidates = [{"query": f"query {i}", "expected_intent": "COUNT"} for i in range(10)]
+
+        with patch(
+            "self_improve_nl_parsing.generate_golden_questions_from_logs",
+            return_value=mock_candidates,
+        ):
+            # Act: Refresh with max_new_questions=3
+            new_count = refresh_golden_questions_from_logs(
+                log_file=log_file,
+                golden_questions_file=golden_questions_file,
+                min_confidence=0.8,
+                max_new_questions=3,  # Limit to 3
+            )
+
+            # Assert: Only 3 questions added
+            assert new_count == 3
+            updated_data = yaml.safe_load(golden_questions_file.read_text())
+            assert len(updated_data["questions"]) == 4  # 1 existing + 3 new
+
+    def test_refresh_golden_questions_handles_empty_log_gracefully(self, tmp_path):
+        """Test that refresh handles missing/empty log file without crashing."""
+        # Arrange: Import function
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+        from self_improve_nl_parsing import refresh_golden_questions_from_logs
+
+        # Create existing golden questions
+        golden_questions_file = tmp_path / "golden_questions.yaml"
+        existing_data = {"questions": [{"query": "existing query", "expected_intent": "COUNT"}]}
+        golden_questions_file.write_text(yaml.dump(existing_data))
+
+        # Non-existent log file
+        log_file = tmp_path / "nonexistent.log"
+
+        # Mock returns empty list
+        with patch(
+            "self_improve_nl_parsing.generate_golden_questions_from_logs",
+            return_value=[],
+        ):
+            # Act: Refresh with missing log
+            new_count = refresh_golden_questions_from_logs(
+                log_file=log_file,
+                golden_questions_file=golden_questions_file,
+                min_confidence=0.8,
+                max_new_questions=10,
+            )
+
+            # Assert: No new questions added, no crash
+            assert new_count == 0
+            updated_data = yaml.safe_load(golden_questions_file.read_text())
+            assert len(updated_data["questions"]) == 1  # Still only existing question
