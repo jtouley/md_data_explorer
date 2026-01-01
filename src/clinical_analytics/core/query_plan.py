@@ -52,6 +52,9 @@ class QueryPlan:
     # ADR009 Phase 1: LLM-generated follow-up questions
     follow_ups: list[str] = field(default_factory=list)  # Context-aware follow-up questions
     follow_up_explanation: str = ""  # Why these follow-ups are relevant
+    # ADR009 Phase 2: Query interpretation and confidence explanation
+    interpretation: str = ""  # Human-readable explanation of what the query is asking
+    confidence_explanation: str = ""  # Why the confidence score is what it is
 
     @classmethod
     def from_dict(cls, data: dict) -> "QueryPlan":
@@ -122,6 +125,8 @@ class QueryPlan:
             scope=data.get("scope", "all"),
             follow_ups=data.get("follow_ups", []),
             follow_up_explanation=data.get("follow_up_explanation", ""),
+            interpretation=data.get("interpretation", ""),
+            confidence_explanation=data.get("confidence_explanation", ""),
         )
 
 

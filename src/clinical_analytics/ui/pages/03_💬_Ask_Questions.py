@@ -1033,6 +1033,10 @@ def render_result(
     elif query_plan:
         st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
 
+    # ADR009 Phase 2: Render LLM-generated query interpretation
+    if query_plan:
+        _render_query_interpretation(query_plan)
+
     # ADR009 Phase 1: Render LLM-generated follow-up questions
     if query_plan and query_plan.follow_ups:
         _render_llm_follow_ups(query_plan, run_key)
@@ -1376,6 +1380,30 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
         has_filters=len(query_plan.filters) > 0,
         has_explanation=bool(query_plan.explanation),
     )
+
+
+# ADR009 Phase 2: Query Interpretation
+def _render_query_interpretation(plan) -> None:
+    """
+    Render LLM-generated query interpretation (ADR009 Phase 2).
+
+    Displays human-readable explanation of what the query is asking and why
+    the confidence score is what it is. Helps users understand how their
+    question was parsed without needing to inspect technical QueryPlan fields.
+
+    Args:
+        plan: QueryPlan with interpretation and confidence_explanation fields
+    """
+    if not plan.interpretation and not plan.confidence_explanation:
+        return  # No interpretation to render
+
+    # Only show interpretation section if we have content
+    if plan.interpretation:
+        st.info(f"**Understanding your question:** {plan.interpretation}")
+
+    # Show confidence explanation if confidence is not high or if explanation exists
+    if plan.confidence_explanation and plan.confidence < 0.9:
+        st.caption(f"*Confidence note:* {plan.confidence_explanation}")
 
 
 # ADR009 Phase 1: LLM-Generated Follow-Ups

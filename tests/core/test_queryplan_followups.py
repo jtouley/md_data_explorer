@@ -8,7 +8,6 @@ Tests cover:
 - Empty and None value handling
 """
 
-
 from clinical_analytics.core.query_plan import QueryPlan
 
 

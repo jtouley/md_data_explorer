@@ -67,6 +67,9 @@ class QueryIntent:
     # ADR009 Phase 1: LLM-generated follow-up questions
     follow_ups: list[str] = field(default_factory=list)  # Context-aware follow-up questions
     follow_up_explanation: str = ""  # Why these follow-ups are relevant
+    # ADR009 Phase 2: Query interpretation and confidence explanation
+    interpretation: str = ""  # Human-readable explanation of what the query is asking
+    confidence_explanation: str = ""  # Why the confidence score is what it is
 
     def __post_init__(self):
         """Validate intent_type."""
@@ -926,6 +929,8 @@ Return JSON matching the QueryPlan schema with these REQUIRED fields:
 OPTIONAL fields for enhanced UX (ADR009):
 - follow_ups: Array of 2-3 context-aware follow-up questions (as suggestions, not endorsements)
 - follow_up_explanation: Brief explanation of why these follow-ups are relevant
+- interpretation: Human-readable explanation of what the query is asking (helps user understand parsing)
+- confidence_explanation: Brief explanation of why the confidence score is what it is
 
 Available columns: {columns}
 Aliases: {aliases}
@@ -973,6 +978,7 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
 
                 # Convert validated QueryPlan back to QueryIntent for backward compatibility
                 # ADR009 Phase 1: Preserve follow_ups fields
+                # ADR009 Phase 2: Preserve interpretation fields
                 return QueryIntent(
                     intent_type=query_plan.intent,  # type: ignore[arg-type]
                     primary_variable=query_plan.metric,
@@ -982,6 +988,8 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                     filters=query_plan.filters,  # Preserve validated filters
                     follow_ups=query_plan.follow_ups,  # Preserve LLM-generated follow-ups
                     follow_up_explanation=query_plan.follow_up_explanation,
+                    interpretation=query_plan.interpretation,  # Preserve LLM-generated interpretation
+                    confidence_explanation=query_plan.confidence_explanation,  # Preserve confidence explanation
                 )
 
             except (ValueError, KeyError) as validation_error:
