@@ -165,3 +165,85 @@ questions:
     expected_metric: null
     expected_group_by: null
     notes: "Vague comparison - missing which variable to compare"
+
+  # Conversational refinement queries (ADR009 Phase 6)
+  # These test context-aware LLM refinement handling
+  - id: refinement_remove_na_with_context
+    query: "remove the n/a"
+    conversation_history:
+      - query: "count patients by statin"
+        intent: "COUNT"
+        group_by: "statin"
+        metric: null
+        filters_applied: []
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "statin"  # Should inherit from previous
+    expected_filters:
+      - column: "statin"
+        operator: "!="
+        value: 0
+    notes: "Conversational refinement - LLM should detect this refines previous COUNT query"
+
+  - id: refinement_exclude_with_context
+    query: "exclude missing values"
+    conversation_history:
+      - query: "describe cholesterol"
+        intent: "DESCRIBE"
+        group_by: null
+        metric: "cholesterol"
+        filters_applied: []
+    expected_intent: DESCRIBE
+    expected_metric: "cholesterol"  # Should inherit from previous
+    expected_group_by: null
+    expected_filters:
+      - column: "cholesterol"
+        operator: "!="
+        value: 0
+    notes: "Conversational refinement - add exclusion filter to previous DESCRIBE"
+
+  - id: refinement_update_filter_with_context
+    query: "actually over 65"
+    conversation_history:
+      - query: "patients over 50"
+        intent: "COUNT"
+        group_by: null
+        metric: null
+        filters_applied:
+          - column: "age"
+            operator: ">"
+            value: 50
+            exclude_nulls: true
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: null
+    expected_filters:
+      - column: "age"
+        operator: ">"
+        value: 65  # Should update from 50 to 65
+    notes: "Conversational refinement - LLM should update existing age filter"
+
+  - id: refinement_only_active_with_context
+    query: "only active patients"
+    conversation_history:
+      - query: "count patients by treatment"
+        intent: "COUNT"
+        group_by: "treatment"
+        metric: null
+        filters_applied: []
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: "treatment"  # Should inherit grouping
+    expected_filters:
+      - column: "status"
+        operator: "=="
+        value: "active"
+    notes: "Conversational refinement - add filter while preserving grouping"
+
+  - id: refinement_without_context_low_confidence
+    query: "remove the n/a"
+    conversation_history: []  # NO context
+    expected_intent: DESCRIBE  # Falls back to generic
+    expected_metric: null
+    expected_group_by: null
+    notes: "Refinement WITHOUT context - should have low confidence (<0.75)"

@@ -165,14 +165,26 @@ class NLQueryEngine:
             {"template": "describe", "intent": "DESCRIBE", "slots": []},
         ]
 
-    def parse_query(self, query: str, dataset_id: str | None = None, upload_id: str | None = None) -> QueryIntent:
+    def parse_query(
+        self,
+        query: str,
+        dataset_id: str | None = None,
+        upload_id: str | None = None,
+        conversation_history: list[dict] | None = None,
+    ) -> QueryIntent:
         """
-        Parse natural language query into structured intent.
+        Parse natural language query into structured intent with conversation context.
+
+        Supports conversational refinements (ADR009 Phase 6): When conversation_history
+        is provided, the LLM can detect refinement queries like "remove the n/a" that
+        modify previous queries, and intelligently merge them.
 
         Args:
             query: User's question (e.g., "compare survival by treatment arm")
             dataset_id: Optional dataset identifier for logging
             upload_id: Optional upload identifier for logging
+            conversation_history: Optional list of previous queries for context
+                Each entry should contain: query, intent, group_by, filters_applied
 
         Returns:
             QueryIntent with extracted intent type and variables
@@ -184,6 +196,12 @@ class NLQueryEngine:
             >>> intent = engine.parse_query("compare mortality by treatment")
             >>> assert intent.intent_type == "COMPARE_GROUPS"
             >>> assert intent.confidence > 0.9
+
+        Example (with conversation context):
+            >>> history = [{"query": "count by statin", "intent": "COUNT", "group_by": "statin"}]
+            >>> intent = engine.parse_query("remove the n/a", conversation_history=history)
+            >>> assert intent.intent_type == "COUNT"  # Inherited from previous
+            >>> assert len(intent.filters) > 0  # Added filter from refinement
         """
         if not query or not query.strip():
             logger.error(
@@ -291,7 +309,7 @@ class NLQueryEngine:
 
         # Tier 3: LLM fallback (stub for now) - only if we don't have a good intent yet
         if not intent or (intent.confidence < 0.5 and intent.intent_type == "DESCRIBE"):
-            llm_intent = self._llm_parse(query)
+            llm_intent = self._llm_parse(query, conversation_history=conversation_history)
             attempt = {
                 "tier": "llm_fallback",
                 "result": "success" if llm_intent else "failed",
@@ -450,36 +468,55 @@ class NLQueryEngine:
 
         # Extract filters from query (applies to all intent types)
         if intent:
-            intent.filters = self._extract_filters(query, grouping_variable=intent.grouping_variable)
+            # Extract regex-based filters
+            regex_filters = self._extract_filters(query, grouping_variable=intent.grouping_variable)
 
             # CRITICAL FIX: Validate all regex-extracted filters before applying
             # Phase 5 filter extraction provides validation, but regex extraction doesn't
             # We must filter out invalid filters (e.g., string "n/a" for float column)
-            if intent.filters:
+            valid_regex_filters = []
+            if regex_filters:
                 from clinical_analytics.core.filter_extraction import _validate_filter
 
-                valid_filters = []
                 invalid_count = 0
-                for f in intent.filters:
+                for f in regex_filters:
                     is_valid, error_msg = _validate_filter(
                         {"column": f.column, "operator": f.operator, "value": f.value}, self.semantic_layer
                     )
                     if is_valid:
-                        valid_filters.append(f)
+                        valid_regex_filters.append(f)
                     else:
                         invalid_count += 1
                         logger.debug("regex_filter_validation_failed", filter=f, error=error_msg)
 
-                intent.filters = valid_filters
                 if invalid_count > 0:
                     intent.confidence = max(0.6, intent.confidence - 0.1 * invalid_count)
                     logger.debug(
                         "regex_filters_invalidated",
                         query=query,
                         invalid_count=invalid_count,
-                        valid_count=len(valid_filters),
+                        valid_count=len(valid_regex_filters),
                         confidence=intent.confidence,
                     )
+
+            # Merge regex filters with existing intent filters (e.g., from LLM parse)
+            # Avoid duplicates
+            if valid_regex_filters:
+                existing_filter_keys = {
+                    (f.column, f.operator, str(f.value) if not isinstance(f.value, list) else tuple(sorted(f.value)))
+                    for f in intent.filters
+                }
+
+                for rf in valid_regex_filters:
+                    filter_key = (
+                        rf.column,
+                        rf.operator,
+                        str(rf.value) if not isinstance(rf.value, list) else tuple(sorted(rf.value)),
+                    )
+
+                    if filter_key not in existing_filter_keys:
+                        intent.filters.append(rf)
+                        existing_filter_keys.add(filter_key)
 
             if intent.filters:
                 logger.debug(
@@ -933,19 +970,59 @@ class NLQueryEngine:
             "query": query,
         }
 
-    def _build_llm_prompt(self, query: str, context: dict) -> tuple[str, str]:
+    def _build_llm_prompt(
+        self,
+        query: str,
+        context: dict,
+        conversation_history: list[dict] | None = None,
+    ) -> tuple[str, str]:
         """
-        Build structured prompts for LLM.
+        Build structured prompts for LLM with conversation context.
 
         Phase 5.1: Request QueryPlan JSON schema instead of legacy QueryIntent.
+        Phase 6: Support conversational refinements (ADR009).
 
         Args:
             query: User's question
             context: RAG context with columns, aliases, examples
+            conversation_history: Optional list of previous queries for refinement detection
 
         Returns:
             Tuple of (system_prompt, user_prompt)
         """
+        # Build conversation context section if history provided
+        conversation_context = ""
+        if conversation_history and len(conversation_history) > 0:
+            # Get most recent query (limit to last 1 for simplicity)
+            recent = conversation_history[-1]
+            conversation_context = f"""
+
+CONVERSATION CONTEXT (ADR009 Phase 6):
+Previous query: "{recent.get("query", "N/A")}"
+Previous intent: {recent.get("intent", "N/A")}
+Previous group_by: {recent.get("group_by", "null")}
+Previous metric: {recent.get("metric", "null")}
+Previous filters: {recent.get("filters_applied", [])}
+
+REFINEMENT DETECTION:
+If the current query appears to be a refinement of the previous query
+(e.g., "remove X", "exclude Y", "only Z", "without A"), then:
+1. REUSE the previous intent, metric, and group_by fields
+2. ADD or UPDATE filters based on the current query
+3. Set confidence >= 0.7 (you have context)
+4. In explanation, mention this is a refinement of the previous query
+
+Examples of refinements:
+- Previous: "count by statin" → Current: "remove the n/a"
+  Result: Reuse COUNT + group_by=statin, ADD filter statin != 0
+- Previous: "describe outcome" → Current: "exclude unknowns"
+  Result: Reuse DESCRIBE + metric=outcome, ADD filter
+- Previous: "patients over 50" → Current: "actually over 65"
+  Result: Reuse intent, UPDATE age filter to >65
+
+If the current query is NOT a refinement (it's a completely new question),
+parse it independently and set confidence based on clarity."""
+
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 
 Return JSON matching the QueryPlan schema with these REQUIRED fields:
@@ -984,10 +1061,13 @@ Filter extraction (ADR009 Phase 5):
 - Examples:
   * "get rid of the n/a" → {{"column": "treatment_group", "operator": "!=", "value": 0}}
   * "exclude missing values" → {{"column": "treatment_group", "operator": "!=", "value": 0}}
-  * "patients on statins" → {{"column": "statin_prescribed", "operator": "==", "value": 1}}""".format(
+  * "patients on statins" → {{
+      "column": "statin_prescribed", "operator": "==", "value": 1
+    }}{conversation_context}""".format(
             columns=", ".join(context["columns"]),
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
+            conversation_context=conversation_context,
         )
 
         user_prompt = f"Parse this query: {query}"
@@ -1069,7 +1149,7 @@ Filter extraction (ADR009 Phase 5):
             )
             return None
 
-    def _llm_parse(self, query: str) -> QueryIntent:
+    def _llm_parse(self, query: str, conversation_history: list[dict] | None = None) -> QueryIntent:
         """
         Tier 3: LLM fallback with RAG context from semantic layer.
 
@@ -1078,8 +1158,12 @@ Filter extraction (ADR009 Phase 5):
 
         Privacy-preserving: Uses local Ollama only, no external API calls.
 
+        Supports conversational refinements (ADR009 Phase 6): When conversation_history
+        is provided, LLM can detect refinement queries and merge with previous context.
+
         Args:
             query: User's question
+            conversation_history: Optional list of previous queries for context
 
         Returns:
             QueryIntent with confidence >= 0.5 on success, or 0.3 stub on failure
@@ -1099,7 +1183,7 @@ Filter extraction (ADR009 Phase 5):
             context = self._build_rag_context(query)
 
             # Step 4: Build structured prompts
-            system_prompt, user_prompt = self._build_llm_prompt(query, context)
+            system_prompt, user_prompt = self._build_llm_prompt(query, context, conversation_history)
 
             # Step 5: Call Ollama with JSON mode
             response = client.generate(user_prompt, system_prompt=system_prompt, json_mode=True)

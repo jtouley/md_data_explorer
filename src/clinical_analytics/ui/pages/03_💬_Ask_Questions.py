@@ -1193,6 +1193,7 @@ def execute_analysis_with_idempotency(
         # Add entry (lightweight: headline, not full result dict)
         # Limit to last 20 queries to prevent memory bloat
         max_conversation_history = 20
+        # Add to conversation history with context for refinement detection (ADR009 Phase 6)
         st.session_state["conversation_history"].append(
             {
                 "query": query_text,
@@ -1201,6 +1202,9 @@ def execute_analysis_with_idempotency(
                 "run_key": run_key,
                 "timestamp": time.time(),
                 "filters_applied": filters_applied,
+                # Add group_by and metric for refinement context
+                "group_by": context.group_by_var if hasattr(context, "group_by_var") else None,
+                "metric": context.primary_var if hasattr(context, "primary_var") else None,
             }
         )
 
@@ -2189,7 +2193,18 @@ def main():
             from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
             nl_engine = NLQueryEngine(semantic_layer)
-            query_intent = nl_engine.parse_query(normalized_query, dataset_id=dataset_id, upload_id=upload_id)
+
+            # Get conversation history for context-aware parsing (ADR009 Phase 6)
+            # Limit to last 3 queries for performance and relevance
+            conversation_history = st.session_state.get("conversation_history", [])
+            recent_history = conversation_history[-3:] if len(conversation_history) > 3 else conversation_history
+
+            query_intent = nl_engine.parse_query(
+                normalized_query,
+                dataset_id=dataset_id,
+                upload_id=upload_id,
+                conversation_history=recent_history,
+            )
 
             if query_intent:
                 # Convert QueryIntent to AnalysisContext (similar to ask_free_form_question logic)
