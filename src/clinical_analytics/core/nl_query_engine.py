@@ -451,6 +451,36 @@ class NLQueryEngine:
         # Extract filters from query (applies to all intent types)
         if intent:
             intent.filters = self._extract_filters(query, grouping_variable=intent.grouping_variable)
+
+            # CRITICAL FIX: Validate all regex-extracted filters before applying
+            # Phase 5 filter extraction provides validation, but regex extraction doesn't
+            # We must filter out invalid filters (e.g., string "n/a" for float column)
+            if intent.filters:
+                from clinical_analytics.core.filter_extraction import _validate_filter
+
+                valid_filters = []
+                invalid_count = 0
+                for f in intent.filters:
+                    is_valid, error_msg = _validate_filter(
+                        {"column": f.column, "operator": f.operator, "value": f.value}, self.semantic_layer
+                    )
+                    if is_valid:
+                        valid_filters.append(f)
+                    else:
+                        invalid_count += 1
+                        logger.debug("regex_filter_validation_failed", filter=f, error=error_msg)
+
+                intent.filters = valid_filters
+                if invalid_count > 0:
+                    intent.confidence = max(0.6, intent.confidence - 0.1 * invalid_count)
+                    logger.debug(
+                        "regex_filters_invalidated",
+                        query=query,
+                        invalid_count=invalid_count,
+                        valid_count=len(valid_filters),
+                        confidence=intent.confidence,
+                    )
+
             if intent.filters:
                 logger.debug(
                     "filters_extracted_in_parse",
