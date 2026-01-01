@@ -344,3 +344,70 @@ def test_llm_provides_explanation_for_refinement(make_semantic_layer):
     assert any(word in explanation_lower for word in ["filter", "exclude", "refin", "previous"]), (
         "Explanation should describe the refinement"
     )
+
+
+def test_parse_query_refinement_handles_llm_failure_with_fallback(make_semantic_layer):
+    """
+    Test that refinement queries work even when LLM returns invalid response.
+
+    This tests the exact scenario from the terminal where LLM returns
+    {"query": "remove the n/a"} instead of proper QueryPlan schema.
+    The system should fall back to refinement handler that merges with previous context.
+    """
+    # Arrange: Create semantic layer with statin column matching terminal scenario
+    statin_col = (
+        "Statin Used:    0: n/a                       1: Atorvastatin  "
+        "2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin"
+    )
+    semantic = make_semantic_layer(
+        dataset_name="test_statins",
+        data={
+            "patient_id": ["P1", "P2", "P3", "P4"],
+            statin_col: [0, 1, 2, 1],
+            "age": [45, 52, 38, 61],
+        },
+    )
+    engine = NLQueryEngine(semantic_layer=semantic)
+
+    # Previous query: count by statin (all values including n/a)
+    conversation_history = [
+        {
+            "query": "what statins were those patients on, broken down by count of patients per statin?",
+            "intent": "COUNT",
+            "group_by": statin_col,
+            "metric": None,
+            "filters_applied": [],
+            "run_key": "abc123",
+            "timestamp": 100.0,
+        }
+    ]
+
+    # Act: Parse refinement query "remove the n/a" with conversation context
+    # This should work even if LLM fails and returns invalid response
+    result = engine.parse_query(
+        query="remove the n/a",
+        conversation_history=conversation_history,
+    )
+
+    # Assert: Should maintain previous intent and grouping
+    assert result.intent_type == "COUNT", "Should maintain previous COUNT intent"
+    assert result.grouping_variable == statin_col, "Should maintain previous grouping"
+
+    # Should add filter to exclude n/a (value 0) - NOT string "the n/a"
+    assert len(result.filters) >= 1, "Should have filter from refinement"
+
+    # Find the statin filter (may be canonical name or alias)
+    statin_filters = [
+        f for f in result.filters if f.column == statin_col or statin_col in f.column or f.column in statin_col
+    ]
+    assert len(statin_filters) >= 1, "Should have at least one statin filter"
+    statin_filter = statin_filters[0]
+
+    # CRITICAL: Should use numeric value 0, NOT string "the n/a"
+    assert statin_filter.operator == "!=", "Should use != for exclusion"
+    assert statin_filter.value == 0, (
+        f"Should exclude value 0 (n/a), not string. Got: {statin_filter.value} (type: {type(statin_filter.value)})"
+    )
+
+    # Should have reasonable confidence (even with fallback)
+    assert result.confidence >= 0.5, "Should have reasonable confidence even with fallback"

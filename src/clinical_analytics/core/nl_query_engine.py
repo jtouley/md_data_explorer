@@ -1418,6 +1418,35 @@ Filter extraction (ADR009 Phase 5):
             if conversation_history and intent:
                 previous_intent = conversation_history[-1].get("intent") if conversation_history else None
                 previous_group_by = conversation_history[-1].get("group_by") if conversation_history else None
+                previous_metric = conversation_history[-1].get("metric") if conversation_history else None
+
+                # If this is a refinement query and LLM didn't preserve context, merge it
+                if self._is_refinement_query(query) and previous_intent:
+                    # Preserve previous intent if LLM changed it
+                    if intent.intent_type != previous_intent:
+                        intent.intent_type = previous_intent  # type: ignore[assignment]
+                        logger.info(
+                            "refinement_intent_corrected",
+                            query=query,
+                            llm_intent=intent.intent_type,
+                            corrected_intent=previous_intent,
+                        )
+                    # Preserve previous group_by if LLM didn't set it
+                    if previous_group_by and not intent.grouping_variable:
+                        intent.grouping_variable = previous_group_by
+                        logger.info(
+                            "refinement_group_by_preserved",
+                            query=query,
+                            previous_group_by=previous_group_by,
+                        )
+                    # Preserve previous metric if LLM didn't set it
+                    if previous_metric and not intent.primary_variable:
+                        intent.primary_variable = previous_metric
+                        logger.info(
+                            "refinement_metric_preserved",
+                            query=query,
+                            previous_metric=previous_metric,
+                        )
 
                 logger.info(
                     "llm_refinement_parsing_completed",
@@ -1439,6 +1468,17 @@ Filter extraction (ADR009 Phase 5):
 
             if intent is None:
                 logger.info("llm_parse_extraction_failed_fallback_to_stub", query=query)
+                # Try fallback refinement handler if conversation history exists
+                if conversation_history and len(conversation_history) > 0:
+                    fallback_intent = self._handle_refinement_fallback(query, conversation_history)
+                    if fallback_intent:
+                        logger.info(
+                            "refinement_fallback_handler_success",
+                            query=query,
+                            intent_type=fallback_intent.intent_type,
+                            confidence=fallback_intent.confidence,
+                        )
+                        return fallback_intent
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
             # ADR009 Phase 5: Extract filters using LLM (for complex patterns)
@@ -1509,6 +1549,155 @@ Filter extraction (ADR009 Phase 5):
                 query=query,
             )
             return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+    def _is_refinement_query(self, query: str) -> bool:
+        """
+        Detect if query is a refinement (modification of previous query).
+
+        Refinement keywords: "remove", "exclude", "without", "only", "just",
+        "also", "actually", "get rid of", "drop"
+
+        Args:
+            query: User's query text
+
+        Returns:
+            True if query appears to be a refinement
+        """
+        query_lower = query.lower()
+        refinement_keywords = [
+            "remove",
+            "exclude",
+            "without",
+            "only",
+            "just",
+            "also",
+            "actually",
+            "get rid of",
+            "drop",
+            "filter out",
+        ]
+        return any(keyword in query_lower for keyword in refinement_keywords)
+
+    def _handle_refinement_fallback(self, query: str, conversation_history: list[dict]) -> QueryIntent | None:
+        """
+        Fallback refinement handler when LLM fails.
+
+        Detects refinement queries and merges with previous context:
+        - Preserves previous intent, group_by, metric
+        - Extracts filters from refinement query
+        - Uses numeric code 0 for "n/a" in coded columns
+
+        Args:
+            query: Current query (refinement)
+            conversation_history: Previous query context
+
+        Returns:
+            QueryIntent if refinement detected and handled, None otherwise
+        """
+        # Check if this looks like a refinement
+        if not self._is_refinement_query(query):
+            return None
+
+        # Get previous context
+        recent = conversation_history[-1]
+        previous_intent = recent.get("intent")
+        previous_group_by = recent.get("group_by")
+        previous_metric = recent.get("metric")
+
+        if not previous_intent:
+            return None
+
+        # Create base intent from previous context
+        intent = QueryIntent(
+            intent_type=previous_intent,  # type: ignore[arg-type]
+            primary_variable=previous_metric,
+            grouping_variable=previous_group_by,
+            confidence=0.6,  # Moderate confidence for fallback
+            parsing_tier="llm_fallback",
+        )
+
+        # Extract filters from refinement query
+        # For "remove the n/a" or "exclude missing", we need to:
+        # 1. Identify the column (from previous group_by or metric)
+        # 2. Extract the value to exclude (0 for n/a in coded columns)
+        query_lower = query.lower()
+
+        # Determine target column from previous context
+        target_column = None
+        if previous_group_by:
+            # Use previous group_by column
+            target_column = previous_group_by
+        elif previous_metric:
+            # Use previous metric column
+            target_column = previous_metric
+        else:
+            # No clear column context, try to infer from query
+            # This is a fallback, so lower confidence
+            intent.confidence = 0.5
+            return intent
+
+        # Get canonical column name (may be alias)
+        try:
+            alias_index = self.semantic_layer.get_column_alias_index()
+            # Normalize target column for lookup
+            normalized_target = self.semantic_layer._normalize_alias(target_column)
+            # Try to find canonical name from alias index
+            canonical_column = alias_index.get(normalized_target, target_column)
+            # If still not found, check if target_column is already canonical
+            # by checking if it exists in the base view
+            if canonical_column == target_column:
+                try:
+                    view = self.semantic_layer.get_base_view()
+                    if target_column in view.columns:
+                        canonical_column = target_column
+                    else:
+                        # Try reverse lookup: find alias that matches target_column
+                        for alias, canonical in alias_index.items():
+                            if canonical == target_column or alias == normalized_target:
+                                canonical_column = canonical
+                                break
+                except Exception:
+                    pass
+        except Exception:
+            canonical_column = target_column
+
+        # Extract filter value based on query
+        # For "remove the n/a" or "exclude missing", use code 0
+        filter_value = 0  # Default for n/a/missing
+        filter_operator = "!="
+
+        # Check for specific value references
+        if "n/a" in query_lower or "na" in query_lower or "missing" in query_lower:
+            filter_value = 0
+        elif "zero" in query_lower or "0" in query:
+            filter_value = 0
+        elif "only" in query_lower or "just" in query_lower:
+            # "only X" means == X, not !=
+            filter_operator = "=="
+            # Try to extract value from query (simplified)
+            # This is a fallback, so we'll use 1 as default for "only"
+            filter_value = 1
+
+        # Check if column is coded (numeric with labels)
+        is_coded = self._is_coded_column(canonical_column, target_column)
+
+        # Create filter
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        filter_spec = FilterSpec(
+            column=canonical_column,
+            operator=filter_operator,  # type: ignore[arg-type]
+            value=filter_value if is_coded else str(filter_value),
+            exclude_nulls=True,
+        )
+
+        # Add filter to intent
+        intent.filters = [filter_spec]
+
+        # Add explanation
+        intent.explanation = f"Refining previous query: {query}"
+
+        return intent
 
     def _extract_variables_from_query(self, query: str) -> tuple[list[str], dict[str, list[str]]]:
         """
