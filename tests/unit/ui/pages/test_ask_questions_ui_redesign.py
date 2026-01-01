@@ -234,7 +234,7 @@ class TestChatInputHandling:
         from pathlib import Path
 
         project_root = Path(__file__).parent.parent.parent.parent.parent
-        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "3_💬_Ask_Questions.py"
+        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "03_💬_Ask_Questions.py"
 
         # Read the page file
         page_content = page_path.read_text()
@@ -319,7 +319,7 @@ class TestChatInputHandling:
         from pathlib import Path
 
         project_root = Path(__file__).parent.parent.parent.parent.parent
-        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "3_💬_Ask_Questions.py"
+        page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "03_💬_Ask_Questions.py"
 
         # Read the page file
         page_content = page_path.read_text()

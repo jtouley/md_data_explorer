@@ -6,7 +6,6 @@ of duplication across UI pages.
 """
 
 
-
 def test_dataset_loader_encapsulates_loading_logic():
     """Dataset loader should encapsulate all dataset loading logic."""
     # This is a placeholder test - UI component testing requires Streamlit test framework

@@ -72,7 +72,7 @@ def ask_questions_page():
     sys.path.insert(0, str(project_root / "src"))
 
     # Import from the page file (has emoji in name, so use importlib)
-    page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "3_💬_Ask_Questions.py"
+    page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "03_💬_Ask_Questions.py"
     spec = importlib.util.spec_from_file_location("ask_questions_page", page_path)
     ask_questions_page = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ask_questions_page)
