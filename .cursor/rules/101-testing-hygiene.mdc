@@ -6,6 +6,10 @@ alwaysApply: true
 
 # Testing Hygiene Standards
 
+> **Source of Truth**: For comprehensive testing guidelines, decision criteria, and enforcement rules, see **[tests/AGENTS.md](../../tests/AGENTS.md)**. This rule document provides patterns and standards that complement AGENTS.md.
+
+## Testing Hygiene Standards
+
 ## Test Structure: AAA Pattern
 
 Every test follows Arrange-Act-Assert with clear separation:
@@ -365,3 +369,4 @@ make test-core
 ```
 
 See `.cursor/rules/000-project-setup-and-makefile.mdc` for full Makefile reference.
+See `tests/AGENTS.md` for comprehensive testing guidelines including unit vs integration test criteria.

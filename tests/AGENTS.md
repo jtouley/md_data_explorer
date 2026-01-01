@@ -59,18 +59,19 @@
 
 1. [Test Structure: AAA Pattern](#test-structure-aaa-pattern)
 2. [Test Naming Convention](#test-naming-convention)
-3. [DRY Principles for Tests](#dry-principles-for-tests)
-4. [Fixture Discipline](#fixture-discipline)
-5. [Test Isolation](#test-isolation)
-6. [Parameterization](#parameterization)
-7. [Error Testing](#error-testing)
-8. [Data Engineering Specific Patterns](#data-engineering-specific-patterns)
-9. [Polars Testing Assertions](#polars-testing-assertions)
-10. [Common Anti-Patterns to Avoid](#common-anti-patterns-to-avoid)
-11. [Standard Fixtures Reference](#standard-fixtures-reference)
-12. [Makefile Usage](#makefile-usage)
-13. [Test Writing Checklist](#test-writing-checklist)
-14. [Examples](#examples)
+3. [Unit Tests vs Integration Tests: Decision Criteria](#unit-tests-vs-integration-tests-decision-criteria)
+4. [DRY Principles for Tests](#dry-principles-for-tests)
+5. [Fixture Discipline](#fixture-discipline)
+6. [Test Isolation](#test-isolation)
+7. [Parameterization](#parameterization)
+8. [Error Testing](#error-testing)
+9. [Data Engineering Specific Patterns](#data-engineering-specific-patterns)
+10. [Polars Testing Assertions](#polars-testing-assertions)
+11. [Common Anti-Patterns to Avoid](#common-anti-patterns-to-avoid)
+12. [Standard Fixtures Reference](#standard-fixtures-reference)
+13. [Makefile Usage](#makefile-usage)
+14. [Test Writing Checklist](#test-writing-checklist)
+15. [Examples](#examples)
 
 ---
 
@@ -132,6 +133,136 @@ def test_load():
 ```
 
 **Why**: Descriptive names explain what is being tested without reading the code.
+
+---
+
+## Unit Tests vs Integration Tests: Decision Criteria
+
+> **Reference**: [tests/PERFORMANCE.md](./PERFORMANCE.md) - Performance optimization details
+
+### When to Write Unit Tests (Default - 95% of Tests)
+
+**Write unit tests when testing:**
+1. **Code logic and business rules** - How the code processes data, makes decisions, transforms inputs
+2. **Error handling** - How code handles invalid inputs, edge cases, failures
+3. **Data transformations** - How data is parsed, filtered, aggregated, validated
+4. **Algorithm correctness** - Pattern matching, semantic matching, query parsing logic
+5. **State management** - How internal state changes, how objects interact
+
+**Characteristics:**
+- ✅ Use `mock_llm_calls` fixture to mock LLM calls (prevents 30s HTTP timeouts)
+- ✅ Use `nl_query_engine_with_cached_model` for fast SentenceTransformer access (2-5s speedup)
+- ✅ Use test doubles (mocks, stubs, fakes) for external dependencies
+- ✅ Run fast (<1s per test)
+- ✅ No `@pytest.mark.integration` or `@pytest.mark.slow` markers
+- ✅ Test in isolation - no real external services
+
+**Example:**
+```python
+def test_parse_query_with_refinement_context_adds_filter(
+    make_semantic_layer,
+    mock_llm_calls,
+    nl_query_engine_with_cached_model,
+):
+    """Test that parsing logic correctly handles refinement queries."""
+    # Arrange
+    semantic = make_semantic_layer(
+        dataset_name="test_statins",
+        data={"patient_id": ["P1", "P2"], "statin_used": [0, 1]},
+    )
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    
+    # Act
+    result = engine.parse_query(
+        query="remove the n/a",
+        conversation_history=[{"query": "count patients", "intent": "COUNT"}],
+    )
+    
+    # Assert: Tests logic, not real LLM
+    assert result.intent_type == "COUNT"
+    assert len(result.filters) >= 1
+```
+
+### When to Write Integration Tests (Exception - 5% of Tests)
+
+**Write integration tests ONLY when testing:**
+1. **Real external service behavior** - Actual LLM responses, actual API contracts
+2. **End-to-end workflows** - Complete user journeys across multiple components
+3. **Service availability** - Whether Ollama is running, whether models are available
+4. **Performance characteristics** - Real LLM latency, real data loading times
+5. **Regression detection** - Catching changes in external service behavior
+
+**Characteristics:**
+- ✅ Use real Ollama LLM calls (no mocks)
+- ✅ Mark with `@pytest.mark.integration` AND `@pytest.mark.slow`
+- ✅ Skip automatically if service unavailable (`skip_if_ollama_unavailable`)
+- ✅ Run slow (10-30s per test) - acceptable because they're rare
+- ✅ In separate files (e.g., `test_*_integration.py`)
+- ✅ Test real behavior, not just logic
+
+**Example:**
+```python
+@pytest.mark.integration
+@pytest.mark.slow
+def test_llm_parse_with_real_ollama(mock_semantic_layer, skip_if_ollama_unavailable):
+    """Verify real Ollama service returns valid responses."""
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+    
+    engine = NLQueryEngine(mock_semantic_layer)
+    intent = engine._llm_parse("complex query that needs real LLM")
+    
+    # Assert: Tests real LLM, not mocked
+    assert intent is not None
+    assert intent.confidence >= 0.5  # Real LLM should have good confidence
+```
+
+### Decision Tree
+
+```
+Start: What are you testing?
+│
+├─ Code logic, transformations, error handling?
+│  └─> Write UNIT TEST (with mocks)
+│
+├─ Real external service behavior (LLM, API, database)?
+│  └─> Write INTEGRATION TEST (real services)
+│
+├─ End-to-end user workflow?
+│  └─> Write INTEGRATION TEST (real services)
+│
+└─ Performance/regression of external service?
+   └─> Write INTEGRATION TEST (real services)
+```
+
+### Rules of Thumb
+
+1. **Default to unit tests** - 95% of tests should be unit tests
+2. **Integration tests are exceptions** - Only write when you MUST test real service behavior
+3. **One integration test per concern** - Don't duplicate unit test coverage with integration tests
+4. **Integration tests verify contracts** - They ensure external services still work as expected
+5. **Unit tests verify logic** - They ensure your code works correctly
+
+### Anti-Patterns
+
+❌ **DON'T write integration tests to test code logic** - Use unit tests with mocks
+❌ **DON'T write unit tests to test external service behavior** - Use integration tests
+❌ **DON'T duplicate coverage** - If unit test covers the logic, integration test should only verify real service
+❌ **DON'T skip mocking in unit tests** - Always use `mock_llm_calls` in unit tests
+❌ **DON'T forget to mark integration tests** - Always use both `@pytest.mark.integration` and `@pytest.mark.slow`
+
+### Performance Impact
+
+**Unit Tests (with mocks):**
+- Duration: <1s per test
+- Uses: `mock_llm_calls` + `nl_query_engine_with_cached_model`
+- Speedup: 30-50x faster than real LLM calls
+
+**Integration Tests (real services):**
+- Duration: 10-30s per test
+- Uses: Real Ollama LLM calls
+- Purpose: Verify real service behavior, catch regressions
+
+See [tests/PERFORMANCE.md](./PERFORMANCE.md) for detailed performance optimization documentation.
 
 ---
 

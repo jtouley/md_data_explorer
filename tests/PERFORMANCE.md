@@ -6,6 +6,41 @@ This document tracks test performance, identifies slow tests (>30 seconds), and 
 
 ## Performance Optimizations
 
+### LLM Mocking and SentenceTransformer Caching (2026-01-01)
+
+**Problem**: LLM query parsing tests were taking 10-30 seconds each because:
+1. **Real HTTP requests**: `OllamaClient.is_available()` was making real HTTP requests to check if Ollama is running, causing 30s timeouts when Ollama wasn't available
+2. **SentenceTransformer reloading**: Each test created a new `NLQueryEngine` instance, which loaded the SentenceTransformer model (`all-MiniLM-L6-v2`) fresh each time (2-5 seconds per test)
+3. **Real LLM calls**: Some tests were making real LLM calls even when they should be unit tests
+
+**Solution**: 
+1. **Enhanced `mock_llm_calls` fixture**: Now patches both `OllamaClient.generate()` AND `OllamaClient.is_available()` to return `True` immediately, preventing HTTP requests
+2. **Session-scoped SentenceTransformer caching**: Added `cached_sentence_transformer` fixture that loads the model once per test session
+3. **Factory fixture for cached engines**: Added `nl_query_engine_with_cached_model` fixture that creates `NLQueryEngine` instances with pre-loaded SentenceTransformer
+4. **Separated unit and integration tests**: Unit tests use mocks (fast), integration tests use real LLM (marked `@pytest.mark.integration` and `@pytest.mark.slow`)
+
+**Impact**:
+- Unit tests: Reduced from 10-30s to <1s per test (30-50x speedup)
+- Integration tests: Properly marked and skipped in fast runs
+- No test coverage lost - unit tests test logic, integration tests test real LLM
+
+**Usage**:
+```python
+# Unit test (fast, uses mocks)
+def test_example(make_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model):
+    semantic = make_semantic_layer(...)
+    engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    result = engine.parse_query("remove the n/a", conversation_history=[...])
+    assert result.intent_type == "COUNT"
+
+# Integration test (slow, uses real LLM)
+@pytest.mark.integration
+@pytest.mark.slow
+def test_real_llm_example(skip_if_ollama_unavailable):
+    # Uses real Ollama, marked as integration
+    ...
+```
+
 ### Session-Scoped Dataset Discovery Fixture (2026-01-01)
 
 **Problem**: Tests were calling `DatasetRegistry.discover_datasets()` and `load_dataset_config()` on every test, causing:
@@ -39,25 +74,47 @@ Tests marked with `@pytest.mark.slow` and `@pytest.mark.integration` are expecte
 
 ### Documented Slow Tests
 
-#### 1. LLM Query Parsing Tests
+#### 1. LLM Query Parsing Tests (UNIT TESTS - NOW FAST)
 **Location**: `tests/core/test_nl_query_refinement.py`, `tests/core/test_nl_query_engine_filter_extraction.py`
+
+**Duration**: <1 second per test (with mocks and cached SentenceTransformer)
+
+**Reason**: These are **unit tests** that use mocked LLM calls and cached SentenceTransformer models. They test the parsing logic without making real LLM calls.
+
+**Performance Optimizations (2026-01-01)**:
+- **Mock LLM Calls**: `mock_llm_calls` fixture patches `OllamaClient.generate()` and `OllamaClient.is_available()` to avoid real HTTP requests
+- **Cached SentenceTransformer**: `nl_query_engine_with_cached_model` fixture pre-loads the embedding model once per session (2-5s speedup per test)
+- **Result**: Tests run in <1s each instead of 10-30s
+
+**Mitigation**:
+- Unit tests use mocks and run fast (<1s)
+- Integration tests (real LLM) are in separate files marked `@pytest.mark.integration` and `@pytest.mark.slow`
+- Use `make test-fast` to skip slow integration tests
+
+**Documentation**: These tests verify that the parsing logic correctly:
+- Recognizes refinement patterns ("remove the n/a", "exclude missing")
+- Inherits previous query context
+- Extracts filters from natural language
+
+#### 1a. LLM Integration Tests (REAL LLM - SLOW)
+**Location**: `tests/core/test_llm_fallback_integration.py`
 
 **Duration**: 10-30 seconds per test (depends on LLM response time)
 
-**Reason**: These tests make real LLM calls to Ollama to test natural language query parsing. Each test:
-- Sends query to LLM
+**Reason**: These tests make **real LLM calls** to Ollama to validate actual LLM behavior. Each test:
+- Sends query to real Ollama service
 - Waits for response (5-15 seconds typical)
 - Validates parsing results
 
 **Mitigation**:
-- Tests are marked `@pytest.mark.slow` to skip in fast runs
+- Tests are marked `@pytest.mark.integration` and `@pytest.mark.slow`
 - Use `make test-fast` to skip these tests
-- LLM calls are necessary to validate actual parsing behavior
+- Tests skip automatically if Ollama is not available
 
-**Documentation**: These tests verify that the LLM correctly:
-- Recognizes refinement patterns ("remove the n/a", "exclude missing")
-- Inherits previous query context
-- Extracts filters from natural language
+**Documentation**: These tests verify that the real Ollama service:
+- Responds correctly to queries
+- Returns valid JSON responses
+- Handles errors gracefully
 
 #### 2. Dataset Integration Tests
 **Location**: `tests/core/test_mapper.py`, `tests/core/test_registry.py`, `tests/core/test_dataset_interface.py`

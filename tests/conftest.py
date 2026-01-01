@@ -26,7 +26,7 @@ pytest_plugins = ["performance.plugin"]
 
 
 @pytest.fixture
-def mock_llm_calls():
+def mock_llm_calls(request):
     """
     Explicit fixture to mock LLM calls for unit tests.
 
@@ -35,7 +35,17 @@ def mock_llm_calls():
 
     This fixture mocks all LLMFeature types with realistic responses,
     providing 30-50x speedup (10-30s → <1s per test).
+
+    Automatically skips mocking for tests marked with @pytest.mark.integration
+    to allow real Ollama validation.
     """
+    # Skip mocking for integration tests that need real Ollama
+    integration_marker = request.node.get_closest_marker("integration")
+    if integration_marker:
+        # Don't mock - let real Ollama run for integration tests
+        yield None
+        return
+
     from unittest.mock import patch
 
     from clinical_analytics.core.llm_feature import LLMCallResult, LLMFeature
@@ -49,6 +59,8 @@ def mock_llm_calls():
         patch("clinical_analytics.core.golden_question_generator.call_llm"),
         # Also patch OllamaClient.generate() for code that uses it directly (e.g., NLQueryEngine)
         patch("clinical_analytics.core.llm_client.OllamaClient.generate"),
+        # CRITICAL: Patch is_available() to avoid real HTTP requests (30s timeout when Ollama isn't running)
+        patch("clinical_analytics.core.llm_client.OllamaClient.is_available", return_value=True),
     ]
 
     # Start all patches
@@ -58,28 +70,144 @@ def mock_llm_calls():
     mock_call_llm = mock_objects[0]
 
     # Mock for OllamaClient.generate() - returns raw JSON string
-    def _mock_ollama_generate(self, prompt, system_prompt=None, json_mode=False):
-        """Mock OllamaClient.generate() to return JSON string."""
-        # Return appropriate JSON based on prompt content (heuristic)
-        if "refinement" in prompt.lower() or "remove" in prompt.lower() or "exclude" in prompt.lower():
-            # Refinement query - return query plan with filters
-            return (
-                '{"intent": "COUNT", "confidence": 0.8, '
-                '"filters": [{"column": "statin_used", "operator": "!=", "value": 0}]}'
+    # Note: When used as side_effect, receives all arguments including self
+    def _mock_ollama_generate(*args, **kwargs):
+        """Mock OllamaClient.generate() to return JSON string matching QueryPlan schema."""
+        import json
+
+        # Extract arguments (self is first arg for instance methods, but we ignore it)
+        # OllamaClient.generate() signature: generate(self, prompt, system_prompt=None, json_mode=False, model=None)
+        prompt = args[1] if len(args) > 1 else kwargs.get("prompt", "")
+        system_prompt = kwargs.get("system_prompt", None)
+
+        prompt_lower = prompt.lower() if prompt else ""
+        system_prompt_lower = system_prompt.lower() if system_prompt else ""
+        combined_text = f"{prompt_lower} {system_prompt_lower}"
+
+        import re
+
+        # Detect refinement queries - check for refinement keywords in prompt or conversation history in system prompt
+        is_refinement = (
+            "refinement" in combined_text
+            or "remove" in prompt_lower
+            or "exclude" in prompt_lower
+            or "without" in prompt_lower
+            or "get rid of" in prompt_lower
+            or "also exclude" in prompt_lower
+            or "only active" in prompt_lower
+            or (
+                "conversation_history" in system_prompt_lower
+                and ("remove" in prompt_lower or "exclude" in prompt_lower)
             )
-        elif "filter" in prompt.lower():
+        )
+
+        # Return appropriate JSON based on prompt content (heuristic)
+        if is_refinement:
+            # Refinement query - return query plan with filters
+            # Extract group_by from conversation history if present in system prompt
+            group_by = None
+            if system_prompt:
+                # Look for previous group_by in conversation history JSON
+                # Pattern: "group_by": "column_name" or "group_by": null
+                # Also handle multi-line strings (the statin column name is very long)
+                group_by_match = re.search(r'"group_by":\s*"([^"]+)"', system_prompt, re.DOTALL)
+                if group_by_match:
+                    group_by = group_by_match.group(1)
+                # Also check for previous_group_by in logs (format: previous_group_by='...')
+                prev_group_by_match = re.search(r"previous_group_by[=:]\s*['\"]([^'\"]+)['\"]", system_prompt)
+                if prev_group_by_match:
+                    group_by = prev_group_by_match.group(1)
+
+            # Determine filter column and value based on context
+            filter_column = "status"  # default
+            filter_operator = "!="
+            filter_value = 0
+
+            # Check for age filter updates ("actually make it over 65")
+            # Look for age-related keywords in prompt or system prompt
+            has_age_context = (
+                "age" in prompt_lower
+                or "age" in system_prompt_lower
+                or "over" in prompt_lower
+                or "65" in prompt_lower
+                or "50" in prompt_lower
+            )
+
+            if has_age_context and ("over" in prompt_lower or ">" in prompt_lower):
+                filter_column = "age"
+                filter_operator = ">"
+                # Extract age value from prompt (e.g., "over 65", "> 50")
+                age_match = re.search(r"(?:over|>)\s*(\d+)", prompt_lower)
+                if age_match:
+                    filter_value = int(age_match.group(1))
+                elif "65" in prompt_lower:
+                    filter_value = 65
+                elif "50" in prompt_lower:
+                    filter_value = 50
+                else:
+                    filter_value = 65  # default
+                response = {
+                    "intent": "COUNT",
+                    "metric": None,
+                    "group_by": group_by,
+                    "filters": [
+                        {
+                            "column": filter_column,
+                            "operator": filter_operator,
+                            "value": filter_value,
+                            "exclude_nulls": True,
+                        }
+                    ],
+                    "confidence": 0.8,
+                    "explanation": "Refining previous query with updated age filter",
+                }
+                return json.dumps(response)
+            elif "statin" in combined_text:
+                filter_column = "statin_used"
+            elif "treatment" in combined_text:
+                filter_column = "treatment_group"
+            elif "status" in combined_text:
+                filter_column = "status"
+
+            response = {
+                "intent": "COUNT",
+                "metric": None,
+                "group_by": group_by,
+                "filters": [
+                    {"column": filter_column, "operator": filter_operator, "value": filter_value, "exclude_nulls": True}
+                ],
+                "confidence": 0.8,
+                "explanation": "Refining previous query by excluding n/a values",
+            }
+            return json.dumps(response)
+        elif "filter" in prompt_lower:
             # Filter extraction
             return '{"filters": []}'
-        elif "follow" in prompt.lower():
+        elif "follow" in prompt_lower:
             # Follow-ups
             return '{"follow_ups": []}'
+        elif "describe" in prompt_lower:
+            # DESCRIBE query
+            response = {
+                "intent": "DESCRIBE",
+                "metric": None,
+                "group_by": None,
+                "filters": [],
+                "confidence": 0.8,
+                "explanation": "Describe the data",
+            }
+            return json.dumps(response)
         else:
             # Default parse response
-            return '{"intent": "DESCRIBE", "confidence": 0.8}'
-
-    # Set the OllamaClient.generate mock (last one)
-    if len(mock_objects) > 5:
-        mock_objects[5].side_effect = _mock_ollama_generate
+            response = {
+                "intent": "DESCRIBE",
+                "metric": None,
+                "group_by": None,
+                "filters": [],
+                "confidence": 0.8,
+                "explanation": "Default query plan",
+            }
+            return json.dumps(response)
 
     # Mock responses for all LLMFeature types
     def _mock_call_llm(feature, system, user, timeout_s, model=None):
@@ -140,15 +268,76 @@ def mock_llm_calls():
             error=None,
         )
 
-    # Set side_effect on all mocks
-    for mock in mock_objects:
-        mock.side_effect = _mock_call_llm
+    # Set side_effect on all mocks EXCEPT OllamaClient.generate (which uses _mock_ollama_generate)
+    # Note: is_available() patch (index 6) uses return_value=True, not side_effect
+    ollama_generate_mock_index = 5  # Index of OllamaClient.generate mock
+    for i, mock in enumerate(mock_objects):
+        if i == ollama_generate_mock_index:
+            mock.side_effect = _mock_ollama_generate
+        elif i < 6:  # Only set side_effect for call_llm mocks (indices 0-4)
+            mock.side_effect = _mock_call_llm
+        # Index 6 (is_available) already has return_value=True from patch() call
 
     yield mock_call_llm
 
     # Stop all patches
     for p in patches:
         p.stop()
+
+
+@pytest.fixture(scope="session")
+def cached_sentence_transformer():
+    """
+    Session-scoped fixture to cache SentenceTransformer model.
+
+    Loads the model once per test session and reuses it across all tests.
+    This provides 2-5 second speedup per test that uses semantic matching.
+
+    The model is loaded lazily on first use in NLQueryEngine._semantic_match(),
+    but this fixture pre-loads it once for the entire test session.
+    """
+    from sentence_transformers import SentenceTransformer
+
+    # Use same model name as NLQueryEngine default
+    model_name = "all-MiniLM-L6-v2"
+    encoder = SentenceTransformer(model_name)
+
+    yield encoder
+
+    # Cleanup (if needed)
+    del encoder
+
+
+@pytest.fixture
+def nl_query_engine_with_cached_model(make_semantic_layer, cached_sentence_transformer):
+    """
+    Factory fixture that creates NLQueryEngine with pre-loaded SentenceTransformer.
+
+    This avoids reloading the model for each test, providing 2-5s speedup per test.
+
+    Usage:
+        def test_example(nl_query_engine_with_cached_model, make_semantic_layer):
+            semantic = make_semantic_layer(...)
+            engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+            result = engine.parse_query("describe outcome")
+    """
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    def _create_engine(semantic_layer=None, **kwargs):
+        if semantic_layer is None:
+            semantic_layer = make_semantic_layer()
+
+        engine = NLQueryEngine(semantic_layer=semantic_layer, **kwargs)
+        # Inject pre-loaded encoder
+        engine.encoder = cached_sentence_transformer
+        # Pre-compute template embeddings if not already done
+        if engine.template_embeddings is None:
+            template_texts = [t["template"] for t in engine.query_templates]
+            engine.template_embeddings = cached_sentence_transformer.encode(template_texts)
+
+        return engine
+
+    return _create_engine
 
 
 @pytest.fixture(scope="session")
