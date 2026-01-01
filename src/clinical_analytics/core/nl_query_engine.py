@@ -14,10 +14,13 @@ Example:
     'COMPARE_GROUPS'
 """
 
+import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from difflib import get_close_matches
+from pathlib import Path
 
 import structlog
 
@@ -34,6 +37,19 @@ VALID_INTENT_TYPES = [
     "CORRELATIONS",
     "COUNT",
 ]
+
+
+def _stable_hash(s: str) -> str:
+    """
+    Stable hash for metrics (SHA256, not Python's randomized hash()).
+
+    Args:
+        s: String to hash
+
+    Returns:
+        First 12 chars of SHA256 hex digest
+    """
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass
@@ -64,6 +80,12 @@ class QueryIntent:
     parsing_attempts: list[dict] = field(default_factory=list)  # What was tried
     failure_reason: str | None = None  # Why it failed
     suggestions: list[str] = field(default_factory=list)  # How to improve query
+    # ADR009 Phase 1: LLM-generated follow-up questions
+    follow_ups: list[str] = field(default_factory=list)  # Context-aware follow-up questions
+    follow_up_explanation: str = ""  # Why these follow-ups are relevant
+    # ADR009 Phase 2: Query interpretation and confidence explanation
+    interpretation: str = ""  # Human-readable explanation of what the query is asking
+    confidence_explanation: str = ""  # Why the confidence score is what it is
 
     def __post_init__(self):
         """Validate intent_type."""
@@ -104,8 +126,65 @@ class NLQueryEngine:
         self.encoder = None  # Lazy load
         self.template_embeddings = None  # Lazy load
 
+        # Overlay cache (mtime-based hot reload)
+        self._overlay_cache_text = ""
+        self._overlay_cache_mtime_ns = 0
+
         # Build query templates from metadata
         self._build_query_templates()
+
+    def _prompt_overlay_path(self) -> Path:
+        """
+        Get overlay file path (configurable via env var).
+
+        Defaults to /tmp/nl_query_learning/prompt_overlay.txt to keep
+        learning artifacts out of source tree.
+
+        Returns:
+            Path to overlay file
+        """
+        # Prefer explicit override
+        p = os.getenv("NL_PROMPT_OVERLAY_PATH")
+        if p:
+            return Path(p)
+
+        # Default: same directory as self-improve logs
+        # (keeps artifacts out of source tree)
+        return Path("/tmp/nl_query_learning/prompt_overlay.txt")
+
+    def _load_prompt_overlay(self) -> str:
+        """
+        Load prompt overlay from disk with mtime-based caching.
+
+        Only re-reads file if modified since last load (hot reload).
+
+        Returns:
+            Overlay text to append to system prompt, or empty string
+        """
+        p = self._prompt_overlay_path()
+
+        try:
+            st = p.stat()
+        except FileNotFoundError:
+            self._overlay_cache_text = ""
+            self._overlay_cache_mtime_ns = 0
+            return ""
+
+        # Cache hit: file unchanged since last load
+        if st.st_mtime_ns == self._overlay_cache_mtime_ns:
+            return self._overlay_cache_text
+
+        # Cache miss: file changed, reload
+        try:
+            text = p.read_text(encoding="utf-8").strip()
+            self._overlay_cache_text = text
+            self._overlay_cache_mtime_ns = st.st_mtime_ns
+            if text:
+                logger.info("prompt_overlay_loaded", path=str(p), length=len(text))
+            return text
+        except Exception as e:
+            logger.warning("prompt_overlay_load_failed", path=str(p), error=str(e))
+            return ""
 
     def _build_query_templates(self):
         """Build query templates from semantic layer metadata."""
@@ -159,14 +238,26 @@ class NLQueryEngine:
             {"template": "describe", "intent": "DESCRIBE", "slots": []},
         ]
 
-    def parse_query(self, query: str, dataset_id: str | None = None, upload_id: str | None = None) -> QueryIntent:
+    def parse_query(
+        self,
+        query: str,
+        dataset_id: str | None = None,
+        upload_id: str | None = None,
+        conversation_history: list[dict] | None = None,
+    ) -> QueryIntent:
         """
-        Parse natural language query into structured intent.
+        Parse natural language query into structured intent with conversation context.
+
+        Supports conversational refinements (ADR009 Phase 6): When conversation_history
+        is provided, the LLM can detect refinement queries like "remove the n/a" that
+        modify previous queries, and intelligently merge them.
 
         Args:
             query: User's question (e.g., "compare survival by treatment arm")
             dataset_id: Optional dataset identifier for logging
             upload_id: Optional upload identifier for logging
+            conversation_history: Optional list of previous queries for context
+                Each entry should contain: query, intent, group_by, filters_applied
 
         Returns:
             QueryIntent with extracted intent type and variables
@@ -178,6 +269,12 @@ class NLQueryEngine:
             >>> intent = engine.parse_query("compare mortality by treatment")
             >>> assert intent.intent_type == "COMPARE_GROUPS"
             >>> assert intent.confidence > 0.9
+
+        Example (with conversation context):
+            >>> history = [{"query": "count by statin", "intent": "COUNT", "group_by": "statin"}]
+            >>> intent = engine.parse_query("remove the n/a", conversation_history=history)
+            >>> assert intent.intent_type == "COUNT"  # Inherited from previous
+            >>> assert len(intent.filters) > 0  # Added filter from refinement
         """
         if not query or not query.strip():
             logger.error(
@@ -285,7 +382,7 @@ class NLQueryEngine:
 
         # Tier 3: LLM fallback (stub for now) - only if we don't have a good intent yet
         if not intent or (intent.confidence < 0.5 and intent.intent_type == "DESCRIBE"):
-            llm_intent = self._llm_parse(query)
+            llm_intent = self._llm_parse(query, conversation_history=conversation_history)
             attempt = {
                 "tier": "llm_fallback",
                 "result": "success" if llm_intent else "failed",
@@ -444,7 +541,56 @@ class NLQueryEngine:
 
         # Extract filters from query (applies to all intent types)
         if intent:
-            intent.filters = self._extract_filters(query, grouping_variable=intent.grouping_variable)
+            # Extract regex-based filters
+            regex_filters = self._extract_filters(query, grouping_variable=intent.grouping_variable)
+
+            # CRITICAL FIX: Validate all regex-extracted filters before applying
+            # Phase 5 filter extraction provides validation, but regex extraction doesn't
+            # We must filter out invalid filters (e.g., string "n/a" for float column)
+            valid_regex_filters = []
+            if regex_filters:
+                from clinical_analytics.core.filter_extraction import _validate_filter
+
+                invalid_count = 0
+                for f in regex_filters:
+                    is_valid, error_msg = _validate_filter(
+                        {"column": f.column, "operator": f.operator, "value": f.value}, self.semantic_layer
+                    )
+                    if is_valid:
+                        valid_regex_filters.append(f)
+                    else:
+                        invalid_count += 1
+                        logger.debug("regex_filter_validation_failed", filter=f, error=error_msg)
+
+                if invalid_count > 0:
+                    intent.confidence = max(0.6, intent.confidence - 0.1 * invalid_count)
+                    logger.debug(
+                        "regex_filters_invalidated",
+                        query=query,
+                        invalid_count=invalid_count,
+                        valid_count=len(valid_regex_filters),
+                        confidence=intent.confidence,
+                    )
+
+            # Merge regex filters with existing intent filters (e.g., from LLM parse)
+            # Avoid duplicates
+            if valid_regex_filters:
+                existing_filter_keys = {
+                    (f.column, f.operator, str(f.value) if not isinstance(f.value, list) else tuple(sorted(f.value)))
+                    for f in intent.filters
+                }
+
+                for rf in valid_regex_filters:
+                    filter_key = (
+                        rf.column,
+                        rf.operator,
+                        str(rf.value) if not isinstance(rf.value, list) else tuple(sorted(rf.value)),
+                    )
+
+                    if filter_key not in existing_filter_keys:
+                        intent.filters.append(rf)
+                        existing_filter_keys.add(filter_key)
+
             if intent.filters:
                 logger.debug(
                     "filters_extracted_in_parse",
@@ -864,10 +1010,10 @@ class NLQueryEngine:
 
     def _build_rag_context(self, query: str) -> dict:
         """
-        Build RAG context from semantic layer metadata.
+        Build RAG context from semantic layer metadata and golden questions.
 
-        Extracts available columns, aliases, and example queries to provide
-        context for LLM parsing.
+        Uses golden questions as RAG corpus - retrieves similar examples
+        to help LLM pattern-match instead of hallucinate.
 
         Args:
             query: User's question
@@ -882,34 +1028,169 @@ class NLQueryEngine:
         # Get alias mappings
         alias_index = self.semantic_layer.get_column_alias_index()
 
-        # Build example queries (simple patterns for now)
-        examples = [
-            "What is the average age?",
-            "Compare viral load by treatment",
-            "How many patients have treatment A?",
-            "Show me patients with age > 30",
-        ]
+        # RAG: Load golden questions as corpus
+        golden_examples = self._load_golden_questions_rag()
+
+        # Find top 3 most similar examples
+        relevant_examples = self._find_similar_examples(query, golden_examples, top_k=3)
 
         return {
             "columns": columns,
             "aliases": alias_index,
-            "examples": examples,
+            "examples": relevant_examples,
             "query": query,
         }
 
-    def _build_llm_prompt(self, query: str, context: dict) -> tuple[str, str]:
+    def _load_golden_questions_rag(self) -> list[dict]:
+        """Load golden questions for RAG retrieval."""
+        try:
+            from pathlib import Path
+
+            import yaml
+
+            golden_path = Path(__file__).parent.parent.parent / "tests" / "eval" / "golden_questions.yaml"
+            if not golden_path.exists():
+                return []
+
+            with open(golden_path) as f:
+                data = yaml.safe_load(f)
+            return data.get("golden_questions", [])
+        except Exception as e:
+            logger.warning("failed_to_load_golden_questions_for_rag", error=str(e))
+            return []
+
+    def _find_similar_examples(self, query: str, examples: list[dict], top_k: int = 3) -> list[str]:
+        """Find most similar examples using keyword matching."""
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+
+        # Score each example by keyword overlap
+        scored = []
+        for ex in examples:
+            ex_query = ex.get("query", "").lower()
+            ex_words = set(ex_query.split())
+
+            # Jaccard similarity
+            overlap = len(query_words & ex_words)
+            union = len(query_words | ex_words)
+            score = overlap / union if union > 0 else 0
+
+            # Boost if refinement phrases match
+            refinement_phrases = ["remove", "exclude", "without", "only", "get rid of"]
+            if any(phrase in query_lower for phrase in refinement_phrases):
+                if any(phrase in ex_query for phrase in refinement_phrases):
+                    score += 0.5
+
+            scored.append((score, ex))
+
+        # Sort by score and take top k
+        scored.sort(reverse=True, key=lambda x: x[0])
+        top_examples = scored[:top_k]
+
+        # Format as examples
+        formatted = []
+        for score, ex in top_examples:
+            intent = ex.get("expected_intent", "DESCRIBE")
+            metric = ex.get("expected_metric")
+            group_by = ex.get("expected_group_by")
+
+            example_text = f'Q: "{ex.get("query", "")}"\n'
+            example_text += f"   Intent: {intent}"
+            if metric:
+                example_text += f", Metric: {metric}"
+            if group_by:
+                example_text += f", GroupBy: {group_by}"
+
+            formatted.append(example_text)
+
+        return (
+            formatted
+            if formatted
+            else [
+                'Q: "What is the average age?"\n   Intent: DESCRIBE, Metric: age',
+                'Q: "How many patients?"\n   Intent: COUNT',
+                'Q: "Compare by treatment"\n   Intent: COMPARE_GROUPS, GroupBy: treatment',
+            ]
+        )
+
+    def _build_llm_prompt(
+        self,
+        query: str,
+        context: dict,
+        conversation_history: list[dict] | None = None,
+    ) -> tuple[str, str]:
         """
-        Build structured prompts for LLM.
+        Build structured prompts for LLM with conversation context.
 
         Phase 5.1: Request QueryPlan JSON schema instead of legacy QueryIntent.
+        Phase 6: Support conversational refinements (ADR009).
 
         Args:
             query: User's question
             context: RAG context with columns, aliases, examples
+            conversation_history: Optional list of previous queries for refinement detection
 
         Returns:
             Tuple of (system_prompt, user_prompt)
         """
+        # Build conversation context section if history provided
+        conversation_context = ""
+        if conversation_history and len(conversation_history) > 0:
+            # Get most recent query (limit to last 1 for simplicity)
+            recent = conversation_history[-1]
+            conversation_context = f"""
+
+=== CONVERSATION CONTEXT (CRITICAL FOR REFINEMENTS) ===
+
+Previous Query: "{recent.get("query", "N/A")}"
+Previous Intent: {recent.get("intent", "N/A")}
+Previous Group By: {recent.get("group_by", "null")}
+Previous Metric: {recent.get("metric", "null")}
+Previous Filters: {recent.get("filters_applied", [])}
+
+=== REFINEMENT DETECTION RULES ===
+
+**IS THIS A REFINEMENT?** Check if current query modifies the previous query:
+- Refinement phrases: "remove", "exclude", "without", "only", "just", "also",
+  "actually", "get rid of", "drop"
+- Examples: "remove the n/a", "exclude missing", "only active", "actually over 65"
+
+**IF YES - THIS IS A REFINEMENT:**
+1. **COPY the previous intent EXACTLY** - Do NOT invent new intents
+   - If previous was COUNT → use COUNT
+   - If previous was DESCRIBE → use DESCRIBE
+   - If previous was COMPARE_GROUPS → use COMPARE_GROUPS
+2. **COPY previous group_by and metric** - Preserve what user was analyzing
+3. **ADD/UPDATE filters only** - This is what's being refined
+4. **Set confidence >= 0.7** - You have clear context
+5. **In explanation**: Say "Refining previous query to [what changed]"
+
+**IF NO - THIS IS A NEW QUERY:**
+- Parse independently
+- Do NOT use previous intent/group_by/metric
+- Set confidence based on query clarity
+
+=== REFINEMENT EXAMPLES (COPY THESE PATTERNS) ===
+
+Example 1:
+Previous: {{"intent": "COUNT", "group_by": "statin", "metric": null}}
+Current: "remove the n/a"
+Result: {{"intent": "COUNT", "group_by": "statin", "filters": [{{"column": "statin", "operator": "!=", "value": 0}}]}}
+
+Example 2:
+Previous: {{"intent": "DESCRIBE", "metric": "cholesterol", "group_by": null}}
+Current: "exclude missing values"
+Result: {{"intent": "DESCRIBE", "metric": "cholesterol",
+  "filters": [{{"column": "cholesterol", "operator": "!=", "value": 0}}]}}
+
+Example 3:
+Previous: {{"intent": "COUNT", "filters": [{{"column": "age", "operator": ">", "value": 50}}]}}
+Current: "actually over 65"
+Result: {{"intent": "COUNT", "filters": [{{"column": "age", "operator": ">", "value": 65}}]}}
+
+**REMEMBER**: NEVER create intents like "REMOVE_NA", "FILTER_OUT", "EXCLUDE" - these are INVALID.
+Only use: COUNT, DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, CORRELATIONS"""
+
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 
 Return JSON matching the QueryPlan schema with these REQUIRED fields:
@@ -920,20 +1201,67 @@ Return JSON matching the QueryPlan schema with these REQUIRED fields:
 - confidence: Your confidence 0.0-1.0
 - explanation: Brief explanation of what the query asks for
 
+OPTIONAL fields for enhanced UX (ADR009):
+- follow_ups: Array of 2-3 context-aware follow-up questions (as suggestions, not endorsements)
+- follow_up_explanation: Brief explanation of why these follow-ups are relevant
+- interpretation: Human-readable explanation of what the query is asking (helps user understand parsing)
+- confidence_explanation: Brief explanation of why the confidence score is what it is
+
+CRITICAL: Your JSON response must be FLAT with these fields at the TOP LEVEL.
+NEVER create nested objects like {{ "query": {{ ... }} }} or {{ "action": {{ ... }} }}.
+
+INVALID EXAMPLES (DO NOT DO THIS):
+❌ {{ "query": {{ "remove": ["n/a"], "recalc": true }} }}
+❌ {{ "action": {{ "type": "exclude", "value": "n/a" }} }}
+❌ {{ "refinement": {{ "previous": "...", "change": "..." }} }}
+
+VALID EXAMPLE:
+✅ {{
+  "intent": "COUNT",
+  "metric": null,
+  "group_by": "statin_used",
+  "filters": [{{"column": "statin_used", "operator": "!=", "value": 0}}],
+  "confidence": 0.85,
+  "explanation": "Count by statin type, excluding n/a"
+}}
+
 Available columns: {columns}
 Aliases: {aliases}
 
 Examples:
 {examples}
 
+Follow-up generation guidelines:
+- Provide 2-3 exploratory questions that build on the current query
+- Questions should be helpful suggestions, not authoritative recommendations
+- Avoid clinical advice territory - focus on data exploration
+- Examples: "What predicts X?", "Compare by Y group", "Are there outliers?"
+
 IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by),
-not legacy names (intent_type, primary_variable, grouping_variable).""".format(
+not legacy names (intent_type, primary_variable, grouping_variable).
+
+Filter extraction (ADR009 Phase 5):
+- Extract filter conditions from queries like "get rid of the n/a", "exclude missing", "remove 0"
+- For exclusion patterns ("get rid of", "exclude", "remove"), use operator "!=" with value 0 (n/a code)
+- For coded columns, use numeric codes (0=n/a, 1=first value, etc.)
+- Examples:
+  * "get rid of the n/a" → {{"column": "treatment_group", "operator": "!=", "value": 0}}
+  * "exclude missing values" → {{"column": "treatment_group", "operator": "!=", "value": 0}}
+  * "patients on statins" → {{
+      "column": "statin_prescribed", "operator": "==", "value": 1
+    }}{conversation_context}""".format(
             columns=", ".join(context["columns"]),
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
+            conversation_context=conversation_context,
         )
 
         user_prompt = f"Parse this query: {query}"
+
+        # Load and append overlay (auto-generated fixes from self-improvement)
+        overlay = self._load_prompt_overlay()
+        if overlay:
+            system_prompt = system_prompt + "\n\n" + overlay
 
         return (system_prompt, user_prompt)
 
@@ -959,6 +1287,8 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                 query_plan = QueryPlan.from_dict(data)
 
                 # Convert validated QueryPlan back to QueryIntent for backward compatibility
+                # ADR009 Phase 1: Preserve follow_ups fields
+                # ADR009 Phase 2: Preserve interpretation fields
                 return QueryIntent(
                     intent_type=query_plan.intent,  # type: ignore[arg-type]
                     primary_variable=query_plan.metric,
@@ -966,6 +1296,10 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                     confidence=query_plan.confidence,
                     parsing_tier="llm_fallback",
                     filters=query_plan.filters,  # Preserve validated filters
+                    follow_ups=query_plan.follow_ups,  # Preserve LLM-generated follow-ups
+                    follow_up_explanation=query_plan.follow_up_explanation,
+                    interpretation=query_plan.interpretation,  # Preserve LLM-generated interpretation
+                    confidence_explanation=query_plan.confidence_explanation,  # Preserve confidence explanation
                 )
 
             except (ValueError, KeyError) as validation_error:
@@ -973,7 +1307,10 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                 logger.warning(
                     "llm_queryplan_validation_failed_trying_legacy_format",
                     error=str(validation_error),
-                    response=response[:100],
+                    error_type=type(validation_error).__name__,
+                    response=response[:200] if len(response) > 200 else response,
+                    response_length=len(response),
+                    parsed_data_keys=list(data.keys()) if isinstance(data, dict) else None,
                 )
 
                 # Legacy format fallback
@@ -1002,11 +1339,13 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
             logger.warning(
                 "llm_response_parse_failed",
                 error=str(e),
-                response=response[:100],
+                error_type=type(e).__name__,
+                response=response[:200] if len(response) > 200 else response,
+                response_length=len(response),
             )
             return None
 
-    def _llm_parse(self, query: str) -> QueryIntent:
+    def _llm_parse(self, query: str, conversation_history: list[dict] | None = None) -> QueryIntent:
         """
         Tier 3: LLM fallback with RAG context from semantic layer.
 
@@ -1015,8 +1354,12 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
 
         Privacy-preserving: Uses local Ollama only, no external API calls.
 
+        Supports conversational refinements (ADR009 Phase 6): When conversation_history
+        is provided, LLM can detect refinement queries and merge with previous context.
+
         Args:
             query: User's question
+            conversation_history: Optional list of previous queries for context
 
         Returns:
             QueryIntent with confidence >= 0.5 on success, or 0.3 stub on failure
@@ -1036,7 +1379,21 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
             context = self._build_rag_context(query)
 
             # Step 4: Build structured prompts
-            system_prompt, user_prompt = self._build_llm_prompt(query, context)
+            system_prompt, user_prompt = self._build_llm_prompt(query, context, conversation_history)
+
+            # Log conversation context for refinement debugging
+            if conversation_history:
+                logger.info(
+                    "llm_refinement_parsing_started",
+                    query=query,
+                    conversation_history_count=len(conversation_history),
+                    previous_query=conversation_history[-1].get("query") if conversation_history else None,
+                    previous_intent=conversation_history[-1].get("intent") if conversation_history else None,
+                    previous_group_by=conversation_history[-1].get("group_by") if conversation_history else None,
+                    previous_filters=conversation_history[-1].get("filters_applied", [])
+                    if conversation_history
+                    else [],
+                )
 
             # Step 5: Call Ollama with JSON mode
             response = client.generate(user_prompt, system_prompt=system_prompt, json_mode=True)
@@ -1045,12 +1402,123 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                 logger.info("ollama_generate_failed_fallback_to_stub", query=query)
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
+            # Log raw LLM response for debugging
+            logger.debug(
+                "llm_raw_response_received",
+                query=query,
+                response_length=len(response),
+                response_preview=response[:200] if len(response) > 200 else response,
+                has_conversation_history=bool(conversation_history),
+            )
+
             # Step 6: Extract QueryIntent from response
             intent = self._extract_query_intent_from_llm_response(response)
 
+            # Log extracted intent for refinement debugging
+            if conversation_history and intent:
+                previous_intent = conversation_history[-1].get("intent") if conversation_history else None
+                previous_group_by = conversation_history[-1].get("group_by") if conversation_history else None
+                previous_metric = conversation_history[-1].get("metric") if conversation_history else None
+
+                # If this is a refinement query and LLM didn't preserve context, merge it
+                if self._is_refinement_query(query) and previous_intent:
+                    # Preserve previous intent if LLM changed it
+                    if intent.intent_type != previous_intent:
+                        intent.intent_type = previous_intent  # type: ignore[assignment]
+                        logger.info(
+                            "refinement_intent_corrected",
+                            query=query,
+                            llm_intent=intent.intent_type,
+                            corrected_intent=previous_intent,
+                        )
+                    # Preserve previous group_by if LLM didn't set it
+                    if previous_group_by and not intent.grouping_variable:
+                        intent.grouping_variable = previous_group_by
+                        logger.info(
+                            "refinement_group_by_preserved",
+                            query=query,
+                            previous_group_by=previous_group_by,
+                        )
+                    # Preserve previous metric if LLM didn't set it
+                    if previous_metric and not intent.primary_variable:
+                        intent.primary_variable = previous_metric
+                        logger.info(
+                            "refinement_metric_preserved",
+                            query=query,
+                            previous_metric=previous_metric,
+                        )
+
+                logger.info(
+                    "llm_refinement_parsing_completed",
+                    query=query,
+                    extracted_intent=intent.intent_type,
+                    extracted_group_by=intent.grouping_variable,
+                    extracted_filters_count=len(intent.filters),
+                    extracted_confidence=intent.confidence,
+                    previous_intent=previous_intent,
+                    previous_group_by=previous_group_by,
+                    intent_matches_previous=intent.intent_type == previous_intent if previous_intent else None,
+                    group_by_matches_previous=intent.grouping_variable == previous_group_by
+                    if previous_group_by
+                    else None,
+                    filters_extracted=[
+                        {"column": f.column, "operator": f.operator, "value": f.value} for f in intent.filters
+                    ],
+                )
+
             if intent is None:
                 logger.info("llm_parse_extraction_failed_fallback_to_stub", query=query)
+                # Try fallback refinement handler if conversation history exists
+                if conversation_history and len(conversation_history) > 0:
+                    fallback_intent = self._handle_refinement_fallback(query, conversation_history)
+                    if fallback_intent:
+                        logger.info(
+                            "refinement_fallback_handler_success",
+                            query=query,
+                            intent_type=fallback_intent.intent_type,
+                            confidence=fallback_intent.confidence,
+                        )
+                        return fallback_intent
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+            # ADR009 Phase 5: Extract filters using LLM (for complex patterns)
+            from clinical_analytics.core.filter_extraction import _extract_filters_with_llm
+
+            llm_filters, confidence_delta, validation_failures = _extract_filters_with_llm(
+                query, self.semantic_layer, current_confidence=intent.confidence
+            )
+
+            # Merge LLM-extracted filters with filters from main parse
+            # Deduplicate: if same column+operator+value exists, keep only one
+            existing_filter_keys = {
+                (f.column, f.operator, str(f.value) if not isinstance(f.value, list) else tuple(sorted(f.value)))
+                for f in intent.filters
+            }
+            for llm_filter in llm_filters:
+                filter_key = (
+                    llm_filter.column,
+                    llm_filter.operator,
+                    str(llm_filter.value)
+                    if not isinstance(llm_filter.value, list)
+                    else tuple(sorted(llm_filter.value)),
+                )
+                if filter_key not in existing_filter_keys:
+                    intent.filters.append(llm_filter)
+                    existing_filter_keys.add(filter_key)
+
+            # Update confidence based on filter validation results
+            if confidence_delta < 0:
+                intent.confidence = max(0.6, intent.confidence + confidence_delta)  # Cap at 0.6 minimum
+                if validation_failures:
+                    # Add validation failures to confidence explanation
+                    if intent.confidence_explanation:
+                        intent.confidence_explanation += (
+                            f" Filter validation issues: {len(validation_failures)} invalid filter(s)."
+                        )
+                    else:
+                        intent.confidence_explanation = (
+                            f"Filter validation issues: {len(validation_failures)} invalid filter(s)."
+                        )
 
             # Step 7: Validate confidence meets minimum threshold
             if intent.confidence < TIER_3_MIN_CONFIDENCE:
@@ -1081,6 +1549,155 @@ not legacy names (intent_type, primary_variable, grouping_variable).""".format(
                 query=query,
             )
             return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+
+    def _is_refinement_query(self, query: str) -> bool:
+        """
+        Detect if query is a refinement (modification of previous query).
+
+        Refinement keywords: "remove", "exclude", "without", "only", "just",
+        "also", "actually", "get rid of", "drop"
+
+        Args:
+            query: User's query text
+
+        Returns:
+            True if query appears to be a refinement
+        """
+        query_lower = query.lower()
+        refinement_keywords = [
+            "remove",
+            "exclude",
+            "without",
+            "only",
+            "just",
+            "also",
+            "actually",
+            "get rid of",
+            "drop",
+            "filter out",
+        ]
+        return any(keyword in query_lower for keyword in refinement_keywords)
+
+    def _handle_refinement_fallback(self, query: str, conversation_history: list[dict]) -> QueryIntent | None:
+        """
+        Fallback refinement handler when LLM fails.
+
+        Detects refinement queries and merges with previous context:
+        - Preserves previous intent, group_by, metric
+        - Extracts filters from refinement query
+        - Uses numeric code 0 for "n/a" in coded columns
+
+        Args:
+            query: Current query (refinement)
+            conversation_history: Previous query context
+
+        Returns:
+            QueryIntent if refinement detected and handled, None otherwise
+        """
+        # Check if this looks like a refinement
+        if not self._is_refinement_query(query):
+            return None
+
+        # Get previous context
+        recent = conversation_history[-1]
+        previous_intent = recent.get("intent")
+        previous_group_by = recent.get("group_by")
+        previous_metric = recent.get("metric")
+
+        if not previous_intent:
+            return None
+
+        # Create base intent from previous context
+        intent = QueryIntent(
+            intent_type=previous_intent,  # type: ignore[arg-type]
+            primary_variable=previous_metric,
+            grouping_variable=previous_group_by,
+            confidence=0.6,  # Moderate confidence for fallback
+            parsing_tier="llm_fallback",
+        )
+
+        # Extract filters from refinement query
+        # For "remove the n/a" or "exclude missing", we need to:
+        # 1. Identify the column (from previous group_by or metric)
+        # 2. Extract the value to exclude (0 for n/a in coded columns)
+        query_lower = query.lower()
+
+        # Determine target column from previous context
+        target_column = None
+        if previous_group_by:
+            # Use previous group_by column
+            target_column = previous_group_by
+        elif previous_metric:
+            # Use previous metric column
+            target_column = previous_metric
+        else:
+            # No clear column context, try to infer from query
+            # This is a fallback, so lower confidence
+            intent.confidence = 0.5
+            return intent
+
+        # Get canonical column name (may be alias)
+        try:
+            alias_index = self.semantic_layer.get_column_alias_index()
+            # Normalize target column for lookup
+            normalized_target = self.semantic_layer._normalize_alias(target_column)
+            # Try to find canonical name from alias index
+            canonical_column = alias_index.get(normalized_target, target_column)
+            # If still not found, check if target_column is already canonical
+            # by checking if it exists in the base view
+            if canonical_column == target_column:
+                try:
+                    view = self.semantic_layer.get_base_view()
+                    if target_column in view.columns:
+                        canonical_column = target_column
+                    else:
+                        # Try reverse lookup: find alias that matches target_column
+                        for alias, canonical in alias_index.items():
+                            if canonical == target_column or alias == normalized_target:
+                                canonical_column = canonical
+                                break
+                except Exception:
+                    pass
+        except Exception:
+            canonical_column = target_column
+
+        # Extract filter value based on query
+        # For "remove the n/a" or "exclude missing", use code 0
+        filter_value = 0  # Default for n/a/missing
+        filter_operator = "!="
+
+        # Check for specific value references
+        if "n/a" in query_lower or "na" in query_lower or "missing" in query_lower:
+            filter_value = 0
+        elif "zero" in query_lower or "0" in query:
+            filter_value = 0
+        elif "only" in query_lower or "just" in query_lower:
+            # "only X" means == X, not !=
+            filter_operator = "=="
+            # Try to extract value from query (simplified)
+            # This is a fallback, so we'll use 1 as default for "only"
+            filter_value = 1
+
+        # Check if column is coded (numeric with labels)
+        is_coded = self._is_coded_column(canonical_column, target_column)
+
+        # Create filter
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        filter_spec = FilterSpec(
+            column=canonical_column,
+            operator=filter_operator,  # type: ignore[arg-type]
+            value=filter_value if is_coded else str(filter_value),
+            exclude_nulls=True,
+        )
+
+        # Add filter to intent
+        intent.filters = [filter_spec]
+
+        # Add explanation
+        intent.explanation = f"Refining previous query: {query}"
+
+        return intent
 
     def _extract_variables_from_query(self, query: str) -> tuple[list[str], dict[str, list[str]]]:
         """

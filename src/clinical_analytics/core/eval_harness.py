@@ -109,9 +109,13 @@ class EvalHarness:
         expected_metric = question.get("expected_metric")
         expected_group_by = question.get("expected_group_by")
         expected_filters = question.get("expected_filters", [])
+        conversation_history = question.get("conversation_history", [])
 
-        # Parse query
-        query_intent = self.query_engine.parse_query(query_text)
+        # Parse query with conversation history (ADR009 Phase 6)
+        query_intent = self.query_engine.parse_query(
+            query_text,
+            conversation_history=conversation_history if conversation_history else None,
+        )
 
         if query_intent is None:
             # Parsing failed

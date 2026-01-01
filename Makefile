@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui test-fast-serial git-log-first git-log-rest
+.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run run-app run-app-keep validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui test-fast-serial git-log-first git-log-rest
 
 # Default target
 .DEFAULT_GOAL := help
@@ -156,9 +156,19 @@ check-fast: ## Run fast checks (lint, format-check, fast tests)
 	@$(MAKE) test-fast || exit 1
 	@echo "$(GREEN)✅ All fast checks passed!$(NC)"
 
-run: ensure-venv ## Start the Streamlit application
+run: ensure-venv ## Start the Streamlit application (direct, no Ollama management)
 	@echo "$(GREEN)Starting Streamlit application...$(NC)"
 	$(STREAMLIT) run src/clinical_analytics/ui/app.py
+
+run-app: ## Start application with bash script (stops Ollama on exit)
+	@echo "$(GREEN)Starting application with Ollama lifecycle management...$(NC)"
+	@echo "$(YELLOW)Press Ctrl+C to stop (will stop Ollama)$(NC)"
+	@STOP_OLLAMA_ON_EXIT=true bash scripts/run_app.sh
+
+run-app-keep: ## Start application with bash script (keep Ollama running on exit)
+	@echo "$(GREEN)Starting application (Ollama will keep running)...$(NC)"
+	@echo "$(YELLOW)Press Ctrl+C to stop (Ollama will stay running)$(NC)"
+	@STOP_OLLAMA_ON_EXIT=false bash scripts/run_app.sh
 
 validate: ## Run platform validation script
 	@echo "$(GREEN)Running platform validation...$(NC)"

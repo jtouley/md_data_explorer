@@ -1,0 +1,171 @@
+# Configuration for self-learning prompt optimization
+# This file defines how to detect patterns and generate fixes
+
+# Intent keyword patterns for classification hints
+intent_keywords:
+  FIND_PREDICTORS:
+    - "predict"
+    - "predictor"
+    - "what causes"
+    - "what leads to"
+    - "best predicts"
+    - "risk factors"
+  
+  COMPARE_GROUPS:
+    - "compare"
+    - "difference"
+    - "between"
+    - "vs"
+    - "versus"
+    - "stratified by"
+  
+  COUNT:
+    - "how many"
+    - "count"
+    - "number of"
+    - "most common"
+    - "most prescribed"
+    - "breakdown"
+    - "broken down"
+  
+  DESCRIBE:
+    - "average"
+    - "mean"
+    - "median"
+    - "describe"
+    - "distribution"
+    - "summary"
+  
+  CORRELATIONS:
+    - "correlate"
+    - "correlation"
+    - "relationship"
+    - "how does"
+    - "relate to"
+    - "associated with"
+
+# Refinement detection patterns
+refinement_phrases:
+  - "remove"
+  - "exclude"
+  - "without"
+  - "only"
+  - "just"
+  - "also"
+  - "actually"
+  - "get rid of"
+  - "drop"
+  - "additionally"
+  - "plus"
+
+# Valid intents (for validation)
+valid_intents:
+  - "COUNT"
+  - "DESCRIBE"
+  - "COMPARE_GROUPS"
+  - "FIND_PREDICTORS"
+  - "CORRELATIONS"
+
+# Failure pattern detection rules
+failure_patterns:
+  - type: "invalid_intent"
+    detect:
+      condition: "actual_intent not in valid_intents"
+    priority: 1  # Highest priority
+    fix_template: |
+      **VALIDATION RULE (CRITICAL):**
+      You MUST use EXACTLY one of these intents: {valid_intents}
+      ANY other intent (like '{invalid_intent}') is INVALID and will cause system failure.
+      
+      If the query doesn't clearly match an intent, choose the closest one:
+      - Unclear counting questions → COUNT
+      - Unclear analysis → DESCRIBE
+      - Unclear comparison → COMPARE_GROUPS
+
+  - type: "refinement_ignored"
+    detect:
+      condition: "has_conversation_history and actual_intent != expected_intent"
+    priority: 2
+    fix_template: |
+      **REFINEMENT DETECTION ALGORITHM:**
+      
+      STEP 1: Check if query contains refinement phrase: {refinement_phrases}
+      STEP 2: IF YES → This is a REFINEMENT
+              - COPY previous_intent → current_intent (DO NOT CREATE NEW)
+              - COPY previous_metric → current_metric
+              - COPY previous_group_by → current_group_by
+              - ONLY modify filters based on current query
+      STEP 3: IF NO → Parse as independent query
+
+  - type: "intent_mismatch"
+    detect:
+      condition: "expected_intent != actual_intent and not has_conversation_history"
+    priority: 3
+    fix_template: |
+      **INTENT CLASSIFICATION HINTS:**
+      
+      Queries containing these keywords should use these intents:
+      {keyword_hints}
+      
+      Common misclassifications to avoid:
+      - "what predicts X" is FIND_PREDICTORS, not COUNT
+      - "compare between groups" is COMPARE_GROUPS, not DESCRIBE
+      - "most common X" is COUNT with implicit ordering, not DESCRIBE
+
+  - type: "missing_filters"
+    detect:
+      condition: "expected_filters and not actual_filters"
+    priority: 4
+    fix_template: |
+      **FILTER EXTRACTION RULES:**
+      
+      Extract filters from these patterns:
+      - "remove X" / "exclude X" → filter X != value
+      - "only X" / "just X" → filter X == value
+      - "patients on X" → filter X == 1 (if coded column)
+      - "without X" / "no X" → filter X == 0 or != value
+      
+      For coded columns, use numeric codes (0=n/a, 1=yes, 2=no, etc.)
+
+  - type: "wrong_grouping"
+    detect:
+      condition: "expected_group_by != actual_group_by"
+    priority: 5
+    fix_template: |
+      **GROUPING DETECTION:**
+      
+      Look for "by", "per", "broken down by", "stratified by" to identify grouping.
+      Examples:
+      - "count by statin" → group_by: "statin"
+      - "per regimen" → group_by: "regimen"
+      - "broken down by age group" → group_by: "age_group"
+
+# Prompt structure template
+prompt_template: |
+  You are a medical data query parser. Extract structured query intent from natural language.
+  
+  Return JSON matching the QueryPlan schema with these REQUIRED fields:
+  - intent: One of {valid_intents}
+  - metric: Main variable to analyze (string or null)
+  - group_by: Variable to group by (string or null)
+  - filters: List of filter objects (empty list if none)
+  - confidence: Your confidence 0.0-1.0
+  - explanation: Brief explanation of what the query asks for
+  
+  {dynamic_fixes}
+  
+  Available columns: {columns}
+  Aliases: {aliases}
+  
+  Examples:
+  {examples}
+  
+  {conversation_context}
+
+# Logging configuration
+logging:
+  enabled: true
+  log_dir: "/tmp/nl_query_learning"
+  log_level: "INFO"
+  log_failures_only: false
+

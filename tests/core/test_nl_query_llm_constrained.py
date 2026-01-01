@@ -146,6 +146,31 @@ class TestLLMQueryPlanSchema:
         # Assert: Should return None (QueryPlan.from_dict() requires 'intent')
         assert result is None, "Missing required 'intent' field should be rejected"
 
+    def test_llm_rejects_nested_query_object_structure(self, mock_semantic_layer):
+        """LLM should reject nested 'query' object structure (actual failure from logs)."""
+        # Arrange
+        mock = mock_semantic_layer(columns={"statin_used": "Statin Used"})
+        engine = NLQueryEngine(mock)
+
+        # Actual invalid response from logs: { "query": { "remove": [...], "recalc": true } }
+        # This is the EXACT anti-pattern that caused the regression
+        llm_response = json.dumps(
+            {
+                "query": {  # WRONG: Nested structure
+                    "remove": ["{n/a}"],
+                    "recalc": True,
+                }
+            }
+        )
+
+        # Act: Extract QueryIntent
+        result = engine._extract_query_intent_from_llm_response(llm_response)
+
+        # Assert: Should return None (no 'intent' field at top level)
+        assert result is None, (
+            "Nested 'query' object structure should be rejected - missing required 'intent' field at top level"
+        )
+
 
 class TestLLMConstrainedOutput:
     """Test that LLM output is constrained to QueryPlan schema."""

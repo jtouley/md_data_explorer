@@ -15,14 +15,14 @@ class OllamaClient:
     Client for local Ollama LLM service.
 
     Provides connection handling, model management, and JSON-mode generation.
-    All requests timeout after 5 seconds by default for responsiveness.
+    All requests timeout after 30 seconds by default for responsiveness.
     """
 
     def __init__(
         self,
         model: str = "llama3.1:8b",
         base_url: str = "http://localhost:11434",
-        timeout: float = 5.0,
+        timeout: float = 30.0,
     ):
         """
         Initialize Ollama client.
@@ -30,7 +30,7 @@ class OllamaClient:
         Args:
             model: Model name (default: llama3.1:8b)
             base_url: Ollama service URL (default: http://localhost:11434)
-            timeout: Request timeout in seconds (default: 5.0)
+            timeout: Request timeout in seconds (default: 30.0)
         """
         self.model = model
         self.base_url = base_url

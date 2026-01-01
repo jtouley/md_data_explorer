@@ -94,13 +94,29 @@ class DatasetRegistry:
         # Built-in datasets to exclude (only user uploads are supported)
         builtin_datasets = {"covid_ms", "mimic3", "sepsis"}
 
+        logger.info(
+            "dataset_discovery_started",
+            datasets_path=str(datasets_path),
+            builtin_excluded=list(builtin_datasets),
+        )
+
+        discovered_modules = []
+        skipped_modules = []
+        registered_datasets = []
+
         # Iterate through all subdirectories in datasets/
         for module_info in pkgutil.iter_modules([str(datasets_path)]):
             if module_info.ispkg:
                 module_name = module_info.name
+                discovered_modules.append(module_name)
 
                 # Skip built-in datasets
                 if module_name in builtin_datasets:
+                    logger.debug(
+                        "dataset_skipped_builtin",
+                        module_name=module_name,
+                        reason="built-in dataset excluded",
+                    )
                     continue
 
                 try:
@@ -108,6 +124,7 @@ class DatasetRegistry:
                     definition_module = importlib.import_module(f"clinical_analytics.datasets.{module_name}.definition")
 
                     # Find all ClinicalDataset subclasses in this module
+                    found_class = False
                     for name, obj in inspect.getmembers(definition_module, inspect.isclass):
                         if (
                             issubclass(obj, ClinicalDataset)
@@ -116,11 +133,40 @@ class DatasetRegistry:
                         ):
                             # Register using module name as key
                             cls._datasets[module_name] = obj
+                            registered_datasets.append(module_name)
+                            found_class = True
+                            logger.debug(
+                                "dataset_registered",
+                                module_name=module_name,
+                                class_name=obj.__name__,
+                            )
+
+                    if not found_class:
+                        logger.debug(
+                            "dataset_no_class_found",
+                            module_name=module_name,
+                            reason="no ClinicalDataset subclass found",
+                        )
 
                 except (ImportError, AttributeError) as e:
                     # Skip modules that don't have definition.py or proper structure
-                    print(f"Skipping {module_name}: {e}")
+                    skipped_modules.append({"module": module_name, "error": str(e)})
+                    logger.debug(
+                        "dataset_skipped_import_error",
+                        module_name=module_name,
+                        error=str(e),
+                    )
                     continue
+
+        logger.info(
+            "dataset_discovery_completed",
+            total_modules_discovered=len(discovered_modules),
+            modules_discovered=discovered_modules,
+            registered_count=len(registered_datasets),
+            registered_datasets=registered_datasets,
+            skipped_count=len(skipped_modules),
+            skipped_modules=skipped_modules,
+        )
 
         return cls._datasets
 
