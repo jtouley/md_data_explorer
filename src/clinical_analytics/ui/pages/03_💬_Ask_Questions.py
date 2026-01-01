@@ -9,7 +9,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -37,14 +37,31 @@ from clinical_analytics.ui.messages import (
 
 
 # TypedDict schemas for chat transcript and pending state
-class ChatMessage(TypedDict):
-    """Schema for chat transcript messages."""
+class ChatMessage(TypedDict, total=False):
+    """
+    Schema for chat transcript messages.
 
-    role: str  # "user" or "assistant"
-    text: str  # Message text
+    Phase 9 enhancements (Staff Feedback):
+    - Added query_text, assistant_text for better history UX
+    - Added intent, confidence for display without recompute
+    - Made fields optional (total=False) for backward compatibility
+
+    Phase 12 type improvements (Staff Feedback):
+    - Use Literal types for role and status (better type safety)
+    """
+
+    # Core fields (Phase 12: Literal types for better type safety)
+    role: Literal["user", "assistant"]  # Message role
+    text: str  # Message text (user query or assistant response)
     run_key: str | None  # Run key for assistant messages (None for user messages)
-    status: str  # "pending", "completed", "error"
+    status: Literal["pending", "completed", "error"]  # Message status
     created_at: float  # Unix timestamp
+
+    # Phase 9 additions (optional for backward compat)
+    query_text: str | None  # Original user query that produced this result
+    assistant_text: str | None  # What was displayed to user (may differ from text)
+    intent: str | None  # Intent classification (e.g., "DESCRIBE", "COMPARE_GROUPS")
+    confidence: float | None  # Confidence score (0.0-1.0)
 
 
 class Pending(TypedDict):
@@ -147,11 +164,19 @@ def canonicalize_scope(scope: dict | None) -> dict:
     - Sorts list values recursively
     - Ensures stable JSON serialization
 
+    PR25: Improved to handle common edge cases (enums, dataclasses).
+    Limitations: Complex objects (dataclasses with nested objects) should be
+    converted to dicts before calling this function.
+
     Args:
         scope: Semantic scope dict (may be None)
 
     Returns:
         Canonicalized scope dict (stable, sorted, no Nones)
+
+    Raises:
+        TypeError: If scope contains non-serializable objects (enums/dataclasses
+                   should be converted to primitives before calling)
     """
     if scope is None:
         return {}
@@ -173,15 +198,30 @@ def canonicalize_scope(scope: dict | None) -> dict:
                 if isinstance(item, dict):
                     sorted_list.append(canonicalize_scope(item))
                 else:
-                    sorted_list.append(item)
+                    # PR25: Handle enums and other objects with .value or .name attributes
+                    if hasattr(item, "value"):
+                        sorted_list.append(item.value)
+                    elif hasattr(item, "name"):
+                        sorted_list.append(item.name)
+                    else:
+                        sorted_list.append(item)
             # Sort the list (works for primitives, dicts as JSON strings for comparison)
             try:
                 canonical[key] = sorted(sorted_list, key=lambda x: str(x))
-            except TypeError:
-                # If sorting fails, keep original order
-                canonical[key] = sorted_list
+            except TypeError as e:
+                # PR25: If sorting fails, raise with helpful error message
+                raise TypeError(
+                    f"Scope contains non-serializable value for key '{key}': {type(value).__name__}. "
+                    "Convert enums/dataclasses to primitives (use .value or .name) before canonicalizing."
+                ) from e
         else:
-            canonical[key] = value
+            # PR25: Handle enums and other objects with .value or .name attributes
+            if hasattr(value, "value"):
+                canonical[key] = value.value
+            elif hasattr(value, "name"):
+                canonical[key] = value.name
+            else:
+                canonical[key] = value
 
     return canonical
 
@@ -233,6 +273,8 @@ def cleanup_old_results(dataset_version: str) -> None:
 
     Note: Most cleanup happens proactively in remember_run() (O(1)).
     This function is a safety net for edge cases (e.g., manual deletions).
+
+    PR25: Now called proactively to enforce lifecycle invariants.
     """
     hist_key = f"run_history_{dataset_version}"
     hist_list = st.session_state.get(hist_key, [])
@@ -249,13 +291,34 @@ def cleanup_old_results(dataset_version: str) -> None:
 
     for key in keys_to_remove:
         del st.session_state[key]
+        logger.debug("cleanup_orphaned_result", dataset_version=dataset_version, removed_key=key)
 
-    if keys_to_remove:
-        logger.info(
-            "cleaned_orphaned_results",
-            dataset_version=dataset_version,
-            count=len(keys_to_remove),
-        )
+
+def _evict_old_execution_cache(dataset_version: str) -> None:
+    """
+    Evict old execution cache entries to prevent unbounded growth (PR25).
+
+    Execution cache (exec_result:{dataset_version}:{query_hash}) can grow unbounded
+    if users run many different queries. This function limits cache size to
+    MAX_STORED_RESULTS_PER_DATASET entries per dataset.
+
+    Args:
+        dataset_version: Dataset version to evict cache for
+    """
+    exec_prefix = f"exec_result:{dataset_version}:"
+    exec_keys = [key for key in st.session_state.keys() if key.startswith(exec_prefix)]
+
+    if len(exec_keys) <= MAX_STORED_RESULTS_PER_DATASET:
+        return
+
+    # Sort by access time (if available) or FIFO eviction
+    # For now, use simple FIFO: keep last N entries based on insertion order
+    # (Streamlit session_state preserves insertion order)
+    keys_to_evict = exec_keys[:-MAX_STORED_RESULTS_PER_DATASET]
+
+    for key in keys_to_evict:
+        del st.session_state[key]
+        logger.debug("evicted_execution_cache", dataset_version=dataset_version, evicted_key=key)
 
 
 def _render_add_alias_ui(
@@ -970,12 +1033,8 @@ def render_result(
     elif query_plan:
         st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
 
-    # Suggest follow-up questions (only for current results, not history)
-    # Use a session state flag to prevent duplicate rendering in same cycle
-    follow_ups_key = f"followups_rendered_{run_key}"
-    if not st.session_state.get(follow_ups_key, False):
-        _suggest_follow_ups(context, result, run_key, render_context="current")
-        st.session_state[follow_ups_key] = True
+        # PR25: _suggest_follow_ups() removed (disabled partial feature)
+        # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
 
 
 def execute_analysis_with_idempotency(
@@ -1022,6 +1081,10 @@ def execute_analysis_with_idempotency(
         # Render inline in chat message style (Phase 3.5)
         result = st.session_state[result_key]
 
+        # PR25: Enforce remember_run() invariant - must be called even for cached results
+        # This ensures history tracking is consistent regardless of cache hits
+        remember_run(dataset_version, run_key)
+
         # Render main results inline (no expander, no extra headers)
         render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
 
@@ -1035,12 +1098,8 @@ def execute_analysis_with_idempotency(
         if query_plan:
             st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
 
-        # Suggest follow-up questions (only for current results, not history)
-        # Use a session state flag to prevent duplicate rendering in same cycle
-        follow_ups_key = f"followups_rendered_{run_key}"
-        if not st.session_state.get(follow_ups_key, False):
-            _suggest_follow_ups(context, result, run_key, render_context="current")
-            st.session_state[follow_ups_key] = True
+        # PR25: _suggest_follow_ups() removed (disabled partial feature)
+        # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
         return
 
     # Not computed - compute and store
@@ -1148,12 +1207,8 @@ def execute_analysis_with_idempotency(
                 query_text=query_text,
             )
 
-        # Suggest follow-up questions (only for current results, not history)
-        # Use a session state flag to prevent duplicate rendering in same cycle
-        follow_ups_key = f"followups_rendered_{run_key}"
-        if not st.session_state.get(follow_ups_key, False):
-            _suggest_follow_ups(context, result, run_key, render_context="current")
-            st.session_state[follow_ups_key] = True
+        # PR25: _suggest_follow_ups() removed (disabled partial feature)
+        # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
 
         logger.info("analysis_rendering_complete", run_key=run_key)
 
@@ -1322,95 +1377,9 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
     )
 
 
-def _suggest_follow_ups(
-    context: AnalysisContext, result: dict, run_key: str | None = None, render_context: str = "current"
-) -> None:
-    """
-    DISABLED: Hardcoded follow-ups removed per user request.
-
-    Previously suggested natural follow-up questions based on current result.
-    Now disabled - only show LLM-generated follow-ups in future.
-
-    TODO: Add follow_ups field to QueryPlan schema and LLM prompt.
-    Then implement: if plan.follow_ups: _suggest_follow_ups_from_llm(plan.follow_ups)
-
-    Args:
-        context: Analysis context
-        result: Analysis result dict
-        run_key: Run key for this analysis
-        render_context: Context identifier ("current" or "history") to ensure unique button keys
-    """
-    # DISABLED per user request - hardcoded follow-ups removed
-    return
-
-    suggestions = []
-
-    # Generate suggestions based on intent and result
-    if context.inferred_intent == AnalysisIntent.DESCRIBE:
-        if context.primary_variable and context.primary_variable != "all":
-            # Suggest comparing this variable
-            suggestions.append(f"Compare {context.primary_variable} by treatment group")
-            suggestions.append(f"What predicts {context.primary_variable}?")
-        else:
-            # No specific variable - suggest exploring
-            suggestions.append("Compare outcomes by treatment group")
-            suggestions.append("What predicts the outcome?")
-
-    elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
-        if context.grouping_variable and context.primary_variable:
-            # Suggest deeper analysis
-            suggestions.append(f"What else affects {context.primary_variable}?")
-            suggestions.append(f"Show distribution of {context.primary_variable} by {context.grouping_variable}")
-        if context.primary_variable:
-            suggestions.append(f"Describe {context.primary_variable} in detail")
-
-    elif context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
-        if context.primary_variable:
-            # Suggest comparing predictors
-            suggestions.append(f"Compare {context.primary_variable} by the strongest predictor")
-            suggestions.append(f"Describe {context.primary_variable} in detail")
-
-    elif context.inferred_intent == AnalysisIntent.COUNT:
-        # Suggest grouping or filtering
-        if context.grouping_variable:
-            suggestions.append(f"Filter {context.grouping_variable} and count again")
-        else:
-            suggestions.append("Break down the count by a grouping variable")
-        if context.filters or (context.query_plan and context.query_plan.filters):
-            suggestions.append("Remove filters and count all records")
-
-    elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
-        if context.primary_variable:
-            suggestions.append(f"Compare survival by {context.primary_variable}")
-        suggestions.append("What predicts survival time?")
-
-    elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
-        if context.predictor_variables:
-            second_var = context.predictor_variables[1] if len(context.predictor_variables) > 1 else "outcome"
-            suggestions.append(f"Compare {context.predictor_variables[0]} by {second_var}")
-
-    # Render suggestions as compact buttons (only if we have suggestions)
-    if suggestions:
-        st.markdown("**💡 You might also ask:**")
-        # Use columns for compact layout
-        cols = st.columns(min(len(suggestions), 2))
-        for idx, suggestion in enumerate(suggestions[:4]):  # Limit to 4 suggestions
-            col = cols[idx % len(cols)]
-            with col:
-                # Include run_key and render_context in button key to ensure uniqueness
-                # This prevents StreamlitDuplicateElementKey errors when same suggestion appears in different contexts
-                # Use sanitized run_key (not hash) to prevent collisions while keeping it readable
-                # Sanitize run_key to remove special characters that might cause issues
-                run_key_safe = (run_key or "default").replace(":", "_").replace("/", "_").replace("-", "_")[:30]
-                # Use stable hash for suggestion button key
-                suggestion_hash = hashlib.sha256(suggestion.encode("utf-8")).hexdigest()[:8]
-                # Use render_context to distinguish between current result and history rendering
-                # Create a unique key that combines all these elements
-                button_key = f"followup_{render_context}_{run_key_safe}_{idx}_{suggestion_hash}"
-                if st.button(suggestion, key=button_key, use_container_width=True):
-                    # Store suggestion to prefill chat input and rerun to process it
-                    st.session_state["prefilled_query"] = suggestion
-                    st.rerun()
+# PR25: _suggest_follow_ups() removed - disabled partial feature
+# Follow-ups will be implemented via LLM-generated QueryPlan.follow_ups field in future
+# When implemented, add: if plan.follow_ups: _render_llm_follow_ups(plan.follow_ups)
 
 
 def get_dataset_version(dataset, dataset_choice: str) -> str:
@@ -1546,10 +1515,58 @@ def main():
 
     st.divider()
 
+    # ============================================================================
+    # STATE MACHINE DOCUMENTATION (Per Staff Engineer Feedback)
+    # ============================================================================
+    # The Ask Questions page uses Streamlit session state as a mini state machine
+    # to manage analysis context and execution flow. This is fragile but acceptable for MVP.
+    #
+    # State Keys:
+    #   - analysis_context: AnalysisContext | None
+    #       Stores the current analysis configuration (variables, intent, filters)
+    #       Set when NL query is parsed or user answers clarifying questions
+    #   - intent_signal: "nl_parsed" | None
+    #       Signals that NL parsing completed and context is ready
+    #       Used to trigger analysis execution flow
+    #   - use_nl_query: bool (legacy, may be removed in future)
+    #       Legacy flag for NL query mode (kept for backward compatibility)
+    #
+    # Allowed Transitions:
+    #   1. None -> "nl_parsed"
+    #      Trigger: User submits NL query, parsing succeeds
+    #      Action: Set analysis_context, set intent_signal="nl_parsed"
+    #      Location: After successful NL query parsing (~line 1990)
+    #
+    #   2. "nl_parsed" -> None
+    #      Trigger: User changes dataset, clears conversation, or resets
+    #      Action: Clear analysis_context, set intent_signal=None
+    #      Location: Clear conversation button (~line 1543), dataset change detection
+    #
+    #   3. "nl_parsed" -> "executed" (implicit)
+    #      Trigger: Context is complete, analysis executes
+    #      Action: Execute analysis, render results, keep context for follow-ups
+    #      Location: Analysis execution block (~line 1574-1700)
+    #
+    # Fragility Notes:
+    #   - Order matters: Must check intent_signal before accessing analysis_context
+    #   - Reruns can invalidate assumptions if state is modified mid-cycle
+    #   - Future contributors will break this accidentally without explicit docs
+    #   - State is not validated - invalid states can cause silent failures
+    #
+    # Future Refactor (Post-MVP, see ADR008):
+    #   - Extract to StateManager class with explicit transition methods
+    #   - Add state validation and transition guards
+    #   - Use state machine library (e.g., transitions) for robustness
+    # ============================================================================
+
     # Initialize session state for context
+    # PR25: Initialize state machine state with validation
     if "analysis_context" not in st.session_state:
         st.session_state["analysis_context"] = None
         st.session_state["intent_signal"] = None
+
+    # PR25: Proactive cleanup - enforce lifecycle invariants
+    cleanup_old_results(dataset_version)
 
     # Initialize conversation history (lightweight storage per ADR001 - keep for backward compat)
     if "conversation_history" not in st.session_state:
@@ -1571,9 +1588,22 @@ def main():
         semantic_layer = None
 
     # Handle analysis execution if we have a context ready
-    if st.session_state.get("intent_signal") is not None:
+    # PR25: State machine validation - enforce documented transitions
+    intent_signal = st.session_state.get("intent_signal")
+    if intent_signal is not None:
+        # Validate state machine invariant: intent_signal requires analysis_context
+        context = st.session_state.get("analysis_context")
+        if context is None:
+            logger.error(
+                "state_machine_invariant_violation",
+                message="intent_signal set but analysis_context is None",
+                intent_signal=intent_signal,
+            )
+            # Recover by clearing invalid state
+            st.session_state["intent_signal"] = None
+            st.warning("⚠️ Analysis state was invalid. Please try your query again.")
+            return
         # We have intent, now gather details
-        context = st.session_state["analysis_context"]
 
         logger.info(
             "page_render_analysis_configuration",
@@ -1672,11 +1702,19 @@ def main():
             if query_plan and semantic_layer:
                 query_text = getattr(context, "research_question", "")
 
+                # INVARIANT ENFORCEMENT (PR25): Normalize query text before passing to execute_query_plan()
+                # _generate_run_key() enforces normalization contract - must normalize here
+                normalized_query = normalize_query(query_text)
+
+                # Reject empty queries at ingestion (PR25 - invariant enforcement)
+                if not normalized_query:
+                    logger.warning("empty_query_rejected", original_query=query_text)
+                    st.warning("Please enter a non-empty query.")
+                    return
+
                 # Phase 2.4: Cache execution results to prevent duplicate execute_query_plan() calls
                 # Use stable sha256 digest (not hash()) for deterministic cache keys across sessions
                 # run_key is only available after execution, so we use query hash for pre-execution cache lookup
-                # Normalize query text same way as semantic layer does for run_key generation
-                normalized_query = " ".join(query_text.lower().split()) if query_text else ""
                 query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
                 exec_cache_key = f"exec_result:{dataset_version}:{query_hash}"
 
@@ -1688,18 +1726,26 @@ def main():
                 execution_result = None
                 if not force_rerun and exec_cache_key in st.session_state:
                     execution_result = st.session_state[exec_cache_key]
-                    logger.debug("query_execution_cache_hit", cache_key=exec_cache_key, query_preview=query_text[:50])
+                    logger.debug(
+                        "query_execution_cache_hit", cache_key=exec_cache_key, query_preview=normalized_query[:50]
+                    )
 
                 # Phase 2.5.1: Progressive thinking indicator for query execution
                 if execution_result is None:
                     # Execute query (core layer generates step information)
+                    # INVARIANT: Pass normalized_query (not raw query_text) to enforce contract
                     execution_result = semantic_layer.execute_query_plan(
-                        query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=query_text
+                        query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=normalized_query
                     )
 
                     # Cache the execution result
                     st.session_state[exec_cache_key] = execution_result
-                    logger.debug("query_execution_cache_miss", cache_key=exec_cache_key, query_preview=query_text[:50])
+                    logger.debug(
+                        "query_execution_cache_miss", cache_key=exec_cache_key, query_preview=normalized_query[:50]
+                    )
+
+                    # PR25: Evict old execution cache entries (unbounded growth prevention)
+                    _evict_old_execution_cache(dataset_version)
 
                 # Phase 2.5.1: Render thinking indicator from core layer step data (UI only renders)
                 if execution_result.get("steps"):
@@ -1758,7 +1804,7 @@ def main():
                         context,
                         run_key,
                         dataset_version,
-                        query_text,
+                        normalized_query,  # PR25: Pass normalized query (invariant enforcement)
                         query_plan,
                         execution_result,
                         semantic_layer,
@@ -1785,7 +1831,6 @@ def main():
 
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     # Use stable hash for button key (same normalization as cache key)
-                    normalized_query = " ".join(query_text.lower().split()) if query_text else ""
                     query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
                     if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{query_hash}"):
                         st.session_state[force_rerun_key] = True

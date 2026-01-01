@@ -85,19 +85,28 @@ class TestRunKeyDeterminism:
         assert key1 != key2
 
     def test_run_key_same_for_whitespace_variations(self, semantic_layer):
-        """Whitespace variations should produce same run_key (Phase 1.1)."""
+        """Whitespace variations should produce same run_key when normalized (Phase 1.1 + Phase 8)."""
         # Arrange: Same plan, query with different whitespace
         plan = QueryPlan(intent="COUNT", metric="age", group_by="status", confidence=0.9)
         query1 = "average age by status"
         query2 = "average  age   by    status"  # Extra whitespace
         query3 = "AVERAGE AGE BY STATUS"  # Different case
 
-        # Act
-        key1 = semantic_layer._generate_run_key(plan, query1)
-        key2 = semantic_layer._generate_run_key(plan, query2)
-        key3 = semantic_layer._generate_run_key(plan, query3)
+        # Normalize queries (Phase 8: runtime guardrails require pre-normalized input)
+        def normalize(q: str) -> str:
+            """Normalize query: lowercase, collapse whitespace."""
+            return " ".join(q.lower().split())
 
-        # Assert: All should be identical (normalized)
+        normalized1 = normalize(query1)
+        normalized2 = normalize(query2)
+        normalized3 = normalize(query3)
+
+        # Act
+        key1 = semantic_layer._generate_run_key(plan, normalized1)
+        key2 = semantic_layer._generate_run_key(plan, normalized2)
+        key3 = semantic_layer._generate_run_key(plan, normalized3)
+
+        # Assert: All should be identical (normalization ensures consistency)
         assert key1 == key2 == key3
 
     def test_run_key_includes_all_plan_fields(self, semantic_layer):

@@ -94,27 +94,19 @@ class SepsisDataset(ClinicalDataset):
         all filtering and transformation via SQL.
 
         Args:
-            granularity: Grain level (patient_level, admission_level, event_level)
-                        Sepsis dataset is patient-level only
+            granularity: Grain level (must be "patient_level")
             **filters: Optional filters
         """
         # Validate: Sepsis dataset is patient-level only
         if granularity != "patient_level":
             raise ValueError(f"SepsisDataset only supports patient_level granularity. Requested: {granularity}")
 
+        # Ensure data is loaded and aggregated
         if self._aggregated_data is None:
             self.load()
 
         if len(self._aggregated_data) == 0:
             return pd.DataFrame(columns=UnifiedCohort.REQUIRED_COLUMNS)
 
-        # Extract outcome override if provided
-        outcome_col = filters.get("target_outcome")
-
-        # Remove target_outcome from filters
-        filter_only = {k: v for k, v in filters.items() if k != "target_outcome"}
-
-        # Delegate to semantic layer
-        return self.semantic.get_cohort(
-            granularity=granularity, outcome_col=outcome_col, filters=filter_only, show_sql=False
-        )
+        # Delegate to base class implementation
+        return super().get_cohort(granularity=granularity, **filters)
