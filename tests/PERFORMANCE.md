@@ -65,6 +65,59 @@ def test_example(discovered_datasets):
     # Use config...
 ```
 
+### Test Data Caching (2026-01-01)
+
+**Problem**: Tests were regenerating the same expensive data files repeatedly:
+- Excel files recreated for each test (pandas operations + file I/O)
+- Large CSV files regenerated from scratch
+- Polars DataFrames recreated unnecessarily
+
+**Solution**: Implemented content-based caching for test fixtures:
+1. **Content-based hashing**: Generate cache keys from data content (DataFrame parquet hash, file SHA256)
+2. **Generic factory functions**: Refactored duplicate fixtures (3 Excel, 6 CSV, 2 ZIP) into extensible factories
+3. **Automatic cache invalidation**: Cache invalidates when data content changes (different hash)
+4. **Cache location**: `tests/.test_cache/` (gitignored)
+
+**Implementation**:
+- `tests/fixtures/cache.py`: Caching infrastructure (hash_dataframe, cache_dataframe, get_cached_dataframe, etc.)
+- `tests/fixtures/factories.py`: Generic factories using caching (_create_synthetic_excel_file, make_large_csv, make_large_zip)
+- All expensive fixtures now use caching automatically
+
+**Impact** (measured via `tests/fixtures/test_caching_impact.py`):
+- **Excel file generation**: 99.0% reduction (0.1364s → 0.0014s)
+  - Baseline: First generation with pandas operations and file I/O
+  - Cached: Loading from cache (file copy)
+  - **Exceeds target of 50-80% reduction**
+- **DataFrame caching**: Modest improvement for parquet I/O (7.7% reduction)
+  - Real benefit comes from avoiding expensive operations (Excel generation, data transformations)
+  - Parquet read/write is already fast, so improvement is smaller
+
+**Overall Impact**:
+- **Target**: 50-80% reduction in data loading time
+- **Achieved**: 99% reduction for Excel files (primary bottleneck)
+- **Result**: Significant reduction in fixture creation time, especially for Excel-heavy tests
+
+**Usage**:
+Caching is automatic - fixtures use cached data when available:
+```python
+# Excel fixture (uses cache automatically)
+def test_example(synthetic_dexa_excel_file):
+    # First call: Generates Excel file, caches it
+    # Subsequent calls: Loads from cache (99% faster)
+    assert synthetic_dexa_excel_file.exists()
+
+# CSV fixture (uses cache automatically)
+def test_example(large_patients_csv):
+    # First call: Generates CSV string, caches it
+    # Subsequent calls: Returns cached string
+    assert len(large_patients_csv) > 0
+```
+
+**Cache Management**:
+- Cache location: `tests/.test_cache/` (gitignored)
+- Cache invalidation: Automatic (content-based hashing detects changes)
+- Manual cache clear: `rm -rf tests/.test_cache/` (or use `make test-cache-clear` if added to Makefile)
+
 ## Slow Tests (>30 seconds)
 
 Tests marked with `@pytest.mark.slow` and `@pytest.mark.integration` are expected to take longer because they:
