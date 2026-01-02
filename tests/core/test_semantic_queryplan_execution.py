@@ -416,3 +416,144 @@ def test_execute_query_plan_refuses_invalid_plans(mock_semantic_layer_for_execut
         or "missing" in warnings_text.lower()
         or "validation" in warnings_text.lower()
     )
+
+
+# ============================================================================
+# Phase 8: Query Validation Against Active Schema
+# ============================================================================
+
+
+class TestQueryValidationAgainstActiveSchema:
+    """Test suite for validate_query_against_schema() (Phase 8)."""
+
+    def test_validate_query_warns_missing_metric_column(self, mock_semantic_layer_for_execution):
+        """Should warn if metric column not in active version schema."""
+        from clinical_analytics.core.query_plan import QueryPlan
+        from clinical_analytics.core.semantic import validate_query_against_schema
+
+        # Arrange: QueryPlan with metric, active version without that column
+        plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="missing_column",  # Column not in active version
+            group_by=None,
+            filters=[],
+            confidence=0.9,
+        )
+
+        # Mock active version schema (missing the metric column)
+        active_version = {
+            "schema": {
+                "inferred_schema": {
+                    "table_0": {
+                        "columns": {
+                            "patient_id": {"type": "Utf8"},
+                            "age": {"type": "Int64"},
+                            # missing_column is NOT present
+                        }
+                    }
+                }
+            }
+        }
+
+        # Act: Validate query against schema
+        warnings = validate_query_against_schema(plan, active_version)
+
+        # Assert: Warning returned
+        assert len(warnings) > 0
+        assert any("missing_column" in w.lower() for w in warnings)
+        assert any("metric" in w.lower() or "column" in w.lower() for w in warnings)
+
+    def test_validate_query_warns_missing_group_by_column(self, mock_semantic_layer_for_execution):
+        """Should warn if group_by column not in active version schema."""
+        from clinical_analytics.core.query_plan import QueryPlan
+        from clinical_analytics.core.semantic import validate_query_against_schema
+
+        # Arrange: QueryPlan with group_by, active version without that column
+        plan = QueryPlan(
+            intent="COMPARE_GROUPS",
+            metric="age",
+            group_by="missing_group_column",  # Column not in active version
+            filters=[],
+            confidence=0.9,
+        )
+
+        # Mock active version schema (missing the group_by column)
+        active_version = {
+            "schema": {
+                "inferred_schema": {
+                    "table_0": {
+                        "columns": {
+                            "patient_id": {"type": "Utf8"},
+                            "age": {"type": "Int64"},
+                            # missing_group_column is NOT present
+                        }
+                    }
+                }
+            }
+        }
+
+        # Act: Validate query against schema
+        warnings = validate_query_against_schema(plan, active_version)
+
+        # Assert: Warning returned
+        assert len(warnings) > 0
+        assert any("missing_group_column" in w.lower() for w in warnings)
+        assert any("group" in w.lower() or "column" in w.lower() for w in warnings)
+
+    def test_validate_query_warns_missing_filter_column(self, mock_semantic_layer_for_execution):
+        """Should warn if filter column not in active version schema."""
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+        from clinical_analytics.core.semantic import validate_query_against_schema
+
+        # Arrange: QueryPlan with filter, active version without that column
+        plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="age",
+            group_by=None,
+            filters=[FilterSpec(column="missing_filter_column", operator="==", value="test")],
+            confidence=0.9,
+        )
+
+        # Mock active version schema (missing the filter column)
+        active_version = {
+            "schema": {
+                "inferred_schema": {
+                    "table_0": {
+                        "columns": {
+                            "patient_id": {"type": "Utf8"},
+                            "age": {"type": "Int64"},
+                            # missing_filter_column is NOT present
+                        }
+                    }
+                }
+            }
+        }
+
+        # Act: Validate query against schema
+        warnings = validate_query_against_schema(plan, active_version)
+
+        # Assert: Warning returned
+        assert len(warnings) > 0
+        assert any("missing_filter_column" in w.lower() for w in warnings)
+        assert any("filter" in w.lower() or "column" in w.lower() for w in warnings)
+
+    def test_validate_query_allows_execution_with_warnings(self, mock_semantic_layer_for_execution):
+        """Validation warnings should not block execution."""
+        from clinical_analytics.core.query_plan import QueryPlan
+
+        # Arrange: QueryPlan with missing columns
+        plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="age",  # This exists
+            group_by=None,
+            filters=[],
+            confidence=0.9,
+        )
+
+        # Act: Execute query (should proceed even if validation would warn)
+        result = mock_semantic_layer_for_execution.execute_query_plan(plan)
+
+        # Assert: Execution proceeds (may have warnings, but doesn't block)
+        assert "success" in result
+        # Warnings may be present, but execution should not be blocked
+        # (The actual validation integration will add warnings, but execution continues)

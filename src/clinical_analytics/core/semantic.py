@@ -33,6 +33,63 @@ from clinical_analytics.core.query_plan import generate_chart_spec
 logger = logging.getLogger(__name__)
 
 
+def validate_query_against_schema(plan: "QueryPlan", active_version: dict[str, Any]) -> list[str]:
+    """
+    Validate QueryPlan column references against active version schema (Phase 8).
+
+    Checks if metric, group_by, and filter columns exist in the active version's schema.
+    Returns warnings for missing columns (non-blocking - execution proceeds).
+
+    Args:
+        plan: QueryPlan to validate
+        active_version: Active version entry dict with schema information
+
+    Returns:
+        List of warning messages (empty if all columns exist)
+    """
+    warnings: list[str] = []
+
+    # Extract schema from active version
+    schema = active_version.get("schema", {}).get("inferred_schema", {})
+    if not schema:
+        # No schema available, skip validation
+        return warnings
+
+    # Get table name from schema (first table, or use table name from query context)
+    table_name = list(schema.keys())[0] if schema else None
+    if not table_name:
+        return warnings
+
+    # Get available columns from schema
+    table_schema = schema.get(table_name, {})
+    columns = table_schema.get("columns", {})
+    available_columns = set(columns.keys())
+
+    # Check metric column
+    if plan.metric and plan.metric not in available_columns:
+        warnings.append(
+            f"Metric column '{plan.metric}' not in active version schema. "
+            "Query may fail at runtime. Consider rolling back to a version with this column."
+        )
+
+    # Check group_by column
+    if plan.group_by and plan.group_by not in available_columns:
+        warnings.append(
+            f"Group-by column '{plan.group_by}' not in active version schema. "
+            "Query may fail at runtime. Consider rolling back to a version with this column."
+        )
+
+    # Check filter columns
+    for filter_spec in plan.filters:
+        if filter_spec.column not in available_columns:
+            warnings.append(
+                f"Filter column '{filter_spec.column}' not in active version schema. "
+                "Query may fail at runtime. Consider rolling back to a version with this column."
+            )
+
+    return warnings
+
+
 def _safe_identifier(name: str, max_len: int = 50) -> str:
     """
     Generate a SQL-safe identifier from a dataset name.
@@ -1352,6 +1409,21 @@ class SemanticLayer:
 
         # Phase 2.2: Initialize warnings list for observability
         warnings: list[str] = []
+
+        # Phase 8: Validate query against active version schema (non-blocking)
+        if self.upload_id:
+            # For user-uploaded datasets, validate against active version schema
+            metadata = self._load_metadata(self.upload_id)
+            if metadata:
+                version_history = metadata.get("version_history", [])
+                if version_history:
+                    # Find active version
+                    active_versions = [v for v in version_history if v.get("is_active", False)]
+                    if active_versions:
+                        active_version = active_versions[0]
+                        # Validate query against active version schema
+                        schema_warnings = validate_query_against_schema(plan, active_version)
+                        warnings.extend(schema_warnings)
 
         # Step 1: Interpreting query (Phase 2.5.1)
         step_details = {
