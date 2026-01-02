@@ -327,6 +327,92 @@ def sample_cohort():  # Already exists in conftest.py!
     return pl.DataFrame({...})
 ```
 
+### DRY/SOLID Refactoring Standards for Fixtures
+
+**Rule of Three**: When you have 3+ fixtures with similar patterns, refactor to a generic factory.
+
+**Refactoring Criteria**:
+- **3+ similar implementations** → Extract to generic factory/function
+- **Duplicate patterns across fixtures** → Create factory fixture
+- **Magic values/config scattered** → Extract to configuration
+- **Similar data structures** → Use parameterized factories
+
+**Factory Pattern Standards**:
+- **Factory fixtures** for variations: `make_semantic_layer`, `make_cohort_with_categorical`
+- **Direct fixtures** for standard cases: `sample_cohort`, `sample_patients_df`
+- **Generic factories** for extensibility: `_create_synthetic_excel_file(data, config)`
+
+**Extensibility Patterns**:
+- Configuration-driven: Accept `config` dict for variations
+- Single source of truth: One implementation, multiple callers
+- Open/Closed Principle: Extend via configuration, not code changes
+
+**Example: Refactoring Duplicate Excel Fixtures**:
+
+```python
+# WRONG: Three separate fixtures with same pattern
+@pytest.fixture
+def synthetic_dexa_excel_file(tmp_path_factory):
+    # ... 50 lines of Excel generation code ...
+    
+@pytest.fixture
+def synthetic_statin_excel_file(tmp_path_factory):
+    # ... 50 lines of similar Excel generation code ...
+    
+@pytest.fixture
+def synthetic_complex_excel_file(tmp_path_factory):
+    # ... 50 lines of similar Excel generation code ...
+
+# CORRECT: Generic factory with configuration
+def _create_synthetic_excel_file(
+    tmp_path_factory,
+    data: dict,
+    filename: str,
+    excel_config: dict | None = None,
+) -> Path:
+    """Generic factory for creating synthetic Excel files with caching."""
+    # Single implementation handles all cases via config
+    ...
+
+@pytest.fixture
+def synthetic_dexa_excel_file(tmp_path_factory):
+    """Create synthetic DEXA-like Excel file."""
+    data = {...}
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_dexa.xlsx",
+        excel_config={"header_row": 0, "use_dataframe_hash": True},
+    )
+
+@pytest.fixture
+def synthetic_statin_excel_file(tmp_path_factory):
+    """Create synthetic Statin-like Excel file."""
+    data = {...}
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_statin.xlsx",
+        excel_config={
+            "header_row": 1,
+            "metadata_rows": [{"row_index": 0, "cells": [""] * len(data)}],
+            "use_dataframe_hash": False,
+        },
+    )
+```
+
+**Identified Duplicate Patterns** (to be refactored):
+1. **Excel Fixtures (3 duplicates)**: All follow same pattern, differ only in data/layout
+2. **Large CSV Fixtures (6 duplicates)**: All generate CSV strings, differ only in columns
+3. **Large ZIP Fixtures (2 duplicates)**: All create ZIP files, differ only in file count
+
+**Code Review Checklist**:
+- [ ] No duplicate implementations (check for similar patterns)
+- [ ] Factory patterns used for variations
+- [ ] Configuration extracted (no magic values)
+- [ ] Single source of truth (one implementation per concern)
+- [ ] Extensible (new cases via config, not code changes)
+
 ---
 
 ## Fixture Discipline
