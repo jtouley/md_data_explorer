@@ -12,11 +12,14 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 class TestPromptOverlayPath:
     """Test overlay path resolution with env var support."""
 
-    def test_overlay_path_defaults_to_tmp_directory(self, mock_semantic_layer):
+    @pytest.mark.serial  # Uses shared /tmp/ path - must run serially
+    def test_overlay_path_defaults_to_tmp_directory(self, mock_semantic_layer, tmp_path):
         """Test that overlay path defaults to /tmp/nl_query_learning/ when no env var set."""
         # Arrange: Create engine without NL_PROMPT_OVERLAY_PATH env var
         from clinical_analytics.core.nl_query_engine import NLQueryEngine
@@ -30,10 +33,14 @@ class TestPromptOverlayPath:
             # Act: Get overlay path
             overlay_path = engine._prompt_overlay_path()
 
-            # Assert: Path is /tmp/nl_query_learning/prompt_overlay.txt
+            # Assert: Path defaults to /tmp/nl_query_learning/prompt_overlay.txt
+            # (Note: In production this uses /tmp/, but we verify the structure)
             assert overlay_path == Path("/tmp/nl_query_learning/prompt_overlay.txt")
             assert str(overlay_path).startswith("/tmp/")
             assert "prompt_overlay.txt" in str(overlay_path)
+            # Verify it's the expected default structure (not checking exact path to avoid parallel collisions)
+            assert overlay_path.parent.name == "nl_query_learning"
+            assert overlay_path.name == "prompt_overlay.txt"
 
     def test_overlay_path_respects_env_var_override(self, mock_semantic_layer):
         """Test that NL_PROMPT_OVERLAY_PATH env var overrides default path."""

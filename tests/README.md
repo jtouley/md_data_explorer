@@ -1,6 +1,14 @@
 # Test Organization
 
+**Source of Truth**: This document provides high-level test organization. For comprehensive testing guidelines, decision criteria, and enforcement rules, see **[tests/AGENTS.md](./AGENTS.md)**.
+
 Tests follow a **registry-based, generic approach** that avoids hardcoded dataset dependencies. All integration tests use dynamic dataset discovery to ensure tests work across all available datasets.
+
+## Quick Reference
+
+- **Unit Tests**: Test code logic with mocks (fast, <1s each). Use `mock_llm_calls` and `nl_query_engine_with_cached_model` fixtures.
+- **Integration Tests**: Test real external services (slow, 10-30s each). Mark with `@pytest.mark.integration` and `@pytest.mark.slow`.
+- **Decision Criteria**: See [Unit Tests vs Integration Tests](./AGENTS.md#unit-tests-vs-integration-tests-decision-criteria) in AGENTS.md.
 
 For detailed testing guidelines, see [tests/AGENTS.md](./AGENTS.md).
 
@@ -79,6 +87,10 @@ make check         # Full quality gate (format + lint + type + test)
    - Single source of truth for fixtures in `conftest.py`
    - No duplicate fixture definitions across test files
    - Reusable helper functions for common patterns
+   - **Factory fixtures** for variations (e.g., `make_semantic_layer`, `make_cohort_with_categorical`)
+   - **Generic factories** for extensibility (e.g., `_create_synthetic_excel_file(data, config)`)
+   - **Rule of Three**: When 3+ fixtures follow same pattern, refactor to generic factory
+   - See [DRY/SOLID Refactoring Standards](./AGENTS.md#drysolid-refactoring-standards-for-fixtures) in AGENTS.md for detailed guidance
 
 ### 2. **Registry-Based Testing**
    - Tests use `DatasetRegistry.discover_datasets()` for dynamic discovery

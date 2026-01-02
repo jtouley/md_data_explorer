@@ -50,6 +50,11 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+
+# Performance tracking data
+tests/.performance_data.json
+tests/.performance_data_worker_*.json
+tests/.test_cache/
 cover/
 
 # Translations
