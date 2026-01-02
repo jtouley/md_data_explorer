@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest
+.PHONY: help install install-dev test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest checkpoint-create checkpoint-resume
 
 # Default target
 .DEFAULT_GOAL := help
@@ -321,4 +321,63 @@ git-log-first: ## Show first 200 lines of commits since main branch
 
 git-log-rest: ## Show commits since main branch (from line 201 onwards)
 	@git log main..HEAD --format="%h %s%n%b" | tail -n +201
+
+git-log-export: ## Export full commit history since main branch to .context/commits/
+	@echo "$(GREEN)📝 Exporting commit history...$(NC)"
+	@mkdir -p .context/commits
+	@BRANCH_NAME=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); \
+	TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	OUTPUT_FILE=".context/commits/$${BRANCH_NAME}_$${TIMESTAMP}.md"; \
+	echo "# Commit History: $${BRANCH_NAME}" > "$$OUTPUT_FILE"; \
+	echo "" >> "$$OUTPUT_FILE"; \
+	echo "**Branch**: \`$${BRANCH_NAME}\`" >> "$$OUTPUT_FILE"; \
+	echo "**Exported**: $$(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> "$$OUTPUT_FILE"; \
+	echo "" >> "$$OUTPUT_FILE"; \
+	echo "## Commits Since Main" >> "$$OUTPUT_FILE"; \
+	echo "" >> "$$OUTPUT_FILE"; \
+	git log main..HEAD --format="### %h - %s%n%n**Date**: %ai%n**Author**: %an%n%n%b%n---" >> "$$OUTPUT_FILE" 2>/dev/null || echo "No commits since main branch." >> "$$OUTPUT_FILE"; \
+	echo "$(GREEN)✅ Commit history exported to $${OUTPUT_FILE}$(NC)"
+
+git-log-latest: ## Show latest commit history export
+	@LATEST=$$(ls -t .context/commits/*.md 2>/dev/null | head -1); \
+	if [ -z "$$LATEST" ]; then \
+		echo "$(YELLOW)⚠ No commit history exports found. Run 'make git-log-export' first.$(NC)"; \
+	else \
+		echo "$(GREEN)Latest commit history: $${LATEST}$(NC)"; \
+		head -50 "$$LATEST"; \
+	fi
+
+checkpoint-create: ## Create lightweight checkpoint template (requires TASK_ID="task_name")
+	@if [ -z "$(TASK_ID)" ]; then \
+		echo "$(RED)❌ Error: TASK_ID required. Usage: make checkpoint-create TASK_ID=\"task_name\"$(NC)"; \
+		exit 1; \
+	fi
+	@mkdir -p .context/checkpoints
+	@LAST_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "none"); \
+	FILE=".context/checkpoints/$(TASK_ID).md"; \
+	echo "# $(TASK_ID)" > "$$FILE"; \
+	echo "" >> "$$FILE"; \
+	echo "**Status**: In progress (since last commit: $${LAST_COMMIT})" >> "$$FILE"; \
+	echo "" >> "$$FILE"; \
+	echo "**What I did since last commit**:\n- " >> "$$FILE"; \
+	echo "" >> "$$FILE"; \
+	echo "**Current state**:\n- " >> "$$FILE"; \
+	echo "" >> "$$FILE"; \
+	echo "**Next steps**:\n1. " >> "$$FILE"; \
+	echo "" >> "$$FILE"; \
+	echo "**Blockers/Notes**:\n- " >> "$$FILE"; \
+	echo "$(GREEN)✅ Checkpoint created: $$FILE$(NC)"; \
+	echo "$(YELLOW)💡 Edit it manually with what happened in this chat session$(NC)"
+
+checkpoint-resume: ## Show checkpoint for resuming work (requires TASK_ID)
+	@if [ -z "$(TASK_ID)" ]; then \
+		echo "$(RED)❌ Error: TASK_ID required$(NC)"; \
+		exit 1; \
+	fi
+	@FILE=".context/checkpoints/$(TASK_ID).md"; \
+	if [ ! -f "$$FILE" ]; then \
+		echo "$(RED)❌ Checkpoint not found: $$FILE$(NC)"; \
+		exit 1; \
+	fi; \
+	cat "$$FILE"
 
