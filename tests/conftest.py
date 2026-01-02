@@ -1518,6 +1518,84 @@ def discovered_datasets():
     }
 
 
+@pytest.fixture(scope="session")
+def dataset_registry():
+    """
+    Session-scoped dataset registry for lazy loading.
+
+    Discovers datasets but does NOT pre-load all configs.
+    Configs are loaded lazily when get_dataset_by_name() is called.
+
+    Returns:
+        DatasetRegistry class (not instance) - use DatasetRegistry.get_dataset() directly
+    """
+    from clinical_analytics.core.registry import DatasetRegistry
+
+    # Discover datasets once per session (but don't load configs)
+    DatasetRegistry.reset()
+    DatasetRegistry.discover_datasets()
+    DatasetRegistry.load_config()  # Load config registry, but not individual dataset configs
+
+    return DatasetRegistry
+
+
+@pytest.fixture
+def get_dataset_by_name(dataset_registry):
+    """
+    Helper fixture to load specific dataset by name (lazy loading).
+
+    This fixture allows tests to load only the dataset they need,
+    avoiding the cost of loading all dataset configs upfront.
+
+    Args:
+        dataset_registry: Session-scoped DatasetRegistry class
+
+    Returns:
+        Function that takes dataset name and returns ClinicalDataset instance
+
+    Example:
+        def test_example(get_dataset_by_name):
+            dataset = get_dataset_by_name("my_dataset")
+            cohort = dataset.get_cohort()
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    def _get(name: str):
+        """
+        Load dataset by name, skipping if not available.
+
+        Args:
+            name: Dataset name to load
+
+        Returns:
+            ClinicalDataset instance
+
+        Raises:
+            pytest.skip: If dataset doesn't exist or doesn't validate
+        """
+        try:
+            dataset = dataset_registry.get_dataset(name)
+            if dataset is None:
+                pytest.skip(f"Dataset '{name}' not found in registry")
+
+            # Validate dataset (check if data is available)
+            if not dataset.validate():
+                pytest.skip(f"Dataset '{name}' data not available")
+
+            logger.info(f"selective_dataset_loaded: dataset={name}")
+
+            return dataset
+        except Exception as e:
+            logger.warning(
+                f"selective_dataset_load_failed: dataset={name}, error={e}",
+            )
+            pytest.skip(f"Failed to load dataset '{name}': {e}")
+
+    return _get
+
+
 # ============================================================================
 # Performance Tracking Plugin Registration
 # ============================================================================
