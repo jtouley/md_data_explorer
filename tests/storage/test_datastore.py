@@ -386,3 +386,51 @@ class TestDataStoreTableNameSanitization:
         loaded_data = lazy_df.collect()
         assert loaded_data.height == sample_table.height
         assert loaded_data.columns == sample_table.columns
+
+    def test_datastore_list_datasets_parses_sanitized_table_names(self, datastore, sample_table):
+        """list_datasets should correctly parse upload_id from sanitized table names."""
+        # Arrange: Save tables with sanitized names (spaces/hyphens → underscores)
+        # This matches real-world scenario where table names contain spaces
+        upload_id_1 = "user_upload_20251229_225650_45c58677"
+        table_name_1 = "Statin use - deidentified"  # Will be sanitized to "statin_use_deidentified"
+        dataset_version_1 = "091a873a95864319"
+
+        upload_id_2 = "user_upload_20251228_203407_376a8faa"
+        table_name_2 = "de-identified DEXA"  # Will be sanitized to "de_identified_dexa"
+        dataset_version_2 = "1ee8f9c3e0f6f0f7"
+
+        # Save both tables
+        datastore.save_table(
+            table_name=table_name_1,
+            data=sample_table,
+            upload_id=upload_id_1,
+            dataset_version=dataset_version_1,
+        )
+
+        datastore.save_table(
+            table_name=table_name_2,
+            data=sample_table,
+            upload_id=upload_id_2,
+            dataset_version=dataset_version_2,
+        )
+
+        # Act: List datasets
+        datasets = datastore.list_datasets()
+
+        # Assert: Should correctly extract both upload_ids (not truncated)
+        upload_ids = [d["upload_id"] for d in datasets]
+        assert upload_id_1 in upload_ids, (
+            f"Expected upload_id '{upload_id_1}' not found in {upload_ids}. "
+            f"This indicates parsing failed due to sanitized table name containing underscores."
+        )
+        assert upload_id_2 in upload_ids, (
+            f"Expected upload_id '{upload_id_2}' not found in {upload_ids}. "
+            f"This indicates parsing failed due to sanitized table name containing underscores."
+        )
+
+        # Assert: Each upload_id should have correct table_count
+        dataset_1 = next(d for d in datasets if d["upload_id"] == upload_id_1)
+        assert dataset_1["table_count"] == 1
+
+        dataset_2 = next(d for d in datasets if d["upload_id"] == upload_id_2)
+        assert dataset_2["table_count"] == 1
