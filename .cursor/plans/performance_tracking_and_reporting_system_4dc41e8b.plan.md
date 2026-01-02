@@ -4,43 +4,43 @@ overview: ""
 todos: []
 ---
 
----name: Comprehensive Test Performance Systemoverview: Implement comprehensive test performance system that both tracks performance AND optimizes slow tests. Includes automated monitoring, regression detection, reporting tools, LLM mocking, test data caching, selective dataset loading, fixture scope optimization, and documentation updates.**Note**: All test commands run in parallel by default (`-n auto`) for maximum speed. Integration tests run serially to avoid conflicts with external services.todos:
+---name: Comprehensive Test Performance Systemoverview: Implement comprehensive test performance system that both tracks performance AND optimizes slow tests. Includes automated monitoring, regression detection, reporting tools, LLM mocking, test data caching, selective dataset loading, fixture scope optimization, and documentation updates.**Note**: Test commands run serially by default. Parallel execution available via `-n auto` after Phase 2.5 safety fixes. Integration tests run serially to avoid conflicts with external services.todos:
 
 - id: "phase0-test-organization"
 
 content: "Phase 0: Establish test organization structure (unit → integration → regression)"
 
-status: pending
+status: completed
 
 - id: "phase0-test-execution"
 
 content: "Phase 0: Document test execution commands per phase"
 
-status: pending
+status: completed
 
 - id: "phase0-regression-protection"
 
 content: "Phase 0: Set up regression protection with baseline comparison"
 
-status: pending
+status: completed
 
 - id: "phase0-testing-coverage"
 
 content: "Phase 0: Define testing coverage thresholds and verification process"
 
-status: pending
+status: completed
 
 - id: "phase0-dry-solid-standards"
 
 content: "Phase 0: Establish DRY/SOLID refactoring standards and patterns for fixtures"
 
-status: pending
+status: completed
 
 - id: "phase0-verify"
 
 content: "Phase 0: Verify testing strategy is documented and baseline established"
 
-status: pending
+status: completed
 
 dependencies:
 
@@ -89,7 +89,7 @@ content: Create scripts/generate_performance_report.py - CLI tool for report gen
                 - "6"
 - id: "7.5"
 
-content: Add integration test - End-to-end workflow (track → report → baseline → regression)status: pendingdependencies:
+content: Add integration test - End-to-end workflow (track → report → baseline → regression)status: completeddependencies:
 
                 - "7"
 - id: "8"
@@ -184,6 +184,7 @@ content: Phase 2.2: Refactor duplicate fixture patterns to generic factories (DR
 content: Phase 2.2: Measure caching impact (target: 50-80% reduction in data loading time)status: pendingdependencies:
 
                 - "22"
+                - "22.5"
 - id: "24"
 
 content: Phase 2.3: Enhance discovered_datasets fixture to support lazy loadingstatus: pendingdependencies:
