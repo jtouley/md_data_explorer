@@ -25,12 +25,27 @@ def get_project_root() -> Path:
     Uses pattern: config_loader.py → core/ → clinical_analytics/ → src/ → project_root
     This matches the existing codebase pattern in nl_query_config.py.
 
+    Validates that the config/ directory exists to ensure correct project root detection.
+
     Returns:
         Path to project root directory
+
+    Raises:
+        ValueError: If config/ directory is not found at the detected project root
     """
     current_file = Path(__file__)
     # Go up 4 levels: config_loader.py → core/ → clinical_analytics/ → src/ → project_root
     project_root = current_file.parent.parent.parent.parent
+
+    # Validate that config/ directory exists
+    config_dir = project_root / "config"
+    if not config_dir.is_dir():
+        raise ValueError(
+            f"Project root detection failed: config/ directory not found at {config_dir}. "
+            f"Detected project root: {project_root}. "
+            f"If project structure has changed, update get_project_root() in config_loader.py"
+        )
+
     return project_root
 
 
@@ -216,6 +231,29 @@ class NLQueryConfigDefaults:
         }
 
 
+def _is_critical_config(key: str) -> bool:
+    """
+    Check if a config key is critical (should raise ValueError on type coercion failure).
+
+    Critical configs are those that could cause serious issues if wrong:
+    - Confidence thresholds (tier_*_threshold, *_confidence_threshold, tier_3_*)
+    - Timeouts (tier_timeout_seconds, llm_timeout_*, ollama_timeout_seconds)
+
+    Args:
+        key: Config key name
+
+    Returns:
+        True if config is critical, False otherwise
+    """
+    critical_patterns = [
+        "threshold",
+        "confidence",
+        "timeout",
+        "tier_3_",
+    ]
+    return any(pattern in key.lower() for pattern in critical_patterns)
+
+
 def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     Load NL query config from YAML with env var overrides.
@@ -252,6 +290,14 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
                         try:
                             config[key] = _coerce_type(value, target_type)
                         except (ValueError, TypeError) as e:
+                            # For critical configs, raise ValueError instead of warning
+                            if _is_critical_config(key):
+                                raise ValueError(
+                                    f"Type coercion failed for critical config {key}={value}: "
+                                    f"expected {target_type.__name__}, got {type(value).__name__}. "
+                                    f"Error: {e}"
+                                ) from e
+                            # For non-critical configs, log warning and use default
                             logger.warning(
                                 f"Failed to coerce YAML value {key}={value} to "
                                 f"{target_type.__name__}: {e}, using default"

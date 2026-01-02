@@ -68,6 +68,16 @@ Configuration values follow this precedence order (highest to lowest):
 2. **YAML File Values**
 3. **Default Values** (lowest priority)
 
+### Automatic Environment Variable Override
+
+**IMPORTANT**: The config loader automatically overrides YAML values with environment variables if the environment variable name matches the config key (uppercase). This means:
+
+- Any environment variable matching a config key will override the YAML value
+- Example: Setting `TIER_2_SEMANTIC_MATCH_THRESHOLD=0.80` will override the YAML value
+- This behavior applies to ALL config keys, not just those explicitly listed below
+
+**Use with caution**: Accidental environment variables (e.g., `TIER_1_PATTERN_MATCH_THRESHOLD=0.5`) will override YAML values, which could cause unexpected behavior. Always verify environment variables before deployment.
+
 ### Environment Variable Mapping
 
 The following environment variables override YAML values:
@@ -105,6 +115,20 @@ Environment variables are automatically coerced to the correct type:
 - String `"123"` → `int` 123
 - Missing env var → use YAML value → use default
 
+#### Boolean Coercion Accepted Values
+
+Boolean values accept the following string values (case-insensitive):
+- **Truthy**: `"true"`, `"1"`, `"yes"`, `"on"`
+- **Falsy**: `"false"`, `"0"`, `"no"`, `"off"`
+
+For example:
+- `ENABLE_CLARIFYING_QUESTIONS=true` → `True`
+- `ENABLE_CLARIFYING_QUESTIONS=1` → `True`
+- `ENABLE_CLARIFYING_QUESTIONS=yes` → `True`
+- `ENABLE_CLARIFYING_QUESTIONS=false` → `False`
+- `ENABLE_CLARIFYING_QUESTIONS=0` → `False`
+- `ENABLE_CLARIFYING_QUESTIONS=no` → `False`
+
 ## Project Root Detection
 
 The config loader automatically detects the project root using this pattern:
@@ -123,12 +147,14 @@ project_root = current_file.parent.parent.parent.parent
 
 ## Schema Validation
 
-All YAML files are validated using dataclasses with manual validation (matching existing codebase patterns). The config loader:
+All YAML files are validated using dataclasses with type coercion (matching existing codebase patterns). The config loader:
 
-- Validates required fields are present
-- Validates types match expected types
-- Validates value ranges (e.g., confidence thresholds 0.0-1.0)
-- Raises `ValueError` with field-level error messages on validation failure
+- Validates types match expected types (with automatic coercion)
+- Coerces string values to appropriate types (float, bool, int)
+- Raises `ValueError` for critical config type coercion failures (thresholds, timeouts)
+- Logs warnings for non-critical config type coercion failures (uses defaults)
+
+**Note**: Value range validation (e.g., confidence thresholds 0.0-1.0) is not currently implemented. The config loader focuses on type safety and graceful degradation.
 
 ## Error Handling
 
@@ -146,8 +172,15 @@ All YAML files are validated using dataclasses with manual validation (matching 
 - Lists all validation failures (not just first)
 
 ### Type Coercion Failure
+
+**Critical Configs** (thresholds, timeouts):
 - Raises `ValueError` with field name and expected type
 - Includes the invalid value for debugging
+- Prevents silent failures that could cause serious issues
+
+**Non-Critical Configs** (feature flags, strings):
+- Logs warning and uses default value
+- Allows graceful degradation for less critical settings
 
 ## Usage
 
