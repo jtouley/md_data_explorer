@@ -93,25 +93,25 @@ content: Add Makefile commands (test-performance, performance-report, performanc
                                 - "7"
 - id: "11"
 
-content: Update tests/PERFORMANCE.md with automated tracking, regression, and reporting sectionsstatus: pendingdependencies:
+content: Update tests/PERFORMANCE.md with automated tracking, regression, and reporting sectionsstatus: completeddependencies:
 
                                 - "5"
                                 - "6"
                                 - "7"
 - id: "12"
 
-content: Add .performance_data.json and .performance_data_worker_*.json to .gitignorestatus: pending
+content: Add .performance_data.json and .performance_data_worker_*.json to .gitignorestatus: completed
 
 - id: "13"
 
-content: Write tests for performance system (test_plugin.py, test_storage.py, test_regression.py, test_reporter.py)status: pendingdependencies:
+content: Write tests for performance system (test_plugin.py, test_storage.py, test_regression.py, test_reporter.py)status: completeddependencies:
 
                                 - "3"
                                 - "5"
                                 - "6"
 - id: "14"
 
-content: Run full test suite and verify performance tracking works end-to-endstatus: pendingdependencies:
+content: Run full test suite and verify performance tracking works end-to-endstatus: completeddependencies:
 
                                 - "4"
                                 - "8"

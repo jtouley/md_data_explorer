@@ -2,10 +2,8 @@
 Pytest configuration and fixtures for clinical analytics tests.
 """
 
-import io
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 import polars as pl
@@ -420,41 +418,118 @@ def large_test_data_csv(num_records: int = 1000000) -> str:
     Returns:
         CSV string with patient_id and age columns
     """
-    return "patient_id,age\n" + "\n".join([f"P{i:06d},{20 + i % 100}" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "age": lambda i: str(20 + i % 100),
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
 def large_patients_csv(num_records: int = 1000000) -> str:
     """Generate large patients CSV with patient_id, age, sex columns."""
-    return "patient_id,age,sex\n" + "\n".join(
-        [f"P{i:06d},{20 + i % 100},{['M', 'F'][i % 2]}" for i in range(num_records)]
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "age": lambda i: str(20 + i % 100),
+            "sex": lambda i: ["M", "F"][i % 2],
+        },
+        num_records=num_records,
     )
 
 
 @pytest.fixture
 def large_admissions_csv(num_records: int = 1000000) -> str:
     """Generate large admissions CSV with patient_id and date columns."""
-    return "patient_id,date\n" + "\n".join([f"P{i:06d},2020-01-{1 + i % 30:02d}" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "date": lambda i: f"2020-01-{1 + i % 30:02d}",
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
 def large_admissions_with_admission_date_csv(num_records: int = 1000000) -> str:
     """Generate large admissions CSV with patient_id and admission_date columns."""
-    return "patient_id,admission_date\n" + "\n".join([f"P{i:06d},2020-01-{1 + i % 30:02d}" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "admission_date": lambda i: f"2020-01-{1 + i % 30:02d}",
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
 def large_admissions_with_discharge_csv(num_records: int = 1000000) -> str:
     """Generate large admissions CSV with patient_id, admission_date, discharge_date columns."""
-    return "patient_id,admission_date,discharge_date\n" + "\n".join(
-        [f"P{i:06d},2020-01-{1 + i % 30:02d},2020-01-{5 + i % 30:02d}" for i in range(num_records)]
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "admission_date": lambda i: f"2020-01-{1 + i % 30:02d}",
+            "discharge_date": lambda i: f"2020-01-{5 + i % 30:02d}",
+        },
+        num_records=num_records,
     )
 
 
 @pytest.fixture
 def large_diagnoses_csv(num_records: int = 1000000) -> str:
     """Generate large diagnoses CSV with patient_id, icd_code, diagnosis columns."""
-    return "patient_id,icd_code,diagnosis\n" + "\n".join([f"P{i:06d},E11.9,Diabetes" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "icd_code": lambda i: "E11.9",
+            "diagnosis": lambda i: "Diabetes",
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
@@ -465,12 +540,19 @@ def large_zip_with_csvs(large_patients_csv, large_admissions_csv) -> bytes:
     Returns:
         ZIP file bytes with patients.csv and admissions.csv
     """
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-        zip_file.writestr("patients.csv", large_patients_csv)
-        zip_file.writestr("admissions.csv", large_admissions_csv)
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_zip
+
+    return make_large_zip(
+        csv_files={
+            "patients.csv": large_patients_csv,
+            "admissions.csv": large_admissions_csv,
+        }
+    )
 
 
 @pytest.fixture
@@ -481,13 +563,20 @@ def large_zip_with_three_tables(large_patients_csv, large_admissions_csv, large_
     Returns:
         ZIP file bytes with patients.csv, admissions.csv, and diagnoses.csv
     """
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-        zip_file.writestr("patients.csv", large_patients_csv)
-        zip_file.writestr("admissions.csv", large_admissions_csv)
-        zip_file.writestr("diagnoses.csv", large_diagnoses_csv)
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_zip
+
+    return make_large_zip(
+        csv_files={
+            "patients.csv": large_patients_csv,
+            "admissions.csv": large_admissions_csv,
+            "diagnoses.csv": large_diagnoses_csv,
+        }
+    )
 
 
 @pytest.fixture
@@ -565,9 +654,12 @@ def synthetic_dexa_excel_file(tmp_path_factory):
     Returns:
         Path to Excel file
     """
-    import pandas as pd
+    import sys
+    from pathlib import Path
 
-    from tests.fixtures.cache import cache_excel_file, get_cache_dir, get_cached_excel_file, hash_dataframe
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import _create_synthetic_excel_file
 
     # Create DataFrame (deterministic data)
     data = {
@@ -583,28 +675,12 @@ def synthetic_dexa_excel_file(tmp_path_factory):
         "Prior Tenofovir (TDF) use? 1: Yes 2: No 3: Unknown": [1, 2, 3] * 16 + [1, 2],
     }
 
-    df = pd.DataFrame(data)
-
-    # Generate cache key from DataFrame content
-    import polars as pl
-
-    df_polars = pl.from_pandas(df)
-    cache_key = hash_dataframe(df_polars)
-    cache_dir = get_cache_dir()
-
-    # Check cache first
-    cached_file = get_cached_excel_file(cache_key, cache_dir)
-    if cached_file is not None:
-        return cached_file
-
-    # Generate file if not cached
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_dexa.xlsx"
-    df.to_excel(excel_path, index=False, engine="openpyxl")
-
-    # Cache the generated file
-    cache_excel_file(excel_path, cache_key, cache_dir)
-
-    return excel_path
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_dexa.xlsx",
+        excel_config={"header_row": 0, "use_dataframe_hash": True},
+    )
 
 
 @pytest.fixture(scope="module")
@@ -621,7 +697,12 @@ def synthetic_statin_excel_file(tmp_path_factory):
     Returns:
         Path to Excel file
     """
-    import pandas as pd
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import _create_synthetic_excel_file
 
     # All columns must have exactly 50 rows
     n_rows = 50
@@ -643,42 +724,16 @@ def synthetic_statin_excel_file(tmp_path_factory):
         "HTN 1: Yes 2: No": ([1, 2] * 25)[:n_rows],
     }
 
-    df_data = pd.DataFrame(data)
-
-    from tests.fixtures.cache import cache_excel_file, get_cache_dir, get_cached_excel_file, hash_file
-
-    # Generate temporary file to compute hash
-    temp_path = tmp_path_factory.mktemp("excel_data") / "temp_statin.xlsx"
-    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
-        # Write empty first row
-        empty_row = pd.DataFrame([[""] * len(df_data.columns)])
-        empty_row.to_excel(writer, index=False, header=False, startrow=0)
-
-        # Write headers in row 2 (index 1)
-        headers_df = pd.DataFrame([df_data.columns])
-        headers_df.to_excel(writer, index=False, header=False, startrow=1)
-
-        # Write data starting from row 3 (index 2)
-        df_data.to_excel(writer, index=False, header=False, startrow=2)
-
-    # Generate cache key from file content
-    cache_key = hash_file(temp_path)
-    cache_dir = get_cache_dir()
-
-    # Check cache first
-    cached_file = get_cached_excel_file(cache_key, cache_dir)
-    if cached_file is not None:
-        temp_path.unlink()  # Clean up temp file
-        return cached_file
-
-    # Use the generated file as final output
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_statin.xlsx"
-    temp_path.rename(excel_path)
-
-    # Cache the generated file
-    cache_excel_file(excel_path, cache_key, cache_dir)
-
-    return excel_path
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_statin.xlsx",
+        excel_config={
+            "header_row": 1,
+            "metadata_rows": [{"row_index": 0, "cells": [""] * len(data)}],
+            "use_dataframe_hash": False,  # Must hash file due to metadata row
+        },
+    )
 
 
 @pytest.fixture(scope="module")
@@ -693,7 +748,12 @@ def synthetic_complex_excel_file(tmp_path_factory):
     Returns:
         Path to Excel file
     """
-    import pandas as pd
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import _create_synthetic_excel_file
 
     # All columns must have exactly 45 rows
     n_rows = 45
@@ -712,44 +772,20 @@ def synthetic_complex_excel_file(tmp_path_factory):
         "Diabetes Yes:1 No:2": ([1, 2] * 23)[:n_rows],
     }
 
-    df_data = pd.DataFrame(data)
+    # Create metadata row with "Units" in column 8 (index 7)
+    metadata_cells = [None] * len(data)
+    metadata_cells[7] = "Units"
 
-    from tests.fixtures.cache import cache_excel_file, get_cache_dir, get_cached_excel_file, hash_file
-
-    # Generate temporary file to compute hash
-    temp_path = tmp_path_factory.mktemp("excel_data") / "temp_complex.xlsx"
-    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
-        # Write metadata row (row 1) - mostly empty, one cell with "Units"
-        metadata_row = [None] * len(df_data.columns)
-        metadata_row[7] = "Units"  # Put "Units" in column 8
-        metadata_df = pd.DataFrame([metadata_row])
-        metadata_df.to_excel(writer, index=False, header=False, startrow=0)
-
-        # Write headers in row 2 (index 1)
-        headers_df = pd.DataFrame([df_data.columns])
-        headers_df.to_excel(writer, index=False, header=False, startrow=1)
-
-        # Write data starting from row 3 (index 2)
-        df_data.to_excel(writer, index=False, header=False, startrow=2)
-
-    # Generate cache key from file content
-    cache_key = hash_file(temp_path)
-    cache_dir = get_cache_dir()
-
-    # Check cache first
-    cached_file = get_cached_excel_file(cache_key, cache_dir)
-    if cached_file is not None:
-        temp_path.unlink()  # Clean up temp file
-        return cached_file
-
-    # Use the generated file as final output
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_complex.xlsx"
-    temp_path.rename(excel_path)
-
-    # Cache the generated file
-    cache_excel_file(excel_path, cache_key, cache_dir)
-
-    return excel_path
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_complex.xlsx",
+        excel_config={
+            "header_row": 1,
+            "metadata_rows": [{"row_index": 0, "cells": metadata_cells}],
+            "use_dataframe_hash": False,  # Must hash file due to metadata row
+        },
+    )
 
 
 # ============================================================================
