@@ -560,11 +560,16 @@ def synthetic_dexa_excel_file(tmp_path_factory):
     - 25-50 rows of clinical data
     - Mixed data types (strings, numbers, dates)
 
+    Uses caching to avoid regeneration across test runs.
+
     Returns:
         Path to Excel file
     """
     import pandas as pd
 
+    from tests.fixtures.cache import cache_excel_file, get_cache_dir, get_cached_excel_file, hash_dataframe
+
+    # Create DataFrame (deterministic data)
     data = {
         "Race": ["Black or African-American"] * 30 + ["White"] * 20,
         "Gender": ["Male", "Female"] * 25,
@@ -579,8 +584,25 @@ def synthetic_dexa_excel_file(tmp_path_factory):
     }
 
     df = pd.DataFrame(data)
+
+    # Generate cache key from DataFrame content
+    import polars as pl
+
+    df_polars = pl.from_pandas(df)
+    cache_key = hash_dataframe(df_polars)
+    cache_dir = get_cache_dir()
+
+    # Check cache first
+    cached_file = get_cached_excel_file(cache_key, cache_dir)
+    if cached_file is not None:
+        return cached_file
+
+    # Generate file if not cached
     excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_dexa.xlsx"
     df.to_excel(excel_path, index=False, engine="openpyxl")
+
+    # Cache the generated file
+    cache_excel_file(excel_path, cache_key, cache_dir)
 
     return excel_path
 
@@ -623,9 +645,11 @@ def synthetic_statin_excel_file(tmp_path_factory):
 
     df_data = pd.DataFrame(data)
 
-    # Create Excel with empty first row, then headers, then data
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_statin.xlsx"
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+    from tests.fixtures.cache import cache_excel_file, get_cache_dir, get_cached_excel_file, hash_file
+
+    # Generate temporary file to compute hash
+    temp_path = tmp_path_factory.mktemp("excel_data") / "temp_statin.xlsx"
+    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
         # Write empty first row
         empty_row = pd.DataFrame([[""] * len(df_data.columns)])
         empty_row.to_excel(writer, index=False, header=False, startrow=0)
@@ -636,6 +660,23 @@ def synthetic_statin_excel_file(tmp_path_factory):
 
         # Write data starting from row 3 (index 2)
         df_data.to_excel(writer, index=False, header=False, startrow=2)
+
+    # Generate cache key from file content
+    cache_key = hash_file(temp_path)
+    cache_dir = get_cache_dir()
+
+    # Check cache first
+    cached_file = get_cached_excel_file(cache_key, cache_dir)
+    if cached_file is not None:
+        temp_path.unlink()  # Clean up temp file
+        return cached_file
+
+    # Use the generated file as final output
+    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_statin.xlsx"
+    temp_path.rename(excel_path)
+
+    # Cache the generated file
+    cache_excel_file(excel_path, cache_key, cache_dir)
 
     return excel_path
 
@@ -673,9 +714,11 @@ def synthetic_complex_excel_file(tmp_path_factory):
 
     df_data = pd.DataFrame(data)
 
-    # Create Excel with metadata row, then headers, then data
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_complex.xlsx"
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+    from tests.fixtures.cache import cache_excel_file, get_cache_dir, get_cached_excel_file, hash_file
+
+    # Generate temporary file to compute hash
+    temp_path = tmp_path_factory.mktemp("excel_data") / "temp_complex.xlsx"
+    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
         # Write metadata row (row 1) - mostly empty, one cell with "Units"
         metadata_row = [None] * len(df_data.columns)
         metadata_row[7] = "Units"  # Put "Units" in column 8
@@ -688,6 +731,23 @@ def synthetic_complex_excel_file(tmp_path_factory):
 
         # Write data starting from row 3 (index 2)
         df_data.to_excel(writer, index=False, header=False, startrow=2)
+
+    # Generate cache key from file content
+    cache_key = hash_file(temp_path)
+    cache_dir = get_cache_dir()
+
+    # Check cache first
+    cached_file = get_cached_excel_file(cache_key, cache_dir)
+    if cached_file is not None:
+        temp_path.unlink()  # Clean up temp file
+        return cached_file
+
+    # Use the generated file as final output
+    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_complex.xlsx"
+    temp_path.rename(excel_path)
+
+    # Cache the generated file
+    cache_excel_file(excel_path, cache_key, cache_dir)
 
     return excel_path
 

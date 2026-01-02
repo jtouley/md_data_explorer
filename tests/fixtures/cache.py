@@ -10,11 +10,30 @@ Cache location: tests/.test_cache/
 """
 
 import hashlib
+import os
 import shutil
 from io import BytesIO
 from pathlib import Path
 
 import polars as pl
+
+# Cache directory location
+CACHE_DIR = Path(__file__).parent.parent / ".test_cache"
+
+
+def get_cache_dir() -> Path:
+    """
+    Get cache directory path.
+
+    Can be overridden via TEST_CACHE_DIR environment variable.
+
+    Returns:
+        Path to cache directory
+    """
+    env_cache_dir = os.getenv("TEST_CACHE_DIR")
+    if env_cache_dir:
+        return Path(env_cache_dir)
+    return CACHE_DIR
 
 
 def hash_dataframe(df: pl.DataFrame) -> str:
@@ -52,13 +71,15 @@ def hash_file(file_path: Path) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
 
 
-def _get_cache_path(cache_dir: Path, cache_key: str, extension: str) -> Path:
+def _get_cache_path(cache_dir: Path | None, cache_key: str, extension: str) -> Path:
     """Get cache file path for given key and extension."""
+    if cache_dir is None:
+        cache_dir = get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / f"{cache_key}{extension}"
 
 
-def cache_dataframe(df: pl.DataFrame, cache_dir: Path, cache_key: str) -> Path:
+def cache_dataframe(df: pl.DataFrame, cache_key: str, cache_dir: Path | None = None) -> Path:
     """
     Cache DataFrame as parquet file.
 
@@ -75,7 +96,7 @@ def cache_dataframe(df: pl.DataFrame, cache_dir: Path, cache_key: str) -> Path:
     return cache_path
 
 
-def get_cached_dataframe(cache_dir: Path, cache_key: str) -> pl.DataFrame | None:
+def get_cached_dataframe(cache_key: str, cache_dir: Path | None = None) -> pl.DataFrame | None:
     """
     Retrieve cached DataFrame from parquet file.
 
@@ -97,7 +118,7 @@ def get_cached_dataframe(cache_dir: Path, cache_key: str) -> pl.DataFrame | None
         return None
 
 
-def cache_excel_file(source_file: Path, cache_dir: Path, cache_key: str) -> Path:
+def cache_excel_file(source_file: Path, cache_key: str, cache_dir: Path | None = None) -> Path:
     """
     Cache Excel file by copying to cache directory.
 
@@ -114,7 +135,7 @@ def cache_excel_file(source_file: Path, cache_dir: Path, cache_key: str) -> Path
     return cache_path
 
 
-def get_cached_excel_file(cache_dir: Path, cache_key: str) -> Path | None:
+def get_cached_excel_file(cache_key: str, cache_dir: Path | None = None) -> Path | None:
     """
     Retrieve cached Excel file path.
 
