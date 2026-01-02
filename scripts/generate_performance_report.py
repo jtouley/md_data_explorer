@@ -124,12 +124,13 @@ def generate_report(
             except Exception as e:
                 report += f"\n## Regression Check\n\n❌ Regressions detected:\n\n```\n{e}\n```\n"
 
-        # Add uncategorized slow tests section
-        uncategorized = categorize_slow_tests(data_file, threshold=30.0)
-        if uncategorized:
-            report += "\n## Uncategorized Slow Tests\n\n"
-            report += generate_categorization_report(data_file, threshold=30.0)
-            report += "\n"
+        # Add comprehensive categorization section
+        report += "\n## Test Categorization Verification\n\n"
+        categorization_report = generate_categorization_report(
+            data_file, slow_threshold=30.0, fast_threshold=1.0, integration_threshold=10.0
+        )
+        report += categorization_report
+        report += "\n"
 
     if output_file:
         output_file.write_text(report, encoding="utf-8")
