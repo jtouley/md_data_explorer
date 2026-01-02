@@ -17,12 +17,12 @@
 
 ### 0.3: Regression Protection ✅
 - **Script created**: `scripts/verify_regression_protection.sh`
-- **Baseline captured**: `baseline_test_results.txt` (1153 passed, 32 failed, 29 skipped)
+- **Baseline captured**: `tests/docs/baseline_test_results.txt` (1153 passed, 32 failed, 29 skipped)
 - **Verification**: Script created and executable, baseline captured
 
 ### 0.4: Testing Coverage ✅
 - **Script created**: `scripts/verify_coverage.sh`
-- **Baseline captured**: `baseline_coverage.txt` (65% coverage)
+- **Baseline captured**: `tests/docs/baseline_coverage.txt` (65% coverage)
 - **Threshold**: 2% maximum decrease per phase
 - **Verification**: Script created and executable, baseline captured
 

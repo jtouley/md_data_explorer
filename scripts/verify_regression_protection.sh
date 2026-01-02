@@ -9,7 +9,7 @@ CURRENT_FILE="tests/docs/current_test_results.txt"
 
 if [ ! -f "$BASELINE_FILE" ]; then
     echo "ERROR: Baseline file not found: $BASELINE_FILE"
-    echo "Run 'make test 2>&1 | tee baseline_test_results.txt' first to create baseline"
+    echo "Run 'make test 2>&1 | tee tests/docs/baseline_test_results.txt' first to create baseline"
     exit 1
 fi
 
