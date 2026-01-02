@@ -14,6 +14,10 @@ sys.path.insert(0, str(project_root / "tests"))
 from performance.reporter import generate_json_report, generate_markdown_report
 from performance.storage import load_baseline, load_performance_data, save_baseline
 
+# Import categorization script
+sys.path.insert(0, str(project_root))
+from scripts.categorize_slow_tests import categorize_slow_tests, generate_report as generate_categorization_report
+
 
 def get_default_paths() -> tuple[Path, Path]:
     """Get default paths for performance data and baseline files."""
@@ -119,6 +123,13 @@ def generate_report(
                 report += "\n## Regression Check\n\n✅ No regressions detected.\n"
             except Exception as e:
                 report += f"\n## Regression Check\n\n❌ Regressions detected:\n\n```\n{e}\n```\n"
+
+        # Add uncategorized slow tests section
+        uncategorized = categorize_slow_tests(data_file, threshold=30.0)
+        if uncategorized:
+            report += "\n## Uncategorized Slow Tests\n\n"
+            report += generate_categorization_report(data_file, threshold=30.0)
+            report += "\n"
 
     if output_file:
         output_file.write_text(report, encoding="utf-8")
