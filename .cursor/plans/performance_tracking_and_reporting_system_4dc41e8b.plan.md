@@ -8,96 +8,80 @@ todos: []
 
 - id: "phase0-test-organization"
 
-content: "Phase 0: Establish test organization structure (unit → integration → regression)"
-
-status: completed
+content: "Phase 0: Establish test organization structure (unit → integration → regression)"status: completed
 
 - id: "phase0-test-execution"
 
-content: "Phase 0: Document test execution commands per phase"
-
-status: completed
+content: "Phase 0: Document test execution commands per phase"status: completed
 
 - id: "phase0-regression-protection"
 
-content: "Phase 0: Set up regression protection with baseline comparison"
-
-status: completed
+content: "Phase 0: Set up regression protection with baseline comparison"status: completed
 
 - id: "phase0-testing-coverage"
 
-content: "Phase 0: Define testing coverage thresholds and verification process"
-
-status: completed
+content: "Phase 0: Define testing coverage thresholds and verification process"status: completed
 
 - id: "phase0-dry-solid-standards"
 
-content: "Phase 0: Establish DRY/SOLID refactoring standards and patterns for fixtures"
-
-status: completed
+content: "Phase 0: Establish DRY/SOLID refactoring standards and patterns for fixtures"status: completed
 
 - id: "phase0-verify"
 
-content: "Phase 0: Verify testing strategy is documented and baseline established"
+content: "Phase 0: Verify testing strategy is documented and baseline established"status: completeddependencies:
 
-status: completed
-
-dependencies:
-
-                - "phase0-test-organization"
-                - "phase0-test-execution"
-                - "phase0-regression-protection"
-                - "phase0-testing-coverage"
-                - "phase0-dry-solid-standards"
+                                - "phase0-test-organization"
+                                - "phase0-test-execution"
+                                - "phase0-regression-protection"
+                                - "phase0-testing-coverage"
+                                - "phase0-dry-solid-standards"
 - id: "1"
 
-content: Create performance tracking module structure (**init**.py, plugin.py, storage.py, regression.py, reporter.py)status: completed
-
-dependencies:
+content: Create performance tracking module structure (**init**.py, plugin.py, storage.py, regression.py, reporter.py)status: completeddependencies:
 
 - "phase0-verify"
 - id: "2"
 
 content: Implement storage.py - JSON read/write utilities for performance data and baselinestatus: completeddependencies:
 
-                - "1"
+                                - "1"
 - id: "3"
 
 content: Implement plugin.py - Pytest hooks (pytest_runtest_setup/teardown) to track test durationsstatus: completeddependencies:
 
-                - "2"
+                                - "2"
 - id: "4"
 
 content: Register performance plugin in tests/conftest.py using pytest_configure hookstatus: completeddependencies:
 
-                - "3"
+                                - "3"
 - id: "5"
 
 content: Implement reporter.py - Generate markdown reports from performance datastatus: completeddependencies:
 
-                - "2"
+                                - "2"
 - id: "6"
 
 content: Implement regression.py - Compare current performance against baseline with thresholdsstatus: completeddependencies:
 
-                - "2"
+                                - "2"
 - id: "7"
 
 content: Create scripts/generate_performance_report.py - CLI tool for report generationstatus: completeddependencies:
 
-                - "5"
-                - "6"
+                                - "5"
+                                - "6"
 - id: "7.5"
 
 content: Add integration test - End-to-end workflow (track → report → baseline → regression)status: completeddependencies:
 
-                - "7"
+                                - "7"
 - id: "8"
 
 content: Create tests/test_performance_regression.py - Regression test suitestatus: completeddependencies:
 
-                - "6"
-                - "7.5"
+                                - "6"
+                                - "7.5"
 - id: "9"
 
 content: Add performance configuration to pyproject.toml (thresholds, file paths)status: completed
@@ -106,14 +90,14 @@ content: Add performance configuration to pyproject.toml (thresholds, file paths
 
 content: Add Makefile commands (test-performance, performance-report, performance-baseline, etc.)status: completeddependencies:
 
-                - "7"
+                                - "7"
 - id: "11"
 
 content: Update tests/PERFORMANCE.md with automated tracking, regression, and reporting sectionsstatus: pendingdependencies:
 
-                - "5"
-                - "6"
-                - "7"
+                                - "5"
+                                - "6"
+                                - "7"
 - id: "12"
 
 content: Add .performance_data.json and .performance_data_worker_*.json to .gitignorestatus: pending
@@ -122,149 +106,149 @@ content: Add .performance_data.json and .performance_data_worker_*.json to .giti
 
 content: Write tests for performance system (test_plugin.py, test_storage.py, test_regression.py, test_reporter.py)status: pendingdependencies:
 
-                - "3"
-                - "5"
-                - "6"
+                                - "3"
+                                - "5"
+                                - "6"
 - id: "14"
 
 content: Run full test suite and verify performance tracking works end-to-endstatus: pendingdependencies:
 
-                - "4"
-                - "8"
-                - "13"
+                                - "4"
+                                - "8"
+                                - "13"
 - id: "15"
 
 content: Phase 2.1: Add mock_llm_calls fixture to conftest.py for unit testsstatus: completeddependencies:
 
-                - "14"
+                                - "14"
 - id: "16"
 
 content: Phase 2.1: Refactor test_nl_query_refinement.py to use mocked LLM (create integration test file for real LLM)status: completeddependencies:
 
-                - "15"
+                                - "15"
 - id: "17"
 
 content: Phase 2.1: Refactor test_nl_query_engine_filter_extraction.py to use mocked LLMstatus: completeddependencies:
 
-                - "15"
+                                - "15"
 - id: "18"
 
 content: Phase 2.1: Verify LLM unit tests run <1s each (30-50x speedup)status: completeddependencies:
 
-                - "16"
-                - "17"
+                                - "16"
+                                - "17"
 - id: "19"
 
 content: Phase 2.2: Create tests/fixtures/cache.py with content-based hashing for test data cachingstatus: pendingdependencies:
 
-                - "18"
+                                - "18"
 - id: "20"
 
 content: Phase 2.2: Implement DataFrame caching (parquet files in tests/.test_cache/)status: pendingdependencies:
 
-                - "19"
+                                - "19"
 - id: "21"
 
 content: Phase 2.2: Implement Excel file caching for expensive fixturesstatus: pendingdependencies:
 
-                - "19"
+                                - "19"
 - id: "22"
 
 content: Phase 2.2: Update fixtures to use cached data when availablestatus: pendingdependencies:
 
-                - "20"
-                - "21"
+                                - "20"
+                                - "21"
 - id: "22.5"
 
 content: Phase 2.2: Refactor duplicate fixture patterns to generic factories (DRY/SOLID) - Excel fixtures (3), Large CSV fixtures (6), Large ZIP fixtures (2)status: pendingdependencies:
 
-                - "22"
+                                - "22"
 - id: "23"
 
 content: Phase 2.2: Measure caching impact (target: 50-80% reduction in data loading time)status: pendingdependencies:
 
-                - "22"
-                - "22.5"
+                                - "22"
+                                - "22.5"
 - id: "24"
 
 content: Phase 2.3: Enhance discovered_datasets fixture to support lazy loadingstatus: pendingdependencies:
 
-                - "23"
+                                - "23"
 - id: "25"
 
 content: Phase 2.3: Add get_dataset_by_name() helper for selective dataset loadingstatus: pendingdependencies:
 
-                - "24"
+                                - "24"
 - id: "26"
 
 content: Phase 2.3: Update tests to request specific datasets instead of loading allstatus: pendingdependencies:
 
-                - "25"
+                                - "25"
 - id: "27"
 
 content: Phase 2.3: Measure selective loading impact (target: 30-50% reduction in setup time)status: pendingdependencies:
 
-                - "26"
+                                - "26"
 - id: "28"
 
 content: Phase 2.4: Profile fixtures to identify expensive ones using performance tracking datastatus: pendingdependencies:
 
-                - "14"
+                                - "14"
 - id: "29"
 
 content: Phase 2.4: Convert expensive immutable fixtures to module/session scopestatus: pendingdependencies:
 
-                - "28"
+                                - "28"
 - id: "30"
 
 content: Phase 2.4: Verify test isolation maintained after scope changesstatus: pendingdependencies:
 
-                - "29"
+                                - "29"
 - id: "31"
 
 content: Phase 2.4: Measure scope optimization impact (target: 10-30% overall speedup)status: pendingdependencies:
 
-                - "30"
+                                - "30"
 - id: "32"
 
 content: Phase 2.5: Audit tests for parallel-safety (file I/O, shared state)status: pendingdependencies:
 
-                - "31"
+                                - "31"
 - id: "33"
 
 content: Phase 2.5: Mark non-parallel-safe tests with @pytest.mark.serialstatus: pendingdependencies:
 
-                - "32"
+                                - "32"
 - id: "34"
 
 content: Phase 2.5: Optimize Makefile parallel execution commandsstatus: pendingdependencies:
 
-                - "33"
+                                - "33"
 - id: "35"
 
 content: Phase 3: Create scripts/categorize_slow_tests.py using performance tracking datastatus: pendingdependencies:
 
-                - "14"
+                                - "14"
 - id: "36"
 
 content: Phase 3: Auto-categorize tests >30s with @pytest.mark.slowstatus: pendingdependencies:
 
-                - "35"
+                                - "35"
 - id: "37"
 
 content: Phase 3: Generate report of uncategorized slow testsstatus: pendingdependencies:
 
-                - "36"
+                                - "36"
 - id: "38"
 
 content: Final: Measure total performance improvement and update PERFORMANCE.md with resultsstatus: pendingdependencies:
 
-                - "18"
-                - "23"
-                - "27"
-                - "31"
-                - "34"
-                - "37"
+                                - "18"
+                                - "23"
+                                - "27"
+                                - "31"
+                                - "34"
+                                - "37"
 
 ---
 
@@ -419,9 +403,7 @@ fi
 
 #### 0.5: DRY/SOLID Refactoring Standards
 
-**Goal**: Establish code quality standards before implementation to prevent technical debt accumulation and ensure extensible, maintainable fixtures.
-
-**Refactoring Criteria (Rule of Three)**:
+**Goal**: Establish code quality standards before implementation to prevent technical debt accumulation and ensure extensible, maintainable fixtures.**Refactoring Criteria (Rule of Three)**:
 
 - **3+ similar implementations** → Extract to generic factory/function
 - **Duplicate patterns across fixtures** → Create factory fixture
@@ -444,15 +426,15 @@ fi
 
 1. **Excel Fixtures (3 duplicates)**: `synthetic_dexa_excel_file`, `synthetic_statin_excel_file`, `synthetic_complex_excel_file`
 
-            - Solution: Generic `_create_synthetic_excel_file(data, excel_config)` factory
+                        - Solution: Generic `_create_synthetic_excel_file(data, excel_config)` factory
 
 2. **Large CSV Fixtures (6 duplicates)**: `large_test_data_csv`, `large_patients_csv`, `large_admissions_csv`, `large_admissions_with_admission_date_csv`, `large_admissions_with_discharge_csv`, `large_diagnoses_csv`
 
-            - Solution: Generic `make_large_csv(columns, num_records)` factory
+                        - Solution: Generic `make_large_csv(columns, num_records)` factory
 
 3. **Large ZIP Fixtures (2 duplicates)**: `large_zip_with_csvs`, `large_zip_with_three_tables`
 
-            - Solution: Generic `make_large_zip(csv_files: dict[str, str])` factory
+                        - Solution: Generic `make_large_zip(csv_files: dict[str, str])` factory
 
 **Code Review Checklist**:
 
@@ -849,50 +831,50 @@ def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
 **Implementation**:
 
    ```python
-         def get_cache_key(data: dict | pl.DataFrame, config: dict | None = None) -> str:
-             """Generate content-based hash with version."""
-             CACHE_VERSION = "v1"  # Increment to invalidate all caches
-             # ... hash logic ...
-             return f"{CACHE_VERSION}_{hashlib.sha256(...).hexdigest()}"
-         
-         def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
-             """Load with corruption recovery."""
-             cache_file = CACHE_DIR / f"{cache_key}.parquet"
-             metadata_file = CACHE_DIR / f"{cache_key}.meta.json"
-             
-             if not cache_file.exists():
-                 return None
-             
-             # Check manual invalidation flag
-             if (CACHE_DIR / ".invalidate").exists():
-                 return None
-             
-             # Check metadata for validity
-             try:
-                 if metadata_file.exists():
-                     metadata = json.loads(metadata_file.read_text())
-                     if not metadata.get("cache_valid", True):
-                         return None
-             except Exception:
-                 pass
-             
-             # Try to load with corruption recovery
-             try:
-                 return pl.read_parquet(cache_file)
-             except Exception as e:
-                 logger.warning(f"Cache corruption detected, regenerating: {e}")
-                 cache_file.unlink(missing_ok=True)
-                 metadata_file.unlink(missing_ok=True)
-                 return None
+            def get_cache_key(data: dict | pl.DataFrame, config: dict | None = None) -> str:
+                """Generate content-based hash with version."""
+                CACHE_VERSION = "v1"  # Increment to invalidate all caches
+                # ... hash logic ...
+                return f"{CACHE_VERSION}_{hashlib.sha256(...).hexdigest()}"
+            
+            def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
+                """Load with corruption recovery."""
+                cache_file = CACHE_DIR / f"{cache_key}.parquet"
+                metadata_file = CACHE_DIR / f"{cache_key}.meta.json"
+                
+                if not cache_file.exists():
+                    return None
+                
+                # Check manual invalidation flag
+                if (CACHE_DIR / ".invalidate").exists():
+                    return None
+                
+                # Check metadata for validity
+                try:
+                    if metadata_file.exists():
+                        metadata = json.loads(metadata_file.read_text())
+                        if not metadata.get("cache_valid", True):
+                            return None
+                except Exception:
+                    pass
+                
+                # Try to load with corruption recovery
+                try:
+                    return pl.read_parquet(cache_file)
+                except Exception as e:
+                    logger.warning(f"Cache corruption detected, regenerating: {e}")
+                    cache_file.unlink(missing_ok=True)
+                    metadata_file.unlink(missing_ok=True)
+                    return None
    ```
 
 **Makefile command**:
 
    ```makefile
-         test-cache-clear: ## Clear test data cache
-         	@echo "$(GREEN)Clearing test cache...$(NC)"
-         	rm -rf tests/.test_cache
-         	@echo "$(GREEN)Cache cleared$(NC)"
+            test-cache-clear: ## Clear test data cache
+            	@echo "$(GREEN)Clearing test cache...$(NC)"
+            	rm -rf tests/.test_cache
+            	@echo "$(GREEN)Cache cleared$(NC)"
    ```
 
 **Success Criteria**:
@@ -912,51 +894,49 @@ def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
 - 6 Large CSV fixtures with same generation pattern (different columns)
 - 2 Large ZIP fixtures with same compression pattern (different file counts)
 
-**Solution**: Refactor to generic factories following DRY/SOLID principles.
-
-**Implementation**:
+**Solution**: Refactor to generic factories following DRY/SOLID principles.**Implementation**:
 
 1. **Excel Fixtures → Generic Factory**:
    ```python
-   def _create_synthetic_excel_file(
-       tmp_path_factory,
-       data: dict,
-       filename: str,
-       excel_config: dict | None = None,
-   ) -> Path:
-       """
-       Generic factory for creating synthetic Excel files with caching.
-       
-       Args:
-           tmp_path_factory: Pytest tmp_path_factory fixture
-           data: Dictionary of column_name -> list of values
-           filename: Output filename
-           excel_config: Configuration for Excel layout:
-               - header_row: int (default: 0)
-               - metadata_rows: list[dict] | None
-               - use_dataframe_hash: bool (default: True)
-       """
-       # Implementation with caching
+      def _create_synthetic_excel_file(
+          tmp_path_factory,
+          data: dict,
+          filename: str,
+          excel_config: dict | None = None,
+      ) -> Path:
+          """
+          Generic factory for creating synthetic Excel files with caching.
+          
+          Args:
+              tmp_path_factory: Pytest tmp_path_factory fixture
+              data: Dictionary of column_name -> list of values
+              filename: Output filename
+              excel_config: Configuration for Excel layout:
+                                    - header_row: int (default: 0)
+                                    - metadata_rows: list[dict] | None
+                                    - use_dataframe_hash: bool (default: True)
+          """
+          # Implementation with caching
    ```
 
 2. **Large CSV Fixtures → Generic Factory**:
    ```python
-   @pytest.fixture
-   def make_large_csv():
-       """Factory for generating large CSV strings with caching."""
-       def _make(columns: dict[str, Callable], num_records: int = 1000000) -> str:
-           # Generate CSV with caching by content hash
-       return _make
+      @pytest.fixture
+      def make_large_csv():
+          """Factory for generating large CSV strings with caching."""
+          def _make(columns: dict[str, Callable], num_records: int = 1000000) -> str:
+              # Generate CSV with caching by content hash
+          return _make
    ```
 
 3. **Large ZIP Fixtures → Generic Factory**:
    ```python
-   @pytest.fixture
-   def make_large_zip():
-       """Factory for creating ZIP files with caching."""
-       def _make(csv_files: dict[str, str]) -> bytes:
-           # Create ZIP with caching by content hash
-       return _make
+      @pytest.fixture
+      def make_large_zip():
+          """Factory for creating ZIP files with caching."""
+          def _make(csv_files: dict[str, str]) -> bytes:
+              # Create ZIP with caching by content hash
+          return _make
    ```
 
 
@@ -990,42 +970,42 @@ def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
 
 1. **Audit existing usage** (BEFORE making changes):
    ```bash
-         # Find all usages of discovered_datasets fixture
-         grep -r "discovered_datasets" tests/ --include="*.py" | wc -l
-         # Expected: ~20+ files
+            # Find all usages of discovered_datasets fixture
+            grep -r "discovered_datasets" tests/ --include="*.py" | wc -l
+            # Expected: ~20+ files
    ```
 
 2. **Add NEW fixture (backward compatible)**:
    ```python
-         # Keep existing discovered_datasets fixture unchanged (returns dict)
-         @pytest.fixture(scope="session")
-         def discovered_datasets():
-             """Session-scoped dataset discovery (BACKWARD COMPATIBLE - returns dict)."""
-             # ... existing implementation unchanged ...
-             return {
-                 "available": available,
-                 "configs": configs,
-                 "all_datasets": all_datasets,
-             }
-         
-         # Add NEW fixture for lazy loading
-         @pytest.fixture(scope="session")
-         def dataset_registry():
-             """Session-scoped dataset registry for lazy loading."""
-             DatasetRegistry.reset()
-             DatasetRegistry.discover_datasets()
-             DatasetRegistry.load_config()
-             return DatasetRegistry
-         
-         @pytest.fixture
-         def get_dataset_by_name(dataset_registry):
-             """Helper to load specific dataset by name (lazy loading)."""
-             def _get(name: str):
-                 dataset = dataset_registry.get_dataset(name)
-                 if dataset and not dataset.validate():
-                     pytest.skip(f"{name} data not available")
-                 return dataset
-             return _get
+            # Keep existing discovered_datasets fixture unchanged (returns dict)
+            @pytest.fixture(scope="session")
+            def discovered_datasets():
+                """Session-scoped dataset discovery (BACKWARD COMPATIBLE - returns dict)."""
+                # ... existing implementation unchanged ...
+                return {
+                    "available": available,
+                    "configs": configs,
+                    "all_datasets": all_datasets,
+                }
+            
+            # Add NEW fixture for lazy loading
+            @pytest.fixture(scope="session")
+            def dataset_registry():
+                """Session-scoped dataset registry for lazy loading."""
+                DatasetRegistry.reset()
+                DatasetRegistry.discover_datasets()
+                DatasetRegistry.load_config()
+                return DatasetRegistry
+            
+            @pytest.fixture
+            def get_dataset_by_name(dataset_registry):
+                """Helper to load specific dataset by name (lazy loading)."""
+                def _get(name: str):
+                    dataset = dataset_registry.get_dataset(name)
+                    if dataset and not dataset.validate():
+                        pytest.skip(f"{name} data not available")
+                    return dataset
+                return _get
    ```
 
 3. **Migration approach** (incremental, non-breaking):
@@ -1087,27 +1067,27 @@ def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
 2. **Identify expensive fixtures**:
 
 - **Threshold criteria**: Fixture is "expensive" if:
-                - Creation time > 1 second (if measurable)
-                - OR test duration > 5 seconds AND fixture used by >5 tests
-                - OR fixture creates large files (>10MB) or performs I/O
+                                - Creation time > 1 second (if measurable)
+                                - OR test duration > 5 seconds AND fixture used by >5 tests
+                                - OR fixture creates large files (>10MB) or performs I/O
 - **Tooling**: 
-                - Use `pytest-profiling` plugin: `pytest --profile -o profile.txt`
-                - OR analyze `.performance_data.json` to find slow tests, then identify fixtures used
-                - OR add fixture-level tracking to performance plugin (future enhancement)
+                                - Use `pytest-profiling` plugin: `pytest --profile -o profile.txt`
+                                - OR analyze `.performance_data.json` to find slow tests, then identify fixtures used
+                                - OR add fixture-level tracking to performance plugin (future enhancement)
 
 3. **Profiling process**:
    ```bash
-         # Step 1: Run tests with profiling
-         make test-performance
-         
-         # Step 2: Analyze performance data
-         python scripts/generate_performance_report.py --analyze-fixtures
-         
-         # Step 3: Identify candidates
-         # Look for:
-         # - Tests with duration >5s that share common fixtures
-         # - Fixtures used by >5 tests with average test duration >2s
-         # - Fixtures that create files or perform I/O
+            # Step 1: Run tests with profiling
+            make test-performance
+            
+            # Step 2: Analyze performance data
+            python scripts/generate_performance_report.py --analyze-fixtures
+            
+            # Step 3: Identify candidates
+            # Look for:
+            # - Tests with duration >5s that share common fixtures
+            # - Fixtures used by >5 tests with average test duration >2s
+            # - Fixtures that create files or perform I/O
    ```
 
 
@@ -1253,7 +1233,7 @@ git status  # Verify baseline committed
 
 2. **Clear cache if causing issues**:
    ```bash
-         make test-cache-clear
+            make test-cache-clear
    ```
 
 3. **Revert changes**:
@@ -1544,7 +1524,7 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
 
 10. **Final Integration** - Wire everything together
 
-                - **Success Criteria**: All components work together, full test suite passes
+                                - **Success Criteria**: All components work together, full test suite passes
 
 ### Phase 2: Performance Optimizations (After tracking is working)
 
@@ -1683,5 +1663,3 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
 - [ ] Handles errors gracefully (missing files, invalid arguments)
 - [ ] Generates reports in specified format (json/markdown)
 - [ ] Creates baseline correctly
-
-**Regression Tests (`test_performance_regression.py`)**:

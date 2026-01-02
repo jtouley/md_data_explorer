@@ -1,0 +1,2218 @@
+[0;32mRunning tests with coverage...[0m 
+uv run pytest tests --cov=src/clinical_analytics --cov-report=html --cov-report=term-missing
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/jasontouleyrou/Projects/md_data_explorer
+configfile: pyproject.toml
+plugins: anyio-4.12.0, xdist-3.8.0, langsmith-0.5.1, cov-7.0.0
+collected 1214 items
+
+tests/analysis/test_compute.py ......................................    [  3%]
+tests/analysis/test_compute_count_most_query.py ....                     [  3%]
+tests/analysis/test_stats.py ......                                      [  3%]
+tests/analysis/test_stats_vectorization.py ...                           [  4%]
+tests/analysis/test_survival.py .............                            [  5%]
+tests/core/test_chart_spec.py ......                                     [  5%]
+tests/core/test_clarifying_questions.py ........                         [  6%]
+tests/core/test_dataset.py ..                                            [  6%]
+tests/core/test_dataset_instance_isolation.py .....                      [  7%]
+tests/core/test_dataset_interface.py sssssssssssssssss                   [  8%]
+tests/core/test_error_translation.py .......                             [  8%]
+tests/core/test_eval_harness.py .......                                  [  9%]
+tests/core/test_execution_gating.py .......                              [ 10%]
+tests/core/test_filter_extraction.py ...........                         [ 11%]
+tests/core/test_golden_question_generation.py ............               [ 12%]
+tests/core/test_llm_fallback.py ............                             [ 13%]
+tests/core/test_llm_fallback_integration.py ...F.                        [ 13%]
+tests/core/test_llm_feature.py ............                              [ 14%]
+tests/core/test_llm_json.py ...................                          [ 15%]
+tests/core/test_llm_mock_performance.py ....                             [ 16%]
+tests/core/test_llm_observability.py ..................                  [ 17%]
+tests/core/test_mapper.py FFFFF...............s..                        [ 19%]
+tests/core/test_mock_llm_fixture.py ......                               [ 20%]
+tests/core/test_multi_table_handler.py ................................. [ 22%]
+.............                                                            [ 23%]
+tests/core/test_nl_query_config.py ....                                  [ 24%]
+tests/core/test_nl_query_engine_average_pattern.py ......                [ 24%]
+tests/core/test_nl_query_engine_binary_prioritization.py ...             [ 25%]
+tests/core/test_nl_query_engine_diagnostics.py ...........               [ 25%]
+tests/core/test_nl_query_engine_e2e_dexa_query.py .....                  [ 26%]
+tests/core/test_nl_query_engine_error_messages.py ...                    [ 26%]
+tests/core/test_nl_query_engine_filter_deduplication.py ...              [ 26%]
+tests/core/test_nl_query_engine_filter_extraction.py ...............F... [ 28%]
+....FF.....                                                              [ 29%]
+tests/core/test_nl_query_engine_grouping.py ..........                   [ 30%]
+tests/core/test_nl_query_engine_most_query.py ...                        [ 30%]
+tests/core/test_nl_query_engine_pattern_fallback.py ....                 [ 30%]
+tests/core/test_nl_query_engine_real_world_queries.py ...........        [ 31%]
+tests/core/test_nl_query_engine_self_improvement.py ..........           [ 32%]
+tests/core/test_nl_query_engine_variable_extraction.py .......           [ 33%]
+tests/core/test_nl_query_llm_constrained.py ........                     [ 33%]
+tests/core/test_nl_query_refinement.py ..FF........FFF                   [ 34%]
+tests/core/test_nl_query_type_aware.py ......                            [ 35%]
+tests/core/test_normalize_query.py ......                                [ 35%]
+tests/core/test_ollama_manager_integration.py .ss....                    [ 36%]
+tests/core/test_profiling.py ................                            [ 37%]
+tests/core/test_prompt_optimizer.py ..FFFFFFFFFF..FF.F                   [ 39%]
+tests/core/test_queryplan_contract.py .......                            [ 39%]
+tests/core/test_queryplan_conversion.py ......                           [ 40%]
+tests/core/test_queryplan_followups.py ...........                       [ 41%]
+tests/core/test_queryplan_interpretation.py .........                    [ 42%]
+tests/core/test_queryplan_only_path.py ........                          [ 42%]
+tests/core/test_queryplan_validation.py ............                     [ 43%]
+tests/core/test_registry.py ...F........FF                               [ 44%]
+tests/core/test_relationship_detector.py ................                [ 46%]
+tests/core/test_result_interpretation.py ......                          [ 46%]
+tests/core/test_schema.py ...                                            [ 46%]
+tests/core/test_schema_validation.py .........                           [ 47%]
+tests/core/test_scope_canonicalization.py ......                         [ 48%]
+tests/core/test_security.py ..........                                   [ 48%]
+tests/core/test_self_improve_nl_parsing.py ...........                   [ 49%]
+tests/core/test_semantic_alias_persistence.py ........                   [ 50%]
+tests/core/test_semantic_deterministic_compilation.py .......            [ 51%]
+tests/core/test_semantic_granularity.py ......                           [ 51%]
+tests/core/test_semantic_layer.py .........................              [ 53%]
+tests/core/test_semantic_observability.py ............                   [ 54%]
+tests/core/test_semantic_queryplan_execution.py ...............          [ 55%]
+tests/core/test_semantic_run_key_determinism.py ..............           [ 57%]
+tests/core/test_semantic_security.py ............                        [ 57%]
+tests/datasets/test_unified_semantic_layer.py ......                     [ 58%]
+tests/datasets/test_uploaded_dataset.py ..........                       [ 59%]
+tests/datasets/test_uploaded_dataset_integration.py ....                 [ 59%]
+tests/datasets/test_uploaded_dataset_lazy_frames.py ...........          [ 60%]
+tests/e2e/test_ask_questions_full_flow.py ....                           [ 60%]
+tests/eval/test_golden_questions.py F.                                   [ 61%]
+tests/fixtures/test_cache.py ..........                                  [ 61%]
+tests/fixtures/test_cached_fixtures.py .......                           [ 62%]
+tests/integration/test_adr002_end_to_end.py ...                          [ 62%]
+tests/integration/test_run_app_script.py ........                        [ 63%]
+tests/integration/test_run_key_determinism_ui_flow.py ....               [ 63%]
+tests/loader/test_zip_extraction.py ............                         [ 64%]
+tests/performance/test_cli.py ..                                         [ 64%]
+tests/performance/test_integration.py .                                  [ 64%]
+tests/performance/test_plugin.py ...........                             [ 65%]
+tests/performance/test_regression.py ......                              [ 66%]
+tests/performance/test_reporter.py ....                                  [ 66%]
+tests/performance/test_storage.py .......                                [ 67%]
+tests/storage/test_datastore.py .........                                [ 67%]
+tests/storage/test_query_logger.py .........                             [ 68%]
+tests/storage/test_query_logger_enhanced.py .......                      [ 69%]
+tests/storage/test_versioning.py .........                               [ 70%]
+tests/test_performance_regression.py ss.                                 [ 70%]
+tests/ui/components/test_dataset_loader.py ....                          [ 70%]
+tests/ui/components/test_question_engine_clarifying.py ..                [ 70%]
+tests/ui/components/test_question_engine_confidence_propagation.py ...   [ 71%]
+tests/ui/components/test_question_engine_error_formatting.py ...         [ 71%]
+tests/ui/components/test_question_engine_integration.py .                [ 71%]
+tests/ui/components/test_question_engine_progressive_feedback.py ....    [ 71%]
+tests/ui/pages/test_ask_questions_semantic_layer_check.py ..             [ 71%]
+tests/ui/pages/test_page_gating.py ....                                  [ 72%]
+tests/ui/pages/test_page_ordering.py ...                                 [ 72%]
+tests/ui/pages/test_upload_progress.py ....                              [ 72%]
+tests/ui/test_app.py ...                                                 [ 72%]
+tests/ui/test_composite_identifier.py ................                   [ 74%]
+tests/ui/test_data_validator.py ...............                          [ 75%]
+tests/ui/test_excel_reading.py ..............                            [ 76%]
+tests/ui/test_integration.py ..ssFss.s                                   [ 77%]
+tests/ui/test_normalization.py .s..........s..                           [ 78%]
+tests/ui/test_ollama_init.py .....                                       [ 79%]
+tests/ui/test_ollama_ui_feedback.py .....                                [ 79%]
+tests/ui/test_patient_id_regeneration.py ....................            [ 81%]
+tests/ui/test_schema_conversion.py ......................                [ 82%]
+tests/ui/test_session_recovery.py .....                                  [ 83%]
+tests/ui/test_trust_ui.py ...........                                    [ 84%]
+tests/ui/test_upload_security.py ............................            [ 86%]
+tests/ui/test_uploaded_dataset_patient_id.py .....                       [ 86%]
+tests/ui/test_user_datasets.py ......................................... [ 90%]
+..........                                                               [ 91%]
+tests/ui/test_variable_detector.py .................                     [ 92%]
+tests/ui/test_zip_upload_progress.py ......                              [ 93%]
+tests/unit/core/test_nl_query_engine_logging.py ........                 [ 93%]
+tests/unit/ui/components/test_result_interpreter.py ...........          [ 94%]
+tests/unit/ui/pages/test_ask_questions_code_label_mapping.py ..          [ 94%]
+tests/unit/ui/pages/test_ask_questions_conversation_history.py ......... [ 95%]
+                                                                         [ 95%]
+tests/unit/ui/pages/test_ask_questions_dataset_switching.py ....         [ 95%]
+tests/unit/ui/pages/test_ask_questions_idempotency.py ....               [ 96%]
+tests/unit/ui/pages/test_ask_questions_lifecycle.py ........             [ 96%]
+tests/unit/ui/pages/test_ask_questions_low_confidence.py ...........     [ 97%]
+tests/unit/ui/pages/test_ask_questions_run_key.py .......                [ 98%]
+tests/unit/ui/pages/test_ask_questions_ui_redesign.py ..............     [ 99%]
+tests/unit/ui/test_messages.py ......                                    [100%]
+
+=================================== FAILURES ===================================
+_______________________ test_ollama_client_real_generate _______________________
+
+ollama_client = <clinical_analytics.core.llm_client.OllamaClient object at 0x17e8e1f40>
+skip_if_ollama_unavailable = None
+
+    def test_ollama_client_real_generate(ollama_client, skip_if_ollama_unavailable):
+        """Verify real OllamaClient can generate responses."""
+        from clinical_analytics.core.nl_query_config import OLLAMA_DEFAULT_MODEL
+    
+        if not ollama_client.is_model_available(OLLAMA_DEFAULT_MODEL):
+            pytest.skip(f"Model {OLLAMA_DEFAULT_MODEL} not available")
+    
+        prompt = "What is 2+2? Respond with just the number."
+>       response = ollama_client.generate(prompt, model=OLLAMA_DEFAULT_MODEL)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: OllamaClient.generate() got an unexpected keyword argument 'model'
+
+tests/core/test_llm_fallback_integration.py:75: TypeError
+___________ TestColumnMapper.test_mapper_initialization_with_config ____________
+
+self = <core.test_mapper.TestColumnMapper object at 0x12a12c550>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_mapper_initialization_with_config(self, discovered_datasets):
+        """Test mapper can be initialized with dataset config."""
+        # Arrange: Get config from first available dataset
+>       config = get_first_available_dataset_config(discovered_datasets)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_mapper.py:63: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:38: in get_first_available_dataset_config
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_mapper (WARNING)>
+msg = 'test_mapper_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+__________ TestColumnMapper.test_get_default_predictors_returns_list ___________
+
+self = <core.test_mapper.TestColumnMapper object at 0x12a12c190>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_get_default_predictors_returns_list(self, discovered_datasets):
+        """Test getting default predictors returns non-empty list."""
+        # Arrange: Get config and create mapper
+>       config = get_first_available_dataset_config(discovered_datasets)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_mapper.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:38: in get_first_available_dataset_config
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_mapper (WARNING)>
+msg = 'test_mapper_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+_________ TestColumnMapper.test_get_categorical_variables_returns_list _________
+
+self = <core.test_mapper.TestColumnMapper object at 0x12a013bb0>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_get_categorical_variables_returns_list(self, discovered_datasets):
+        """Test getting categorical variables returns list."""
+        # Arrange: Get config and create mapper
+>       config = get_first_available_dataset_config(discovered_datasets)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_mapper.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:38: in get_first_available_dataset_config
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_mapper (WARNING)>
+msg = 'test_mapper_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+______ TestColumnMapper.test_get_default_outcome_returns_non_empty_string ______
+
+self = <core.test_mapper.TestColumnMapper object at 0x12a013ce0>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_get_default_outcome_returns_non_empty_string(self, discovered_datasets):
+        """Test getting default outcome returns non-empty string."""
+        # Arrange: Get config and create mapper
+>       config = get_first_available_dataset_config(discovered_datasets)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_mapper.py:112: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:38: in get_first_available_dataset_config
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_mapper (WARNING)>
+msg = 'test_mapper_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+____________ TestColumnMapper.test_get_default_filters_returns_dict ____________
+
+self = <core.test_mapper.TestColumnMapper object at 0x12a1268d0>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_get_default_filters_returns_dict(self, discovered_datasets):
+        """Test getting default filters returns dict."""
+        # Arrange: Get config and create mapper
+>       config = get_first_available_dataset_config(discovered_datasets)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_mapper.py:129: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:38: in get_first_available_dataset_config
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_mapper (WARNING)>
+msg = 'test_mapper_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+_ TestFilterExtractionStrategy1ToStrategy2Handoff.test_strategy1_passes_coded_column_to_strategy2 _
+
+self = <core.test_nl_query_engine_filter_extraction.TestFilterExtractionStrategy1ToStrategy2Handoff object at 0x12a430b90>
+mock_semantic_layer = <function mock_semantic_layer.<locals>._make at 0x12f8e7ec0>
+mock_llm_calls = <MagicMock name='call_llm' id='6408083104'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x12f8e7ba0>
+
+    def test_strategy1_passes_coded_column_to_strategy2(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
+        """
+        Test that when Strategy 1 finds a coded column via fuzzy matching,
+        Strategy 2 uses it directly instead of searching again.
+    
+        This fixes the bug where "statins" (plural) matched to "Statin Used" (singular)
+        but Strategy 2 couldn't find it because it searched for "statins" in aliases.
+        """
+        # Arrange: Create semantic layer where "statins" (plural) will fuzzy match to "statin_used" (singular)
+        # The alias contains "statin" (singular), not "statins" (plural)
+        # Note: mock_semantic_layer returns {canonical: alias}, but get_column_alias_index
+        # should return {alias: canonical}. So we need to set it up correctly
+        statin_alias = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin 3: Simvastatin"
+        canonical_name = "statin_used"
+    
+        # Mock returns {alias: canonical} for get_column_alias_index (as per real semantic layer)
+        from unittest.mock import MagicMock
+    
+        mock = MagicMock()
+        mock.get_column_alias_index.return_value = {
+            statin_alias: canonical_name,  # {alias: canonical}
+            "statin used": canonical_name,  # normalized version
+        }
+        mock.get_collision_suggestions.return_value = None
+        mock.get_collision_warnings.return_value = set()
+        mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
+        # Mock _fuzzy_match_variable to return the canonical name when matching "statins"
+        # This simulates Strategy 1 finding the column
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
+        }
+    
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
+        # Override _fuzzy_match_variable to return canonical_name for "statins"
+        original_fuzzy = engine._fuzzy_match_variable
+    
+        def mock_fuzzy(term):
+            if "statin" in term.lower():
+                return canonical_name, 0.9, None
+            return original_fuzzy(term)
+    
+        engine._fuzzy_match_variable = mock_fuzzy
+    
+        # Act: Extract filters - "statins" should match to "statin_used" via Strategy 1,
+        # then Strategy 2 should use that column directly instead of searching
+        query = "how many patients were on statins"
+        intent = engine.parse_query(query)
+    
+        # Assert: Should extract filter with numeric codes (not string "statins")
+        assert intent is not None, "Query should parse successfully"
+>       assert len(intent.filters) > 0, "Should extract at least one filter for 'on statins'"
+E       AssertionError: Should extract at least one filter for 'on statins'
+E       assert 0 > 0
+E        +  where 0 = len([])
+E        +    where [] = QueryIntent(intent_type='COUNT', primary_variable=None, grouping_variable=None, predictor_variables=[], time_variable=...ure_reason=None, suggestions=[], follow_ups=[], follow_up_explanation='', interpretation='', confidence_explanation='').filters
+
+tests/core/test_nl_query_engine_filter_extraction.py:478: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:09 [info     ] query_parse_start              dataset_id=None query='how many patients were on statins' upload_id=None
+2026-01-01 20:51:09 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many patients were on statins' tier=pattern_match upload_id=None
+2026-01-01 20:51:09 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'statin_used', 'operator': 'IN', 'value': [1, 2, 3]}] query='how many patients were on statins'
+2026-01-01 20:51:09 [debug    ] regex_filter_validation_failed error="Column 'statin_used' not found in dataset" filter=FilterSpec(column='statin_used', operator='IN', value=[1, 2, 3], exclude_nulls=True)
+2026-01-01 20:51:09 [debug    ] regex_filters_invalidated      confidence=0.8 invalid_count=1 query='how many patients were on statins' valid_count=0
+2026-01-01 20:51:09 [debug    ] grouping_extraction_failed     intent_type=COUNT query='how many patients were on statins'
+___ TestExclusionFilters.test_exclusion_filter_works_for_any_medication_type ___
+
+self = <core.test_nl_query_engine_filter_extraction.TestExclusionFilters object at 0x12a16a470>
+mock_semantic_layer = <function mock_semantic_layer.<locals>._make at 0x17dd567a0>
+mock_llm_calls = <MagicMock name='call_llm' id='11944082608'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x17dfaeb60>
+
+    def test_exclusion_filter_works_for_any_medication_type(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
+        """Test that exclusion filters are generic and work for any medication/treatment type."""
+        # Arrange: Create semantic layer with diabetes medication column (different domain)
+        diabetes_column_value = "Diabetes Medication: 0: n/a 1: Metformin 2: Insulin 3: Glipizide"
+        mock = mock_semantic_layer(
+            columns={
+                diabetes_column_value: "diabetes_medication",  # alias -> canonical
+                "diabetes medication": "diabetes_medication",  # normalized alias -> canonical
+                "diabetes meds": "diabetes_medication",  # partial match -> canonical
+            }
+        )
+        # Mock metadata to indicate coded column
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
+        }
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
+    
+        # Act: Extract filters from exclusion query (different domain)
+        query = "excluding those not on diabetes medication"
+        intent = engine.parse_query(query)
+    
+        # Assert: Should extract filter to exclude code 0 (generic, not hardcoded)
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filter = intent.filters[0]
+>       assert exclusion_filter.column == "diabetes_medication"
+E       AssertionError: assert 'statin_used' == 'diabetes_medication'
+E         
+E         - diabetes_medication
+E         + statin_used
+
+tests/core/test_nl_query_engine_filter_extraction.py:793: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:09 [info     ] query_parse_start              dataset_id=None query='excluding those not on diabetes medication' upload_id=None
+2026-01-01 20:51:09 [debug    ] llm_raw_response_received      has_conversation_history=False query='excluding those not on diabetes medication' response_length=240 response_preview='{"intent": "COUNT", "metric": null, "group_by": "statin_used", "filters": [{"column": "statin_used", "operator": "!=", "value": 0, "exclude_nulls": true}], "confidence": 0.8, "explanation": "Refining '
+2026-01-01 20:51:09 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='excluding those not on diabetes medication' valid_count=0
+2026-01-01 20:51:09 [info     ] llm_parse_success              confidence=0.8 intent_type=COUNT query='excluding those not on diabetes medication'
+2026-01-01 20:51:09 [info     ] query_parse_success            confidence=0.8 dataset_id=None intent=COUNT matched_vars=['statin_used'] query='excluding those not on diabetes medication' tier=llm_fallback upload_id=None
+2026-01-01 20:51:09 [debug    ] filters_extracted              filter_count=2 filters=[{'column': 'diabetes_medication', 'operator': '!=', 'value': 0}, {'column': 'diabetes_medication', 'operator': 'IN', 'value': [1, 2, 3]}] query='excluding those not on diabetes medication'
+2026-01-01 20:51:09 [debug    ] filters_extracted_in_parse     filter_count=3 intent_type=COUNT query='excluding those not on diabetes medication'
+____ TestExclusionFilters.test_exclusion_filter_works_for_any_coded_column _____
+
+self = <core.test_nl_query_engine_filter_extraction.TestExclusionFilters object at 0x12a16a580>
+mock_semantic_layer = <function mock_semantic_layer.<locals>._make at 0x12f8e5f80>
+mock_llm_calls = <MagicMock name='call_llm' id='11944075888'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x12f8e5440>
+
+    def test_exclusion_filter_works_for_any_coded_column(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
+        """Test that exclusion filters work for any coded column, not just medications."""
+        # Arrange: Create semantic layer with treatment column (different domain)
+        treatment_column_value = "Treatment Type: 0: None 1: Surgery 2: Chemotherapy 3: Radiation"
+        mock = mock_semantic_layer(
+            columns={
+                treatment_column_value: "treatment_type",  # alias -> canonical
+                "treatment type": "treatment_type",  # normalized alias -> canonical
+                "treatment": "treatment_type",  # partial match -> canonical
+            }
+        )
+        # Mock metadata to indicate coded column
+        mock.get_column_metadata.return_value = {
+            "type": "categorical",
+            "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
+        }
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
+    
+        # Act: Extract filters from exclusion query (different domain)
+        query = "excluding patients not on treatment"
+        intent = engine.parse_query(query)
+    
+        # Assert: Should extract filter to exclude code 0 (generic pattern)
+        assert intent is not None
+        assert len(intent.filters) > 0
+        exclusion_filter = intent.filters[0]
+>       assert exclusion_filter.column == "treatment_type"
+E       AssertionError: assert 'statin_used' == 'treatment_type'
+E         
+E         - treatment_type
+E         + statin_used
+
+tests/core/test_nl_query_engine_filter_extraction.py:826: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:09 [info     ] query_parse_start              dataset_id=None query='excluding patients not on treatment' upload_id=None
+2026-01-01 20:51:09 [debug    ] llm_raw_response_received      has_conversation_history=False query='excluding patients not on treatment' response_length=240 response_preview='{"intent": "COUNT", "metric": null, "group_by": "statin_used", "filters": [{"column": "statin_used", "operator": "!=", "value": 0, "exclude_nulls": true}], "confidence": 0.8, "explanation": "Refining '
+2026-01-01 20:51:09 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='excluding patients not on treatment' valid_count=0
+2026-01-01 20:51:09 [info     ] llm_parse_success              confidence=0.8 intent_type=COUNT query='excluding patients not on treatment'
+2026-01-01 20:51:09 [info     ] query_parse_success            confidence=0.8 dataset_id=None intent=COUNT matched_vars=['statin_used'] query='excluding patients not on treatment' tier=llm_fallback upload_id=None
+2026-01-01 20:51:09 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'treatment_type', 'operator': '!=', 'value': 0}] query='excluding patients not on treatment'
+2026-01-01 20:51:09 [debug    ] filters_extracted_in_parse     filter_count=2 intent_type=COUNT query='excluding patients not on treatment'
+___________ test_parse_query_refinement_merges_with_existing_filters ___________
+
+make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x12f8d3ec0>
+mock_llm_calls = <MagicMock name='call_llm' id='11944076224'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x12f8d16c0>
+
+    def test_parse_query_refinement_merges_with_existing_filters(
+        make_semantic_layer,
+        mock_llm_calls,
+        nl_query_engine_with_cached_model,
+    ):
+        """Test that LLM merges refinement filter with existing filters."""
+        # Arrange
+        semantic = make_semantic_layer(
+            dataset_name="test",
+            data={
+                "patient_id": ["P1", "P2", "P3"],
+                "age": [45, 52, 38],
+                "status": [0, 1, 1],  # 0=unknown, 1=active
+            },
+        )
+        engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    
+        # Previous query already had an age filter
+        conversation_history = [
+            {
+                "query": "count patients over 50",
+                "intent": "COUNT",
+                "group_by": None,
+                "filters_applied": [
+                    {
+                        "column": "age",
+                        "operator": ">",
+                        "value": 50,
+                        "exclude_nulls": True,
+                    }
+                ],
+            }
+        ]
+    
+        # Act: Add refinement to exclude unknown status
+        result = engine.parse_query(
+            query="exclude unknown status",
+            conversation_history=conversation_history,
+        )
+    
+        # Assert: Should have both filters
+        assert result.intent_type == "COUNT"
+        assert len(result.filters) >= 2, "Should have age + status filters"
+    
+        # Should preserve age filter
+        age_filters = [f for f in result.filters if f.column == "age"]
+>       assert len(age_filters) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/core/test_nl_query_refinement.py:147: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:32 [info     ] query_parse_start              dataset_id=None query='exclude unknown status' upload_id=None
+2026-01-01 20:51:32 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[{'column': 'age', 'operator': '>', 'value': 50, 'exclude_nulls': True}] previous_group_by=None previous_intent=COUNT previous_query='count patients over 50' query='exclude unknown status'
+2026-01-01 20:51:32 [debug    ] llm_raw_response_received      has_conversation_history=True query='exclude unknown status' response_length=240 response_preview='{"intent": "COUNT", "metric": null, "group_by": "statin_used", "filters": [{"column": "statin_used", "operator": "!=", "value": 0, "exclude_nulls": true}], "confidence": 0.8, "explanation": "Refining '
+2026-01-01 20:51:32 [info     ] llm_refinement_parsing_completed extracted_confidence=0.8 extracted_filters_count=1 extracted_group_by=statin_used extracted_intent=COUNT filters_extracted=[{'column': 'statin_used', 'operator': '!=', 'value': 0}] group_by_matches_previous=None intent_matches_previous=True previous_group_by=None previous_intent=COUNT query='exclude unknown status'
+2026-01-01 20:51:32 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='exclude unknown status' valid_count=0
+2026-01-01 20:51:32 [info     ] llm_parse_success              confidence=0.8 intent_type=COUNT query='exclude unknown status'
+2026-01-01 20:51:32 [info     ] query_parse_success            confidence=0.8 dataset_id=None intent=COUNT matched_vars=['statin_used'] query='exclude unknown status' tier=llm_fallback upload_id=None
+2026-01-01 20:51:32 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'status', 'operator': '!=', 'value': 'unknown status'}] query='exclude unknown status'
+2026-01-01 20:51:32 [debug    ] filters_extracted_in_parse     filter_count=2 intent_type=COUNT query='exclude unknown status'
+____________ test_parse_query_refinement_updates_same_column_filter ____________
+
+make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x12f8d37e0>
+mock_llm_calls = <MagicMock name='call_llm' id='6433505696'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x12f8d3600>
+
+    def test_parse_query_refinement_updates_same_column_filter(
+        make_semantic_layer,
+        mock_llm_calls,
+        nl_query_engine_with_cached_model,
+    ):
+        """Test that LLM replaces filter on same column when refined."""
+        # Arrange
+        semantic = make_semantic_layer(
+            dataset_name="test",
+            data={
+                "patient_id": ["P1", "P2", "P3"],
+                "age": [45, 52, 68],
+            },
+        )
+        engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    
+        conversation_history = [
+            {
+                "query": "patients over 50",
+                "intent": "COUNT",
+                "filters_applied": [
+                    {
+                        "column": "age",
+                        "operator": ">",
+                        "value": 50,
+                        "exclude_nulls": True,
+                    }
+                ],
+            }
+        ]
+    
+        # Act: Refine the age filter
+        result = engine.parse_query(
+            query="actually make it over 65",
+            conversation_history=conversation_history,
+        )
+    
+        # Assert: LLM should update age filter, not duplicate
+        age_filters = [f for f in result.filters if f.column == "age"]
+>       assert len(age_filters) == 1, "Should only have one age filter (updated)"
+E       AssertionError: Should only have one age filter (updated)
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+tests/core/test_nl_query_refinement.py:195: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:32 [info     ] query_parse_start              dataset_id=None query='actually make it over 65' upload_id=None
+2026-01-01 20:51:32 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[{'column': 'age', 'operator': '>', 'value': 50, 'exclude_nulls': True}] previous_group_by=None previous_intent=COUNT previous_query='patients over 50' query='actually make it over 65'
+2026-01-01 20:51:32 [debug    ] llm_raw_response_received      has_conversation_history=True query='actually make it over 65' response_length=240 response_preview='{"intent": "COUNT", "metric": null, "group_by": "statin_used", "filters": [{"column": "statin_used", "operator": "!=", "value": 0, "exclude_nulls": true}], "confidence": 0.8, "explanation": "Refining '
+2026-01-01 20:51:32 [info     ] llm_refinement_parsing_completed extracted_confidence=0.8 extracted_filters_count=1 extracted_group_by=statin_used extracted_intent=COUNT filters_extracted=[{'column': 'statin_used', 'operator': '!=', 'value': 0}] group_by_matches_previous=None intent_matches_previous=True previous_group_by=None previous_intent=COUNT query='actually make it over 65'
+2026-01-01 20:51:32 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='actually make it over 65' valid_count=0
+2026-01-01 20:51:32 [info     ] llm_parse_success              confidence=0.8 intent_type=COUNT query='actually make it over 65'
+2026-01-01 20:51:32 [info     ] query_parse_success            confidence=0.8 dataset_id=None intent=COUNT matched_vars=['statin_used'] query='actually make it over 65' tier=llm_fallback upload_id=None
+2026-01-01 20:51:32 [debug    ] filters_extracted              filter_count=0 filters=[] query='actually make it over 65'
+2026-01-01 20:51:32 [debug    ] filters_extracted_in_parse     filter_count=1 intent_type=COUNT query='actually make it over 65'
+______________ test_llm_refinement_with_coded_categorical_column _______________
+
+make_cohort_with_categorical = <function make_cohort_with_categorical.<locals>._make at 0x12f8d2c00>
+make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x12f8d1620>
+mock_llm_calls = <MagicMock name='call_llm' id='6433617440'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x12f8d2b60>
+
+    def test_llm_refinement_with_coded_categorical_column(
+        make_cohort_with_categorical,
+        make_semantic_layer,
+        mock_llm_calls,
+        nl_query_engine_with_cached_model,
+    ):
+        """Test LLM handles refinement with coded categorical columns correctly."""
+        # Arrange: Use factory fixture for categorical cohort
+>       cohort = make_cohort_with_categorical(
+            patient_ids=["P1", "P2", "P3", "P4"],
+            ages=[45, 52, 38, 61],
+            treatment=["1: Control", "2: Treatment A", "1: Control", "2: Treatment A"],
+        )
+
+tests/core/test_nl_query_refinement.py:313: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:1024: in _make
+    return pl.DataFrame(
+.venv/lib/python3.13/site-packages/polars/dataframe/frame.py:377: in __init__
+    self._df = dict_to_pydf(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+data = {'age': [45, 52, 38, 61], 'patient_id': ['P1', 'P2', 'P3', 'P4'], 'status': ['1: Active', '2: Inactive', '1: Active', '1: Active', '2: Inactive'], 'treatment': ['1: Control', '2: Treatment A', '1: Control', '2: Treatment A']}
+schema = None
+
+    def dict_to_pydf(
+        data: Mapping[str, Sequence[object] | Mapping[str, Sequence[object]] | Series],
+        schema: SchemaDefinition | None = None,
+        *,
+        schema_overrides: SchemaDict | None = None,
+        strict: bool = True,
+        nan_to_null: bool = False,
+        allow_multithreaded: bool = True,
+    ) -> PyDataFrame:
+        """Construct a PyDataFrame from a dictionary of sequences."""
+        if isinstance(schema, Mapping) and data:
+            if not all((col in schema) for col in data):
+                msg = "the given column-schema names do not match the data dictionary"
+                raise ValueError(msg)
+            data = {col: data[col] for col in schema}
+    
+        column_names, schema_overrides = _unpack_schema(
+            schema, lookup_names=data.keys(), schema_overrides=schema_overrides
+        )
+        if not column_names:
+            column_names = list(data)
+    
+        if data and _NUMPY_AVAILABLE:
+            # if there are 3 or more numpy arrays of sufficient size, we multi-thread:
+            count_numpy = sum(
+                int(
+                    allow_multithreaded
+                    and _check_for_numpy(val)
+                    and isinstance(val, np.ndarray)
+                    and len(val) > _MIN_NUMPY_SIZE_FOR_MULTITHREADING
+                    # integers and non-nan floats are zero-copy
+                    and nan_to_null
+                    and val.dtype in (np.float32, np.float64)
+                )
+                for val in data.values()
+            )
+            if count_numpy >= 3:
+                # yes, multi-threading was easier in python here; we cannot have multiple
+                # threads running python and release the gil in pyo3 (it will deadlock).
+    
+                # (note: 'dummy' is threaded)
+                # We catch FileNotFoundError: see 16675
+                try:
+                    import multiprocessing.dummy
+    
+                    pool_size = thread_pool_size()
+                    with multiprocessing.dummy.Pool(pool_size) as pool:
+                        data = dict(
+                            zip(
+                                column_names,
+                                pool.map(
+                                    lambda t: (
+                                        pl.Series(t[0], t[1], nan_to_null=nan_to_null)
+                                        if isinstance(t[1], np.ndarray)
+                                        else t[1]
+                                    ),
+                                    list(data.items()),
+                                ),
+                            )
+                        )
+                except FileNotFoundError:
+                    return dict_to_pydf(
+                        data=data,
+                        schema=schema,
+                        schema_overrides=schema_overrides,
+                        strict=strict,
+                        nan_to_null=nan_to_null,
+                        allow_multithreaded=False,
+                    )
+    
+        if not data and schema_overrides:
+            data_series = [
+                pl.Series(
+                    name,
+                    [],
+                    dtype=schema_overrides.get(name),
+                    strict=strict,
+                    nan_to_null=nan_to_null,
+                )._s
+                for name in column_names
+            ]
+        else:
+            data_series = [
+                s._s
+                for s in _expand_dict_values(
+                    data,
+                    schema_overrides=schema_overrides,
+                    strict=strict,
+                    nan_to_null=nan_to_null,
+                ).values()
+            ]
+    
+        data_series = _handle_columns_arg(data_series, columns=column_names, from_dict=True)
+>       pydf = PyDataFrame(data_series)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       polars.exceptions.ShapeError: could not create a new DataFrame: height of column 'status' (5) does not match height of column 'patient_id' (4)
+
+.venv/lib/python3.13/site-packages/polars/_utils/construction/dataframe.py:170: ShapeError
+_________________ test_llm_provides_explanation_for_refinement _________________
+
+make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x325fb0e00>
+mock_llm_calls = <MagicMock name='call_llm' id='11944075888'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x325fb0fe0>
+
+    def test_llm_provides_explanation_for_refinement(
+        make_semantic_layer,
+        mock_llm_calls,
+        nl_query_engine_with_cached_model,
+    ):
+        """Test that LLM provides explanation when handling refinement."""
+        # Arrange
+        semantic = make_semantic_layer(
+            dataset_name="test",
+            data={"patient_id": ["P1", "P2"], "status": [0, 1]},
+        )
+        engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    
+        conversation_history = [
+            {
+                "query": "count patients",
+                "intent": "COUNT",
+            }
+        ]
+    
+        # Act
+        result = engine.parse_query(
+            query="exclude unknowns",
+            conversation_history=conversation_history,
+        )
+    
+        # Assert: LLM should provide explanation of refinement
+        # QueryIntent uses 'interpretation' field, not 'explanation'
+>       assert result.interpretation, "Should have interpretation"
+E       AssertionError: Should have interpretation
+E       assert ''
+E        +  where '' = QueryIntent(intent_type='COUNT', primary_variable=None, grouping_variable='statin_used', predictor_variables=[], time_...ure_reason=None, suggestions=[], follow_ups=[], follow_up_explanation='', interpretation='', confidence_explanation='').interpretation
+
+tests/core/test_nl_query_refinement.py:374: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:33 [info     ] query_parse_start              dataset_id=None query='exclude unknowns' upload_id=None
+2026-01-01 20:51:33 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[] previous_group_by=None previous_intent=COUNT previous_query='count patients' query='exclude unknowns'
+2026-01-01 20:51:33 [debug    ] llm_raw_response_received      has_conversation_history=True query='exclude unknowns' response_length=240 response_preview='{"intent": "COUNT", "metric": null, "group_by": "statin_used", "filters": [{"column": "statin_used", "operator": "!=", "value": 0, "exclude_nulls": true}], "confidence": 0.8, "explanation": "Refining '
+2026-01-01 20:51:33 [info     ] llm_refinement_parsing_completed extracted_confidence=0.8 extracted_filters_count=1 extracted_group_by=statin_used extracted_intent=COUNT filters_extracted=[{'column': 'statin_used', 'operator': '!=', 'value': 0}] group_by_matches_previous=None intent_matches_previous=True previous_group_by=None previous_intent=COUNT query='exclude unknowns'
+2026-01-01 20:51:33 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='exclude unknowns' valid_count=0
+2026-01-01 20:51:33 [info     ] llm_parse_success              confidence=0.8 intent_type=COUNT query='exclude unknowns'
+2026-01-01 20:51:33 [info     ] query_parse_success            confidence=0.8 dataset_id=None intent=COUNT matched_vars=['statin_used'] query='exclude unknowns' tier=llm_fallback upload_id=None
+2026-01-01 20:51:33 [debug    ] filters_extracted              filter_count=0 filters=[] query='exclude unknowns'
+2026-01-01 20:51:33 [debug    ] filters_extracted_in_parse     filter_count=1 intent_type=COUNT query='exclude unknowns'
+________ test_parse_query_refinement_handles_llm_failure_with_fallback _________
+
+make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x325fb16c0>
+mock_llm_calls = <MagicMock name='call_llm' id='11944072528'>
+nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.<locals>._create_engine at 0x325fb1b20>
+
+    def test_parse_query_refinement_handles_llm_failure_with_fallback(
+        make_semantic_layer,
+        mock_llm_calls,
+        nl_query_engine_with_cached_model,
+    ):
+        """
+        Test that refinement queries work even when LLM returns invalid response.
+    
+        This tests the exact scenario from the terminal where LLM returns
+        {"query": "remove the n/a"} instead of proper QueryPlan schema.
+        The system should fall back to refinement handler that merges with previous context.
+        """
+        # Arrange: Create semantic layer with statin column matching terminal scenario
+        statin_col = (
+            "Statin Used:    0: n/a                       1: Atorvastatin  "
+            "2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin"
+        )
+        semantic = make_semantic_layer(
+            dataset_name="test_statins",
+            data={
+                "patient_id": ["P1", "P2", "P3", "P4"],
+                statin_col: [0, 1, 2, 1],
+                "age": [45, 52, 38, 61],
+            },
+        )
+        engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+    
+        # Previous query: count by statin (all values including n/a)
+        conversation_history = [
+            {
+                "query": "what statins were those patients on, broken down by count of patients per statin?",
+                "intent": "COUNT",
+                "group_by": statin_col,
+                "metric": None,
+                "filters_applied": [],
+                "run_key": "abc123",
+                "timestamp": 100.0,
+            }
+        ]
+    
+        # Act: Parse refinement query "remove the n/a" with conversation context
+        # This should work even if LLM fails and returns invalid response
+        result = engine.parse_query(
+            query="remove the n/a",
+            conversation_history=conversation_history,
+        )
+    
+        # Assert: Should maintain previous intent and grouping
+        assert result.intent_type == "COUNT", "Should maintain previous COUNT intent"
+>       assert result.grouping_variable == statin_col, "Should maintain previous grouping"
+E       AssertionError: Should maintain previous grouping
+E       assert 'statin_used' == 'Statin Used:...: Simvastatin'
+E         
+E         - Statin Used:    0: n/a                       1: Atorvastatin  2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin
+E         + statin_used
+
+tests/core/test_nl_query_refinement.py:432: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:33 [info     ] query_parse_start              dataset_id=None query='remove the n/a' upload_id=None
+2026-01-01 20:51:33 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[] previous_group_by='Statin Used:    0: n/a                       1: Atorvastatin  2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin' previous_intent=COUNT previous_query='what statins were those patients on, broken down by count of patients per statin?' query='remove the n/a'
+2026-01-01 20:51:33 [debug    ] llm_raw_response_received      has_conversation_history=True query='remove the n/a' response_length=240 response_preview='{"intent": "COUNT", "metric": null, "group_by": "statin_used", "filters": [{"column": "statin_used", "operator": "!=", "value": 0, "exclude_nulls": true}], "confidence": 0.8, "explanation": "Refining '
+2026-01-01 20:51:33 [info     ] llm_refinement_parsing_completed extracted_confidence=0.8 extracted_filters_count=1 extracted_group_by=statin_used extracted_intent=COUNT filters_extracted=[{'column': 'statin_used', 'operator': '!=', 'value': 0}] group_by_matches_previous=False intent_matches_previous=True previous_group_by='Statin Used:    0: n/a                       1: Atorvastatin  2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin' previous_intent=COUNT query='remove the n/a'
+2026-01-01 20:51:33 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='remove the n/a' valid_count=0
+2026-01-01 20:51:33 [info     ] llm_parse_success              confidence=0.8 intent_type=COUNT query='remove the n/a'
+2026-01-01 20:51:33 [info     ] query_parse_success            confidence=0.8 dataset_id=None intent=COUNT matched_vars=['statin_used'] query='remove the n/a' tier=llm_fallback upload_id=None
+2026-01-01 20:51:33 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'statin_used', 'operator': '!=', 'value': 0}] query='remove the n/a'
+2026-01-01 20:51:33 [debug    ] regex_filter_validation_failed error="Column 'statin_used' not found in dataset" filter=FilterSpec(column='statin_used', operator='!=', value=0, exclude_nulls=True)
+2026-01-01 20:51:33 [debug    ] regex_filters_invalidated      confidence=0.7000000000000001 invalid_count=1 query='remove the n/a' valid_count=0
+2026-01-01 20:51:33 [debug    ] filters_extracted_in_parse     filter_count=1 intent_type=COUNT query='remove the n/a'
+_____ test_optimizer_analyze_failures_with_invalid_intent_detects_pattern ______
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+sample_test_results_with_invalid_intent = [{'actual_intent': 'REMOVE_NA', 'expected_intent': 'COUNT', 'passed': False, 'query': 'remove the n/a'}, {'actual_inte...'exclude unknowns'}, {'actual_intent': 'COUNT', 'expected_intent': 'COUNT', 'passed': True, 'query': 'count patients'}]
+
+    def test_optimizer_analyze_failures_with_invalid_intent_detects_pattern(
+        sample_learning_config, sample_test_results_with_invalid_intent
+    ):
+        """Test that optimizer detects invalid intent pattern from failures."""
+        # Arrange: Create optimizer with config
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:165: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x12a49b680>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+___ test_optimizer_analyze_failures_with_refinement_failures_detects_pattern ___
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+sample_test_results_with_refinement_failures = [{'actual_intent': 'DESCRIBE', 'conversation_history': [{'group_by': 'statin', 'intent': 'COUNT'}], 'expected_intent':...tion_history': [{'intent': 'DESCRIBE', 'metric': 'cholesterol'}], 'expected_intent': 'DESCRIBE', 'passed': False, ...}]
+
+    def test_optimizer_analyze_failures_with_refinement_failures_detects_pattern(
+        sample_learning_config, sample_test_results_with_refinement_failures
+    ):
+        """Test that optimizer detects refinement ignored pattern from failures."""
+        # Arrange: Create optimizer with config
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:183: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f3d83c0>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+_____ test_optimizer_analyze_failures_with_all_passing_returns_empty_list ______
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+sample_test_results_all_passing = [{'actual_intent': 'COUNT', 'expected_intent': 'COUNT', 'passed': True, 'query': 'count patients'}, {'actual_intent': 'DESCRIBE', 'expected_intent': 'DESCRIBE', 'passed': True, 'query': 'average age'}]
+
+    def test_optimizer_analyze_failures_with_all_passing_returns_empty_list(
+        sample_learning_config, sample_test_results_all_passing
+    ):
+        """Test that optimizer returns no patterns when all tests pass."""
+        # Arrange: Create optimizer with config
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:201: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f3db610>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+_______ test_optimizer_generate_fix_from_template_replaces_placeholders ________
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_generate_fix_from_template_replaces_placeholders(sample_learning_config):
+        """Test that fix generation replaces template placeholders correctly."""
+        # Arrange: Create optimizer and template
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:214: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f123ae0>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+_____ test_optimizer_generate_prompt_additions_with_patterns_returns_text ______
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+sample_test_results_with_invalid_intent = [{'actual_intent': 'REMOVE_NA', 'expected_intent': 'COUNT', 'passed': False, 'query': 'remove the n/a'}, {'actual_inte...'exclude unknowns'}, {'actual_intent': 'COUNT', 'expected_intent': 'COUNT', 'passed': True, 'query': 'count patients'}]
+
+    def test_optimizer_generate_prompt_additions_with_patterns_returns_text(
+        sample_learning_config, sample_test_results_with_invalid_intent
+    ):
+        """Test that prompt additions are generated from failure patterns."""
+        # Arrange: Create optimizer and analyze failures
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:232: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x12a4fd230>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+___ test_optimizer_generate_prompt_additions_with_no_patterns_returns_empty ____
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_generate_prompt_additions_with_no_patterns_returns_empty(
+        sample_learning_config,
+    ):
+        """Test that no prompt additions generated when no patterns detected."""
+        # Arrange: Create optimizer with no patterns
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:248: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f1230d0>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+____ test_optimizer_get_keyword_hints_with_matching_keyword_returns_intent _____
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_get_keyword_hints_with_matching_keyword_returns_intent(
+        sample_learning_config,
+    ):
+        """Test that keyword hints return correct intent for matching query."""
+        # Arrange: Create optimizer
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:264: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f123450>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+_________ test_optimizer_get_keyword_hints_with_no_match_returns_none __________
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_get_keyword_hints_with_no_match_returns_none(sample_learning_config):
+        """Test that keyword hints return None when no keyword matches."""
+        # Arrange: Create optimizer
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:277: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x12a49b680>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+____ test_optimizer_is_refinement_query_with_refinement_phrase_returns_true ____
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_is_refinement_query_with_refinement_phrase_returns_true(
+        sample_learning_config,
+    ):
+        """Test that refinement detection returns True for refinement queries."""
+        # Arrange: Create optimizer
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:292: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f1231b0>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+_______ test_optimizer_is_refinement_query_with_no_phrase_returns_false ________
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_is_refinement_query_with_no_phrase_returns_false(
+        sample_learning_config,
+    ):
+        """Test that refinement detection returns False for non-refinement queries."""
+        # Arrange: Create optimizer
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:307: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f123530>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+_____ test_optimizer_evaluate_condition_with_valid_condition_returns_true ______
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_evaluate_condition_with_valid_condition_returns_true(
+        sample_learning_config,
+    ):
+        """Test that condition evaluation returns True for matching conditions."""
+        # Arrange: Create optimizer and failure record
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:368: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f36b3e0>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+____ test_optimizer_evaluate_condition_with_invalid_condition_returns_false ____
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_evaluate_condition_with_invalid_condition_returns_false(
+        sample_learning_config,
+    ):
+        """Test that condition evaluation returns False for non-matching conditions."""
+        # Arrange: Create optimizer and failure record
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:388: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f36bb50>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+_____ test_optimizer_analyze_failures_with_none_intent_filters_none_values _____
+
+sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', 'count'], 'DESCRIBE': ['average', 'mean'], 'FIND_PREDICTORS': ['...refinement_phrases}'}], prompt_template='Template: {dynamic_fixes}', logging_config={'enabled': True, 'log_dir': None})
+
+    def test_optimizer_analyze_failures_with_none_intent_filters_none_values(sample_learning_config):
+        """Test that optimizer filters None from invalid_intents set without crashing."""
+        # Arrange: Create optimizer and test results with None actual_intent
+>       optimizer = PromptOptimizer(config=sample_learning_config)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_prompt_optimizer.py:433: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
+    self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
+    super().__init__(*args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x32f368cf0>
+args = (None,), paths = [], arg = None, path = None
+
+    def __init__(self, *args):
+        paths = []
+        for arg in args:
+            if isinstance(arg, PurePath):
+                if arg.parser is not self.parser:
+                    # GH-103631: Convert separators for backwards compatibility.
+                    paths.append(arg.as_posix())
+                else:
+                    paths.extend(arg._raw_paths)
+            else:
+                try:
+                    path = os.fspath(arg)
+                except TypeError:
+                    path = arg
+                if not isinstance(path, str):
+>                   raise TypeError(
+                        "argument should be a str or an os.PathLike "
+                        "object where __fspath__ returns a str, "
+                        f"not {type(path).__name__!r}")
+E                   TypeError: argument should be a str or an os.PathLike object where __fspath__ returns a str, not 'NoneType'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:132: TypeError
+________ TestDatasetRegistry.test_get_dataset_factory_creates_instance _________
+
+self = <core.test_registry.TestDatasetRegistry object at 0x12a558510>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_get_dataset_factory_creates_instance(self, discovered_datasets):
+        """Test factory method creates dataset instance."""
+        # Arrange
+>       dataset_name = get_first_available_dataset(discovered_datasets)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_registry.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_registry.py:39: in get_first_available_dataset
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_registry (WARNING)>
+msg = 'test_registry_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+_ TestDatasetRegistry.test_get_dataset_with_override_params_applies_overrides __
+
+self = <core.test_registry.TestDatasetRegistry object at 0x12a5649f0>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_get_dataset_with_override_params_applies_overrides(self, discovered_datasets):
+        """Test getting dataset with override parameters applies overrides."""
+        # Arrange
+>       dataset_name = get_first_available_dataset(discovered_datasets)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_registry.py:236: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_registry.py:39: in get_first_available_dataset
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_registry (WARNING)>
+msg = 'test_registry_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+__ TestDatasetRegistry.test_registry_filters_unsupported_params_without_error __
+
+self = <core.test_registry.TestDatasetRegistry object at 0x12a550390>
+discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs': {}}
+caplog = <_pytest.logging.LogCaptureFixture object at 0x1798c1590>
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_registry_filters_unsupported_params_without_error(self, discovered_datasets, caplog):
+        """Test that registry filters out unsupported init params without error."""
+        # Arrange
+>       dataset_name = get_first_available_dataset(discovered_datasets)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/core/test_registry.py:253: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_registry.py:39: in get_first_available_dataset
+    logger.warning(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Logger core.test_registry (WARNING)>
+msg = 'test_registry_no_datasets_available', args = ()
+kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or none discovered'}
+
+    def warning(self, msg, *args, **kwargs):
+        """
+        Log 'msg % args' with severity 'WARNING'.
+    
+        To pass exception information, use the keyword argument exc_info with
+        a true value, e.g.
+    
+        logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
+        """
+        if self.isEnabledFor(WARNING):
+>           self._log(WARNING, msg, args, **kwargs)
+E           TypeError: Logger._log() got an unexpected keyword argument 'all_datasets'
+
+/opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/logging/__init__.py:1532: TypeError
+_______________________ test_golden_questions_evaluation _______________________
+
+make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x32f4d7100>
+
+    @pytest.mark.integration
+    @pytest.mark.slow
+    def test_golden_questions_evaluation(make_semantic_layer):
+        """
+        Evaluate all golden questions and ensure accuracy is above threshold.
+    
+        This is a regression test - if parsing accuracy drops below 80%,
+        the test will fail and alert us to degradation.
+    
+        Integration test: Uses real NLQueryEngine and SemanticLayer to test
+        end-to-end query parsing pipeline.
+        """
+        # Arrange: Create semantic layer with test data
+        semantic_layer = make_semantic_layer(
+            data={
+                "patient_id": list(range(1, 101)),
+                "age": [25 + i % 40 for i in range(100)],
+                "gender": ["M" if i % 2 == 0 else "F" for i in range(100)],
+                "status": ["active" if i % 3 != 0 else "inactive" for i in range(100)],
+                "treatment": ["A" if i % 2 == 0 else "B" for i in range(100)],
+                "cholesterol": [150 + i % 100 for i in range(100)],
+                "LDL": [100 + i % 80 for i in range(100)],
+                "BMI": [20 + i % 15 for i in range(100)],
+                "statin": [i % 6 for i in range(100)],  # 0=n/a, 1-5=different statins
+            }
+        )
+    
+        # Load golden questions
+        yaml_path = "tests/eval/golden_questions.yaml"
+        questions = load_golden_questions(yaml_path)
+    
+        # Act: Run evaluation
+        harness = EvalHarness(semantic_layer)
+        results = harness.evaluate_batch(questions)
+        summary = harness.get_summary(results)
+    
+        # Print detailed results for failures
+        failures = [r for r in results if not r.get("correct", False)]
+        if failures:
+            print("\n" + "=" * 80)
+            print("FAILURES")
+            print("=" * 80)
+            for result in failures:
+                print(f"\n✗ {result['id']}")
+                print(f"  Query: {result['query']}")
+                print(f"  Expected: {result.get('expected_intent', 'N/A')}")
+                print(f"  Actual: {result.get('actual_intent', 'N/A')}")
+                print(f"  Confidence: {result.get('confidence', 0.0):.2f}")
+                if not result.get("intent_match"):
+                    print(f"  ❌ Intent: expected {result.get('expected_intent')}, got {result.get('actual_intent')}")
+    
+        # Print summary
+        print("\n" + "=" * 80)
+        print("SUMMARY")
+        print("=" * 80)
+        print(f"Total Questions: {summary['total_questions']}")
+        print(f"Correct: {summary['correct_count']}")
+        print(f"Incorrect: {summary['incorrect_count']}")
+        print(f"Accuracy: {summary['accuracy']:.1%}")
+        print(f"Intent Accuracy: {summary['intent_accuracy']:.1%}")
+        print(f"Average Confidence: {summary['average_confidence']:.2f}")
+    
+        # Assert: Accuracy must be above 80%
+>       assert summary["accuracy"] >= 0.80, (
+            f"Golden questions accuracy ({summary['accuracy']:.1%}) "
+            f"is below 80% threshold. This indicates regression in query parsing."
+        )
+E       AssertionError: Golden questions accuracy (71.8%) is below 80% threshold. This indicates regression in query parsing.
+E       assert 0.717948717948718 >= 0.8
+
+tests/eval/test_golden_questions.py:84: AssertionError
+----------------------------- Captured stdout call -----------------------------
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='how many patients?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many patients?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='how many patients?'
+2026-01-01 20:51:37 [debug    ] grouping_extraction_failed     intent_type=COUNT query='how many patients?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='how many patients by status?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many patients by status?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='how many patients by status?'
+2026-01-01 20:51:37 [debug    ] grouping_extracted_broken_down column_name=status confidence=0.9 group_phrase=status query='how many patients by status?'
+2026-01-01 20:51:37 [info     ] grouping_extracted_from_compound grouping_variable=status intent_type=COUNT query='how many patients by status?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='how many patients broken down by treatment?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many patients broken down by treatment?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='how many patients broken down by treatment?'
+2026-01-01 20:51:37 [debug    ] grouping_extracted_broken_down column_name=treatment confidence=0.9 group_phrase=treatment query='how many patients broken down by treatment?'
+2026-01-01 20:51:37 [info     ] grouping_extracted_from_compound grouping_variable=treatment intent_type=COUNT query='how many patients broken down by treatment?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='what is the average age?' upload_id=None
+2026-01-01 20:51:37 [debug    ] pattern_match_what_is_average  confidence=0.9 matched_var=age variable_term=age
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['age'] query='what is the average age?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='what is the average age?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='average age by gender' upload_id=None
+2026-01-01 20:51:37 [debug    ] pattern_match_average_with_variable confidence=0.9 grouping=gender matched_var=age variable_term=age
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['age', 'gender'] query='average age by gender' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='average age by gender'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='describe cholesterol levels' upload_id=None
+2026-01-01 20:51:37 [debug    ] pattern_match_describe_with_variable confidence=0.9 matched_var=cholesterol variable_term=cholesterol
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['cholesterol'] query='describe cholesterol levels' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='describe cholesterol levels'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='compare LDL between treatment and control' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.95 dataset_id=None intent=COMPARE_GROUPS matched_vars=['LDL', 'treatment'] query='compare LDL between treatment and control' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='compare LDL between treatment and control'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='compare age across different statuses' upload_id=None
+2026-01-01 20:51:37 [debug    ] pattern_match_compare_across   group_term=statuses group_var=status primary_term=age primary_var=age
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.95 dataset_id=None intent=COMPARE_GROUPS matched_vars=['age', 'status'] query='compare age across different statuses' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='compare age across different statuses'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='how many active patients?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many active patients?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='how many active patients?'
+2026-01-01 20:51:37 [debug    ] grouping_extraction_failed     intent_type=COUNT query='how many active patients?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='average cholesterol for patients over 50' upload_id=None
+2026-01-01 20:51:37 [debug    ] pattern_match_average_with_variable confidence=0.9 grouping=None matched_var=cholesterol variable_term=cholesterol
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['cholesterol'] query='average cholesterol for patients over 50' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'age', 'operator': '>', 'value': 50}] query='average cholesterol for patients over 50'
+2026-01-01 20:51:37 [debug    ] filters_extracted_in_parse     filter_count=1 intent_type=DESCRIBE query='average cholesterol for patients over 50'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='how many patients excluding those with missing data?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many patients excluding those with missing data?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='how many patients excluding those with missing data?'
+2026-01-01 20:51:37 [debug    ] grouping_extraction_failed     intent_type=COUNT query='how many patients excluding those with missing data?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='how many active patients by treatment group?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many active patients by treatment group?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='how many active patients by treatment group?'
+2026-01-01 20:51:37 [debug    ] grouping_extracted_broken_down column_name=treatment confidence=0.7 group_phrase='treatment group' query='how many active patients by treatment group?'
+2026-01-01 20:51:37 [info     ] grouping_extracted_from_compound grouping_variable=treatment intent_type=COUNT query='how many active patients by treatment group?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='what is the mean and median age?' upload_id=None
+2026-01-01 20:51:37 [debug    ] pattern_match_what_is_average  confidence=0.9 matched_var=age variable_term=age
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['age'] query='what is the mean and median age?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='what is the mean and median age?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='total number of patients' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='total number of patients' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='total number of patients'
+2026-01-01 20:51:37 [debug    ] grouping_extraction_failed     intent_type=COUNT query='total number of patients'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='summarize BMI statistics' upload_id=None
+2026-01-01 20:51:37 [debug    ] pattern_match_describe_with_variable confidence=0.9 matched_var=BMI variable_term=bmi
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['BMI'] query='summarize BMI statistics' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='summarize BMI statistics'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='what statins were those patients on, broken down by count of patients per statin?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='what statins were those patients on, broken down by count of patients per statin?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='what statins were those patients on, broken down by count of patients per statin?'
+2026-01-01 20:51:37 [debug    ] grouping_extracted_broken_down column_name=statin confidence=0.9 group_phrase=statin query='what statins were those patients on, broken down by count of patients per statin?'
+2026-01-01 20:51:37 [info     ] grouping_extracted_from_compound grouping_variable=statin intent_type=COUNT query='what statins were those patients on, broken down by count of patients per statin?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='remove the n/a (0) - what statins were patients on?' upload_id=None
+2026-01-01 20:51:37 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=['statin'] query='remove the n/a (0) - what statins were patients on?' tier=pattern_match upload_id=None
+2026-01-01 20:51:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='remove the n/a (0) - what statins were patients on?'
+2026-01-01 20:51:37 [info     ] query_parse_start              dataset_id=None query='show me the data' upload_id=None
+2026-01-01 20:51:46 [debug    ] llm_raw_response_received      has_conversation_history=False query='show me the data' response_length=149 response_preview='{\n  "intent": "DESCRIBE",\n  "metric": null,\n  "group_by": null,\n  "filters": [],\n  "confidence": 0.8,\n  "explanation": "Show all available columns"\n}'
+2026-01-01 20:51:49 [debug    ] llm_json_parse_success         length=15
+2026-01-01 20:51:49 [info     ] llm_call_success               feature=filter_extraction latency_ms=3208.8042919931468 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:51:49 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='show me the data' valid_count=0
+2026-01-01 20:51:49 [info     ] llm_parse_success              confidence=0.8 intent_type=DESCRIBE query='show me the data'
+2026-01-01 20:51:49 [info     ] query_parse_success            confidence=0.8 dataset_id=None intent=DESCRIBE matched_vars=[] query='show me the data' tier=llm_fallback upload_id=None
+2026-01-01 20:51:49 [debug    ] filters_extracted              filter_count=0 filters=[] query='show me the data'
+2026-01-01 20:51:49 [info     ] query_parse_start              dataset_id=None query='compare the groups' upload_id=None
+2026-01-01 20:51:56 [debug    ] llm_raw_response_received      has_conversation_history=False query='compare the groups' response_length=157 response_preview='{\n  "intent": "COMPARE_GROUPS",\n  "metric": null,\n  "group_by": null,\n  "filters": [],\n  "confidence": 0.9,\n  "explanation": "Compare the different groups"\n}'
+2026-01-01 20:51:59 [debug    ] llm_json_parse_success         length=15
+2026-01-01 20:51:59 [info     ] llm_call_success               feature=filter_extraction latency_ms=3247.0505829842295 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:51:59 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='compare the groups' valid_count=0
+2026-01-01 20:51:59 [info     ] llm_parse_success              confidence=0.9 intent_type=COMPARE_GROUPS query='compare the groups'
+2026-01-01 20:51:59 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COMPARE_GROUPS matched_vars=[] query='compare the groups' tier=llm_fallback upload_id=None
+2026-01-01 20:51:59 [debug    ] filters_extracted              filter_count=0 filters=[] query='compare the groups'
+2026-01-01 20:51:59 [info     ] query_parse_start              dataset_id=None query='remove the n/a' upload_id=None
+2026-01-01 20:51:59 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[] previous_group_by=statin previous_intent=COUNT previous_query='count patients by statin' query='remove the n/a'
+2026-01-01 20:52:14 [debug    ] llm_raw_response_received      has_conversation_history=True query='remove the n/a' response_length=225 response_preview='{\n  "intent": "COUNT",\n  "metric": null,\n  "group_by": null,\n  "filters": [{"column": "statin_prescribed", "operator": "!=", "value": 0}],\n  "confidence": 1.0,\n  "explanation": "Refining previous quer'
+2026-01-01 20:52:14 [info     ] refinement_group_by_preserved  previous_group_by=statin query='remove the n/a'
+2026-01-01 20:52:14 [info     ] llm_refinement_parsing_completed extracted_confidence=1.0 extracted_filters_count=1 extracted_group_by=statin extracted_intent=COUNT filters_extracted=[{'column': 'statin_prescribed', 'operator': '!=', 'value': 0}] group_by_matches_previous=True intent_matches_previous=True previous_group_by=statin previous_intent=COUNT query='remove the n/a'
+2026-01-01 20:52:19 [debug    ] llm_json_parse_success         length=65
+2026-01-01 20:52:19 [info     ] llm_call_success               feature=filter_extraction latency_ms=5186.618000007002 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:52:19 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='remove the n/a' valid_count=1
+2026-01-01 20:52:19 [info     ] llm_parse_success              confidence=1.0 intent_type=COUNT query='remove the n/a'
+2026-01-01 20:52:19 [info     ] query_parse_success            confidence=1.0 dataset_id=None intent=COUNT matched_vars=['statin'] query='remove the n/a' tier=llm_fallback upload_id=None
+2026-01-01 20:52:19 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'statin', 'operator': '!=', 'value': 0}] query='remove the n/a'
+2026-01-01 20:52:19 [debug    ] filters_extracted_in_parse     filter_count=2 intent_type=COUNT query='remove the n/a'
+2026-01-01 20:52:19 [info     ] query_parse_start              dataset_id=None query='exclude missing values' upload_id=None
+2026-01-01 20:52:19 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[] previous_group_by=None previous_intent=DESCRIBE previous_query='describe cholesterol' query='exclude missing values'
+2026-01-01 20:52:31 [debug    ] llm_raw_response_received      has_conversation_history=True query='exclude missing values' response_length=203 response_preview='{\n  "intent": "DESCRIBE",\n  "metric": null,\n  "group_by": null,\n  "filters": [\n    {"column": "statin", "operator": "!=", "value": 0}\n  ],\n  "confidence": 1.0,\n  "explanation": "Exclude missing values'
+2026-01-01 20:52:31 [info     ] refinement_metric_preserved    previous_metric=cholesterol query='exclude missing values'
+2026-01-01 20:52:31 [info     ] llm_refinement_parsing_completed extracted_confidence=1.0 extracted_filters_count=1 extracted_group_by=None extracted_intent=DESCRIBE filters_extracted=[{'column': 'statin', 'operator': '!=', 'value': 0}] group_by_matches_previous=None intent_matches_previous=True previous_group_by=None previous_intent=DESCRIBE query='exclude missing values'
+2026-01-01 20:52:37 [debug    ] llm_json_parse_success         length=65
+2026-01-01 20:52:37 [info     ] llm_call_success               feature=filter_extraction latency_ms=5856.284499983303 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:52:37 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='exclude missing values' valid_count=1
+2026-01-01 20:52:37 [info     ] llm_parse_success              confidence=1.0 intent_type=DESCRIBE query='exclude missing values'
+2026-01-01 20:52:37 [info     ] query_parse_success            confidence=1.0 dataset_id=None intent=DESCRIBE matched_vars=['cholesterol'] query='exclude missing values' tier=llm_fallback upload_id=None
+2026-01-01 20:52:37 [debug    ] filters_extracted              filter_count=0 filters=[] query='exclude missing values'
+2026-01-01 20:52:37 [debug    ] filters_extracted_in_parse     filter_count=2 intent_type=DESCRIBE query='exclude missing values'
+2026-01-01 20:52:37 [info     ] query_parse_start              dataset_id=None query='actually over 65' upload_id=None
+2026-01-01 20:52:37 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[{'column': 'age', 'operator': '>', 'value': 50, 'exclude_nulls': True}] previous_group_by=None previous_intent=COUNT previous_query='patients over 50' query='actually over 65'
+2026-01-01 20:52:49 [debug    ] llm_raw_response_received      has_conversation_history=True query='actually over 65' response_length=207 response_preview='{\n  "intent": "COUNT",\n  "metric": null,\n  "group_by": null,\n  "filters": [\n    {"column": "age", "operator": ">", "value": 65}\n  ],\n  "confidence": 0.85,\n  "explanation": "Count patients actually ove'
+2026-01-01 20:52:49 [info     ] llm_refinement_parsing_completed extracted_confidence=0.85 extracted_filters_count=1 extracted_group_by=None extracted_intent=COUNT filters_extracted=[{'column': 'age', 'operator': '>', 'value': 65}] group_by_matches_previous=None intent_matches_previous=True previous_group_by=None previous_intent=COUNT query='actually over 65'
+2026-01-01 20:52:54 [debug    ] llm_json_parse_success         length=86
+2026-01-01 20:52:54 [info     ] llm_call_success               feature=filter_extraction latency_ms=5617.542708001565 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:52:54 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='actually over 65' valid_count=1
+2026-01-01 20:52:54 [info     ] llm_parse_success              confidence=0.85 intent_type=COUNT query='actually over 65'
+2026-01-01 20:52:54 [info     ] query_parse_success            confidence=0.85 dataset_id=None intent=COUNT matched_vars=[] query='actually over 65' tier=llm_fallback upload_id=None
+2026-01-01 20:52:54 [debug    ] filters_extracted              filter_count=0 filters=[] query='actually over 65'
+2026-01-01 20:52:54 [debug    ] filters_extracted_in_parse     filter_count=1 intent_type=COUNT query='actually over 65'
+2026-01-01 20:52:54 [debug    ] grouping_extraction_failed     intent_type=COUNT query='actually over 65'
+2026-01-01 20:52:54 [info     ] query_parse_start              dataset_id=None query='only active patients' upload_id=None
+2026-01-01 20:52:55 [info     ] llm_refinement_parsing_started conversation_history_count=1 previous_filters=[] previous_group_by=treatment previous_intent=COUNT previous_query='count patients by treatment' query='only active patients'
+2026-01-01 20:53:10 [debug    ] llm_raw_response_received      has_conversation_history=True query='only active patients' response_length=227 response_preview='{\n  "intent": "DESCRIBE",\n  "metric": null,\n  "group_by": null,\n  "filters": [{"column": "status", "operator": "==", "value": "active"}],\n  "confidence": 0.9,\n  "explanation": "Refining previous query'
+2026-01-01 20:53:10 [info     ] refinement_intent_corrected    corrected_intent=COUNT llm_intent=COUNT query='only active patients'
+2026-01-01 20:53:10 [info     ] refinement_group_by_preserved  previous_group_by=treatment query='only active patients'
+2026-01-01 20:53:10 [info     ] llm_refinement_parsing_completed extracted_confidence=0.9 extracted_filters_count=1 extracted_group_by=treatment extracted_intent=COUNT filters_extracted=[{'column': 'status', 'operator': '==', 'value': 'active'}] group_by_matches_previous=True intent_matches_previous=True previous_group_by=treatment previous_intent=COUNT query='only active patients'
+2026-01-01 20:53:26 [debug    ] llm_json_parse_success         length=697
+2026-01-01 20:53:26 [info     ] llm_call_success               feature=filter_extraction latency_ms=16035.25770897977 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:53:26 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='only active patients' valid_count=1
+2026-01-01 20:53:26 [info     ] llm_parse_success              confidence=0.9 intent_type=COUNT query='only active patients'
+2026-01-01 20:53:26 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=['treatment'] query='only active patients' tier=llm_fallback upload_id=None
+2026-01-01 20:53:26 [debug    ] filters_extracted              filter_count=0 filters=[] query='only active patients'
+2026-01-01 20:53:26 [debug    ] filters_extracted_in_parse     filter_count=2 intent_type=COUNT query='only active patients'
+2026-01-01 20:53:26 [info     ] query_parse_start              dataset_id=None query='remove the n/a' upload_id=None
+2026-01-01 20:53:35 [debug    ] llm_raw_response_received      has_conversation_history=False query='remove the n/a' response_length=196 response_preview='{\n  "intent": "DESCRIBE",\n  "metric": null,\n  "group_by": null,\n  "filters": [{"column": "statin_used", "operator": "!=", "value": 0}],\n  "confidence": 1.0,\n  "explanation": "Exclude n/a values"\n}'
+2026-01-01 20:53:41 [debug    ] llm_json_parse_success         length=88
+2026-01-01 20:53:41 [info     ] llm_call_success               feature=filter_extraction latency_ms=5770.061833987711 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:53:41 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='remove the n/a' valid_count=1
+2026-01-01 20:53:41 [info     ] llm_parse_success              confidence=1.0 intent_type=DESCRIBE query='remove the n/a'
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=1.0 dataset_id=None intent=DESCRIBE matched_vars=[] query='remove the n/a' tier=llm_fallback upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='remove the n/a'
+2026-01-01 20:53:41 [debug    ] filters_extracted_in_parse     filter_count=2 intent_type=DESCRIBE query='remove the n/a'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='how many patients were on statins' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='how many patients were on statins' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'statin', 'operator': '==', 'value': 'statins'}] query='how many patients were on statins'
+2026-01-01 20:53:41 [debug    ] filters_extracted_in_parse     filter_count=1 intent_type=COUNT query='how many patients were on statins'
+2026-01-01 20:53:41 [debug    ] grouping_extraction_failed     intent_type=COUNT query='how many patients were on statins'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='excluding those not on statins, which was the most prescribed statin?' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='excluding those not on statins, which was the most prescribed statin?' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'statin', 'operator': '!=', 'value': 'statins'}] query='excluding those not on statins, which was the most prescribed statin?'
+2026-01-01 20:53:41 [debug    ] filters_extracted_in_parse     filter_count=1 intent_type=COUNT query='excluding those not on statins, which was the most prescribed statin?'
+2026-01-01 20:53:41 [debug    ] grouping_extracted             column_name=statin confidence=0.7 group_phrase=prescribed query='excluding those not on statins, which was the most prescribed statin?'
+2026-01-01 20:53:41 [info     ] grouping_extracted_from_compound grouping_variable=statin intent_type=COUNT query='excluding those not on statins, which was the most prescribed statin?'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='what statins were those patients on, broken down by count of patients per statin?' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='what statins were those patients on, broken down by count of patients per statin?' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='what statins were those patients on, broken down by count of patients per statin?'
+2026-01-01 20:53:41 [debug    ] grouping_extracted_broken_down column_name=statin confidence=0.9 group_phrase=statin query='what statins were those patients on, broken down by count of patients per statin?'
+2026-01-01 20:53:41 [info     ] grouping_extracted_from_compound grouping_variable=statin intent_type=COUNT query='what statins were those patients on, broken down by count of patients per statin?'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='which statin was most prescribed?' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='which statin was most prescribed?' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='which statin was most prescribed?'
+2026-01-01 20:53:41 [debug    ] grouping_extracted             column_name=statin confidence=0.7 group_phrase=statin query='which statin was most prescribed?'
+2026-01-01 20:53:41 [info     ] grouping_extracted_from_compound grouping_variable=statin intent_type=COUNT query='which statin was most prescribed?'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='what was the most common HIV regiment?' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='what was the most common HIV regiment?' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='what was the most common HIV regiment?'
+2026-01-01 20:53:41 [debug    ] grouping_extraction_failed     intent_type=COUNT query='what was the most common HIV regiment?'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='average BMI of patients' upload_id=None
+2026-01-01 20:53:41 [debug    ] pattern_match_average_with_variable confidence=0.9 grouping=None matched_var=BMI variable_term=bmi
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['BMI'] query='average BMI of patients' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='average BMI of patients'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='average ldl of all patients' upload_id=None
+2026-01-01 20:53:41 [debug    ] pattern_match_average_with_variable confidence=0.9 grouping=None matched_var=LDL variable_term=ldl
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=DESCRIBE matched_vars=['LDL'] query='average ldl of all patients' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='average ldl of all patients'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='what was the most common Current Regimen' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='what was the most common Current Regimen' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='what was the most common Current Regimen'
+2026-01-01 20:53:41 [debug    ] grouping_extraction_failed     intent_type=COUNT query='what was the most common Current Regimen'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='what statins were those patients on, broken down by count of patients by their Current Regimen' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='what statins were those patients on, broken down by count of patients by their Current Regimen' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='what statins were those patients on, broken down by count of patients by their Current Regimen'
+2026-01-01 20:53:41 [debug    ] grouping_extracted_broken_down column_name=patient_id confidence=0.6 group_phrase='count of patients by their current regimen' query='what statins were those patients on, broken down by count of patients by their Current Regimen'
+2026-01-01 20:53:41 [info     ] grouping_extracted_from_compound grouping_variable=patient_id intent_type=COUNT query='what statins were those patients on, broken down by count of patients by their Current Regimen'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='how does bmi, statin use relate to the regiment that the person is on and their cd4 counts?' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=CORRELATIONS matched_vars=['BMI', 'statin', 'BMI', 'statin', 'treatment', 'time_zero', 'status'] query='how does bmi, statin use relate to the regiment that the person is on and their cd4 counts?' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='how does bmi, statin use relate to the regiment that the person is on and their cd4 counts?'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months?' upload_id=None
+2026-01-01 20:53:41 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months?' tier=pattern_match upload_id=None
+2026-01-01 20:53:41 [debug    ] filters_extracted              filter_count=0 filters=[] query='what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months?'
+2026-01-01 20:53:41 [debug    ] grouping_extraction_failed     intent_type=COUNT query='what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months?'
+2026-01-01 20:53:41 [info     ] query_parse_start              dataset_id=None query='time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100' upload_id=None
+2026-01-01 20:53:52 [debug    ] llm_raw_response_received      has_conversation_history=False query='time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100' response_length=241 response_preview='{\n  "intent": "COMPARE_GROUPS",\n  "metric": null,\n  "group_by": "statin_used",\n  "filters": [\n    {"column": "LDL", "operator": ">", "value": 100}\n  ],\n  "confidence": 0.92,\n  "explanation": "Stratify'
+2026-01-01 20:54:01 [debug    ] llm_json_parse_success         length=166
+2026-01-01 20:54:01 [info     ] llm_call_success               feature=filter_extraction latency_ms=9166.014791000634 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:54:01 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100' valid_count=2
+2026-01-01 20:54:01 [info     ] llm_parse_success              confidence=0.92 intent_type=COMPARE_GROUPS query='time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100'
+2026-01-01 20:54:01 [info     ] query_parse_success            confidence=0.92 dataset_id=None intent=COMPARE_GROUPS matched_vars=['statin_used'] query='time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100' tier=llm_fallback upload_id=None
+2026-01-01 20:54:01 [info     ] variables_extracted_post_parse grouping_variable=time_zero intent_type=COMPARE_GROUPS matched_vars=['time_zero', 'statin', 'LDL'] primary_variable=statin
+2026-01-01 20:54:01 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'LDL', 'operator': '>', 'value': 100}] query='time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100'
+2026-01-01 20:54:01 [debug    ] filters_extracted_in_parse     filter_count=3 intent_type=COMPARE_GROUPS query='time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100'
+2026-01-01 20:54:01 [info     ] query_parse_start              dataset_id=None query='compare average cd4 change from baseline to 6 months between hiv regimens, only for those on statins with bmi > 25' upload_id=None
+2026-01-01 20:54:01 [debug    ] pattern_match_average_no_variable_match reason=fuzzy_match_failed_but_pattern_matched variable_term='cd4 change from baseline to 6 months'
+2026-01-01 20:54:01 [debug    ] filters_extracted              filter_count=3 filters=[{'column': 'BMI', 'operator': '==', 'value': 'bmi > 25'}, {'column': 'BMI', 'operator': '==', 'value': 'statins with bmi > 25'}, {'column': 'BMI', 'operator': '>', 'value': 25}] query='compare average cd4 change from baseline to 6 months between hiv regimens, only for those on statins with bmi > 25'
+2026-01-01 20:54:01 [debug    ] filters_extracted_in_parse     filter_count=3 intent_type=DESCRIBE query='compare average cd4 change from baseline to 6 months between hiv regimens, only for those on statins with bmi > 25'
+2026-01-01 20:54:01 [info     ] query_parse_start              dataset_id=None query='how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?' upload_id=None
+2026-01-01 20:54:27 [debug    ] llm_raw_response_received      has_conversation_history=False query='how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?' response_length=1314 response_preview='{\n  "intent": "CORRELATIONS",\n  "metric": null,\n  "group_by": "null",\n  "filters": [\n    {"column": "baseline_ldl_category", "operator": "==", "value": 0},\n    {"column": "statin_regimen_type", "opera'
+2026-01-01 20:54:35 [debug    ] llm_json_parse_success         length=121
+2026-01-01 20:54:35 [info     ] llm_call_success               feature=filter_extraction latency_ms=8032.410749990959 model=llama3.1:8b payload_keys=['filters'] timeout_s=30.0
+2026-01-01 20:54:35 [debug    ] filter_extraction_completed    confidence_delta=0.0 invalid_count=0 query='how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?' valid_count=2
+2026-01-01 20:54:35 [info     ] llm_parse_success              confidence=0.85 intent_type=CORRELATIONS query='how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?'
+2026-01-01 20:54:35 [info     ] query_parse_success            confidence=0.85 dataset_id=None intent=CORRELATIONS matched_vars=['null'] query='how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?' tier=llm_fallback upload_id=None
+2026-01-01 20:54:35 [info     ] variables_extracted_post_parse grouping_variable=null intent_type=CORRELATIONS matched_vars=[] primary_variable=None
+2026-01-01 20:54:35 [debug    ] filters_extracted              filter_count=1 filters=[{'column': 'LDL', 'operator': '==', 'value': 'vary by baseline ldl category'}] query='how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?'
+2026-01-01 20:54:35 [debug    ] filters_extracted_in_parse     filter_count=5 intent_type=CORRELATIONS query='how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?'
+2026-01-01 20:54:35 [info     ] query_parse_start              dataset_id=None query='among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?' upload_id=None
+2026-01-01 20:54:35 [info     ] query_parse_success            confidence=0.9 dataset_id=None intent=COUNT matched_vars=[] query='among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?' tier=pattern_match upload_id=None
+2026-01-01 20:54:35 [debug    ] filters_extracted              filter_count=0 filters=[] query='among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?'
+2026-01-01 20:54:35 [debug    ] grouping_extracted_broken_down column_name=LDL confidence=0.6 group_phrase='statin use and baseline ldl category' query='among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?'
+2026-01-01 20:54:35 [info     ] grouping_extracted_from_compound grouping_variable=LDL intent_type=COUNT query='among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?'
+
+================================================================================
+FAILURES
+================================================================================
+
+✗ exclude_na_statin_count
+  Query: remove the n/a (0) - what statins were patients on?
+  Expected: COUNT
+  Actual: COUNT
+  Confidence: 0.90
+
+✗ refinement_remove_na_with_context
+  Query: remove the n/a
+  Expected: COUNT
+  Actual: COUNT
+  Confidence: 1.00
+
+✗ refinement_exclude_with_context
+  Query: exclude missing values
+  Expected: DESCRIBE
+  Actual: DESCRIBE
+  Confidence: 1.00
+
+✗ refinement_only_active_with_context
+  Query: only active patients
+  Expected: COUNT
+  Actual: COUNT
+  Confidence: 0.90
+
+✗ prod_most_common_hiv_regimen
+  Query: what was the most common HIV regiment?
+  Expected: COUNT
+  Actual: COUNT
+  Confidence: 0.90
+
+✗ prod_most_common_current_regimen
+  Query: what was the most common Current Regimen
+  Expected: COUNT
+  Actual: COUNT
+  Confidence: 0.90
+
+✗ prod_statin_by_regimen
+  Query: what statins were those patients on, broken down by count of patients by their Current Regimen
+  Expected: COUNT
+  Actual: COUNT
+  Confidence: 0.90
+
+✗ complex_predictive_modeling
+  Query: what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months?
+  Expected: FIND_PREDICTORS
+  Actual: COUNT
+  Confidence: 0.90
+  ❌ Intent: expected FIND_PREDICTORS, got COUNT
+
+✗ complex_survival_stratified
+  Query: time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100
+  Expected: FIND_PREDICTORS
+  Actual: COMPARE_GROUPS
+  Confidence: 0.92
+  ❌ Intent: expected FIND_PREDICTORS, got COMPARE_GROUPS
+
+✗ complex_compare_with_filters
+  Query: compare average cd4 change from baseline to 6 months between hiv regimens, only for those on statins with bmi > 25
+  Expected: COMPARE_GROUPS
+  Actual: DESCRIBE
+  Confidence: 0.85
+  ❌ Intent: expected COMPARE_GROUPS, got DESCRIBE
+
+✗ complex_count_nested
+  Query: among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?
+  Expected: COUNT
+  Actual: COUNT
+  Confidence: 0.90
+
+================================================================================
+SUMMARY
+================================================================================
+Total Questions: 39
+Correct: 28
+Incorrect: 11
+Accuracy: 71.8%
+Intent Accuracy: 92.3%
+Average Confidence: 0.90
+____ TestUIDatasetIntegration.test_ui_workflow_end_to_end_with_all_datasets ____
+
+self = <ui.test_integration.TestUIDatasetIntegration object at 0x12db0e210>
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    def test_ui_workflow_end_to_end_with_all_datasets(self):
+        """Test complete UI workflow: select dataset -> get cohort -> verify schema."""
+        # Arrange: Get all available datasets
+        available_datasets = DatasetRegistry.list_datasets()
+    
+        tested_count = 0
+        for dataset_name in available_datasets:
+            # Skip uploaded class (requires upload_id)
+            if dataset_name == "uploaded":
+                continue
+    
+            # Act: Create dataset instance (UI pattern)
+            dataset = DatasetRegistry.get_dataset(dataset_name)
+    
+            if not dataset.validate():
+                continue
+    
+            # Get cohort (as UI would)
+            cohort = dataset.get_cohort()
+    
+            # Assert: Verify results
+            assert isinstance(cohort, pd.DataFrame)
+            assert len(cohort) > 0
+    
+            # Check schema compliance
+            for col in UnifiedCohort.REQUIRED_COLUMNS:
+                assert col in cohort.columns, f"Dataset {dataset_name} missing required column: {col}"
+    
+            tested_count += 1
+    
+        # Assert: At least one dataset was tested
+>       assert tested_count > 0, "No datasets available for testing"
+E       AssertionError: No datasets available for testing
+E       assert 0 > 0
+
+tests/ui/test_integration.py:142: AssertionError
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:852
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/_pytest/config/__init__.py:852: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; performance.plugin
+    self.import_plugin(import_spec)
+
+tests/core/test_nl_query_engine_self_improvement.py:21
+  /Users/jasontouleyrou/Projects/md_data_explorer/tests/core/test_nl_query_engine_self_improvement.py:21: PytestUnknownMarkWarning: Unknown pytest.mark.serial - is this a typo?  You can register custom marks to avoid this warning - for details, see https://docs.pytest.org/en/stable/how-to/mark.html
+    @pytest.mark.serial  # Uses shared /tmp/ path - must run serially
+
+tests/analysis/test_compute.py::TestComputeComparisonAnalysis::test_compute_comparison_analysis_chi_square_for_categorical
+  /Users/jasontouleyrou/Projects/md_data_explorer/src/clinical_analytics/analysis/compute.py:557: DeprecationWarning: the argument `columns` for `DataFrame.pivot` is deprecated. It was renamed to `on` in version 1.0.0.
+    .pivot(index=outcome_col, columns=group_col, values="count", aggregate_function="sum")
+
+tests/analysis/test_compute.py::TestComputeComparisonAnalysis::test_comparison_analysis_with_european_comma_format
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/scipy/stats/_stats_py.py:6316: RuntimeWarning: invalid value encountered in scalar divide
+    svar = ((n1 - 1) * v1 + (n2 - 1) * v2) / df
+
+tests/analysis/test_compute.py::TestComputeComparisonAnalysis::test_comparison_analysis_with_european_comma_format
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/numpy/_core/_methods.py:222: RuntimeWarning: Degrees of freedom <= 0 for slice
+    ret = _var(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+
+tests/analysis/test_compute.py::TestComputeComparisonAnalysis::test_comparison_analysis_with_european_comma_format
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/numpy/_core/_methods.py:214: RuntimeWarning: invalid value encountered in scalar divide
+    ret = ret.dtype.type(ret / rcount)
+
+tests/analysis/test_compute.py::TestComputePredictorAnalysis::test_compute_predictor_analysis_returns_serializable_dict
+tests/analysis/test_compute.py::TestComputeAnalysisByType::test_compute_analysis_by_type_routes_to_predictor
+tests/analysis/test_stats.py::TestStats::test_run_logistic_regression_with_nulls
+tests/analysis/test_stats_vectorization.py::TestVectorizedOperations::test_odds_ratio_calculation_uses_vectorized_operations
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/statsmodels/base/model.py:607: ConvergenceWarning: Maximum Likelihood optimization failed to converge. Check mle_retvals
+    warnings.warn("Maximum Likelihood optimization failed to "
+
+tests/analysis/test_compute.py::TestComputePredictorAnalysis::test_compute_predictor_analysis_returns_serializable_dict
+tests/analysis/test_compute.py::TestComputeAnalysisByType::test_compute_analysis_by_type_routes_to_predictor
+tests/analysis/test_stats.py::TestStats::test_run_logistic_regression_with_nulls
+tests/analysis/test_stats_vectorization.py::TestVectorizedOperations::test_odds_ratio_calculation_uses_vectorized_operations
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/pandas/core/internals/blocks.py:395: RuntimeWarning: overflow encountered in exp
+    result = func(self.values, **kwargs)
+
+tests/analysis/test_stats.py::TestStats::test_run_logistic_regression_with_nulls
+tests/analysis/test_stats_vectorization.py::TestVectorizedOperations::test_odds_ratio_calculation_uses_vectorized_operations
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/statsmodels/discrete/discrete_model.py:227: PerfectSeparationWarning: Perfect separation or prediction detected, parameter may not be identified
+    warnings.warn(msg, category=PerfectSeparationWarning)
+
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression_categorical
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression_with_nulls
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/fitters/coxph_fitter.py:1217: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    self._time_fit_was_called = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/fitters/coxph_fitter.py:1589: ConvergenceWarning: The log-likelihood is getting suspiciously close to 0 and the delta is still large. There may be complete separation in the dataset. This may result in incorrect inference of coefficients. See https://stats.stackexchange.com/q/11109/11867 for more.
+  
+    warnings.warn(
+
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression_with_nulls
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/utils/__init__.py:1163: ConvergenceWarning: Column age has high sample correlation with the duration column. This may harm convergence. This could be a form of 'complete separation'.     See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression
+  
+    warnings.warn(dedent(warning_text), ConvergenceWarning)
+
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/fitters/coxph_fitter.py:1614: ConvergenceWarning: Newton-Raphson failed to converge sufficiently. Please see the following tips in the lifelines documentation: https://lifelines.readthedocs.io/en/latest/Examples.html#problems-with-convergence-in-the-cox-proportional-hazard-model
+    warnings.warn(
+
+tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression_with_nulls
+  /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/fitters/coxph_fitter.py:1607: ConvergenceWarning: Newton-Raphson convergence completed successfully but norm(delta) is still high, 0.707. This may imply non-unique solutions to the maximum likelihood. Perhaps there is collinearity or complete separation in the dataset?
+  
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.13.11-final-0 _______________
+
+Name                                                                  Stmts   Miss  Cover   Missing
+---------------------------------------------------------------------------------------------------
+src/clinical_analytics/__init__.py                                        0      0   100%
+src/clinical_analytics/analysis/__init__.py                               0      0   100%
+src/clinical_analytics/analysis/compute.py                              440    132    70%   32-36, 61-118, 136, 148, 151, 162, 186-187, 213-214, 237-247, 270-271, 315-331, 390, 395, 417, 420, 425-426, 434-436, 577-587, 615, 648, 654, 680-690, 692, 694, 696, 702-714, 732, 836, 848, 851-852, 907, 966, 969-973, 979, 1010-1020, 1023-1028
+src/clinical_analytics/analysis/stats.py                                 20      0   100%
+src/clinical_analytics/analysis/survival.py                              69      1    99%   158
+src/clinical_analytics/core/__init__.py                                   0      0   100%
+src/clinical_analytics/core/clarifying_questions.py                      62      0   100%
+src/clinical_analytics/core/column_parser.py                             60      1    98%   210
+src/clinical_analytics/core/dataset.py                                   43      7    84%   77, 87, 112-121, 162
+src/clinical_analytics/core/error_translation.py                         17      0   100%
+src/clinical_analytics/core/eval_harness.py                              61      6    90%   52, 58, 122, 183-185
+src/clinical_analytics/core/filter_extraction.py                         82     16    80%   50, 52, 54, 68-70, 83-84, 184, 191-192, 227-232, 252-255
+src/clinical_analytics/core/golden_question_generator.py                 58      8    86%   54, 141-146, 151-152, 160, 233-234
+src/clinical_analytics/core/llm_client.py                                58     12    79%   84, 89, 95-101, 121-122, 144-149, 161-167
+src/clinical_analytics/core/llm_feature.py                               42      0   100%
+src/clinical_analytics/core/llm_json.py                                  64      8    88%   162-163, 171-172, 177, 182, 190-191
+src/clinical_analytics/core/llm_observability.py                         57      0   100%
+src/clinical_analytics/core/mapper.py                                   234     55    76%   47-56, 89, 93, 102-105, 131, 142, 146-148, 168, 177, 214-216, 229-232, 235-245, 263, 285, 298, 326-333, 343, 366, 384-386, 399, 428, 432, 436, 440, 444, 458, 504
+src/clinical_analytics/core/multi_table_handler.py                      743    141    81%   30-31, 290-308, 343, 458-459, 569, 575, 600, 615, 664, 666, 668, 676, 764, 774, 808, 822, 825-826, 875-876, 923-924, 927, 931, 935, 980-981, 1001, 1005-1010, 1077, 1095-1096, 1223, 1227, 1231, 1248-1281, 1291, 1318-1325, 1357, 1442, 1446, 1456, 1460, 1464, 1499-1513, 1532-1535, 1624, 1629-1630, 1633, 1645, 1657-1660, 1663-1664, 1728, 1735, 1766-1767, 1796-1797, 1799-1800, 1820-1829, 1844-1865, 1917-1918, 1941, 1977-1979, 1988-1990, 2015-2026
+src/clinical_analytics/core/nl_query_config.py                           52      5    90%   68-69, 94-96
+src/clinical_analytics/core/nl_query_engine.py                          930    216    77%   185-187, 377, 379, 409-422, 452-454, 464, 476-505, 518, 526-531, 690-700, 877-881, 983, 985, 989-997, 1055-1060, 1070-1084, 1093-1104, 1264, 1375-1376, 1402-1403, 1473-1481, 1511-1519, 1525-1531, 1598-1700, 1744, 1786, 1802, 1815, 1859, 1976, 2017-2020, 2045, 2065-2072, 2090-2091, 2097-2104, 2158, 2213, 2220, 2275-2276, 2299-2309, 2350-2351, 2365-2366, 2384-2386, 2395, 2483-2492, 2560-2567, 2572-2578, 2625-2628, 2680-2702
+src/clinical_analytics/core/ollama_manager.py                           106     34    68%   82, 106, 110-112, 124, 138-142, 152, 160-170, 207-228
+src/clinical_analytics/core/profiling.py                                108     16    85%   95, 125, 242-245, 269-283
+src/clinical_analytics/core/prompt_optimizer.py                         128     29    77%   44, 89-90, 151-153, 163-173, 197-202, 218, 268-275, 279-280
+src/clinical_analytics/core/query_plan.py                                62      3    95%   101, 148, 179
+src/clinical_analytics/core/registry.py                                 147     33    78%   27-28, 47-65, 145-159, 212, 222-250, 280, 351
+src/clinical_analytics/core/relationship_detector.py                    109     18    83%   72, 141-142, 159-162, 170-174, 196-197, 199-200, 220-229, 262
+src/clinical_analytics/core/result_interpretation.py                     35      4    89%   41, 49, 53, 57
+src/clinical_analytics/core/schema.py                                    62      6    90%   141, 169-172, 180
+src/clinical_analytics/core/schema_inference.py                         217     89    59%   49-53, 111-113, 128-146, 314, 334, 428, 456, 475, 497-572, 596-629
+src/clinical_analytics/core/semantic.py                                 793    299    62%   130, 190-209, 291-293, 314-328, 338-344, 354-356, 359, 386-422, 477-479, 489-493, 508-512, 524-526, 565-566, 581, 590, 599, 608, 636, 641-643, 658-688, 712-761, 891-894, 951, 991-993, 1003-1019, 1037-1042, 1049-1050, 1056-1058, 1103-1104, 1107, 1118-1121, 1130, 1142, 1149, 1152, 1286, 1303-1312, 1442, 1498, 1508, 1514-1521, 1527, 1533-1537, 1553-1554, 1571-1572, 1576-1577, 1594-1595, 1604-1610, 1625, 1644, 1650, 1664, 1690-1692, 1696, 1701-1702, 1753, 1759, 1765, 1798-1799, 1806, 1809-1850, 1852-1876, 1880, 1882, 1884, 1911, 1925, 1944-1947, 1962-1992
+src/clinical_analytics/datasets/__init__.py                               0      0   100%
+src/clinical_analytics/datasets/covid_ms/__init__.py                      0      0   100%
+src/clinical_analytics/datasets/covid_ms/definition.py                   25     25     0%   1-67
+src/clinical_analytics/datasets/covid_ms/loader.py                       12     12     0%   1-37
+src/clinical_analytics/datasets/mimic3/__init__.py                        0      0   100%
+src/clinical_analytics/datasets/mimic3/definition.py                     36     36     0%   7-91
+src/clinical_analytics/datasets/mimic3/loader.py                         52     52     0%   7-133
+src/clinical_analytics/datasets/sepsis/__init__.py                        0      0   100%
+src/clinical_analytics/datasets/sepsis/definition.py                     53     53     0%   1-112
+src/clinical_analytics/datasets/sepsis/loader.py                         35     35     0%   1-89
+src/clinical_analytics/datasets/uploaded/__init__.py                      0      0   100%
+src/clinical_analytics/datasets/uploaded/definition.py                  352    103    71%   41, 63, 74, 81-87, 105-112, 119, 123-124, 165-181, 208, 215, 229, 240-241, 280-293, 306, 311, 324-326, 340-344, 368-369, 381-382, 425-426, 431, 440-444, 469, 491-492, 515-519, 533-535, 543-554, 562, 577-581, 626, 631-634, 668, 684, 724-725, 737, 748-752, 762-765, 793-794, 807, 817-827
+src/clinical_analytics/datasets/uploaded/patient_id_regeneration.py      68      2    97%   165, 191
+src/clinical_analytics/datasets/uploaded/schema_conversion.py            54      3    94%   32, 119, 142
+src/clinical_analytics/storage/__init__.py                                4      0   100%
+src/clinical_analytics/storage/datastore.py                              64      3    95%   116, 207, 240
+src/clinical_analytics/storage/query_logger.py                           66      0   100%
+src/clinical_analytics/storage/versioning.py                             31      2    94%   48, 54
+src/clinical_analytics/ui/__init__.py                                     0      0   100%
+src/clinical_analytics/ui/app.py                                        307    133    57%   29-32, 38-41, 56, 65, 95-104, 123, 143, 156-162, 166-168, 186-238, 246-247, 270-271, 277-279, 297-299, 309-310, 321, 369-371, 378-393, 404-406, 415-416, 425-433, 442-450, 459-467, 477-509, 531-564
+src/clinical_analytics/ui/app_utils.py                                   35      7    80%   53-54, 86-91
+src/clinical_analytics/ui/components/__init__.py                          0      0   100%
+src/clinical_analytics/ui/components/analysis_wizard.py                  98     98     0%   8-381
+src/clinical_analytics/ui/components/data_validator.py                  121     15    88%   36-50, 88-96, 104, 241-249, 259, 283, 301, 370
+src/clinical_analytics/ui/components/dataset_loader.py                   47     43     9%   57-127
+src/clinical_analytics/ui/components/question_engine.py                 351    163    54%   81, 84, 90-93, 98, 102-133, 151-177, 190-204, 209-221, 226-239, 244-268, 273-276, 314, 347-350, 353-362, 370, 375-385, 393, 402-443, 516, 571-593, 631-637, 659, 661, 663, 674-675, 704-707, 734-737
+src/clinical_analytics/ui/components/result_interpreter.py              146     74    49%   31-33, 133, 146, 155-158, 171, 178-184, 259-315, 331-369, 389-417, 438-483
+src/clinical_analytics/ui/components/trust_ui.py                        126     58    54%   68-69, 163-164, 198, 204, 208-225, 231, 303-357
+src/clinical_analytics/ui/components/variable_detector.py               144     11    92%   128, 221-222, 260, 389-398
+src/clinical_analytics/ui/components/variable_mapper.py                 106    106     0%   7-320
+src/clinical_analytics/ui/config.py                                       6      0   100%
+src/clinical_analytics/ui/helpers.py                                     18     12    33%   30-48, 62-77
+src/clinical_analytics/ui/logging_config.py                              14      8    43%   25-41
+src/clinical_analytics/ui/messages.py                                    12      0   100%
+src/clinical_analytics/ui/ollama_init.py                                 79     25    68%   45-46, 130-132, 145, 153-157, 159-163, 181-215
+src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py                   947    766    19%   138, 201, 205, 207, 213-215, 222, 224, 285, 314, 343-365, 391, 411-502, 507-563, 569-618, 625-712, 719-775, 791-817, 827-908, 913-931, 945-996, 1024-1054, 1113, 1119, 1142-1148, 1185, 1187, 1213, 1234, 1238-1240, 1258-1281, 1304-1348, 1361-1409, 1431-1436, 1469-1478, 1493-1519, 1534, 1613-2286, 2290
+src/clinical_analytics/ui/storage/__init__.py                             0      0   100%
+src/clinical_analytics/ui/storage/user_datasets.py                      843    196    77%   102-112, 134-136, 141-142, 275-278, 315-318, 323, 350, 380, 394-399, 464-466, 472-513, 517-520, 551, 561, 565, 612, 620-621, 830, 837, 842, 844, 1081-1082, 1087-1092, 1115-1116, 1180-1181, 1230-1232, 1263-1266, 1270-1275, 1286-1287, 1320-1323, 1333-1336, 1386-1389, 1399, 1404-1407, 1437-1439, 1475, 1491, 1524-1527, 1532, 1535-1538, 1547-1553, 1572, 1585, 1595-1596, 1639-1643, 1673-1674, 1676-1682, 1757-1766, 1769, 1789, 1819-1820, 1835-1858, 1907, 1911-1912, 1925-1945, 1971, 1983, 2001, 2074-2076, 2081
+---------------------------------------------------------------------------------------------------
+TOTAL                                                                  9111   3180    65%
+Coverage HTML written to dir htmlcov
+=========================== short test summary info ============================
+FAILED tests/core/test_llm_fallback_integration.py::test_ollama_client_real_generate
+FAILED tests/core/test_mapper.py::TestColumnMapper::test_mapper_initialization_with_config
+FAILED tests/core/test_mapper.py::TestColumnMapper::test_get_default_predictors_returns_list
+FAILED tests/core/test_mapper.py::TestColumnMapper::test_get_categorical_variables_returns_list
+FAILED tests/core/test_mapper.py::TestColumnMapper::test_get_default_outcome_returns_non_empty_string
+FAILED tests/core/test_mapper.py::TestColumnMapper::test_get_default_filters_returns_dict
+FAILED tests/core/test_nl_query_engine_filter_extraction.py::TestFilterExtractionStrategy1ToStrategy2Handoff::test_strategy1_passes_coded_column_to_strategy2
+FAILED tests/core/test_nl_query_engine_filter_extraction.py::TestExclusionFilters::test_exclusion_filter_works_for_any_medication_type
+FAILED tests/core/test_nl_query_engine_filter_extraction.py::TestExclusionFilters::test_exclusion_filter_works_for_any_coded_column
+FAILED tests/core/test_nl_query_refinement.py::test_parse_query_refinement_merges_with_existing_filters
+FAILED tests/core/test_nl_query_refinement.py::test_parse_query_refinement_updates_same_column_filter
+FAILED tests/core/test_nl_query_refinement.py::test_llm_refinement_with_coded_categorical_column
+FAILED tests/core/test_nl_query_refinement.py::test_llm_provides_explanation_for_refinement
+FAILED tests/core/test_nl_query_refinement.py::test_parse_query_refinement_handles_llm_failure_with_fallback
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_analyze_failures_with_invalid_intent_detects_pattern
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_analyze_failures_with_refinement_failures_detects_pattern
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_analyze_failures_with_all_passing_returns_empty_list
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_generate_fix_from_template_replaces_placeholders
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_generate_prompt_additions_with_patterns_returns_text
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_generate_prompt_additions_with_no_patterns_returns_empty
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_get_keyword_hints_with_matching_keyword_returns_intent
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_get_keyword_hints_with_no_match_returns_none
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_is_refinement_query_with_refinement_phrase_returns_true
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_is_refinement_query_with_no_phrase_returns_false
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_evaluate_condition_with_valid_condition_returns_true
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_evaluate_condition_with_invalid_condition_returns_false
+FAILED tests/core/test_prompt_optimizer.py::test_optimizer_analyze_failures_with_none_intent_filters_none_values
+FAILED tests/core/test_registry.py::TestDatasetRegistry::test_get_dataset_factory_creates_instance
+FAILED tests/core/test_registry.py::TestDatasetRegistry::test_get_dataset_with_override_params_applies_overrides
+FAILED tests/core/test_registry.py::TestDatasetRegistry::test_registry_filters_unsupported_params_without_error
+FAILED tests/eval/test_golden_questions.py::test_golden_questions_evaluation
+FAILED tests/ui/test_integration.py::TestUIDatasetIntegration::test_ui_workflow_end_to_end_with_all_datasets
+===== 32 failed, 1153 passed, 29 skipped, 24 warnings in 379.93s (0:06:19) =====
+make: *** [test-cov] Error 1
