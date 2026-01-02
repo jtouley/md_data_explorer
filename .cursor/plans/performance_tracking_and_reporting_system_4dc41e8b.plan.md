@@ -4,7 +4,7 @@ overview: ""
 todos: []
 ---
 
----name: Comprehensive Test Performance Systemoverview: Implement comprehensive test performance system that both tracks performance AND optimizes slow tests. Includes automated monitoring, regression detection, reporting tools, LLM mocking, test data caching, selective dataset loading, fixture scope optimization, and documentation updates.**Note**: Test commands run serially by default. Parallel execution available via `-n auto` after Phase 2.5 safety fixes. Integration tests run serially to avoid conflicts with external services.todos:
+---name: Comprehensive Test Performance Systemoverview: Implement comprehensive test performance system that both tracks performance AND optimizes slow tests. Includes automated monitoring, regression detection, reporting tools, LLM mocking, test data caching, selective dataset loading, fixture scope optimization, and documentation updates.**Note**: All test commands run in parallel by default (`-n auto`) for maximum speed during development. Final validation before commit runs serially to ensure deterministic results. Integration tests marked with `@pytest.mark.serial` run serially to avoid conflicts with external services. Parallel execution effectiveness will be measured and validated throughout plan execution.todos:
 
 - id: "phase0-test-organization"
 
@@ -325,34 +325,41 @@ graph LR
 
 #### 0.2: Test Execution Per Phase
 
+**Standard**: All test commands run in parallel by default (`-n auto`) for maximum speed during development. Final validation before commit runs serially.
+
 **Phase 1 (Performance Tracking)**:
 
-- `make test-fast PYTEST_ARGS="tests/performance/test_plugin.py tests/performance/test_storage.py -xvs"`
-- `make test-integration PYTEST_ARGS="tests/test_performance_regression.py -xvs"`
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="tests/performance/test_plugin.py tests/performance/test_storage.py -xvs"`
+- **Final validation (serial)**: `make test-integration PYTEST_ARGS="tests/test_performance_regression.py -xvs"` (integration tests run serially)
 
 **Phase 2 (Performance Optimizations)**:
 
-- `make test-fast PYTEST_ARGS="tests/core/test_nl_query_refinement.py tests/core/test_nl_query_engine_filter_extraction.py -xvs"`
-- `make test-integration PYTEST_ARGS="tests/core/test_nl_query_refinement_integration.py -xvs"`
-- `make test-fast PYTEST_ARGS="tests/fixtures/test_cache.py -xvs"`
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="tests/core/test_nl_query_refinement.py tests/core/test_nl_query_engine_filter_extraction.py -xvs"`
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="tests/fixtures/test_cache.py -xvs"`
+- **Final validation (serial)**: `make test-integration PYTEST_ARGS="tests/core/test_nl_query_refinement_integration.py -xvs"` (integration tests run serially)
 
 **Phase 3 (Automated Categorization)**:
 
-- `make test-fast PYTEST_ARGS="scripts/test_categorize_slow_tests.py -xvs"`
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="scripts/test_categorize_slow_tests.py -xvs"`
+
+**Final Validation Before Commit** (serial for deterministic results):
+
+- `make test` (serial) - Full test suite validation
+- `make check` (serial) - Full quality gate (format, lint, type, test)
 
 #### 0.3: Regression Protection
 
 After each phase, run full test suite with baseline comparison:
 
 ```bash
-# Baseline (run once at start of performance system implementation)
+# Baseline (run once at start of performance system implementation) - SERIAL for baseline
 make test 2>&1 | tee tests/docs/baseline_test_results.txt
 BASELINE_PASSED=$(grep -c "PASSED" tests/docs/baseline_test_results.txt || echo "0")
 BASELINE_FAILED=$(grep -c "FAILED" tests/docs/baseline_test_results.txt || echo "0")
 echo "Baseline: $BASELINE_PASSED passed, $BASELINE_FAILED failed"
 
-# After each phase
-make test 2>&1 | tee phase_N_test_results.txt
+# After each phase - PARALLEL for speed during development
+make test-parallel 2>&1 | tee phase_N_test_results.txt
 PHASE_PASSED=$(grep -c "PASSED" phase_N_test_results.txt || echo "0")
 PHASE_FAILED=$(grep -c "FAILED" phase_N_test_results.txt || echo "0")
 
@@ -362,8 +369,8 @@ if [ "$PHASE_FAILED" -gt "$BASELINE_FAILED" ]; then
     exit 1
 fi
 
-# Full quality gate
-make check  # Lint, format, type check, test
+# Final validation before commit - SERIAL for deterministic results
+make check  # Lint, format, type check, test (serial)
 ```
 
 **Success Criteria**:
@@ -386,12 +393,12 @@ make check  # Lint, format, type check, test
 **Coverage Verification Process**:
 
 ```bash
-# Baseline (run once at start)
+# Baseline (run once at start) - SERIAL for baseline
 make test-cov 2>&1 | tee tests/docs/baseline_coverage.txt
 BASELINE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' tests/docs/baseline_coverage.txt | head -1)
 
-# After each phase
-make test-cov 2>&1 | tee phase_N_coverage.txt
+# After each phase - PARALLEL for speed during development
+make test-cov-parallel 2>&1 | tee phase_N_coverage.txt
 PHASE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' phase_N_coverage.txt | head -1)
 
 # Verify: Coverage within 2% of baseline
@@ -456,6 +463,8 @@ fi
 - [ ] Baseline coverage captured
 
 ### Phase 1: Performance Tracking & Monitoring
+
+**Note**: Baseline performance data in `tests/PERFORMANCE.md` and `.performance_baseline.json` was established from **serial test runs** for deterministic baseline comparison. All development work uses parallel execution (`-n auto`) for speed, with final validation running serially before commit.
 
 #### 1. Automated Performance Tracking
 
@@ -1210,13 +1219,18 @@ def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
 **Gate Command**:
 
 ```bash
-# Verify Phase 1 complete
-make test-performance
-make performance-baseline
-make performance-regression  # Should pass
+# Development (parallel for speed)
+make test-performance-parallel  # Run with parallel execution
 make performance-report
+
+# Final validation (serial for deterministic baseline)
+make test-performance  # Serial run for baseline comparison
+make performance-baseline  # Create baseline from serial run
+make performance-regression  # Should pass
 git status  # Verify baseline committed
 ```
+
+**Note**: Baseline is created from **serial runs** to ensure deterministic comparison. Development uses parallel execution for speed.
 
 **Only proceed to Phase 2 after all Phase 1 validation passes.**
 
@@ -1258,11 +1272,16 @@ git status  # Verify baseline committed
 **File**: `tests/PERFORMANCE.md`Updates:
 
 - Add "Automated Performance Tracking" section
-- Document baseline update process
+- Document baseline update process (note: baseline from serial runs)
 - Add regression test documentation
 - Include CLI tool usage examples
 - Add performance data file locations
 - Document threshold configuration
+- **Add "Parallel Execution" section** (after plan completion) with:
+  - Measured speedup factor
+  - Flake rate and reliability metrics
+  - Best practices for parallel-safe test writing
+  - When to use serial execution (final validation, baselines)
 
 **Structure Improvements**:
 
@@ -1270,6 +1289,7 @@ git status  # Verify baseline committed
 - Organize by component (tracking, regression, reporting)
 - Add troubleshooting section
 - Include examples for common workflows
+- Document parallel execution decision and metrics (final update)
 
 ## Implementation Details
 
@@ -1430,7 +1450,7 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
 - Use AAA pattern (Arrange-Act-Assert)
 - Test naming: `test_unit_scenario_expectedBehavior`
 - Use shared fixtures from `conftest.py` (check first before creating new fixtures)
-- Run test immediately: `make test-fast` or module-specific command
+- Run test immediately: `make test-fast-parallel` or module-specific parallel command
 - Verify test fails for the RIGHT reason (not setup error)
 
 2. **Implement Minimum Code (Green Phase)**
@@ -1440,7 +1460,7 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
 
 3. **Run Test Again (Green Phase)**
 
-- Same command as step 1
+- Same command as step 1 (parallel for speed)
 - Verify test passes
 
 4. **Fix Quality Issues (Refactor Phase)**
@@ -1450,13 +1470,19 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
 - Fix any remaining issues manually
 - Run: `make type-check` (if applicable)
 
-5. **Run Module Test Suite**
+5. **Run Module Test Suite (Parallel for Development)**
 
-- Use module-specific command: `make test-core`, `make test-analysis`, etc.
-- Or: `make test-fast` for quick feedback
+- Use module-specific parallel command: `make test-core-parallel`, `make test-analysis-parallel`, etc.
+- Or: `make test-fast-parallel` for quick feedback
 - Verify no regressions
 
-6. **Commit with Tests**
+6. **Final Validation Before Commit (Serial for Deterministic Results)**
+
+- Run: `make test` (serial) - Full test suite validation
+- Run: `make check` (serial) - Full quality gate (format, lint, type, test)
+- Verify all tests pass deterministically
+
+7. **Commit with Tests**
 
 - Include both implementation AND tests in same commit
 - Commit message format: `feat: [description] - Add comprehensive test suite (X tests passing)`
@@ -1466,13 +1492,16 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
 - `make format` / `make format-check`
 - `make lint-fix` / `make lint`
 - `make type-check` (for Python code)
-- Module-specific test run (e.g., `make test-fast`)
+- Module-specific parallel test run (e.g., `make test-fast-parallel`) for development
+- Final serial validation (`make test`, `make check`) before commit
 
 **Makefile Command Usage Per Phase**:
 
-- Todos #2-6: Use `make test-fast` for quick feedback during development
-- Todo #13: Use `make test-fast` with filter for performance system tests
-- Todo #14: Use `make test` for full suite verification
+- **Development (parallel)**: Use `make test-fast-parallel` or module-specific parallel commands for quick feedback
+- **Final validation (serial)**: Use `make test` and `make check` for deterministic results before commit
+- Todos #2-6: Use `make test-fast-parallel` for quick feedback during development
+- Todo #13: Use `make test-fast-parallel` with filter for performance system tests
+- Todo #14: Use `make test` (serial) for full suite verification before commit
 
 ## Implementation Order
 
@@ -1663,3 +1692,89 @@ test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
 - [ ] Handles errors gracefully (missing files, invalid arguments)
 - [ ] Generates reports in specified format (json/markdown)
 - [ ] Creates baseline correctly
+
+## Parallel Execution Decision and Documentation
+
+### Data Collection During Plan Execution
+
+Throughout plan execution, parallel execution effectiveness will be measured and validated:
+
+1. **Performance Metrics**:
+   - Test execution time (parallel vs serial)
+   - Speedup factor (target: 2-4x)
+   - Flake rate (target: <1% over 100+ runs)
+   - Resource utilization (CPU, memory)
+
+2. **Reliability Metrics**:
+   - Test failure rate in parallel vs serial
+   - Nondeterministic failures (race conditions, shared state)
+   - Random order test execution results
+   - Multiple run consistency
+
+3. **Safety Metrics**:
+   - Hardcoded path collisions (should be zero)
+   - Serial marker coverage (all unsafe tests marked)
+   - Test isolation verification (no shared mutable state)
+
+### Decision Criteria
+
+**Parallel execution will be validated as the default if:**
+
+- ✅ Speedup factor ≥ 2x (parallel is at least 2x faster than serial)
+- ✅ Flake rate < 1% (over 100+ parallel runs)
+- ✅ Zero hardcoded path collisions
+- ✅ All unsafe tests marked with `@pytest.mark.serial`
+- ✅ Random order execution passes consistently
+- ✅ No test failures introduced by parallel execution
+- ✅ Resource utilization acceptable (CPU/memory within limits)
+
+**If criteria are met**, parallel execution becomes the standard default for all development work, with serial reserved only for:
+- Final validation before commit (`make test`, `make check`)
+- Baseline creation (`make test-performance` for baseline)
+- Integration tests that require serial execution
+
+### Documentation Updates
+
+Upon completion of plan execution, the following documentation will be updated with parallel execution decision and data:
+
+1. **`.cursor/plans/performance_tracking_and_reporting_system_4dc41e8b.plan.md`**:
+   - Update overview with final parallel execution decision
+   - Document measured speedup, flake rate, and reliability metrics
+   - Update all test execution commands to reflect final decision
+
+2. **`tests/PERFORMANCE.md`**:
+   - Add "Parallel Execution" section with:
+     - Measured speedup factor
+     - Flake rate and reliability metrics
+     - Best practices for parallel-safe test writing
+     - When to use serial execution (final validation, baselines)
+
+3. **`tests/AGENTS.md`**:
+   - Update "Makefile Usage" section with parallel execution guidance
+   - Add parallel execution safety checklist
+   - Document serial marker usage
+
+4. **`.cursor/rules/000-project-setup-and-makefile.mdc`**:
+   - Update test commands to reflect parallel-by-default (if validated)
+   - Document serial execution use cases
+
+5. **`.cursor/rules/101-testing-hygiene.mdc`**:
+   - Add parallel execution safety guidelines
+   - Document `@pytest.mark.serial` marker usage
+   - Add test isolation requirements for parallel execution
+
+### Final Decision Documentation
+
+At the end of plan execution, a final decision document will be created:
+
+**File**: `tests/docs/PARALLEL_EXECUTION_DECISION.md`
+
+**Contents**:
+- Executive summary of parallel execution validation
+- Measured metrics (speedup, flake rate, reliability)
+- Decision: Parallel-by-default or serial-by-default
+- Rationale based on collected data
+- Recommendations for future test development
+- Migration guide (if switching from serial to parallel)
+
+**Timeline**: This decision document will be created after Phase 2.5 (Parallel Execution Safety Audit) is complete and all metrics have been collected.
