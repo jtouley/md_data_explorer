@@ -1000,6 +1000,169 @@ class TestLegacyDatasetMigration:
         assert new_version["version"] != "legacy_version_abc"
 
 
+class TestSeparateEventsList:
+    """Test suite for separate top-level events list (Phase 5)."""
+
+    def test_upload_creates_upload_created_event(self, tmp_path):
+        """New upload should record upload_created event in separate events list."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload dataset
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Assert: Separate events list exists and contains upload_created event
+        metadata = storage.get_upload_metadata(upload_id)
+        assert "events" in metadata, "Metadata should have separate events list"
+        assert isinstance(metadata["events"], list), "events should be a list"
+        assert len(metadata["events"]) > 0, "Should have at least one event"
+
+        upload_event = metadata["events"][0]
+        assert upload_event["event_type"] == "upload_created"
+        assert "event_id" in upload_event
+        assert "timestamp" in upload_event
+        assert upload_event["event_id"] == metadata["version_history"][0]["event_id"]
+
+    def test_overwrite_creates_version_activated_event(self, tmp_path):
+        """Overwriting should record version_activated event in separate events list."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Arrange: Initial upload
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        initial_events_count = len(storage.get_upload_metadata(upload_id)["events"])
+
+        # Arrange: Overwrite with different data
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [30 + i for i in range(150)],  # Different data
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        # Act: Overwrite
+        success, message, _ = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+            overwrite=True,
+        )
+        assert success is True
+
+        # Assert: Events list should have new version_activated event
+        metadata = storage.get_upload_metadata(upload_id)
+        events = metadata["events"]
+        assert len(events) == initial_events_count + 1, "Should have one more event"
+
+        # Find version_activated event
+        activated_events = [e for e in events if e["event_type"] == "version_activated"]
+        assert len(activated_events) > 0, "Should have version_activated event"
+        assert activated_events[0]["event_id"] == metadata["version_history"][-1]["event_id"]
+
+    def test_events_are_append_only(self, tmp_path):
+        """Events should be append-only (never deleted)."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Arrange: Multiple operations
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload, then overwrite multiple times
+        success, _, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        event_counts = []
+        for i in range(2):
+            df_new = pd.DataFrame(
+                {
+                    "patient_id": [f"P{j:03d}" for j in range(150)],
+                    "age": [20 + j + i for j in range(150)],
+                }
+            )
+            csv_bytes_new = df_new.to_csv(index=False).encode("utf-8")
+
+            success, _, _ = storage.save_upload(
+                file_bytes=csv_bytes_new,
+                original_filename="test.csv",
+                metadata={"dataset_name": "test"},
+                overwrite=True,
+            )
+            assert success is True
+
+            metadata = storage.get_upload_metadata(upload_id)
+            event_counts.append(len(metadata["events"]))
+
+        # Assert: Events are append-only (counts increase)
+        assert event_counts[0] < event_counts[1], "Events should be append-only"
+        assert all(event_counts[i] <= event_counts[i + 1] for i in range(len(event_counts) - 1)), (
+            "Event counts should never decrease"
+        )
+
+    def test_events_have_required_fields(self, tmp_path):
+        """Events should have event_id, timestamp, and event_type."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Assert: All events have required fields
+        metadata = storage.get_upload_metadata(upload_id)
+        for event in metadata["events"]:
+            assert "event_id" in event, "Event should have event_id"
+            assert "timestamp" in event, "Event should have timestamp"
+            assert "event_type" in event, "Event should have event_type"
+            assert len(event["event_id"]) == 32, "event_id should be UUID4 hex (32 chars)"
+            assert event["timestamp"].endswith("Z"), "timestamp should be ISO 8601 UTC with Z"
+
+
 class TestVersionHistoryMetadata:
     """Test suite for version history metadata structure (Phase 2)."""
 

@@ -1141,16 +1141,21 @@ def save_table_list(
             }
 
         # Phase 2/5: Create version history entry with event metadata
-        event_type = "overwrite" if metadata.pop("_is_overwrite", False) else "upload"
+        is_overwrite = metadata.pop("_is_overwrite", False)
+        event_type_str = "overwrite" if is_overwrite else "upload"
         # Phase 5: Event structure - UUID4 hex format, ISO 8601 UTC with Z suffix
         now_utc = datetime.now(UTC)
+        event_id = uuid.uuid4().hex  # Phase 5: UUID4 hex format (no dashes)
+        timestamp = now_utc.isoformat().replace("+00:00", "Z")  # ISO 8601 UTC with Z
+
         version_entry = {
             "version": dataset_version,
-            "created_at": now_utc.isoformat().replace("+00:00", "Z"),  # ISO 8601 UTC with Z
-            "event_id": uuid.uuid4().hex,  # Phase 5: UUID4 hex format (no dashes)
-            "event_type": event_type,  # Phase 5: upload/overwrite/rollback
+            "created_at": timestamp,
+            "event_id": event_id,
+            "event_type": event_type_str,  # Phase 5: upload/overwrite/rollback
             "is_active": True,  # New version is always active
             "tables": canonical_tables,
+            "source_filename": metadata.get("original_filename", ""),  # Phase 5: breadcrumbs
         }
 
         # Phase 4.2: Handle existing version history (overwrite case)
@@ -1165,6 +1170,40 @@ def save_table_list(
 
         # Phase 2: Ensure version_history is sorted by created_at ascending (oldest first)
         version_history.sort(key=lambda v: v.get("created_at", ""))
+
+        # Phase 5: Create separate event entry for events list
+        existing_events = metadata.pop("_existing_events", None)  # Phase 5: Preserve existing events
+        if is_overwrite:
+            # Overwrite: record version_activated event
+            event_entry = {
+                "event_id": event_id,
+                "timestamp": timestamp,
+                "event_type": "version_activated",
+                "version": dataset_version,
+                "upload_id": upload_id,
+            }
+            # Add previous_version if available
+            if existing_version_history:
+                previous_active = next((v for v in existing_version_history if v.get("is_active", False)), None)
+                if previous_active:
+                    event_entry["previous_version"] = previous_active["version"]
+        else:
+            # Initial upload: record upload_created event
+            event_entry = {
+                "event_id": event_id,
+                "timestamp": timestamp,
+                "event_type": "upload_created",
+                "version": dataset_version,
+                "upload_id": upload_id,
+            }
+
+        # Phase 5: Initialize or append to events list
+        if existing_events is not None:
+            # Overwrite: append to existing events
+            events = existing_events + [event_entry]
+        else:
+            # Initial upload: create new events list
+            events = [event_entry]
 
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
@@ -1191,6 +1230,8 @@ def save_table_list(
             ),
             # Phase 2/4.2: Version history (initial or appended)
             "version_history": version_history,
+            # Phase 5: Separate events list for audit trail
+            "events": events,
         }
 
         # Phase 0/8: Thread-safe metadata write using file lock
@@ -1479,8 +1520,7 @@ class UserDatasetStorage:
                             synthetic_version_entry = {
                                 "version": legacy_version or "legacy",
                                 "created_at": (
-                                    legacy_created_at
-                                    or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                                    legacy_created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
                                 ),
                                 "event_id": uuid.uuid4().hex,
                                 "event_type": "upload",
@@ -1761,9 +1801,17 @@ class UserDatasetStorage:
                 }
             )
 
-            # Phase 4.2: Pass existing_version_history for overwrite
+            # Phase 4.2: Pass existing_version_history and events for overwrite
             if existing_version_history is not None:
                 metadata["_existing_version_history"] = existing_version_history
+                # Phase 5: Preserve existing events list
+                existing_meta_for_events = None
+                for meta in self.list_uploads():
+                    if meta.get("upload_id") == existing_upload_id:
+                        existing_meta_for_events = meta
+                        break
+                if existing_meta_for_events:
+                    metadata["_existing_events"] = existing_meta_for_events.get("events", [])
                 metadata["_is_overwrite"] = True  # Phase 5: Mark as overwrite event
 
             # Update table with validated data (convert back to Polars for save_table_list)
