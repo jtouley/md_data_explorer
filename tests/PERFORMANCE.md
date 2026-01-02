@@ -118,6 +118,48 @@ def test_example(large_patients_csv):
 - Cache invalidation: Automatic (content-based hashing detects changes)
 - Manual cache clear: `rm -rf tests/.test_cache/` (or use `make test-cache-clear` if added to Makefile)
 
+### Selective Dataset Loading (2026-01-01)
+
+**Problem**: Tests were loading all dataset configs upfront even when only one dataset was needed:
+- `discovered_datasets` fixture pre-loads all dataset configs into memory
+- Tests that only need one dataset pay the cost of loading all configs
+- YAML parsing overhead for unused datasets
+
+**Solution**: Added lazy loading fixtures for selective dataset access:
+1. **`dataset_registry` fixture**: Session-scoped fixture that discovers datasets but doesn't pre-load all configs
+2. **`get_dataset_by_name` helper fixture**: Loads specific dataset on demand, skipping if unavailable
+3. **Backward compatible**: Existing `discovered_datasets` fixture unchanged (all tests continue to work)
+
+**Implementation**:
+- `tests/conftest.py`: Added `dataset_registry` and `get_dataset_by_name` fixtures
+- `tests/core/test_selective_dataset_loading.py`: Tests for lazy loading functionality
+- `tests/core/test_selective_loading_performance.py`: Performance measurement tests
+
+**Usage**:
+```python
+# New pattern: Selective loading (loads only requested dataset)
+def test_example(get_dataset_by_name):
+    dataset = get_dataset_by_name("my_dataset")
+    cohort = dataset.get_cohort()
+    assert len(cohort) > 0
+
+# Old pattern: Still works (backward compatible)
+def test_example(discovered_datasets):
+    config = get_first_available_dataset_config(discovered_datasets)
+    # Use config...
+```
+
+**Impact** (measured via `tests/core/test_selective_loading_performance.py`):
+- **Target**: 30-50% reduction in setup time
+- **Current**: Infrastructure in place, benefit scales with number of datasets
+- **Note**: Real benefit increases when many datasets exist and tests only need one
+- **Future optimization**: Could implement true lazy YAML parsing (load individual configs on demand)
+
+**Migration Strategy**:
+- New tests: Use `get_dataset_by_name` for selective loading
+- Existing tests: Continue using `discovered_datasets` (backward compatible)
+- Incremental migration: Update tests gradually as needed
+
 ## Slow Tests (>30 seconds)
 
 Tests marked with `@pytest.mark.slow` and `@pytest.mark.integration` are expected to take longer because they:
