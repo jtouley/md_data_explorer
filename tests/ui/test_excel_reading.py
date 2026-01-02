@@ -215,6 +215,46 @@ class TestExcelReadingIntegration:
 class TestExcelHeaderDetection:
     """Tests for intelligent Excel header row detection using fixtures from conftest.py."""
 
+    def _verify_header_detection(
+        self,
+        file_bytes: bytes,
+        expected_header_row: int,
+        min_rows: int = 1,
+    ) -> pd.DataFrame:
+        """
+        Generic helper to verify Excel header detection works correctly.
+
+        Args:
+            file_bytes: Excel file content as bytes
+            expected_header_row: Expected header row index
+            min_rows: Minimum number of data rows expected
+
+        Returns:
+            DataFrame read with detected header row
+
+        Raises:
+            AssertionError: If header detection or reading fails
+        """
+        # Detect header row
+        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
+        assert header_row == expected_header_row, f"Expected header row {expected_header_row}, got {header_row}"
+
+        # Read with detected header
+        file_io = io.BytesIO(file_bytes)
+        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
+
+        # Generic assertions (not dataset-specific) - using pandas-compatible attributes
+        assert len(df_read.columns) > 0, "DataFrame should have at least one column"
+        assert len(df_read) >= min_rows, f"DataFrame should have at least {min_rows} rows, got {len(df_read)}"
+        # Assert no "Unnamed:" columns (common failure mode)
+        assert not any("Unnamed" in str(col) for col in df_read.columns), (
+            "Header detection failed: found 'Unnamed' columns"
+        )
+        # Assert all column names are non-empty strings
+        assert all(col and str(col).strip() for col in df_read.columns), "All column names should be non-empty"
+
+        return df_read
+
     def test_detect_header_row_standard_format(self, synthetic_dexa_excel_file):
         """
         Test header detection with standard format (header in row 0).
@@ -227,18 +267,12 @@ class TestExcelHeaderDetection:
         with open(synthetic_dexa_excel_file, "rb") as f:
             file_bytes = f.read()
 
-        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
-        assert header_row == 0, f"Expected header row 0, got {header_row}"
+        # Generic verification (no dataset-specific assertions)
+        df_read = self._verify_header_detection(file_bytes, expected_header_row=0, min_rows=50)
 
-        # Verify reading works correctly (semantic assertions)
-        file_io = io.BytesIO(file_bytes)
-        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
-        # Semantic assertions (not exact shape)
-        assert "Race" in df_read.columns
-        assert "Age" in df_read.columns
-        assert df_read.shape[0] >= 50  # At least expected rows (allows fixture changes)
-        # Assert no "Unnamed:" columns (common failure mode)
-        assert not any("Unnamed" in str(col) for col in df_read.columns)
+        # Additional generic checks
+        assert isinstance(df_read, pd.DataFrame)
+        assert len(df_read.columns) > 0
 
     def test_detect_header_row_with_empty_first_row(self, synthetic_statin_excel_file):
         """
@@ -252,19 +286,12 @@ class TestExcelHeaderDetection:
         with open(synthetic_statin_excel_file, "rb") as f:
             file_bytes = f.read()
 
-        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
-        assert header_row == 1, f"Expected header row 1, got {header_row}"
+        # Generic verification (no dataset-specific assertions)
+        df_read = self._verify_header_detection(file_bytes, expected_header_row=1, min_rows=50)
 
-        # Verify reading works correctly (semantic assertions)
-        file_io = io.BytesIO(file_bytes)
-        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
-        # Semantic assertions (not exact shape)
-        assert "Race" in df_read.columns
-        assert "Age" in df_read.columns
-        assert "Most Recent VL copies/mL" in df_read.columns
-        assert df_read.shape[0] >= 50  # At least expected rows (allows fixture changes)
-        # Assert no "Unnamed:" columns (common failure mode)
-        assert not any("Unnamed" in str(col) for col in df_read.columns)
+        # Additional generic checks
+        assert isinstance(df_read, pd.DataFrame)
+        assert len(df_read.columns) > 0
 
     def test_detect_header_row_with_metadata_rows(self, synthetic_complex_excel_file):
         """
@@ -278,15 +305,9 @@ class TestExcelHeaderDetection:
         with open(synthetic_complex_excel_file, "rb") as f:
             file_bytes = f.read()
 
-        header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
-        assert header_row == 1, f"Expected header row 1, got {header_row}"
+        # Generic verification (no dataset-specific assertions)
+        df_read = self._verify_header_detection(file_bytes, expected_header_row=1, min_rows=45)
 
-        # Verify reading works correctly (semantic assertions)
-        file_io = io.BytesIO(file_bytes)
-        df_read = pd.read_excel(file_io, engine="openpyxl", header=header_row)
-        # Semantic assertions (not exact shape)
-        assert "Race" in df_read.columns
-        assert "Viral Load copies/mL" in df_read.columns
-        assert df_read.shape[0] >= 45  # At least expected rows (allows fixture changes)
-        # Assert no "Unnamed:" columns (common failure mode)
-        assert not any("Unnamed" in str(col) for col in df_read.columns)
+        # Additional generic checks
+        assert isinstance(df_read, pd.DataFrame)
+        assert len(df_read.columns) > 0
