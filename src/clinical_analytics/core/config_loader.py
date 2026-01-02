@@ -305,6 +305,9 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
                             # Keep default value
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+        except ValueError as e:
+            # Re-raise ValueError (e.g., from critical config type coercion failure)
+            raise
         except Exception as e:
             logger.warning(f"Failed to load config from {config_path}: {e}, using defaults")
     else:
