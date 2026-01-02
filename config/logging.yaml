@@ -1,0 +1,26 @@
+# Logging Configuration
+# Centralized logging configuration for Streamlit UI.
+#
+# Configure once in app.py entry point, not per page.
+# The configure_logging() function in logging_config.py applies these settings.
+
+# Root logger level
+root_level: "INFO"
+
+# Log format string
+format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Module-specific log levels
+# These loggers are set to INFO level
+module_levels:
+  clinical_analytics.core.semantic: "INFO"
+  clinical_analytics.core.registry: "INFO"
+  clinical_analytics.core.multi_table_handler: "INFO"
+  clinical_analytics.ui.storage.user_datasets: "INFO"
+  clinical_analytics.datasets: "INFO"
+
+# Reduce noise - loggers set to WARNING level
+reduce_noise:
+  streamlit: "WARNING"
+  urllib3: "WARNING"
+

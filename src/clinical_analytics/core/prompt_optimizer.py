@@ -41,7 +41,10 @@ class LearningConfig:
     def load(cls, config_path: Path | None = None) -> "LearningConfig":
         """Load configuration from YAML file."""
         if config_path is None:
-            config_path = Path(__file__).parent / "prompt_learning_config.yaml"
+            # Get project root: prompt_optimizer.py → core/ → clinical_analytics/ → src/ → project_root
+            current_file = Path(__file__)
+            project_root = current_file.parent.parent.parent.parent
+            config_path = project_root / "config" / "prompt_learning.yaml"
 
         if not config_path.exists():
             logger.warning("config_not_found", path=str(config_path))
