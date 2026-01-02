@@ -611,6 +611,51 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         help="This name will be used to identify your dataset in the analysis interface",
     )
 
+    # Phase 9: Check if dataset name already exists and show overwrite option
+    overwrite = False
+    existing_dataset_info = None
+    if dataset_name.strip():
+        # Check if dataset with this name already exists
+        existing_datasets = storage.list_uploads()
+        for dataset in existing_datasets:
+            if dataset.get("dataset_name") == dataset_name.strip():
+                existing_dataset_info = dataset
+                break
+
+        if existing_dataset_info:
+            st.warning(
+                f"⚠️ **Dataset '{dataset_name}' already exists.** "
+                f"Upload ID: `{existing_dataset_info.get('upload_id', 'N/A')}`"
+            )
+
+            # Phase 9: Show overwrite checkbox
+            overwrite = st.checkbox(
+                "Overwrite existing dataset (preserves version history)",
+                value=False,
+                help="If checked, this upload will create a new version of the existing dataset. "
+                "Previous versions will be preserved and can be rolledback.",
+            )
+
+            # Phase 9: Show version history if available
+            upload_id = existing_dataset_info.get("upload_id")
+            if upload_id:
+                metadata = storage.get_upload_metadata(upload_id)
+                if metadata and metadata.get("version_history"):
+                    version_history = metadata["version_history"]
+                    with st.expander(f"📜 Version History ({len(version_history)} versions)", expanded=False):
+                        st.markdown("**Version History:**")
+                        for idx, version in enumerate(version_history, 1):
+                            is_active = version.get("is_active", False)
+                            version_display = version.get("version", "unknown")[:8] + "..."
+                            created_at = version.get("created_at", "Unknown")
+                            source_file = version.get("source_filename", "N/A")
+
+                            active_badge = "🟢 **ACTIVE**" if is_active else "⚪ Inactive"
+                            st.markdown(
+                                f"{idx}. {active_badge} | Version: `{version_display}` | "
+                                f"Created: {created_at} | Source: {source_file}"
+                            )
+
     # Check if already saved in this session
     already_saved = st.session_state.get("upload_success") is True
 
@@ -669,11 +714,12 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
                         "validation_result": validation_result,
                     }
 
-                    # Run save
+                    # Run save with overwrite flag (Phase 9)
                     success, message, upload_id = storage.save_upload(
                         file_bytes=st.session_state["uploaded_bytes"],
                         original_filename=st.session_state["uploaded_filename"],
                         metadata=metadata,
+                        overwrite=overwrite,
                     )
 
                     if success:
@@ -716,6 +762,51 @@ def render_zip_review_step():
         value=default_name,
         help="This name will be used to identify your dataset in the analysis interface",
     )
+
+    # Phase 9: Check if dataset name already exists and show overwrite option
+    overwrite = False
+    existing_dataset_info = None
+    if dataset_name.strip():
+        # Check if dataset with this name already exists
+        existing_datasets = storage.list_uploads()
+        for dataset in existing_datasets:
+            if dataset.get("dataset_name") == dataset_name.strip():
+                existing_dataset_info = dataset
+                break
+
+        if existing_dataset_info:
+            st.warning(
+                f"⚠️ **Dataset '{dataset_name}' already exists.** "
+                f"Upload ID: `{existing_dataset_info.get('upload_id', 'N/A')}`"
+            )
+
+            # Phase 9: Show overwrite checkbox
+            overwrite = st.checkbox(
+                "Overwrite existing dataset (preserves version history)",
+                value=False,
+                help="If checked, this upload will create a new version of the existing dataset. "
+                "Previous versions will be preserved and can be rolledback.",
+            )
+
+            # Phase 9: Show version history if available
+            upload_id = existing_dataset_info.get("upload_id")
+            if upload_id:
+                metadata = storage.get_upload_metadata(upload_id)
+                if metadata and metadata.get("version_history"):
+                    version_history = metadata["version_history"]
+                    with st.expander(f"📜 Version History ({len(version_history)} versions)", expanded=False):
+                        st.markdown("**Version History:**")
+                        for idx, version in enumerate(version_history, 1):
+                            is_active = version.get("is_active", False)
+                            version_display = version.get("version", "unknown")[:8] + "..."
+                            created_at = version.get("created_at", "Unknown")
+                            source_file = version.get("source_filename", "N/A")
+
+                            active_badge = "🟢 **ACTIVE**" if is_active else "⚪ Inactive"
+                            st.markdown(
+                                f"{idx}. {active_badge} | Version: `{version_display}` | "
+                                f"Created: {created_at} | Source: {source_file}"
+                            )
 
     # Process ZIP file
     if st.button(
@@ -770,6 +861,7 @@ def render_zip_review_step():
                 original_filename=st.session_state["uploaded_filename"],
                 metadata=metadata,
                 progress_callback=progress_callback,
+                overwrite=overwrite,
             )
         except Exception as e:
             import traceback

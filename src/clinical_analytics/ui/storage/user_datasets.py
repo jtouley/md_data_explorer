@@ -2257,6 +2257,7 @@ class UserDatasetStorage:
         original_filename: str,
         metadata: dict[str, Any],
         progress_callback: Callable[[int, int, str, dict], None] | None = None,
+        overwrite: bool = False,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded ZIP file containing multiple CSV files.
@@ -2289,8 +2290,76 @@ class UserDatasetStorage:
         if not valid:
             return False, error, None
 
-        # Generate upload ID
-        upload_id = self.generate_upload_id(original_filename)
+        # Phase 9: Handle overwrite for ZIP uploads
+        dataset_name = metadata.get("dataset_name")
+        existing_upload_id = None
+        existing_version_history = None
+        if overwrite and dataset_name:
+            # Check if dataset with this name already exists
+            existing_datasets = self.list_uploads()
+            for dataset in existing_datasets:
+                if dataset.get("dataset_name") == dataset_name:
+                    existing_upload_id = dataset.get("upload_id")
+                    existing_meta = self.get_upload_metadata(existing_upload_id)
+                    if existing_meta:
+                        existing_version_history = existing_meta.get("version_history", [])
+                        # Phase 4.2: Legacy dataset migration during overwrite
+                        if len(existing_version_history) == 0:
+                            # Legacy dataset: create synthetic version_history from top-level metadata
+                            legacy_version = existing_meta.get("dataset_version")
+                            legacy_created_at = existing_meta.get("created_at") or existing_meta.get("upload_timestamp")
+                            legacy_tables = {}
+
+                            # Reconstruct tables from parquet_paths or duckdb_tables if available
+                            parquet_paths = existing_meta.get("parquet_paths", {})
+                            if parquet_paths:
+                                # Convert parquet_paths dict to canonical tables structure
+                                for table_name, parquet_path in parquet_paths.items():
+                                    legacy_tables[table_name] = {
+                                        "parquet_path": parquet_path,
+                                        "duckdb_table": existing_meta.get("duckdb_tables", {}).get(
+                                            table_name, table_name
+                                        ),
+                                        "row_count": existing_meta.get("table_counts", {}).get(table_name, 0),
+                                        "column_count": existing_meta.get("column_count", 0),
+                                        "schema_fingerprint": existing_meta.get("schema_fingerprint", ""),
+                                    }
+                            else:
+                                # Fallback: create minimal table entry
+                                table_name = (
+                                    existing_meta.get("tables", ["table_0"])[0]
+                                    if existing_meta.get("tables")
+                                    else "table_0"
+                                )
+                                legacy_tables[table_name] = {
+                                    "parquet_path": "",
+                                    "duckdb_table": table_name,
+                                    "row_count": existing_meta.get("row_count", 0),
+                                    "column_count": existing_meta.get("column_count", 0),
+                                    "schema_fingerprint": "",
+                                }
+
+                            synthetic_version_entry = {
+                                "version": legacy_version or "legacy",
+                                "created_at": (
+                                    legacy_created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                                ),
+                                "event_id": uuid.uuid4().hex,
+                                "event_type": "upload",
+                                "is_active": False,
+                                "tables": legacy_tables,
+                                "source_filename": existing_meta.get("original_filename", ""),
+                            }
+
+                            existing_version_history = [synthetic_version_entry]
+                            logger.info("Migrated legacy dataset to version_history (1 version)")
+                    break
+
+        # Generate upload ID (or use existing if overwriting)
+        if existing_upload_id and overwrite:
+            upload_id = existing_upload_id
+        else:
+            upload_id = self.generate_upload_id(original_filename)
 
         try:
             import logging
@@ -2371,6 +2440,16 @@ class UserDatasetStorage:
                     "file_format": "zip_multi_table",
                 }
             )
+
+            # Phase 9: Pass overwrite metadata to save_table_list
+            if overwrite and existing_version_history is not None:
+                metadata["_existing_version_history"] = existing_version_history
+                # Phase 5: Preserve existing events list
+                if existing_upload_id:
+                    existing_meta_for_events = self.get_upload_metadata(existing_upload_id)
+                    if existing_meta_for_events:
+                        metadata["_existing_events"] = existing_meta_for_events.get("events", [])
+                metadata["_is_overwrite"] = True
 
             # Save using unified save_table_list() function
             if progress_callback:
