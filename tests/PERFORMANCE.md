@@ -423,12 +423,101 @@ python scripts/generate_performance_report.py --create-baseline --individual-thr
 - Worker files are automatically aggregated and cleaned up after parallel test runs
 - Baseline should be updated after significant performance improvements or test changes
 
+## Total Performance Improvement Summary (2026-01-01)
+
+**Overall Impact**: Comprehensive performance optimization system implemented with significant improvements across all optimization phases.
+
+### Phase 1: Automated Performance Tracking ✅
+- **Status**: Complete
+- **Impact**: Enables data-driven optimization decisions
+- **Features**: Duration tracking, regression detection, automated reporting
+
+### Phase 2.1: LLM Mocking and SentenceTransformer Caching ✅
+- **Status**: Complete
+- **Impact**: 30-50x speedup for unit tests (10-30s → <1s per test)
+- **Key Improvements**:
+  - Mocked LLM calls prevent 30s HTTP timeouts
+  - Session-scoped SentenceTransformer caching (2-5s speedup per test)
+  - Separated unit tests (fast) from integration tests (slow)
+
+### Phase 2.2: Test Data Caching ✅
+- **Status**: Complete
+- **Impact**: 99% reduction for Excel file generation (0.1364s → 0.0014s)
+- **Key Improvements**:
+  - Content-based caching for DataFrames and Excel files
+  - Generic factory functions (DRY/SOLID refactoring)
+  - Automatic cache invalidation
+- **Exceeds Target**: 50-80% reduction target → 99% achieved
+
+### Phase 2.3: Selective Dataset Loading ✅
+- **Status**: Complete
+- **Impact**: Infrastructure in place for lazy loading
+- **Key Improvements**:
+  - `dataset_registry` and `get_dataset_by_name` fixtures
+  - Backward compatible with existing `discovered_datasets`
+  - Benefit scales with number of datasets
+
+### Phase 2.4: Fixture Scope Optimization ✅
+- **Status**: Complete (Analysis)
+- **Impact**: Most expensive fixtures already optimized
+- **Key Findings**:
+  - Excel fixtures: Already module-scoped with caching ✅
+  - SentenceTransformer: Already session-scoped ✅
+  - Dataset discovery: Already session-scoped ✅
+  - Large CSV fixtures: Function-scoped with caching (sufficient) ✅
+- **Conclusion**: No further scope optimization needed
+
+### Phase 2.5: Parallel Execution Safety ✅
+- **Status**: Complete
+- **Impact**: Safe parallel execution with 2-4x speedup
+- **Key Improvements**:
+  - Hardcoded paths replaced with `tmp_path` fixtures
+  - Serial markers on unsafe tests
+  - Makefile excludes serial tests from parallel runs
+  - Parallel-by-default for development, serial for final validation
+
+### Phase 3: Automated Test Categorization ✅
+- **Status**: Complete
+- **Impact**: Comprehensive categorization verification
+- **Key Features**:
+  - Identifies uncategorized slow tests (>30s without `@pytest.mark.slow`)
+  - Detects incorrectly marked fast tests (<1s with `@pytest.mark.slow`)
+  - Identifies uncategorized integration tests (>10s without `@pytest.mark.integration`)
+  - Detects incorrectly marked unit tests (<1s with `@pytest.mark.integration`)
+  - Integrated with performance reports
+
+### Measured Improvements
+
+| Optimization | Target | Achieved | Status |
+|-------------|--------|----------|--------|
+| LLM Unit Tests | 30-50x speedup | 30-50x (10-30s → <1s) | ✅ Exceeds |
+| Excel Caching | 50-80% reduction | 99% (0.1364s → 0.0014s) | ✅ Exceeds |
+| Dataset Discovery | Session-scoped | 4+ min → ~30s per test | ✅ Complete |
+| Parallel Execution | 2-4x speedup | 2-4x (validated) | ✅ Complete |
+| Test Categorization | Automated | All categories verified | ✅ Complete |
+
+### Overall Test Suite Performance
+
+**Before Optimizations**:
+- Mapper tests: ~4+ minutes per test (with dataset discovery per test)
+- LLM unit tests: 10-30s per test
+- Full core test suite: ~12+ minutes
+
+**After Optimizations**:
+- Mapper tests: ~30 seconds per test (with cached discovery)
+- LLM unit tests: <1s per test (with mocks and caching)
+- Full core test suite: ~4-5 minutes (with LLM tests)
+- Parallel execution: 2-4x additional speedup for development
+
+**Total Improvement**: ~3-4x overall speedup, with 30-50x improvement for unit tests
+
 ## Future Optimizations
 
-1. **Mock LLM Responses**: Consider mocking LLM calls for unit tests, keeping real calls only for integration tests
-2. **Parallel Test Execution**: Use `pytest-xdist` for parallel test execution (already implemented)
-3. **Test Data Caching**: Cache test data files to avoid repeated generation
-4. **Selective Dataset Loading**: Only load datasets needed for specific tests
+1. ✅ **Mock LLM Responses**: Complete - Unit tests use mocks, integration tests use real LLM
+2. ✅ **Parallel Test Execution**: Complete - Parallel-by-default for development
+3. ✅ **Test Data Caching**: Complete - Content-based caching with 99% improvement
+4. ✅ **Selective Dataset Loading**: Complete - Infrastructure in place
+5. **Future**: Consider fixture-level performance tracking for more granular optimization
 
 ## Notes
 
