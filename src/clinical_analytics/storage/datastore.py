@@ -12,12 +12,36 @@ Deferred to Phase 5+: Table deduplication, storage optimization, compression.
 """
 
 import logging
+import re
 from pathlib import Path
 
 import duckdb
 import polars as pl
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_table_name(name: str) -> str:
+    """
+    Sanitize table name to SQL-safe identifier.
+
+    Replaces spaces, hyphens, and special characters with underscores.
+    Ensures identifier starts with letter/underscore (not number).
+
+    Args:
+        name: Original table name (can contain spaces, hyphens, etc.)
+
+    Returns:
+        SQL-safe identifier (e.g., "statin_use_deidentified")
+    """
+    # Replace non-alphanumeric (except underscore) with underscore
+    sanitized = re.sub(r"[^0-9a-zA-Z_]+", "_", name).strip("_").lower()
+
+    # Ensure it starts with letter or underscore (not a number)
+    if not sanitized or sanitized[0].isdigit():
+        sanitized = f"t_{sanitized}" if sanitized else "t"
+
+    return sanitized
 
 
 class DataStore:
@@ -76,8 +100,9 @@ class DataStore:
             IO Boundary: Accepts eager DataFrame for DuckDB write.
             Use collect() before calling if you have a LazyFrame.
         """
-        # Build qualified table name
-        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+        # Build qualified table name (sanitize table_name for SQL safety)
+        sanitized_table_name = _sanitize_table_name(table_name)
+        qualified_name = f"{upload_id}_{sanitized_table_name}_{dataset_version}"
 
         # Create table in DuckDB (overwrite if exists for idempotency)
         # Use CREATE OR REPLACE for MVP (deferred: IF NOT EXISTS + dedup logic)
@@ -107,8 +132,9 @@ class DataStore:
         Raises:
             ValueError: If table not found
         """
-        # Build qualified table name
-        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+        # Build qualified table name (sanitize table_name for SQL safety)
+        sanitized_table_name = _sanitize_table_name(table_name)
+        qualified_name = f"{upload_id}_{sanitized_table_name}_{dataset_version}"
 
         # Check if table exists
         tables = self.list_tables()
@@ -198,8 +224,9 @@ class DataStore:
         Raises:
             ValueError: If table not found in DuckDB
         """
-        # Build qualified table name
-        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+        # Build qualified table name (sanitize table_name for SQL safety)
+        sanitized_table_name = _sanitize_table_name(table_name)
+        qualified_name = f"{upload_id}_{sanitized_table_name}_{dataset_version}"
 
         # Check if table exists
         tables = self.list_tables()

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest
+.PHONY: help install install-dev test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest
 
 # Default target
 .DEFAULT_GOAL := help
@@ -126,6 +126,14 @@ test-loader: ensure-venv ## Run loader module tests in parallel (default)
 test-loader-serial: ensure-venv ## Run loader module tests serially (for debugging)
 	@echo "$(GREEN)Running loader module tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR)/loader -v
+
+test-storage: ensure-venv ## Run storage module tests in parallel (default)
+	@echo "$(GREEN)Running storage module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/storage -v -n auto -m "not serial"
+
+test-storage-serial: ensure-venv ## Run storage module tests serially (for debugging)
+	@echo "$(GREEN)Running storage module tests serially...$(NC)"
+	$(PYTEST) $(TEST_DIR)/storage -v
 
 test-ui: ensure-venv ## Run UI module tests in parallel (default)
 	@echo "$(GREEN)Running UI module tests in parallel...$(NC)"
