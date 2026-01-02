@@ -3,7 +3,7 @@
 Single source of truth for confidence thresholds and parsing parameters.
 These are domain config, not code - adjust without code changes.
 
-Ollama configuration is loaded from ollama_config.yaml in the project root.
+Ollama configuration is loaded from config/ollama.yaml in the project root.
 Environment variables take precedence over YAML config.
 """
 
@@ -57,12 +57,12 @@ def _load_ollama_config() -> dict[str, Any]:
         "execution_threshold": 0.75,
     }
 
-    # Try to find project root (where ollama_config.yaml should be)
+    # Try to find project root (where config/ollama.yaml should be)
     # Start from this file and go up to find project root
     current_file = Path(__file__)
     project_root = current_file.parent.parent.parent.parent
 
-    config_path = project_root / "ollama_config.yaml"
+    config_path = project_root / "config" / "ollama.yaml"
 
     if not config_path.exists():
         logger.debug(f"Ollama config file not found at {config_path}, using defaults")
