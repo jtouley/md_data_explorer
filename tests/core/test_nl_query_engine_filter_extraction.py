@@ -12,14 +12,15 @@ Tests verify:
 
 import polars as pl
 
-from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import FilterSpec
 
 
 class TestFilterExtractionStopsAtContinuationWords:
     """Test that filter extraction stops at continuation words."""
 
-    def test_filter_extraction_stops_at_and(self, mock_semantic_layer):
+    def test_filter_extraction_stops_at_and(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that filter extraction stops at 'and' in compound queries."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Prescribed? 1: Yes 2: No"
@@ -28,7 +29,7 @@ class TestFilterExtractionStopsAtContinuationWords:
                 "statin_prescribed": statin_column_value,
             }
         )
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from compound query
         query = "how many patients were on statins and which statin was most prescribed?"
@@ -46,7 +47,9 @@ class TestFilterExtractionStopsAtContinuationWords:
                     f"Filter value should not contain continuation phrase, got: {f.value}"
                 )
 
-    def test_filter_extraction_stops_at_which(self, mock_semantic_layer):
+    def test_filter_extraction_stops_at_which(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that filter extraction stops at 'which' in compound queries."""
         # Arrange
         mock = mock_semantic_layer(
@@ -54,7 +57,7 @@ class TestFilterExtractionStopsAtContinuationWords:
                 "treatment": "Treatment Group",
             }
         )
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "which" continuation
         query = "patients on treatment which treatment was most effective"
@@ -68,7 +71,9 @@ class TestFilterExtractionStopsAtContinuationWords:
                     f"Filter value should not contain continuation phrase, got: {f.value}"
                 )
 
-    def test_filter_extraction_stops_at_or(self, mock_semantic_layer):
+    def test_filter_extraction_stops_at_or(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that filter extraction stops at 'or' in compound queries."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Prescribed? 1: Yes 2: No"
@@ -77,7 +82,7 @@ class TestFilterExtractionStopsAtContinuationWords:
                 "statin_prescribed": statin_column_value,
             }
         )
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "or" continuation
         query = "patients on statins or treatment"
@@ -96,7 +101,9 @@ class TestFilterExtractionStopsAtContinuationWords:
                         f"Filter value should be just 'statins' or code 1, got: {f.value}"
                     )
 
-    def test_filter_extraction_correctly_extracts_single_filter(self, mock_semantic_layer):
+    def test_filter_extraction_correctly_extracts_single_filter(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that filter extraction correctly extracts a single filter when no continuation."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Prescribed? 1: Yes 2: No"
@@ -105,7 +112,7 @@ class TestFilterExtractionStopsAtContinuationWords:
                 "statin_prescribed": statin_column_value,
             }
         )
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from simple query
         query = "how many patients were on statins"
@@ -127,7 +134,9 @@ class TestFilterExtractionStopsAtContinuationWords:
 class TestCodedColumnDetection:
     """Test generic coded column detection helper."""
 
-    def test_is_coded_column_uses_metadata_when_available(self, mock_semantic_layer):
+    def test_is_coded_column_uses_metadata_when_available(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that _is_coded_column uses metadata first (most reliable)."""
         # Arrange: Mock semantic layer with metadata
         mock = mock_semantic_layer(
@@ -143,7 +152,7 @@ class TestCodedColumnDetection:
                 "values": [0, 1, 2, 3, 4, 5],
             },
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act
         is_coded = engine._is_coded_column("statin_used")
@@ -153,7 +162,9 @@ class TestCodedColumnDetection:
         # Verify metadata was checked
         mock.get_column_metadata.assert_called_once_with("statin_used")
 
-    def test_is_coded_column_detects_code_pattern_in_alias(self, mock_semantic_layer):
+    def test_is_coded_column_detects_code_pattern_in_alias(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that _is_coded_column detects columns with code patterns (1: Yes 2: No)."""
         # Arrange
         mock = mock_semantic_layer(
@@ -164,7 +175,7 @@ class TestCodedColumnDetection:
         )
         # Mock get_column_metadata to return None (no metadata, tests fallback)
         mock.get_column_metadata.return_value = None
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act
         is_coded = engine._is_coded_column("statin_prescribed", "Statin Prescribed? 1: Yes 2: No")
@@ -174,7 +185,9 @@ class TestCodedColumnDetection:
         assert is_coded is True, "Column with code pattern should be detected as coded"
         assert is_not_coded is False, "Column without code pattern should not be detected as coded"
 
-    def test_is_coded_column_detects_multiple_codes(self, mock_semantic_layer):
+    def test_is_coded_column_detects_multiple_codes(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that _is_coded_column detects columns with multiple codes (0: n/a 1: Atorvastatin...)."""
         # Arrange
         alias = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin 3: Simvastatin"
@@ -185,7 +198,7 @@ class TestCodedColumnDetection:
         )
         # Mock get_column_metadata to return None (no metadata, tests fallback)
         mock.get_column_metadata.return_value = None
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act
         is_coded = engine._is_coded_column("statin_used", alias)
@@ -193,7 +206,9 @@ class TestCodedColumnDetection:
         # Assert
         assert is_coded is True, "Column with multiple codes should be detected as coded"
 
-    def test_is_coded_column_detects_coded_indicators(self, mock_semantic_layer):
+    def test_is_coded_column_detects_coded_indicators(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that _is_coded_column detects columns with coded indicators (prescribed, used, type, etc.)."""
         # Arrange
         mock = mock_semantic_layer(
@@ -204,7 +219,7 @@ class TestCodedColumnDetection:
         )
         # Mock get_column_metadata to return None (no metadata, tests fallback)
         mock.get_column_metadata.return_value = None
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act
         is_coded_type = engine._is_coded_column("medication_type", "Medication Type: 1: A 2: B")
@@ -214,7 +229,9 @@ class TestCodedColumnDetection:
         assert is_coded_type is True, "Column with 'type' indicator should be detected as coded"
         assert is_coded_status is True, "Column with 'status' indicator should be detected as coded"
 
-    def test_is_coded_column_looks_up_alias_when_not_provided(self, mock_semantic_layer):
+    def test_is_coded_column_looks_up_alias_when_not_provided(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that _is_coded_column looks up alias from semantic layer when not provided."""
         # Arrange: Mock returns alias -> canonical mapping
         # The alias is the full string with codes, canonical is the normalized name
@@ -228,7 +245,7 @@ class TestCodedColumnDetection:
         # Mock get_column_metadata to return None (no metadata available)
         # This tests the fallback to alias parsing
         mock.get_column_metadata.return_value = None
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Don't provide alias, let it look up
         is_coded = engine._is_coded_column(canonical)
@@ -240,7 +257,9 @@ class TestCodedColumnDetection:
 class TestFilterExtractionTypeSafety:
     """Test that filter extraction produces type-safe filters for coded columns."""
 
-    def test_filter_extraction_extracts_numeric_codes_not_strings_for_coded_columns(self, mock_semantic_layer):
+    def test_filter_extraction_extracts_numeric_codes_not_strings_for_coded_columns(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'on statins' extracts numeric codes, not string 'statins'."""
         # Arrange: Create semantic layer with coded statin column
         statin_alias = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin 3: Simvastatin"
@@ -254,7 +273,7 @@ class TestFilterExtractionTypeSafety:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query
         query = "how many patients were on statins"
@@ -279,7 +298,9 @@ class TestFilterExtractionTypeSafety:
                             f"Filter value should be int for coded column, got: {f.value} (type: {type(f.value)})"
                         )
 
-    def test_filter_extraction_uses_in_operator_for_multiple_codes(self, mock_semantic_layer):
+    def test_filter_extraction_uses_in_operator_for_multiple_codes(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that coded columns with multiple non-zero codes use IN operator."""
         # Arrange: Column with multiple statin options
         statin_alias = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin 3: Simvastatin 4: Pravastatin"
@@ -288,7 +309,7 @@ class TestFilterExtractionTypeSafety:
                 "statin_used": statin_alias,
             }
         )
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act
         query = "how many patients were on statins"
@@ -303,7 +324,9 @@ class TestFilterExtractionTypeSafety:
                     assert isinstance(f.value, list), f"IN operator should have list value, got: {type(f.value)}"
                     assert all(isinstance(v, int) for v in f.value), f"IN list should contain ints, got: {f.value}"
 
-    def test_filter_extraction_binary_yes_no_extracts_single_code(self, mock_semantic_layer):
+    def test_filter_extraction_binary_yes_no_extracts_single_code(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that binary yes/no columns extract single code (1 for Yes)."""
         # Arrange: Binary prescribed column
         statin_alias = "Statin Prescribed? 1: Yes 2: No"
@@ -312,7 +335,7 @@ class TestFilterExtractionTypeSafety:
                 "statin_prescribed": statin_alias,
             }
         )
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act
         query = "how many patients were on statins"
@@ -399,7 +422,9 @@ class TestFilterApplicationTypeSafety:
 class TestFilterExtractionStrategy1ToStrategy2Handoff:
     """Test that Strategy 1 correctly passes matched coded columns to Strategy 2."""
 
-    def test_strategy1_passes_coded_column_to_strategy2(self, mock_semantic_layer):
+    def test_strategy1_passes_coded_column_to_strategy2(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """
         Test that when Strategy 1 finds a coded column via fuzzy matching,
         Strategy 2 uses it directly instead of searching again.
@@ -432,7 +457,7 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
 
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
         # Override _fuzzy_match_variable to return canonical_name for "statins"
         original_fuzzy = engine._fuzzy_match_variable
 
@@ -472,7 +497,9 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
                 f"Filter value should be int code, got: {statin_filter.value} (type: {type(statin_filter.value)})"
             )
 
-    def test_strategy1_to_strategy2_handoff_prevents_missing_filters(self, mock_semantic_layer):
+    def test_strategy1_to_strategy2_handoff_prevents_missing_filters(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """
         Test that Strategy 1→Strategy 2 handoff prevents filters from being missed
         when singular/plural differences would cause Strategy 2 search to fail.
@@ -485,7 +512,7 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
                 "statin_prescribed": statin_alias,
             }
         )
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Query with plural "statins"
         query = "patients on statins"
@@ -501,7 +528,9 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
                 for f in statin_filters:
                     assert not isinstance(f.value, str), f"Filter should have numeric code, not string, got: {f.value}"
 
-    def test_strategy1_handles_full_alias_string_as_column_name(self, mock_semantic_layer):
+    def test_strategy1_handles_full_alias_string_as_column_name(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """
         Test that when _fuzzy_match_variable returns the full alias string (with codes)
         as the column name, Strategy 1 correctly identifies it and passes it to Strategy 2.
@@ -526,7 +555,7 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
 
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Override _fuzzy_match_variable to return full alias string
         def mock_fuzzy(term):
@@ -565,7 +594,9 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
 class TestExclusionFilters:
     """Test exclusion filter patterns like 'excluding those not on X'."""
 
-    def test_exclude_variant_creates_exclusion_filter(self, mock_semantic_layer):
+    def test_exclude_variant_creates_exclusion_filter(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'exclude' variant (not just 'excluding') creates exclusion filter."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -580,7 +611,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "exclude" (not "excluding")
         query = "only include patients on statins, exclude n/a"
@@ -597,7 +628,9 @@ class TestExclusionFilters:
         assert na_filter.column == "statin_used"
         assert na_filter.value == 0
 
-    def test_remove_pattern_creates_exclusion_filter(self, mock_semantic_layer):
+    def test_remove_pattern_creates_exclusion_filter(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'remove' pattern creates exclusion filter."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -612,7 +645,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "remove" (provide context with "on statins")
         query = "patients on statins, results are skewed, remove 0"
@@ -628,7 +661,9 @@ class TestExclusionFilters:
         remove_filter = exclusion_filters[0]
         assert remove_filter.value == 0
 
-    def test_exclude_na_value_maps_to_code_zero(self, mock_semantic_layer):
+    def test_exclude_na_value_maps_to_code_zero(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'exclude n/a' maps to code 0 for coded columns."""
         # Arrange: Create semantic layer with coded column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -643,7 +678,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with explicit "n/a" value
         query = "patients on statins exclude n/a"
@@ -657,7 +692,9 @@ class TestExclusionFilters:
         na_filter = exclusion_filters[0]
         assert na_filter.value == 0, "Should map 'n/a' to code 0"
 
-    def test_exclusion_filter_excludes_code_zero(self, mock_semantic_layer):
+    def test_exclusion_filter_excludes_code_zero(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'excluding those not on X' creates a filter to exclude code 0."""
         # Arrange: Create semantic layer with statin column
         # Note: alias_index is {alias: canonical}, not {canonical: alias}
@@ -674,7 +711,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from exclusion query
         query = "excluding those not on statins"
@@ -689,7 +726,7 @@ class TestExclusionFilters:
         assert exclusion_filter.value == 0
         assert exclusion_filter.exclude_nulls is True
 
-    def test_exclusion_with_most_query(self, mock_semantic_layer):
+    def test_exclusion_with_most_query(self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model):
         """Test that 'excluding those not on X, which was the most Y' extracts both exclusion and grouping."""
         # Arrange: Create semantic layer with statin column
         # Note: alias_index is {alias: canonical}, not {canonical: alias}
@@ -707,7 +744,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Parse compound query with exclusion and grouping
         query = "excluding those not on statins, which was the most prescribed statin?"
@@ -725,7 +762,9 @@ class TestExclusionFilters:
         # Should have grouping variable
         assert intent.grouping_variable == "statin_used"
 
-    def test_exclusion_filter_works_for_any_medication_type(self, mock_semantic_layer):
+    def test_exclusion_filter_works_for_any_medication_type(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that exclusion filters are generic and work for any medication/treatment type."""
         # Arrange: Create semantic layer with diabetes medication column (different domain)
         diabetes_column_value = "Diabetes Medication: 0: n/a 1: Metformin 2: Insulin 3: Glipizide"
@@ -741,7 +780,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from exclusion query (different domain)
         query = "excluding those not on diabetes medication"
@@ -756,7 +795,9 @@ class TestExclusionFilters:
         assert exclusion_filter.value == 0  # Generic: exclude code 0 (n/a)
         assert exclusion_filter.exclude_nulls is True
 
-    def test_exclusion_filter_works_for_any_coded_column(self, mock_semantic_layer):
+    def test_exclusion_filter_works_for_any_coded_column(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that exclusion filters work for any coded column, not just medications."""
         # Arrange: Create semantic layer with treatment column (different domain)
         treatment_column_value = "Treatment Type: 0: None 1: Surgery 2: Chemotherapy 3: Radiation"
@@ -772,7 +813,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from exclusion query (different domain)
         query = "excluding patients not on treatment"
@@ -787,7 +828,9 @@ class TestExclusionFilters:
         assert exclusion_filter.value == 0  # Generic: exclude code 0 (n/a/None)
         assert exclusion_filter.exclude_nulls is True
 
-    def test_dont_want_pattern_with_context_creates_exclusion_filter(self, mock_semantic_layer):
+    def test_dont_want_pattern_with_context_creates_exclusion_filter(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'i don't want the 0 results' creates exclusion filter when context is available."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -802,7 +845,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "don't want" pattern and context
         query = "what statins were patients on, i don't want the 0 results"
@@ -817,7 +860,9 @@ class TestExclusionFilters:
         dont_want_filter = exclusion_filters[0]
         assert dont_want_filter.value == 0, "Should exclude code 0 for 'don't want the 0'"
 
-    def test_dont_want_zero_with_context_creates_exclusion_filter(self, mock_semantic_layer):
+    def test_dont_want_zero_with_context_creates_exclusion_filter(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'don't want 0' creates exclusion filter when context from 'on X' is available."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -832,7 +877,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "don't want" and context
         query = "patients on statins, don't want 0"
@@ -846,7 +891,9 @@ class TestExclusionFilters:
         dont_want_filter = exclusion_filters[0]
         assert dont_want_filter.value == 0, "Should exclude code 0"
 
-    def test_do_not_want_na_creates_exclusion_filter(self, mock_semantic_layer):
+    def test_do_not_want_na_creates_exclusion_filter(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'do not want n/a' creates exclusion filter when context is available."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -861,7 +908,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "do not want" pattern
         query = "patients on statins, do not want n/a"
@@ -875,7 +922,9 @@ class TestExclusionFilters:
         na_filter = exclusion_filters[0]
         assert na_filter.value == 0, "Should map 'n/a' to code 0"
 
-    def test_dont_want_with_grouping_variable_uses_context(self, mock_semantic_layer):
+    def test_dont_want_with_grouping_variable_uses_context(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'don't want' pattern uses grouping_variable parameter for follow-up queries."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -890,7 +939,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters with grouping_variable parameter (simulating follow-up query)
         # This simulates a follow-up query where grouping_variable is available from previous query
@@ -905,7 +954,9 @@ class TestExclusionFilters:
         assert dont_want_filter.column == "statin_used", "Should use grouping_variable for column"
         assert dont_want_filter.value == 0, "Should exclude code 0"
 
-    def test_dont_want_strips_the_prefix_from_value(self, mock_semantic_layer):
+    def test_dont_want_strips_the_prefix_from_value(
+        self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
+    ):
         """Test that 'don't want the 0' correctly strips 'the' prefix from value."""
         # Arrange: Create semantic layer with statin column
         statin_column_value = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin"
@@ -920,7 +971,7 @@ class TestExclusionFilters:
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2]},
         }
-        engine = NLQueryEngine(mock)
+        engine = nl_query_engine_with_cached_model(semantic_layer=mock)
 
         # Act: Extract filters from query with "the 0" (should strip "the")
         query = "patients on statins, i don't want the 0 results"

@@ -2,10 +2,8 @@
 Pytest configuration and fixtures for clinical analytics tests.
 """
 
-import io
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 import polars as pl
@@ -14,6 +12,330 @@ import yaml
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+# Register performance tracking plugin
+# Plugin checks --track-performance flag internally and only tracks when enabled
+pytest_plugins = ["performance.plugin"]
+
+
+# ============================================================================
+# LLM Mocking Fixture (Phase 2.1: Performance Optimization)
+# ============================================================================
+
+
+@pytest.fixture
+def mock_llm_calls(request):
+    """
+    Explicit fixture to mock LLM calls for unit tests.
+
+    Usage: Add 'mock_llm_calls' to test function parameters.
+    Integration tests should NOT use this fixture to get real LLM calls.
+
+    This fixture mocks all LLMFeature types with realistic responses,
+    providing 30-50x speedup (10-30s → <1s per test).
+
+    Automatically skips mocking for tests marked with @pytest.mark.integration
+    to allow real Ollama validation.
+    """
+    # Skip mocking for integration tests that need real Ollama
+    integration_marker = request.node.get_closest_marker("integration")
+    if integration_marker:
+        # Don't mock - let real Ollama run for integration tests
+        yield None
+        return
+
+    from unittest.mock import patch
+
+    from clinical_analytics.core.llm_feature import LLMCallResult, LLMFeature
+
+    # Patch call_llm in all modules that import it
+    patches = [
+        patch("clinical_analytics.core.llm_feature.call_llm"),
+        patch("clinical_analytics.core.filter_extraction.call_llm"),
+        patch("clinical_analytics.core.result_interpretation.call_llm"),
+        patch("clinical_analytics.core.error_translation.call_llm"),
+        patch("clinical_analytics.core.golden_question_generator.call_llm"),
+        # Also patch OllamaClient.generate() for code that uses it directly (e.g., NLQueryEngine)
+        patch("clinical_analytics.core.llm_client.OllamaClient.generate"),
+        # CRITICAL: Patch is_available() to avoid real HTTP requests (30s timeout when Ollama isn't running)
+        patch("clinical_analytics.core.llm_client.OllamaClient.is_available", return_value=True),
+    ]
+
+    # Start all patches
+    mock_objects = [p.start() for p in patches]
+
+    # Use the first mock as the main one
+    mock_call_llm = mock_objects[0]
+
+    # Mock for OllamaClient.generate() - returns raw JSON string
+    # Note: When used as side_effect, receives all arguments including self
+    def _mock_ollama_generate(*args, **kwargs):
+        """Mock OllamaClient.generate() to return JSON string matching QueryPlan schema."""
+        import json
+
+        # Extract arguments (self is first arg for instance methods, but we ignore it)
+        # OllamaClient.generate() signature: generate(self, prompt, system_prompt=None, json_mode=False, model=None)
+        prompt = args[1] if len(args) > 1 else kwargs.get("prompt", "")
+        system_prompt = kwargs.get("system_prompt", None)
+
+        prompt_lower = prompt.lower() if prompt else ""
+        system_prompt_lower = system_prompt.lower() if system_prompt else ""
+        combined_text = f"{prompt_lower} {system_prompt_lower}"
+
+        import re
+
+        # Detect refinement queries - check for refinement keywords in prompt or conversation history in system prompt
+        is_refinement = (
+            "refinement" in combined_text
+            or "remove" in prompt_lower
+            or "exclude" in prompt_lower
+            or "without" in prompt_lower
+            or "get rid of" in prompt_lower
+            or "also exclude" in prompt_lower
+            or "only active" in prompt_lower
+            or (
+                "conversation_history" in system_prompt_lower
+                and ("remove" in prompt_lower or "exclude" in prompt_lower)
+            )
+        )
+
+        # Return appropriate JSON based on prompt content (heuristic)
+        if is_refinement:
+            # Refinement query - return query plan with filters
+            # Extract group_by from conversation history if present in system prompt
+            group_by = None
+            if system_prompt:
+                # Look for previous group_by in conversation history JSON
+                # Pattern: "group_by": "column_name" or "group_by": null
+                # Also handle multi-line strings (the statin column name is very long)
+                group_by_match = re.search(r'"group_by":\s*"([^"]+)"', system_prompt, re.DOTALL)
+                if group_by_match:
+                    group_by = group_by_match.group(1)
+                # Also check for previous_group_by in logs (format: previous_group_by='...')
+                prev_group_by_match = re.search(r"previous_group_by[=:]\s*['\"]([^'\"]+)['\"]", system_prompt)
+                if prev_group_by_match:
+                    group_by = prev_group_by_match.group(1)
+
+            # Determine filter column and value based on context
+            filter_column = "status"  # default
+            filter_operator = "!="
+            filter_value = 0
+
+            # Check for age filter updates ("actually make it over 65")
+            # Look for age-related keywords in prompt or system prompt
+            has_age_context = (
+                "age" in prompt_lower
+                or "age" in system_prompt_lower
+                or "over" in prompt_lower
+                or "65" in prompt_lower
+                or "50" in prompt_lower
+            )
+
+            if has_age_context and ("over" in prompt_lower or ">" in prompt_lower):
+                filter_column = "age"
+                filter_operator = ">"
+                # Extract age value from prompt (e.g., "over 65", "> 50")
+                age_match = re.search(r"(?:over|>)\s*(\d+)", prompt_lower)
+                if age_match:
+                    filter_value = int(age_match.group(1))
+                elif "65" in prompt_lower:
+                    filter_value = 65
+                elif "50" in prompt_lower:
+                    filter_value = 50
+                else:
+                    filter_value = 65  # default
+                response = {
+                    "intent": "COUNT",
+                    "metric": None,
+                    "group_by": group_by,
+                    "filters": [
+                        {
+                            "column": filter_column,
+                            "operator": filter_operator,
+                            "value": filter_value,
+                            "exclude_nulls": True,
+                        }
+                    ],
+                    "confidence": 0.8,
+                    "explanation": "Refining previous query with updated age filter",
+                }
+                return json.dumps(response)
+            elif "statin" in combined_text:
+                filter_column = "statin_used"
+            elif "treatment" in combined_text:
+                filter_column = "treatment_group"
+            elif "status" in combined_text:
+                filter_column = "status"
+
+            response = {
+                "intent": "COUNT",
+                "metric": None,
+                "group_by": group_by,
+                "filters": [
+                    {"column": filter_column, "operator": filter_operator, "value": filter_value, "exclude_nulls": True}
+                ],
+                "confidence": 0.8,
+                "explanation": "Refining previous query by excluding n/a values",
+            }
+            return json.dumps(response)
+        elif "filter" in prompt_lower:
+            # Filter extraction
+            return '{"filters": []}'
+        elif "follow" in prompt_lower:
+            # Follow-ups
+            return '{"follow_ups": []}'
+        elif "describe" in prompt_lower:
+            # DESCRIBE query
+            response = {
+                "intent": "DESCRIBE",
+                "metric": None,
+                "group_by": None,
+                "filters": [],
+                "confidence": 0.8,
+                "explanation": "Describe the data",
+            }
+            return json.dumps(response)
+        else:
+            # Default parse response
+            response = {
+                "intent": "DESCRIBE",
+                "metric": None,
+                "group_by": None,
+                "filters": [],
+                "confidence": 0.8,
+                "explanation": "Default query plan",
+            }
+            return json.dumps(response)
+
+    # Mock responses for all LLMFeature types
+    def _mock_call_llm(feature, system, user, timeout_s, model=None):
+        if feature == LLMFeature.PARSE:
+            return LLMCallResult(
+                raw_text='{"intent": "DESCRIBE", "confidence": 0.8}',
+                payload={"intent": "DESCRIBE", "confidence": 0.8},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.FILTER_EXTRACTION:
+            return LLMCallResult(
+                raw_text='{"filters": []}',
+                payload={"filters": []},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.FOLLOWUPS:
+            return LLMCallResult(
+                raw_text='{"follow_ups": []}',
+                payload={"follow_ups": []},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.RESULT_INTERPRETATION:
+            return LLMCallResult(
+                raw_text='{"interpretation": "Test interpretation"}',
+                payload={"interpretation": "Test interpretation"},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.ERROR_TRANSLATION:
+            return LLMCallResult(
+                raw_text='{"translation": "Test error translation"}',
+                payload={"translation": "Test error translation"},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        elif feature == LLMFeature.INTERPRETATION:
+            return LLMCallResult(
+                raw_text='{"interpretation": "Test interpretation", "confidence": 0.8}',
+                payload={"interpretation": "Test interpretation", "confidence": 0.8},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        # Default fallback
+        return LLMCallResult(
+            raw_text="{}",
+            payload={},
+            latency_ms=10.0,
+            timed_out=False,
+            error=None,
+        )
+
+    # Set side_effect on all mocks EXCEPT OllamaClient.generate (which uses _mock_ollama_generate)
+    # Note: is_available() patch (index 6) uses return_value=True, not side_effect
+    ollama_generate_mock_index = 5  # Index of OllamaClient.generate mock
+    for i, mock in enumerate(mock_objects):
+        if i == ollama_generate_mock_index:
+            mock.side_effect = _mock_ollama_generate
+        elif i < 6:  # Only set side_effect for call_llm mocks (indices 0-4)
+            mock.side_effect = _mock_call_llm
+        # Index 6 (is_available) already has return_value=True from patch() call
+
+    yield mock_call_llm
+
+    # Stop all patches
+    for p in patches:
+        p.stop()
+
+
+@pytest.fixture(scope="session")
+def cached_sentence_transformer():
+    """
+    Session-scoped fixture to cache SentenceTransformer model.
+
+    Loads the model once per test session and reuses it across all tests.
+    This provides 2-5 second speedup per test that uses semantic matching.
+
+    The model is loaded lazily on first use in NLQueryEngine._semantic_match(),
+    but this fixture pre-loads it once for the entire test session.
+    """
+    from sentence_transformers import SentenceTransformer
+
+    # Use same model name as NLQueryEngine default
+    model_name = "all-MiniLM-L6-v2"
+    encoder = SentenceTransformer(model_name)
+
+    yield encoder
+
+    # Cleanup (if needed)
+    del encoder
+
+
+@pytest.fixture
+def nl_query_engine_with_cached_model(make_semantic_layer, cached_sentence_transformer):
+    """
+    Factory fixture that creates NLQueryEngine with pre-loaded SentenceTransformer.
+
+    This avoids reloading the model for each test, providing 2-5s speedup per test.
+
+    Usage:
+        def test_example(nl_query_engine_with_cached_model, make_semantic_layer):
+            semantic = make_semantic_layer(...)
+            engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
+            result = engine.parse_query("describe outcome")
+    """
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    def _create_engine(semantic_layer=None, **kwargs):
+        if semantic_layer is None:
+            semantic_layer = make_semantic_layer()
+
+        engine = NLQueryEngine(semantic_layer=semantic_layer, **kwargs)
+        # Inject pre-loaded encoder
+        engine.encoder = cached_sentence_transformer
+        # Pre-compute template embeddings if not already done
+        if engine.template_embeddings is None:
+            template_texts = [t["template"] for t in engine.query_templates]
+            engine.template_embeddings = cached_sentence_transformer.encode(template_texts)
+
+        return engine
+
+    return _create_engine
 
 
 @pytest.fixture(scope="session")
@@ -96,41 +418,118 @@ def large_test_data_csv(num_records: int = 1000000) -> str:
     Returns:
         CSV string with patient_id and age columns
     """
-    return "patient_id,age\n" + "\n".join([f"P{i:06d},{20 + i % 100}" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "age": lambda i: str(20 + i % 100),
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
 def large_patients_csv(num_records: int = 1000000) -> str:
     """Generate large patients CSV with patient_id, age, sex columns."""
-    return "patient_id,age,sex\n" + "\n".join(
-        [f"P{i:06d},{20 + i % 100},{['M', 'F'][i % 2]}" for i in range(num_records)]
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "age": lambda i: str(20 + i % 100),
+            "sex": lambda i: ["M", "F"][i % 2],
+        },
+        num_records=num_records,
     )
 
 
 @pytest.fixture
 def large_admissions_csv(num_records: int = 1000000) -> str:
     """Generate large admissions CSV with patient_id and date columns."""
-    return "patient_id,date\n" + "\n".join([f"P{i:06d},2020-01-{1 + i % 30:02d}" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "date": lambda i: f"2020-01-{1 + i % 30:02d}",
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
 def large_admissions_with_admission_date_csv(num_records: int = 1000000) -> str:
     """Generate large admissions CSV with patient_id and admission_date columns."""
-    return "patient_id,admission_date\n" + "\n".join([f"P{i:06d},2020-01-{1 + i % 30:02d}" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "admission_date": lambda i: f"2020-01-{1 + i % 30:02d}",
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
 def large_admissions_with_discharge_csv(num_records: int = 1000000) -> str:
     """Generate large admissions CSV with patient_id, admission_date, discharge_date columns."""
-    return "patient_id,admission_date,discharge_date\n" + "\n".join(
-        [f"P{i:06d},2020-01-{1 + i % 30:02d},2020-01-{5 + i % 30:02d}" for i in range(num_records)]
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "admission_date": lambda i: f"2020-01-{1 + i % 30:02d}",
+            "discharge_date": lambda i: f"2020-01-{5 + i % 30:02d}",
+        },
+        num_records=num_records,
     )
 
 
 @pytest.fixture
 def large_diagnoses_csv(num_records: int = 1000000) -> str:
     """Generate large diagnoses CSV with patient_id, icd_code, diagnosis columns."""
-    return "patient_id,icd_code,diagnosis\n" + "\n".join([f"P{i:06d},E11.9,Diabetes" for i in range(num_records)])
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_csv
+
+    return make_large_csv(
+        columns={
+            "patient_id": lambda i: f"P{i:06d}",
+            "icd_code": lambda i: "E11.9",
+            "diagnosis": lambda i: "Diabetes",
+        },
+        num_records=num_records,
+    )
 
 
 @pytest.fixture
@@ -141,12 +540,19 @@ def large_zip_with_csvs(large_patients_csv, large_admissions_csv) -> bytes:
     Returns:
         ZIP file bytes with patients.csv and admissions.csv
     """
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-        zip_file.writestr("patients.csv", large_patients_csv)
-        zip_file.writestr("admissions.csv", large_admissions_csv)
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_zip
+
+    return make_large_zip(
+        csv_files={
+            "patients.csv": large_patients_csv,
+            "admissions.csv": large_admissions_csv,
+        }
+    )
 
 
 @pytest.fixture
@@ -157,13 +563,20 @@ def large_zip_with_three_tables(large_patients_csv, large_admissions_csv, large_
     Returns:
         ZIP file bytes with patients.csv, admissions.csv, and diagnoses.csv
     """
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-        zip_file.writestr("patients.csv", large_patients_csv)
-        zip_file.writestr("admissions.csv", large_admissions_csv)
-        zip_file.writestr("diagnoses.csv", large_diagnoses_csv)
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import make_large_zip
+
+    return make_large_zip(
+        csv_files={
+            "patients.csv": large_patients_csv,
+            "admissions.csv": large_admissions_csv,
+            "diagnoses.csv": large_diagnoses_csv,
+        }
+    )
 
 
 @pytest.fixture
@@ -236,11 +649,19 @@ def synthetic_dexa_excel_file(tmp_path_factory):
     - 25-50 rows of clinical data
     - Mixed data types (strings, numbers, dates)
 
+    Uses caching to avoid regeneration across test runs.
+
     Returns:
         Path to Excel file
     """
-    import pandas as pd
+    import sys
+    from pathlib import Path
 
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import _create_synthetic_excel_file
+
+    # Create DataFrame (deterministic data)
     data = {
         "Race": ["Black or African-American"] * 30 + ["White"] * 20,
         "Gender": ["Male", "Female"] * 25,
@@ -254,11 +675,12 @@ def synthetic_dexa_excel_file(tmp_path_factory):
         "Prior Tenofovir (TDF) use? 1: Yes 2: No 3: Unknown": [1, 2, 3] * 16 + [1, 2],
     }
 
-    df = pd.DataFrame(data)
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_dexa.xlsx"
-    df.to_excel(excel_path, index=False, engine="openpyxl")
-
-    return excel_path
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_dexa.xlsx",
+        excel_config={"header_row": 0, "use_dataframe_hash": True},
+    )
 
 
 @pytest.fixture(scope="module")
@@ -275,7 +697,12 @@ def synthetic_statin_excel_file(tmp_path_factory):
     Returns:
         Path to Excel file
     """
-    import pandas as pd
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import _create_synthetic_excel_file
 
     # All columns must have exactly 50 rows
     n_rows = 50
@@ -297,23 +724,16 @@ def synthetic_statin_excel_file(tmp_path_factory):
         "HTN 1: Yes 2: No": ([1, 2] * 25)[:n_rows],
     }
 
-    df_data = pd.DataFrame(data)
-
-    # Create Excel with empty first row, then headers, then data
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_statin.xlsx"
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        # Write empty first row
-        empty_row = pd.DataFrame([[""] * len(df_data.columns)])
-        empty_row.to_excel(writer, index=False, header=False, startrow=0)
-
-        # Write headers in row 2 (index 1)
-        headers_df = pd.DataFrame([df_data.columns])
-        headers_df.to_excel(writer, index=False, header=False, startrow=1)
-
-        # Write data starting from row 3 (index 2)
-        df_data.to_excel(writer, index=False, header=False, startrow=2)
-
-    return excel_path
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_statin.xlsx",
+        excel_config={
+            "header_row": 1,
+            "metadata_rows": [{"row_index": 0, "cells": [""] * len(data)}],
+            "use_dataframe_hash": False,  # Must hash file due to metadata row
+        },
+    )
 
 
 @pytest.fixture(scope="module")
@@ -328,7 +748,12 @@ def synthetic_complex_excel_file(tmp_path_factory):
     Returns:
         Path to Excel file
     """
-    import pandas as pd
+    import sys
+    from pathlib import Path
+
+    # Add tests to path for imports
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.factories import _create_synthetic_excel_file
 
     # All columns must have exactly 45 rows
     n_rows = 45
@@ -347,25 +772,20 @@ def synthetic_complex_excel_file(tmp_path_factory):
         "Diabetes Yes:1 No:2": ([1, 2] * 23)[:n_rows],
     }
 
-    df_data = pd.DataFrame(data)
+    # Create metadata row with "Units" in column 8 (index 7)
+    metadata_cells = [None] * len(data)
+    metadata_cells[7] = "Units"
 
-    # Create Excel with metadata row, then headers, then data
-    excel_path = tmp_path_factory.mktemp("excel_data") / "synthetic_complex.xlsx"
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        # Write metadata row (row 1) - mostly empty, one cell with "Units"
-        metadata_row = [None] * len(df_data.columns)
-        metadata_row[7] = "Units"  # Put "Units" in column 8
-        metadata_df = pd.DataFrame([metadata_row])
-        metadata_df.to_excel(writer, index=False, header=False, startrow=0)
-
-        # Write headers in row 2 (index 1)
-        headers_df = pd.DataFrame([df_data.columns])
-        headers_df.to_excel(writer, index=False, header=False, startrow=1)
-
-        # Write data starting from row 3 (index 2)
-        df_data.to_excel(writer, index=False, header=False, startrow=2)
-
-    return excel_path
+    return _create_synthetic_excel_file(
+        tmp_path_factory,
+        data,
+        "synthetic_complex.xlsx",
+        excel_config={
+            "header_row": 1,
+            "metadata_rows": [{"row_index": 0, "cells": metadata_cells}],
+            "use_dataframe_hash": False,  # Must hash file due to metadata row
+        },
+    )
 
 
 # ============================================================================
@@ -1096,3 +1516,95 @@ def discovered_datasets():
         "configs": configs,
         "all_datasets": all_datasets,
     }
+
+
+@pytest.fixture(scope="session")
+def dataset_registry():
+    """
+    Session-scoped dataset registry for lazy loading.
+
+    Discovers datasets but does NOT pre-load all configs.
+    Configs are loaded lazily when get_dataset_by_name() is called.
+
+    Returns:
+        DatasetRegistry class (not instance) - use DatasetRegistry.get_dataset() directly
+    """
+    from clinical_analytics.core.registry import DatasetRegistry
+
+    # Discover datasets once per session (but don't load configs)
+    DatasetRegistry.reset()
+    DatasetRegistry.discover_datasets()
+    DatasetRegistry.load_config()  # Load config registry, but not individual dataset configs
+
+    return DatasetRegistry
+
+
+@pytest.fixture
+def get_dataset_by_name(dataset_registry):
+    """
+    Helper fixture to load specific dataset by name (lazy loading).
+
+    This fixture allows tests to load only the dataset they need,
+    avoiding the cost of loading all dataset configs upfront.
+
+    Args:
+        dataset_registry: Session-scoped DatasetRegistry class
+
+    Returns:
+        Function that takes dataset name and returns ClinicalDataset instance
+
+    Example:
+        def test_example(get_dataset_by_name):
+            dataset = get_dataset_by_name("my_dataset")
+            cohort = dataset.get_cohort()
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    def _get(name: str):
+        """
+        Load dataset by name, skipping if not available.
+
+        Args:
+            name: Dataset name to load
+
+        Returns:
+            ClinicalDataset instance
+
+        Raises:
+            pytest.skip: If dataset doesn't exist or doesn't validate
+        """
+        try:
+            dataset = dataset_registry.get_dataset(name)
+            if dataset is None:
+                pytest.skip(f"Dataset '{name}' not found in registry")
+
+            # Validate dataset (check if data is available)
+            if not dataset.validate():
+                pytest.skip(f"Dataset '{name}' data not available")
+
+            logger.info(f"selective_dataset_loaded: dataset={name}")
+
+            return dataset
+        except Exception as e:
+            logger.warning(
+                f"selective_dataset_load_failed: dataset={name}, error={e}",
+            )
+            pytest.skip(f"Failed to load dataset '{name}': {e}")
+
+    return _get
+
+
+# ============================================================================
+# Performance Tracking Plugin Registration
+# ============================================================================
+
+
+# Import performance plugin to register pytest_addoption hook
+# The plugin checks --track-performance flag internally
+try:
+    import performance.plugin  # noqa: F401
+except ImportError:
+    # Plugin not available, skip
+    pass

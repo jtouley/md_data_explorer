@@ -10,8 +10,9 @@ Or skip if Ollama unavailable: pytest tests/core/test_llm_fallback_integration.p
 
 import pytest
 
-# Mark all tests in this file as integration tests
-pytestmark = pytest.mark.integration
+# Mark all tests in this file as integration tests (require real Ollama)
+# Also mark as slow since LLM calls take 5-15 seconds each
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
 @pytest.fixture

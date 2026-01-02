@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-unit test-integration test-cov lint format type-check check clean run run-app run-app-keep validate ensure-venv diff test-analysis test-core test-datasets test-e2e test-loader test-ui test-fast-serial git-log-first git-log-rest
+.PHONY: help install install-dev test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest
 
 # Default target
 .DEFAULT_GOAL := help
@@ -54,58 +54,131 @@ install-dev: ## Install all dependencies including dev tools
 	@echo "  • Docs tools: mkdocs and related packages (from dependency-groups)"
 	$(UV) sync --extra dev --group dev
 
-test: ensure-venv ## Run all tests
-	@echo "$(GREEN)Running all tests...$(NC)"
+test: ensure-venv ## Run all tests in parallel (default)
+	@echo "$(GREEN)Running all tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -n auto -m "not serial"
+
+test-serial: ensure-venv ## Run all tests serially (for debugging or deterministic results)
+	@echo "$(GREEN)Running all tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v
 
-test-unit: ## Run unit tests only
-	@echo "$(GREEN)Running unit tests...$(NC)"
+test-unit: ## Run unit tests only in parallel (default)
+	@echo "$(GREEN)Running unit tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "not integration and not serial" -n auto
+
+test-unit-serial: ## Run unit tests serially (for debugging)
+	@echo "$(GREEN)Running unit tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v -m "not integration"
 
-test-integration: ## Run integration tests only
-	@echo "$(GREEN)Running integration tests...$(NC)"
+test-integration: ## Run integration tests in parallel (default)
+	@echo "$(GREEN)Running integration tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "integration and not serial" -n auto
+
+test-integration-serial: ## Run integration tests serially (for debugging)
+	@echo "$(GREEN)Running integration tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v -m "integration"
 
-test-fast: ## Run fast tests (skip slow tests) in parallel
+test-fast: ## Run fast tests (skip slow tests) in parallel (default)
 	@echo "$(GREEN)Running fast tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n auto  # auto = use all CPU cores
+	$(PYTEST) $(TEST_DIR) -v -m "not slow and not serial" -n auto
 
 test-fast-serial: ## Run fast tests serially (for debugging)
 	@echo "$(GREEN)Running fast tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow" -n 0
+	$(PYTEST) $(TEST_DIR) -v -m "not slow"
 
-# Module-specific test commands
-test-analysis: ensure-venv ## Run analysis module tests in parallel
+# Module-specific test commands (parallel by default)
+test-analysis: ensure-venv ## Run analysis module tests in parallel (default)
 	@echo "$(GREEN)Running analysis module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/analysis -v -n auto
+	$(PYTEST) $(TEST_DIR)/analysis -v -n auto -m "not serial"
 
-test-core: ensure-venv ## Run core module tests in parallel
+test-analysis-serial: ensure-venv ## Run analysis module tests serially (for debugging)
+	@echo "$(GREEN)Running analysis module tests serially...$(NC)"
+	$(PYTEST) $(TEST_DIR)/analysis -v
+
+test-core: ensure-venv ## Run core module tests in parallel (default)
 	@echo "$(GREEN)Running core module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/core -v -n auto
+	$(PYTEST) $(TEST_DIR)/core -v -n auto -m "not serial"
 
-test-datasets: ensure-venv ## Run datasets module tests
-	@echo "$(GREEN)Running datasets module tests...$(NC)"
+test-core-serial: ensure-venv ## Run core module tests serially (for debugging)
+	@echo "$(GREEN)Running core module tests serially...$(NC)"
+	$(PYTEST) $(TEST_DIR)/core -v
+
+test-datasets: ensure-venv ## Run datasets module tests in parallel (default)
+	@echo "$(GREEN)Running datasets module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/datasets -v -n auto -m "not serial"
+
+test-datasets-serial: ensure-venv ## Run datasets module tests serially (for debugging)
+	@echo "$(GREEN)Running datasets module tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR)/datasets -v
 
-test-e2e: ensure-venv ## Run end-to-end tests
-	@echo "$(GREEN)Running end-to-end tests...$(NC)"
+test-e2e: ensure-venv ## Run end-to-end tests in parallel (default)
+	@echo "$(GREEN)Running end-to-end tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/e2e -v -n auto -m "not serial"
+
+test-e2e-serial: ensure-venv ## Run end-to-end tests serially (for debugging)
+	@echo "$(GREEN)Running end-to-end tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR)/e2e -v
 
-test-loader: ensure-venv ## Run loader module tests
-	@echo "$(GREEN)Running loader module tests...$(NC)"
+test-loader: ensure-venv ## Run loader module tests in parallel (default)
+	@echo "$(GREEN)Running loader module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/loader -v -n auto -m "not serial"
+
+test-loader-serial: ensure-venv ## Run loader module tests serially (for debugging)
+	@echo "$(GREEN)Running loader module tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR)/loader -v
 
-test-ui: ensure-venv ## Run UI module tests
-	@echo "$(GREEN)Running UI module tests...$(NC)"
+test-ui: ensure-venv ## Run UI module tests in parallel (default)
+	@echo "$(GREEN)Running UI module tests in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR)/ui -v -n auto -m "not serial"
+
+test-ui-serial: ensure-venv ## Run UI module tests serially (for debugging)
+	@echo "$(GREEN)Running UI module tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR)/ui -v
 
-test-cov: ## Run tests with coverage report
-	@echo "$(GREEN)Running tests with coverage...$(NC)"
+test-performance: ensure-venv ## Run tests with performance tracking in parallel (default)
+	@echo "$(GREEN)Running tests with performance tracking in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v --track-performance -n auto -m "not serial"
+
+test-performance-serial: ensure-venv ## Run tests with performance tracking serially (for baseline/deterministic results)
+	@echo "$(GREEN)Running tests with performance tracking serially...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v --track-performance
+
+performance-report: ## Generate performance report
+	@echo "$(GREEN)Generating performance report...$(NC)"
+	$(PYTHON_RUN) scripts/generate_performance_report.py --format markdown
+
+performance-update-docs: ## Update PERFORMANCE.md with current benchmarks
+	@echo "$(GREEN)Updating PERFORMANCE.md...$(NC)"
+	$(PYTHON_RUN) scripts/generate_performance_report.py --update-docs
+
+performance-baseline: ## Create or update performance baseline
+	@echo "$(GREEN)Creating performance baseline...$(NC)"
+	@if [ ! -f tests/.performance_data.json ]; then \
+		echo "$(RED)Error: No performance data found. Run 'make test-performance' first.$(NC)"; \
+		exit 1; \
+	fi
+	$(PYTHON_RUN) scripts/generate_performance_report.py --create-baseline
+
+performance-regression: ensure-venv ## Run performance regression tests
+	@echo "$(GREEN)Running performance regression tests...$(NC)"
+	$(PYTEST) tests/test_performance_regression.py -v
+
+test-cov: ## Run tests with coverage report in parallel (default)
+	@echo "$(GREEN)Running tests with coverage in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -n auto -m "not serial"
+	@echo "$(GREEN)Coverage report generated in $(COV_DIR)/index.html$(NC)"
+
+test-cov-serial: ## Run tests with coverage report serially (for deterministic coverage)
+	@echo "$(GREEN)Running tests with coverage serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing
 	@echo "$(GREEN)Coverage report generated in $(COV_DIR)/index.html$(NC)"
 
-test-cov-term: ensure-venv ## Run tests with terminal coverage only
-	@echo "$(GREEN)Running tests with terminal coverage...$(NC)"
+test-cov-term: ensure-venv ## Run tests with terminal coverage only in parallel (default)
+	@echo "$(GREEN)Running tests with terminal coverage in parallel...$(NC)"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing -n auto -m "not serial"
+
+test-cov-term-serial: ensure-venv ## Run tests with terminal coverage serially (for deterministic coverage)
+	@echo "$(GREEN)Running tests with terminal coverage serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing
 
 lint: ensure-venv ## Run ruff linter
@@ -132,7 +205,7 @@ type-check-strict: ## Run mypy in strict mode
 	@echo "$(GREEN)Running mypy in strict mode...$(NC)"
 	$(MYPY) --strict $(SRC_DIR)
 
-check: ## Run all checks (lint, format-check, type-check, test)
+check: ## Run all checks (lint, format-check, type-check, test) - tests run in parallel
 	@echo "$(GREEN)Running all checks...$(NC)"
 	@echo ""
 	@echo "$(YELLOW)1. Linting...$(NC)"
@@ -144,8 +217,25 @@ check: ## Run all checks (lint, format-check, type-check, test)
 	@echo "$(YELLOW)3. Type checking...$(NC)"
 	@$(MAKE) type-check || (echo "$(RED)❌ Type checking failed$(NC)" && exit 1)
 	@echo ""
-	@echo "$(YELLOW)4. Running tests...$(NC)"
+	@echo "$(YELLOW)4. Running tests (parallel)...$(NC)"
 	@$(MAKE) test || (echo "$(RED)❌ Tests failed$(NC)" && exit 1)
+	@echo ""
+	@echo "$(GREEN)✅ All checks passed!$(NC)"
+
+check-serial: ## Run all checks serially (for deterministic results)
+	@echo "$(GREEN)Running all checks serially...$(NC)"
+	@echo ""
+	@echo "$(YELLOW)1. Linting...$(NC)"
+	@$(MAKE) lint || (echo "$(RED)❌ Linting failed$(NC)" && exit 1)
+	@echo ""
+	@echo "$(YELLOW)2. Format check...$(NC)"
+	@$(MAKE) format-check || (echo "$(RED)❌ Format check failed$(NC)" && exit 1)
+	@echo ""
+	@echo "$(YELLOW)3. Type checking...$(NC)"
+	@$(MAKE) type-check || (echo "$(RED)❌ Type checking failed$(NC)" && exit 1)
+	@echo ""
+	@echo "$(YELLOW)4. Running tests (serial)...$(NC)"
+	@$(MAKE) test-serial || (echo "$(RED)❌ Tests failed$(NC)" && exit 1)
 	@echo ""
 	@echo "$(GREEN)✅ All checks passed!$(NC)"
 

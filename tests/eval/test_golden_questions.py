@@ -18,6 +18,7 @@ import pytest
 from clinical_analytics.core.eval_harness import EvalHarness, load_golden_questions
 
 
+@pytest.mark.integration
 @pytest.mark.slow
 def test_golden_questions_evaluation(make_semantic_layer):
     """
@@ -25,6 +26,9 @@ def test_golden_questions_evaluation(make_semantic_layer):
 
     This is a regression test - if parsing accuracy drops below 80%,
     the test will fail and alert us to degradation.
+
+    Integration test: Uses real NLQueryEngine and SemanticLayer to test
+    end-to-end query parsing pipeline.
     """
     # Arrange: Create semantic layer with test data
     semantic_layer = make_semantic_layer(

@@ -1,93 +1,268 @@
 ---
-name: Performance Tracking and Reporting System
-overview: Implement comprehensive test performance tracking system with automated monitoring, regression detection, reporting tools, and documentation updates
-todos:
-  - id: "1"
-    content: Create performance tracking module structure (__init__.py, plugin.py, storage.py, regression.py, reporter.py)
-    status: completed
-  - id: "2"
-    content: Implement storage.py - JSON read/write utilities for performance data and baseline
-    status: completed
-    dependencies:
-      - "1"
-  - id: "3"
-    content: Implement plugin.py - Pytest hooks (pytest_runtest_setup/teardown) to track test durations
-    status: completed
-    dependencies:
-      - "2"
-  - id: "4"
-    content: Register performance plugin in tests/conftest.py using pytest_configure hook
-    status: completed
-    dependencies:
-      - "3"
-  - id: "5"
-    content: Implement reporter.py - Generate markdown reports from performance data
-    status: completed
-    dependencies:
-      - "2"
-  - id: "6"
-    content: Implement regression.py - Compare current performance against baseline with thresholds
-    status: completed
-    dependencies:
-      - "2"
-  - id: "7"
-    content: Create scripts/generate_performance_report.py - CLI tool for report generation
-    status: completed
-    dependencies:
-      - "5"
-      - "6"
-  - id: "7.5"
-    content: Add integration test - End-to-end workflow (track → report → baseline → regression)
-    status: pending
-    dependencies:
-      - "7"
-  - id: "8"
-    content: Create tests/test_performance_regression.py - Regression test suite
-    status: completed
-    dependencies:
-      - "6"
-      - "7.5"
-  - id: "9"
-    content: Add performance configuration to pyproject.toml (thresholds, file paths)
-    status: completed
-  - id: "10"
-    content: Add Makefile commands (test-performance, performance-report, performance-baseline, etc.)
-    status: completed
-    dependencies:
-      - "7"
-  - id: "11"
-    content: Update tests/PERFORMANCE.md with automated tracking, regression, and reporting sections
-    status: pending
-    dependencies:
-      - "5"
-      - "6"
-      - "7"
-  - id: "12"
-    content: Add .performance_data.json and .performance_data_worker_*.json to .gitignore
-    status: pending
-  - id: "13"
-    content: Write tests for performance system (test_plugin.py, test_storage.py, test_regression.py, test_reporter.py)
-    status: pending
-    dependencies:
-      - "3"
-      - "5"
-      - "6"
-  - id: "14"
-    content: Run full test suite and verify performance tracking works end-to-end
-    status: pending
-    dependencies:
-      - "4"
-      - "8"
-      - "13"
+name: ""
+overview: ""
+todos: []
 ---
 
-# Perfo
+---name: Comprehensive Test Performance Systemoverview: Implement comprehensive test performance system that both tracks performance AND optimizes slow tests. Includes automated monitoring, regression detection, reporting tools, LLM mocking, test data caching, selective dataset loading, fixture scope optimization, and documentation updates.**Note**: All test commands run in parallel by default (`-n auto`) for maximum speed during development. Final validation before commit runs serially to ensure deterministic results. Integration tests marked with `@pytest.mark.serial` run serially to avoid conflicts with external services. Parallel execution effectiveness will be measured and validated throughout plan execution.todos:
 
-rmance Tracking and Reporting System
+- id: "phase0-test-organization"
+
+content: "Phase 0: Establish test organization structure (unit → integration → regression)"status: completed
+
+- id: "phase0-test-execution"
+
+content: "Phase 0: Document test execution commands per phase"status: completed
+
+- id: "phase0-regression-protection"
+
+content: "Phase 0: Set up regression protection with baseline comparison"status: completed
+
+- id: "phase0-testing-coverage"
+
+content: "Phase 0: Define testing coverage thresholds and verification process"status: completed
+
+- id: "phase0-dry-solid-standards"
+
+content: "Phase 0: Establish DRY/SOLID refactoring standards and patterns for fixtures"status: completed
+
+- id: "phase0-verify"
+
+content: "Phase 0: Verify testing strategy is documented and baseline established"status: completeddependencies:
+
+                                - "phase0-test-organization"
+                                - "phase0-test-execution"
+                                - "phase0-regression-protection"
+                                - "phase0-testing-coverage"
+                                - "phase0-dry-solid-standards"
+- id: "1"
+
+content: Create performance tracking module structure (**init**.py, plugin.py, storage.py, regression.py, reporter.py)status: completeddependencies:
+
+- "phase0-verify"
+- id: "2"
+
+content: Implement storage.py - JSON read/write utilities for performance data and baselinestatus: completeddependencies:
+
+                                - "1"
+- id: "3"
+
+content: Implement plugin.py - Pytest hooks (pytest_runtest_setup/teardown) to track test durationsstatus: completeddependencies:
+
+                                - "2"
+- id: "4"
+
+content: Register performance plugin in tests/conftest.py using pytest_configure hookstatus: completeddependencies:
+
+                                - "3"
+- id: "5"
+
+content: Implement reporter.py - Generate markdown reports from performance datastatus: completeddependencies:
+
+                                - "2"
+- id: "6"
+
+content: Implement regression.py - Compare current performance against baseline with thresholdsstatus: completeddependencies:
+
+                                - "2"
+- id: "7"
+
+content: Create scripts/generate_performance_report.py - CLI tool for report generationstatus: completeddependencies:
+
+                                - "5"
+                                - "6"
+- id: "7.5"
+
+content: Add integration test - End-to-end workflow (track → report → baseline → regression)status: completeddependencies:
+
+                                - "7"
+- id: "8"
+
+content: Create tests/test_performance_regression.py - Regression test suitestatus: completeddependencies:
+
+                                - "6"
+                                - "7.5"
+- id: "9"
+
+content: Add performance configuration to pyproject.toml (thresholds, file paths)status: completed
+
+- id: "10"
+
+content: Add Makefile commands (test-performance, performance-report, performance-baseline, etc.)status: completeddependencies:
+
+                                - "7"
+- id: "11"
+
+content: Update tests/PERFORMANCE.md with automated tracking, regression, and reporting sectionsstatus: completeddependencies:
+
+                                - "5"
+                                - "6"
+                                - "7"
+- id: "12"
+
+content: Add .performance_data.json and .performance_data_worker_*.json to .gitignorestatus: completed
+
+- id: "13"
+
+content: Write tests for performance system (test_plugin.py, test_storage.py, test_regression.py, test_reporter.py)status: completeddependencies:
+
+                                - "3"
+                                - "5"
+                                - "6"
+- id: "14"
+
+content: Run full test suite and verify performance tracking works end-to-endstatus: completeddependencies:
+
+                                - "4"
+                                - "8"
+                                - "13"
+- id: "15"
+
+content: Phase 2.1: Add mock_llm_calls fixture to conftest.py for unit testsstatus: completeddependencies:
+
+                                - "14"
+- id: "16"
+
+content: Phase 2.1: Refactor test_nl_query_refinement.py to use mocked LLM (create integration test file for real LLM)status: completeddependencies:
+
+                                - "15"
+- id: "17"
+
+content: Phase 2.1: Refactor test_nl_query_engine_filter_extraction.py to use mocked LLMstatus: completeddependencies:
+
+                                - "15"
+- id: "18"
+
+content: Phase 2.1: Verify LLM unit tests run <1s each (30-50x speedup)status: completeddependencies:
+
+                                - "16"
+                                - "17"
+- id: "19"
+
+content: Phase 2.2: Create tests/fixtures/cache.py with content-based hashing for test data cachingstatus: completeddependencies:
+
+                                - "18"
+- id: "20"
+
+content: Phase 2.2: Implement DataFrame caching (parquet files in tests/.test_cache/)status: completeddependencies:
+
+                                - "19"
+- id: "21"
+
+content: Phase 2.2: Implement Excel file caching for expensive fixturesstatus: completeddependencies:
+
+                                - "19"
+- id: "22"
+
+content: Phase 2.2: Update fixtures to use cached data when availablestatus: completeddependencies:
+
+                                - "20"
+                                - "21"
+- id: "22.5"
+
+content: Phase 2.2: Refactor duplicate fixture patterns to generic factories (DRY/SOLID) - Excel fixtures (3), Large CSV fixtures (6), Large ZIP fixtures (2)status: completeddependencies:
+
+                                - "22"
+- id: "23"
+
+content: Phase 2.2: Measure caching impact (target: 50-80% reduction in data loading time)status: completeddependencies:
+
+                                - "22"
+                                - "22.5"
+- id: "24"
+
+content: Phase 2.3: Enhance discovered_datasets fixture to support lazy loadingstatus: completeddependencies:
+
+                                - "23"
+- id: "25"
+
+content: Phase 2.3: Add get_dataset_by_name() helper for selective dataset loadingstatus: completeddependencies:
+
+                                - "24"
+- id: "26"
+
+content: Phase 2.3: Update tests to request specific datasets instead of loading allstatus: completeddependencies:
+
+                                - "25"
+- id: "27"
+
+content: Phase 2.3: Measure selective loading impact (target: 30-50% reduction in setup time)status: completeddependencies:
+
+                                - "26"
+- id: "28"
+
+content: Phase 2.4: Profile fixtures to identify expensive ones using performance tracking datastatus: completeddependencies:
+
+                                - "14"
+- id: "29"
+
+content: Phase 2.4: Convert expensive immutable fixtures to module/session scopestatus: completeddependencies:
+
+                                - "28"
+- id: "30"
+
+content: Phase 2.4: Verify test isolation maintained after scope changesstatus: completeddependencies:
+
+                                - "29"
+- id: "31"
+
+content: Phase 2.4: Measure scope optimization impact (target: 10-30% overall speedup)status: completeddependencies:
+
+                                - "30"
+- id: "32"
+
+content: Phase 2.5: Audit tests for parallel-safety (file I/O, shared state)status: completeddependencies:
+
+                                - "31"
+- id: "33"
+
+content: Phase 2.5: Mark non-parallel-safe tests with @pytest.mark.serialstatus: completeddependencies:
+
+                                - "32"
+- id: "34"
+
+content: Phase 2.5: Optimize Makefile parallel execution commandsstatus: completeddependencies:
+
+                                - "33"
+- id: "35"
+
+content: Phase 3: Create scripts/categorize_slow_tests.py using performance tracking datastatus: completeddependencies:
+
+                                - "14"
+- id: "36"
+
+content: Phase 3: Auto-categorize tests >30s with @pytest.mark.slowstatus: completeddependencies:
+
+                                - "35"
+- id: "37"
+
+content: Phase 3: Generate report of uncategorized slow testsstatus: completeddependencies:
+
+                                - "36"
+- id: "38"
+
+content: Final: Measure total performance improvement and update PERFORMANCE.md with resultsstatus: completeddependencies:
+
+                                - "18"
+                                - "23"
+                                - "27"
+                                - "31"
+                                - "34"
+                                - "37"
+
+---
+
+# Comprehensive Test Performance System
 
 ## Overview
 
-Implement a comprehensive test performance tracking system that automates performance monitoring, detects regressions, generates reports, and maintains accurate documentation.
+Implement a comprehensive test performance system that **both tracks performance AND optimizes slow tests**. This plan includes:
+
+1. **Phase 1: Performance Tracking & Monitoring** - Automated tracking, regression detection, reporting
+2. **Phase 2: Actual Performance Optimizations** - Mock LLM calls, test data caching, selective loading, fixture optimization
+3. **Phase 3: Automated Categorization** - Use tracking data to improve test-fast effectiveness
+
+**Key Goal**: Not just track slow tests, but actually **fix them** to achieve measurable speedups (30-50x for LLM tests, 50-80% for data loading, 10-30% overall).
 
 ## Architecture
 
@@ -109,11 +284,189 @@ tests/
 └── PERFORMANCE.md              # Updated documentation
 ```
 
+## Implementation Phases
 
+### Phase 0: Testing Strategy Foundation
 
-## Implementation Components
+**Goal**: Establish comprehensive testing strategy before implementing performance tracking system. This ensures all subsequent phases have clear test execution patterns, regression protection, and coverage thresholds.
 
-### 1. Automated Performance Tracking
+#### 0.1: Test Organization Structure
+
+**Test Organization**:
+
+```mermaid
+graph LR
+    subgraph unit [Unit Tests]
+        testConstants[test_constants.py]
+        testExceptions[test_exceptions.py]
+        testFactory[test_dataset_factory.py]
+        testProviders[test_llm_providers.py]
+    end
+    
+    subgraph integration [Integration Tests]
+        testDatasets[test_dataset_refactored.py]
+        testPages[test_page_base.py]
+        testPipeline[test_full_pipeline.py]
+    end
+    
+    subgraph regression [Regression Tests]
+        existingTests[Existing 786 Tests]
+    end
+    
+    unit --> integration
+    integration --> regression
+```
+
+**Structure**:
+
+- **Unit Tests**: Fast, isolated tests for individual components (<1s each)
+- **Integration Tests**: Tests that verify component interactions and real service behavior
+- **Regression Tests**: Full test suite to ensure no regressions (786+ tests)
+
+#### 0.2: Test Execution Per Phase
+
+**Standard**: All test commands run in parallel by default (`-n auto`) for maximum speed during development. Final validation before commit runs serially.
+
+**Phase 1 (Performance Tracking)**:
+
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="tests/performance/test_plugin.py tests/performance/test_storage.py -xvs"`
+- **Final validation (serial)**: `make test-integration PYTEST_ARGS="tests/test_performance_regression.py -xvs"` (integration tests run serially)
+
+**Phase 2 (Performance Optimizations)**:
+
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="tests/core/test_nl_query_refinement.py tests/core/test_nl_query_engine_filter_extraction.py -xvs"`
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="tests/fixtures/test_cache.py -xvs"`
+- **Final validation (serial)**: `make test-integration PYTEST_ARGS="tests/core/test_nl_query_refinement_integration.py -xvs"` (integration tests run serially)
+
+**Phase 3 (Automated Categorization)**:
+
+- **Development (parallel)**: `make test-fast-parallel PYTEST_ARGS="scripts/test_categorize_slow_tests.py -xvs"`
+
+**Final Validation Before Commit** (serial for deterministic results):
+
+- `make test` (serial) - Full test suite validation
+- `make check` (serial) - Full quality gate (format, lint, type, test)
+
+#### 0.3: Regression Protection
+
+After each phase, run full test suite with baseline comparison:
+
+```bash
+# Baseline (run once at start of performance system implementation) - SERIAL for baseline
+make test 2>&1 | tee tests/docs/baseline_test_results.txt
+BASELINE_PASSED=$(grep -c "PASSED" tests/docs/baseline_test_results.txt || echo "0")
+BASELINE_FAILED=$(grep -c "FAILED" tests/docs/baseline_test_results.txt || echo "0")
+echo "Baseline: $BASELINE_PASSED passed, $BASELINE_FAILED failed"
+
+# After each phase - PARALLEL for speed during development
+make test-parallel 2>&1 | tee phase_N_test_results.txt
+PHASE_PASSED=$(grep -c "PASSED" phase_N_test_results.txt || echo "0")
+PHASE_FAILED=$(grep -c "FAILED" phase_N_test_results.txt || echo "0")
+
+# Verify: No new failures, same or more passing tests
+if [ "$PHASE_FAILED" -gt "$BASELINE_FAILED" ]; then
+    echo "ERROR: New test failures detected!"
+    exit 1
+fi
+
+# Final validation before commit - SERIAL for deterministic results
+make check  # Lint, format, type check, test (serial)
+```
+
+**Success Criteria**:
+
+- All existing tests must pass (baseline: 786+ tests)
+- No new test failures compared to baseline
+- New test files created and passing
+- Coverage maintained or improved (see Testing Coverage section)
+
+#### 0.4: Testing Coverage
+
+**Coverage Requirements**:
+
+- Minimum 80% coverage maintained throughout
+- Critical paths have 100% coverage (performance tracking, regression detection)
+- Integration tests verify end-to-end workflows
+- **Coverage verification**: `make test-cov` after each phase, compare to baseline
+- **Coverage threshold**: No decrease >2% per phase
+
+**Coverage Verification Process**:
+
+```bash
+# Baseline (run once at start) - SERIAL for baseline
+make test-cov 2>&1 | tee tests/docs/baseline_coverage.txt
+BASELINE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' tests/docs/baseline_coverage.txt | head -1)
+
+# After each phase - PARALLEL for speed during development
+make test-cov-parallel 2>&1 | tee phase_N_coverage.txt
+PHASE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' phase_N_coverage.txt | head -1)
+
+# Verify: Coverage within 2% of baseline
+COVERAGE_DIFF=$((BASELINE_COVERAGE - PHASE_COVERAGE))
+if [ "$COVERAGE_DIFF" -gt 2 ]; then
+    echo "WARNING: Coverage decreased by ${COVERAGE_DIFF}%"
+fi
+```
+
+#### 0.5: DRY/SOLID Refactoring Standards
+
+**Goal**: Establish code quality standards before implementation to prevent technical debt accumulation and ensure extensible, maintainable fixtures.**Refactoring Criteria (Rule of Three)**:
+
+- **3+ similar implementations** → Extract to generic factory/function
+- **Duplicate patterns across fixtures** → Create factory fixture
+- **Magic values/config scattered** → Extract to configuration
+- **Similar data structures** → Use parameterized factories
+
+**Factory Pattern Standards**:
+
+- **Factory fixtures** for variations: `make_semantic_layer`, `make_cohort_with_categorical`
+- **Direct fixtures** for standard cases: `sample_cohort`, `sample_patients_df`
+- **Generic factories** for extensibility: `_create_synthetic_excel_file(data, config)`
+
+**Extensibility Patterns**:
+
+- Configuration-driven: Accept `config` dict for variations
+- Single source of truth: One implementation, multiple callers
+- Open/Closed Principle: Extend via configuration, not code changes
+
+**Identified Duplicate Patterns** (to be refactored in Phase 2.2):
+
+1. **Excel Fixtures (3 duplicates)**: `synthetic_dexa_excel_file`, `synthetic_statin_excel_file`, `synthetic_complex_excel_file`
+
+                        - Solution: Generic `_create_synthetic_excel_file(data, excel_config)` factory
+
+2. **Large CSV Fixtures (6 duplicates)**: `large_test_data_csv`, `large_patients_csv`, `large_admissions_csv`, `large_admissions_with_admission_date_csv`, `large_admissions_with_discharge_csv`, `large_diagnoses_csv`
+
+                        - Solution: Generic `make_large_csv(columns, num_records)` factory
+
+3. **Large ZIP Fixtures (2 duplicates)**: `large_zip_with_csvs`, `large_zip_with_three_tables`
+
+                        - Solution: Generic `make_large_zip(csv_files: dict[str, str])` factory
+
+**Code Review Checklist**:
+
+- [ ] No duplicate implementations (check for similar patterns)
+- [ ] Factory patterns used for variations
+- [ ] Configuration extracted (no magic values)
+- [ ] Single source of truth (one implementation per concern)
+- [ ] Extensible (new cases via config, not code changes)
+
+**Phase 0 Success Criteria**:
+
+- [ ] Test organization structure documented
+- [ ] Test execution commands defined for all phases
+- [ ] Regression protection script created and tested
+- [ ] Coverage verification process established
+- [ ] DRY/SOLID refactoring standards documented
+- [ ] Duplicate fixture patterns identified and documented
+- [ ] Baseline test results captured
+- [ ] Baseline coverage captured
+
+### Phase 1: Performance Tracking & Monitoring
+
+**Note**: Baseline performance data in `tests/PERFORMANCE.md` and `.performance_baseline.json` was established from **serial test runs** for deterministic baseline comparison. All development work uses parallel execution (`-n auto`) for speed, with final validation running serially before commit.
+
+#### 1. Automated Performance Tracking
 
 **File**: `tests/performance/plugin.py`Pytest plugin that tracks test durations. **Tracking is opt-in via `--track-performance` flag** to avoid overhead on normal test runs.**Core Functionality**:
 
@@ -177,7 +530,7 @@ def pytest_sessionfinish(session, exitstatus):
 - Store data in `tests/.performance_data.json` (gitignored)
 - Worker files (`.performance_data_worker_*.json`) are also gitignored
 
-### 2. Performance Regression Tests
+#### 2. Performance Regression Tests
 
 **File**: `tests/test_performance_regression.py`Test suite that validates performance hasn't regressed beyond acceptable thresholds.**Core Functionality**:
 
@@ -233,9 +586,7 @@ class TestPerformanceRegression:
         """Verify slow test count hasn't increased unexpectedly."""
 ```
 
-
-
-### 3. Performance Reporting Tool
+#### 3. Performance Reporting Tool
 
 **File**: `scripts/generate_performance_report.py`CLI tool that:
 
@@ -261,16 +612,676 @@ class TestPerformanceRegression:
 - `make performance-report` - Generate report
 - `make performance-update-docs` - Update PERFORMANCE.md
 
-### 4. Documentation Updates
+#### 4. Documentation Updates
+
+### Phase 2: Actual Performance Optimizations (CRITICAL - FIXES SLOW TESTS)
+
+**Goal**: Actually optimize slow tests, not just track them. Achieve measurable speedups through mocking, caching, and scope optimization.
+
+#### 2.1: Mock LLM Calls in Unit Tests (HIGHEST IMPACT - DO FIRST)
+
+**Problem**: Tests in `test_nl_query_refinement.py` and `test_nl_query_engine_filter_extraction.py` make real LLM calls (10-30 seconds each), causing:
+
+- Slow test execution (10-30s per test)
+- Flaky tests (depends on Ollama availability)
+- Expensive CI/CD runs
+
+**Solution**: Mock LLM calls in unit tests, keep real calls only for integration tests.**Implementation**:
+
+1. **Add `mock_llm_calls` fixture to `conftest.py`** (explicit fixture, NOT autouse):
+```python
+@pytest.fixture
+def mock_llm_calls():
+    """
+    Explicit fixture to mock LLM calls for unit tests.
+    
+    Usage: Add 'mock_llm_calls' to test function parameters.
+    Integration tests should NOT use this fixture to get real LLM calls.
+    """
+    from unittest.mock import patch
+    from clinical_analytics.core.llm_feature import LLMCallResult, LLMFeature
+    
+    with patch("clinical_analytics.core.llm_feature.call_llm") as mock_call_llm:
+        # Mock responses for all LLMFeature types
+        def _mock_call_llm(feature, system, user, timeout_s, model=None):
+            if feature == LLMFeature.PARSE:
+                return LLMCallResult(
+                    raw_text='{"intent": "DESCRIBE", "confidence": 0.8}',
+                    payload={"intent": "DESCRIBE", "confidence": 0.8},
+                    latency_ms=10.0,
+                    timed_out=False,
+                    error=None,
+                )
+            elif feature == LLMFeature.FILTER_EXTRACTION:
+                return LLMCallResult(
+                    raw_text='{"filters": []}',
+                    payload={"filters": []},
+                    latency_ms=10.0,
+                    timed_out=False,
+                    error=None,
+                )
+            elif feature == LLMFeature.FOLLOWUPS:
+                return LLMCallResult(
+                    raw_text='{"follow_ups": []}',
+                    payload={"follow_ups": []},
+                    latency_ms=10.0,
+                    timed_out=False,
+                    error=None,
+                )
+            elif feature == LLMFeature.RESULT_INTERPRETATION:
+                return LLMCallResult(
+                    raw_text='{"interpretation": "Test interpretation"}',
+                    payload={"interpretation": "Test interpretation"},
+                    latency_ms=10.0,
+                    timed_out=False,
+                    error=None,
+                )
+            elif feature == LLMFeature.ERROR_TRANSLATION:
+                return LLMCallResult(
+                    raw_text='{"translation": "Test error translation"}',
+                    payload={"translation": "Test error translation"},
+                    latency_ms=10.0,
+                    timed_out=False,
+                    error=None,
+                )
+            # Default fallback
+            return LLMCallResult(
+                raw_text='{}',
+                payload={},
+                latency_ms=10.0,
+                timed_out=False,
+                error=None,
+            )
+        
+        mock_call_llm.side_effect = _mock_call_llm
+        yield mock_call_llm
+```
+
+
+**Alternative approach using pytest_configure hook** (if explicit fixture injection is too verbose):
+
+```python
+def pytest_configure(config):
+    """Configure LLM mocking based on markers."""
+    # Register custom marker
+    config.addinivalue_line("markers", "real_llm: Use real LLM calls (for integration tests)")
+
+@pytest.fixture(autouse=True)
+def mock_llm_calls_unless_marked(request):
+    """
+    Automatically mock LLM calls UNLESS test is marked with @pytest.mark.real_llm.
+    
+    Integration tests must explicitly mark with @pytest.mark.real_llm to get real LLM.
+    """
+    if request.node.get_closest_marker("real_llm"):
+        # Integration test - use real LLM
+        yield
+        return
+    
+    # Unit test - use mocked LLM
+    # ... (same mock implementation as above)
+    yield
+```
+
+**Decision**: Use explicit fixture approach (first option) for clarity and explicit opt-in. Integration tests simply don't use the fixture.
+
+2. **Refactor unit tests to use mocks**:
+
+- `tests/core/test_nl_query_refinement.py` - Remove real LLM calls, use mocked responses
+- `tests/core/test_nl_query_engine_filter_extraction.py` - Remove real LLM calls, use mocked responses
+
+3. **Create integration test files**:
+
+- `tests/core/test_nl_query_refinement_integration.py` - Real LLM tests (marked `@pytest.mark.slow` and `@pytest.mark.integration`)
+- `tests/core/test_nl_query_engine_filter_extraction_integration.py` - Real LLM tests
+
+**Integration Test Requirements**:
+
+- **Coverage threshold**: 80% of real LLM scenarios must be covered
+- **Required scenarios**:
+- Happy path: Successful query parsing with various intents
+- Error cases: LLM timeout, JSON parse failures, Ollama unavailable
+- Edge cases: Ambiguous queries, complex filters, refinement queries
+- **How to run**: `make test-integration-llm` (new Makefile command, filters `@pytest.mark.integration` + `@pytest.mark.real_llm`)
+- **Test structure**: Separate integration test files (`*_integration.py`) marked with both `@pytest.mark.slow` and `@pytest.mark.integration`
+
+**Success Criteria**:
+
+- [ ] Unit tests run <1s each (30-50x speedup from 10-30s)
+- [ ] Integration tests still verify real LLM behavior (80% scenario coverage)
+- [ ] All existing tests pass
+- [ ] No flaky tests from Ollama availability
+- [ ] Mock responses match real LLM response patterns (verified in integration tests)
+
+**Expected Impact**: 10-30s → <1s per test (30-50x speedup for LLM tests)
+
+#### 2.2: Test Data Caching (HIGH IMPACT)
+
+**Problem**: Tests regenerate the same data files repeatedly:
+
+- Excel files recreated for each test
+- Large CSV files regenerated
+- Polars DataFrames recreated from scratch
+
+**Solution**: Cache test data with content-based hashing.**Implementation**:
+
+1. **Create `tests/fixtures/cache.py`**:
+```python
+import hashlib
+import json
+from pathlib import Path
+import polars as pl
+
+CACHE_DIR = Path("tests/.test_cache")
+
+def get_cache_key(data: dict | pl.DataFrame, config: dict | None = None) -> str:
+    """Generate content-based hash for caching."""
+    if isinstance(data, pl.DataFrame):
+        # Hash DataFrame schema and sample rows
+        key_data = {
+            "schema": dict(data.schema),
+            "shape": data.shape,
+            "sample": data.head(10).to_dict(as_series=False),
+        }
+    else:
+        key_data = data
+    
+    if config:
+        key_data["config"] = config
+    
+    key_str = json.dumps(key_data, sort_keys=True)
+    return hashlib.sha256(key_str.encode()).hexdigest()
+
+def cache_dataframe(df: pl.DataFrame, cache_key: str) -> Path:
+    """Cache DataFrame as parquet file."""
+    cache_file = CACHE_DIR / f"{cache_key}.parquet"
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    df.write_parquet(cache_file)
+    return cache_file
+
+def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
+    """Load cached DataFrame if exists."""
+    cache_file = CACHE_DIR / f"{cache_key}.parquet"
+    if cache_file.exists():
+        return pl.read_parquet(cache_file)
+    return None
+```
+
+2. **Update expensive fixtures to use caching**:
+
+- `synthetic_dexa_excel_file` - Cache Excel file generation
+- `synthetic_statin_excel_file` - Cache Excel file generation
+- `synthetic_complex_excel_file` - Cache Excel file generation
+- Large DataFrame fixtures - Cache as parquet
+
+3. **Cache invalidation strategy**:
+
+**Invalidation triggers**:
+
+- **Content hash mismatch**: If hash of input data/config differs from cached hash, regenerate
+- **File modification time**: If source files (fixture code, test data) modified after cache creation, invalidate
+- **Git commit hash**: Store git commit hash with cache, invalidate if commit changes (optional, for CI/CD)
+- **Manual flag**: `tests/.test_cache/.invalidate` file presence triggers full cache clear
+- **Cache version**: Increment cache version in code to force invalidation of all caches
+
+**Corruption recovery**:
+
+- Check cache file integrity on load (try/catch parquet read)
+- If corrupted: Delete corrupted file, log warning, regenerate
+- Add `cache_valid` flag to cache metadata (JSON file alongside parquet)
+
+**Cache size management**:
+
+- Maximum cache size: 500MB (configurable)
+- LRU eviction: Remove least recently used cache entries when limit reached
+- Cache cleanup: `make test-cache-clear` removes all cached files
+- Cache stats: Track cache hit/miss rates for monitoring
+
+**Implementation**:
+
+   ```python
+            def get_cache_key(data: dict | pl.DataFrame, config: dict | None = None) -> str:
+                """Generate content-based hash with version."""
+                CACHE_VERSION = "v1"  # Increment to invalidate all caches
+                # ... hash logic ...
+                return f"{CACHE_VERSION}_{hashlib.sha256(...).hexdigest()}"
+            
+            def load_cached_dataframe(cache_key: str) -> pl.DataFrame | None:
+                """Load with corruption recovery."""
+                cache_file = CACHE_DIR / f"{cache_key}.parquet"
+                metadata_file = CACHE_DIR / f"{cache_key}.meta.json"
+                
+                if not cache_file.exists():
+                    return None
+                
+                # Check manual invalidation flag
+                if (CACHE_DIR / ".invalidate").exists():
+                    return None
+                
+                # Check metadata for validity
+                try:
+                    if metadata_file.exists():
+                        metadata = json.loads(metadata_file.read_text())
+                        if not metadata.get("cache_valid", True):
+                            return None
+                except Exception:
+                    pass
+                
+                # Try to load with corruption recovery
+                try:
+                    return pl.read_parquet(cache_file)
+                except Exception as e:
+                    logger.warning(f"Cache corruption detected, regenerating: {e}")
+                    cache_file.unlink(missing_ok=True)
+                    metadata_file.unlink(missing_ok=True)
+                    return None
+   ```
+
+**Makefile command**:
+
+   ```makefile
+            test-cache-clear: ## Clear test data cache
+            	@echo "$(GREEN)Clearing test cache...$(NC)"
+            	rm -rf tests/.test_cache
+            	@echo "$(GREEN)Cache cleared$(NC)"
+   ```
+
+**Success Criteria**:
+
+- [ ] Cached data loads 50-80% faster than regeneration
+- [ ] Cache invalidation works correctly
+- [ ] No test failures from stale cache
+- [ ] Cache directory added to `.gitignore`
+
+**Expected Impact**: 50-80% reduction in data loading time
+
+#### 2.2.5: Refactor Duplicate Fixture Patterns (DRY/SOLID)
+
+**Problem**: Multiple fixtures follow identical patterns, violating DRY principle:
+
+- 3 Excel fixtures with same structure (different data/layout)
+- 6 Large CSV fixtures with same generation pattern (different columns)
+- 2 Large ZIP fixtures with same compression pattern (different file counts)
+
+**Solution**: Refactor to generic factories following DRY/SOLID principles.**Implementation**:
+
+1. **Excel Fixtures → Generic Factory**:
+   ```python
+      def _create_synthetic_excel_file(
+          tmp_path_factory,
+          data: dict,
+          filename: str,
+          excel_config: dict | None = None,
+      ) -> Path:
+          """
+          Generic factory for creating synthetic Excel files with caching.
+          
+          Args:
+              tmp_path_factory: Pytest tmp_path_factory fixture
+              data: Dictionary of column_name -> list of values
+              filename: Output filename
+              excel_config: Configuration for Excel layout:
+                                    - header_row: int (default: 0)
+                                    - metadata_rows: list[dict] | None
+                                    - use_dataframe_hash: bool (default: True)
+          """
+          # Implementation with caching
+   ```
+
+2. **Large CSV Fixtures → Generic Factory**:
+   ```python
+      @pytest.fixture
+      def make_large_csv():
+          """Factory for generating large CSV strings with caching."""
+          def _make(columns: dict[str, Callable], num_records: int = 1000000) -> str:
+              # Generate CSV with caching by content hash
+          return _make
+   ```
+
+3. **Large ZIP Fixtures → Generic Factory**:
+   ```python
+      @pytest.fixture
+      def make_large_zip():
+          """Factory for creating ZIP files with caching."""
+          def _make(csv_files: dict[str, str]) -> bytes:
+              # Create ZIP with caching by content hash
+          return _make
+   ```
+
+
+**Refactoring Process**:
+
+- Apply DRY/SOLID standards from Phase 0.5
+- Refactor Excel fixtures first (highest impact)
+- Refactor CSV fixtures second
+- Refactor ZIP fixtures third
+- Verify all existing tests pass (no regressions)
+- Add caching to all refactored fixtures
+
+**Success Criteria**:
+
+- [ ] 11 duplicate fixtures consolidated into 3 generic factories
+- [ ] All existing tests pass (no regressions)
+- [ ] New formats can be added via configuration (extensibility)
+- [ ] Caching integrated into all factories
+- [ ] Code review checklist from Phase 0.5 passes
+
+**Expected Impact**: Improved maintainability, extensibility, and reduced code duplication (11 fixtures → 3 factories)
+
+#### 2.3: Selective Dataset Loading (MEDIUM IMPACT)
+
+**Problem**: Tests load all datasets even when only one is needed:
+
+- `discovered_datasets` fixture loads all dataset configs
+- Tests that only need one dataset pay cost of loading all
+
+**Solution**: Add new fixture for lazy loading while maintaining backward compatibility with existing `discovered_datasets` fixture.**Migration Strategy** (CRITICAL - prevents breaking existing tests):
+
+1. **Audit existing usage** (BEFORE making changes):
+   ```bash
+            # Find all usages of discovered_datasets fixture
+            grep -r "discovered_datasets" tests/ --include="*.py" | wc -l
+            # Expected: ~20+ files
+   ```
+
+2. **Add NEW fixture (backward compatible)**:
+   ```python
+            # Keep existing discovered_datasets fixture unchanged (returns dict)
+            @pytest.fixture(scope="session")
+            def discovered_datasets():
+                """Session-scoped dataset discovery (BACKWARD COMPATIBLE - returns dict)."""
+                # ... existing implementation unchanged ...
+                return {
+                    "available": available,
+                    "configs": configs,
+                    "all_datasets": all_datasets,
+                }
+            
+            # Add NEW fixture for lazy loading
+            @pytest.fixture(scope="session")
+            def dataset_registry():
+                """Session-scoped dataset registry for lazy loading."""
+                DatasetRegistry.reset()
+                DatasetRegistry.discover_datasets()
+                DatasetRegistry.load_config()
+                return DatasetRegistry
+            
+            @pytest.fixture
+            def get_dataset_by_name(dataset_registry):
+                """Helper to load specific dataset by name (lazy loading)."""
+                def _get(name: str):
+                    dataset = dataset_registry.get_dataset(name)
+                    if dataset and not dataset.validate():
+                        pytest.skip(f"{name} data not available")
+                    return dataset
+                return _get
+   ```
+
+3. **Migration approach** (incremental, non-breaking):
+
+- **Option A (Recommended)**: New tests use `get_dataset_by_name`, old tests continue using `discovered_datasets`
+- **Option B**: Migrate tests incrementally (update 5-10 tests at a time, verify passing)
+- **Option C**: Create migration script to update all tests automatically, then verify all pass
+
+4. **Validation after migration**:
+
+- All existing tests pass (no regressions)
+- New lazy loading works correctly
+- Performance improvement measured (30-50% reduction in setup time)
+
+**Implementation**:
+
+1. **Add new fixtures** (without changing existing `discovered_datasets`):
+
+- Add `dataset_registry` fixture (returns DatasetRegistry)
+- Add `get_dataset_by_name` helper fixture
+
+2. **Update tests incrementally**:
+
+- Start with new tests: Use `get_dataset_by_name` for selective loading
+- Migrate existing tests gradually: Update 5-10 tests, verify passing, commit
+- Final state: All tests use lazy loading, `discovered_datasets` can be deprecated (future)
+
+3. **Verify backward compatibility**:
+
+- All tests using `discovered_datasets` continue to work
+- No test failures introduced
+- Performance improvement verified
+
+**Success Criteria**:
+
+- [ ] Tests load only needed datasets
+- [ ] Setup time reduced by 30-50%
+- [ ] All existing tests pass
+
+**Expected Impact**: 30-50% reduction in test setup time
+
+#### 2.4: Fixture Scope Optimization (MEDIUM IMPACT)
+
+**Problem**: Expensive fixtures recreated for every test:
+
+- Workspace setup repeated
+- Large DataFrames regenerated
+- Excel files recreated
+
+**Solution**: Convert immutable, expensive fixtures to module/session scope.**Profiling Methodology**:
+
+1. **Extract metrics from performance tracking data**:
+
+- Run `make test-performance` to generate `.performance_data.json`
+- Extract fixture creation time (if fixture-level tracking available)
+- Extract test duration (includes fixture setup + test execution)
+- Count fixture reuse (how many tests use same fixture)
+
+2. **Identify expensive fixtures**:
+
+- **Threshold criteria**: Fixture is "expensive" if:
+                                - Creation time > 1 second (if measurable)
+                                - OR test duration > 5 seconds AND fixture used by >5 tests
+                                - OR fixture creates large files (>10MB) or performs I/O
+- **Tooling**: 
+                                - Use `pytest-profiling` plugin: `pytest --profile -o profile.txt`
+                                - OR analyze `.performance_data.json` to find slow tests, then identify fixtures used
+                                - OR add fixture-level tracking to performance plugin (future enhancement)
+
+3. **Profiling process**:
+   ```bash
+            # Step 1: Run tests with profiling
+            make test-performance
+            
+            # Step 2: Analyze performance data
+            python scripts/generate_performance_report.py --analyze-fixtures
+            
+            # Step 3: Identify candidates
+            # Look for:
+            # - Tests with duration >5s that share common fixtures
+            # - Fixtures used by >5 tests with average test duration >2s
+            # - Fixtures that create files or perform I/O
+   ```
+
+
+**Implementation**:
+
+1. **Profile fixtures using performance tracking data**:
+
+- Use `make test-performance` to identify expensive fixtures
+- Analyze `.performance_data.json` for slow tests
+- Identify common fixtures across slow tests
+- Apply threshold criteria (>1s creation OR >5 tests with >2s duration)
+
+2. **Convert to module/session scope**:
+
+- Identify immutable fixtures (don't change between tests)
+- Convert to `@pytest.fixture(scope="module")` or `scope="session"`
+- Use `tmp_path_factory` for module-scoped temp files
+
+3. **Verify test isolation**:
+
+- Run tests multiple times
+- Run in random order
+- Verify no shared state issues
+
+**Success Criteria**:
+
+- [ ] Expensive fixtures converted to appropriate scope
+- [ ] Test isolation maintained
+- [ ] Overall test speedup of 10-30%
+- [ ] No flaky tests introduced
+
+**Expected Impact**: 10-30% overall test speedup
+
+#### 2.5: Parallel Execution Safety Audit and Fix (CRITICAL - BLOCKING)
+
+**Problem**: Parallel execution is currently default, but safety issues identified:
+
+- Hardcoded filesystem paths (`/tmp/nl_query_learning/`, `/tmp/test_logs`) can collide in parallel runs
+- No `@pytest.mark.serial` markers for unsafe tests
+- No parallel-safety verification (flake rate, random order testing)
+- Risk of nondeterministic failures in parallel execution
+
+**Solution**: Switch to serial-by-default, fix issues, verify safety, then re-enable parallel.**Implementation**:**Phase 1: Fix Hardcoded Paths** (IMMEDIATE):
+
+- Replace `/tmp/nl_query_learning/` with `tmp_path` fixture in `test_nl_query_engine_self_improvement.py`
+- Replace `/tmp/test_logs` with `tmp_path` fixture in `test_prompt_optimizer.py`
+- Audit all tests for hardcoded paths (grep for `/tmp/`, `/var/`, absolute paths)
+
+**Phase 2: Add Serial Markers**:
+
+- Identify tests that can't run in parallel (shared DB, ports, file locks)
+- Mark with `@pytest.mark.serial`
+- Update Makefile to exclude serial tests from parallel runs
+
+**Phase 3: Verify Parallel-Safety**:
+
+- Run with random order: `pytest --random-order`
+- Run multiple times: `for i in {1..10}; do pytest -n auto; done`
+- Monitor flake rate (target: <1% over 100+ runs)
+- Check for shared state issues
+
+**Phase 4: Re-enable Parallel as Default** (AFTER VERIFICATION):
+
+- Only after: zero hardcoded paths, serial markers in place, flake rate <1%
+- Switch Makefile back to parallel-by-default
+- Document parallel-safety guarantees
+
+**Current Status**:
+
+- ⚠️ **BLOCKING**: Parallel is default but unsafe
+- **Action**: Switch to serial-by-default immediately, then fix issues
+
+**Success Criteria**:
+
+- [ ] All hardcoded paths replaced with `tmp_path` fixtures
+- [ ] Serial markers on all unsafe tests
+- [ ] Flake rate <1% over 100+ parallel runs
+- [ ] Random order testing passes consistently
+- [ ] Parallel re-enabled as default (after verification)
+
+**Expected Impact**: Safe parallel execution with 2-4x speedup (after fixes)
+
+### Phase 3: Automated Test Categorization (LOW EFFORT, HIGH VALUE)
+
+**Goal**: Use performance tracking data to automatically categorize slow tests and improve `test-fast` effectiveness.**Implementation**:
+
+1. **Create `scripts/categorize_slow_tests.py`**:
+
+- Read `.performance_data.json`
+- Identify tests >30 seconds without `@pytest.mark.slow`
+- Generate report of uncategorized slow tests
+- Optionally auto-add `@pytest.mark.slow` (with confirmation)
+
+2. **Integrate with performance report**:
+
+- Add section to `make performance-report` output
+- Show uncategorized slow tests
+- Recommend adding `@pytest.mark.slow`
+
+**Success Criteria**:
+
+- [ ] Identifies uncategorized slow tests
+- [ ] Generates actionable reports
+- [ ] Improves `test-fast` effectiveness
+
+**Expected Impact**: Better test categorization, more effective `test-fast` runs
+
+### Phase 1 Completion Gate (REQUIRED BEFORE PHASE 2)
+
+**Validation Checklist** (must complete before starting Phase 2):
+
+- [ ] All Phase 1 todos marked complete (1-14)
+- [ ] Performance tracking verified working: `make test-performance` generates `.performance_data.json`
+- [ ] Baseline created: `make performance-baseline` creates `.performance_baseline.json`
+- [ ] Baseline committed to git
+- [ ] Regression tests passing: `make performance-regression` passes
+- [ ] Performance report generated: `make performance-report` works
+- [ ] Documentation updated: `make performance-update-docs` updates PERFORMANCE.md
+
+**Gate Command**:
+
+```bash
+# Development (parallel for speed)
+make test-performance-parallel  # Run with parallel execution
+make performance-report
+
+# Final validation (serial for deterministic baseline)
+make test-performance  # Serial run for baseline comparison
+make performance-baseline  # Create baseline from serial run
+make performance-regression  # Should pass
+git status  # Verify baseline committed
+```
+
+**Note**: Baseline is created from **serial runs** to ensure deterministic comparison. Development uses parallel execution for speed.
+
+**Only proceed to Phase 2 after all Phase 1 validation passes.**
+
+### Rollback Strategy
+
+**If optimizations break tests or cause regressions:**
+
+1. **Disable optimizations**:
+
+- **LLM Mocking**: Remove `mock_llm_calls` fixture from test parameters (revert to real LLM)
+- **Caching**: Set environment variable `DISABLE_TEST_CACHE=1` (add to cache.py)
+- **Lazy Loading**: Revert to using `discovered_datasets` fixture (keep old behavior)
+- **Scope Changes**: Revert fixture scope changes (git revert specific commits)
+
+2. **Clear cache if causing issues**:
+   ```bash
+            make test-cache-clear
+   ```
+
+3. **Revert changes**:
+
+- **Git revert**: `git revert <commit-hash>` for specific optimization commits
+- **Manual undo**: Restore original fixture implementations from git history
+- **Feature flags**: Add environment variables to disable optimizations without code changes
+
+4. **Validation before committing optimizations**:
+
+- Run full test suite: `make test` (all tests must pass)
+- Verify performance improvement: Compare before/after metrics
+- Check for flaky tests: Run tests multiple times, verify stability
+- Verify test isolation: Run tests in random order, verify no shared state
+
+5. **Rollback validation**:
+
+- After rollback, verify all tests pass
+- Verify performance returns to baseline
+- Document rollback reason in commit message
 
 **File**: `tests/PERFORMANCE.md`Updates:
 
 - Add "Automated Performance Tracking" section
-- Document baseline update process
+- Document baseline update process (note: baseline from serial runs)
 - Add regression test documentation
 - Include CLI tool usage examples
 - Add performance data file locations
 - Document threshold configuration
+- **Add "Parallel Execution" section** (after plan completion) with:
+  - Measured speedup factor
+  - Flake rate and reliability metrics
+  - Best practices for parallel-safe test writing
+  - When to use serial execution (final validation, baselines)
 
 **Structure Improvements**:
 
@@ -278,6 +1289,7 @@ class TestPerformanceRegression:
 - Organize by component (tracking, regression, reporting)
 - Add troubleshooting section
 - Include examples for common workflows
+- Document parallel execution decision and metrics (final update)
 
 ## Implementation Details
 
@@ -304,8 +1316,6 @@ class TestPerformanceRegression:
 }
 ```
 
-
-
 ### Baseline Schema
 
 ```json
@@ -323,8 +1333,6 @@ class TestPerformanceRegression:
 }
 ```
 
-
-
 ### Configuration
 
 Add to `pyproject.toml`:
@@ -338,8 +1346,6 @@ slow_test_threshold_seconds = 30.0
 baseline_file = "tests/.performance_baseline.json"
 data_file = "tests/.performance_data.json"
 ```
-
-
 
 ## Makefile Commands
 
@@ -377,9 +1383,16 @@ performance-baseline: ## Create or update performance baseline
 performance-regression: ensure-venv ## Run performance regression tests
 	@echo "$(GREEN)Running performance regression tests...$(NC)"
 	$(PYTEST) tests/test_performance_regression.py -v
+
+test-cache-clear: ## Clear test data cache
+	@echo "$(GREEN)Clearing test cache...$(NC)"
+	rm -rf tests/.test_cache
+	@echo "$(GREEN)Cache cleared$(NC)"
+
+test-integration-llm: ensure-venv ## Run LLM integration tests (real LLM calls)
+	@echo "$(GREEN)Running LLM integration tests...$(NC)"
+	$(PYTEST) $(TEST_DIR) -v -m "integration and real_llm"
 ```
-
-
 
 ## Testing Strategy
 
@@ -415,11 +1428,18 @@ performance-regression: ensure-venv ## Run performance regression tests
 
 ### Modified Files
 
-1. `tests/conftest.py` - Register performance plugin
-2. `tests/PERFORMANCE.md` - Update with new sections
+1. `tests/conftest.py` - Register performance plugin, add mock_llm_calls fixture, enhance discovered_datasets
+2. `tests/PERFORMANCE.md` - Update with new sections and optimization results
 3. `pyproject.toml` - Add performance configuration
 4. `Makefile` - Add performance commands
-5. `.gitignore` - Add `.performance_data.json`
+5. `.gitignore` - Add `.performance_data.json`, `.performance_data_worker_*.json`, `tests/.test_cache/`
+
+### New Files (Phase 2 Optimizations)
+
+1. `tests/fixtures/cache.py` - Test data caching utilities
+2. `tests/core/test_nl_query_refinement_integration.py` - Real LLM integration tests
+3. `tests/core/test_nl_query_engine_filter_extraction_integration.py` - Real LLM integration tests
+4. `scripts/categorize_slow_tests.py` - Automated test categorization
 
 ## TDD Workflow (MANDATORY)
 
@@ -430,7 +1450,7 @@ performance-regression: ensure-venv ## Run performance regression tests
 - Use AAA pattern (Arrange-Act-Assert)
 - Test naming: `test_unit_scenario_expectedBehavior`
 - Use shared fixtures from `conftest.py` (check first before creating new fixtures)
-- Run test immediately: `make test-fast` or module-specific command
+- Run test immediately: `make test-fast-parallel` or module-specific parallel command
 - Verify test fails for the RIGHT reason (not setup error)
 
 2. **Implement Minimum Code (Green Phase)**
@@ -440,7 +1460,7 @@ performance-regression: ensure-venv ## Run performance regression tests
 
 3. **Run Test Again (Green Phase)**
 
-- Same command as step 1
+- Same command as step 1 (parallel for speed)
 - Verify test passes
 
 4. **Fix Quality Issues (Refactor Phase)**
@@ -450,13 +1470,19 @@ performance-regression: ensure-venv ## Run performance regression tests
 - Fix any remaining issues manually
 - Run: `make type-check` (if applicable)
 
-5. **Run Module Test Suite**
+5. **Run Module Test Suite (Parallel for Development)**
 
-- Use module-specific command: `make test-core`, `make test-analysis`, etc.
-- Or: `make test-fast` for quick feedback
+- Use module-specific parallel command: `make test-core-parallel`, `make test-analysis-parallel`, etc.
+- Or: `make test-fast-parallel` for quick feedback
 - Verify no regressions
 
-6. **Commit with Tests**
+6. **Final Validation Before Commit (Serial for Deterministic Results)**
+
+- Run: `make test` (serial) - Full test suite validation
+- Run: `make check` (serial) - Full quality gate (format, lint, type, test)
+- Verify all tests pass deterministically
+
+7. **Commit with Tests**
 
 - Include both implementation AND tests in same commit
 - Commit message format: `feat: [description] - Add comprehensive test suite (X tests passing)`
@@ -466,15 +1492,20 @@ performance-regression: ensure-venv ## Run performance regression tests
 - `make format` / `make format-check`
 - `make lint-fix` / `make lint`
 - `make type-check` (for Python code)
-- Module-specific test run (e.g., `make test-fast`)
+- Module-specific parallel test run (e.g., `make test-fast-parallel`) for development
+- Final serial validation (`make test`, `make check`) before commit
 
 **Makefile Command Usage Per Phase**:
 
-- Todos #2-6: Use `make test-fast` for quick feedback during development
-- Todo #13: Use `make test-fast` with filter for performance system tests
-- Todo #14: Use `make test` for full suite verification
+- **Development (parallel)**: Use `make test-fast-parallel` or module-specific parallel commands for quick feedback
+- **Final validation (serial)**: Use `make test` and `make check` for deterministic results before commit
+- Todos #2-6: Use `make test-fast-parallel` for quick feedback during development
+- Todo #13: Use `make test-fast-parallel` with filter for performance system tests
+- Todo #14: Use `make test` (serial) for full suite verification before commit
 
 ## Implementation Order
+
+### Phase 1: Performance Tracking (Complete tracking system first)
 
 1. **Storage Layer** (`storage.py`) - JSON read/write utilities
 
@@ -522,17 +1553,106 @@ performance-regression: ensure-venv ## Run performance regression tests
 
 10. **Final Integration** - Wire everything together
 
-    - **Success Criteria**: All components work together, full test suite passes
+                                - **Success Criteria**: All components work together, full test suite passes
+
+### Phase 2: Performance Optimizations (After tracking is working)
+
+**CRITICAL**: Phase 2 optimizations should be implemented **after** Phase 1 tracking is complete, so we can measure the impact of each optimization.**Phase 1 Completion Gate**: Verify all Phase 1 validation checklist items pass before starting Phase 2 (see "Phase 1 Completion Gate" section above).**Order of Implementation** (by impact):
+
+1. **2.1: Mock LLM Calls** (HIGHEST IMPACT - DO FIRST)
+
+- **TDD**: Write test for mock_llm_calls fixture first
+- **Success Criteria**: Unit tests <1s each, integration tests still work
+- **Expected**: 30-50x speedup for LLM tests
+
+2. **2.2: Test Data Caching** (HIGH IMPACT)
+
+- **TDD**: Write tests for cache utilities first
+- **Success Criteria**: 50-80% faster data loading
+- **Expected**: Significant reduction in fixture creation time
+
+3. **2.3: Selective Dataset Loading** (MEDIUM IMPACT)
+
+- **TDD**: Write tests for lazy loading helpers first
+- **Success Criteria**: 30-50% reduction in setup time
+- **Expected**: Faster test initialization
+
+4. **2.4: Fixture Scope Optimization** (MEDIUM IMPACT)
+
+- **TDD**: Profile first, then optimize
+- **Success Criteria**: 10-30% overall speedup
+- **Expected**: Reduced fixture recreation overhead
+
+5. **2.5: Parallel Execution Safety Fix** (CRITICAL - BLOCKING)
+
+- **TDD**: Write tests for parallel-safety detection
+- **Phase 1**: Fix hardcoded paths (IMMEDIATE)
+- **Phase 2**: Add serial markers
+- **Phase 3**: Verify parallel-safety
+- **Phase 4**: Re-enable parallel as default (after verification)
+- **Success Criteria**: Zero hardcoded paths, flake rate <1%, safe parallel execution
+- **Expected**: Safe 2-4x speedup after fixes
+
+### Phase 3: Automated Categorization (After optimizations)
+
+1. **Categorization Script**
+
+- **TDD**: Write tests for categorization logic first
+- **Success Criteria**: Identifies uncategorized slow tests
+- **Expected**: Better test-fast effectiveness
 
 ## Success Criteria
 
-### Overall Success Criteria
+### Phase 1: Performance Tracking Success Criteria
 
 - [ ] Performance data automatically collected on every test run **when `--track-performance` flag is used**
 - [ ] Regression tests fail when performance degrades >20% **with clear error message showing before/after comparison**
 - [ ] CLI tool generates accurate reports **with all specified sections populated**
 - [ ] PERFORMANCE.md automatically updated with current benchmarks **via `make performance-update-docs`**
 - [ ] All components have comprehensive test coverage **≥80% for performance system**
+
+### Phase 2: Performance Optimization Success Criteria
+
+**2.1: LLM Mocking**:
+
+- [ ] Unit tests run <1s each (30-50x speedup from 10-30s)
+- [ ] Integration tests still verify real LLM behavior
+- [ ] No flaky tests from Ollama availability
+
+**2.2: Test Data Caching**:
+
+- [ ] Cached data loads 50-80% faster than regeneration
+- [ ] Cache invalidation works correctly
+- [ ] No test failures from stale cache
+
+**2.3: Selective Dataset Loading**:
+
+- [ ] Tests load only needed datasets
+- [ ] Setup time reduced by 30-50%
+
+**2.4: Fixture Scope Optimization**:
+
+- [ ] Expensive fixtures converted to appropriate scope
+- [ ] Overall test speedup of 10-30%
+- [ ] Test isolation maintained
+
+**2.5: Parallel Execution**:
+
+- [ ] Maintain 2-4x parallel speedup
+- [ ] Serial tests properly excluded
+
+### Phase 3: Automated Categorization Success Criteria
+
+- [ ] Identifies uncategorized slow tests automatically
+- [ ] Generates actionable reports
+- [ ] Improves `test-fast` effectiveness
+
+### Overall Success Criteria
+
+- [ ] **Measurable performance improvements**: 30-50x for LLM tests, 50-80% for data loading, 10-30% overall
+- [ ] **Performance tracking works end-to-end**: Track → Report → Baseline → Regression
+- [ ] **All optimizations verified**: Before/after metrics documented in PERFORMANCE.md
+- [ ] **No regressions**: All existing tests pass after optimizations
 
 ### Per-Component Success Criteria
 
@@ -573,8 +1693,88 @@ performance-regression: ensure-venv ## Run performance regression tests
 - [ ] Generates reports in specified format (json/markdown)
 - [ ] Creates baseline correctly
 
-**Regression Tests (`test_performance_regression.py`)**:
+## Parallel Execution Decision and Documentation
 
-- [ ] Tests fail when performance degrades beyond threshold
-- [ ] Tests skip gracefully when baseline missing
-- [ ] Error messages are clear and actionable
+### Data Collection During Plan Execution
+
+Throughout plan execution, parallel execution effectiveness will be measured and validated:
+
+1. **Performance Metrics**:
+   - Test execution time (parallel vs serial)
+   - Speedup factor (target: 2-4x)
+   - Flake rate (target: <1% over 100+ runs)
+   - Resource utilization (CPU, memory)
+
+2. **Reliability Metrics**:
+   - Test failure rate in parallel vs serial
+   - Nondeterministic failures (race conditions, shared state)
+   - Random order test execution results
+   - Multiple run consistency
+
+3. **Safety Metrics**:
+   - Hardcoded path collisions (should be zero)
+   - Serial marker coverage (all unsafe tests marked)
+   - Test isolation verification (no shared mutable state)
+
+### Decision Criteria
+
+**Parallel execution will be validated as the default if:**
+
+- ✅ Speedup factor ≥ 2x (parallel is at least 2x faster than serial)
+- ✅ Flake rate < 1% (over 100+ parallel runs)
+- ✅ Zero hardcoded path collisions
+- ✅ All unsafe tests marked with `@pytest.mark.serial`
+- ✅ Random order execution passes consistently
+- ✅ No test failures introduced by parallel execution
+- ✅ Resource utilization acceptable (CPU/memory within limits)
+
+**If criteria are met**, parallel execution becomes the standard default for all development work, with serial reserved only for:
+- Final validation before commit (`make test`, `make check`)
+- Baseline creation (`make test-performance` for baseline)
+- Integration tests that require serial execution
+
+### Documentation Updates
+
+Upon completion of plan execution, the following documentation will be updated with parallel execution decision and data:
+
+1. **`.cursor/plans/performance_tracking_and_reporting_system_4dc41e8b.plan.md`**:
+   - Update overview with final parallel execution decision
+   - Document measured speedup, flake rate, and reliability metrics
+   - Update all test execution commands to reflect final decision
+
+2. **`tests/PERFORMANCE.md`**:
+   - Add "Parallel Execution" section with:
+     - Measured speedup factor
+     - Flake rate and reliability metrics
+     - Best practices for parallel-safe test writing
+     - When to use serial execution (final validation, baselines)
+
+3. **`tests/AGENTS.md`**:
+   - Update "Makefile Usage" section with parallel execution guidance
+   - Add parallel execution safety checklist
+   - Document serial marker usage
+
+4. **`.cursor/rules/000-project-setup-and-makefile.mdc`**:
+   - Update test commands to reflect parallel-by-default (if validated)
+   - Document serial execution use cases
+
+5. **`.cursor/rules/101-testing-hygiene.mdc`**:
+   - Add parallel execution safety guidelines
+   - Document `@pytest.mark.serial` marker usage
+   - Add test isolation requirements for parallel execution
+
+### Final Decision Documentation
+
+At the end of plan execution, a final decision document will be created:
+
+**File**: `tests/docs/PARALLEL_EXECUTION_DECISION.md`
+
+**Contents**:
+- Executive summary of parallel execution validation
+- Measured metrics (speedup, flake rate, reliability)
+- Decision: Parallel-by-default or serial-by-default
+- Rationale based on collected data
+- Recommendations for future test development
+- Migration guide (if switching from serial to parallel)
+
+**Timeline**: This decision document will be created after Phase 2.5 (Parallel Execution Safety Audit) is complete and all metrics have been collected.
