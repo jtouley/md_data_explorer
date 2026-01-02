@@ -87,6 +87,10 @@ make check         # Full quality gate (format + lint + type + test)
    - Single source of truth for fixtures in `conftest.py`
    - No duplicate fixture definitions across test files
    - Reusable helper functions for common patterns
+   - **Factory fixtures** for variations (e.g., `make_semantic_layer`, `make_cohort_with_categorical`)
+   - **Generic factories** for extensibility (e.g., `_create_synthetic_excel_file(data, config)`)
+   - **Rule of Three**: When 3+ fixtures follow same pattern, refactor to generic factory
+   - See [DRY/SOLID Refactoring Standards](./AGENTS.md#drysolid-refactoring-standards-for-fixtures) in AGENTS.md for detailed guidance
 
 ### 2. **Registry-Based Testing**
    - Tests use `DatasetRegistry.discover_datasets()` for dynamic discovery

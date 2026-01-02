@@ -22,6 +22,12 @@ todos:
       - phase1-empty-df
       - phase1-page-config
       - phase1-sys-path
+    verification_steps:
+      - Run: make test-core PYTEST_ARGS="tests/core/test_constants.py tests/core/test_schema.py -xvs"
+      - Run: make test-ui PYTEST_ARGS="tests/ui/test_page_base.py -xvs"
+      - Verify: All existing tests pass (baseline: 786+ tests)
+      - Verify: New test files created and passing
+      - Verify: All 8 UI pages use PageConfig, zero sys.path hacks
   - id: phase2-exceptions
     content: "Phase 2.1: Create exceptions.py with full hierarchy"
     status: pending
@@ -44,6 +50,11 @@ todos:
       - phase2-exceptions
       - phase2-context
       - phase2-logging
+    verification_steps:
+      - Run: make test-core PYTEST_ARGS="tests/core/test_exceptions.py -xvs"
+      - Run: make test-integration PYTEST_ARGS="tests/integration/test_error_handling.py -xvs"
+      - Verify: All existing tests pass (baseline: 786+ tests)
+      - Verify: All exceptions inherit from ClinicalAnalyticsError, structured logging in place
   - id: phase3-factory
     content: "Phase 3.1: Create DatasetFactory for config-driven init"
     status: pending
@@ -72,6 +83,12 @@ todos:
       - phase3-granularity
       - phase3-config
       - phase3-sepsis
+    verification_steps:
+      - Run: make test-datasets PYTEST_ARGS="tests/datasets/test_dataset_factory.py -xvs"
+      - Run: make test-core PYTEST_ARGS="tests/core/test_dataset.py -xvs"
+      - Run: make test-loader PYTEST_ARGS="tests/loader/test_sepsis_loader.py -xvs"
+      - Verify: All existing tests pass (baseline: 786+ tests)
+      - Verify: DatasetFactory creates all 3 dataset types, zero pandas in sepsis loader
   - id: phase4-base-pages
     content: "Phase 4.1: Create AnalysisPage and GatedPage base classes"
     status: pending
@@ -95,6 +112,11 @@ todos:
       - phase4-base-pages
       - phase4-export
       - phase4-migrate
+    verification_steps:
+      - Run: make test-ui PYTEST_ARGS="tests/ui/test_page_base.py tests/ui/test_export_buttons.py -xvs"
+      - Run: make test-integration PYTEST_ARGS="tests/integration/test_page_migration.py -xvs"
+      - Verify: All existing tests pass (baseline: 786+ tests)
+      - Verify: All 5 analysis pages migrated to base classes, ExportButtons component in use
   - id: phase5-interface
     content: "Phase 5.1: Create LLMProvider abstract interface"
     status: pending
@@ -117,6 +139,10 @@ todos:
       - phase5-interface
       - phase5-ollama
       - phase5-factory
+    verification_steps:
+      - Run: make test-core PYTEST_ARGS="tests/core/test_llm_interface.py tests/core/test_llm_factory.py tests/core/test_providers.py -xvs"
+      - Verify: All existing tests pass (baseline: 786+ tests)
+      - Verify: LLMProvider interface implemented, OllamaProvider working, LLMFactory creates providers
   - id: final-verification
     content: "Final: Run all quality gates (test, lint, format, type-check)"
     status: pending
@@ -232,9 +258,11 @@ class UnifiedCohort:
     # ... existing code ...
     
     @staticmethod
-    def empty_dataframe() -> pd.DataFrame:
+    def empty_dataframe() -> pl.DataFrame:
         """Return empty DataFrame with required cohort columns."""
-        return pd.DataFrame(columns=UnifiedCohort.REQUIRED_COLUMNS)
+        # PANDAS EXCEPTION: UnifiedCohort.REQUIRED_COLUMNS is currently defined for pandas
+        # TODO: Migrate to Polars schema when UnifiedCohort is fully migrated
+        return pl.DataFrame(schema={col: pl.Utf8 for col in UnifiedCohort.REQUIRED_COLUMNS})
 ```
 
 **Migration**: Replace 3 instances in dataset definitions.
@@ -320,7 +348,10 @@ class ClinicalAnalyticsError(Exception):
 
 **Files**: Throughout codebase - identify all `raise ValueError/Exception` calls
 
+**Discovery**: Use `grep -r "raise ValueError\|raise Exception" src/` to find all exception sites.
+
 **Test Strategy**:
+- Use `grep -r "raise ValueError\|raise Exception" src/` to find all sites
 - Test exceptions include dataset name in context
 - Test exceptions include relevant columns/values
 - Test error messages are descriptive
@@ -529,7 +560,12 @@ class ExportButtons:
 
 ### 4.3: Consolidate Gate Pattern
 
-**Files**: All analysis pages 20-24
+**Files**: All 5 analysis pages in `src/clinical_analytics/ui/pages/`:
+- `2_📊_Analyze.py`
+- `3_❓_Ask_Questions.py`
+- `4_📈_Descriptive_Statistics.py`
+- `5_🔍_Correlation_Analysis.py`
+- `6_📉_Predictor_Analysis.py`
 
 **Test Strategy**:
 - Test gated pages stop execution in MVP mode
@@ -630,19 +666,57 @@ graph LR
 
 ### Test Execution Per Phase
 
-**Phase 1**: `make test-core`, `make test-ui`
-**Phase 2**: `make test-core`, `make test-integration`
-**Phase 3**: `make test-datasets`, `make test-core`
-**Phase 4**: `make test-ui`, `make test-integration`
-**Phase 5**: `make test-core`
+**Phase 1**: 
+- `make test-core PYTEST_ARGS="tests/core/test_constants.py tests/core/test_schema.py -xvs"`
+- `make test-ui PYTEST_ARGS="tests/ui/test_page_base.py -xvs"`
+
+**Phase 2**: 
+- `make test-core PYTEST_ARGS="tests/core/test_exceptions.py -xvs"`
+- `make test-integration PYTEST_ARGS="tests/integration/test_error_handling.py -xvs"`
+
+**Phase 3**: 
+- `make test-datasets PYTEST_ARGS="tests/datasets/test_dataset_factory.py -xvs"`
+- `make test-core PYTEST_ARGS="tests/core/test_dataset.py -xvs"`
+- `make test-loader PYTEST_ARGS="tests/loader/test_sepsis_loader.py -xvs"`
+
+**Phase 4**: 
+- `make test-ui PYTEST_ARGS="tests/ui/test_page_base.py tests/ui/test_export_buttons.py -xvs"`
+- `make test-integration PYTEST_ARGS="tests/integration/test_page_migration.py -xvs"`
+
+**Phase 5**: 
+- `make test-core PYTEST_ARGS="tests/core/test_llm_interface.py tests/core/test_llm_factory.py tests/core/test_providers.py -xvs"`
 
 ### Regression Protection
 
-After each phase, run full test suite:
+After each phase, run full test suite with baseline comparison:
+
 ```bash
-make test  # All 786+ tests must pass
-make check # Lint, format, type check
+# Baseline (run once at start of refactoring)
+make test 2>&1 | tee baseline_test_results.txt
+BASELINE_PASSED=$(grep -c "PASSED" baseline_test_results.txt || echo "0")
+BASELINE_FAILED=$(grep -c "FAILED" baseline_test_results.txt || echo "0")
+echo "Baseline: $BASELINE_PASSED passed, $BASELINE_FAILED failed"
+
+# After each phase
+make test 2>&1 | tee phase_N_test_results.txt
+PHASE_PASSED=$(grep -c "PASSED" phase_N_test_results.txt || echo "0")
+PHASE_FAILED=$(grep -c "FAILED" phase_N_test_results.txt || echo "0")
+
+# Verify: No new failures, same or more passing tests
+if [ "$PHASE_FAILED" -gt "$BASELINE_FAILED" ]; then
+    echo "ERROR: New test failures detected!"
+    exit 1
+fi
+
+# Full quality gate
+make check  # Lint, format, type check, test
 ```
+
+**Success Criteria**:
+- All existing tests must pass (baseline: 786+ tests)
+- No new test failures compared to baseline
+- New test files created and passing
+- Coverage maintained or improved (see Testing Coverage section)
 
 ---
 
@@ -656,12 +730,13 @@ make check # Lint, format, type check
 
 ### Per-Phase Checklist
 - [ ] Write tests BEFORE implementation (Red phase)
-- [ ] Run tests to verify failure (Red verified)
+- [ ] Run tests to verify failure (Red verified) - Use phase-specific test commands from "Test Execution Per Phase"
 - [ ] Implement refactoring (Green phase)
-- [ ] Run tests to verify pass (Green verified)
+- [ ] Run tests to verify pass (Green verified) - Use same phase-specific test commands
 - [ ] Run `make format && make lint-fix`
-- [ ] Run module-specific tests
-- [ ] Run full test suite (regression check)
+- [ ] Run module-specific tests (see "Test Execution Per Phase" for exact commands)
+- [ ] Run full test suite with baseline comparison (see "Regression Protection" section)
+- [ ] Run coverage check: `make test-cov` and compare to baseline
 - [ ] Commit with TDD confirmation
 
 ### Post-Refactoring
@@ -690,11 +765,39 @@ git revert <phase-N-commit>  # Revert specific phase
 git checkout main            # Full rollback if needed
 ```
 
+**Rollback Verification**:
+- After each phase commit, test `git revert` to ensure clean rollback
+- Document which files are touched per phase for selective rollback:
+  - Phase 1: `src/clinical_analytics/core/constants.py`, `src/clinical_analytics/core/schema.py`, `src/clinical_analytics/ui/page_base.py`, all UI pages
+  - Phase 2: `src/clinical_analytics/core/exceptions.py`, all files with exception handling
+  - Phase 3: `src/clinical_analytics/core/dataset_factory.py`, `src/clinical_analytics/core/dataset.py`, `src/clinical_analytics/datasets/sepsis/`
+  - Phase 4: `src/clinical_analytics/ui/page_base.py`, `src/clinical_analytics/ui/components/export_buttons.py`, all analysis pages
+  - Phase 5: `src/clinical_analytics/core/llm_interface.py`, `src/clinical_analytics/core/providers/`, `src/clinical_analytics/core/llm_factory.py`
+
 ### Testing Coverage
 
 - Minimum 80% coverage maintained throughout
 - Critical paths have 100% coverage (dataset loading, analysis)
 - Integration tests verify end-to-end workflows
+- **Coverage verification**: `make test-cov` after each phase, compare to baseline
+- **Coverage threshold**: No decrease >2% per phase
+
+**Coverage Verification Process**:
+```bash
+# Baseline (run once at start)
+make test-cov 2>&1 | tee baseline_coverage.txt
+BASELINE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' baseline_coverage.txt | head -1)
+
+# After each phase
+make test-cov 2>&1 | tee phase_N_coverage.txt
+PHASE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' phase_N_coverage.txt | head -1)
+
+# Verify: Coverage within 2% of baseline
+COVERAGE_DIFF=$((BASELINE_COVERAGE - PHASE_COVERAGE))
+if [ "$COVERAGE_DIFF" -gt 2 ]; then
+    echo "WARNING: Coverage decreased by ${COVERAGE_DIFF}%"
+fi
+```
 
 ---
 
