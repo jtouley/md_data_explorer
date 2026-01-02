@@ -3,10 +3,10 @@ name: "Implement ADR008: Versioned Dataset Persistence with Rollback"
 overview: Implement versioned dataset persistence with rollback, cross-dataset content deduplication, schema drift policy, and event logging as specified in ADR008. Follows test-first development with phase commits and quality gates.
 todos:
   - id: phase0-file-locking-helper
-    content: "Phase 0: File locking helper - Implement file_lock() context manager (fcntl/msvcrt) for metadata writes, reuse in all phases"
+    content: "Phase 0: Audit file locking usage - Verify file_lock() used in all metadata writes (save_upload, rollback, etc.), add if missing, add tests for coverage"
     status: pending
   - id: phase0-tests
-    content: "Phase 0: Write and run tests for file locking helper (exclusive lock, platform support)"
+    content: "Phase 0: Write and run tests for file locking helper (exclusive lock, platform support, verify make test-ui runs tests in tests/ui/test_user_datasets.py)"
     status: pending
     dependencies:
       - phase0-file-locking-helper
@@ -61,7 +61,7 @@ todos:
     dependencies:
       - phase3-tests
   - id: phase4-invariants-assertion
-    content: "Phase 4.1: Invariant assertion function - Add assert_metadata_invariants() with explicit checks: exactly one is_active, top-level dataset_version matches active, top-level upload_id matches active (or decide consistency), active version tables exist on disk"
+    content: "Phase 4.1: Invariant assertion function - Add assert_metadata_invariants() with explicit checks: exactly one is_active, top-level dataset_version matches active, top-level upload_id matches active (or decide consistency), active version tables exist on disk. Invariants must be implemented first so Phase 4.2 can call assert_metadata_invariants() after every write."
     status: pending
     dependencies:
       - phase3-quality-gates
@@ -76,12 +76,12 @@ todos:
     dependencies:
       - phase4-invariants-tests
   - id: phase4-overwrite-behavior
-    content: "Phase 4.2: Overwrite behavior with version preservation - Update save_upload() to preserve versions, check for duplicate version, apply schema drift policy, call assert_metadata_invariants() after every write, only register active version tables in DuckDB (historical on-demand)"
+    content: "Phase 4.2: Overwrite behavior with version preservation - Update save_upload() to preserve versions, migrate legacy datasets (create synthetic version_history from top-level fields), check for duplicate version, apply schema drift policy, call assert_metadata_invariants() after every write, only register active version tables in DuckDB (historical on-demand)"
     status: pending
     dependencies:
       - phase4-invariants-quality-gates
   - id: phase4-tests
-    content: "Phase 4.2: Write and run tests for overwrite behavior (version preservation, duplicate version reuse, invariant enforcement, only active tables registered)"
+    content: "Phase 4.2: Write and run tests for overwrite behavior (version preservation, legacy dataset migration, duplicate version reuse, invariant enforcement, only active tables registered)"
     status: pending
     dependencies:
       - phase4-overwrite-behavior
@@ -210,16 +210,20 @@ flowchart TD
 
 ### Phase 0: File Locking Helper (Foundation)
 
-**Objective**: Implement reusable file locking helper for metadata writes to prevent corruption from concurrent Streamlit reruns.
+**Objective**: Audit and ensure file locking is used in all metadata writes to prevent corruption from concurrent Streamlit reruns. Note: `file_lock()` context manager already exists in codebase (lines 55-144), but may not be used in all write operations.
 
 **Files to Modify**:
 
-- `src/clinical_analytics/ui/storage/user_datasets.py` - Add `file_lock()` context manager
-- `tests/ui/test_user_datasets.py` - Add tests for file locking
+- `src/clinical_analytics/ui/storage/user_datasets.py` - Audit file_lock() usage, add if missing
+- `tests/ui/test_user_datasets.py` - Add tests for file locking coverage
 
 **Test-First Approach**:
 
-1. **Write failing tests**:
+1. **Verify existing implementation**:
+   - Check `file_lock()` exists and works (already implemented)
+   - Verify `make test-ui` runs tests in `tests/ui/test_user_datasets.py`
+
+2. **Write failing tests**:
    ```python
    def test_file_lock_exclusive_access(tmp_path):
        """File lock should provide exclusive access to metadata file."""
@@ -232,24 +236,31 @@ flowchart TD
        # Arrange: Platform detection
        # Act: Create lock helper
        # Assert: Correct implementation selected
+   
+   def test_file_lock_used_in_all_metadata_writes():
+       """Verify file_lock() is used in all metadata write operations."""
+       # Arrange: Audit codebase
+       # Act: Check save_upload(), rollback_to_version(), etc.
+       # Assert: All metadata writes use file_lock()
    ```
 
-2. **Run tests** (should fail): `make test-ui`
+3. **Run tests** (should fail for missing coverage): `make test-ui`
 
-3. **Implement**:
+4. **Audit and add file locking**:
+   - Verify `file_lock()` is used in `save_upload()` metadata writes
+   - Verify `file_lock()` is used in `rollback_to_version()` metadata writes
+   - Add file locking to any metadata write operations that don't have it
+   - Ensure all metadata writes use file locking helper
 
-   - Add `file_lock()` context manager using `fcntl` (Unix) or `msvcrt` (Windows)
-   - Handle platform detection
-   - Use in all metadata write operations (reused in Phase 4, 6)
+5. **Run tests again**: `make test-ui`
 
-4. **Run tests again**: `make test-ui`
-
-5. **Quality gates**: `make check`
+6. **Quality gates**: `make check`
 
 **Key Changes**:
 
-- Create reusable `file_lock()` context manager
-- Support both Unix and Windows platforms
+- Audit existing `file_lock()` context manager usage
+- Add file locking to any missing metadata write operations
+- Support both Unix and Windows platforms (already implemented)
 - Use in all phases that write metadata (not just Phase 6)
 
 ### Phase 1: Cross-Dataset Content Deduplication (UX Polish, Non-Blocking)
@@ -306,7 +317,9 @@ flowchart TD
 
 ### Phase 2: Version History Metadata Structure
 
-**Objective**: Extend metadata schema to include `version_history` array with canonical `tables` structure.**Files to Modify**:
+**Objective**: Extend metadata schema to include `version_history` array with canonical `tables` structure. Version history is ordered by `created_at` ascending (oldest first), with new versions appended to the end.
+
+**Files to Modify**:
 
 - `src/clinical_analytics/ui/storage/user_datasets.py` - Update metadata structure, replace `parquet_paths`/`duckdb_tables` with `tables` map
 - `src/clinical_analytics/ui/storage/user_datasets.py` - Update `save_table_list()` to use canonical structure
@@ -354,6 +367,7 @@ flowchart TD
 - Add `schema_fingerprint` to each table entry
 - **Preserve stable internal identifier** (table_0 or cohort) - don't break existing uploads
 - Display names are UI-only (breadcrumbs for humans, not storage keys)
+- **Version history ordering**: Ordered by `created_at` ascending (oldest first), append new versions to end
 
 ### Phase 3: Schema Drift Detection and Policy
 
@@ -402,7 +416,9 @@ flowchart TD
 
 - Add `compute_schema_fingerprint()` function
 - Add `classify_schema_drift()` function
+  - **Return type**: `dict[str, Any]` with keys: `drift_type` ("additive" | "breaking" | "none"), `added_columns` (list[str]), `removed_columns` (list[str]), `type_changes` (list[dict])
 - Add `apply_schema_drift_policy()` function
+  - **Return type**: `tuple[bool, str, list[str]]` (allowed, message, warnings)
 - Integrate into overwrite flow
 
 4. **Run tests again**: `make test-ui`
@@ -410,10 +426,11 @@ flowchart TD
 
 **Key Changes**:
 
-- Implement schema fingerprint computation (SHA256 of canonicalized schema JSON with **sorted keys** - deterministic over ordered columns/types)
+- Implement schema fingerprint computation: SHA256 hash of canonicalized schema JSON with keys sorted alphabetically, column types sorted within each key. Encoding: `hashlib.sha256(canonical_json.encode('utf-8')).hexdigest()` (deterministic over ordered columns/types)
 - Implement drift classification (added/removed/type changes)
 - Implement policy enforcement for **overwrite acceptance only** (allow additive, block breaking unless override)
 - **Query compatibility** handled separately in Phase 8 (warnings at rollback time, query validation against active schema)
+- **Duplicate version detection**: Exact string match, case-sensitive comparison
 
 ### Phase 4: Overwrite Behavior with Version Preservation
 
@@ -431,6 +448,13 @@ flowchart TD
           # Arrange: Upload dataset, then overwrite with new data
           # Act: Load metadata
           # Assert: version_history contains both versions, old version marked inactive
+      
+      def test_overwrite_legacy_dataset_migrates_to_version_history(tmp_path):
+          """Overwriting legacy dataset (no version_history) should migrate legacy data to version 1."""
+          # Arrange: Create legacy metadata (no version_history, has dataset_version, schema, parquet_paths)
+          # Act: Overwrite with new data
+          # Assert: version_history has 2 entries: v1 (legacy, inactive), v2 (new, active)
+          # Assert: Legacy data preserved in v1 entry (dataset_version, schema, parquet_paths reconstructed)
       
       def test_identical_content_reuses_version(tmp_path):
           """Uploading identical content should reuse existing version entry."""
@@ -455,6 +479,18 @@ flowchart TD
 3. **Implement**:
 
 - Update `save_upload()` to handle overwrite with version preservation
+- **CRITICAL: Legacy dataset migration during overwrite**:
+  - When `existing_version_history` is empty (`[]`) but legacy metadata exists:
+    - Create synthetic version entry from top-level fields:
+      - `version`: `existing_meta.get("dataset_version")`
+      - `upload_id`: `existing_upload_id`
+      - `created_at`: `existing_meta.get("created_at")` or `existing_meta.get("upload_timestamp")`
+      - `is_active`: `False` (will be marked inactive when new version added)
+      - `tables`: Reconstruct from `parquet_paths` or `duckdb_tables` (if exists)
+      - `schema`: `existing_meta.get("schema", {})`
+      - `source_filename`: `existing_meta.get("original_filename")`
+    - Set `existing_version_history = [legacy_version_entry]`
+    - Log: "Migrated legacy dataset to version_history (1 version)"
 - Check for duplicate version (dedupe logic)
 - Apply schema drift policy (overwrite acceptance gating)
 - Mark old versions inactive
@@ -466,13 +502,21 @@ flowchart TD
 4. **Run tests again**: `make test-ui`
 5. **Quality gates**: `make check`
 
+**Error Handling**:
+- **FileLockTimeoutError**: Retry with exponential backoff (max 3 retries), then return error to user
+- **JSON decode errors**: Log corruption, attempt recovery from backup (if exists), else return error
+- **Disk space errors**: Return clear error message, preserve existing metadata
+- **Partial writes**: Use atomic write pattern (write to temp file, then rename) to prevent corruption
+- Add tests for all error scenarios
+
 **Key Changes**:
 
 - Find existing metadata by `dataset_name` (with file locking)
-- Check if `dataset_version` already exists in `version_history` (dedupe)
+- **Legacy dataset migration**: When overwriting dataset without `version_history`, create synthetic version entry from top-level fields (`dataset_version`, `schema`, `parquet_paths`, etc.) and mark as inactive before adding new version
+- Check if `dataset_version` already exists in `version_history` (dedupe, exact string match, case-sensitive)
 - Apply schema drift policy (overwrite acceptance)
 - Create version entry with canonical `tables` structure
-- **Only register active version tables** - historical versions preserved but not registered (prevents name collisions, faster startup, cleaner DuckDB)
+- **Only register active version tables** - historical versions preserved but not registered (prevents name collisions, faster startup, cleaner DuckDB). Historical tables registered on-demand during rollback (Phase 6), using versioned table names to prevent collisions
 - **Call `assert_metadata_invariants()` after every write** - explicit, centralized enforcement
 - Never delete Parquet files or DuckDB tables
 
@@ -510,7 +554,10 @@ flowchart TD
 3. **Implement**:
 
 - Initialize `events` list in metadata
-- **Add `event_id` (UUID) and `timestamp` to each event** (for safe merge and sort)
+- **Event Structure**:
+  - `event_id`: `uuid.uuid4().hex` (UUID4 hex string)
+  - `timestamp`: `datetime.now().isoformat() + "Z"` (ISO 8601 UTC)
+  - `event_type`: `str` (upload_created, version_activated, overwrite_attempt_blocked_by_drift, rollback)
 - Record `upload_created` on new upload
 - Record `version_activated` on overwrite (if not duplicate)
 - Record `overwrite_attempt_blocked_by_drift` when drift blocked
@@ -520,8 +567,9 @@ flowchart TD
 5. **Quality gates**: `make check`
 
 **Key Changes**:
-- Events include `event_id` (UUID) and `timestamp` for safe merge/sort
+- Events include `event_id` (UUID4 hex) and `timestamp` (ISO 8601 UTC) for safe merge/sort
 - Version history entries include `source_filename` (human breadcrumbs)
+- **Return type specifications**: `find_datasets_by_content_hash()` returns `list[dict[str, Any]]` where each dict contains `dataset_name`, `upload_id`, `dataset_version`
 
 ### Phase 6: Rollback Mechanism
 
@@ -571,10 +619,17 @@ flowchart TD
 - Add `rollback_to_version()` method using **file locking helper from Phase 0**
 - **Check schema compatibility for query compatibility warnings** (not overwrite gating - that's Phase 3)
 - Switch active version flag
-- **Register historical version tables on-demand** (activate them in DuckDB when rolled back)
+- **Register historical version tables on-demand** (activate them in DuckDB when rolled back, using versioned table names to prevent collisions)
 - Update top-level fields (schema/aliases/config)
 - Record rollback event (with event_id and timestamp)
 - **Call `assert_metadata_invariants()` after rollback**
+
+**Error Handling**:
+- **FileLockTimeoutError**: Retry with exponential backoff (max 3 retries), then return error to user
+- **JSON decode errors**: Log corruption, attempt recovery from backup (if exists), else return error
+- **Disk space errors**: Return clear error message, preserve existing metadata
+- **Partial writes**: Use atomic write pattern (write to temp file, then rename) to prevent corruption
+- Add tests for all error scenarios
 
 4. **Run tests again**: `make test-ui`
 5. **Quality gates**: `make check`
@@ -589,7 +644,16 @@ flowchart TD
 
 ### Phase 7: Active Version Resolution Algorithm
 
-**Objective**: Implement canonical active version resolution with fallback logic.**Files to Modify**:
+**Objective**: Implement canonical active version resolution with fallback logic and backward compatibility migration.
+
+**Migration Strategy**:
+- **Trigger**: On first read of metadata without `version_history` (lazy migration)
+- **Process**: Create synthetic `version_history` from top-level fields (dataset_version, schema, aliases, etc.)
+- **Validation**: Call `assert_metadata_invariants()` after migration to verify correctness
+- **Rollback safety**: Preserve original metadata file as backup before migration (rename to `.backup`), restore on failure
+- **Tests**: `test_migration_creates_version_history()`, `test_migration_preserves_data()`, `test_migration_rollback_on_failure()`
+
+**Files to Modify**:
 
 - `src/clinical_analytics/ui/storage/user_datasets.py` - Add `get_active_version()` method
 - `src/clinical_analytics/datasets/uploaded/definition.py` - Use active version for loading
@@ -628,9 +692,10 @@ flowchart TD
 3. **Implement**:
 
 - Add `get_active_version()` method with canonical rules
-- Fallback to latest if no active version
-- Backward compatibility for old metadata format
+- Fallback to latest if no active version (by `created_at` descending)
+- **Backward compatibility**: On first read of metadata without `version_history`, migrate to new format (lazy migration)
 - Assert invariants
+- **Return type**: `dict[str, Any] | None` (version entry dict or None if no versions exist)
 
 4. **Run tests again**: `make test-ui`
 5. **Quality gates**: `make check`
@@ -698,8 +763,20 @@ flowchart TD
 - Display version history with active indicator
 - Add rollback button/UI
 
-3. **Manual testing**: Verify UI behavior
-4. **Quality gates**: `make check`
+3. **Manual Testing Checklist**:
+   - [ ] Upload dataset with same name (overwrite checkbox appears)
+   - [ ] Overwrite with additive schema changes (allowed)
+   - [ ] Overwrite with breaking schema changes (blocked, override works)
+   - [ ] Rollback to previous version (active switches, queries work)
+   - [ ] Version history displays correctly in UI
+   - [ ] Cross-dataset deduplication warning appears with link to existing dataset
+
+4. **Integration Tests** (add to Phase 9 or create Phase 9.5):
+   - Full upload → overwrite → rollback flow
+   - Cross-dataset deduplication with multiple datasets
+   - Schema drift policy enforcement across multiple overwrites
+
+5. **Quality gates**: `make check`
 
 ## File Structure
 

@@ -1,0 +1,62 @@
+# NL Query Engine Configuration
+# Single source of truth for confidence thresholds and parsing parameters.
+# These are domain config, not code - adjust without code changes.
+#
+# Environment variables take precedence over YAML values.
+# See config/README.md for environment variable mapping.
+
+# Confidence thresholds for tier matching
+tier_1_pattern_match_threshold: 0.9  # Pattern matching requires high confidence
+tier_2_semantic_match_threshold: 0.75  # Semantic matching threshold
+clarifying_questions_threshold: 0.5  # Below this, ask clarifying questions
+
+# Auto-execute threshold (intentionally same as tier_2_semantic_match_threshold)
+# because semantic match is the minimum confidence for auto-execution
+auto_execute_confidence_threshold: 0.75
+
+# Performance/timeout settings
+tier_timeout_seconds: 5.0  # Fail fast if any tier takes too long
+enable_parallel_tier_matching: false  # Future optimization (not implemented yet)
+
+# Semantic matching parameters
+semantic_similarity_threshold: 0.7  # Minimum cosine similarity for semantic match
+fuzzy_match_cutoff: 0.7  # difflib cutoff for fuzzy variable matching
+
+# Feature flags
+enable_clarifying_questions: true
+enable_progressive_feedback: true
+
+# Ollama LLM Configuration (loaded from config/ollama.yaml, but values here for reference)
+# These values are loaded from config/ollama.yaml via _load_ollama_config()
+# Environment variables take precedence over YAML config
+ollama_base_url: "http://localhost:11434"
+ollama_default_model: "llama3.1:8b"
+ollama_fallback_model: "llama3.2:3b"
+ollama_timeout_seconds: 30.0
+ollama_max_retries: 3
+ollama_json_mode: true
+
+# Tier 3 confidence thresholds (Phase 0 success vs Phase 3 execution gate)
+tier_3_min_confidence: 0.5
+tier_3_execution_threshold: 0.75
+
+# ADR009: LLM Feature-Specific Timeout Configuration
+# Each feature has its own timeout based on complexity
+# Error translation should be fast (5s) - users are already frustrated by error
+# Result interpretation can be longer (20s) - users expect thoughtful analysis
+# Query parsing is most complex (30s) - requires understanding schema and intent
+llm_timeout_parse_s: 30.0
+llm_timeout_followups_s: 30.0
+llm_timeout_interpretation_s: 30.0
+llm_timeout_result_interpretation_s: 20.0
+llm_timeout_error_translation_s: 5.0
+llm_timeout_filter_extraction_s: 30.0
+
+# Hard cap: prevents increasing timeouts to "fix" issues
+# If any feature needs more than 30s, investigate model size or prompt complexity
+llm_timeout_max_s: 30.0
+
+# ADR009: Feature Flags
+# Enable/disable LLM-enhanced features independently
+enable_result_interpretation: true
+

@@ -1,0 +1,25 @@
+# UI Configuration
+# Feature flags and configuration settings for the Clinical Analytics UI.
+# Single source of truth for feature toggles.
+#
+# Environment variables take precedence over YAML values.
+# See config/README.md for environment variable mapping.
+
+# Feature flags - single source of truth
+# Set MULTI_TABLE_ENABLED=true in environment to enable multi-table (ZIP) uploads
+multi_table_enabled: false
+
+# V1 MVP: Gate legacy analysis pages (2-6)
+# Set V1_MVP_MODE=false to show all pages (for development/testing)
+v1_mvp_mode: true
+
+# Logging configuration
+log_level: "INFO"
+
+# Upload settings
+max_upload_size_mb: 100
+
+# Page names (centralized to avoid brittle string references)
+# These are the actual Streamlit page file paths
+ask_questions_page: "pages/03_💬_Ask_Questions.py"
+
