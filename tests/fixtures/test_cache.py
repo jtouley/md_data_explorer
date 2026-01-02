@@ -90,7 +90,7 @@ class TestDataFrameCaching:
         # Act: Cache DataFrame
         from tests.fixtures.cache import cache_dataframe
 
-        cache_path = cache_dataframe(df, cache_dir, "test_key")
+        cache_path = cache_dataframe(df, "test_key", cache_dir)
 
         # Assert: Parquet file exists
         assert cache_path.exists(), "Cache file should exist"
@@ -106,10 +106,10 @@ class TestDataFrameCaching:
         from tests.fixtures.cache import cache_dataframe, get_cached_dataframe
 
         cache_key = "test_key"
-        cache_dataframe(original_df, cache_dir, cache_key)
+        cache_dataframe(original_df, cache_key, cache_dir)
 
         # Act: Retrieve cached DataFrame
-        cached_df = get_cached_dataframe(cache_dir, cache_key)
+        cached_df = get_cached_dataframe(cache_key, cache_dir)
 
         # Assert: Retrieved DataFrame matches original
         assert cached_df is not None, "Should retrieve cached DataFrame"
@@ -124,7 +124,7 @@ class TestDataFrameCaching:
         # Act: Try to retrieve non-existent cache
         from tests.fixtures.cache import get_cached_dataframe
 
-        cached_df = get_cached_dataframe(cache_dir, "non_existent_key")
+        cached_df = get_cached_dataframe("non_existent_key", cache_dir)
 
         # Assert: Should return None
         assert cached_df is None, "Should return None when cache miss"
@@ -148,7 +148,7 @@ class TestExcelFileCaching:
         # Act: Cache Excel file
         from tests.fixtures.cache import cache_excel_file
 
-        cache_path = cache_excel_file(source_file, cache_dir, "test_key")
+        cache_path = cache_excel_file(source_file, "test_key", cache_dir)
 
         # Assert: Cached file exists
         assert cache_path.exists(), "Cached file should exist"
@@ -169,10 +169,10 @@ class TestExcelFileCaching:
         from tests.fixtures.cache import cache_excel_file, get_cached_excel_file
 
         cache_key = "test_key"
-        cache_excel_file(source_file, cache_dir, cache_key)
+        cache_excel_file(source_file, cache_key, cache_dir)
 
         # Act: Retrieve cached file
-        cached_file = get_cached_excel_file(cache_dir, cache_key)
+        cached_file = get_cached_excel_file(cache_key, cache_dir)
 
         # Assert: Retrieved file exists and matches
         assert cached_file is not None, "Should retrieve cached file"
@@ -191,7 +191,7 @@ class TestExcelFileCaching:
         # Act: Try to retrieve non-existent cache
         from tests.fixtures.cache import get_cached_excel_file
 
-        cached_file = get_cached_excel_file(cache_dir, "non_existent_key")
+        cached_file = get_cached_excel_file("non_existent_key", cache_dir)
 
         # Assert: Should return None
         assert cached_file is None, "Should return None when cache miss"
