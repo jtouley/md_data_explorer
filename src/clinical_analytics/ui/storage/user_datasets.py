@@ -801,6 +801,126 @@ def detect_schema_drift(schema1: dict[str, Any], schema2: dict[str, Any]) -> tup
     return has_drift, drift_details
 
 
+def classify_schema_drift(old_schema: dict[str, Any], new_schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Classify schema drift as 'additive', 'breaking', or 'none' (Phase 3).
+
+    Uses detect_schema_drift() to identify changes, then classifies:
+    - 'none': No changes
+    - 'additive': Only new columns added (no removals, no type changes)
+    - 'breaking': Removed columns, type changes, or mixed changes
+
+    Args:
+        old_schema: Old schema dict with 'columns' key (list of (name, type) tuples)
+        new_schema: New schema dict with 'columns' key (list of (name, type) tuples)
+
+    Returns:
+        Dict with keys:
+        - drift_type: "none" | "additive" | "breaking"
+        - added_columns: list[str] (empty if none)
+        - removed_columns: list[str] (empty if none)
+        - type_changes: dict[str, tuple[str, str]] (empty if none)
+    """
+    has_drift, drift_details = detect_schema_drift(old_schema, new_schema)
+
+    if not has_drift:
+        return {
+            "drift_type": "none",
+            "added_columns": [],
+            "removed_columns": [],
+            "type_changes": {},
+        }
+
+    added_columns = drift_details.get("added_columns", [])
+    removed_columns = drift_details.get("removed_columns", [])
+    type_changes = drift_details.get("type_changes", {})
+
+    # Classify drift type
+    if removed_columns or type_changes:
+        # Breaking: removals or type changes
+        drift_type = "breaking"
+    elif added_columns:
+        # Additive: only additions
+        drift_type = "additive"
+    else:
+        # No drift (shouldn't happen if has_drift is True, but defensive)
+        drift_type = "none"
+
+    return {
+        "drift_type": drift_type,
+        "added_columns": added_columns,
+        "removed_columns": removed_columns,
+        "type_changes": type_changes,
+    }
+
+
+def apply_schema_drift_policy(
+    drift_result: dict[str, Any],
+    override: bool = False,
+) -> tuple[bool, str, list[str]]:
+    """
+    Apply schema drift policy to determine if overwrite is allowed (Phase 3).
+
+    Policy rules:
+    - 'none': Always allowed
+    - 'additive': Allowed without override
+    - 'breaking': Blocked unless override=True
+
+    Args:
+        drift_result: Result from classify_schema_drift() with keys:
+            - drift_type: "none" | "additive" | "breaking"
+            - added_columns: list[str]
+            - removed_columns: list[str]
+            - type_changes: dict[str, tuple[str, str]]
+        override: If True, allow breaking changes (with warnings)
+
+    Returns:
+        Tuple of (allowed: bool, message: str, warnings: list[str])
+    """
+    drift_type = drift_result.get("drift_type", "none")
+    added_columns = drift_result.get("added_columns", [])
+    removed_columns = drift_result.get("removed_columns", [])
+    type_changes = drift_result.get("type_changes", {})
+
+    warnings = []
+
+    if drift_type == "none":
+        return True, "No schema changes detected", []
+
+    if drift_type == "additive":
+        message = f"Additive schema changes detected: {len(added_columns)} new column(s) added"
+        return True, message, []
+
+    # drift_type == "breaking"
+    if override:
+        # Allowed with override, but warn
+        warning_parts = []
+        if removed_columns:
+            warning_parts.append(f"{len(removed_columns)} column(s) removed: {', '.join(removed_columns)}")
+        if type_changes:
+            warning_parts.append(f"{len(type_changes)} type change(s): {', '.join(type_changes.keys())}")
+        if added_columns:
+            warning_parts.append(f"{len(added_columns)} column(s) added: {', '.join(added_columns)}")
+
+        warnings.append(f"Breaking schema changes overridden: {'; '.join(warning_parts)}")
+        message = "Breaking schema changes allowed with override"
+        return True, message, warnings
+    else:
+        # Blocked
+        error_parts = []
+        if removed_columns:
+            error_parts.append(f"removed columns: {', '.join(removed_columns)}")
+        if type_changes:
+            error_parts.append(f"type changes: {', '.join(type_changes.keys())}")
+
+        message = (
+            f"Breaking schema changes detected ({'; '.join(error_parts)}). "
+            "Overwrite blocked. Use override=True to proceed."
+        )
+        warnings.append(message)
+        return False, message, warnings
+
+
 def assert_metadata_invariants(metadata: dict[str, Any]) -> None:
     """
     Assert critical metadata invariants.

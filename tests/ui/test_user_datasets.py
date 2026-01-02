@@ -989,6 +989,195 @@ class TestSchemaDriftDetection:
         assert "age" in drift_details["type_changes"]
 
 
+class TestSchemaDriftClassification:
+    """Test suite for schema drift classification (Phase 3)."""
+
+    def test_classify_schema_drift_none(self, tmp_path):
+        """No drift should be classified as 'none'."""
+        from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
+
+        # Arrange: Identical schemas
+        old_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        new_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+
+        # Act: Classify drift
+        result = classify_schema_drift(old_schema, new_schema)
+
+        # Assert: No drift
+        assert result["drift_type"] == "none"
+        assert result.get("added_columns") == []
+        assert result.get("removed_columns") == []
+        assert result.get("type_changes") == {}
+
+    def test_classify_schema_drift_additive(self, tmp_path):
+        """Additive changes (new columns only) should be classified as 'additive'."""
+        from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
+
+        # Arrange: Schema with new column added
+        old_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        new_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64"), ("outcome", "Int64")]}
+
+        # Act: Classify drift
+        result = classify_schema_drift(old_schema, new_schema)
+
+        # Assert: Additive drift
+        assert result["drift_type"] == "additive"
+        assert "outcome" in result.get("added_columns", [])
+        assert result.get("removed_columns") == []
+        assert result.get("type_changes") == {}
+
+    def test_classify_schema_drift_breaking_removed_column(self, tmp_path):
+        """Removed columns should be classified as 'breaking'."""
+        from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
+
+        # Arrange: Schema with column removed
+        old_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64"), ("outcome", "Int64")]}
+        new_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+
+        # Act: Classify drift
+        result = classify_schema_drift(old_schema, new_schema)
+
+        # Assert: Breaking drift
+        assert result["drift_type"] == "breaking"
+        assert "outcome" in result.get("removed_columns", [])
+        assert result.get("added_columns") == []
+
+    def test_classify_schema_drift_breaking_type_change(self, tmp_path):
+        """Type changes should be classified as 'breaking'."""
+        from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
+
+        # Arrange: Schema with type change
+        old_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        new_schema = {"columns": [("patient_id", "Utf8"), ("age", "Float64")]}
+
+        # Act: Classify drift
+        result = classify_schema_drift(old_schema, new_schema)
+
+        # Assert: Breaking drift
+        assert result["drift_type"] == "breaking"
+        assert "age" in result.get("type_changes", {})
+        assert result.get("added_columns") == []
+        assert result.get("removed_columns") == []
+
+    def test_classify_schema_drift_breaking_mixed(self, tmp_path):
+        """Mixed additive and breaking changes should be classified as 'breaking'."""
+        from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
+
+        # Arrange: Schema with both added and removed columns
+        old_schema = {"columns": [("patient_id", "Utf8"), ("age", "Int64")]}
+        new_schema = {"columns": [("patient_id", "Utf8"), ("outcome", "Int64")]}
+
+        # Act: Classify drift
+        result = classify_schema_drift(old_schema, new_schema)
+
+        # Assert: Breaking drift (removal takes precedence)
+        assert result["drift_type"] == "breaking"
+        assert "age" in result.get("removed_columns", [])
+        assert "outcome" in result.get("added_columns", [])
+
+
+class TestSchemaDriftPolicy:
+    """Test suite for schema drift policy enforcement (Phase 3)."""
+
+    def test_apply_schema_drift_policy_allows_additive(self, tmp_path):
+        """Additive changes should be allowed without override."""
+        from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
+
+        # Arrange: Additive drift
+        drift_result = {
+            "drift_type": "additive",
+            "added_columns": ["outcome"],
+            "removed_columns": [],
+            "type_changes": {},
+        }
+
+        # Act: Apply policy
+        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=False)
+
+        # Assert: Allowed
+        assert allowed is True
+        assert "allowed" in message.lower() or "additive" in message.lower()
+        assert len(warnings) == 0
+
+    def test_apply_schema_drift_policy_blocks_breaking_removal(self, tmp_path):
+        """Breaking changes (removed columns) should be blocked without override."""
+        from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
+
+        # Arrange: Breaking drift (removed column)
+        drift_result = {
+            "drift_type": "breaking",
+            "added_columns": [],
+            "removed_columns": ["outcome"],
+            "type_changes": {},
+        }
+
+        # Act: Apply policy without override
+        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=False)
+
+        # Assert: Blocked
+        assert allowed is False
+        assert "blocked" in message.lower() or "removed" in message.lower() or "breaking" in message.lower()
+        assert len(warnings) > 0
+
+    def test_apply_schema_drift_policy_blocks_breaking_type_change(self, tmp_path):
+        """Breaking changes (type changes) should be blocked without override."""
+        from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
+
+        # Arrange: Breaking drift (type change)
+        drift_result = {
+            "drift_type": "breaking",
+            "added_columns": [],
+            "removed_columns": [],
+            "type_changes": {"age": ("Int64", "Float64")},
+        }
+
+        # Act: Apply policy without override
+        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=False)
+
+        # Assert: Blocked
+        assert allowed is False
+        assert "blocked" in message.lower() or "type" in message.lower() or "breaking" in message.lower()
+        assert len(warnings) > 0
+
+    def test_apply_schema_drift_policy_allows_breaking_with_override(self, tmp_path):
+        """Breaking changes should be allowed with override=True."""
+        from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
+
+        # Arrange: Breaking drift
+        drift_result = {
+            "drift_type": "breaking",
+            "added_columns": [],
+            "removed_columns": ["outcome"],
+            "type_changes": {},
+        }
+
+        # Act: Apply policy with override
+        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=True)
+
+        # Assert: Allowed with override
+        assert allowed is True
+        assert len(warnings) > 0  # Should warn about breaking changes even with override
+
+    def test_apply_schema_drift_policy_no_drift(self, tmp_path):
+        """No drift should always be allowed."""
+        from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
+
+        # Arrange: No drift
+        drift_result = {
+            "drift_type": "none",
+            "added_columns": [],
+            "removed_columns": [],
+            "type_changes": {},
+        }
+
+        # Act: Apply policy
+        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=False)
+
+        # Assert: Allowed
+        assert allowed is True
+        assert len(warnings) == 0
+
+
 class TestMetadataInvariants:
     """Test suite for metadata invariants (Phase 4.1)."""
 
