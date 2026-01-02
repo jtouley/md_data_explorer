@@ -179,7 +179,7 @@ class DatasetRegistry:
             config_path: Path to datasets.yaml config file
         """
         if config_path is None:
-            config_path = Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
+            config_path = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
 
         if not config_path.exists():
             print(f"Warning: Config file not found at {config_path}")

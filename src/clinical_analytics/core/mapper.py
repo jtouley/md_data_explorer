@@ -45,7 +45,7 @@ class ColumnMapper:
             ColumnMapper instance
         """
         if config_path is None:
-            config_path = Path(__file__).parent.parent.parent.parent / "data" / "configs" / "datasets.yaml"
+            config_path = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
 
         with open(config_path) as f:
             all_configs = yaml.safe_load(f)
