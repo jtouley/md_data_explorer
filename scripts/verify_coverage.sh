@@ -10,7 +10,7 @@ THRESHOLD=2  # Maximum allowed coverage decrease (percentage)
 
 if [ ! -f "$BASELINE_FILE" ]; then
     echo "ERROR: Baseline coverage file not found: $BASELINE_FILE"
-    echo "Run 'make test-cov 2>&1 | tee baseline_coverage.txt' first to create baseline"
+    echo "Run 'make test-cov 2>&1 | tee tests/docs/baseline_coverage.txt' first to create baseline"
     exit 1
 fi
 

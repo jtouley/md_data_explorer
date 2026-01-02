@@ -346,9 +346,9 @@ After each phase, run full test suite with baseline comparison:
 
 ```bash
 # Baseline (run once at start of performance system implementation)
-make test 2>&1 | tee baseline_test_results.txt
-BASELINE_PASSED=$(grep -c "PASSED" baseline_test_results.txt || echo "0")
-BASELINE_FAILED=$(grep -c "FAILED" baseline_test_results.txt || echo "0")
+make test 2>&1 | tee tests/docs/baseline_test_results.txt
+BASELINE_PASSED=$(grep -c "PASSED" tests/docs/baseline_test_results.txt || echo "0")
+BASELINE_FAILED=$(grep -c "FAILED" tests/docs/baseline_test_results.txt || echo "0")
 echo "Baseline: $BASELINE_PASSED passed, $BASELINE_FAILED failed"
 
 # After each phase
@@ -387,8 +387,8 @@ make check  # Lint, format, type check, test
 
 ```bash
 # Baseline (run once at start)
-make test-cov 2>&1 | tee baseline_coverage.txt
-BASELINE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' baseline_coverage.txt | head -1)
+make test-cov 2>&1 | tee tests/docs/baseline_coverage.txt
+BASELINE_COVERAGE=$(grep -oP 'TOTAL.*\K\d+' tests/docs/baseline_coverage.txt | head -1)
 
 # After each phase
 make test-cov 2>&1 | tee phase_N_coverage.txt
