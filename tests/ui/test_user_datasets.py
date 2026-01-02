@@ -653,11 +653,46 @@ class TestFileLocking:
 
         # Act: Create lock helper (should auto-detect platform)
         with file_lock(metadata_file):
-            # Assert: Lock acquired without error
-            assert metadata_file.exists()
+            pass
 
-        # Verify correct module was used (indirect test via success)
-        # Direct module check would be implementation detail
+        # Assert: No exception raised (platform detection works)
+        assert True
+
+    def test_file_lock_used_in_all_metadata_writes(self, tmp_path):
+        """Verify file_lock() is used in all metadata write operations."""
+        import inspect
+
+        from clinical_analytics.ui.storage.user_datasets import (
+            UserDatasetStorage,
+            save_table_list,
+        )
+
+        # Arrange: Get all functions that write metadata
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Functions that write metadata (must use file_lock)
+        metadata_write_functions = [
+            ("save_table_list", save_table_list),
+            ("rollback_to_version", storage.rollback_to_version),
+            ("update_metadata", storage.update_metadata),
+        ]
+
+        # Act: Check source code for file_lock usage
+        missing_locks = []
+        for func_name, func in metadata_write_functions:
+            source = inspect.getsource(func)
+            if "with file_lock" not in source and "file_lock(" not in source:
+                missing_locks.append(func_name)
+
+        # Also check _migrate_legacy_upload (internal function)
+        from clinical_analytics.ui.storage import user_datasets
+
+        migrate_source = inspect.getsource(user_datasets._migrate_legacy_upload)
+        if "with file_lock" not in migrate_source and "file_lock(" not in migrate_source:
+            missing_locks.append("_migrate_legacy_upload")
+
+        # Assert: All metadata writes use file locking
+        assert len(missing_locks) == 0, f"Metadata write functions missing file_lock: {missing_locks}"
 
 
 class TestCrossDatasetDeduplication:

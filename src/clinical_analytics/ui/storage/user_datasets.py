@@ -1149,10 +1149,17 @@ def _migrate_legacy_upload(
     metadata["tables"] = [table_name]
     metadata["migrated_to_v2"] = True
 
-    # Write back metadata
+    # Write back metadata with file locking (Phase 0)
     metadata_path = storage.metadata_dir / f"{upload_id}.json"
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
+    try:
+        with file_lock(metadata_path, timeout=10.0) as f:
+            # Use the locked file handle for atomic write
+            f.seek(0)
+            f.truncate()
+            json.dump(metadata, f, indent=2)
+            f.flush()  # Ensure write completes before lock releases
+    except FileLockTimeoutError:
+        raise RuntimeError(f"Failed to acquire lock on {metadata_path} (timeout after 10s)")
 
     logger.info(f"Migration complete for upload {upload_id}")
 
@@ -1928,19 +1935,25 @@ class UserDatasetStorage:
             return False, f"Upload {upload_id} not found"
 
         try:
-            # Load existing metadata
-            with open(metadata_path) as f:
+            # Phase 0: Use file locking for thread-safe metadata write
+            with file_lock(metadata_path, timeout=10.0) as f:
+                # Load existing metadata
+                f.seek(0)
                 metadata = json.load(f)
 
-            # Update with new fields
-            metadata.update(metadata_updates)
+                # Update with new fields
+                metadata.update(metadata_updates)
 
-            # Save updated metadata
-            with open(metadata_path, "w") as f:
+                # Save updated metadata atomically
+                f.seek(0)
+                f.truncate()
                 json.dump(metadata, f, indent=2)
+                f.flush()  # Ensure write completes before lock releases
 
             return True, "Metadata updated successfully"
 
+        except FileLockTimeoutError:
+            return False, f"Failed to acquire lock on {metadata_path} (timeout after 10s)"
         except Exception as e:
             return False, f"Error updating metadata: {str(e)}"
 
