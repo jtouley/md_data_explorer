@@ -1435,11 +1435,11 @@ class UserDatasetStorage:
                         logger.info(
                             f"Overwriting existing dataset '{dataset_name}' "
                             f"(upload_id={existing_upload_id}, "
-                            f"{len(existing_version_history)} versions)"
+                            f"version_history={existing_version_history is not None}, "
+                            f"{len(existing_version_history) if existing_version_history else 0} versions)"
                         )
-                        # Mark all existing versions as inactive
-                        for version_entry in existing_version_history:
-                            version_entry["is_active"] = False
+                        # Mark all existing versions as inactive (after schema drift check)
+                        # Note: Schema drift check needs active version, so we mark inactive later
                         break
 
             # Generate upload ID (or use existing if overwriting)
@@ -1463,6 +1463,71 @@ class UserDatasetStorage:
                     pass  # Best-effort
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+
+            # Phase 3: Schema drift policy enforcement (overwrite only) - BEFORE ensure_patient_id modifies schema
+            if (
+                existing_version_history is not None
+                and len(existing_version_history) > 0
+                and overwrite
+                and existing_upload_id
+            ):
+                logger.info(
+                    f"Schema drift check: existing_version_history={len(existing_version_history)} versions, "
+                    f"overwrite={overwrite}, existing_upload_id={existing_upload_id}"
+                )
+                # Get active version from existing history
+                active_version_entry = None
+                for version_entry in existing_version_history:
+                    if version_entry.get("is_active", False):
+                        active_version_entry = version_entry
+                        break
+
+                if active_version_entry:
+                    # Extract old schema from existing CSV file (simpler than parquet)
+                    old_schema = None
+                    try:
+                        # Load existing CSV to get schema
+                        existing_csv_path = self.raw_dir / f"{existing_upload_id}.csv"
+                        logger.debug(
+                            f"Checking schema drift: existing_csv_path={existing_csv_path}, "
+                            f"exists={existing_csv_path.exists()}"
+                        )
+                        if existing_csv_path.exists():
+                            # Scan CSV to get schema (lazy, doesn't load data)
+                            old_lf = pl.scan_csv(existing_csv_path, n_rows=0)
+                            old_schema_dict = old_lf.collect_schema()
+                            # Convert to format expected by classify_schema_drift
+                            old_schema = {"columns": [(col, str(dtype)) for col, dtype in old_schema_dict.items()]}
+                            logger.debug(f"Loaded old schema: {old_schema}")
+                    except Exception as e:
+                        logger.warning(f"Could not load old schema for drift check: {e}")
+
+                    # Extract new schema from current tables (BEFORE patient_id addition)
+                    if old_schema and tables:
+                        # Get schema from first table DataFrame (before ensure_patient_id modifies it)
+                        new_schema_dict = tables[0]["data"].schema
+                        new_schema = {"columns": [(col, str(dtype)) for col, dtype in new_schema_dict.items()]}
+                        logger.debug(f"New schema: {new_schema}")
+
+                        # Phase 3: Classify and apply schema drift policy
+                        drift_result = classify_schema_drift(old_schema, new_schema)
+                        logger.debug(f"Drift result: {drift_result}")
+                        override = metadata.get("schema_drift_override", False)
+                        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=override)
+                        logger.info(f"Schema drift policy: allowed={allowed}, message={message}, warnings={warnings}")
+
+                        if not allowed:
+                            # Block overwrite due to breaking schema changes
+                            return False, message, None
+
+                        # Log warnings if any (even if allowed)
+                        if warnings:
+                            logger.warning(f"Schema drift warnings: {'; '.join(warnings)}")
+
+            # Mark all existing versions as inactive (after schema drift check)
+            if existing_version_history is not None:
+                for version_entry in existing_version_history:
+                    version_entry["is_active"] = False
 
             # Phase 1: Compute dataset_version early for cross-dataset deduplication
             from clinical_analytics.storage.versioning import compute_dataset_version

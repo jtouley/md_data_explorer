@@ -1178,6 +1178,136 @@ class TestSchemaDriftPolicy:
         assert len(warnings) == 0
 
 
+class TestSchemaDriftPolicyEnforcement:
+    """Test suite for schema drift policy enforcement in overwrite flow (Phase 3 integration)."""
+
+    def test_overwrite_with_breaking_schema_changes_blocked(self, tmp_path):
+        """Overwrite with breaking schema changes (removed column) should be blocked."""
+        # Arrange: Upload initial dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset"},
+        )
+        assert success is True
+
+        # Arrange: Prepare overwrite with removed column (breaking change)
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                # outcome column removed - breaking change
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        # Act: Try to overwrite without override
+        success, message, _ = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset"},
+            overwrite=True,
+        )
+
+        # Assert: Should be blocked
+        assert success is False
+        assert "blocked" in message.lower() or "breaking" in message.lower() or "removed" in message.lower()
+
+    def test_overwrite_with_additive_schema_changes_allowed(self, tmp_path):
+        """Overwrite with additive schema changes (new column) should be allowed."""
+        # Arrange: Upload initial dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset"},
+        )
+        assert success is True
+
+        # Arrange: Prepare overwrite with new column (additive change)
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],  # New column - additive change
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        # Act: Overwrite with additive changes
+        success, message, _ = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset"},
+            overwrite=True,
+        )
+
+        # Assert: Should be allowed
+        assert success is True
+
+    def test_overwrite_with_breaking_changes_allowed_with_override(self, tmp_path):
+        """Overwrite with breaking schema changes should be allowed with override=True."""
+        # Arrange: Upload initial dataset
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                "outcome": [i % 2 for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset"},
+        )
+        assert success is True
+
+        # Arrange: Prepare overwrite with removed column (breaking change)
+        df2 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+                # outcome column removed - breaking change
+            }
+        )
+        csv_bytes2 = df2.to_csv(index=False).encode("utf-8")
+
+        # Act: Overwrite with override=True
+        success, message, _ = storage.save_upload(
+            file_bytes=csv_bytes2,
+            original_filename="test_dataset.csv",
+            metadata={"dataset_name": "test_dataset", "schema_drift_override": True},
+            overwrite=True,
+        )
+
+        # Assert: Should be allowed with override
+        assert success is True
+
+
 class TestMetadataInvariants:
     """Test suite for metadata invariants (Phase 4.1)."""
 
