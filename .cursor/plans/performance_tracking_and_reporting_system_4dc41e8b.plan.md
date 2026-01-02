@@ -139,22 +139,22 @@ content: Phase 2.1: Verify LLM unit tests run <1s each (30-50x speedup)status: c
                                 - "17"
 - id: "19"
 
-content: Phase 2.2: Create tests/fixtures/cache.py with content-based hashing for test data cachingstatus: pendingdependencies:
+content: Phase 2.2: Create tests/fixtures/cache.py with content-based hashing for test data cachingstatus: completeddependencies:
 
                                 - "18"
 - id: "20"
 
-content: Phase 2.2: Implement DataFrame caching (parquet files in tests/.test_cache/)status: pendingdependencies:
+content: Phase 2.2: Implement DataFrame caching (parquet files in tests/.test_cache/)status: completeddependencies:
 
                                 - "19"
 - id: "21"
 
-content: Phase 2.2: Implement Excel file caching for expensive fixturesstatus: pendingdependencies:
+content: Phase 2.2: Implement Excel file caching for expensive fixturesstatus: completeddependencies:
 
                                 - "19"
 - id: "22"
 
-content: Phase 2.2: Update fixtures to use cached data when availablestatus: pendingdependencies:
+content: Phase 2.2: Update fixtures to use cached data when availablestatus: completeddependencies:
 
                                 - "20"
                                 - "21"
@@ -165,83 +165,83 @@ content: Phase 2.2: Refactor duplicate fixture patterns to generic factories (DR
                                 - "22"
 - id: "23"
 
-content: Phase 2.2: Measure caching impact (target: 50-80% reduction in data loading time)status: pendingdependencies:
+content: Phase 2.2: Measure caching impact (target: 50-80% reduction in data loading time)status: completeddependencies:
 
                                 - "22"
                                 - "22.5"
 - id: "24"
 
-content: Phase 2.3: Enhance discovered_datasets fixture to support lazy loadingstatus: pendingdependencies:
+content: Phase 2.3: Enhance discovered_datasets fixture to support lazy loadingstatus: completeddependencies:
 
                                 - "23"
 - id: "25"
 
-content: Phase 2.3: Add get_dataset_by_name() helper for selective dataset loadingstatus: pendingdependencies:
+content: Phase 2.3: Add get_dataset_by_name() helper for selective dataset loadingstatus: completeddependencies:
 
                                 - "24"
 - id: "26"
 
-content: Phase 2.3: Update tests to request specific datasets instead of loading allstatus: pendingdependencies:
+content: Phase 2.3: Update tests to request specific datasets instead of loading allstatus: completeddependencies:
 
                                 - "25"
 - id: "27"
 
-content: Phase 2.3: Measure selective loading impact (target: 30-50% reduction in setup time)status: pendingdependencies:
+content: Phase 2.3: Measure selective loading impact (target: 30-50% reduction in setup time)status: completeddependencies:
 
                                 - "26"
 - id: "28"
 
-content: Phase 2.4: Profile fixtures to identify expensive ones using performance tracking datastatus: pendingdependencies:
+content: Phase 2.4: Profile fixtures to identify expensive ones using performance tracking datastatus: completeddependencies:
 
                                 - "14"
 - id: "29"
 
-content: Phase 2.4: Convert expensive immutable fixtures to module/session scopestatus: pendingdependencies:
+content: Phase 2.4: Convert expensive immutable fixtures to module/session scopestatus: completeddependencies:
 
                                 - "28"
 - id: "30"
 
-content: Phase 2.4: Verify test isolation maintained after scope changesstatus: pendingdependencies:
+content: Phase 2.4: Verify test isolation maintained after scope changesstatus: completeddependencies:
 
                                 - "29"
 - id: "31"
 
-content: Phase 2.4: Measure scope optimization impact (target: 10-30% overall speedup)status: pendingdependencies:
+content: Phase 2.4: Measure scope optimization impact (target: 10-30% overall speedup)status: completeddependencies:
 
                                 - "30"
 - id: "32"
 
-content: Phase 2.5: Audit tests for parallel-safety (file I/O, shared state)status: pendingdependencies:
+content: Phase 2.5: Audit tests for parallel-safety (file I/O, shared state)status: completeddependencies:
 
                                 - "31"
 - id: "33"
 
-content: Phase 2.5: Mark non-parallel-safe tests with @pytest.mark.serialstatus: pendingdependencies:
+content: Phase 2.5: Mark non-parallel-safe tests with @pytest.mark.serialstatus: completeddependencies:
 
                                 - "32"
 - id: "34"
 
-content: Phase 2.5: Optimize Makefile parallel execution commandsstatus: pendingdependencies:
+content: Phase 2.5: Optimize Makefile parallel execution commandsstatus: completeddependencies:
 
                                 - "33"
 - id: "35"
 
-content: Phase 3: Create scripts/categorize_slow_tests.py using performance tracking datastatus: pendingdependencies:
+content: Phase 3: Create scripts/categorize_slow_tests.py using performance tracking datastatus: completeddependencies:
 
                                 - "14"
 - id: "36"
 
-content: Phase 3: Auto-categorize tests >30s with @pytest.mark.slowstatus: pendingdependencies:
+content: Phase 3: Auto-categorize tests >30s with @pytest.mark.slowstatus: completeddependencies:
 
                                 - "35"
 - id: "37"
 
-content: Phase 3: Generate report of uncategorized slow testsstatus: pendingdependencies:
+content: Phase 3: Generate report of uncategorized slow testsstatus: completeddependencies:
 
                                 - "36"
 - id: "38"
 
-content: Final: Measure total performance improvement and update PERFORMANCE.md with resultsstatus: pendingdependencies:
+content: Final: Measure total performance improvement and update PERFORMANCE.md with resultsstatus: completeddependencies:
 
                                 - "18"
                                 - "23"
