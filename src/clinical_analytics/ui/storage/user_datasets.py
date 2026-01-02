@@ -13,7 +13,7 @@ import uuid
 import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -1142,10 +1142,12 @@ def save_table_list(
 
         # Phase 2/5: Create version history entry with event metadata
         event_type = "overwrite" if metadata.pop("_is_overwrite", False) else "upload"
+        # Phase 5: Event structure - UUID4 hex format, ISO 8601 UTC with Z suffix
+        now_utc = datetime.now(UTC)
         version_entry = {
             "version": dataset_version,
-            "created_at": datetime.now().isoformat(),
-            "event_id": str(uuid.uuid4()),  # Phase 5: Unique event identifier
+            "created_at": now_utc.isoformat().replace("+00:00", "Z"),  # ISO 8601 UTC with Z
+            "event_id": uuid.uuid4().hex,  # Phase 5: UUID4 hex format (no dashes)
             "event_type": event_type,  # Phase 5: upload/overwrite/rollback
             "is_active": True,  # New version is always active
             "tables": canonical_tables,
@@ -1160,6 +1162,9 @@ def save_table_list(
         else:
             # Initial upload: create new history
             version_history = [version_entry]
+
+        # Phase 2: Ensure version_history is sorted by created_at ascending (oldest first)
+        version_history.sort(key=lambda v: v.get("created_at", ""))
 
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
@@ -1432,6 +1437,61 @@ class UserDatasetStorage:
                         # Overwrite mode: preserve existing upload_id and version_history
                         existing_upload_id = existing_meta.get("upload_id")
                         existing_version_history = existing_meta.get("version_history", [])
+
+                        # Phase 4.2: Legacy dataset migration during overwrite
+                        # If existing_version_history is empty but legacy metadata exists,
+                        # create synthetic version entry
+                        if len(existing_version_history) == 0:
+                            # Legacy dataset: create synthetic version_history from top-level metadata
+                            legacy_version = existing_meta.get("dataset_version")
+                            legacy_created_at = existing_meta.get("created_at") or existing_meta.get("upload_timestamp")
+                            legacy_tables = {}
+
+                            # Reconstruct tables from parquet_paths or duckdb_tables if available
+                            parquet_paths = existing_meta.get("parquet_paths", {})
+                            if parquet_paths:
+                                # Convert parquet_paths dict to canonical tables structure
+                                for table_name, parquet_path in parquet_paths.items():
+                                    legacy_tables[table_name] = {
+                                        "parquet_path": parquet_path,
+                                        "duckdb_table": existing_meta.get("duckdb_tables", {}).get(
+                                            table_name, table_name
+                                        ),
+                                        "row_count": existing_meta.get("table_counts", {}).get(table_name, 0),
+                                        "column_count": existing_meta.get("column_count", 0),
+                                        "schema_fingerprint": existing_meta.get("schema_fingerprint", ""),
+                                    }
+                            else:
+                                # Fallback: create minimal table entry
+                                table_name = (
+                                    existing_meta.get("tables", ["table_0"])[0]
+                                    if existing_meta.get("tables")
+                                    else "table_0"
+                                )
+                                legacy_tables[table_name] = {
+                                    "parquet_path": "",  # Will be filled if parquet exists
+                                    "duckdb_table": table_name,
+                                    "row_count": existing_meta.get("row_count", 0),
+                                    "column_count": existing_meta.get("column_count", 0),
+                                    "schema_fingerprint": "",
+                                }
+
+                            synthetic_version_entry = {
+                                "version": legacy_version or "legacy",
+                                "created_at": (
+                                    legacy_created_at
+                                    or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                                ),
+                                "event_id": uuid.uuid4().hex,
+                                "event_type": "upload",
+                                "is_active": False,  # Will be marked inactive when new version added
+                                "tables": legacy_tables,
+                                "source_filename": existing_meta.get("original_filename", ""),
+                            }
+
+                            existing_version_history = [synthetic_version_entry]
+                            logger.info("Migrated legacy dataset to version_history (1 version)")
+
                         logger.info(
                             f"Overwriting existing dataset '{dataset_name}' "
                             f"(upload_id={existing_upload_id}, "
@@ -1799,10 +1859,11 @@ class UserDatasetStorage:
 
                 # Create rollback event entry with unique version identifier
                 # Use "rollback:<event_id>" to avoid duplicate version values in history
-                rollback_event_id = str(uuid.uuid4())
+                rollback_event_id = uuid.uuid4().hex  # Phase 5: UUID4 hex format
+                now_utc = datetime.now(UTC)
                 rollback_event = {
                     "version": f"rollback:{rollback_event_id}",  # Unique version identifier
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": now_utc.isoformat().replace("+00:00", "Z"),  # ISO 8601 UTC with Z
                     "event_id": rollback_event_id,
                     "event_type": "rollback",
                     "is_active": False,  # Event entry itself is not active

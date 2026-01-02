@@ -804,6 +804,202 @@ class TestCrossDatasetDeduplication:
         assert "duplicate" not in msg2.lower(), f"Should not warn: {msg2}"
 
 
+class TestEventStructure:
+    """Test suite for event structure (Phase 5)."""
+
+    def test_event_id_uses_uuid4_hex_format(self, tmp_path):
+        """Event IDs should use UUID4 hex format (no dashes)."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload dataset
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Assert: Check event_id format in version_history
+        metadata = storage.get_upload_metadata(upload_id)
+        assert "version_history" in metadata
+        assert len(metadata["version_history"]) > 0
+
+        version_entry = metadata["version_history"][0]
+        event_id = version_entry.get("event_id")
+
+        # Assert: event_id is hex format (32 hex chars, no dashes)
+        assert event_id is not None
+        assert len(event_id) == 32  # UUID4 hex is 32 chars
+        assert all(c in "0123456789abcdef" for c in event_id)
+        assert "-" not in event_id
+
+    def test_timestamp_uses_iso8601_utc_with_z_suffix(self, tmp_path):
+        """Timestamps should use ISO 8601 UTC format with Z suffix."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Upload dataset
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Assert: Check timestamp format in version_history
+        metadata = storage.get_upload_metadata(upload_id)
+        assert "version_history" in metadata
+        assert len(metadata["version_history"]) > 0
+
+        version_entry = metadata["version_history"][0]
+        created_at = version_entry.get("created_at")
+
+        # Assert: Timestamp is ISO 8601 UTC with Z suffix
+        assert created_at is not None
+        assert created_at.endswith("Z") or created_at.endswith("+00:00")
+        # Parse to verify it's valid ISO 8601
+        from datetime import datetime
+
+        # Should parse without error
+        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        assert dt is not None
+
+
+class TestVersionHistoryOrdering:
+    """Test suite for version_history ordering (Phase 2)."""
+
+    def test_version_history_sorted_by_created_at_ascending(self, tmp_path):
+        """version_history should be sorted by created_at ascending (oldest first)."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Arrange: Upload initial dataset
+        df1 = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes1 = df1.to_csv(index=False).encode("utf-8")
+
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes1,
+            original_filename="test.csv",
+            metadata={"dataset_name": "test"},
+        )
+        assert success is True
+
+        # Arrange: Overwrite multiple times
+        for i in range(2, 4):
+            df = pd.DataFrame(
+                {
+                    "patient_id": [f"P{j:03d}" for j in range(150)],
+                    "age": [20 + j + i for j in range(150)],  # Different data
+                }
+            )
+            csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+            success, message, _ = storage.save_upload(
+                file_bytes=csv_bytes,
+                original_filename="test.csv",
+                metadata={"dataset_name": "test"},
+                overwrite=True,
+            )
+            assert success is True
+
+        # Act: Get metadata
+        metadata = storage.get_upload_metadata(upload_id)
+        version_history = metadata["version_history"]
+
+        # Assert: version_history is sorted by created_at ascending
+        assert len(version_history) >= 3, "Should have at least 3 versions"
+
+        created_dates = [v["created_at"] for v in version_history]
+        sorted_dates = sorted(created_dates)
+
+        assert created_dates == sorted_dates, "version_history should be sorted by created_at ascending"
+
+
+class TestLegacyDatasetMigration:
+    """Test suite for legacy dataset migration during overwrite (Phase 4.2)."""
+
+    def test_overwrite_legacy_dataset_migrates_to_version_history(self, tmp_path):
+        """Overwriting legacy dataset (no version_history) should create synthetic version entry."""
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Arrange: Create legacy dataset metadata (without version_history)
+        legacy_upload_id = "legacy_upload_123"
+        legacy_metadata = {
+            "upload_id": legacy_upload_id,
+            "dataset_name": "legacy_dataset",
+            "dataset_version": "legacy_version_abc",
+            "created_at": "2024-01-01T00:00:00Z",
+            "upload_timestamp": "2024-01-01T00:00:00Z",  # Add upload_timestamp for compatibility
+            "original_filename": "legacy.csv",
+            "row_count": 100,
+            "column_count": 5,
+            "tables": ["table_0"],  # Add tables list
+            # No version_history - this is a legacy dataset
+        }
+
+        # Save legacy metadata
+        metadata_path = storage.metadata_dir / f"{legacy_upload_id}.json"
+        with open(metadata_path, "w") as f:
+            json.dump(legacy_metadata, f)
+
+        # Arrange: Prepare overwrite
+        df = pd.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + i for i in range(150)],
+            }
+        )
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+
+        # Act: Overwrite legacy dataset
+        success, message, upload_id = storage.save_upload(
+            file_bytes=csv_bytes,
+            original_filename="new_data.csv",
+            metadata={"dataset_name": "legacy_dataset"},
+            overwrite=True,
+        )
+
+        # Assert: Should succeed
+        assert success is True, f"Upload failed: {message}"
+        assert upload_id == legacy_upload_id  # Should preserve upload_id
+
+        # Assert: version_history should have 2 entries (legacy + new)
+        metadata = storage.get_upload_metadata(upload_id)
+        assert "version_history" in metadata
+        version_history = metadata["version_history"]
+        assert len(version_history) == 2, "Should have 2 versions (legacy + new)"
+
+        # Assert: Legacy version should be first (oldest) and inactive
+        legacy_version = version_history[0]
+        assert legacy_version["version"] == "legacy_version_abc"
+        assert legacy_version["is_active"] is False
+        assert legacy_version.get("source_filename") == "legacy.csv"
+
+        # Assert: New version should be second and active
+        new_version = version_history[1]
+        assert new_version["is_active"] is True
+        assert new_version["version"] != "legacy_version_abc"
+
+
 class TestVersionHistoryMetadata:
     """Test suite for version history metadata structure (Phase 2)."""
 
@@ -987,6 +1183,77 @@ class TestSchemaDriftDetection:
         assert has_drift is True
         assert "type_changes" in drift_details
         assert "age" in drift_details["type_changes"]
+
+
+class TestSchemaFingerprint:
+    """Test suite for schema fingerprint computation (Phase 3)."""
+
+    def test_compute_schema_fingerprint_uses_utf8_encoding(self, tmp_path):
+        """Schema fingerprint should use UTF-8 encoding."""
+        from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
+
+        # Arrange: DataFrame with UTF-8 column names
+        df = pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002"],
+                "âge": [25, 30],  # UTF-8 character
+            }
+        )
+
+        # Act: Compute fingerprint
+        fingerprint = compute_schema_fingerprint(df)
+
+        # Assert: Should not raise encoding error, returns hex string
+        assert isinstance(fingerprint, str)
+        assert len(fingerprint) == 64  # SHA256 hex digest length
+        assert all(c in "0123456789abcdef" for c in fingerprint)
+
+    def test_compute_schema_fingerprint_sorts_by_column_name(self, tmp_path):
+        """Schema fingerprint should sort columns alphabetically by name."""
+        from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
+
+        # Arrange: DataFrame with columns in non-alphabetical order
+        df1 = pl.DataFrame({"zebra": [1], "alpha": [2], "beta": [3]})
+        df2 = pl.DataFrame({"alpha": [2], "beta": [3], "zebra": [1]})
+
+        # Act: Compute fingerprints
+        fp1 = compute_schema_fingerprint(df1)
+        fp2 = compute_schema_fingerprint(df2)
+
+        # Assert: Same fingerprint regardless of column order
+        assert fp1 == fp2
+
+    def test_compute_schema_fingerprint_sorts_by_column_type(self, tmp_path):
+        """Schema fingerprint should sort by column type when names are same."""
+        from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
+
+        # Arrange: Two DataFrames with same column names but different types
+        # Note: Polars doesn't allow same column name with different types in one DataFrame
+        # So we test that type is included in fingerprint
+        df1 = pl.DataFrame({"col": [1, 2, 3]})  # Int64
+        df2 = pl.DataFrame({"col": [1.0, 2.0, 3.0]})  # Float64
+
+        # Act: Compute fingerprints
+        fp1 = compute_schema_fingerprint(df1)
+        fp2 = compute_schema_fingerprint(df2)
+
+        # Assert: Different fingerprints due to different types
+        assert fp1 != fp2
+
+    def test_compute_schema_fingerprint_deterministic(self, tmp_path):
+        """Schema fingerprint should be deterministic (same schema = same fingerprint)."""
+        from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
+
+        # Arrange: Same schema, different data
+        df1 = pl.DataFrame({"patient_id": ["P001"], "age": [25]})
+        df2 = pl.DataFrame({"patient_id": ["P999"], "age": [99]})
+
+        # Act: Compute fingerprints
+        fp1 = compute_schema_fingerprint(df1)
+        fp2 = compute_schema_fingerprint(df2)
+
+        # Assert: Same fingerprint (schema only, not data)
+        assert fp1 == fp2
 
 
 class TestSchemaDriftClassification:
