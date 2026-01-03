@@ -270,3 +270,76 @@ class TestDocContextInMetadata:
         # Verify documentation content is in context
         assert "Dataset Documentation" in metadata["doc_context"]
         assert "patient_id" in metadata["doc_context"]
+
+    def test_save_table_list_skips_extraction_if_doc_context_exists(self, tmp_path):
+        """Test that save_table_list() skips doc_context extraction if it already exists (idempotency)."""
+        from io import BytesIO
+        from zipfile import ZipFile
+
+        import polars as pl
+
+        from clinical_analytics.ui.storage.user_datasets import (
+            UserDatasetStorage,
+            save_table_list,
+        )
+
+        # Arrange: Create ZIP with data files and documentation
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, "w") as zf:
+            df = pl.DataFrame(
+                {
+                    "patient_id": [f"P{i:03d}" for i in range(100)],
+                    "age": [20 + (i % 50) for i in range(100)],
+                    "outcome": [i % 2 for i in range(100)],
+                }
+            )
+            zf.writestr("patients.csv", df.write_csv())
+            zf.writestr("README.md", "# Dataset Documentation\nThis is a test dataset.")
+
+        zip_buffer.seek(0)
+        zip_bytes = zip_buffer.getvalue()
+
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        upload_id = storage.generate_upload_id("test.zip")
+
+        # Get tables and metadata with doc_files
+        from clinical_analytics.ui.storage.user_datasets import normalize_upload_to_table_list
+
+        tables, table_metadata = normalize_upload_to_table_list(zip_bytes, "test.zip", {})
+        metadata = {"dataset_name": "test", **table_metadata}
+
+        # Verify doc_files exists before extraction
+        assert "doc_files" in metadata
+        assert len(metadata["doc_files"]) > 0
+
+        # First call: Extract doc_context normally
+        success, _ = save_table_list(storage, tables, upload_id, metadata.copy())
+        assert success is True
+
+        # Verify doc_context was extracted and doc_files was removed
+        saved_metadata = storage.get_upload_metadata(upload_id)
+        assert "doc_context" in saved_metadata
+        assert len(saved_metadata["doc_context"]) > 0
+        # doc_files should be removed after extraction
+        assert "doc_files" not in saved_metadata
+
+        # Second call: Create new metadata with both doc_files AND pre-existing doc_context
+        # This tests the idempotency safeguard: should skip extraction if doc_context exists
+        # Create a new upload_id to test the safeguard in isolation
+        upload_id2 = storage.generate_upload_id("test2.zip")
+        metadata_with_both = metadata.copy()
+        metadata_with_both["doc_context"] = "PRE_EXISTING_CONTEXT"
+        # Keep doc_files to test the safeguard
+
+        # This should skip extraction because doc_context already exists
+        # The safeguard should prevent re-extraction and remove doc_files
+        success2, _ = save_table_list(storage, tables, upload_id2, metadata_with_both)
+        assert success2 is True
+
+        # Verify: doc_files was removed (ensures JSON serializability)
+        # and extraction was skipped (doc_context remains PRE_EXISTING_CONTEXT)
+        final_metadata = storage.get_upload_metadata(upload_id2)
+        assert "doc_files" not in final_metadata, "doc_files should be removed even when extraction is skipped"
+        assert "doc_context" in final_metadata
+        # The safeguard prevents re-extraction, so PRE_EXISTING_CONTEXT is preserved
+        assert final_metadata["doc_context"] == "PRE_EXISTING_CONTEXT"

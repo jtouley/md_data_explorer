@@ -1056,28 +1056,34 @@ def save_table_list(
     """
     try:
         # 1. Extract documentation context (Phase 1: ADR004)
+        # Skip extraction if doc_context already exists (idempotency safeguard)
         if "doc_files" in metadata and metadata["doc_files"]:
-            import tempfile
+            if "doc_context" not in metadata:
+                # Extract doc_context from doc_files
+                import tempfile
 
-            from clinical_analytics.core.doc_parser import extract_context_from_docs
+                from clinical_analytics.core.doc_parser import extract_context_from_docs
 
-            # Save doc files to temp directory for extraction
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                doc_paths = []
+                # Save doc files to temp directory for extraction
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    doc_paths = []
 
-                for doc_file in metadata["doc_files"]:
-                    # Save doc file content to temp file
-                    doc_temp_path = temp_path / doc_file.name
-                    doc_temp_path.write_bytes(doc_file.content)
-                    doc_paths.append(doc_temp_path)
+                    for doc_file in metadata["doc_files"]:
+                        # Save doc file content to temp file
+                        doc_temp_path = temp_path / doc_file.name
+                        doc_temp_path.write_bytes(doc_file.content)
+                        doc_paths.append(doc_temp_path)
 
-                # Extract text context from all documentation files
-                doc_context = extract_context_from_docs(doc_paths)
-                metadata["doc_context"] = doc_context
-                logger.info(f"Extracted doc_context ({len(doc_context)} chars) from {len(doc_paths)} files")
+                    # Extract text context from all documentation files
+                    doc_context = extract_context_from_docs(doc_paths)
+                    metadata["doc_context"] = doc_context
+                    logger.info(f"Extracted doc_context ({len(doc_context)} chars) from {len(doc_paths)} files")
+            else:
+                # doc_context already exists, skip extraction (idempotency)
+                logger.debug("doc_context already exists, skipping extraction")
 
-            # Remove doc_files from metadata after extraction (not JSON serializable, only doc_context needed)
+            # Always remove doc_files from metadata (not JSON serializable, only doc_context needed)
             metadata.pop("doc_files", None)
 
         # 2. Convert schema (AFTER normalization, has df access)
