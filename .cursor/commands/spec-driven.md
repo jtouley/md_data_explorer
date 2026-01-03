@@ -37,7 +37,9 @@ Execution Sequence (MANDATORY)
    - Use shared fixtures from conftest.py
 
 3. Run Test to Verify Failure
-   - Command: make test-[module] PYTEST_ARGS="tests/.../test_file.py -xvs"
+   - For RED phase verification only: Direct pytest is acceptable for quick feedback
+   - Command: uv run pytest tests/.../test_file.py::TestClass::test_method -xvs
+   - OR if Makefile supports PYTEST_ARGS: make test-[module] PYTEST_ARGS="tests/.../test_file.py -xvs"
    - Confirm it fails for the RIGHT reason
    - NEVER skip this step
 
@@ -46,7 +48,8 @@ Execution Sequence (MANDATORY)
    - Keep it simple
 
 5. Run Test to Verify Pass
-   - Same command as step 3
+   - Use Makefile command: make test-[module] PYTEST_ARGS="tests/.../test_file.py -xvs" (if supported)
+   - OR direct pytest: uv run pytest tests/.../test_file.py::TestClass::test_method -xvs
    - Confirm test passes
    - Update TODO
 
@@ -91,15 +94,15 @@ Critical Rules
 
 ❌ NEVER write code before tests
 ❌ NEVER skip running tests after writing them
-❌ NEVER run pytest/ruff/mypy directly (use Makefile)
+❌ NEVER run pytest/ruff/mypy directly (use Makefile) - EXCEPTION: Red phase verification allows direct pytest
 ❌ NEVER accumulate quality issues
 ❌ NEVER commit without tests
 ❌ NEVER skip TODO updates
 
 ✅ ALWAYS write test first
-✅ ALWAYS run test immediately (Red phase)
-✅ ALWAYS verify test passes (Green phase)
-✅ ALWAYS use Makefile commands
+✅ ALWAYS run test immediately (Red phase) - direct pytest OK for quick verification
+✅ ALWAYS verify test passes (Green phase) - prefer Makefile, direct pytest acceptable
+✅ ALWAYS use Makefile commands for green phase and full suite runs
 ✅ ALWAYS fix quality issues immediately
 ✅ ALWAYS commit implementation + tests together
 ✅ ALWAYS update TODOs
@@ -132,7 +135,7 @@ Agent: [Follows complete TDD workflow as specified above]
 Enforcement
 
 If you catch yourself:
-- Running pytest directly → STOP, use make test-[module]
+- Running pytest directly (outside red phase) → STOP, use make test-[module] for green phase and full suite
 - Writing code before tests → STOP, write test first
 - Skipping test runs → STOP, run tests now
 - Accumulating lint errors → STOP, run make lint-fix
