@@ -475,6 +475,130 @@ class SchemaInferenceEngine:
         # Default to categorical for unknown types
         return True
 
+    def parse_dictionary_text(self, source: Path | str) -> DictionaryMetadata | None:
+        """
+        Parse data dictionary text to extract column metadata.
+
+        Accepts both file paths (Path) and text strings (str).
+        For PDF files, extracts text using LangChain's PyPDFLoader.
+        For text files, reads directly.
+        For string input, uses text directly.
+
+        Uses pattern matching to find:
+        - Column names
+        - Descriptions
+        - Data types
+        - Valid values
+
+        Args:
+            source: Path to dictionary file (PDF or text) or text string
+
+        Returns:
+            DictionaryMetadata with extracted information, or None if parsing fails
+
+        Note:
+            This is a best-effort extraction. Dictionary structure varies widely,
+            so we use heuristics to identify column documentation.
+        """
+        # Extract text from source
+        if isinstance(source, str):
+            # Direct text input
+            full_text = source
+            source_file = None
+        elif isinstance(source, Path):
+            # File path input
+            if not source.exists():
+                return None
+
+            source_file = source
+
+            # Determine file type and extract text
+            if source.suffix.lower() == ".pdf":
+                # PDF file - use LangChain
+                try:
+                    from langchain_community.document_loaders import PyPDFLoader
+                except ImportError:
+                    print("Warning: LangChain not installed. Install with: uv add langchain langchain-community")
+                    return None
+
+                try:
+                    loader = PyPDFLoader(str(source))
+                    pages = loader.load()
+                    full_text = "\n".join([page.page_content for page in pages])
+                except Exception as e:
+                    print(f"Error loading PDF: {e}")
+                    return None
+            else:
+                # Text file - read directly
+                try:
+                    full_text = source.read_text(encoding="utf-8")
+                except Exception as e:
+                    print(f"Error reading text file: {e}")
+                    return None
+        else:
+            return None
+
+        metadata = DictionaryMetadata(source_file=source_file)
+
+        try:
+            # Pattern 1: "ColumnName: Description" or "ColumnName - Description"
+            pattern1 = r"^([a-z_][a-z0-9_]*)\s*[:\-]\s*(.+)$"
+
+            # Pattern 2: "Variable Name: Description" format
+            pattern2 = (
+                r"(?:variable|column|field)\s+(?:name|id)?\s*[:\-]?\s*([a-z_][a-z0-9_]*)\s*"
+                r"(?:description|meaning)?[:\-]\s*(.+)$"
+            )
+
+            for line in full_text.split("\n"):
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                # Try pattern 1
+                match = re.match(pattern1, line, re.IGNORECASE)
+                if match:
+                    col_name = match.group(1).lower()
+                    description = match.group(2).strip()
+
+                    # Skip if description is too short (likely not a real description)
+                    if len(description) > 10:
+                        metadata.column_descriptions[col_name] = description
+                    continue
+
+                # Try pattern 2
+                match = re.match(pattern2, line, re.IGNORECASE)
+                if match:
+                    col_name = match.group(1).lower()
+                    description = match.group(2).strip()
+
+                    if len(description) > 10:
+                        metadata.column_descriptions[col_name] = description
+
+            # Extract data types if mentioned
+            type_patterns = {
+                "integer": ["integer", "int", "numeric", "number"],
+                "float": ["float", "decimal", "real", "double"],
+                "string": ["string", "text", "varchar", "char"],
+                "date": ["date", "datetime", "timestamp"],
+                "boolean": ["boolean", "bool", "binary", "yes/no"],
+            }
+
+            for col_name, desc in metadata.column_descriptions.items():
+                desc_lower = desc.lower()
+
+                for dtype, keywords in type_patterns.items():
+                    if any(kw in desc_lower for kw in keywords):
+                        metadata.column_types[col_name] = dtype
+                        break
+
+            return metadata if metadata.column_descriptions else None
+
+        except Exception as e:
+            print(f"Error parsing dictionary text: {e}")
+            return None
+
     def parse_dictionary_pdf(self, pdf_path: Path) -> DictionaryMetadata | None:
         """
         Parse data dictionary PDF to extract column metadata using LangChain.
