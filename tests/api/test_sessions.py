@@ -20,7 +20,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from clinical_analytics.api.db.database import get_db
-from clinical_analytics.api.main import app as main_app
 from clinical_analytics.api.models.database import Base
 from clinical_analytics.api.routes import sessions
 

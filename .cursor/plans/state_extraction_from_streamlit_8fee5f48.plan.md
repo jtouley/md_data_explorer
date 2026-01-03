@@ -90,12 +90,12 @@ todos:
       - b2-verify
   - id: b4-commit
     content: Commit Milestone B (feat - Add persistence boundary StateStore + FileBackend)
-    status: in_progress
+    status: completed
     dependencies:
       - b3-integration-test
   - id: final-quality
     content: Run full quality gates (make format, make lint-fix, make type-check, make test)
-    status: pending
+    status: completed
     dependencies:
       - b4-commit
 ---
@@ -505,5 +505,3 @@ For each component:
 - Make deterministic: same query + scope = same run_key
 
 **Validation issues:**
-
-- `issues: list[dict] `where each dict has `{"message": str, "severity": str}`
