@@ -36,12 +36,14 @@ class DictionaryMetadata:
         column_descriptions: Dict mapping column names to descriptions
         column_types: Dict mapping column names to expected data types
         valid_values: Dict mapping column names to valid value sets
+        codebooks: Dict mapping column names to codebook dictionaries {code: label}
         source_file: Path to the PDF dictionary
     """
 
     column_descriptions: dict[str, str] = field(default_factory=dict)
     column_types: dict[str, str] = field(default_factory=dict)
     valid_values: dict[str, list[str]] = field(default_factory=dict)
+    codebooks: dict[str, dict[str, str]] = field(default_factory=dict)
     source_file: Path | None = None
 
     def get_description(self, column: str) -> str | None:
@@ -168,34 +170,39 @@ def extract_codebooks_from_docs(doc_text: str) -> dict[str, dict[str, str]]:
     codebooks: dict[str, dict[str, str]] = {}
 
     # Pattern to find codebook patterns: "ColumnName: 1: Value1, 2: Value2" or "ColumnName: 1: Value1 2: Value2"
-    # Match column name followed by code:value pairs
-    # Pattern: column_name (optional colon/dash) followed by code:value pairs
-    pattern = r"([A-Za-z_][A-Za-z0-9_\s]*?)\s*[:\-]?\s*((?:\d+\s*:\s*[A-Za-z\s/]+(?:,\s*|\s+))*\d+\s*:\s*[A-Za-z\s/]+)"
+    # Match column name followed by colon and then code:value pairs on same line or next line
+    # Pattern: column_name : code:value pairs (stops at newline or end of codebook pattern)
+    pattern = r"^([A-Za-z_][A-Za-z0-9_\s]*?)\s*:\s*((?:\d+\s*:\s*[A-Za-z\s/]+(?:,\s*|\s+))*\d+\s*:\s*[A-Za-z\s/]+)"
 
-    matches = re.finditer(pattern, doc_text, re.IGNORECASE)
+    # Process line by line to avoid cross-line matching
+    for line in doc_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
 
-    for match in matches:
-        col_name_raw = match.group(1).strip()
-        codebook_text = match.group(2).strip()
+        match = re.match(pattern, line, re.IGNORECASE)
+        if match:
+            col_name_raw = match.group(1).strip()
+            codebook_text = match.group(2).strip()
 
-        # Normalize column name (lowercase, replace spaces with underscores)
-        col_name = re.sub(r"\s+", "_", col_name_raw.lower())
+            # Normalize column name (lowercase, replace spaces with underscores)
+            col_name = re.sub(r"\s+", "_", col_name_raw.lower())
 
-        # Extract code:value pairs from codebook_text
-        # Pattern: "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No"
-        codebook: dict[str, str] = {}
+            # Extract code:value pairs from codebook_text
+            # Pattern: "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No"
+            codebook: dict[str, str] = {}
 
-        # Pattern for code:value pairs (handles comma-separated and space-separated)
-        code_value_pattern = r"(\d+)\s*:\s*([A-Za-z\s/]+?)(?=\s*\d+\s*:|,|$)"
+            # Pattern for code:value pairs (handles comma-separated and space-separated)
+            code_value_pattern = r"(\d+)\s*:\s*([A-Za-z\s/]+?)(?=\s*\d+\s*:|,|$)"
 
-        for code_match in re.finditer(code_value_pattern, codebook_text):
-            code = code_match.group(1).strip()
-            value = code_match.group(2).strip().rstrip(",").strip()
-            if code and value:
-                codebook[code] = value
+            for code_match in re.finditer(code_value_pattern, codebook_text):
+                code = code_match.group(1).strip()
+                value = code_match.group(2).strip().rstrip(",").strip()
+                if code and value:
+                    codebook[code] = value
 
-        if codebook:
-            codebooks[col_name] = codebook
+            if codebook:
+                codebooks[col_name] = codebook
 
     return codebooks
 
@@ -332,6 +339,22 @@ class SchemaInferenceEngine:
         else:
             # No time columns - use static time_zero
             schema.time_zero = "2020-01-01"
+
+        # 7. Parse doc_context if provided (populate DictionaryMetadata)
+        if doc_context:
+            # Parse descriptions using parse_dictionary_text (accepts str)
+            dict_metadata = self.parse_dictionary_text(doc_context)
+            if dict_metadata is None:
+                # Create empty DictionaryMetadata if parsing fails
+                dict_metadata = DictionaryMetadata()
+
+            # Extract codebooks from doc_context
+            codebooks = extract_codebooks_from_docs(doc_context)
+            if codebooks:
+                dict_metadata.codebooks.update(codebooks)
+
+            # Attach to schema
+            schema.dictionary_metadata = dict_metadata
 
         return schema
 
