@@ -1,35 +1,50 @@
-# Active Session Rule
+---
+description: Active development session - terminal configuration fixes
+globs: ["**/*"]
+alwaysApply: true
+---
 
-**Session ID**: `llm_nested_json_fix_complete`
+# Active Session: terminal-config-fix
 
-**Status**: COMPLETE
+**Session ID**: `terminal-config-fix`
 
-**Session File**: `.context/sessions/llm_nested_json_fix_complete.yaml`
+**Session File**: `.context/sessions/terminal-config-fix.yaml`
 
-## Resume Prompt
+**Status**: Completed
 
-Session resumed: LLM nested JSON fix complete
+## Resume Prompt Template
 
-Root cause: LLM was generating invalid nested structures like:
-{ "query": { "remove": [...], "recalc": true } }
-instead of flat QueryPlan schema with top-level "intent" field.
+Resume work on terminal configuration fixes:
 
-Solution implemented:
-- Added test: test_llm_rejects_nested_query_object_structure (PASSED)
-- Strengthened LLM prompt with explicit FLAT JSON requirement
-- Added anti-pattern examples in prompt showing invalid nested structures
-- Enhanced conversation context with clear refinement detection rules
+Context: Fixed Cursor terminal auto-execution of pyenv commands and added fast scroll settings.
 
-Test results: 589/610 passing (21 pre-existing failures, no regressions)
-Commit: 877a052 pushed to feat/adr009-llm-enhanced-ux
+Completed:
+- Created .vscode/settings.json with Python interpreter path pointing to .venv/bin/python
+- Added fast terminal scroll settings (smoothScrolling, fastScrollSensitivity, scrollback, mouseWheelScrollSensitivity)
+- Explained Powerlevel10k branch display format (shows local:remote format)
 
-This session is complete. LLM prompt now explicitly rejects nested structures.
+Files modified:
+- .vscode/settings.json (created with Python and terminal scroll settings)
+- .gitignore (already ignores .vscode/ directory)
 
-## Context
+Next steps if resuming:
+- Verify terminal scroll settings work after Cursor reload
+- Test that pyenv commands no longer auto-execute in new terminals
+- Consider removing docs/.python-version if not needed (contains 3.14, might confuse tools)
 
-- **Ticket**: LLM generating invalid nested JSON structures for refinement queries
-- **Gate**: implementation_complete
-- **Key Files**: 
-  - tests/core/test_nl_query_llm_constrained.py
-  - src/clinical_analytics/core/nl_query_engine.py
-- **ADRs**: ADR009 (LLM-enhanced UX)
+## Session Context
+
+- **Problem**: Cursor was automatically running 'pyenv shell 3.11.6' when creating new terminals, but pyenv wasn't in PATH causing command not found errors. Also requested fast terminal scroll settings.
+- **Root Cause**: Cursor's Python extension detected pyenv's Python 3.11.6 installation but pyenv wasn't initialized in shell PATH. Project uses uv for Python management.
+- **Solution**: Created workspace settings to explicitly use uv-managed Python from .venv and added fast terminal scroll configuration.
+
+## Key Files
+
+- `.vscode/settings.json` - Workspace settings for Python interpreter and terminal scroll
+
+## Notes
+
+- pyenv is installed at ~/.pyenv/ with Python 3.11.6 but not in PATH
+- Project uses uv with Python 3.13.11 in .venv
+- Powerlevel10k shows branch format as "local:remote" which is expected behavior
+- Fast scroll settings: fastScrollSensitivity=5, mouseWheelScrollSensitivity=3, scrollback=10000
