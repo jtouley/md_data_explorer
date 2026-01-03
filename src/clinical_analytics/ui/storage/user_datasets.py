@@ -174,19 +174,76 @@ def normalize_upload_to_table_list(
     if filename.endswith(".zip"):
         # Multi-table: extract from ZIP
         tables = extract_zip_tables(file_bytes)
+
+        # Extract documentation files from ZIP (Phase 1: ADR004)
+        from io import BytesIO
+
+        doc_files = extract_documentation_files(BytesIO(file_bytes))
+        logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
         df = load_single_file(file_bytes, filename)
         table_name = Path(filename).stem  # Use original filename stem
         tables = [{"name": table_name, "data": df}]
+        doc_files = []  # No docs for single-file uploads
 
     # Build metadata
     table_metadata = {
         "table_count": len(tables),
         "table_names": [t["name"] for t in tables],
+        "doc_files": doc_files,  # Phase 1: Store doc files for processing
     }
 
     return tables, table_metadata
+
+
+def extract_documentation_files(zip_file: Any) -> list[Any]:
+    """
+    Extract documentation files (PDF, Markdown, text) from ZIP archive.
+
+    Args:
+        zip_file: ZIP file (bytes, BytesIO, or file path)
+
+    Returns:
+        List of documentation file info objects with .name attribute
+
+    Example:
+        >>> zip_buffer = BytesIO(zip_data)
+        >>> doc_files = extract_documentation_files(zip_buffer)
+        >>> doc_names = [f.name for f in doc_files]
+        ['README.md', 'dictionary.txt', 'study_protocol.pdf']
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class DocFile:
+        """Documentation file info."""
+
+        name: str
+        path: str
+        content: bytes
+
+    doc_extensions = {".pdf", ".md", ".txt"}
+    doc_files = []
+
+    try:
+        with zipfile.ZipFile(zip_file) as zf:
+            for file_info in zf.filelist:
+                # Skip directories
+                if file_info.is_dir():
+                    continue
+
+                # Check if file has documentation extension
+                file_path = Path(file_info.filename)
+                if file_path.suffix.lower() in doc_extensions:
+                    content = zf.read(file_info.filename)
+                    doc_files.append(DocFile(name=file_path.name, path=file_info.filename, content=content))
+
+        return doc_files
+
+    except zipfile.BadZipFile as e:
+        logger.warning(f"Failed to extract documentation files from ZIP: {e}")
+        return []
 
 
 def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
@@ -998,7 +1055,29 @@ def save_table_list(
         (success, message)
     """
     try:
-        # 1. Convert schema (AFTER normalization, has df access)
+        # 1. Extract documentation context (Phase 1: ADR004)
+        if "doc_files" in metadata and metadata["doc_files"]:
+            import tempfile
+
+            from clinical_analytics.core.doc_parser import extract_context_from_docs
+
+            # Save doc files to temp directory for extraction
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                doc_paths = []
+
+                for doc_file in metadata["doc_files"]:
+                    # Save doc file content to temp file
+                    doc_temp_path = temp_path / doc_file.name
+                    doc_temp_path.write_bytes(doc_file.content)
+                    doc_paths.append(doc_temp_path)
+
+                # Extract text context from all documentation files
+                doc_context = extract_context_from_docs(doc_paths)
+                metadata["doc_context"] = doc_context
+                logger.info(f"Extracted doc_context ({len(doc_context)} chars) from {len(doc_paths)} files")
+
+        # 2. Convert schema (AFTER normalization, has df access)
         if "variable_mapping" in metadata and tables:
             from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
 
@@ -1007,7 +1086,7 @@ def save_table_list(
                 tables[0]["data"],  # Access normalized DataFrame
             )
 
-        # 2. Compute dataset version and table fingerprints (MVP - Phase 1)
+        # 3. Compute dataset version and table fingerprints (MVP - Phase 1)
         from clinical_analytics.storage.versioning import (
             compute_dataset_version,
             compute_table_fingerprint,

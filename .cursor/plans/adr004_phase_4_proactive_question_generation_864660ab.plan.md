@@ -121,12 +121,14 @@ todos:
     dependencies:
       - "2.4"
       - "2.9"
-  - id: "2.11"
-    content: Write failing test for infer_schema_with_context() - doc_context populates DictionaryMetadata with codebooks, descriptions, units
-    status: pending
   - id: "2.11a"
     content: Write failing test for DictionaryMetadata.codebooks field - dataclass has codebooks: dict[str, dict[str, str]] field
     status: pending
+  - id: "2.11"
+    content: Write failing test for infer_schema_with_context() - doc_context populates DictionaryMetadata with codebooks, descriptions, units
+    status: pending
+    dependencies:
+      - "2.11a"
   - id: "2.12"
     content: Add codebooks field to DictionaryMetadata dataclass - codebooks: dict[str, dict[str, str]] = field(default_factory=dict)
     status: pending
@@ -184,6 +186,11 @@ todos:
     dependencies:
       - "2.18"
       - "2.20"
+  - id: "2.21a"
+    content: Grep codebase for 'infer_schema_with_dictionary' and 'parse_dictionary_pdf' - verify no lingering references before removal
+    status: pending
+    dependencies:
+      - "2.20"
   - id: "2.22"
     content: Write test verifying infer_schema_with_dictionary() no longer exists (should raise AttributeError)
     status: pending
@@ -199,6 +206,7 @@ todos:
     status: pending
     dependencies:
       - "2.21"
+      - "2.21a"
       - "2.22"
       - "2.23"
   - id: "2.25"
@@ -312,6 +320,9 @@ todos:
   - id: "4.0a"
     content: Add ENABLE_PROACTIVE_QUESTIONS feature flag to nl_query_config.py (default: False)
     status: pending
+  - id: "4.0b"
+    content: Verify call_llm() infrastructure exists in llm_feature.py (grep check for 'def call_llm' and 'class LLMFeature')
+    status: pending
   - id: "4.1"
     content: Write failing test for generate_upload_questions() - deterministic fallback
     status: pending
@@ -374,17 +385,21 @@ todos:
     status: pending
     dependencies:
       - "4.8"
+  - id: "4.8b"
+    content: Create CacheBackend protocol in question_generator.py - interface for cache get/set (no Streamlit imports)
+    status: pending
   - id: "4.9"
     content: Write failing test for generate_proactive_questions() - query-time follow-ups with confidence gating
     status: pending
   - id: "4.9a"
-    content: Implement generate_proactive_questions() - query-time follow-ups with all constraints
+    content: Implement generate_proactive_questions() - query-time follow-ups with all constraints (uses CacheBackend protocol)
     status: pending
     dependencies:
       - "4.4a"
       - "4.4b"
       - "4.4c"
       - "4.4d"
+      - "4.8b"
       - "4.9"
   - id: "4.10"
     content: Write failing test for UI display - upload-time example questions loaded from metadata
@@ -1080,6 +1095,14 @@ def extract_column_metadata(self, column_name: str) -> dict[str, Any] | None:
 
 ### Phase 4: Proactive Question Generation (P1)
 
+**Prerequisites for Phase 4**:
+1. Verify LLM infrastructure exists:
+   ```bash
+   grep -r "def call_llm" src/clinical_analytics/core/
+   grep -r "class LLMFeature" src/clinical_analytics/core/
+   ```
+2. If missing, block Phase 4 and escalate (requires separate implementation plan)
+
 **Goal**: Generate contextual example questions (upload-time) and proactive follow-up questions (query-time) using local LLM, bounded by semantic layer and confidence-gated to avoid chaos.
 
 **Two Types of Questions**:
@@ -1181,10 +1204,28 @@ falling back to deterministic generation if LLM unavailable.
 - Time-budgeted (hard timeout like parsing tiers)
 - Observable (logs generation/selection/dismissal)
 - Clinically safe (analysis navigation only, not medical advice)
+
+**Architecture**:
+- NO Streamlit imports (core layer must be UI-agnostic)
+- Uses CacheBackend protocol for dependency injection
+- UI layer provides StreamlitCacheBackend implementation
+- Tests use simple dict-based mock
 """
 
+from typing import Protocol
 from clinical_analytics.core.llm_feature import LLMFeature, call_llm
 from clinical_analytics.core.nl_query_config import ENABLE_PROACTIVE_QUESTIONS
+
+class CacheBackend(Protocol):
+    """Protocol for cache backend (UI-agnostic, no Streamlit coupling)."""
+    
+    def get(self, key: str) -> list[str] | None:
+        """Get cached value by key. Returns None if not cached."""
+        ...
+    
+    def set(self, key: str, value: list[str]) -> None:
+        """Cache value by key."""
+        ...
 
 def generate_upload_questions(
     semantic_layer,
@@ -1227,6 +1268,7 @@ def generate_proactive_questions(
     dataset_version: str | None = None,
     run_key: str | None = None,
     normalized_query: str | None = None,
+    cache_backend: CacheBackend | None = None,
 ) -> list[str]:
     """
     Generate proactive follow-up questions based on query intent and semantic layer.
@@ -1238,6 +1280,7 @@ def generate_proactive_questions(
         - < 0.5: do not suggest proactively (ask user to rephrase)
     
     **Idempotent**: Cached by (dataset_version, run_key, normalized_query) to prevent duplicates.
+    **Architecture**: Uses CacheBackend protocol for UI independence (no Streamlit imports in core).
     
     Args:
         semantic_layer: SemanticLayer instance (for column/alias bounds)
@@ -1245,6 +1288,7 @@ def generate_proactive_questions(
         dataset_version: Dataset version for caching
         run_key: Run key for caching
         normalized_query: Normalized query text for caching
+        cache_backend: CacheBackend protocol for UI-agnostic caching (injected dependency)
     
     Returns:
         List of 3-5 example questions (empty if confidence too low or feature disabled)
@@ -1260,11 +1304,12 @@ def generate_proactive_questions(
     if query_intent is None or query_intent.confidence < 0.5:
         return []  # Don't suggest proactively if confidence too low
     
-    # Check cache for idempotency
+    # Check cache for idempotency (uses injected CacheBackend, no Streamlit coupling)
     cache_key = _build_cache_key(dataset_version, run_key, normalized_query)
-    cached = _get_cached_questions(cache_key)
-    if cached is not None:
-        return cached
+    if cache_backend:
+        cached = cache_backend.get(cache_key)
+        if cached is not None:
+            return cached
     
     # Get available columns/aliases from semantic layer (hard boundary)
     alias_index = semantic_layer.get_column_alias_index()
@@ -1302,8 +1347,9 @@ def generate_proactive_questions(
     # Validate questions are bounded by semantic layer
     questions = _validate_questions_bounded(questions, available_columns, available_aliases)
     
-    # Cache results for idempotency
-    _cache_questions(cache_key, questions)
+    # Cache results for idempotency (uses injected CacheBackend)
+    if cache_backend:
+        cache_backend.set(cache_key, questions)
     
     # Log observability event
     _log_question_generation(questions, query_intent.confidence, dataset_version, len(available_columns))
@@ -1452,9 +1498,8 @@ def _build_cache_key(
     Build cache key for idempotency.
     
     Uses same pattern as execution result caching in 03_💬_Ask_Questions.py:
-    - Key format: "{dataset_version}:{run_key}:{query_hash}"
+    - Key format: "proactive_questions:{dataset_version}:{run_key}:{query_hash}"
     - query_hash: SHA256 hash of normalized_query (first 16 chars, same as exec_result caching)
-    - Full session state key: f"proactive_questions:{cache_key}"
     
     Args:
         dataset_version: Dataset version identifier
@@ -1462,48 +1507,12 @@ def _build_cache_key(
         normalized_query: Normalized query text (for hashing)
         
     Returns:
-        Cache key string (without "proactive_questions:" prefix - added in _get_cached_questions/_cache_questions)
+        Cache key string with "proactive_questions:" prefix for use with CacheBackend
     """
     import hashlib
     # Use SHA256 (same as exec_result caching) for deterministic hashing
     query_hash = hashlib.sha256(normalized_query.encode() if normalized_query else b"").hexdigest()[:16]
-    return f"{dataset_version or 'unknown'}:{run_key or 'unknown'}:{query_hash}"
-
-def _get_cached_questions(cache_key: str) -> list[str] | None:
-    """
-    Get cached questions from Streamlit session state.
-    
-    Uses same pattern as execution result caching in 03_💬_Ask_Questions.py:
-    - Key format: f"proactive_questions:{cache_key}"
-    - Cache key includes dataset_version, run_key, query_hash for idempotency
-    - Returns None if not cached (allows LLM generation)
-    
-    Args:
-        cache_key: Cache key built from (dataset_version, run_key, query_hash)
-        
-    Returns:
-        Cached questions list or None if not cached
-    """
-    import streamlit as st
-    session_key = f"proactive_questions:{cache_key}"
-    return st.session_state.get(session_key)
-
-def _cache_questions(cache_key: str, questions: list[str]) -> None:
-    """
-    Cache questions in Streamlit session state for idempotency.
-    
-    Uses same pattern as execution result caching in 03_💬_Ask_Questions.py:
-    - Key format: f"proactive_questions:{cache_key}"
-    - Prevents duplicate question generation on Streamlit reruns
-    - Cache persists for session lifetime (cleared on page refresh)
-    
-    Args:
-        cache_key: Cache key built from (dataset_version, run_key, query_hash)
-        questions: Generated questions to cache
-    """
-    import streamlit as st
-    session_key = f"proactive_questions:{cache_key}"
-    st.session_state[session_key] = questions
+    return f"proactive_questions:{dataset_version or 'unknown'}:{run_key or 'unknown'}:{query_hash}"
 
 def _log_question_generation(
     questions: list[str],
@@ -1537,7 +1546,26 @@ def _validate_privacy_safe_stats(stats: dict[str, Any]) -> None:
 ```
 
 **Modified Files**:
-- `src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py` - Call `generate_proactive_questions()` after query execution, display with selection/dismissal tracking
+- `src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py` - Call `generate_proactive_questions()` after query execution, display with selection/dismissal tracking. Implement `StreamlitCacheBackend` class to provide session state caching:
+  ```python
+  class StreamlitCacheBackend:
+      """Streamlit session state cache backend (UI layer implementation)."""
+      def get(self, key: str) -> list[str] | None:
+          return st.session_state.get(key)
+      
+      def set(self, key: str, value: list[str]) -> None:
+          st.session_state[key] = value
+  
+  # Usage:
+  questions = generate_proactive_questions(
+      semantic_layer,
+      query_intent,
+      dataset_version=dataset_version,
+      run_key=run_key,
+      normalized_query=normalized_query,
+      cache_backend=StreamlitCacheBackend(),
+  )
+  ```
 - `src/clinical_analytics/core/nl_query_engine.py` - Export `generate_proactive_questions()` for use in UI
 
 **Integration Points**:
@@ -1560,6 +1588,12 @@ def _validate_privacy_safe_stats(stats: dict[str, Any]) -> None:
 3. **After execution**: Call `generate_proactive_questions(semantic_layer, query_intent, dataset_version, run_key, normalized_query)`
 4. Display questions in UI with click tracking (log `proactive_question_selected` or `proactive_question_dismissed`)
 
+**Cache Backend Pattern**: Use protocol/interface to decouple from Streamlit:
+- Define `CacheBackend` protocol with `get(key: str)` and `set(key: str, value: list[str])` methods
+- Core layer uses protocol (no Streamlit import)
+- UI layer provides `StreamlitCacheBackend` implementation
+- Tests use simple dict-based mock: `class DictCacheBackend: ...`
+
 **Implementation Notes**:
 
 - **Semantic Layer Bounding**: Questions must only reference columns/aliases from `semantic_layer.get_column_alias_index()`. Use `_validate_questions_bounded()` to filter out hallucinated columns.
@@ -1567,7 +1601,7 @@ def _validate_privacy_safe_stats(stats: dict[str, Any]) -> None:
   - `confidence ≥ 0.85`: Suggest next questions freely (`question_type="next_questions"`)
   - `0.5 ≤ confidence < 0.85`: Suggest only clarification/disambiguation (`question_type="clarification"`)
   - `confidence < 0.5`: Do not suggest proactively (return empty list)
-- **Idempotency**: Cache questions by `(dataset_version, run_key, normalized_query)` using same pattern as result caching. Prevents duplicates on Streamlit reruns.
+- **Idempotency**: Cache questions by `(dataset_version, run_key, normalized_query)` using injected `CacheBackend` protocol. UI layer provides Streamlit session state implementation. Prevents duplicates on Streamlit reruns.
 - **Feature Flag**: Add `ENABLE_PROACTIVE_QUESTIONS` to `nl_query_config.py` (default: `False` for initial rollout).
 - **Time Budget**: Hard timeout of 5.0s (same as parsing tiers). If LLM times out, fall back to deterministic questions.
 - **Observability**: Log events:
@@ -1576,16 +1610,21 @@ def _validate_privacy_safe_stats(stats: dict[str, Any]) -> None:
   - `proactive_question_dismissed` - in UI component
 - **Clinical Safety**: Prompts explicitly state "analysis navigation only, not medical advice". Use phrases like "Would you like to stratify by X?" not "You should consider Y treatment."
 - **No Tier 3 Dependency**: Don't assume Tier 3 LLM fallback is production-ready. Use deterministic fallback if LLM unavailable.
+- **LLM Infrastructure**: Must verify `call_llm()` and `LLMFeature` enum exist before Phase 4 (todo 4.0b). If missing, escalate for separate implementation.
 - **LLMFeature Enum**: Must add `LLMFeature.QUESTION_GENERATION = "question_generation"` to `llm_feature.py` before Phase 4 implementation (todo 4.0).
 - **Error Handling**: If LLM call fails (timeout, unavailable), gracefully fall back to deterministic questions. Never raise exception.
+- **Architecture Compliance**: NO Streamlit imports in `question_generator.py`. Use CacheBackend protocol for UI independence.
 
 **Success Criteria:**
+- [ ] **LLM infrastructure verified**: `call_llm()` and `LLMFeature` enum exist (todo 4.0b)
 - [ ] LLMFeature.QUESTION_GENERATION enum entry added to llm_feature.py
 - [ ] ENABLE_PROACTIVE_QUESTIONS feature flag added to nl_query_config.py
+- [ ] **CacheBackend protocol defined**: UI-agnostic interface for caching (todo 4.8b)
+- [ ] **NO Streamlit imports in core**: `question_generator.py` has zero Streamlit coupling
 - [ ] Question generator module created with LLM + deterministic fallback
 - [ ] **Semantic layer bounding**: Questions only reference known columns/aliases (no hallucination)
 - [ ] **Confidence gating**: Respects deterministic thresholds (≥0.85 free, 0.5-0.85 clarification only, <0.5 none)
-- [ ] **Idempotency**: Questions cached by (dataset_version, run_key, normalized_query) using st.session_state with key format `f"proactive_questions:{cache_key}"` (same pattern as exec_result caching)
+- [ ] **Idempotency**: Questions cached via injected `CacheBackend` protocol (UI layer provides Streamlit implementation)
 - [ ] **Time budget**: Hard timeout of 5.0s (same as parsing tiers)
 - [ ] **Observability**: Logs `proactive_questions_generated`, `proactive_question_selected`, `proactive_question_dismissed` events
 - [ ] **Clinical safety**: Prompts emphasize analysis navigation only, not medical advice

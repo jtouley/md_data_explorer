@@ -1,0 +1,210 @@
+"""Tests for documentation extraction from ZIP uploads."""
+
+from io import BytesIO
+from zipfile import ZipFile
+
+from clinical_analytics.core.doc_parser import (
+    extract_context_from_docs,
+    extract_markdown_text,
+    extract_pdf_text,
+    extract_text,
+)
+from clinical_analytics.ui.storage.user_datasets import extract_documentation_files
+
+
+class TestDocumentationExtraction:
+    """Test suite for documentation file detection and extraction."""
+
+    def test_extract_documentation_files_detects_pdf_md_txt(self, tmp_path):
+        """Test that extract_documentation_files() detects PDF, Markdown, and text files in ZIP."""
+        # Arrange: Create ZIP with documentation files
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, "w") as zf:
+            # Add documentation files
+            zf.writestr("README.md", "# Dataset Documentation\nDescription here")
+            zf.writestr("dictionary.txt", "Column definitions")
+            zf.writestr("docs/study_protocol.pdf", b"%PDF-1.4 fake pdf content")
+            # Add data files (should not be detected as docs)
+            zf.writestr("data.csv", "col1,col2\n1,2")
+            zf.writestr("patients.xlsx", b"fake excel content")
+
+        zip_buffer.seek(0)
+
+        # Act: Extract documentation files
+        doc_files = extract_documentation_files(zip_buffer)
+
+        # Assert: Only documentation files detected
+        assert len(doc_files) == 3
+        doc_names = [f.name for f in doc_files]
+        assert "README.md" in doc_names
+        assert "dictionary.txt" in doc_names
+        assert "study_protocol.pdf" in doc_names
+        # Data files should not be included
+        assert "data.csv" not in doc_names
+        assert "patients.xlsx" not in doc_names
+
+    def test_extract_documentation_files_empty_zip(self, tmp_path):
+        """Test that extract_documentation_files() returns empty list for ZIP with no docs."""
+        # Arrange: Create ZIP with only data files
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("data.csv", "col1,col2\n1,2")
+
+        zip_buffer.seek(0)
+
+        # Act: Extract documentation files
+        doc_files = extract_documentation_files(zip_buffer)
+
+        # Assert: No documentation files found
+        assert len(doc_files) == 0
+
+    def test_extract_documentation_files_docs_subdirectory(self, tmp_path):
+        """Test that extract_documentation_files() detects docs in subdirectories."""
+        # Arrange: Create ZIP with docs in nested subdirectories
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("docs/data_dictionary.pdf", b"%PDF-1.4 fake pdf")
+            zf.writestr("metadata/README.md", "# Metadata\nDescription")
+            zf.writestr("deep/nested/path/notes.txt", "Study notes")
+
+        zip_buffer.seek(0)
+
+        # Act: Extract documentation files
+        doc_files = extract_documentation_files(zip_buffer)
+
+        # Assert: All documentation files detected regardless of directory depth
+        assert len(doc_files) == 3
+        doc_names = [f.name for f in doc_files]
+        assert "data_dictionary.pdf" in doc_names
+        assert "README.md" in doc_names
+        assert "notes.txt" in doc_names
+
+
+class TestDocParser:
+    """Test suite for documentation parsing module."""
+
+    def test_extract_pdf_text_extracts_content(self, tmp_path):
+        """Test that extract_pdf_text() extracts text from PDF files."""
+        # Arrange: Create a simple PDF file
+        pdf_path = tmp_path / "test.pdf"
+        # Create minimal valid PDF with text content
+        pdf_content = b"""%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>/MediaBox[0 0 612 792]/Contents 5 0 R>>endobj
+4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+5 0 obj<</Length 44>>stream
+BT /F1 12 Tf 100 700 Td (Hello World) Tj ET
+endstream endobj
+xref
+0 6
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000262 00000 n
+0000000337 00000 n
+trailer<</Size 6/Root 1 0 R>>
+startxref
+414
+%%EOF"""
+        pdf_path.write_bytes(pdf_content)
+
+        # Act: Extract text from PDF
+        text = extract_pdf_text(pdf_path)
+
+        # Assert: Text content extracted
+        assert text is not None
+        assert len(text) > 0
+        # Note: actual text extraction depends on pymupdf, so we just verify non-empty
+
+    def test_extract_markdown_text_preserves_structure(self, tmp_path):
+        """Test that extract_markdown_text() extracts and preserves Markdown structure."""
+        # Arrange: Create Markdown file
+        md_path = tmp_path / "README.md"
+        md_content = """# Dataset Documentation
+
+## Overview
+This is a clinical dataset.
+
+## Columns
+- patient_id: Patient identifier
+- age: Patient age in years
+- diagnosis: Primary diagnosis
+"""
+        md_path.write_text(md_content)
+
+        # Act: Extract text from Markdown
+        text = extract_markdown_text(md_path)
+
+        # Assert: Content preserved
+        assert "# Dataset Documentation" in text
+        assert "patient_id" in text
+        assert "diagnosis" in text
+
+    def test_extract_text_reads_plain_text(self, tmp_path):
+        """Test that extract_text() reads plain text files."""
+        # Arrange: Create text file
+        txt_path = tmp_path / "notes.txt"
+        txt_content = "Study notes:\nProtocol version 2.0\nRecruitment ongoing"
+        txt_path.write_text(txt_content)
+
+        # Act: Extract text
+        text = extract_text(txt_path)
+
+        # Assert: Content read correctly
+        assert text == txt_content
+
+    def test_extract_context_from_docs_concatenates_files(self, tmp_path):
+        """Test that extract_context_from_docs() concatenates multiple documentation files."""
+        # Arrange: Create multiple doc files
+        md_path = tmp_path / "README.md"
+        md_path.write_text("# Documentation\nDataset overview")
+
+        txt_path = tmp_path / "notes.txt"
+        txt_path.write_text("Additional notes")
+
+        file_paths = [md_path, txt_path]
+
+        # Act: Extract context from all docs
+        context = extract_context_from_docs(file_paths)
+
+        # Assert: All content concatenated
+        assert "# Documentation" in context
+        assert "Dataset overview" in context
+        assert "Additional notes" in context
+
+    def test_extract_context_from_docs_truncates_large_files(self, tmp_path):
+        """Test that extract_context_from_docs() truncates content at 50k chars."""
+        # Arrange: Create large text file (>50k chars)
+        txt_path = tmp_path / "large.txt"
+        large_content = "x" * 60000  # 60k characters
+        txt_path.write_text(large_content)
+
+        # Act: Extract context
+        context = extract_context_from_docs([txt_path])
+
+        # Assert: Truncated to 50k chars
+        assert len(context) <= 50000
+
+    def test_extract_context_from_docs_handles_empty_list(self):
+        """Test that extract_context_from_docs() handles empty file list."""
+        # Arrange: Empty file list
+        file_paths = []
+
+        # Act: Extract context
+        context = extract_context_from_docs(file_paths)
+
+        # Assert: Returns empty string
+        assert context == ""
+
+    def test_extract_context_from_docs_handles_missing_files(self, tmp_path):
+        """Test that extract_context_from_docs() handles missing files gracefully."""
+        # Arrange: Non-existent file path
+        missing_path = tmp_path / "nonexistent.txt"
+
+        # Act: Extract context (should not raise exception)
+        context = extract_context_from_docs([missing_path])
+
+        # Assert: Returns empty string or skips missing file
+        assert isinstance(context, str)
