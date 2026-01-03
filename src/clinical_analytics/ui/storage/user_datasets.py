@@ -1077,6 +1077,9 @@ def save_table_list(
                 metadata["doc_context"] = doc_context
                 logger.info(f"Extracted doc_context ({len(doc_context)} chars) from {len(doc_paths)} files")
 
+            # Remove doc_files from metadata after extraction (not JSON serializable, only doc_context needed)
+            metadata.pop("doc_files", None)
+
         # 2. Convert schema (AFTER normalization, has df access)
         if "variable_mapping" in metadata and tables:
             from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
@@ -2519,6 +2522,10 @@ class UserDatasetStorage:
                     "file_format": "zip_multi_table",
                 }
             )
+
+            # Phase 1: Merge table_metadata (includes doc_files) into metadata
+            # This ensures doc_files are available for save_table_list() to extract doc_context
+            metadata.update(table_metadata)
 
             # Phase 9: Pass overwrite metadata to save_table_list
             if overwrite and existing_version_history is not None:

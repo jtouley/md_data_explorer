@@ -208,3 +208,65 @@ This is a clinical dataset.
 
         # Assert: Returns empty string or skips missing file
         assert isinstance(context, str)
+
+
+class TestDocContextInMetadata:
+    """Test suite for doc_context storage in upload metadata."""
+
+    def test_save_zip_upload_stores_doc_context_in_metadata(self, tmp_path):
+        """Test that save_zip_upload() extracts and stores doc_context in metadata."""
+        from io import BytesIO
+        from zipfile import ZipFile
+
+        import polars as pl
+
+        from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+        # Arrange: Create ZIP with data files and documentation
+        # Create larger dataset to pass validation (minimum 1KB)
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, "w") as zf:
+            # Add data files (create larger dataset)
+            df = pl.DataFrame(
+                {
+                    "patient_id": [f"P{i:03d}" for i in range(100)],
+                    "age": [20 + (i % 50) for i in range(100)],
+                    "outcome": [i % 2 for i in range(100)],
+                }
+            )
+            zf.writestr("patients.csv", df.write_csv())
+            # Add documentation files
+            zf.writestr("README.md", "# Dataset Documentation\nThis is a test dataset.")
+            zf.writestr("dictionary.txt", "patient_id: Patient identifier\nage: Patient age")
+
+        zip_buffer.seek(0)
+        zip_bytes = zip_buffer.getvalue()
+
+        # Act: Save ZIP upload
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        success, message, upload_id = storage.save_zip_upload(
+            file_bytes=zip_bytes,
+            original_filename="test_dataset.zip",
+            metadata={"dataset_name": "test_dataset"},
+        )
+
+        # Assert: Upload succeeded
+        assert success is True, f"Upload failed: {message}"
+        assert upload_id is not None
+
+        # Assert: Metadata contains doc_context
+        import json
+
+        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        assert metadata_path.exists()
+
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+
+        # Verify doc_context was extracted and stored
+        assert "doc_context" in metadata, "doc_context not found in saved metadata"
+        assert isinstance(metadata["doc_context"], str)
+        assert len(metadata["doc_context"]) > 0
+        # Verify documentation content is in context
+        assert "Dataset Documentation" in metadata["doc_context"]
+        assert "patient_id" in metadata["doc_context"]
