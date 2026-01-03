@@ -8,7 +8,8 @@ Production: PostgreSQL (scalable, persistent)
 """
 
 import os
-from typing import Annotated, Generator
+from collections.abc import Generator
+from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy import create_engine
@@ -17,9 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from clinical_analytics.api.models.database import Base
 
 # Database URL from environment or default to SQLite
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "sqlite:///./data/clinical_analytics.db"
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/clinical_analytics.db")
 
 # Create engine
 # For SQLite: check_same_thread=False allows multi-threaded access (FastAPI default)

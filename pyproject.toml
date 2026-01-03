@@ -52,6 +52,10 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = []
 
+[tool.ruff.lint.per-file-ignores]
+# Test files use camelCase naming per CLAUDE.md: test_unit_scenario_expectedBehavior
+"tests/**/*.py" = ["N802", "N806"]
+
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true
