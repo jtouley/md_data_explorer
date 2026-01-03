@@ -824,6 +824,8 @@ def render_zip_review_step():
         def progress_callback(step, total_steps, message, details):
             """Update progress UI with current step information."""
             progress = step / total_steps if total_steps > 0 else 0
+            # Cap progress at 1.0 to prevent StreamlitAPIException when step > total_steps
+            progress = min(progress, 1.0)
             progress_bar.progress(progress)
             status_text.info(f"🔄 {message}")
 

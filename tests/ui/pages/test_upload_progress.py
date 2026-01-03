@@ -65,3 +65,42 @@ class TestUploadProgress:
         assert "Running quality checks" in content or "quality checks" in content.lower(), (
             "Upload page should show quality check progress"
         )
+
+    def test_progress_calculation_capped_at_one(self):
+        """Test that progress calculation is capped at 1.0 to prevent StreamlitAPIException."""
+        # Arrange: Read upload page
+        upload_page = Path("src/clinical_analytics/ui/pages/01_📤_Add_Your_Data.py")
+
+        with open(upload_page) as f:
+            content = f.read()
+            lines = content.split("\n")
+
+        # Assert: Progress calculation caps at 1.0
+        # The bug was: progress = step / total_steps (can exceed 1.0)
+        # The fix should be: progress = min(progress, 1.0) on a subsequent line
+        # OR: progress = min(step / total_steps, 1.0) on same line
+
+        # Find the progress calculation line
+        progress_calc_found = False
+        progress_capped = False
+
+        for i, line in enumerate(lines):
+            if "progress = " in line and "total_steps" in line:
+                progress_calc_found = True
+                # Check if capped on same line
+                if "min(" in line:
+                    progress_capped = True
+                    break
+                # Check if capped on next line (within 3 lines)
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    if "min(progress" in lines[j] or "progress = min(" in lines[j]:
+                        progress_capped = True
+                        break
+                if progress_capped:
+                    break
+
+        assert progress_calc_found, "Progress calculation line should exist"
+        assert progress_capped, (
+            "Progress calculation should be capped at 1.0 using min(progress, 1.0) "
+            "to prevent StreamlitAPIException when step > total_steps"
+        )

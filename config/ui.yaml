@@ -7,7 +7,7 @@
 
 # Feature flags - single source of truth
 # Set MULTI_TABLE_ENABLED=true in environment to enable multi-table (ZIP) uploads
-multi_table_enabled: false
+multi_table_enabled: true
 
 # V1 MVP: Gate legacy analysis pages (2-6)
 # Set V1_MVP_MODE=false to show all pages (for development/testing)
