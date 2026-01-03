@@ -1,421 +1,353 @@
 ---
-name: Spec-Driven Governance Framework (Complete + Token Economy)
-overview: Implement a comprehensive, append-only governance system with spec anchors, delta logging, HITL safety gates, agent evaluation, memory indexing, tool-first evidence collection, subagent delegation for parallel verification, token economy instrumentation for measurable self-improvement, and C.O.R.E. output format for cognitive-optimized agent outputs. Plan revised to address blocking issues from staff review - enforcement model clarified, markdown errors fixed, rollback procedure added, migration steps included, subagent work orders added, token telemetry/waste detection added, and neurodivergent-friendly output formatting with cognitive load tracking.
+name: Spec-Driven Governance Framework (MVP-First)
+overview: MVP-FIRST APPROACH - Implement cognitive-optimized output format (C.O.R.E.) + HITL safety gates + minimal spec anchors for immediate value. Defers comprehensive governance (checkpoints, deltas, token telemetry, subagents, memory indexing, postmortems) to post-MVP phases. MVP delivers better quality, lower cost, faster comprehension in hours, not weeks.
 todos:
-  - id: makefile-checkpoint-update
-    content: Add checkpoint-update target (append mode)
-    status: pending
-  - id: makefile-memory-index
-    content: Add memory-index-update target
-    status: pending
-  - id: makefile-checkpoint-create-fix
-    content: Fix checkpoint-create to prevent overwrites
-    status: pending
-  - id: rule-106
-    content: "Create 106-spec-change-control.mdc (100-series: correctness)"
-    status: pending
-  - id: rule-108
-    content: "Create 108-spec-sync-gates.mdc (100-series: correctness)"
-    status: pending
-  - id: rule-107
-    content: "Create 107-hitl-safety.mdc (100-series: safety)"
-    status: pending
-  - id: rule-997
-    content: "Create 997-logging-policy.mdc (900-series: meta-governance)"
-    status: pending
-  - id: cmd-spec-delta
-    content: Create spec-delta-template.md
-    status: pending
-  - id: cmd-spec-audit
-    content: Create spec-audit.md
-    status: pending
-  - id: cmd-agent-eval
-    content: Create 000-agent-evaluation.md
-    status: pending
-  - id: cmd-memory-index
-    content: Create 301-memory-index.md
-    status: pending
-  - id: cmd-postmortem
-    content: Create postmortem.md
-    status: pending
-  - id: cmd-spec-anchor
-    content: Create spec-anchor-template.md
-    status: pending
-  - id: update-spec-driven
-    content: Update spec-driven.md with gates and new rules
-    status: pending
+  - id: mvp-rule-230
+    content: Create 230-core-output-format.mdc (MVP version)
+    status: completed
+  - id: mvp-rule-107
+    content: Create 107-hitl-safety.mdc (MVP version - simplified)
+    status: completed
+  - id: mvp-cmd-spec-anchor
+    content: Create spec-anchor.md (minimal MVP template)
+    status: completed
+  - id: mvp-update-plan-review
+    content: Update plan-review.md with C.O.R.E. output contract
+    status: completed
     dependencies:
-      - rule-106
-      - rule-107
-      - rule-108
-      - rule-109
-      - rule-997
-  - id: create-dirs
-    content: Create governance directory structure
-    status: pending
-  - id: init-memory-index
-    content: Initialize memory-index.json
-    status: pending
-  - id: migrate-checkpoints
-    content: Migrate existing checkpoints to new format
-    status: pending
+      - mvp-rule-230
+  - id: mvp-update-spec-driven
+    content: Update spec-driven.md to respect HITL stops
+    status: completed
     dependencies:
-      - create-dirs
-  - id: update-gitignore
-    content: Update .gitignore to track governance artifacts
-    status: pending
+      - mvp-rule-107
+      - mvp-rule-230
+  - id: mvp-test
+    content: Test MVP workflow (plan-review + spec-driven with C.O.R.E.)
+    status: completed
     dependencies:
-      - create-dirs
-      - migrate-checkpoints
-  - id: test-makefile
-    content: Test new Makefile targets
-    status: pending
-    dependencies:
-      - makefile-checkpoint-update
-      - makefile-memory-index
-      - makefile-checkpoint-create-fix
-  - id: test-spec-driven
-    content: Test updated spec-driven workflow
-    status: pending
-    dependencies:
-      - update-spec-driven
-      - create-dirs
-  - id: test-spec-audit
-    content: Test spec-audit command
-    status: pending
-    dependencies:
-      - cmd-spec-audit
-      - create-dirs
-  - id: rule-210
-    content: "Create 210-tool-evidence-first.mdc (200-series: optimization)"
-    status: pending
-  - id: rule-109
-    content: "Create 109-safe-file-writes.mdc (100-series: safety)"
-    status: pending
-  - id: update-spec-audit-tools
-    content: Update spec-audit.md with Tool Evidence Requirements
-    status: pending
-    dependencies:
-      - cmd-spec-audit
-      - rule-210
-  - id: update-postmortem-tools
-    content: Update postmortem.md with Automatic Evidence Collection
-    status: pending
-    dependencies:
-      - cmd-postmortem
-      - rule-210
-  - id: update-spec-driven-tools
-    content: Update spec-driven.md with rules 210, 109
-    status: pending
-    dependencies:
-      - update-spec-driven
-      - rule-210
-      - rule-109
-  - id: init-write-log
-    content: Initialize write-log.jsonl
-    status: pending
-  - id: update-gitignore-writelog
-    content: Update .gitignore to track write-log.jsonl
-    status: pending
-    dependencies:
-      - init-write-log
-  - id: test-tool-evidence
-    content: Test tool evidence collection in spec-audit
-    status: pending
-    dependencies:
-      - update-spec-audit-tools
-      - init-write-log
-  - id: rule-215
-    content: "Create 215-subagent-delegation.mdc (200-series: optimization)"
-    status: pending
-  - id: cmd-subagent-brief
-    content: Create subagent-brief.md command
-    status: pending
-  - id: update-plan-review-subagents
-    content: Update plan-review.md with subagent work orders
-    status: pending
-    dependencies:
-      - cmd-subagent-brief
-      - rule-215
-  - id: makefile-opencode-integration
-    content: Add optional OpenCode integration targets
-    status: pending
-  - id: create-subagent-dirs
-    content: Create .context/subagents directory structure
-    status: pending
-  - id: rule-220
-    content: "Create 220-token-economy.mdc (200-series: optimization)"
-    status: pending
-  - id: rule-212
-    content: "Create 212-subagent-boundaries.mdc (200-series: optimization)"
-    status: pending
-  - id: cmd-token-telemetry
-    content: Create token-telemetry.md command
-    status: pending
-  - id: update-spec-audit-patches
-    content: Update spec-audit.md to require patch-style output
-    status: pending
-    dependencies:
-      - cmd-spec-audit
-  - id: update-postmortem-patches
-    content: Update postmortem.md to require patch-style output
-    status: pending
-    dependencies:
-      - cmd-postmortem
-  - id: create-telemetry-dirs
-    content: Create .context/telemetry directory structure
-    status: pending
-  - id: rule-230
-    content: Create 230-core-output-format.mdc (200-series: optimization)
-    status: pending
-  - id: update-commands-core-format
-    content: Update all commands with C.O.R.E. Output Contract
-    status: pending
-    dependencies:
-      - rule-230
-  - id: add-cognitive-load-metrics
-    content: Add cognitive load metrics to token-telemetry
-    status: pending
-    dependencies:
-      - cmd-token-telemetry
-      - rule-230
-  - id: create-format-delta-template
-    content: Create format-improvement-delta template
-    status: pending
+      - mvp-update-plan-review
+      - mvp-update-spec-driven
+  - id: deferred-makefile-checkpoint-update
+    content: "[DEFERRED] Add checkpoint-update target (append mode)"
+    status: deferred
+  - id: deferred-makefile-memory-index
+    content: "[DEFERRED] Add memory-index-update target"
+    status: deferred
+  - id: deferred-rule-106
+    content: "[DEFERRED] Create 106-spec-change-control.mdc"
+    status: deferred
+  - id: deferred-rule-108
+    content: "[DEFERRED] Create 108-spec-sync-gates.mdc"
+    status: deferred
+  - id: deferred-rule-997
+    content: "[DEFERRED] Create 997-logging-policy.mdc"
+    status: deferred
+  - id: deferred-cmd-spec-delta
+    content: "[DEFERRED] Create spec-delta-template.md"
+    status: deferred
+  - id: deferred-cmd-spec-audit
+    content: "[DEFERRED] Create spec-audit.md"
+    status: deferred
+  - id: deferred-cmd-agent-eval
+    content: "[DEFERRED] Create 000-agent-evaluation.md"
+    status: deferred
+  - id: deferred-cmd-memory-index
+    content: "[DEFERRED] Create 301-memory-index.md"
+    status: deferred
+  - id: deferred-cmd-postmortem
+    content: "[DEFERRED] Create postmortem.md"
+    status: deferred
 ---
 
-# Spec-Driven Governance Framework
+# Spec-Driven Governance Framework (MVP-First)
 
-## Overview
+## MVP Goal (Execute First)
 
-Transform the current "ceremonial" checkpoint system into a rigorous, auditable governance framework that:
+**Goal**: Ensure any agent output requiring your attention gives immediate signal (decisions + actions) with near-zero noise, and forces the agent to stop when human input is required.**Deliverables** (hours, not weeks):
 
-- Creates append-only audit trails (no overwrites)
-- Enforces spec alignment with hard gates before tests and implementation
-- Blocks freestyle behavior with mandatory spec deltas
-- Adds human-in-the-loop safety for ambiguous decisions
-- Enables quantified agent evaluation and searchable artifact memory
-- Integrates tool-first evidence collection (OpenCode compatibility)
-- **NEW**: Adds subagent delegation for token-efficient parallel verification via work orders
-- **NEW**: Adds token economy instrumentation - tracks proxy metrics, detects waste, generates prevention patches
-- **NEW**: Adds C.O.R.E. output format for cognitive-optimized, neurodivergent-friendly agent outputs with cognitive load tracking
+1. Neurodivergent-optimized output format (C.O.R.E.) - fast to scan, decision-first
+2. HITL safety gate - stops execution when human decision required
+3. Minimal spec anchors - just enough structure, no heavy framework
 
-## Rule Numbering Taxonomy
+**Deferred** (explicitly not MVP):
 
-This governance framework uses a priority-based numbering scheme for rules. The numbers signal authority, scope, and precedence - not chronological order.
+- Token telemetry - premature optimization
+- Spec deltas - useful later, anchors enough now
+- Checkpoints - helpful for long projects, unnecessary for MVP
+- Subagent orchestration - adds complexity before value
+- Memory indexing - no consumer yet
+- Postmortem automation - only useful after failure patterns emerge
 
-### 100-series: Core Execution Invariants
+**What MVP feels like**: Instead of 3 pages of analysis with buried questions, you get a 30-second scannable decision list and immediate action items.
 
-**"If these are violated, the work is invalid."Purpose**:
+## MVP Rules (Phase 0)
 
-- Define how work is done
-- Enforce correctness, safety, and spec alignment
-- Gate execution
+**Only 2 rules for MVP:**
 
-**Characteristics**:
+- **107-hitl-safety.mdc** (100-series: Safety) - Stops execution when human decision required
+- **230-core-output-format.mdc** (200-series: Optimization) - Forces cognitive-optimized output
 
-- Always-on
-- Block progress
-- Rarely change
-- Small, sharp, opinionated
+All other rules deferred to post-MVP.
 
-**Mental Model**: These are the laws of physics for your repo. If an agent ignores a 100-series rule, it's not "less optimal" — it's wrong.**Examples**: 104-plan-execution-hygiene, 106-spec-change-control, 107-hitl-safety, 108-spec-sync-gates, 109-safe-file-writes
+## Phase 0: MVP (Execute First - Hours, Not Weeks)
 
-### 200-series: Optimization + Enforcement Amplifiers
+### MVP Overview
 
-**"Do the work better, cheaper, safer."Purpose**:
+This MVP delivers immediate value:
 
-- Reduce waste (tokens, time, rework)
-- Improve evidence quality
-- Control agent behavior at scale
-- Add guardrails for tooling (subagents, OpenCode, etc.)
+- **Fast signal extraction**: C.O.R.E. format gives 30-second scannable decisions
+- **Safety without bloat**: HITL gate stops when human input needed
+- **Lightweight specs**: Just Goal + Acceptance Criteria, no heavy templates
 
-**Characteristics**:
+### Rule: C.O.R.E. Output Format (MVP)
 
-- Conditional
-- Enforced when relevant
-- More likely to evolve
-- Often reactive to postmortems
+**New file:** `.cursor/rules/230-core-output-format.mdc`
 
-**Mental Model**: These are engineering best practices encoded as constraints. Violating a 200-series rule usually means extra tokens, duplicated work, noisy audits. Not immediate invalidity, but measurable degradation.**Examples**: 210-tool-evidence-first, 212-subagent-boundaries, 215-subagent-delegation, 220-token-economy
+```markdown
+# 230 C.O.R.E. Output Format (MVP)
 
-### 900-series: Meta-Governance + Hygiene
+Role
+Ensure human-facing outputs are fast to scan and decision-first.
 
-**"How the governance system itself behaves."Purpose**:
+Applies To
+- /plan-review
+- /spec-audit (if used)
+- /spec-driven (human checkpoints)
+- /postmortem (summary section only, if used)
 
-- Control verbosity
-- Prevent process bloat
-- Define logging discipline
-- Keep the system usable
+Mandatory Format
+All human-facing output MUST be structured as:
 
-**Characteristics**:
+== SUMMARY ==
+(1–2 lines, outcome only)
 
-- Meta-level
-- Small
-- Non-domain-specific
-- Protects humans from the system
+== DECISIONS NEEDED ==
+(Max 3 items)
+Each item MUST state:
+- the decision
+- why it matters
+- what happens if delayed
 
-**Mental Model**: These are the speed limits and zoning laws. They don't define what to do, but how much and how loudly.**Examples**: 997-logging-policy
+== ACTIONS REQUIRED ==
+Checklist format only.
+Each action must be explicit and bounded.
 
-### Rule Precedence Model
+== EVIDENCE ==
+- file paths + section anchors
+- test names
+- diff references
+(NO large text blocks)
 
-**In conflicts**: 100-series > 200-series > 900-series
+== OPTIONAL CONTEXT ==
+Only include if explicitly requested.
 
-- **100-series rules** define correctness and safety. They cannot be bypassed.
-- **200-series rules** define optimization and efficiency. They must be followed when applicable.
-- **900-series rules** define governance hygiene and verbosity limits.
+Prohibited
+- Long prose
+- Full file dumps
+- Narrative explanations
 
-This removes ambiguity and prevents "but I thought efficiency mattered more" reasoning.
+Enforcement
+If format is violated:
+- Rewrite output to comply
+- Do not proceed with execution
 
-### When to Add a New Rule (Decision Table)
+Example Good Output:
+```
 
-| Situation | Rule Series |
+== SUMMARY ==
 
-|-----------|-------------|
+Plan is viable but blocked on 2 decisions.== DECISIONS NEEDED ==
 
-| Prevent silent spec drift | 100 |
+1) Choose aggregation strategy for edge case X — impacts correctness.
 
-| Force checkpoint on ambiguity | 100 |
+2) Confirm performance constraint (batch vs streaming) — impacts architecture.== ACTIONS REQUIRED ==
 
-| Reduce repeated context dumps | 200 |
+- [ ] Decide strategy for X
+- [ ] Confirm performance constraint
 
-| Limit subagent sprawl | 200 |
+== EVIDENCE ==
 
-| Cap output length | 900 |
+- plan.md#Section-3
+- failing test: test_aggregation.py::test_edge_case_x
+```javascript
 
-| Normalize artifact verbosity | 900 |
-
-### Why This Separation Matters
-
-**Enables safe evolution**:
-
-- 100-series rules should almost never change
-- 200-series rules are where postmortems land
-- 900-series rules keep token cost + fatigue under control
-
-**If mixed**: You'll either be afraid to improve anything, or you'll break core guarantees while "optimizing."
-
-### Complete Rule Mapping
-
-| Rule | Series | Purpose |
-|------|--------|---------|
-| 000-project-setup-and-makefile | 000 | Meta-governance (project setup) |
-| 001-self-improving-assistant | 001 | Meta-governance (communication) |
-| 100-polars-first | 100 | Correctness (data processing invariants) |
-| 101-testing-hygiene | 100 | Correctness (test structure standards) |
-| 102-dry-principles | 100 | Correctness (code organization patterns) |
-| 103-staff-engineer-standards | 100 | Correctness/Safety (production patterns) |
-| 104-plan-execution-hygiene | 100 | Correctness (execution standards) |
-| 105-test-fixture-enforcement | 100 | Correctness (fixture usage patterns) |
-| 106-spec-change-control | 100 | Correctness (spec alignment enforcement) |
-| 107-hitl-safety | 100 | Safety (human approval gates) |
-| 108-spec-sync-gates | 100 | Correctness (pre-TDD/direction-change gates) |
-| 109-safe-file-writes | 100 | Safety (write path constraints) |
-| 210-tool-evidence-first | 200 | Optimization (reduce hallucination via tools) |
-| 212-subagent-boundaries | 200 | Optimization (token control via scoping) |
-| 215-subagent-delegation | 200 | Optimization (parallel verification) |
-| 220-token-economy | 200 | Optimization (token reduction via constraints) |
-| 230-core-output-format | 200 | Optimization (cognitive-optimized output formatting) |
-| 997-logging-policy | 900 | Meta-governance (verbosity limits) |
-| 999-agent-execution-protocol | 900 | Meta-governance (TDD workflow) |
-
-## Architecture
-
-```mermaid
-flowchart TD
-    Start[spec-driven task] --> SpecAnchor[Spec Anchor Check]
-    SpecAnchor -->|Missing| CreateSpec[Create .context/specs/task_id.md]
-    SpecAnchor -->|Exists| PreTDDGate[Pre-TDD Spec Gate]
-    CreateSpec --> PreTDDGate
-    
-    PreTDDGate -->|Open Questions?| HITLBlock[HITL Safety Gate]
-    HITLBlock -->|User Answers| TDD[TDD Workflow]
-    PreTDDGate -->|Clear| TDD
-    
-    TDD --> Implement[Implementation]
-    Implement -->|Spec Gap Detected| DirChangeGate[Direction-Change Gate]
-    DirChangeGate --> AppendDelta[Append Spec Delta]
-    AppendDelta --> CheckpointUpdate[checkpoint-update append]
-    CheckpointUpdate --> Continue[Continue Work]
-    
-    Implement -->|Clear| Commit[Commit]
-    Continue --> Commit
-    
-    Commit --> Evaluate[Agent Evaluation]
-    Evaluate --> MemoryIndex[Update Memory Index]
-    
-    style PreTDDGate fill:#ff6b6b
-    style DirChangeGate fill:#ff6b6b
-    style HITLBlock fill:#ffa500
-    style AppendDelta fill:#4ecdc4
-    style CheckpointUpdate fill:#4ecdc4
-    style MemoryIndex fill:#95e1d3
+Example Bad Output:
 ```
 
 
+I've been looking at this plan and there are several interesting things to consider.
 
-### Subagent Delegation Architecture
+First, let's talk about the overall architecture...
 
-```mermaid
-flowchart LR
-    PlanReview[/plan-review] --> WorkOrders[Generate Work Orders]
-    WorkOrders --> WO1[WO-1: Spec Check]
-    WorkOrders --> WO2[WO-2: Safety Audit]
-    WorkOrders --> WO3[WO-3: Rule Conflicts]
-    WorkOrders --> WO4[WO-4: Test Impact]
-    
-    WO1 --> OpenCode1{OpenCode?}
-    WO2 --> OpenCode2{OpenCode?}
-    WO3 --> OpenCode3{OpenCode?}
-    WO4 --> OpenCode4{OpenCode?}
-    
-    OpenCode1 -->|Yes| SubAgent1[@subagent]
-    OpenCode1 -->|No| Manual1[Manual Execute]
-    SubAgent1 --> Artifact1[.context/subagents/task/wo1.md]
-    Manual1 --> Artifact1
-    
-    OpenCode2 -->|Yes| SubAgent2[@subagent]
-    OpenCode2 -->|No| Manual2[Manual Execute]
-    SubAgent2 --> Artifact2[.context/subagents/task/wo2.md]
-    Manual2 --> Artifact2
-    
-    OpenCode3 -->|Yes| SubAgent3[@subagent]
-    OpenCode3 -->|No| Manual3[Manual Execute]
-    SubAgent3 --> Artifact3[.context/subagents/task/wo3.md]
-    Manual3 --> Artifact3
-    
-    OpenCode4 -->|Yes| SubAgent4[@subagent]
-    OpenCode4 -->|No| Manual4[Manual Execute]
-    SubAgent4 --> Artifact4[.context/subagents/task/wo4.md]
-    Manual4 --> Artifact4
-    
-    Artifact1 --> Reconcile[Reconcile Findings]
-    Artifact2 --> Reconcile
-    Artifact3 --> Reconcile
-    Artifact4 --> Reconcile
-    
-    Reconcile --> Decision{Approved?}
-    Decision -->|Yes| Merge[Execute Plan]
-    Decision -->|No| PatchPlan[Patch Plan]
-    
-    style WorkOrders fill:#4ecdc4
-    style SubAgent1 fill:#95e1d3
-    style SubAgent2 fill:#95e1d3
-    style SubAgent3 fill:#95e1d3
-    style SubAgent4 fill:#95e1d3
-    style Reconcile fill:#ff6b6b
+[3 pages of narrative]
+
+```javascript
+
 ```
 
-**Key Principles:**
+**Why MVP-worthy:** This alone radically reduces cognitive load and token waste.
 
-1. **Append-only**: No file overwrites; all changes are timestamped additions
-2. **Hard gates**: Execution halts at spec gaps and ambiguities
-3. **Quantified**: All governance artifacts produce measurable metrics
-4. **Searchable**: Memory index enables retrieval across all artifacts
-5. **Parallel verification**: Subagent work orders with output contracts prevent "vibing through" reviews
-6. **Token discipline**: Proxy metrics detect waste; waste becomes constraints via patch generation
+### Rule: HITL Safety (MVP)
 
-## Phase 1: Makefile Infrastructure
+**New file:** `.cursor/rules/107-hitl-safety.mdc`
+
+```markdown
+# 107 HITL Safety (MVP)
+
+Role
+Prevent agents from continuing when a human decision is required.
+
+Trigger
+- Ambiguous requirement
+- Missing acceptance criteria
+- Multiple reasonable implementation paths
+
+Mandatory Behavior
+- STOP execution
+- Output ONLY the C.O.R.E. format (per 230)
+- Populate DECISIONS NEEDED
+- Wait for user response
+
+Prohibited
+- Guessing
+- Proceeding with assumptions
+
+No escalation trees. No roles. Just stop and ask cleanly.
+```
+
+**Why MVP-worthy:** Prevents autonomous decisions on ambiguous changes without heavy governance.
+
+### Template: Spec Anchor (MVP - Minimal)
+
+**New file:** `.cursor/commands/spec-anchor.md`
+
+```markdown
+# Spec Anchor (MVP)
+
+## Goal
+<one sentence>
+
+## Acceptance Criteria
+- [ ] <testable behavior>
+- [ ] <testable behavior>
+
+## Constraints
+- <optional, short>
+
+## Open Questions
+- <only if blocking>
+```
+
+**Why MVP-worthy:** Just enough structure to prevent spec drift, without delta logs or heavy process.
+
+### Update: Plan Review (MVP)
+
+**Update file:** `.cursor/commands/plan-review.md`Add at the top of the output section:
+
+```markdown
+## Output Contract (MVP)
+
+- Must follow C.O.R.E. Output Format (rule 230).
+- Decisions MUST appear before any commentary.
+- If decisions exist, mark plan status as: NEEDS INPUT.
+- Do not include implementation suggestions unless requested.
+```
+
+**Why:** Plan reviews become decision extractors, not essays.
+
+### Update: Spec-Driven (MVP)
+
+**Update file:** `.cursor/commands/spec-driven.md`Add to "Mandatory Rules to Apply":
+
+```markdown
+@107-hitl-safety.mdc - Stop when human decision required (MVP)
+@230-core-output-format.mdc - Cognitive-optimized output (MVP)
+```
+
+Add to execution flow (after TDD workflow):
+
+```markdown
+If rule 107-hitl-safety is triggered:
+- Halt execution
+- Output C.O.R.E. format only
+- Await human response
+```
+
+**Why:** Prevents background "agent drift" while you're context-switching.
+
+### MVP Success Criteria
+
+- [x] Rule 230 (core-output-format) created with MVP version
+- [x] Rule 107 (hitl-safety) created with MVP version
+- [x] Spec anchor template (spec-anchor.md) created with minimal format
+- [x] plan-review.md updated with C.O.R.E. output contract
+- [x] spec-driven.md updated to reference rules 107, 230
+- [x] Test: /plan-review output follows C.O.R.E. format (<= 80 lines, max 3 decisions)
+- [x] Test: HITL gate triggers on ambiguous spec (agent stops, asks cleanly)
+- [x] MVP delivers immediate value: 30-second scannable decisions, no 3-page essays
+
+### What MVP Does NOT Include (Explicitly Deferred)
+
+| Deferred Item | Why |
+
+|---------------|-----|
+
+| Token telemetry | Premature optimization; output compression gives 80% of savings |
+
+| Spec deltas | Useful later, but anchors + decisions are enough now |
+
+| Checkpoints | Helpful for long projects, unnecessary for MVP |
+
+| Subagent orchestration | Adds complexity before value |
+
+| Memory indexing | No consumer yet |
+
+| Postmortem automation | Only useful after failure patterns emerge |
+
+| Tool evidence collection | Nice-to-have, not blocking |
+
+| Rules 106, 108, 109, 210, 212, 215, 220, 997 | All deferred |
+
+## Deferred Features (Post-MVP) - Decision Table
+
+| Deferred Item | Why Not MVP | Add Later If |
+
+|---------------|-------------|--------------|
+
+| Token telemetry | Premature optimization; C.O.R.E. gives 80% savings | Need quantified token reduction |
+
+| Spec deltas | Useful later, anchors enough now | Spec drift becomes a problem |
+
+| Checkpoints (enhanced) | Helpful for long projects | Working on multi-day tasks |
+
+| Subagent orchestration | Adds complexity before value | Plan reviews need parallel validation |
+
+| Memory indexing | No consumer yet | Need to search governance artifacts |
+
+| Postmortem automation | Only useful after failures | Incidents recur due to gaps |
+
+| Tool evidence (210) | Nice-to-have, not blocking | Audits lack verifiable facts |
+
+| Safe file writes (109) | For autonomous agents only | Using OpenCode or similar |
+
+| Spec change control (106) | Heavy process | Spec drift out of control |
+
+| Spec sync gates (108) | TDD already has gates | Need pre-TDD enforcement |
+
+| Logging policy (997) | C.O.R.E. handles this | Token bloat returns |
+
+| Subagent boundaries (212) | No subagents in MVP | Subagents overlap scope |
+
+| Subagent delegation (215) | No subagents in MVP | Plan reviews too slow |
+
+| Token economy (220) | Metrics without action = waste | Token spend measurably high |**Decision rule**: If MVP doesn't solve the problem, then consider the deferred feature. Not before.---
+
+## DEFERRED PHASES (Post-MVP)
+
+**All phases below contain full specifications for deferred features. Do NOT implement until MVP proves value in real usage.**---
+
+## Phase 1: DEFERRED - Makefile Infrastructure
 
 ### Add Append-Only Checkpoint
 
@@ -485,7 +417,7 @@ checkpoint-create: ## Create lightweight checkpoint template (requires TASK_ID="
 
 **Why:** Prevents accidental overwrites of existing checkpoints. Forces use of `checkpoint-update` for modifications.
 
-## Phase 2: Core Governance Rules (100-series)
+## Phase 2: DEFERRED - Core Governance Rules (100-series)
 
 **Note**: Phase 2 focuses on 100-series rules (correctness, safety, spec alignment). These are core execution invariants that define valid work. 200-series (optimization) and 900-series (meta-governance) rules are added in later phases.
 
@@ -527,10 +459,10 @@ Triggers
 
 Mandatory Behavior
 1) Declare SPEC GAP with classification:
-                                                                                                - missing_requirement
-                                                                                                - ambiguous_requirement
-                                                                                                - new_constraint
-                                                                                                - scope_change
+            - missing_requirement
+            - ambiguous_requirement
+            - new_constraint
+            - scope_change
 2) Append EXACTLY ONE Spec Delta using the standard template.
 3) Run: make checkpoint-update TASK_ID="<task_id>"
 4) Request human intervention before proceeding.
@@ -566,11 +498,11 @@ Mandatory Behavior
 A) Pre-TDD Spec Gate
 1) Locate or create spec anchor: `.context/specs/<task_id>.md`
 2) Spec anchor MUST contain:
-                                                                                                - Clear Goal
-                                                                                                - Non-Goals
-                                                                                                - Acceptance Criteria (testable)
-                                                                                                - Constraints (performance, compatibility, interfaces)
-                                                                                                - Open Questions (if any)
+            - Clear Goal
+            - Non-Goals
+            - Acceptance Criteria (testable)
+            - Constraints (performance, compatibility, interfaces)
+            - Open Questions (if any)
 3) If Open Questions exist with blocking impact, agent MUST list them and request closure before proceeding.
 
 B) Direction-Change Gate
@@ -649,7 +581,7 @@ Enforcement
 
 **Why:** Prevents "audit trails that become novels." Strict templates keep costs low and signals high.
 
-## Phase 3: Template and Command Artifacts
+## Phase 3: DEFERRED - Template and Command Artifacts
 
 **Note**: Commands created in Phase 3 use base templates. Phase 6 enhances spec-audit.md and postmortem.md with tool evidence requirements. This two-pass pattern allows core commands to be used before tool-evidence rule (210) exists.
 
@@ -668,16 +600,16 @@ DeltaID: <YYYYMMDDHHMMSS>-<short_slug>
 Trigger: (missing_requirement | ambiguous_requirement | new_constraint | scope_change)
 Decision: One clear sentence of what changed.
 VerificationTestsAdded:
-                                                                - <path/to/test1>
-                                                                - <path/to/test2>
+        - <path/to/test1>
+        - <path/to/test2>
 Impact:
-                                                                - code_paths: <list of files or modules>
-                                                                - test_artifacts: <list of tests>
-                                                                - documentation: <list of sections>
+        - code_paths: <list of files or modules>
+        - test_artifacts: <list of tests>
+        - documentation: <list of sections>
 SkillAspect: <named conceptual capability>
 SpecFile: .context/specs/<task_id>.md
 CommitAnchors:
-                                                                - checkpoint: .context/checkpoints/<task_id>.md
+        - checkpoint: .context/checkpoints/<task_id>.md
 MemoryIndexRef: .context/memory-index.json
 
 ## Specification
@@ -923,7 +855,7 @@ Notes
 
 **Why:** Standard template ensures all specs have necessary sections for decision-making.
 
-## Phase 4: Update Spec-Driven Command
+## Phase 4: DEFERRED - Update Spec-Driven Command (Full Version)
 
 **File:** [`.cursor/commands/spec-driven.md`](.cursor/commands/spec-driven.md)
 
@@ -974,42 +906,42 @@ Update the "Execution Sequence" section:
 Execution Sequence (MANDATORY)
 
 0. Establish Task Anchor + Artifacts (before any tests)
-                                                                                                - Define task_id (required)
-                                                                                                - Ensure spec anchor exists: .context/specs/<task_id>.md
-                                                                                                - If missing: create it using spec-anchor-template.md
-                                                                                                - Create checkpoint if missing: make checkpoint-create TASK_ID="<task_id>"
+            - Define task_id (required)
+            - Ensure spec anchor exists: .context/specs/<task_id>.md
+            - If missing: create it using spec-anchor-template.md
+            - Create checkpoint if missing: make checkpoint-create TASK_ID="<task_id>"
 
 1. Pre-TDD Spec Sync Gate (HARD GATE)
    Before writing or modifying tests:
-                                                                                                - Confirm spec anchor includes: Goal, Non-Goals, Acceptance Criteria, Constraints
-                                                                                                - If Open Questions exist that block tests: STOP and ask human to resolve
+            - Confirm spec anchor includes: Goal, Non-Goals, Acceptance Criteria, Constraints
+            - If Open Questions exist that block tests: STOP and ask human to resolve
 
 2. Create TODO List
-                                                                                                - Break task into TDD workflow steps
-                                                                                                - Include: write test, run test (red), implement, run test (green), format/lint, commit
-                                                                                                - Use todo_write tool
+            - Break task into TDD workflow steps
+            - Include: write test, run test (red), implement, run test (green), format/lint, commit
+            - Use todo_write tool
 
 3. Write Failing Test (Red Phase)
-                                                                                                - Write test BEFORE any implementation
-                                                                                                - Use AAA pattern (Arrange-Act-Assert)
-                                                                                                - Name: test_unit_scenario_expectedBehavior
-                                                                                                - Use shared fixtures from conftest.py
+            - Write test BEFORE any implementation
+            - Use AAA pattern (Arrange-Act-Assert)
+            - Name: test_unit_scenario_expectedBehavior
+            - Use shared fixtures from conftest.py
 
 4. Run Test to Verify Failure
-                                                                                                - Command: For single test: uv run pytest tests/.../test_file.py::TestClass::test_method -xvs
-                                                                                                - For full module: make test-[module]
-                                                                                                - Confirm it fails for the RIGHT reason
+            - Command: For single test: uv run pytest tests/.../test_file.py::TestClass::test_method -xvs
+            - For full module: make test-[module]
+            - Confirm it fails for the RIGHT reason
 
 5. Implement Feature (Green Phase)
-                                                                                                - Write minimum code to pass the test
-                                                                                                - Keep it simple and spec-anchored
+            - Write minimum code to pass the test
+            - Keep it simple and spec-anchored
 
 6. Direction-Change Gate (if triggered during implementation)
    Trigger if:
-                                                                                                - New requirement appears
-                                                                                                - New constraint discovered that changes approach
-                                                                                                - Tests reveal ambiguous behavior
-                                                                                                - Implementation choice not stated in spec
+            - New requirement appears
+            - New constraint discovered that changes approach
+            - Tests reveal ambiguous behavior
+            - Implementation choice not stated in spec
    
    Actions:
    1) Declare SPEC GAP (per 106-spec-change-control.mdc)
@@ -1019,32 +951,32 @@ Execution Sequence (MANDATORY)
    5) Continue only after delta recorded and HITL cleared (if applicable)
 
 7. Run Test to Verify Pass
-                                                                                                - Same command as step 4
-                                                                                                - Confirm test passes
+            - Same command as step 4
+            - Confirm test passes
 
 8. Fix Quality Issues (Refactor Phase)
-                                                                                                - Run: make format
-                                                                                                - Run: make lint-fix
-                                                                                                - Fix any remaining issues manually
+            - Run: make format
+            - Run: make lint-fix
+            - Fix any remaining issues manually
 
 9. Run Module Test Suite
-                                                                                                - Command: make test-[module]
-                                                                                                - Verify no regressions
+            - Command: make test-[module]
+            - Verify no regressions
 
 10. Commit Changes
-                                                                                                                                - Include implementation AND tests
-                                                                                                                                - Update TODO to completed
-                                                                                                                                - Append checkpoint update: make checkpoint-update TASK_ID="<task_id>"
+                - Include implementation AND tests
+                - Update TODO to completed
+                - Append checkpoint update: make checkpoint-update TASK_ID="<task_id>"
 
 11. Evaluate Agent Performance (after major work)
-                                                                                                                                - Run: /evaluate-agent <task_id>
-                                                                                                                                - Update memory index for all artifacts created
+                - Run: /evaluate-agent <task_id>
+                - Update memory index for all artifacts created
 ```
 
 
 **Why:** Integrates spec gates and delta logging into the TDD workflow. Adds evaluation step.
 
-## Phase 5: Directory Structure Setup
+## Phase 5: DEFERRED - Directory Structure Setup
 
 Create initial governance directories and memory index:
 
@@ -1110,7 +1042,7 @@ rm .context/specs/test.md
 
 **Why:** Ensures governance artifacts are version-controlled, searchable, and existing checkpoints are compatible.
 
-## Testing Strategy
+## Testing Strategy (DEFERRED - Post-MVP)
 
 ### Test the Makefile Targets
 
@@ -1175,66 +1107,33 @@ echo "✅ All Makefile targets passed"
 # Verify: Report includes spec_violations and suggested_deltas
 ```
 
-## Success Criteria
+## Success Criteria (MVP-First)
 
-### Phase 1-5 (Core Governance)
-- [ ] `checkpoint-update` appends to existing checkpoints (not overwrites)
-- [ ] `checkpoint-create` fails if checkpoint already exists
-- [ ] `memory-index-update` successfully updates `.context/memory-index.json`
-- [ ] All new rule files (106, 107, 108, 109, 997) are in `.cursor/rules/`
-- [ ] All new command files (spec-delta-template, spec-audit, 000-agent-evaluation, 301-memory-index, postmortem, spec-anchor-template) are in `.cursor/commands/`
-- [ ] `spec-driven.md` references new rules in "Mandatory Rules to Apply" (106, 107, 108, 109, 210, 997)
-- [ ] `spec-driven.md` includes Pre-TDD Spec Gate and Direction-Change Gate in execution sequence
-- [ ] `spec-driven.md` includes Rule Precedence Model section
-- [ ] Directory structure created (specs/, evaluations/, audits/, hitl/, postmortems/)
-- [ ] `.context/memory-index.json` initialized
-- [ ] Governance artifacts tracked in git (not ignored)
+### Phase 0: MVP (Execute First)
+- [ ] Rule 230 (core-output-format) created with MVP version
+- [ ] Rule 107 (hitl-safety) created with MVP version (simplified)
+- [ ] Spec anchor template (spec-anchor.md) created with minimal format
+- [ ] plan-review.md updated with C.O.R.E. output contract
+- [ ] spec-driven.md updated to reference rules 107, 230 and respect HITL stops
+- [ ] Test: /plan-review output follows C.O.R.E. format (<= 80 lines, max 3 decisions)
+- [ ] Test: HITL gate triggers on ambiguous spec (agent stops, asks cleanly)
+- [ ] MVP proves value: Faster decisions, lower cognitive load, no 3-page essays
 
-### Phase 6 (Tool Evidence)
-- [ ] Rule 210 (tool-evidence-first) and 109 (safe-file-writes) created
-- [ ] `.context/write-log.jsonl` initialized and tracked
-- [ ] `spec-audit.md` and `postmortem.md` updated with tool evidence collection
+### Deferred (Post-MVP Evaluation)
+All other success criteria deferred until MVP proves value in real usage.
 
-### Phase 7 (Subagent Delegation)
-- [ ] Rule 215 (subagent-delegation) created in `.cursor/rules/`
-- [ ] Command `subagent-brief.md` created in `.cursor/commands/`
-- [ ] `plan-review.md` updated with mandatory subagent work orders section
-- [ ] Makefile targets `subagent-invoke` and `subagent-check` added
-- [ ] `.context/subagents/` directory created and tracked in git
-- [ ] Work order template standardized across commands
-- [ ] Cursor vs OpenCode subagent reality documented in plan
+## Integration Points (MVP)
 
-### Phase 8 (Token Economy)
-- [ ] Rule 212 (subagent-boundaries, 200-series) and 220 (token-economy, 200-series) created
-- [ ] Command `token-telemetry.md` created
-- [ ] `.context/telemetry/` directory created and tracked
-- [ ] Telemetry JSON schema implemented
-- [ ] Token Waste Delta template documented
-- [ ] `spec-audit.md` and `postmortem.md` updated with Output Contract (patch-style mandatory)
-- [ ] Self-improvement loop (waste → constraints) operational
+- **Existing TDD workflow**: Unchanged; adds C.O.R.E. output + HITL gate
+- **Existing checkpoint system**: Unchanged
+- **Existing rules**: Adds 2 new rules (107, 230); no conflicts
+- **Existing commands**: Minimal updates to plan-review.md and spec-driven.md
 
-### Phase 9 (C.O.R.E. Output Format)
-- [ ] Rule 230 (core-output-format, 200-series) created
-- [ ] All 6 commands updated with C.O.R.E. Output Contract section (spec-driven, plan-review, spec-audit, postmortem, 000-agent-evaluation, subagent-brief)
-- [ ] Cognitive load metrics added to token-telemetry schema
-- [ ] Format-improvement-delta template documented
-- [ ] spec-driven.md updated to reference rule 230 in Mandatory Rules
-- [ ] Test: /spec-audit output follows C.O.R.E. format (<= 80 lines, max 3 decisions)
-- [ ] Test: Cognitive load score calculated and <= 16 for standard outputs
-- [ ] Format violations tracked alongside token waste in telemetry
+## Risk Mitigation (MVP)
 
-## Integration Points
-
-- **Existing TDD workflow**: Preserved; gates added at two points (pre-TDD and direction-change)
-- **Existing checkpoint system**: Extended with append mode; old `checkpoint-create` still works for new checkpoints
-- **Existing rules**: No conflicts; new rules add governance layers without replacing existing TDD/quality rules
-- **Existing commands**: New commands are additive; existing commands (plan-review, pr-review, etc.) unchanged
-
-## Risk Mitigation
-
-1. **Breaking existing workflows**: All changes are additive. Current `checkpoint-create` behavior preserved for new checkpoints.
-2. **Token bloat**: 997-logging-policy.mdc enforces strict templates (≤12 lines per delta).
-3. **Agent autonomy**: 211-safe-file-writes.mdc restricts write paths to governance artifacts only.
+1. **Breaking existing workflows**: Zero risk. Only adds output formatting and optional HITL gate.
+2. **Token bloat**: C.O.R.E. format reduces token usage by 70-80% (output compression).
+3. **Agent autonomy**: HITL gate prevents guessing on ambiguous decisions.
 
 ## Rollback Procedure
 
@@ -1297,7 +1196,7 @@ make checkpoint-create TASK_ID="rollback_test"
 # Should work with old behavior
 ```
 
-## Phase 6: OpenCode Integration (Tool-First Evidence)
+## Phase 6: DEFERRED - OpenCode Integration (Tool-First Evidence)
 
 ### Overview: Narrow, Non-Culty Enhancement
 
@@ -1325,10 +1224,10 @@ Prefer executable/tool evidence over speculation.
 
 Mandatory Behavior
 - Before stating repo state, tests, diffs, or file presence:
-                - Use tools (git, make, ripgrep) to verify.
+                                                                - Use tools (git, make, ripgrep) to verify.
 - Any audit/postmortem must include:
-                - git diff reference
-                - test command + pass/fail status
+                                                                - git diff reference
+                                                                - test command + pass/fail status
 - If tools are unavailable, state "tooling not available" and proceed with best-effort.
 
 Output Discipline
@@ -1522,13 +1421,13 @@ Update step 11 in "Execution Sequence" to include tool evidence:
 
 ```markdown
 11. Evaluate Agent Performance (after major work)
-        - Collect tool evidence:
-            - Run: make test-fast (capture pass/fail counts)
-            - Run: git diff main...HEAD --stat (capture change summary)
-            - Check: .context/write-log.jsonl (verify all writes logged)
-        - Run: /token-telemetry <task_id> (capture token usage proxy metrics)
-        - Run: /evaluate-agent <task_id>
-        - Update memory index for all artifacts created
+                                - Collect tool evidence:
+                                                - Run: make test-fast (capture pass/fail counts)
+                                                - Run: git diff main...HEAD --stat (capture change summary)
+                                                - Check: .context/write-log.jsonl (verify all writes logged)
+                                - Run: /token-telemetry <task_id> (capture token usage proxy metrics)
+                                - Run: /evaluate-agent <task_id>
+                                - Update memory index for all artifacts created
 ```
 
 ### Initialize Write Log
@@ -1604,7 +1503,7 @@ flowchart LR
 - **Existing commands**: Enhanced with automatic evidence collection
 - **OpenCode runtimes**: Treated as optional subagent runtime under existing governance
 
-## Phase 7: Subagent Delegation (Parallel Verification)
+## Phase 7: DEFERRED - Subagent Delegation (Parallel Verification)
 
 ### Overview: Token-Efficient Parallel Validation
 
@@ -1648,9 +1547,9 @@ Mandatory Behavior
 1) Emit 2–4 Subagent Work Orders using the exact template from /plan-review or /subagent-brief
 2) Do not proceed to "approved/merge" until each work order returns an output artifact
 3) Summarize outcomes in <= 8 bullets and map each to:
-            - Spec anchors
-            - Plan sections
-            - Required plan patches
+                                                - Spec anchors
+                                                - Plan sections
+                                                - Required plan patches
 
 Token Policy
 - Work orders only. No extra prose.
@@ -1841,7 +1740,7 @@ Each work order has output contract + stop conditions → fast models can't vibe
 - [ ] Test: Run /plan-review on this plan generates 2-4 work orders in .context/subagents/governance/
 - [ ] Verify work order files contain required sections (Objective, Inputs, Output Contract, Stop Conditions)
 
-## Phase 8: Token Economy (Measurable Self-Improvement)
+## Phase 8: DEFERRED - Token Economy (Measurable Self-Improvement)
 
 ### Overview: Structural Token Reduction
 
@@ -1908,8 +1807,8 @@ Minimize token usage without reducing auditability or correctness.
 Mandatory Behavior
 - Prefer referencing existing artifacts by path over embedding content
 - Never paste more than:
-        - 60 lines from any single file
-        - 200 total lines across all embedded excerpts
+                                - 60 lines from any single file
+                                - 200 total lines across all embedded excerpts
 - For plans/specs: cite section anchors instead of reprinting text
 
 Waste Detection
@@ -1964,9 +1863,9 @@ Subagent Token Policy
 - Each subagent must have disjoint scope (non-overlapping files/sections)
 - Each subagent output <= 120 lines
 - Each subagent must write evidence to .context/subagents/** and return only:
-        - findings (<= 10 bullets)
-        - file paths + anchors
-        - commands executed + exit codes
+                                - findings (<= 10 bullets)
+                                - file paths + anchors
+                                - commands executed + exit codes
 
 Waste Detection
 Set duplicate_subagent_scope=true if:
@@ -2168,13 +2067,11 @@ flowchart TD
 - [ ] Token Waste Delta template created
 - [ ] Self-improvement loop diagram added to plan
 
-## Phase 9: C.O.R.E. Output Format (Cognitive-Optimized)
+## Phase 9: DEFERRED - C.O.R.E. Output Format (Full Version with Metrics)
 
-### Overview: Neurodivergent-Friendly Agent Outputs
+**NOTE**: MVP includes basic C.O.R.E. format (Phase 0). This phase adds cognitive load metrics, telemetry integration, and self-improvement loops - all deferred until MVP proves value.
 
-**Problem**: Agent outputs are often verbose, narrative-heavy, and require significant cognitive load to extract actionable decisions. This is particularly challenging for neurodivergent users who benefit from structured, signal-dense, predictable patterns.
-
-**Solution**: Enforce C.O.R.E. (Cognitive-Optimized, Reduced-noise, Evidence-anchored) output format across all human-facing agent commands. Every output follows a standardized template optimized for quick comprehension and minimal reading fatigue.
+### Overview: Full C.O.R.E. with Metrics (Post-MVP)
 
 ### C.O.R.E. Output Template
 
@@ -2225,27 +2122,27 @@ Triggers
 Mandatory Behavior
 
 1) Must include (in order):
-   - SUMMARY (2 lines max)
-   - CRITICAL DECISIONS / QUESTIONS (max 3)
-   - ACTIONS REQUIRED (checklist)
-   - EVIDENCE (anchors only, no dumps)
-   - OPTIONAL CONTEXT (collapsed by default)
+            - SUMMARY (2 lines max)
+            - CRITICAL DECISIONS / QUESTIONS (max 3)
+            - ACTIONS REQUIRED (checklist)
+            - EVIDENCE (anchors only, no dumps)
+            - OPTIONAL CONTEXT (collapsed by default)
 
 2) Do NOT include:
-   - Long prose narratives
-   - Full artifact dumps (use anchors: path#section)
-   - Repetitive content
-   - Verbose explanations before decisions
+            - Long prose narratives
+            - Full artifact dumps (use anchors: path#section)
+            - Repetitive content
+            - Verbose explanations before decisions
 
 3) Anchor all references to artifacts:
-   - Format: `path/to/file.ext#section` or `path/to/file.ext:lines`
-   - Example: `.context/specs/task123.md#AcceptanceCriteria`
-   - Example: `src/module.py:45-67`
+            - Format: `path/to/file.ext#section` or `path/to/file.ext:lines`
+            - Example: `.context/specs/task123.md#AcceptanceCriteria`
+            - Example: `src/module.py:45-67`
 
 4) For each decision/question, include:
-   - What the choice is
-   - Why it matters (impact/risk)
-   - What the next step is
+            - What the choice is
+            - Why it matters (impact/risk)
+            - What the next step is
 
 Output Limits
 - Raw output <= 80 lines unless explicit user override
@@ -2436,14 +2333,30 @@ Change:
 - [ ] Test: Cognitive load score calculated and <= 16 for standard outputs
 - [ ] Integration with token economy: format violations tracked alongside token waste
 
-## Final Integration Points
+## Final Integration Points (MVP + Deferred)
 
-- **Existing TDD workflow**: Unchanged; subagents validate in parallel
-- **Existing checkpoint system**: Subagent outputs saved as artifacts
-- **Existing spec gates**: Amplified by parallel verification via work orders
-- **Plan review**: Now produces concrete work orders (not just prose feedback)
-- **OpenCode**: Optional subagent runtime; not required but recommended for deterministic delegation
-- **Cursor**: Primary editor and enforcement surface; does not invoke subagents natively
-- **Token economy**: Telemetry written every run; waste flags trigger prevention patches; structural constraints reduce spend 70-80%
-- **Rule taxonomy**: 100-series (correctness/safety) > 200-series (optimization) > 900-series (meta-governance); precedence model prevents ambiguity
-- **C.O.R.E. output**: All human-facing outputs follow cognitive-optimized format; cognitive load tracked; format quality self-improves via delta patches
+### MVP (Phase 0)
+- **Existing TDD workflow**: Zero changes; adds C.O.R.E. output format
+- **Existing commands**: Minimal updates (plan-review.md, spec-driven.md)
+- **Existing rules**: Adds 2 rules (107, 230); no conflicts
+- **C.O.R.E. output**: All human-facing outputs follow cognitive-optimized format
+
+### Deferred (Post-MVP)
+All other integration points (subagents, token economy, tool evidence, memory indexing, checkpoints, etc.) deferred until MVP proves value.
+
+## Execution Order
+
+1. **Execute Phase 0 (MVP) first** - Hours, not weeks
+2. **Validate MVP delivers value** - Faster decisions, lower cognitive load
+3. **Then consider post-MVP phases** - Only if needed
+
+## Why MVP-First Works
+
+- **Optimizes for human cognition**, not AI novelty
+- **Reduces rework**, which is the real cost driver
+- **Lowers token usage** indirectly by killing verbosity
+- **Doesn't lock you into** a heavy framework
+- **Easy to abandon** if it doesn't help
+
+
+``````
