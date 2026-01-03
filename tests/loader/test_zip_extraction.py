@@ -263,6 +263,92 @@ class TestZipExtraction:
         assert "inferred_schema" in metadata
         assert len(metadata["tables"]) == 2  # patients and admissions
 
+    def test_save_zip_upload_overwrite_reuses_upload_id(self, tmp_path, large_patients_csv, large_admissions_csv):
+        """Test that save_zip_upload() with overwrite=True reuses existing upload_id and appends to version_history."""
+        # Arrange: Create initial ZIP upload
+        zip_buffer1 = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer1, "w") as zip_file:
+            zip_file.writestr("patients.csv", large_patients_csv)
+            zip_file.writestr("admissions.csv", large_admissions_csv)
+        zip_buffer1.seek(0)
+        zip_bytes1 = zip_buffer1.getvalue()
+
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+        success1, message1, upload_id1 = storage.save_zip_upload(
+            file_bytes=zip_bytes1,
+            original_filename="test_dataset.zip",
+            metadata={"dataset_name": "test_dataset"},
+        )
+
+        # Assert: First upload succeeded
+        assert success1 is True, f"First upload failed: {message1}"
+        assert upload_id1 is not None
+
+        # Get first version metadata
+        metadata1 = storage.get_upload_metadata(upload_id1)
+        version1 = metadata1["dataset_version"]
+        assert "version_history" in metadata1
+        assert len(metadata1["version_history"]) == 1
+        assert metadata1["version_history"][0]["is_active"] is True
+
+        # Arrange: Create second ZIP with same dataset_name but potentially different content
+        zip_buffer2 = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer2, "w") as zip_file:
+            zip_file.writestr("patients.csv", large_patients_csv)
+            zip_file.writestr("admissions.csv", large_admissions_csv)
+        zip_buffer2.seek(0)
+        zip_bytes2 = zip_buffer2.getvalue()
+
+        # Act: Second upload with overwrite=True
+        success2, message2, upload_id2 = storage.save_zip_upload(
+            file_bytes=zip_bytes2,
+            original_filename="test_dataset.zip",
+            metadata={"dataset_name": "test_dataset"},
+            overwrite=True,
+        )
+
+        # Assert: Second upload succeeded
+        assert success2 is True, f"Overwrite upload failed: {message2}"
+        assert upload_id2 is not None
+
+        # Assert: Same upload_id reused (not a new one)
+        assert upload_id2 == upload_id1, f"Expected upload_id {upload_id1}, got {upload_id2}"
+
+        # Assert: Version history has 2 versions
+        metadata2 = storage.get_upload_metadata(upload_id2)
+        assert "version_history" in metadata2
+        assert len(metadata2["version_history"]) == 2, f"Expected 2 versions, got {len(metadata2['version_history'])}"
+
+        # Assert: First version is inactive, second is active
+        v1_entry = [v for v in metadata2["version_history"] if v["version"] == version1][0]
+        assert v1_entry["is_active"] is False, "First version should be inactive after overwrite"
+
+        active_versions = [v for v in metadata2["version_history"] if v.get("is_active", False)]
+        all_versions_info = [(v.get("version"), v.get("is_active")) for v in metadata2["version_history"]]
+        assert len(active_versions) == 1, (
+            f"Should have exactly one active version, got {len(active_versions)}. "
+            f"All versions: {all_versions_info}"
+        )
+
+        # Assert: Active version is the newer one (check created_at timestamp, not version,
+        # since same content = same version)
+        active_version = active_versions[0]
+        v1_created_at = v1_entry.get("created_at")
+        active_created_at = active_version.get("created_at")
+        assert active_created_at > v1_created_at, (
+            f"Active version should be newer. v1={v1_created_at}, active={active_created_at}"
+        )
+
+        # Assert: Metadata file is the same (not a new file)
+        import json
+
+        metadata_path = tmp_path / "metadata" / f"{upload_id1}.json"
+        assert metadata_path.exists(), "Metadata file should exist"
+        with open(metadata_path) as f:
+            saved_metadata = json.load(f)
+        assert saved_metadata["upload_id"] == upload_id1
+        assert len(saved_metadata["version_history"]) == 2
+
 
 class TestMultiTableHandler:
     """Test suite for MultiTableHandler used in ZIP extraction."""

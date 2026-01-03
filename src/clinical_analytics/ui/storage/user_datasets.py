@@ -1249,6 +1249,9 @@ def save_table_list(
         # Phase 4.2: Handle existing version history (overwrite case)
         existing_version_history = metadata.pop("_existing_version_history", None)
         if existing_version_history:
+            # Mark all existing versions as inactive before appending new version
+            for existing_version in existing_version_history:
+                existing_version["is_active"] = False
             # Overwrite: append to existing history
             version_history = existing_version_history + [version_entry]
             logger.info(f"Appending to existing version history (now {len(version_history)} versions)")
