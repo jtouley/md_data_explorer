@@ -770,3 +770,245 @@ dependencies = [
 - Fixtures from `tests/conftest.py` must be reused
 - Rule of Three: Don't abstract until third instance
 - All tests must pass before commit
+
+---
+
+# Staff Engineer Plan Review
+
+**Date**: 2026-01-03
+**Reviewer**: Staff Engineer AI
+**Plan File**: `.cursor/plans/streamlit_to_lightweight_ui_refactor_4iMKv.plan.md`
+
+## Execution Readiness Decision
+
+**READY WITH CHANGES**
+
+The plan is comprehensive and well-structured, but requires critical updates before execution to prevent rework. Several blocking issues around test infrastructure, semantic layer compatibility, and frontend testing must be addressed first.
+
+## Plan Summary
+
+- Migrates from Streamlit to FastAPI + Next.js architecture with 60 tracked todos across 11 phases
+- Scope is appropriate but sequencing has gaps: frontend tests are underspecified, and compatibility verification with existing test infrastructure is missing
+- Timeline estimate (19-28 days) is optimistic given the complexity; realistic estimate is 25-35 days with proper testing
+
+## Blocking Issues
+
+### 1. Missing Test Infrastructure Compatibility Phase
+
+**Problem**: Plan assumes existing `conftest.py` fixtures (make_semantic_layer, mock_semantic_layer) will work seamlessly with FastAPI dependency injection, but provides no verification phase.
+
+**Impact**: Will discover incompatibilities during Phase 4 (API Services) causing rework in Phases 2-3.
+
+**Required fix**: Add new phase BEFORE Phase 2:
+- **Phase 1.5**: Verify semantic layer compatibility with FastAPI
+  - Write failing test for semantic layer in FastAPI route handler
+  - Confirm DuckDB connection pooling works with async context
+  - Test that `@st.cache_resource` pattern translates to FastAPI `Depends()` pattern
+  - Document any required adapter patterns
+
+### 2. Frontend Test Strategy Underspecified
+
+**Problem**: Phase 5-6 create React components but lack corresponding test todos. "Component tests: Jest + React Testing Library" is mentioned in Testing Strategy section but never executed.
+
+**Impact**: Frontend components shipped without tests, violating TDD workflow and project standards.
+
+**Required fix**: Add test todos for EVERY frontend component:
+- After todo #27 (ConversationList): Add todo for ConversationList component tests
+- After todo #28 (ChatInterface): Add todo for ChatInterface tests
+- After todo #29 (DatasetSelector): Add todo for DatasetSelector tests
+- After todo #30 (ResultRenderers): Add todo for each renderer's tests (6 renderers = 6 test todos)
+- After todo #31 (CollapsibleSection): Add todo for CollapsibleSection tests
+- After todo #32 (VariableSelection): Add todo for VariableSelection tests
+
+Format: Follow TDD pattern (Red-Green-Refactor) with explicit test todos.
+
+### 3. Missing Makefile Frontend Test Integration
+
+**Problem**: Plan mentions Jest/Playwright for frontend but doesn't specify Makefile targets. Project standards require `make test-*` commands, not direct tool invocation.
+
+**Impact**: CI/CD breakage, violation of Makefile enforcement rule from `.claude/CLAUDE.md`.
+
+**Required fix**: Add todo in Phase 10 (Deployment):
+- **Todo #52.5**: Add frontend test targets to Makefile
+  - `make test-web` - Run Jest unit tests
+  - `make test-e2e` - Run Playwright E2E tests
+  - `make test-web-watch` - Jest watch mode
+  - Integration with existing `make check-fast` (run both backend + frontend fast tests)
+
+### 4. Database Schema Not Contract-Validated
+
+**Problem**: Todo #43 creates SQLite schema but lacks contract definition. No explicit validation that schema supports required operations (session CRUD, result caching with LRU eviction, conversation history).
+
+**Impact**: Schema rework after discovering missing columns/indexes in Phase 8.
+
+**Required fix**: Split todo #43 into:
+- **#43a**: Define database contracts (Pydantic schemas for Session, Message, CachedResult)
+- **#43b**: Write Alembic migration with schema validation tests
+- **#43c**: Verify contract compliance (can serialize/deserialize all required types)
+
+### 5. Unclear Matplotlib/Seaborn → Recharts Migration
+
+**Problem**: Current Streamlit UI uses matplotlib/seaborn for plots (e.g., survival curves, correlation heatmaps). Plan mentions "recharts" for frontend but doesn't specify:
+- How survival analysis Kaplan-Meier curves will be rendered (matplotlib is Python-based)
+- Migration path for existing plot generation logic
+- Who owns plotting: backend (generate PNG/SVG) or frontend (send data, render in JS)?
+
+**Impact**: Discovery phase during Phase 6 (Frontend Features), causing architectural rework.
+
+**Required fix**: Add architectural decision to "Key Design Decisions" section:
+- **#7: Plotting Strategy**: Backend generates plot data (JSON), frontend renders with Recharts
+  - Survival curves: Backend returns `{time: [], survival: [], ci_lower: [], ci_upper: []}`, frontend renders with LineChart
+  - Heatmaps: Backend returns `{matrix: [][], labels: []}`, frontend renders with custom heatmap component
+  - Rationale: Separation of concerns, responsive rendering, no image bandwidth overhead
+
+## Non-Blocking Feedback
+
+### Phase Boundaries and Validation Points
+
+1. **Phase 2-3 boundary unclear**: When does "API routes exist" vs "API routes are production-ready"? Add explicit validation point after Phase 3 (API tests pass, OpenAPI schema validated).
+
+2. **Phase 6-7 boundary missing UX validation**: After todo #37 (loading states), add validation checkpoint: "UX review with sample data - verify responsiveness, accessibility, error states".
+
+3. **Phase 8 (Integration) should precede Phase 9 (Documentation)**: Documenting APIs before integration is tested risks outdated docs. Swap order of Phase 8 and Phase 9.
+
+### Rollback and Migration Safety
+
+1. **No rollback plan specified**: If migration fails mid-cutover (Phase 3 of Migration Strategy), what's the rollback path? Add:
+   - Feature flag: `ENABLE_NEW_UI` env var (default: false)
+   - Parallel deployment: Both UIs available during transition
+   - Rollback criteria: If >3 critical bugs in 48h, revert to Streamlit
+
+2. **Session migration is marked "Optional" (todo #48)**: This is optimistic. Users will expect conversation history to persist. Either:
+   - Make it required and add tests
+   - OR document explicitly: "Migration launches with empty history, existing Streamlit sessions archived read-only"
+
+### Observability and Testing Gaps
+
+1. **No API performance testing**: Plan validates functionality but not latency. Add todo after #50 (integration tests):
+   - **#50.5**: Write performance tests for query API (P95 latency <500ms for simple queries)
+
+2. **Missing SSE error handling tests**: Todo #33 implements SSE streaming but doesn't test failure modes (network disconnect, timeout, partial results). Add after #33:
+   - **#33.5**: Test SSE error scenarios (connection drop, server timeout, malformed events)
+
+3. **No observability for semantic layer in FastAPI**: Streamlit logs are configured, but plan doesn't specify how structured logging (structlog) integrates with FastAPI. Add note to todo #3:
+   - FastAPI middleware for request logging with correlation IDs
+   - Bind context: `session_id`, `dataset_id`, `query_hash`
+
+### Quality Gates
+
+1. **Phase completion criteria not explicit**: Each phase should have clear "Done" criteria. Add to plan structure:
+   - Phase 2 Done: All API routes return 200/201, OpenAPI docs generated, unit tests pass
+   - Phase 5 Done: All components render without errors, Storybook deployed (optional), basic interaction tests pass
+   - Phase 8 Done: End-to-end flow (upload → query → results → export) works, integration tests pass
+
+2. **Missing pre-merge checklist**: Todo #58 verifies tests pass but doesn't check:
+   - No new type errors (`make type-check` or mypy)
+   - No new security vulnerabilities (dependency audit)
+   - Add to todo #58: "Run `make type-check` and resolve all errors"
+
+## Spec-Driven Execution Check
+
+### Input/Output Clarity
+**Assessment**: Mostly clear, but gaps exist.
+
+- ✅ Backend API contracts: Implied by FastAPI patterns but not explicitly documented
+- ⚠️ Frontend component props: Not specified; will cause ad-hoc decisions during implementation
+- ❌ Database schema: Underspecified (see Blocking Issue #4)
+
+**Fix**: Add todo #1.5: "Document API contracts (request/response schemas) in architecture doc"
+
+### Success Criteria and Quality Gates
+**Assessment**: Defined at plan level but missing per-phase validation.
+
+- ✅ Overall success criteria clear (8 criteria listed)
+- ⚠️ Phase-level gates missing (see Non-Blocking Feedback: Quality Gates)
+
+**Fix**: Add "Done Criteria" field to each phase in todos YAML
+
+### Incremental Execution
+**Assessment**: Can proceed incrementally with one exception.
+
+- ✅ Backend phases independent (2-4 can run in parallel with adjustments)
+- ❌ Frontend phases tightly coupled: Components (Phase 5) depend on exact API contracts from Phase 2-3, but contracts not frozen
+
+**Fix**: Add todo #14.5: "Freeze API contracts - generate TypeScript types from OpenAPI schema, version lock"
+
+### Test Requirements
+**Assessment**: TDD workflow specified but inconsistently applied.
+
+- ✅ Backend follows Red-Green-Refactor (every feature has test todo)
+- ❌ Frontend lacks test todos (see Blocking Issue #2)
+
+**Fix**: Apply TDD pattern to all frontend todos
+
+### Makefile Command Usage
+**Assessment**: Backend compliant, frontend unclear.
+
+- ✅ Backend: `make test-core`, `make test-ui` specified
+- ❌ Frontend: No Makefile targets defined (see Blocking Issue #3)
+
+**Fix**: Add frontend Makefile targets (todo #52.5)
+
+### Ambiguity Flags
+
+1. **"Reuse logic from Ask_Questions.py"** (multiple todos): Not specific enough. Which functions? Which state machine logic? Add explicit function references:
+   - Todo #16: Extract `normalize_query()`, `canonicalize_scope()`, `remember_run()`, `cleanup_old_results()`
+   - Todo #22: Wrap `QuestionEngine.parse_query()`, `QuestionEngine.execute_with_timeout()`
+
+2. **"Port from Ask_Questions.py"** (todo #30): 6 render functions with different dependencies (matplotlib, pandas, interpretation logic). Specify for each renderer:
+   - Which backend API provides data?
+   - Which Recharts component to use?
+   - How to handle edge cases (empty data, missing columns)?
+
+3. **"Following claude-run patterns"** (todo #2, #27): Vague. Add reference to specific claude-run files:
+   - Todo #2: "Follow claude-run web/ structure (App Router, src/components/, src/lib/)"
+   - Todo #27: "Model after claude-run SessionList component (search, filter, sort)"
+
+## Update Instructions
+
+### Critical (Must Fix Before Execution):
+
+1. **Add Phase 1.5**: Semantic layer FastAPI compatibility verification (insert between todos #1 and #2)
+2. **Add frontend test todos**: Apply TDD pattern to Phase 5-6 (add 10+ test todos after component implementation todos)
+3. **Add Makefile frontend targets**: Todo #52.5 after todo #52
+4. **Split todo #43**: Database schema into contracts (#43a), migration (#43b), validation (#43c)
+5. **Add Plotting Strategy decision**: Document backend-generates-data / frontend-renders-charts pattern in "Key Design Decisions"
+
+### Important (Fix Before Phase Execution):
+
+6. **Add todo #1.5**: Document API contracts with request/response schemas
+7. **Add todo #14.5**: Freeze API contracts and generate TypeScript types
+8. **Add todo #50.5**: API performance tests (P95 latency)
+9. **Add todo #33.5**: SSE error scenario tests
+10. **Add rollback plan**: Feature flag and parallel deployment strategy in Migration Strategy section
+
+### Nice-to-Have (Improves Execution Confidence):
+
+11. **Add "Done Criteria"** to each phase in todos YAML (format: `done_criteria: "All tests pass, docs updated"`)
+12. **Make todo #48 explicit**: Session migration either required or documented as "clean slate"
+13. **Swap Phase 8 and 9**: Integration before documentation
+14. **Add correlation IDs**: Structured logging with session/dataset/query context in todo #3
+15. **Clarify "reuse/port" todos**: Add explicit function references and target components
+
+## Plan Structure Analysis
+
+- **Total phases**: 11 phases
+- **Total todos**: 60 todos
+- **Dependencies mapped**: ✅ Yes (all todos have dependencies field)
+- **Test coverage specified**: ⚠️ Partial (backend complete, frontend missing)
+- **Quality gates defined**: ⚠️ Overall yes, per-phase no
+
+## Recommended Next Steps
+
+1. Apply critical fixes (#1-5 above)
+2. Re-run /plan-review to verify fixes
+3. Execute Phase 1 (Architecture design doc) - this will surface remaining ambiguities
+4. Run /spec-driven only after architecture doc is reviewed and approved
+
+## Overall Assessment
+
+This is a well-researched, ambitious plan with clear understanding of the problem space. The current state analysis is excellent (comprehensive Streamlit dependency audit). However, execution readiness is blocked by test infrastructure gaps and frontend test omissions.
+
+The plan author clearly knows the codebase and has identified the right extraction points (ConversationManager, ResultCache, QuestionEngine). The TDD discipline is strong for backend but needs to be applied consistently to frontend.
+
+With the critical fixes above, this plan will execute cleanly following spec-driven workflow.
