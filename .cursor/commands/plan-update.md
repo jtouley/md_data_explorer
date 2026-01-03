@@ -81,18 +81,45 @@ Error Handling
 
 Output Format
 
-Chat Summary:
-```
-## Plan Update: {plan-name}
+All human-facing outputs from this command MUST follow the C.O.R.E. (Cognitive-Optimized) format per rule 230-core-output-format.mdc.
 
-**Plan File**: {plan-file-path}
-**Review File**: {review-file-path}
+Chat Summary (C.O.R.E. format):
+```markdown
+## SUMMARY
 
-Updating plan with feedback from review...
+**Status: ✅ [SUCCESS | PARTIAL | FAILED]**
 
-[Execute spec-driven update workflow]
+[1-2 lines: update operation outcome]
 
-✓ Plan updated successfully
+## ACTIONS REQUIRED 🚨
+
+- [ ] **Action 1** — [if update was partial or failed, what needs to happen]
+- [ ] **Action 2** — [next step in workflow]
+
+## EVIDENCE
+
+**Plan File:**
+- `{plan-file-path}`
+
+**Review File:**
+- `{review-file-path}`
+
+**Updated:**
+- Plan updated with feedback from review
+
+**Quality Gates:**
+- ✅ Plan file updated
+- ✅ Review feedback applied
+
+## OPTIONAL CONTEXT
+
+**Update Summary:**
+- [Brief description of what was updated]
+
+**Next Steps:**
+1. Review updated plan
+2. Run `/plan-review` again if needed
+3. Execute with `/spec-driven` when ready
 ```
 
 Communication Style
