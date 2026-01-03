@@ -29,6 +29,7 @@ Execution Sequence (MANDATORY)
    - Break task into TDD workflow steps
    - Include: write test, run test (red), implement, run test (green), format/lint, commit
    - Use todo_write tool
+   - **Checkpoint**: `make checkpoint-create TASK_ID="[task_id]"` (creates template, edit manually)
 
 2. Write Failing Test (Red Phase)
    - Write test BEFORE any implementation
@@ -37,7 +38,8 @@ Execution Sequence (MANDATORY)
    - Use shared fixtures from conftest.py
 
 3. Run Test to Verify Failure
-   - Command: make test-[module] PYTEST_ARGS="tests/.../test_file.py -xvs"
+   - Command: For single test during TDD, use `uv run pytest tests/.../test_file.py::TestClass::test_method -xvs`
+   - For full module: `make test-[module]`
    - Confirm it fails for the RIGHT reason
    - NEVER skip this step
 
@@ -73,6 +75,45 @@ Execution Sequence (MANDATORY)
      Following TDD: Red-Green-Refactor"
    - Include implementation AND tests
    - Update TODO to completed
+   - **Before switching assistants**: Edit checkpoint file manually with conversation context
+
+Checkpoint Logging (LIGHTWEIGHT)
+
+Create a lightweight checkpoint to capture uncommitted work and conversation context for switching between assistants.
+
+Checkpoint Location: `.context/checkpoints/[task_id].md`
+
+Checkpoint Format (Simple Markdown):
+```markdown
+# [task_id]
+
+**Status**: In progress (since last commit: [hash])
+
+**What I did since last commit**:
+- [Brief description of changes made in this chat session]
+- [Files modified, tests written, etc.]
+
+**Current state**:
+- [Test status, quality gates, uncommitted changes]
+
+**Next steps**:
+1. [What needs to happen next]
+2. [Any blockers or issues]
+
+**Blockers/Notes**:
+- [Any blockers, errors encountered, or important context]
+```
+
+Checkpoint Commands:
+- Create template: `make checkpoint-create TASK_ID="[task_id]"`
+- Edit manually: Add conversation context about what happened since last commit
+- Resume: `make checkpoint-resume TASK_ID="[task_id]"` (just shows the file)
+
+**Key Principle**: Checkpoint captures what commits can't - uncommitted work and conversation context. Keep it lightweight and focused on actionable context for resuming work.
+
+Commit History Export (Optional):
+- `make git-log-export` - Exports full commit history since main branch to `.context/commits/[branch]_[timestamp].md`
+- `make git-log-latest` - Shows latest commit history export
 
 Verification Checklist
 
@@ -86,6 +127,7 @@ Before claiming complete, verify:
 - [ ] Module tests passing
 - [ ] Changes committed with tests
 - [ ] All TODOs marked completed
+- [ ] Checkpoint created and manually updated with conversation context (if switching assistants)
 
 Critical Rules
 

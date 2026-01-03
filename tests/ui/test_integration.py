@@ -113,6 +113,10 @@ class TestUIDatasetIntegration:
         # Arrange: Get all available datasets
         available_datasets = DatasetRegistry.list_datasets()
 
+        # Skip early if no datasets available (before assertion)
+        if not available_datasets or available_datasets == ["uploaded"]:
+            pytest.skip("No datasets available for testing - skipping integration test")
+
         tested_count = 0
         for dataset_name in available_datasets:
             # Skip uploaded class (requires upload_id)

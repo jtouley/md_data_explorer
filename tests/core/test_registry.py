@@ -37,17 +37,17 @@ def get_first_available_dataset(discovered_datasets):
 
     if not available:
         logger.warning(
-            "test_registry_no_datasets_available",
-            all_datasets=discovered_datasets["all_datasets"],
-            reason="all datasets filtered out or none discovered",
+            "test_registry_no_datasets_available: all_datasets=%s, reason=%s",
+            discovered_datasets["all_datasets"],
+            "all datasets filtered out or none discovered",
         )
         return None
 
     selected = available[0]
     logger.info(
-        "test_registry_dataset_selected",
-        selected_dataset=selected,
-        available_options=available,
+        "test_registry_dataset_selected: selected_dataset=%s, available_options=%s",
+        selected,
+        available,
     )
 
     return selected
