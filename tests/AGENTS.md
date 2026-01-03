@@ -107,9 +107,30 @@ def test_customer_aggregation_sums_transactions():
 
 **Pattern**: `test_unit_scenario_expectedBehavior`
 
+**CRITICAL**: The pattern is `test_[unit]_[scenario]_[expectedBehavior]` where:
+- `unit`: The component/function being tested (e.g., `filter_extraction`, `compute_descriptive_analysis`, `upload_security_validator`)
+- `scenario`: The specific condition or input (e.g., `simple_query`, `null_keys`, `missing_column`, `csv_file`)
+- `expectedBehavior`: What should happen (e.g., `returns_filters`, `preserves_first_occurrence`, `raises_valueerror`, `returns_valid`)
+
 ### Correct Examples
 
 ```python
+def test_filter_extraction_llm_simple_query_returns_filters():
+    """Test that LLM filter extraction returns filters for simple query."""
+    ...
+
+def test_filter_extraction_llm_function_exists_returns_callable():
+    """Test that filter extraction LLM function exists and is callable."""
+    ...
+
+def test_compute_descriptive_analysis_serializable_dict_returns_expected_keys():
+    """Test that compute_descriptive_analysis returns dict with expected keys."""
+    ...
+
+def test_upload_security_validator_file_type_csv_returns_valid():
+    """Test that file type validation returns valid for CSV files."""
+    ...
+
 def test_deduplication_with_null_keys_preserves_first_occurrence():
     """Test deduplication when keys contain null values."""
     ...
@@ -126,13 +147,33 @@ def test_incremental_load_overlapping_dates_merges_correctly():
 ### Incorrect Examples
 
 ```python
+# WRONG: Missing scenario or expected behavior
+def test_extract_filters_with_llm_function_exists():  # Missing scenario/behavior
+def test_extract_filters_with_llm_success_simple():  # Missing expected behavior
+def test_compute_descriptive_analysis_returns_serializable_dict():  # Wrong order
+
+# WRONG: Missing unit prefix
+def test_validate_file_type_csv():  # Should be: test_upload_security_validator_file_type_csv_returns_valid
+def test_validate_file_size_valid():  # Should be: test_upload_security_validator_file_size_valid_returns_true
+
 # WRONG: Vague names
 def test_dedup():
 def test_validation():
 def test_load():
 ```
 
-**Why**: Descriptive names explain what is being tested without reading the code.
+### Common Violations and Corrections
+
+| ❌ Violation | ✅ Correction |
+|-------------|--------------|
+| `test_extract_filters_with_llm_function_exists` | `test_filter_extraction_llm_function_exists_returns_callable` |
+| `test_extract_filters_with_llm_success_simple` | `test_filter_extraction_llm_simple_query_returns_filters` |
+| `test_extract_filters_with_llm_real_world_case` | `test_filter_extraction_llm_real_world_query_returns_filters` |
+| `test_compute_descriptive_analysis_returns_serializable_dict` | `test_compute_descriptive_analysis_serializable_dict_returns_expected_keys` |
+| `test_validate_file_type_csv` | `test_upload_security_validator_file_type_csv_returns_valid` |
+| `test_validate_file_size_valid` | `test_upload_security_validator_file_size_valid_returns_true` |
+
+**Why**: Descriptive names explain what is being tested without reading the code. The pattern ensures consistency and makes test failures immediately understandable.
 
 ---
 
@@ -683,13 +724,26 @@ def test_aggregation_handles_null_values(df_with_nulls):
 import polars.testing as plt
 
 # ✅ CORRECT: Use Polars testing assertions for DataFrames
-plt.assert_frame_equal(result, expected)
+def test_transformation_produces_correct_output():
+    input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+    result = transform(input_df)
+    expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
+    plt.assert_frame_equal(result, expected)
 
 # ❌ WRONG: Never use list comparisons for DataFrame equality
-# assert df1["col"].to_list() == df2["col"].to_list()  # NO!
+def test_transformation_produces_correct_output():
+    input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+    result = transform(input_df)
+    expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
+    assert result["value"].to_list() == expected["value"].to_list()  # NO!
+    # This misses schema differences, type mismatches, null handling, etc.
 
-# ❌ WRONG: Never use pandas assertions
-# pd.testing.assert_frame_equal(result, expected)  # NO!
+# ❌ WRONG: Never use pandas assertions (pandas is prohibited)
+import pandas.testing as pdt
+pdt.assert_frame_equal(result, expected)  # NO! Pandas is prohibited in new code.
+
+# ❌ WRONG: Never use len() instead of df.height
+assert len(result) == len(expected)  # NO! Use: assert result.height == expected.height
 ```
 
 **Why**: `assert_frame_equal()` properly handles:
@@ -703,6 +757,11 @@ plt.assert_frame_equal(result, expected)
 - Single scalar value: `assert result == 42`
 - Simple list of scalars: `assert [1, 2, 3] == [1, 2, 3]`
 - String content: `assert "error message" in str(exception)`
+
+**Common Violations**:
+- ❌ `assert df1["col"].to_list() == df2["col"].to_list()` → ✅ `plt.assert_frame_equal(df1, df2)`
+- ❌ `assert len(df1) == len(df2)` → ✅ `assert df1.height == df2.height`
+- ❌ `pd.testing.assert_frame_equal(df1, df2)` → ✅ `plt.assert_frame_equal(df1, df2)`
 
 ### Polars Attribute Usage
 

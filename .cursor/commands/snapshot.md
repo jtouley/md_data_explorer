@@ -48,7 +48,9 @@ The active session rule must reference:
 	•	the resume prompt template
 	•	the associated session file path
 
-	6.	Confirm completion with a single message:
+	6.	If code was generated during this session, note that `/deslop` should be invoked to remove AI-generated slop before resuming work
+
+	7.	Confirm completion with a single message:
 Session <session_id> snapshot saved.
 
 Constraints

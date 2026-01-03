@@ -22,6 +22,8 @@ Mandatory Rules to Apply
 @100-polars-first.mdc - Data processing patterns (if applicable)
 @105-test-fixture-enforcement.mdc - Fixture usage
 @001-self-improving-assistant.mdc - Direct communication style
+@107-hitl-safety.mdc - Stop when human decision required (MVP)
+@230-core-output-format.mdc - Cognitive-optimized output (MVP)
 
 Execution Sequence (MANDATORY)
 
@@ -29,6 +31,7 @@ Execution Sequence (MANDATORY)
    - Break task into TDD workflow steps
    - Include: write test, run test (red), implement, run test (green), format/lint, commit
    - Use todo_write tool
+   - **Checkpoint**: `make checkpoint-create TASK_ID="[task_id]"` (creates template, edit manually)
 
 2. Write Failing Test (Red Phase)
    - Write test BEFORE any implementation
@@ -57,6 +60,7 @@ Execution Sequence (MANDATORY)
    - Run: make format
    - Run: make lint-fix
    - Fix any remaining issues manually
+   - **Invoke /deslop**: Remove AI-generated slop from all changed files
    - Update TODO
 
 7. Run Module Test Suite
@@ -76,6 +80,53 @@ Execution Sequence (MANDATORY)
      Following TDD: Red-Green-Refactor"
    - Include implementation AND tests
    - Update TODO to completed
+   - **Before switching assistants**: Edit checkpoint file manually with conversation context
+
+9. HITL Safety Gate (if triggered)
+   If rule 107-hitl-safety is triggered:
+   - Halt execution
+   - Output C.O.R.E. format only (per rule 230)
+   - Populate DECISIONS NEEDED section
+   - Await human response
+   - Do not proceed until human decision is provided
+
+Checkpoint Logging (LIGHTWEIGHT)
+
+Create a lightweight checkpoint to capture uncommitted work and conversation context for switching between assistants.
+
+Checkpoint Location: `.context/checkpoints/[task_id].md`
+
+Checkpoint Format (Simple Markdown):
+```markdown
+# [task_id]
+
+**Status**: In progress (since last commit: [hash])
+
+**What I did since last commit**:
+- [Brief description of changes made in this chat session]
+- [Files modified, tests written, etc.]
+
+**Current state**:
+- [Test status, quality gates, uncommitted changes]
+
+**Next steps**:
+1. [What needs to happen next]
+2. [Any blockers or issues]
+
+**Blockers/Notes**:
+- [Any blockers, errors encountered, or important context]
+```
+
+Checkpoint Commands:
+- Create template: `make checkpoint-create TASK_ID="[task_id]"`
+- Edit manually: Add conversation context about what happened since last commit
+- Resume: `make checkpoint-resume TASK_ID="[task_id]"` (just shows the file)
+
+**Key Principle**: Checkpoint captures what commits can't - uncommitted work and conversation context. Keep it lightweight and focused on actionable context for resuming work.
+
+Commit History Export (Optional):
+- `make git-log-export` - Exports full commit history since main branch to `.context/commits/[branch]_[timestamp].md`
+- `make git-log-latest` - Shows latest commit history export
 
 Verification Checklist
 
@@ -85,10 +136,12 @@ Before claiming complete, verify:
 - [ ] Implementation passes tests (Green verified)
 - [ ] make format executed
 - [ ] make lint-fix executed
+- [ ] /deslop invoked to remove AI-generated slop
 - [ ] Zero NEW linting errors in changed files
 - [ ] Module tests passing
 - [ ] Changes committed with tests
 - [ ] All TODOs marked completed
+- [ ] Checkpoint created and manually updated with conversation context (if switching assistants)
 
 Critical Rules
 
@@ -109,7 +162,62 @@ Critical Rules
 
 Output Format
 
-For each major step, output:
+All human-facing outputs from this command MUST follow the C.O.R.E. (Cognitive-Optimized) format per rule 230-core-output-format.mdc. This format is optimized for fast scanning and decision-making.
+
+**This format should be treated as the canonical C.O.R.E. example for all agent outputs.**
+
+C.O.R.E. Format Template:
+
+## SUMMARY
+
+**Status: ✅ [READY FOR USE | IN PROGRESS | BLOCKED]**
+
+[1-2 lines: outcome status, actionable result]
+
+## ACTIONS REQUIRED 🚨
+
+- [ ] **Action 1** — [context/deadline/impact]
+- [ ] **Action 2** — [context/deadline/impact]
+
+## EVIDENCE
+
+**Created:**
+- `path/to/file.ext` (description)
+
+**Updated:**
+- `path/to/file.ext` (what changed)
+
+**Quality Gates:**
+- ✅ **Linting**: All checks passed
+- ✅ **Formatting**: All files formatted
+- ✅ **Tests**: X/Y passing
+
+## OPTIONAL CONTEXT
+
+**Deliverables:**
+- **Feature X** - Description (impact/benefit)
+- **Feature Y** - Description (impact/benefit)
+
+**What's Deferred (intentionally):**
+- Item 1
+- Item 2
+- Item 3
+
+**Next Steps:**
+1. Step 1
+2. Step 2
+
+**Status: ✅ READY FOR USE**
+
+Format Rules:
+- **SUMMARY**: 1-2 lines max, bold status at top
+- **ACTIONS REQUIRED**: Must include 🚨 emoji, bold action text, context for each
+- **EVIDENCE**: Group by Created/Updated/Quality Gates, use file paths with backticks
+- **OPTIONAL CONTEXT**: Compress deferred items into bullets, keep prose minimal
+- **Status**: Appear at top (under SUMMARY) or bottom (bold + emoji)
+- Total output ≤ 80 lines unless explicitly overridden
+
+For each major step during execution, output:
 
 ## Step N: [Step Name]
 

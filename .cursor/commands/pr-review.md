@@ -36,7 +36,9 @@ Execution Sequence
      * Maintainability impact
      * System behavior changes
      * Long-term implications
+     * AI-generated slop (extra comments, defensive checks, type casts, inconsistent style)
    - Generate structured review
+   - **If AI-generated slop is detected**: Recommend invoking `/deslop` to clean up the diff before merge
 
 4. Output Review
    - Display concise summary in chat (see Output Format below)
@@ -60,6 +62,7 @@ Output requirements:
 	•	Major risks, architectural concerns, or correctness issues (if any)
 	•	Focus on system behavior, maintainability, and long-term impact
 	•	No restating code unless it reveals a real issue
+	•	If AI-generated slop detected, recommend invoking `/deslop` before merge
 	4.	Nits (Optional, short)
 	•	Minor improvements, naming, structure, clarity
 	•	Only include if they matter
@@ -71,26 +74,57 @@ Constraints:
 	•	If there are no blocking issues, say so clearly
 	•	If blocking issues exist, explain why they block merge
 
+## Output Contract (C.O.R.E. Format)
+
+All human-facing outputs from this command MUST follow the C.O.R.E. (Cognitive-Optimized) format per rule 230-core-output-format.mdc.
+
 Output Format
 
-Chat Summary (concise):
-```
-## PR{number} Review
+Chat Summary (C.O.R.E. format):
+```markdown
+## SUMMARY
 
-**Decision**: MERGE / NO MERGE
+**Status: ✅ [MERGE | NO MERGE]**
 
-**Summary**:
-- [Bullet 1]
-- [Bullet 2]
+[1-2 lines: merge decision and key justification]
 
-**Key Issues** (if any):
-- [Issue 1]
-- [Issue 2]
+## DECISIONS NEEDED
+
+(Max 3 items - only if NO MERGE or conditional merge)
+1) [Decision 1] — [why it matters, what happens if delayed]
+2) [Decision 2] — [why it matters, what happens if delayed]
+
+## ACTIONS REQUIRED 🚨
+
+- [ ] **Action 1** — [if NO MERGE, what must be fixed]
+- [ ] **Action 2** — [if AI slop detected, recommend `/deslop`]
+
+## EVIDENCE
+
+**PR:**
+- `PR{number}`
+
+**Review File:**
+- `.context/reviews/{prnumber}.md`
+
+**Key Issues:**
+- [Bullet 1: Critical issue or architectural concern]
+- [Bullet 2: Correctness issue or AI slop detection]
+
+## OPTIONAL CONTEXT
+
+**Summary:**
+- [What PR does]
+- [Whether it improves the system]
 
 **Nits** (if any):
-- [Nit 1]
+- [Minor improvement 1]
+- [Minor improvement 2]
 
-Full review saved to: .context/reviews/{prnumber}.md
+**Diff Stats:**
+- Files changed: {count}
+- Additions: {count}
+- Deletions: {count}
 ```
 
 Detailed Markdown File (`.context/reviews/{prnumber}.md`):
@@ -120,6 +154,9 @@ Detailed Markdown File (`.context/reviews/{prnumber}.md`):
 
 ### Correctness Issues (if any)
 [Bugs, logic errors, edge cases]
+
+### AI-Generated Slop (if detected)
+[If AI-generated slop is detected (extra comments, defensive checks, type casts, inconsistent style), recommend invoking `/deslop` to clean up before merge]
 
 ## Nits
 

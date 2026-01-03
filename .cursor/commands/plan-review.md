@@ -48,6 +48,7 @@ Execution Sequence
    - Display concise summary in chat (see Output Format below)
    - Save detailed structured markdown to: `.context/reviews/plan_{plan-name}.md`
    - Create `.context/reviews/` directory if it doesn't exist
+   - **Note**: If plan involves code generation, recommend invoking `/deslop` after execution to remove AI-generated slop
 
 Staff Engineer Design/Execution Plan Review Prompt Template
 
@@ -111,34 +112,60 @@ Constraints:
    • If the plan is solid, say so plainly
    • Focus on execution readiness, not style preferences
 
+## Output Contract (MVP)
+
+- Must follow C.O.R.E. Output Format (rule 230).
+- Decisions MUST appear before any commentary.
+- If decisions exist, mark plan status as: NEEDS INPUT.
+- Do not include implementation suggestions unless requested.
+
 Output Format
 
-Chat Summary (concise):
-```
-## Plan Review: {plan-name}
+All human-facing outputs from this command MUST follow the C.O.R.E. (Cognitive-Optimized) format per rule 230-core-output-format.mdc.
 
-**Decision**: READY TO EXECUTE / READY WITH CHANGES / NOT READY
+Chat Summary (C.O.R.E. format):
+```markdown
+## SUMMARY
 
-**Summary**:
-- [Bullet 1: What plan accomplishes]
-- [Bullet 2: Scope/sequencing assessment]
+**Status: ✅ [READY TO EXECUTE | READY WITH CHANGES | NOT READY]**
 
-**Blocking Issues** (if any):
-- [Issue 1: Must fix before execution]
-- [Issue 2: Must fix before execution]
+[1-2 lines: execution readiness decision and key assessment]
 
-**Non-Blocking Feedback** (if any):
-- [Improvement 1]
-- [Improvement 2]
+## DECISIONS NEEDED
 
-**Spec-Driven Execution Check**:
+(Max 3 items - only if plan status is NOT READY or READY WITH CHANGES)
+1) [Decision 1] — [why it matters, what happens if delayed]
+2) [Decision 2] — [why it matters, what happens if delayed]
+
+## ACTIONS REQUIRED 🚨
+
+- [ ] **Action 1** — [context/deadline/impact]
+- [ ] **Action 2** — [context/deadline/impact]
+
+## EVIDENCE
+
+**Plan File:**
+- `{plan-file-path}`
+
+**Review File:**
+- `.context/reviews/plan_{plan-name}.md`
+
+**Key Findings:**
+- [Bullet 1: Blocking issue or key assessment]
+- [Bullet 2: Non-blocking feedback or spec clarity]
+
+## OPTIONAL CONTEXT
+
+**Plan Summary:**
+- [What plan accomplishes]
+- [Scope/sequencing assessment]
+
+**Spec-Driven Execution Check:**
 - [Assessment of implementation clarity]
 
 **Update Instructions** (if needed):
 - [Concrete change 1]
 - [Concrete change 2]
-
-Full review saved to: .context/reviews/plan_{plan-name}.md
 ```
 
 Detailed Markdown File (`.context/reviews/plan_{plan-name}.md`):
@@ -189,6 +216,9 @@ Detailed Markdown File (`.context/reviews/plan_{plan-name}.md`):
 
 ### Quality Gates
 [Missing success criteria or validation steps]
+
+### Code Quality Recommendation
+If this plan involves code generation, recommend invoking `/deslop` after execution to remove AI-generated slop (extra comments, defensive checks, type casts, inconsistent style).
 
 ## Spec-Driven Execution Check
 

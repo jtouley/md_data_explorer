@@ -290,3 +290,145 @@ class TestADR002EndToEnd:
         )
 
         datastore.close()
+
+    def test_phase2_persistent_storage_with_sanitized_table_names(self, integration_env):
+        """
+        REGRESSION TEST: Verify Phase 2 (persistent DuckDB) works with sanitized table names.
+
+        This test prevents regression of the SQL table name bug where table names with
+        spaces/special characters caused "Parser Error: syntax error at or near X".
+
+        Test Flow:
+        1. Upload dataset with problematic table name (spaces, hyphens, special chars)
+        2. Verify save to DuckDB succeeds (no SQL errors)
+        3. Verify list_datasets() correctly parses upload_id (not truncated)
+        4. Simulate app restart
+        5. Verify restore_datasets() finds dataset (no "Metadata missing" warnings)
+        6. Verify dataset is queryable
+
+        Success Criteria:
+        - No SQL syntax errors during save
+        - list_datasets() returns correct upload_ids (not truncated)
+        - restore_datasets() successfully restores dataset
+        - No "Metadata missing" warnings in logs
+        """
+        storage = integration_env["storage"]
+        datastore = integration_env["datastore"]
+        db_path = integration_env["db_path"]
+        parquet_dir = integration_env["parquet_dir"]
+
+        # ========== Phase 1: Upload with Problematic Table Name ==========
+        # Use real-world table name that previously caused SQL errors
+        upload_id = "user_upload_20251229_225650_45c58677"
+        table_name = "Statin use - deidentified"  # Contains spaces, hyphens
+        dataset_version = "091a873a95864319"  # 16-char hex version
+
+        # Create sample dataset
+        df = pl.DataFrame(
+            {
+                "patient_id": list(range(1, 101)),
+                "age": [25 + (i % 50) for i in range(100)],
+                "statin_prescribed": [i % 2 for i in range(100)],
+                "cholesterol": [150.0 + (i % 50) for i in range(100)],
+            }
+        )
+
+        # Act: Save to DuckDB (should NOT raise SQL syntax error)
+        datastore.save_table(
+            table_name=table_name,
+            data=df,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+        )
+
+        # Assert: Table exists in DuckDB with sanitized name
+        tables = datastore.list_tables()
+        sanitized_table = [t for t in tables if upload_id in t and dataset_version in t]
+        assert len(sanitized_table) == 1, f"Table not found in DuckDB. Available: {tables}"
+        assert " " not in sanitized_table[0], f"Table name contains spaces: {sanitized_table[0]}"
+        assert sanitized_table[0].startswith(upload_id)
+        assert sanitized_table[0].endswith(dataset_version)
+
+        # Export to Parquet
+        parquet_path = datastore.export_to_parquet(
+            upload_id=upload_id,
+            table_name=table_name,
+            dataset_version=dataset_version,
+            parquet_dir=parquet_dir,
+        )
+        assert parquet_path.exists(), "Parquet file should be created"
+
+        # Save metadata
+        metadata = {
+            "upload_id": upload_id,
+            "dataset_version": dataset_version,
+            "dataset_name": "Statin use - deidentified",  # Original name preserved
+            "tables": [table_name],
+            "row_count": df.height,
+            "created_at": "2025-12-30T10:00:00Z",
+            "parquet_paths": {table_name: str(parquet_path)},
+        }
+
+        storage.metadata_dir.mkdir(parents=True, exist_ok=True)
+        with open(storage.metadata_dir / f"{upload_id}.json", "w") as f:
+            json.dump(metadata, f)
+
+        datastore.close()
+
+        # ========== Phase 2: Verify list_datasets() Parsing ==========
+        # Reopen datastore to test list_datasets() parsing
+        from clinical_analytics.storage.datastore import DataStore
+
+        datastore2 = DataStore(db_path)
+        datasets_info = datastore2.list_datasets()
+
+        # Assert: list_datasets() correctly parses upload_id (not truncated)
+        upload_ids = [d["upload_id"] for d in datasets_info]
+        assert upload_id in upload_ids, (
+            f"list_datasets() failed to parse upload_id correctly. "
+            f"Expected: {upload_id}, Got: {upload_ids}. "
+            f"This indicates parsing bug with sanitized table names."
+        )
+
+        # Verify table_count
+        dataset_info = next(d for d in datasets_info if d["upload_id"] == upload_id)
+        assert dataset_info["table_count"] == 1
+
+        datastore2.close()
+
+        # ========== Phase 3: Simulate App Restart ==========
+        # Close all connections (simulate app shutdown)
+        # Reopen (simulate app startup)
+
+        # ========== Phase 4: Verify restore_datasets() ==========
+        from clinical_analytics.ui.app_utils import restore_datasets
+
+        restored = restore_datasets(storage, db_path)
+
+        # Assert: Dataset restored successfully (no "Metadata missing" warnings)
+        assert len(restored) == 1, (
+            f"restore_datasets() should find 1 dataset, got {len(restored)}. "
+            f"This indicates metadata lookup failed (likely due to parsing bug)."
+        )
+
+        restored_metadata = restored[0]
+        assert restored_metadata["upload_id"] == upload_id
+        assert restored_metadata["dataset_name"] == "Statin use - deidentified"
+
+        # ========== Phase 5: Verify Dataset is Queryable ==========
+        # Load from Parquet (lazy evaluation)
+        from clinical_analytics.storage.datastore import DataStore
+
+        lazy_df = DataStore.load_from_parquet(parquet_path)
+        assert isinstance(lazy_df, pl.LazyFrame)
+
+        # Execute query
+        result = lazy_df.filter(pl.col("age") > 40).collect()
+        assert result.height > 0
+
+        # ========== SUCCESS: Phase 2 Regression Test Passed ==========
+        print("\n✅ Phase 2 Regression Test: Sanitized Table Names")
+        print("  - SQL save succeeded: ✅ (no syntax errors)")
+        print(f"  - list_datasets() parsing: ✅ (upload_id={upload_id})")
+        print(f"  - restore_datasets() restoration: ✅ ({len(restored)} datasets)")
+        print("  - Dataset queryable: ✅ (LazyFrame works)")

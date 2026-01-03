@@ -328,3 +328,109 @@ class TestDataStoreParquetExport:
         loaded = lazy_df.collect()
         assert loaded.height == sample_table.height
         assert loaded.to_dicts() == sample_table.to_dicts()
+
+
+class TestDataStoreTableNameSanitization:
+    """Test SQL-safe table name sanitization."""
+
+    def test_datastore_save_table_sanitizes_table_name_with_spaces(self, datastore, sample_table):
+        """Table names with spaces should be sanitized to SQL-safe identifiers."""
+        # Arrange: Table name with spaces and special characters (matches real-world case)
+        upload_id = "user_upload_20251229_225650_45c58677"
+        table_name = "Statin use - deidentified"  # Contains spaces and hyphens
+        dataset_version = "091a873a95864319"
+
+        # Act: Save table (should not raise SQL syntax error)
+        datastore.save_table(
+            table_name=table_name,
+            data=sample_table,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+        )
+
+        # Assert: Table exists in DuckDB with sanitized name
+        tables = datastore.list_tables()
+        assert len(tables) > 0
+        # Table name should be sanitized (spaces/hyphens replaced with underscores)
+        # Should NOT contain spaces or special characters that break SQL
+        saved_table = [t for t in tables if upload_id in t and dataset_version in t]
+        assert len(saved_table) == 1
+        sanitized_name = saved_table[0]
+        # Verify SQL-safe: no spaces, no special chars that break SQL
+        assert " " not in sanitized_name, f"Table name contains spaces: {sanitized_name}"
+        assert sanitized_name.startswith(upload_id)
+        assert sanitized_name.endswith(dataset_version)
+
+    def test_datastore_load_table_with_sanitized_name(self, datastore, sample_table):
+        """Loading tables with sanitized names should work correctly."""
+        # Arrange: Save table with space-containing name
+        upload_id = "test_upload_sanitize"
+        table_name = "My Table - v2.0"  # Contains spaces, hyphens, dots
+        dataset_version = "v1"
+
+        datastore.save_table(
+            table_name=table_name,
+            data=sample_table,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+        )
+
+        # Act: Load table using original table_name (should sanitize internally)
+        lazy_df = datastore.load_table(
+            upload_id=upload_id,
+            table_name=table_name,  # Original name with spaces
+            dataset_version=dataset_version,
+        )
+
+        # Assert: Data loads correctly
+        loaded_data = lazy_df.collect()
+        assert loaded_data.height == sample_table.height
+        assert loaded_data.columns == sample_table.columns
+
+    def test_datastore_list_datasets_parses_sanitized_table_names(self, datastore, sample_table):
+        """list_datasets should correctly parse upload_id from sanitized table names."""
+        # Arrange: Save tables with sanitized names (spaces/hyphens → underscores)
+        # This matches real-world scenario where table names contain spaces
+        upload_id_1 = "user_upload_20251229_225650_45c58677"
+        table_name_1 = "Statin use - deidentified"  # Will be sanitized to "statin_use_deidentified"
+        dataset_version_1 = "091a873a95864319"
+
+        upload_id_2 = "user_upload_20251228_203407_376a8faa"
+        table_name_2 = "de-identified DEXA"  # Will be sanitized to "de_identified_dexa"
+        dataset_version_2 = "1ee8f9c3e0f6f0f7"
+
+        # Save both tables
+        datastore.save_table(
+            table_name=table_name_1,
+            data=sample_table,
+            upload_id=upload_id_1,
+            dataset_version=dataset_version_1,
+        )
+
+        datastore.save_table(
+            table_name=table_name_2,
+            data=sample_table,
+            upload_id=upload_id_2,
+            dataset_version=dataset_version_2,
+        )
+
+        # Act: List datasets
+        datasets = datastore.list_datasets()
+
+        # Assert: Should correctly extract both upload_ids (not truncated)
+        upload_ids = [d["upload_id"] for d in datasets]
+        assert upload_id_1 in upload_ids, (
+            f"Expected upload_id '{upload_id_1}' not found in {upload_ids}. "
+            f"This indicates parsing failed due to sanitized table name containing underscores."
+        )
+        assert upload_id_2 in upload_ids, (
+            f"Expected upload_id '{upload_id_2}' not found in {upload_ids}. "
+            f"This indicates parsing failed due to sanitized table name containing underscores."
+        )
+
+        # Assert: Each upload_id should have correct table_count
+        dataset_1 = next(d for d in datasets if d["upload_id"] == upload_id_1)
+        assert dataset_1["table_count"] == 1
+
+        dataset_2 = next(d for d in datasets if d["upload_id"] == upload_id_2)
+        assert dataset_2["table_count"] == 1

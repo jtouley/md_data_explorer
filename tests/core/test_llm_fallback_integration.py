@@ -71,8 +71,12 @@ def test_ollama_client_real_generate(ollama_client, skip_if_ollama_unavailable):
     if not ollama_client.is_model_available(OLLAMA_DEFAULT_MODEL):
         pytest.skip(f"Model {OLLAMA_DEFAULT_MODEL} not available")
 
+    # Create client with specific model (model is set in constructor, not generate())
+    from clinical_analytics.core.llm_client import OllamaClient
+
+    client = OllamaClient(model=OLLAMA_DEFAULT_MODEL)
     prompt = "What is 2+2? Respond with just the number."
-    response = ollama_client.generate(prompt, model=OLLAMA_DEFAULT_MODEL)
+    response = client.generate(prompt)
 
     assert response is not None
     assert isinstance(response, str)
