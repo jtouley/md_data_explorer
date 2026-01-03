@@ -326,8 +326,7 @@ class TestZipExtraction:
         active_versions = [v for v in metadata2["version_history"] if v.get("is_active", False)]
         all_versions_info = [(v.get("version"), v.get("is_active")) for v in metadata2["version_history"]]
         assert len(active_versions) == 1, (
-            f"Should have exactly one active version, got {len(active_versions)}. "
-            f"All versions: {all_versions_info}"
+            f"Should have exactly one active version, got {len(active_versions)}. All versions: {all_versions_info}"
         )
 
         # Assert: Active version is the newer one (check created_at timestamp, not version,

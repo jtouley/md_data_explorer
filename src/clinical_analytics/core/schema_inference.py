@@ -220,12 +220,13 @@ class SchemaInferenceEngine:
         """Initialize schema inference engine."""
         pass
 
-    def infer_schema(self, df: pl.DataFrame) -> InferredSchema:
+    def infer_schema(self, df: pl.DataFrame, doc_context: str | None = None) -> InferredSchema:
         """
         Infer complete schema from Polars DataFrame.
 
         Args:
             df: Raw Polars DataFrame to analyze
+            doc_context: Optional documentation context text (extracted from PDF/Markdown/text files)
 
         Returns:
             InferredSchema with all detected columns and confidence scores
