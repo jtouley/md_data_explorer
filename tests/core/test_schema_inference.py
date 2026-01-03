@@ -4,7 +4,6 @@ Tests for schema inference engine.
 Tests schema inference with documentation context integration.
 """
 
-
 import polars as pl
 
 from clinical_analytics.core.schema_inference import (
@@ -71,3 +70,39 @@ class TestParseDictionaryText:
         assert isinstance(result, DictionaryMetadata)
         assert "patient_id" in result.column_descriptions
         assert result.column_descriptions["patient_id"] == "Unique patient identifier"
+
+
+class TestExtractCodebooksFromDocs:
+    """Test suite for extract_codebooks_from_docs() function."""
+
+    def test_extract_codebooks_from_docs_parses_comma_separated_pattern(self):
+        """Test that extract_codebooks_from_docs() parses '1: Biktarvy, 2: Symtuza' patterns."""
+        from clinical_analytics.core.schema_inference import extract_codebooks_from_docs
+
+        # Arrange: Documentation text with codebook pattern
+        doc_text = "Current Regimen: 1: Biktarvy, 2: Symtuza, 3: Triumeq"
+
+        # Act: Extract codebooks
+        codebooks = extract_codebooks_from_docs(doc_text)
+
+        # Assert: Codebooks extracted correctly
+        assert isinstance(codebooks, dict)
+        assert "current_regimen" in codebooks or "Current Regimen" in codebooks
+        # Check that codebook has correct structure
+        codebook_key = "current_regimen" if "current_regimen" in codebooks else "Current Regimen"
+        assert codebooks[codebook_key] == {"1": "Biktarvy", "2": "Symtuza", "3": "Triumeq"}
+
+    def test_extract_codebooks_from_docs_parses_space_separated_pattern(self):
+        """Test that extract_codebooks_from_docs() parses '1: Yes 2: No' patterns."""
+        from clinical_analytics.core.schema_inference import extract_codebooks_from_docs
+
+        # Arrange: Documentation text with space-separated codebook pattern
+        doc_text = "Status: 1: Yes 2: No 0: n/a"
+
+        # Act: Extract codebooks
+        codebooks = extract_codebooks_from_docs(doc_text)
+
+        # Assert: Codebooks extracted correctly
+        assert isinstance(codebooks, dict)
+        codebook_key = "status" if "status" in codebooks else "Status"
+        assert codebooks[codebook_key] == {"1": "Yes", "2": "No", "0": "n/a"}

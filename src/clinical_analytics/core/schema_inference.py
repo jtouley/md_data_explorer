@@ -146,6 +146,60 @@ class InferredSchema:
         return "\n".join(lines)
 
 
+def extract_codebooks_from_docs(doc_text: str) -> dict[str, dict[str, str]]:
+    """
+    Extract codebooks from documentation text.
+
+    Parses patterns like "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No" from documentation
+    and matches them to column names.
+
+    Args:
+        doc_text: Documentation text containing codebook patterns
+
+    Returns:
+        Dict mapping column names to codebooks: {column_name: {"1": "Biktarvy", "2": "Symtuza"}}
+
+    Example:
+        >>> text = "Current Regimen: 1: Biktarvy, 2: Symtuza"
+        >>> codebooks = extract_codebooks_from_docs(text)
+        >>> codebooks["current_regimen"]
+        {'1': 'Biktarvy', '2': 'Symtuza'}
+    """
+    codebooks: dict[str, dict[str, str]] = {}
+
+    # Pattern to find codebook patterns: "ColumnName: 1: Value1, 2: Value2" or "ColumnName: 1: Value1 2: Value2"
+    # Match column name followed by code:value pairs
+    # Pattern: column_name (optional colon/dash) followed by code:value pairs
+    pattern = r"([A-Za-z_][A-Za-z0-9_\s]*?)\s*[:\-]?\s*((?:\d+\s*:\s*[A-Za-z\s/]+(?:,\s*|\s+))*\d+\s*:\s*[A-Za-z\s/]+)"
+
+    matches = re.finditer(pattern, doc_text, re.IGNORECASE)
+
+    for match in matches:
+        col_name_raw = match.group(1).strip()
+        codebook_text = match.group(2).strip()
+
+        # Normalize column name (lowercase, replace spaces with underscores)
+        col_name = re.sub(r"\s+", "_", col_name_raw.lower())
+
+        # Extract code:value pairs from codebook_text
+        # Pattern: "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No"
+        codebook: dict[str, str] = {}
+
+        # Pattern for code:value pairs (handles comma-separated and space-separated)
+        code_value_pattern = r"(\d+)\s*:\s*([A-Za-z\s/]+?)(?=\s*\d+\s*:|,|$)"
+
+        for code_match in re.finditer(code_value_pattern, codebook_text):
+            code = code_match.group(1).strip()
+            value = code_match.group(2).strip().rstrip(",").strip()
+            if code and value:
+                codebook[code] = value
+
+        if codebook:
+            codebooks[col_name] = codebook
+
+    return codebooks
+
+
 class SchemaInferenceEngine:
     """
     Automatic schema inference for any tabular clinical dataset.
