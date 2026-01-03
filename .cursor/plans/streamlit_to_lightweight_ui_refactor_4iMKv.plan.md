@@ -21,12 +21,22 @@ todos:
     status: pending
     activeForm: Creating architecture design document
 
+  - id: "1.5"
+    content: Document API contracts (request/response schemas) in architecture doc
+    status: pending
+    activeForm: Documenting API contracts
+    dependencies:
+      - "1"
+    notes: |
+      Pydantic models for: SessionCreate, SessionResponse, QueryRequest, QueryResponse,
+      DatasetUpload, AnalysisResult, etc.
+
   - id: "2"
-    content: Set up Next.js web frontend structure (following claude-run patterns)
+    content: Set up Next.js web frontend structure (Follow claude-run web/ structure: App Router, src/components/, src/lib/)
     status: pending
     activeForm: Setting up Next.js frontend
     dependencies:
-      - "1"
+      - "1.5"
 
   - id: "3"
     content: Set up FastAPI backend structure (API routes, models, services)
@@ -49,13 +59,50 @@ todos:
     dependencies:
       - "2"
 
+  # Phase 1.5: Semantic Layer FastAPI Compatibility (CRITICAL)
+  - id: "5.1"
+    content: Write failing test for semantic layer in FastAPI route handler (TDD Red)
+    status: pending
+    activeForm: Writing semantic layer FastAPI test
+    dependencies:
+      - "4"
+    notes: |
+      Test that SemanticLayer works with FastAPI Depends() dependency injection
+
+  - id: "5.2"
+    content: Verify DuckDB connection pooling works with async context (TDD Green)
+    status: pending
+    activeForm: Verifying DuckDB async compatibility
+    dependencies:
+      - "5.1"
+    notes: |
+      Test async operations don't block, connection reuse works
+
+  - id: "5.3"
+    content: Test @st.cache_resource pattern translates to FastAPI Depends() (TDD Green)
+    status: pending
+    activeForm: Testing FastAPI dependency caching
+    dependencies:
+      - "5.2"
+    notes: |
+      Verify semantic layer instance reuse across requests
+
+  - id: "5.4"
+    content: Document adapter patterns and run compatibility tests (TDD Refactor)
+    status: pending
+    activeForm: Documenting semantic layer adapter patterns
+    dependencies:
+      - "5.3"
+    notes: |
+      Document any workarounds or patterns needed for FastAPI integration
+
   # Phase 2: Core Backend API (TDD)
   - id: "6"
     content: Write failing tests for session management API endpoints (TDD Red)
     status: pending
     activeForm: Writing tests for session management
     dependencies:
-      - "4"
+      - "5.4"
 
   - id: "7"
     content: Implement session management (create, list, get, delete sessions) (TDD Green)
@@ -115,6 +162,16 @@ todos:
     dependencies:
       - "13"
 
+  - id: "14.5"
+    content: Freeze API contracts - generate TypeScript types from OpenAPI schema, version lock
+    status: pending
+    activeForm: Freezing API contracts
+    dependencies:
+      - "14"
+    notes: |
+      Generate TypeScript types using openapi-typescript or similar
+      Prevents frontend/backend drift during parallel development
+
   # Phase 3: State Adapter Layer (Extract from Streamlit)
   - id: "15"
     content: Write failing tests for ConversationManager (transcript, messages, state) (TDD Red)
@@ -130,8 +187,12 @@ todos:
     dependencies:
       - "15"
     notes: |
-      Extract from Ask_Questions.py lines 231-296 (lifecycle management)
-      and lines 1537-1702 (state machine)
+      Extract from Ask_Questions.py:
+      - normalize_query() (line 141-158)
+      - canonicalize_scope() (line 160-200)
+      - remember_run() (lifecycle management, lines 231-296)
+      - cleanup_old_results() (LRU eviction)
+      - State machine logic (lines 1537-1702)
 
   - id: "17"
     content: Run tests for ConversationManager and fix quality issues (TDD Refactor)
@@ -179,7 +240,10 @@ todos:
     dependencies:
       - "21"
     notes: |
-      Reuse src/clinical_analytics/ui/components/question_engine.py
+      Wrap src/clinical_analytics/ui/components/question_engine.py:
+      - QuestionEngine.parse_query() - intent extraction
+      - QuestionEngine.execute_with_timeout() - analysis execution
+      - Reuse AnalysisContext, AnalysisIntent types
 
   - id: "23"
     content: Run tests for QueryService and fix quality issues (TDD Refactor)
@@ -213,14 +277,23 @@ todos:
 
   # Phase 5: Frontend Core Components
   - id: "27"
-    content: Create conversation list component (shows all sessions sorted by recency)
+    content: Create conversation list component (Model after claude-run SessionList: search, filter, sort)
     status: pending
     activeForm: Creating conversation list component
     dependencies:
       - "5"
-      - "7"
+      - "14.5"
     notes: |
-      Similar to claude-run session list with search/filter
+      Follow claude-run patterns for session browsing
+
+  - id: "27a"
+    content: Write Jest tests for ConversationList component (TDD)
+    status: pending
+    activeForm: Writing ConversationList tests
+    dependencies:
+      - "27"
+    notes: |
+      Test: rendering, search, filter, sort, session selection
 
   - id: "28"
     content: Create chat interface component (message rendering, input, SSE streaming)
@@ -228,9 +301,18 @@ todos:
     activeForm: Creating chat interface component
     dependencies:
       - "5"
-      - "13"
+      - "14.5"
     notes: |
       Reuse rendering logic from Ask_Questions.py render_chat(), render_result()
+
+  - id: "28a"
+    content: Write Jest tests for ChatInterface component (TDD)
+    status: pending
+    activeForm: Writing ChatInterface tests
+    dependencies:
+      - "28"
+    notes: |
+      Test: message rendering, user input, SSE streaming, error states
 
   - id: "29"
     content: Create dataset selector component (dropdown with upload option)
@@ -238,42 +320,111 @@ todos:
     activeForm: Creating dataset selector component
     dependencies:
       - "5"
-      - "10"
+      - "14.5"
     notes: |
       Similar to existing dataset_loader.py but in React
 
+  - id: "29a"
+    content: Write Jest tests for DatasetSelector component (TDD)
+    status: pending
+    activeForm: Writing DatasetSelector tests
+    dependencies:
+      - "29"
+    notes: |
+      Test: dropdown rendering, dataset selection, upload trigger
+
   - id: "30"
-    content: Create result renderers (descriptive, comparison, predictor, survival, etc.)
+    content: Create result renderers (descriptive, comparison, predictor, survival, relationship, count)
     status: pending
     activeForm: Creating result renderers
     dependencies:
-      - "28"
+      - "28a"
     notes: |
-      Port from Ask_Questions.py:
-      - render_descriptive_analysis()
-      - render_comparison_analysis()
-      - render_predictor_analysis()
-      - render_survival_analysis()
-      - render_relationship_analysis()
-      - render_count_analysis()
+      Port from Ask_Questions.py with Recharts for charts:
+      - DescriptiveResults: stats summary
+      - ComparisonResults: t-test/ANOVA/chi-square
+      - PredictorResults: logistic regression, odds ratios
+      - SurvivalResults: Kaplan-Meier curves (Recharts LineChart)
+      - RelationshipResults: correlation heatmap (custom component)
+      - CountResults: grouped counts
+
+  - id: "30a"
+    content: Write Jest tests for DescriptiveResults renderer (TDD)
+    status: pending
+    activeForm: Writing DescriptiveResults tests
+    dependencies:
+      - "30"
+
+  - id: "30b"
+    content: Write Jest tests for ComparisonResults renderer (TDD)
+    status: pending
+    activeForm: Writing ComparisonResults tests
+    dependencies:
+      - "30"
+
+  - id: "30c"
+    content: Write Jest tests for PredictorResults renderer (TDD)
+    status: pending
+    activeForm: Writing PredictorResults tests
+    dependencies:
+      - "30"
+
+  - id: "30d"
+    content: Write Jest tests for SurvivalResults renderer (TDD)
+    status: pending
+    activeForm: Writing SurvivalResults tests
+    dependencies:
+      - "30"
+
+  - id: "30e"
+    content: Write Jest tests for RelationshipResults renderer (TDD)
+    status: pending
+    activeForm: Writing RelationshipResults tests
+    dependencies:
+      - "30"
+
+  - id: "30f"
+    content: Write Jest tests for CountResults renderer (TDD)
+    status: pending
+    activeForm: Writing CountResults tests
+    dependencies:
+      - "30"
 
   - id: "31"
     content: Create collapsible sections component (for Trust UI, follow-ups, interpretations)
     status: pending
     activeForm: Creating collapsible sections
     dependencies:
-      - "28"
+      - "28a"
     notes: |
       Similar to claude-run collapsible tool calls
+
+  - id: "31a"
+    content: Write Jest tests for CollapsibleSection component (TDD)
+    status: pending
+    activeForm: Writing CollapsibleSection tests
+    dependencies:
+      - "31"
+    notes: |
+      Test: expand/collapse, nested sections, accessibility
 
   - id: "32"
     content: Create variable selection UI component (for low-confidence queries)
     status: pending
     activeForm: Creating variable selection UI
     dependencies:
-      - "28"
+      - "28a"
     notes: |
       Port from Ask_Questions.py variable selection logic
+
+  - id: "32a"
+    content: Write Jest tests for VariableSelection component (TDD)
+    status: pending
+    activeForm: Writing VariableSelection tests
+    dependencies:
+      - "32"
+    notes: |
+      Test: dropdown population, selection handling, auto-execution
 
   # Phase 6: Frontend Features & Polish
   - id: "33"
@@ -281,8 +432,17 @@ todos:
     status: pending
     activeForm: Implementing SSE streaming
     dependencies:
-      - "28"
+      - "32a"
       - "13"
+
+  - id: "33.5"
+    content: Write tests for SSE error scenarios (connection drop, timeout, malformed events)
+    status: pending
+    activeForm: Writing SSE error tests
+    dependencies:
+      - "33"
+    notes: |
+      Test: network disconnect, server timeout, partial results, reconnection
 
   - id: "34"
     content: Implement dark mode toggle and theme persistence
@@ -357,21 +517,42 @@ todos:
       Port from components/variable_mapper.py
 
   # Phase 8: Integration & Migration
-  - id: "43"
-    content: Create database schema for session persistence (SQLite for MVP)
+  - id: "43a"
+    content: Define database contracts (Pydantic schemas for Session, Message, CachedResult)
     status: pending
-    activeForm: Creating database schema
+    activeForm: Defining database contracts
     dependencies:
       - "7"
     notes: |
-      Store sessions, conversations, cached results
+      Pydantic models defining exact schema for:
+      - Session (id, user_id, dataset_id, created_at, updated_at)
+      - Message (id, session_id, role, content, run_key, status, created_at)
+      - CachedResult (id, session_id, query_hash, result_data, created_at, ttl)
+
+  - id: "43b"
+    content: Write Alembic migration with schema validation tests (TDD Red)
+    status: pending
+    activeForm: Writing Alembic migration
+    dependencies:
+      - "43a"
+    notes: |
+      Create initial migration, test schema creation
+
+  - id: "43c"
+    content: Verify contract compliance (serialize/deserialize all types) (TDD Green)
+    status: pending
+    activeForm: Verifying contract compliance
+    dependencies:
+      - "43b"
+    notes: |
+      Test that all Pydantic models can be stored and retrieved from DB
 
   - id: "44"
     content: Write failing tests for persistence layer (TDD Red)
     status: pending
     activeForm: Writing tests for persistence
     dependencies:
-      - "43"
+      - "43c"
 
   - id: "45"
     content: Implement persistence layer (session CRUD with SQLAlchemy) (TDD Green)
@@ -396,13 +577,15 @@ todos:
       - "45"
 
   - id: "48"
-    content: Create migration script to convert existing session_state data to new format
+    content: Document session migration strategy - clean slate launch, Streamlit sessions archived read-only
     status: pending
-    activeForm: Creating migration script
+    activeForm: Documenting session migration
     dependencies:
       - "47"
     notes: |
-      Optional: for users with existing Streamlit sessions
+      Explicitly document: "Migration launches with empty history, existing Streamlit
+      sessions archived read-only in archive/streamlit_sessions/"
+      Alternative: Build migration script if user feedback demands it
 
   # Phase 9: API Documentation & Testing
   - id: "49"
@@ -421,12 +604,22 @@ todos:
       - "23"
       - "26"
 
+  - id: "50.5"
+    content: Write performance tests for query API (P95 latency <500ms for simple queries)
+    status: pending
+    activeForm: Writing performance tests
+    dependencies:
+      - "50"
+    notes: |
+      Test query execution latency with realistic data volumes
+      Verify API response times meet SLA
+
   - id: "51"
     content: Run full test suite and fix quality issues (make check-fast)
     status: pending
     activeForm: Running full test suite
     dependencies:
-      - "50"
+      - "50.5"
 
   # Phase 10: Deployment & Documentation
   - id: "52"
@@ -437,12 +630,24 @@ todos:
       - "3"
       - "5"
 
+  - id: "52.5"
+    content: Add frontend test targets to Makefile (make test-web, make test-e2e, make test-web-watch)
+    status: pending
+    activeForm: Adding frontend test targets
+    dependencies:
+      - "52"
+    notes: |
+      - make test-web: Run Jest unit tests
+      - make test-e2e: Run Playwright E2E tests
+      - make test-web-watch: Jest watch mode
+      - Integration with make check-fast (run both backend + frontend fast tests)
+
   - id: "53"
     content: Create Docker Compose setup for local development
     status: pending
     activeForm: Creating Docker Compose setup
     dependencies:
-      - "52"
+      - "52.5"
 
   - id: "54"
     content: Update README.md with new setup instructions and architecture diagram
@@ -478,11 +683,16 @@ todos:
       - "51"
 
   - id: "58"
-    content: Verify all tests passing (make test-core, make test-ui, make test-analysis)
+    content: Verify all tests passing, run type-check, verify no new security vulnerabilities
     status: pending
-    activeForm: Verifying all tests pass
+    activeForm: Verifying all quality gates
     dependencies:
       - "57"
+    notes: |
+      - Run: make test-core, make test-ui, make test-analysis, make test-web
+      - Run: make type-check (or mypy) and resolve all errors
+      - Run: dependency audit (pip-audit or safety)
+      - All quality gates must pass before commit
 
   - id: "59"
     content: Commit changes with comprehensive commit message
@@ -636,6 +846,17 @@ web/
 - **Backend**: Redis (production) or in-memory dict (dev) for result cache
 - **Frontend**: React Query for API caching and optimistic updates
 
+### 7. **Plotting Strategy**
+- **Why**: Separation of concerns, responsive rendering, no image bandwidth overhead
+- **Implementation**:
+  - Backend generates plot data as JSON (e.g., `{time: [], survival: [], ci_lower: [], ci_upper: []}`)
+  - Frontend renders with Recharts components
+  - Survival curves: Backend returns time-series data, frontend renders with LineChart
+  - Heatmaps: Backend returns `{matrix: [][], labels: []}`, frontend renders with custom heatmap component
+  - Correlation plots: Backend returns correlation coefficients, frontend creates interactive visualizations
+- **Alternative considered**: Backend PNG generation (poor UX, not responsive), matplotlib in browser (not possible)
+- **Trade-offs**: More frontend code for rendering, but gains interactivity, responsiveness, and customization
+
 ## Migration Strategy
 
 ### Phase 1: Parallel Development
@@ -650,14 +871,26 @@ web/
 4. Complete upload and variable mapping flow
 
 ### Phase 3: Cutover
-1. Update entry point to use new UI
-2. Archive Streamlit code to `archive/streamlit_ui/`
-3. Update documentation and setup instructions
+1. Deploy with feature flag `ENABLE_NEW_UI=true` (default: false for safety)
+2. Both UIs available during transition (parallel deployment)
+3. Monitor for critical bugs (rollback if >3 critical bugs in 48h)
+4. Archive Streamlit code to `archive/streamlit_ui/` after stabilization
+5. Update documentation and setup instructions
+
+**Rollback Plan**:
+- **Trigger**: >3 critical bugs within 48 hours of cutover
+- **Process**:
+  1. Set `ENABLE_NEW_UI=false` environment variable
+  2. Restart application (reverts to Streamlit UI)
+  3. Investigate and fix issues in new UI
+  4. Re-deploy new UI when ready
+- **Data Safety**: Sessions stored in SQLite during new UI usage, Streamlit session files remain read-only
 
 ### Phase 4: Cleanup
 1. Remove Streamlit dependencies from pyproject.toml
 2. Archive unused Streamlit-specific tests
 3. Simplify Makefile (remove streamlit run commands)
+4. Remove feature flag after 2 weeks of stable operation
 
 ## Testing Strategy
 
