@@ -84,7 +84,14 @@ Execution Sequence (MANDATORY)
    - Update TODO to completed
    - **Before switching assistants**: Edit checkpoint file manually with conversation context
 
-9. HITL Safety Gate (if triggered)
+9. Final Quality Gate & PR Preparation
+   - Run: make test-fast (confirms no regressions across entire codebase)
+   - Verify all fast tests pass
+   - Push changes: git push
+   - Open PR (or provide PR-ready summary if manual PR creation preferred)
+   - Update TODO to completed
+
+10. HITL Safety Gate (if triggered)
    If rule 107-hitl-safety is triggered:
    - Halt execution
    - Output C.O.R.E. format only (per rule 230)
@@ -142,6 +149,8 @@ Before claiming complete, verify:
 - [ ] Zero NEW linting errors in changed files
 - [ ] Module tests passing
 - [ ] Changes committed with tests
+- [ ] make test-fast executed (final quality gate)
+- [ ] Changes pushed to remote
 - [ ] All TODOs marked completed
 - [ ] Checkpoint created and manually updated with conversation context (if switching assistants)
 
