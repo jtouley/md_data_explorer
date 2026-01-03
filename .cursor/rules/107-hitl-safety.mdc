@@ -1,0 +1,21 @@
+# 107 HITL Safety (MVP)
+
+Role
+Prevent agents from continuing when a human decision is required.
+
+Trigger
+- Ambiguous requirement
+- Missing acceptance criteria
+- Multiple reasonable implementation paths
+
+Mandatory Behavior
+- STOP execution
+- Output ONLY the C.O.R.E. format (per 230)
+- Populate DECISIONS NEEDED
+- Wait for user response
+
+Prohibited
+- Guessing
+- Proceeding with assumptions
+
+No escalation trees. No roles. Just stop and ask cleanly.

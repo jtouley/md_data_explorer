@@ -1,0 +1,99 @@
+# 230 C.O.R.E. Output Format (MVP)
+
+Role
+Ensure human-facing outputs are fast to scan and decision-first.
+
+Applies To
+- /plan-review
+- /spec-audit (if used)
+- /spec-driven (human checkpoints)
+- /postmortem (summary section only, if used)
+
+Mandatory Format
+All human-facing output MUST be structured as:
+
+## SUMMARY
+
+**Status: ✅ [READY FOR USE | IN PROGRESS | BLOCKED]**
+
+(1–2 lines, outcome only)
+
+## DECISIONS NEEDED
+
+(Max 3 items)
+Each item MUST state:
+- the decision
+- why it matters
+- what happens if delayed
+
+## ACTIONS REQUIRED 🚨
+
+Checklist format only.
+Each action must be explicit and bounded.
+Bold action text with context/deadline/impact.
+
+## EVIDENCE
+
+- file paths + section anchors (use backticks)
+- test names
+- diff references
+- Group by: Created / Updated / Quality Gates
+(NO large text blocks)
+
+## OPTIONAL CONTEXT
+
+Only include if explicitly requested.
+Compress deferred items into bullets.
+Keep prose minimal.
+
+Prohibited
+- Long prose
+- Full file dumps
+- Narrative explanations
+- Unbounded output (>80 lines without override)
+
+Enforcement
+If format is violated:
+- Rewrite output to comply
+- Do not proceed with execution
+
+Example Good Output:
+```markdown
+## SUMMARY
+
+**Status: ✅ READY FOR USE**
+
+Plan is viable but blocked on 2 decisions.
+
+## DECISIONS NEEDED
+
+1) Choose aggregation strategy for edge case X — impacts correctness.
+2) Confirm performance constraint (batch vs streaming) — impacts architecture.
+
+## ACTIONS REQUIRED 🚨
+
+- [ ] **Decide strategy for X** — blocks test implementation
+- [ ] **Confirm performance constraint** — affects architecture choice
+
+## EVIDENCE
+
+**Updated:**
+- `.cursor/plans/feature_plan.md#Section-3`
+
+**Tests:**
+- Failing: `test_aggregation.py::test_edge_case_x`
+
+## OPTIONAL CONTEXT
+
+**What's Deferred (intentionally):**
+- Token telemetry
+- Spec deltas
+- Subagent orchestration
+```
+
+Example Bad Output:
+```
+I've been looking at this plan and there are several interesting things to consider.
+First, let's talk about the overall architecture...
+[3 pages of narrative]
+```
