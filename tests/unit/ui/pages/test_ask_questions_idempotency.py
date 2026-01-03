@@ -27,15 +27,28 @@ def test_idempotency_same_query_uses_cached_result(
 
     Test name follows: test_unit_scenario_expectedBehavior
     """
+    from datetime import datetime
+
+    from clinical_analytics.core.result_cache import CachedResult, ResultCache
+
     # Arrange: Set up test data
     dataset_version = "test_dataset_v1"
     query_text = "describe all patients"
     run_key = _generate_test_run_key(dataset_version, query_text)
 
-    # Pre-populate session_state with cached result
-    result_key = f"analysis_result:{dataset_version}:{run_key}"
+    # Pre-populate ResultCache with cached result (Milestone A: State Extraction)
     cached_result = {"type": "descriptive", "row_count": 5, "column_count": 4}
-    mock_session_state[result_key] = cached_result
+    cache = ResultCache(max_size=50)
+    cache.put(
+        CachedResult(
+            run_key=run_key,
+            query=query_text,
+            result=cached_result,
+            timestamp=datetime.now(),
+            dataset_version=dataset_version,
+        )
+    )
+    mock_session_state["result_cache"] = cache
 
     # Mock Streamlit functions - patch st.session_state and st.spinner on the module
     spinner_context = Mock()
@@ -45,9 +58,9 @@ def test_idempotency_same_query_uses_cached_result(
     monkeypatch.setattr(ask_questions_page.st, "session_state", mock_session_state)
     monkeypatch.setattr(ask_questions_page.st, "spinner", Mock(return_value=spinner_context))
     with patch.object(ask_questions_page, "render_analysis_by_type") as mock_render:
-        # Act: Execute analysis
+        # Act: Execute analysis (with execution_result=None to test cache lookup)
         ask_questions_page.execute_analysis_with_idempotency(
-            sample_cohort, sample_context, run_key, dataset_version, query_text
+            sample_cohort, sample_context, run_key, dataset_version, query_text, execution_result=None
         )
 
         # Assert: Used cached result (render called once with cached data)
@@ -69,6 +82,8 @@ def test_idempotency_different_query_computes_new_result(
 
     Test name: test_unit_scenario_expectedBehavior
     """
+    from clinical_analytics.core.result_cache import ResultCache
+
     # Arrange: Set up test data with DIFFERENT query (to ensure new run_key)
     # Clear mock_session_state to ensure clean state (fixture might be shared)
     mock_session_state.clear()
@@ -77,9 +92,12 @@ def test_idempotency_different_query_computes_new_result(
     sample_context.research_question = query_text
     run_key = _generate_test_run_key(dataset_version, query_text)
 
+    # Initialize ResultCache (Milestone A: State Extraction)
+    cache = ResultCache(max_size=50)
+    mock_session_state["result_cache"] = cache
+
     # Ensure this run_key is NOT in cache
-    result_key = f"analysis_result:{dataset_version}:{run_key}"
-    assert result_key not in mock_session_state
+    assert cache.get(run_key, dataset_version) is None
 
     # Create mock execution_result (from semantic_layer.execute_query_plan)
     execution_result = {"success": True, "result_df": Mock(), "run_key": run_key}
@@ -105,24 +123,23 @@ def test_idempotency_different_query_computes_new_result(
     with patch.object(ask_questions_page.st, "session_state", mock_session_state):
         with patch.object(ask_questions_page.st, "spinner", mock_spinner):
             with patch.object(ask_questions_page, "render_analysis_by_type") as mock_render:
-                with patch.object(ask_questions_page, "remember_run"):
-                    # Act: Execute analysis with required parameters
-                    ask_questions_page.execute_analysis_with_idempotency(
-                        sample_cohort,
-                        sample_context,
-                        run_key,
-                        dataset_version,
-                        query_text,
-                        execution_result=execution_result,
-                        semantic_layer=mock_semantic_layer,
-                    )
+                # Act: Execute analysis with required parameters
+                ask_questions_page.execute_analysis_with_idempotency(
+                    sample_cohort,
+                    sample_context,
+                    run_key,
+                    dataset_version,
+                    query_text,
+                    execution_result=execution_result,
+                    semantic_layer=mock_semantic_layer,
+                )
 
-                    # Assert: Result stored (idempotency works)
-                    assert result_key in mock_session_state
-                    stored_result = mock_session_state[result_key]
-                    assert stored_result["type"] == formatted_result["type"]
-                    assert stored_result["row_count"] == formatted_result["row_count"]
-                    mock_render.assert_called_once()
+                # Assert: Result stored in ResultCache (idempotency works)
+                cached_result = cache.get(run_key, dataset_version)
+                assert cached_result is not None
+                assert cached_result.result["type"] == formatted_result["type"]
+                assert cached_result.result["row_count"] == formatted_result["row_count"]
+                mock_render.assert_called_once()
 
 
 def test_idempotency_result_persists_across_reruns(
@@ -202,12 +219,17 @@ def test_idempotency_result_stored_with_dataset_scoped_key(
 
     Test name: test_unit_scenario_expectedBehavior
     """
+    from clinical_analytics.core.result_cache import ResultCache
+
     # Arrange
     dataset_version = "test_dataset_v3"
     query_text = "analyze patient outcomes"
     sample_context.research_question = query_text
     run_key = _generate_test_run_key(dataset_version, query_text)
-    result_key = f"analysis_result:{dataset_version}:{run_key}"
+
+    # Initialize ResultCache (Milestone A: State Extraction)
+    cache = ResultCache(max_size=50)
+    mock_session_state["result_cache"] = cache
 
     # Create mock execution_result and semantic_layer
     execution_result = {"success": True, "result_df": Mock(), "run_key": run_key}
@@ -231,25 +253,20 @@ def test_idempotency_result_stored_with_dataset_scoped_key(
     with patch.object(ask_questions_page.st, "session_state", mock_session_state):
         with patch.object(ask_questions_page.st, "spinner", mock_spinner):
             with patch.object(ask_questions_page, "render_analysis_by_type"):
-                with patch.object(ask_questions_page, "remember_run"):
-                    # Act: Execute analysis
-                    ask_questions_page.execute_analysis_with_idempotency(
-                        sample_cohort,
-                        sample_context,
-                        run_key,
-                        dataset_version,
-                        query_text,
-                        execution_result=execution_result,
-                        semantic_layer=mock_semantic_layer,
-                    )
+                # Act: Execute analysis
+                ask_questions_page.execute_analysis_with_idempotency(
+                    sample_cohort,
+                    sample_context,
+                    run_key,
+                    dataset_version,
+                    query_text,
+                    execution_result=execution_result,
+                    semantic_layer=mock_semantic_layer,
+                )
 
-                    # Assert: Result stored with dataset-scoped key
-                    assert result_key in mock_session_state
-                    stored_result = mock_session_state[result_key]
-                    assert stored_result["type"] == formatted_result["type"]
-                    assert stored_result["row_count"] == formatted_result["row_count"]
-
-                    # Verify last_run_key also stored
-                    last_run_key = f"last_run_key:{dataset_version}"
-                    assert last_run_key in mock_session_state
-                    assert mock_session_state[last_run_key] == run_key
+                # Assert: Result stored in ResultCache with dataset-scoped key
+                cached_result = cache.get(run_key, dataset_version)
+                assert cached_result is not None
+                assert cached_result.result["type"] == formatted_result["type"]
+                assert cached_result.result["row_count"] == formatted_result["row_count"]
+                assert cached_result.dataset_version == dataset_version

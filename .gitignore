@@ -237,4 +237,4 @@ data/uploads/metadata/
 data/uploads/parquet/
 data/uploads/raw/
 data/uploads/metadata/
-data/uploads/parquet/
+data/uploads/parquet/.vscode/settings.json

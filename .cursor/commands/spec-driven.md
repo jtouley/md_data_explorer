@@ -40,8 +40,10 @@ Execution Sequence (MANDATORY)
    - Use shared fixtures from conftest.py
 
 3. Run Test to Verify Failure
-   - Command: For single test during TDD, use `uv run pytest tests/.../test_file.py::TestClass::test_method -xvs`
-   - For full module: `make test-[module]`
+   - For RED phase verification only: Direct pytest is acceptable for quick feedback
+   - Command: uv run pytest tests/.../test_file.py::TestClass::test_method -xvs
+   - OR if Makefile supports PYTEST_ARGS: make test-[module] PYTEST_ARGS="tests/.../test_file.py -xvs"
+   - **Always use uv run** for Python commands (never use python or pytest directly)
    - Confirm it fails for the RIGHT reason
    - NEVER skip this step
 
@@ -50,7 +52,9 @@ Execution Sequence (MANDATORY)
    - Keep it simple
 
 5. Run Test to Verify Pass
-   - Same command as step 3
+   - Use Makefile command: make test-[module] PYTEST_ARGS="tests/.../test_file.py -xvs" (if supported)
+   - OR direct pytest: uv run pytest tests/.../test_file.py::TestClass::test_method -xvs
+   - **Always use uv run** for Python commands (never use python or pytest directly)
    - Confirm test passes
    - Update TODO
 
@@ -62,7 +66,9 @@ Execution Sequence (MANDATORY)
    - Update TODO
 
 7. Run Module Test Suite
-   - Command: make test-[module]
+   - **Before commit**: Full suite required - Command: make test-[module]
+   - **During development**: Subset acceptable for faster iteration (e.g., specific test files)
+   - **Critical**: Full suite must pass before committing to catch regressions
    - Verify no regressions
    - All tests must pass
    - Update TODO
@@ -80,7 +86,15 @@ Execution Sequence (MANDATORY)
    - Update TODO to completed
    - **Before switching assistants**: Edit checkpoint file manually with conversation context
 
-9. HITL Safety Gate (if triggered)
+9. Final Quality Gate & PR Preparation
+   - Run: make test-fast (confirms no regressions across entire codebase)
+   - Verify all fast tests pass
+   - Push changes: git push
+   - Open PR using GitHub CLI: gh pr create --title "[feat/fix]: [description]" --body "[PR description]"
+   - OR if manual PR creation: Provide PR-ready summary with title and description
+   - Update TODO to completed
+
+10. HITL Safety Gate (if triggered)
    If rule 107-hitl-safety is triggered:
    - Halt execution
    - Output C.O.R.E. format only (per rule 230)
@@ -138,6 +152,8 @@ Before claiming complete, verify:
 - [ ] Zero NEW linting errors in changed files
 - [ ] Module tests passing
 - [ ] Changes committed with tests
+- [ ] make test-fast executed (final quality gate)
+- [ ] Changes pushed to remote
 - [ ] All TODOs marked completed
 - [ ] Checkpoint created and manually updated with conversation context (if switching assistants)
 
@@ -145,15 +161,19 @@ Critical Rules
 
 ❌ NEVER write code before tests
 ❌ NEVER skip running tests after writing them
-❌ NEVER run pytest/ruff/mypy directly (use Makefile)
+❌ NEVER run pytest/ruff/mypy directly (use Makefile) - EXCEPTION: Red phase verification allows direct pytest
+❌ NEVER run Python commands directly - ALWAYS use uv run (e.g., uv run python, uv run pytest)
+❌ NEVER use pip or python directly - ALWAYS use uv
 ❌ NEVER accumulate quality issues
 ❌ NEVER commit without tests
 ❌ NEVER skip TODO updates
 
 ✅ ALWAYS write test first
-✅ ALWAYS run test immediately (Red phase)
-✅ ALWAYS verify test passes (Green phase)
-✅ ALWAYS use Makefile commands
+✅ ALWAYS run test immediately (Red phase) - direct pytest OK for quick verification
+✅ ALWAYS verify test passes (Green phase) - prefer Makefile, direct pytest acceptable
+✅ ALWAYS use Makefile commands for green phase and full suite runs
+✅ ALWAYS use uv for Python commands (uv run python, uv run pytest, etc.)
+✅ ALWAYS use gh CLI for PR creation (gh pr create)
 ✅ ALWAYS fix quality issues immediately
 ✅ ALWAYS commit implementation + tests together
 ✅ ALWAYS update TODOs
@@ -241,7 +261,7 @@ Agent: [Follows complete TDD workflow as specified above]
 Enforcement
 
 If you catch yourself:
-- Running pytest directly → STOP, use make test-[module]
+- Running pytest directly (outside red phase) → STOP, use make test-[module] for green phase and full suite
 - Writing code before tests → STOP, write test first
 - Skipping test runs → STOP, run tests now
 - Accumulating lint errors → STOP, run make lint-fix
