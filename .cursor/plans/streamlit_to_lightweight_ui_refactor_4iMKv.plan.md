@@ -1,0 +1,772 @@
+---
+name: Streamlit to Lightweight UI Refactor
+overview: |
+  Refactor the clinical analytics platform UI away from Streamlit to a lightweight,
+  modern web interface similar to claude-run. Replace Streamlit's state management with
+  a proper backend API and a React-based frontend with SSE streaming for real-time updates.
+
+  This migration will provide:
+  - Better performance and scalability
+  - Modern, responsive UI with dark mode
+  - Session persistence and history browsing
+  - Collapsible results and better conversation UX
+  - Separation of concerns (API backend + web frontend)
+
+  Architecture: FastAPI backend (Python) + Next.js frontend (TypeScript/React)
+
+todos:
+  # Phase 1: Architecture Design & Setup
+  - id: "1"
+    content: Create architecture design document (API endpoints, state management, data flow)
+    status: pending
+    activeForm: Creating architecture design document
+
+  - id: "2"
+    content: Set up Next.js web frontend structure (following claude-run patterns)
+    status: pending
+    activeForm: Setting up Next.js frontend
+    dependencies:
+      - "1"
+
+  - id: "3"
+    content: Set up FastAPI backend structure (API routes, models, services)
+    status: pending
+    activeForm: Setting up FastAPI backend
+    dependencies:
+      - "1"
+
+  - id: "4"
+    content: Add dependencies to pyproject.toml (fastapi, uvicorn, pydantic v2, sse-starlette)
+    status: pending
+    activeForm: Adding backend dependencies
+    dependencies:
+      - "3"
+
+  - id: "5"
+    content: Create package.json with Next.js 15+, TypeScript, TailwindCSS dependencies
+    status: pending
+    activeForm: Creating package.json
+    dependencies:
+      - "2"
+
+  # Phase 2: Core Backend API (TDD)
+  - id: "6"
+    content: Write failing tests for session management API endpoints (TDD Red)
+    status: pending
+    activeForm: Writing tests for session management
+    dependencies:
+      - "4"
+
+  - id: "7"
+    content: Implement session management (create, list, get, delete sessions) (TDD Green)
+    status: pending
+    activeForm: Implementing session management
+    dependencies:
+      - "6"
+
+  - id: "8"
+    content: Run tests for session management and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring session management
+    dependencies:
+      - "7"
+
+  - id: "9"
+    content: Write failing tests for dataset management API endpoints (TDD Red)
+    status: pending
+    activeForm: Writing tests for dataset management
+    dependencies:
+      - "4"
+
+  - id: "10"
+    content: Implement dataset management (list, upload, get metadata) (TDD Green)
+    status: pending
+    activeForm: Implementing dataset management
+    dependencies:
+      - "9"
+
+  - id: "11"
+    content: Run tests for dataset management and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring dataset management
+    dependencies:
+      - "10"
+
+  - id: "12"
+    content: Write failing tests for query/analysis API endpoints (TDD Red)
+    status: pending
+    activeForm: Writing tests for query API
+    dependencies:
+      - "4"
+      - "7"
+      - "10"
+
+  - id: "13"
+    content: Implement query API (parse NL query, execute analysis, stream results via SSE) (TDD Green)
+    status: pending
+    activeForm: Implementing query API
+    dependencies:
+      - "12"
+
+  - id: "14"
+    content: Run tests for query API and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring query API
+    dependencies:
+      - "13"
+
+  # Phase 3: State Adapter Layer (Extract from Streamlit)
+  - id: "15"
+    content: Write failing tests for ConversationManager (transcript, messages, state) (TDD Red)
+    status: pending
+    activeForm: Writing tests for ConversationManager
+    dependencies:
+      - "7"
+
+  - id: "16"
+    content: Create ConversationManager class (extract from session_state logic) (TDD Green)
+    status: pending
+    activeForm: Creating ConversationManager
+    dependencies:
+      - "15"
+    notes: |
+      Extract from Ask_Questions.py lines 231-296 (lifecycle management)
+      and lines 1537-1702 (state machine)
+
+  - id: "17"
+    content: Run tests for ConversationManager and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring ConversationManager
+    dependencies:
+      - "16"
+
+  - id: "18"
+    content: Write failing tests for ResultCache (LRU eviction, serialization) (TDD Red)
+    status: pending
+    activeForm: Writing tests for ResultCache
+    dependencies:
+      - "7"
+
+  - id: "19"
+    content: Create ResultCache class (extract from session_state caching) (TDD Green)
+    status: pending
+    activeForm: Creating ResultCache
+    dependencies:
+      - "18"
+    notes: |
+      Extract from Ask_Questions.py remember_run(), cleanup_old_results()
+
+  - id: "20"
+    content: Run tests for ResultCache and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring ResultCache
+    dependencies:
+      - "19"
+
+  # Phase 4: API Services (Connect Core Logic)
+  - id: "21"
+    content: Write failing tests for QueryService (wraps QuestionEngine) (TDD Red)
+    status: pending
+    activeForm: Writing tests for QueryService
+    dependencies:
+      - "14"
+      - "16"
+
+  - id: "22"
+    content: Create QueryService class (wraps existing question_engine.py logic) (TDD Green)
+    status: pending
+    activeForm: Creating QueryService
+    dependencies:
+      - "21"
+    notes: |
+      Reuse src/clinical_analytics/ui/components/question_engine.py
+
+  - id: "23"
+    content: Run tests for QueryService and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring QueryService
+    dependencies:
+      - "22"
+
+  - id: "24"
+    content: Write failing tests for InterpretationService (wraps result_interpreter) (TDD Red)
+    status: pending
+    activeForm: Writing tests for InterpretationService
+    dependencies:
+      - "14"
+
+  - id: "25"
+    content: Create InterpretationService (wraps existing result_interpreter.py logic) (TDD Green)
+    status: pending
+    activeForm: Creating InterpretationService
+    dependencies:
+      - "24"
+    notes: |
+      Reuse src/clinical_analytics/ui/components/result_interpreter.py
+
+  - id: "26"
+    content: Run tests for InterpretationService and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring InterpretationService
+    dependencies:
+      - "25"
+
+  # Phase 5: Frontend Core Components
+  - id: "27"
+    content: Create conversation list component (shows all sessions sorted by recency)
+    status: pending
+    activeForm: Creating conversation list component
+    dependencies:
+      - "5"
+      - "7"
+    notes: |
+      Similar to claude-run session list with search/filter
+
+  - id: "28"
+    content: Create chat interface component (message rendering, input, SSE streaming)
+    status: pending
+    activeForm: Creating chat interface component
+    dependencies:
+      - "5"
+      - "13"
+    notes: |
+      Reuse rendering logic from Ask_Questions.py render_chat(), render_result()
+
+  - id: "29"
+    content: Create dataset selector component (dropdown with upload option)
+    status: pending
+    activeForm: Creating dataset selector component
+    dependencies:
+      - "5"
+      - "10"
+    notes: |
+      Similar to existing dataset_loader.py but in React
+
+  - id: "30"
+    content: Create result renderers (descriptive, comparison, predictor, survival, etc.)
+    status: pending
+    activeForm: Creating result renderers
+    dependencies:
+      - "28"
+    notes: |
+      Port from Ask_Questions.py:
+      - render_descriptive_analysis()
+      - render_comparison_analysis()
+      - render_predictor_analysis()
+      - render_survival_analysis()
+      - render_relationship_analysis()
+      - render_count_analysis()
+
+  - id: "31"
+    content: Create collapsible sections component (for Trust UI, follow-ups, interpretations)
+    status: pending
+    activeForm: Creating collapsible sections
+    dependencies:
+      - "28"
+    notes: |
+      Similar to claude-run collapsible tool calls
+
+  - id: "32"
+    content: Create variable selection UI component (for low-confidence queries)
+    status: pending
+    activeForm: Creating variable selection UI
+    dependencies:
+      - "28"
+    notes: |
+      Port from Ask_Questions.py variable selection logic
+
+  # Phase 6: Frontend Features & Polish
+  - id: "33"
+    content: Implement SSE streaming for live query execution updates
+    status: pending
+    activeForm: Implementing SSE streaming
+    dependencies:
+      - "28"
+      - "13"
+
+  - id: "34"
+    content: Implement dark mode toggle and theme persistence
+    status: pending
+    activeForm: Implementing dark mode
+    dependencies:
+      - "5"
+    notes: |
+      Using TailwindCSS dark mode utilities
+
+  - id: "35"
+    content: Implement session search and filtering
+    status: pending
+    activeForm: Implementing session search
+    dependencies:
+      - "27"
+
+  - id: "36"
+    content: Implement result export (CSV, JSON download buttons)
+    status: pending
+    activeForm: Implementing result export
+    dependencies:
+      - "30"
+    notes: |
+      Port from existing download_button logic in Ask_Questions.py
+
+  - id: "37"
+    content: Add loading states and error boundaries
+    status: pending
+    activeForm: Adding loading states
+    dependencies:
+      - "28"
+
+  # Phase 7: Data Upload & Validation Flow
+  - id: "38"
+    content: Write failing tests for file upload API endpoint (TDD Red)
+    status: pending
+    activeForm: Writing tests for file upload
+    dependencies:
+      - "10"
+
+  - id: "39"
+    content: Implement file upload endpoint with validation (TDD Green)
+    status: pending
+    activeForm: Implementing file upload
+    dependencies:
+      - "38"
+    notes: |
+      Reuse logic from pages/01_📤_Add_Your_Data.py
+
+  - id: "40"
+    content: Run tests for file upload and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring file upload
+    dependencies:
+      - "39"
+
+  - id: "41"
+    content: Create upload flow component (drag-drop, progress, validation feedback)
+    status: pending
+    activeForm: Creating upload flow component
+    dependencies:
+      - "39"
+
+  - id: "42"
+    content: Create variable mapping wizard component (interactive schema mapping)
+    status: pending
+    activeForm: Creating variable mapping wizard
+    dependencies:
+      - "41"
+    notes: |
+      Port from components/variable_mapper.py
+
+  # Phase 8: Integration & Migration
+  - id: "43"
+    content: Create database schema for session persistence (SQLite for MVP)
+    status: pending
+    activeForm: Creating database schema
+    dependencies:
+      - "7"
+    notes: |
+      Store sessions, conversations, cached results
+
+  - id: "44"
+    content: Write failing tests for persistence layer (TDD Red)
+    status: pending
+    activeForm: Writing tests for persistence
+    dependencies:
+      - "43"
+
+  - id: "45"
+    content: Implement persistence layer (session CRUD with SQLAlchemy) (TDD Green)
+    status: pending
+    activeForm: Implementing persistence layer
+    dependencies:
+      - "44"
+
+  - id: "46"
+    content: Run tests for persistence and fix quality issues (TDD Refactor)
+    status: pending
+    activeForm: Refactoring persistence layer
+    dependencies:
+      - "45"
+
+  - id: "47"
+    content: Integrate ConversationManager with persistence layer
+    status: pending
+    activeForm: Integrating ConversationManager with persistence
+    dependencies:
+      - "17"
+      - "45"
+
+  - id: "48"
+    content: Create migration script to convert existing session_state data to new format
+    status: pending
+    activeForm: Creating migration script
+    dependencies:
+      - "47"
+    notes: |
+      Optional: for users with existing Streamlit sessions
+
+  # Phase 9: API Documentation & Testing
+  - id: "49"
+    content: Add OpenAPI/Swagger documentation to FastAPI routes
+    status: pending
+    activeForm: Adding OpenAPI documentation
+    dependencies:
+      - "14"
+
+  - id: "50"
+    content: Write integration tests for end-to-end query flow (upload → query → results)
+    status: pending
+    activeForm: Writing integration tests
+    dependencies:
+      - "40"
+      - "23"
+      - "26"
+
+  - id: "51"
+    content: Run full test suite and fix quality issues (make check-fast)
+    status: pending
+    activeForm: Running full test suite
+    dependencies:
+      - "50"
+
+  # Phase 10: Deployment & Documentation
+  - id: "52"
+    content: Create Makefile targets for dev server (make dev-web, make dev-api)
+    status: pending
+    activeForm: Creating Makefile targets
+    dependencies:
+      - "3"
+      - "5"
+
+  - id: "53"
+    content: Create Docker Compose setup for local development
+    status: pending
+    activeForm: Creating Docker Compose setup
+    dependencies:
+      - "52"
+
+  - id: "54"
+    content: Update README.md with new setup instructions and architecture diagram
+    status: pending
+    activeForm: Updating README
+    dependencies:
+      - "53"
+
+  - id: "55"
+    content: Create ADR documenting the Streamlit → Lightweight UI migration
+    status: pending
+    activeForm: Creating ADR
+    dependencies:
+      - "54"
+    notes: |
+      Document rationale, trade-offs, and migration strategy
+
+  - id: "56"
+    content: Archive old Streamlit UI code to archive/ directory
+    status: pending
+    activeForm: Archiving Streamlit code
+    dependencies:
+      - "51"
+    notes: |
+      Keep for reference but remove from main codebase
+
+  # Phase 11: Quality Gates & Commit
+  - id: "57"
+    content: Run make format && make lint-fix on all new code
+    status: pending
+    activeForm: Running format and lint
+    dependencies:
+      - "51"
+
+  - id: "58"
+    content: Verify all tests passing (make test-core, make test-ui, make test-analysis)
+    status: pending
+    activeForm: Verifying all tests pass
+    dependencies:
+      - "57"
+
+  - id: "59"
+    content: Commit changes with comprehensive commit message
+    status: pending
+    activeForm: Committing changes
+    dependencies:
+      - "58"
+    notes: |
+      Format:
+      feat: Streamlit to Lightweight UI Refactor
+
+      - Migrate from Streamlit to FastAPI + Next.js architecture
+      - Add session persistence with SQLite
+      - Implement SSE streaming for real-time updates
+      - Create modern React-based conversation UI
+      - Port all analysis types and result renderers
+      - Add comprehensive test suite (X tests passing)
+
+      All tests passing: X/Y
+      Following TDD: Red-Green-Refactor
+
+  - id: "60"
+    content: Push to branch and create pull request
+    status: pending
+    activeForm: Pushing to branch
+    dependencies:
+      - "59"
+
+---
+
+# Streamlit to Lightweight UI Refactor Plan
+
+## Overview
+
+This plan outlines the migration from Streamlit to a modern, lightweight web interface similar to [claude-run](https://github.com/kamranahmedse/claude-run). The goal is to improve performance, scalability, and user experience while maintaining all existing functionality.
+
+## Current State Analysis
+
+### Existing Streamlit Architecture
+- **Main App**: `src/clinical_analytics/ui/app.py` - Dataset selector, legacy mode
+- **Key Pages**:
+  - `01_📤_Add_Your_Data.py` - Upload and variable mapping
+  - `03_💬_Ask_Questions.py` - Main conversational interface (2290 lines)
+  - `02_📊_Your_Dataset.py` - Dataset overview
+  - `20-24_*.py` - Legacy analysis pages (gated in V1 MVP)
+
+### Heavy Streamlit Dependencies
+- `st.session_state` - Mini state machine for workflow
+- `st.chat_message()` / `st.chat_input()` - Chat interface
+- `@st.cache_resource` - Semantic layer caching (non-picklable DuckDB/Ibis)
+- `st.rerun()` - Trigger re-execution
+- Numerous widgets (tabs, expanders, columns, metrics, dataframes, etc.)
+
+### Core Business Logic (Reusable)
+✅ **Can be extracted and reused**:
+- `components/question_engine.py` (786 lines) - Query intent inference
+- `components/result_interpreter.py` - Statistical interpretation
+- `components/trust_ui.py` - Verification and export
+- `components/dataset_loader.py` - Dataset selection logic
+- `components/variable_detector.py` - Type detection
+- `components/variable_mapper.py` - Schema mapping
+- All `src/clinical_analytics/core/` modules (semantic layer, NL engine, etc.)
+- All `src/clinical_analytics/analysis/` modules (stats, survival, compute)
+
+## Target Architecture
+
+### Backend: FastAPI (Python)
+```
+src/clinical_analytics/api/
+├── __init__.py
+├── main.py                    # FastAPI app entry point
+├── routes/
+│   ├── sessions.py            # Session management
+│   ├── datasets.py            # Dataset upload/list
+│   ├── queries.py             # NL query execution (SSE streaming)
+│   └── analysis.py            # Analysis endpoints
+├── services/
+│   ├── conversation_manager.py  # Extract from session_state logic
+│   ├── result_cache.py          # LRU caching
+│   ├── query_service.py         # Wraps QuestionEngine
+│   └── interpretation_service.py # Wraps ResultInterpreter
+├── models/
+│   ├── session.py             # Pydantic models
+│   ├── message.py
+│   ├── query.py
+│   └── result.py
+└── db/
+    ├── database.py            # SQLAlchemy setup
+    ├── models.py              # ORM models
+    └── migrations/
+```
+
+### Frontend: Next.js (TypeScript/React)
+```
+web/
+├── package.json
+├── tsconfig.json
+├── next.config.js
+├── tailwind.config.js
+├── src/
+│   ├── app/
+│   │   ├── page.tsx           # Main conversation view
+│   │   ├── layout.tsx         # Root layout with theme
+│   │   └── api/               # API proxy (optional)
+│   ├── components/
+│   │   ├── ConversationList.tsx    # Session browser (like claude-run)
+│   │   ├── ChatInterface.tsx       # Message rendering + input
+│   │   ├── DatasetSelector.tsx     # Dataset dropdown
+│   │   ├── VariableMapper.tsx      # Interactive schema mapping
+│   │   ├── ResultRenderers/
+│   │   │   ├── DescriptiveResults.tsx
+│   │   │   ├── ComparisonResults.tsx
+│   │   │   ├── PredictorResults.tsx
+│   │   │   ├── SurvivalResults.tsx
+│   │   │   ├── RelationshipResults.tsx
+│   │   │   └── CountResults.tsx
+│   │   ├── CollapsibleSection.tsx  # For Trust UI, follow-ups
+│   │   └── VariableSelection.tsx   # Low-confidence UI
+│   ├── lib/
+│   │   ├── api.ts             # API client
+│   │   ├── sse.ts             # SSE handling
+│   │   └── types.ts           # TypeScript types
+│   └── styles/
+│       └── globals.css
+└── public/
+```
+
+## Key Design Decisions
+
+### 1. **Backend Framework: FastAPI**
+- **Why**: Python-based (reuse existing logic), async support, OpenAPI docs, SSE support
+- **Alternative considered**: Flask (simpler but lacks async), Django (too heavy)
+
+### 2. **Frontend Framework: Next.js**
+- **Why**: React-based, excellent developer experience, TypeScript support, SSE-friendly
+- **Alternative considered**: Vanilla React (more setup), SvelteKit (different ecosystem)
+
+### 3. **State Management: Server-Side Sessions**
+- **Why**: Avoid Streamlit's fragile `session_state`, enable multi-tab browsing
+- **Implementation**: SQLite for MVP (easy migration to Postgres later)
+
+### 4. **Real-Time Updates: SSE (Server-Sent Events)**
+- **Why**: One-way streaming (server → client), simpler than WebSockets for this use case
+- **Usage**: Stream query execution progress, intermediate results
+
+### 5. **Styling: TailwindCSS**
+- **Why**: Utility-first, dark mode support, responsive out of box
+- **Alternative considered**: Styled Components (more verbose)
+
+### 6. **Caching Strategy**
+- **Backend**: Redis (production) or in-memory dict (dev) for result cache
+- **Frontend**: React Query for API caching and optimistic updates
+
+## Migration Strategy
+
+### Phase 1: Parallel Development
+1. Build new API alongside existing Streamlit UI
+2. Extract business logic into reusable services
+3. Create frontend components incrementally
+
+### Phase 2: Feature Parity
+1. Port all analysis types (DESCRIBE, COMPARE_GROUPS, etc.)
+2. Implement all result renderers
+3. Add Trust UI and follow-up suggestions
+4. Complete upload and variable mapping flow
+
+### Phase 3: Cutover
+1. Update entry point to use new UI
+2. Archive Streamlit code to `archive/streamlit_ui/`
+3. Update documentation and setup instructions
+
+### Phase 4: Cleanup
+1. Remove Streamlit dependencies from pyproject.toml
+2. Archive unused Streamlit-specific tests
+3. Simplify Makefile (remove streamlit run commands)
+
+## Testing Strategy
+
+### Backend Tests
+- **Unit tests**: All services, managers, and utilities
+- **Integration tests**: API endpoints with test database
+- **Fixture reuse**: Leverage existing `conftest.py` fixtures (make_semantic_layer, etc.)
+
+### Frontend Tests
+- **Component tests**: Jest + React Testing Library
+- **E2E tests**: Playwright for critical user flows
+- **Visual regression**: Chromatic or Percy (optional)
+
+### TDD Workflow (Per spec-driven.md)
+1. Write failing test (Red)
+2. Implement feature (Green)
+3. Refactor and fix quality (Refactor)
+4. Run module test suite
+5. Commit with tests
+
+## Dependencies
+
+### Backend (Add to pyproject.toml)
+```toml
+dependencies = [
+  # ... existing deps ...
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "pydantic>=2.10.0",
+  "sqlalchemy>=2.0.0",
+  "alembic>=1.14.0",         # DB migrations
+  "sse-starlette>=2.0.0",    # SSE support
+  "python-multipart>=0.0.9", # File uploads
+  "aiosqlite>=0.20.0",       # Async SQLite
+]
+```
+
+### Frontend (New package.json)
+```json
+{
+  "dependencies": {
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.2",
+    "tailwindcss": "^3.4.0",
+    "@tanstack/react-query": "^5.62.0",
+    "recharts": "^2.15.0",      // For charts
+    "eventsource-parser": "^1.1.2" // SSE parsing
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.0"
+  }
+}
+```
+
+## Risk Mitigation
+
+### Risk 1: Loss of Streamlit's Rapid Prototyping
+- **Mitigation**: Keep Streamlit code in archive for reference
+- **Benefit**: Gain maintainability, testability, and scalability
+
+### Risk 2: Learning Curve for Frontend Stack
+- **Mitigation**: Follow claude-run patterns closely, use well-documented tools
+- **Benefit**: Modern UI/UX, better performance
+
+### Risk 3: Non-Picklable Objects (DuckDB/Ibis)
+- **Mitigation**: Use FastAPI dependency injection for semantic layer instances
+- **Current**: Already handled in Streamlit with `@st.cache_resource`
+
+### Risk 4: Breaking Changes During Migration
+- **Mitigation**: TDD workflow, comprehensive integration tests
+- **Quality gate**: All existing tests must pass before cutover
+
+## Success Criteria
+
+1. ✅ All 8 Streamlit pages ported to new UI
+2. ✅ All analysis types working (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, etc.)
+3. ✅ Session persistence and browsing
+4. ✅ Real-time SSE streaming for query execution
+5. ✅ Dark mode support
+6. ✅ All existing tests passing + new tests for API/frontend
+7. ✅ Documentation updated (README, ADR)
+8. ✅ Performance >= Streamlit (faster page loads, no reruns)
+
+## Timeline Estimate
+
+- **Phase 1-2 (Setup)**: ~2-3 days
+- **Phase 3-6 (Backend)**: ~5-7 days
+- **Phase 7-9 (Frontend Core)**: ~7-10 days
+- **Phase 10-11 (Integration)**: ~3-5 days
+- **Phase 12-14 (Polish & Deploy)**: ~2-3 days
+
+**Total**: ~19-28 days (depends on scope adjustments)
+
+## References
+
+- [claude-run GitHub](https://github.com/kamranahmedse/claude-run) - UI inspiration
+- [FastAPI Docs](https://fastapi.tiangolo.com/) - Backend framework
+- [Next.js Docs](https://nextjs.org/docs) - Frontend framework
+- Current codebase analysis (from exploration agent above)
+
+## Notes
+
+- This plan follows strict TDD discipline per `spec-driven.md`
+- All Makefile commands must be used (never `pytest` directly)
+- Fixtures from `tests/conftest.py` must be reused
+- Rule of Three: Don't abstract until third instance
+- All tests must pass before commit
