@@ -7,10 +7,9 @@ Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 """
 
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ============================================================================
 # Session Management Schemas
@@ -23,9 +22,7 @@ class SessionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dataset_id: str = Field(..., description="Dataset ID to use for this session")
-    metadata: Optional[dict[str, Any]] = Field(
-        None, description="Optional client metadata (e.g., user_agent, theme)"
-    )
+    metadata: dict[str, Any] | None = Field(None, description="Optional client metadata (e.g., user_agent, theme)")
 
 
 class SessionResponse(BaseModel):
@@ -62,7 +59,7 @@ class QueryRequest(BaseModel):
     session_id: str = Field(..., description="Session ID for conversation context")
     dataset_id: str = Field(..., description="Dataset to query")
     query_text: str = Field(..., min_length=1, description="Natural language query")
-    context: Optional[dict[str, Any]] = Field(
+    context: dict[str, Any] | None = Field(
         None,
         description="Previous conversation context (e.g., previous_intent, previous_variables)",
     )
@@ -74,12 +71,8 @@ class QueryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query_id: str = Field(..., description="Unique query identifier")
-    status: Literal["processing", "completed", "failed"] = Field(
-        ..., description="Current query status"
-    )
-    stream_url: Optional[str] = Field(
-        None, description="SSE stream URL for real-time updates"
-    )
+    status: Literal["processing", "completed", "failed"] = Field(..., description="Current query status")
+    stream_url: str | None = Field(None, description="SSE stream URL for real-time updates")
 
 
 class QueryResult(BaseModel):
@@ -93,22 +86,12 @@ class QueryResult(BaseModel):
         description="Detected intent (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, etc.)",
     )
     status: Literal["completed", "failed"] = Field(..., description="Query status")
-    confidence: Optional[float] = Field(
-        None, ge=0.0, le=1.0, description="Confidence score for intent detection"
-    )
-    result_data: Optional[dict[str, Any]] = Field(
-        None, description="Query result data (structure varies by intent)"
-    )
-    interpretation: Optional[str] = Field(
-        None, description="LLM-generated interpretation of results"
-    )
-    follow_up_suggestions: list[str] = Field(
-        default_factory=list, description="Suggested follow-up questions"
-    )
-    error: Optional[str] = Field(None, description="Error message if query failed")
-    execution_time_ms: Optional[int] = Field(
-        None, description="Query execution time in milliseconds"
-    )
+    confidence: float | None = Field(None, ge=0.0, le=1.0, description="Confidence score for intent detection")
+    result_data: dict[str, Any] | None = Field(None, description="Query result data (structure varies by intent)")
+    interpretation: str | None = Field(None, description="LLM-generated interpretation of results")
+    follow_up_suggestions: list[str] = Field(default_factory=list, description="Suggested follow-up questions")
+    error: str | None = Field(None, description="Error message if query failed")
+    execution_time_ms: int | None = Field(None, description="Query execution time in milliseconds")
 
 
 # ============================================================================
@@ -126,15 +109,9 @@ class Message(BaseModel):
     role: Literal["user", "assistant"] = Field(..., description="Message sender role")
     content: str = Field(..., description="Message content")
     timestamp: datetime = Field(..., description="Message timestamp (UTC)")
-    query_id: Optional[str] = Field(
-        None, description="Associated query ID (for assistant messages)"
-    )
-    status: Literal["pending", "completed", "failed"] = Field(
-        ..., description="Message status"
-    )
-    confidence: Optional[float] = Field(
-        None, ge=0.0, le=1.0, description="Confidence score (for assistant messages)"
-    )
+    query_id: str | None = Field(None, description="Associated query ID (for assistant messages)")
+    status: Literal["pending", "completed", "failed"] = Field(..., description="Message status")
+    confidence: float | None = Field(None, ge=0.0, le=1.0, description="Confidence score (for assistant messages)")
 
 
 class ConversationHistory(BaseModel):
@@ -164,18 +141,10 @@ class DatasetInfo(BaseModel):
     cohort: str = Field(..., description="Cohort name (patient group)")
     row_count: int = Field(..., ge=0, description="Number of rows in dataset")
     column_count: int = Field(..., ge=0, description="Number of columns in dataset")
-    categorical_columns: list[str] = Field(
-        default_factory=list, description="List of categorical column names"
-    )
-    numeric_columns: list[str] = Field(
-        default_factory=list, description="List of numeric column names"
-    )
-    datetime_columns: list[str] = Field(
-        default_factory=list, description="List of datetime column names"
-    )
-    sample_preview: Optional[dict[str, Any]] = Field(
-        None, description="Sample data preview (first 5 rows as dict)"
-    )
+    categorical_columns: list[str] = Field(default_factory=list, description="List of categorical column names")
+    numeric_columns: list[str] = Field(default_factory=list, description="List of numeric column names")
+    datetime_columns: list[str] = Field(default_factory=list, description="List of datetime column names")
+    sample_preview: dict[str, Any] | None = Field(None, description="Sample data preview (first 5 rows as dict)")
 
 
 class DatasetListResponse(BaseModel):
@@ -199,13 +168,9 @@ class UploadMetadata(BaseModel):
 
     filename: str = Field(..., description="Original filename")
     file_size: int = Field(..., ge=0, description="File size in bytes")
-    file_format: Literal["csv", "xlsx", "sav"] = Field(
-        ..., description="Detected file format"
-    )
-    dataset_name: Optional[str] = Field(
-        None, description="User-provided dataset name"
-    )
-    cohort_name: Optional[str] = Field(None, description="User-provided cohort name")
+    file_format: Literal["csv", "xlsx", "sav"] = Field(..., description="Detected file format")
+    dataset_name: str | None = Field(None, description="User-provided dataset name")
+    cohort_name: str | None = Field(None, description="User-provided cohort name")
 
 
 class UploadResponse(BaseModel):
@@ -215,12 +180,8 @@ class UploadResponse(BaseModel):
 
     upload_id: str = Field(..., description="Unique upload identifier")
     dataset_id: str = Field(..., description="Created dataset identifier")
-    status: Literal["uploaded", "processing", "ready", "failed"] = Field(
-        ..., description="Upload processing status"
-    )
-    preview_url: Optional[str] = Field(
-        None, description="URL to preview uploaded data"
-    )
+    status: Literal["uploaded", "processing", "ready", "failed"] = Field(..., description="Upload processing status")
+    preview_url: str | None = Field(None, description="URL to preview uploaded data")
 
 
 class VariableMapping(BaseModel):
@@ -232,9 +193,9 @@ class VariableMapping(BaseModel):
     detected_type: Literal["categorical", "numeric", "datetime", "unknown"] = Field(
         ..., description="Auto-detected variable type"
     )
-    user_override: Optional[
-        Literal["categorical", "numeric", "datetime", "exclude"]
-    ] = Field(None, description="User-specified type override")
+    user_override: Literal["categorical", "numeric", "datetime", "exclude"] | None = Field(
+        None, description="User-specified type override"
+    )
 
 
 class VariableMappingRequest(BaseModel):
@@ -243,9 +204,7 @@ class VariableMappingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dataset_id: str = Field(..., description="Dataset identifier")
-    mappings: list[VariableMapping] = Field(
-        ..., description="List of variable mappings"
-    )
+    mappings: list[VariableMapping] = Field(..., description="List of variable mappings")
 
 
 # ============================================================================
@@ -266,9 +225,7 @@ class SSEEvent(BaseModel):
         "interpretation_ready",
     ] = Field(..., description="Event type")
     data: dict[str, Any] = Field(..., description="Event-specific data payload")
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Event timestamp (UTC)"
-    )
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp (UTC)")
 
 
 # ============================================================================
@@ -283,9 +240,5 @@ class ErrorResponse(BaseModel):
 
     error: str = Field(..., description="Error type or code")
     message: str = Field(..., description="Human-readable error message")
-    details: Optional[dict[str, Any]] = Field(
-        None, description="Additional error context"
-    )
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow, description="Error timestamp (UTC)"
-    )
+    details: dict[str, Any] | None = Field(None, description="Additional error context")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp (UTC)")

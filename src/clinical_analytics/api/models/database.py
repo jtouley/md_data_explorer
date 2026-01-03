@@ -6,8 +6,7 @@ Uses SQLAlchemy 2.0 declarative mapping with type annotations.
 Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 """
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -33,13 +32,13 @@ class Session(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     # Relationship: one session has many messages
@@ -63,26 +62,22 @@ class Message(Base):
     __tablename__ = "messages"
 
     message_id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    session_id: Mapped[str] = mapped_column(
-        String(50), ForeignKey("sessions.session_id"), nullable=False, index=True
-    )
-    role: Mapped[str] = mapped_column(
-        String(20), nullable=False
-    )  # "user" or "assistant"
+    session_id: Mapped[str] = mapped_column(String(50), ForeignKey("sessions.session_id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # "user" or "assistant"
     content: Mapped[str] = mapped_column(Text, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         index=True,
     )
 
     # Query execution metadata (for assistant messages)
-    query_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    query_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending"
     )  # "pending", "completed", "failed"
-    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Result data stored as JSON in separate cache (not in DB)
     # Use run_key to look up cached result via ResultCache

@@ -18,7 +18,6 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
 
 # Test fixtures
@@ -74,9 +73,7 @@ def app_with_semantic_layer(sample_dataset):
         return _semantic_layer_instance
 
     @app.get("/test-semantic-layer")
-    async def test_route(
-        semantic_layer: Annotated[SemanticLayer, Depends(get_semantic_layer)]
-    ):
+    async def test_route(semantic_layer: Annotated[SemanticLayer, Depends(get_semantic_layer)]):
         """Test route that uses semantic layer."""
         # Verify semantic layer is usable
         dataset_info = semantic_layer.get_dataset_info()
@@ -87,9 +84,7 @@ def app_with_semantic_layer(sample_dataset):
         }
 
     @app.get("/test-query")
-    async def test_query_route(
-        semantic_layer: Annotated[SemanticLayer, Depends(get_semantic_layer)]
-    ):
+    async def test_query_route(semantic_layer: Annotated[SemanticLayer, Depends(get_semantic_layer)]):
         """Test route that executes a query via semantic layer."""
         # Execute a simple query to verify DuckDB works in async context
         result = semantic_layer.query(

@@ -8,8 +8,8 @@ Endpoints:
 """
 
 import secrets
-from datetime import datetime, timezone
-from typing import Annotated, Optional
+from datetime import UTC, datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
@@ -74,8 +74,8 @@ async def create_session(
     db_session = db_models.Session(
         session_id=session_id,
         dataset_id=request.dataset_id,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
 
     db.add(db_session)
@@ -154,10 +154,10 @@ async def get_session(
 
 @router.get("/sessions", response_model=schemas.SessionListResponse)
 async def list_sessions(
-    dataset_id: Annotated[Optional[str], Query(None, description="Filter by dataset ID")] = None,
-    limit: Annotated[int, Query(50, ge=1, le=100, description="Max sessions to return")] = 50,
-    offset: Annotated[int, Query(0, ge=0, description="Number of sessions to skip")] = 0,
-    db: Annotated[Session, Depends(get_db)] = Depends(get_db),
+    db: Annotated[Session, Depends(get_db)],
+    dataset_id: Annotated[str | None, Query(description="Filter by dataset ID")] = None,
+    limit: Annotated[int, Query(ge=1, le=100, description="Max sessions to return")] = 50,
+    offset: Annotated[int, Query(ge=0, description="Number of sessions to skip")] = 0,
 ) -> schemas.SessionListResponse:
     """List sessions with optional filters.
 

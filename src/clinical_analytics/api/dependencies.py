@@ -25,9 +25,7 @@ from clinical_analytics.datasets.uploaded_dataset_factory import UploadedDataset
 _semantic_layer_cache: dict[str, SemanticLayer] = {}
 
 
-def get_semantic_layer(
-    dataset_id: Annotated[str, Path(..., description="Dataset ID")]
-) -> SemanticLayer:
+def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset ID")]) -> SemanticLayer:
     """Get or create cached semantic layer instance for a dataset.
 
     Replaces Streamlit's @st.cache_resource pattern:

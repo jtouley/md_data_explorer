@@ -13,14 +13,16 @@ TDD Workflow:
 """
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from clinical_analytics.api.db.database import get_db
-from clinical_analytics.api.main import app
+from clinical_analytics.api.main import app as main_app
 from clinical_analytics.api.models.database import Base
-
+from clinical_analytics.api.routes import sessions
 
 # ============================================================================
 # Test Database Setup
@@ -28,13 +30,35 @@ from clinical_analytics.api.models.database import Base
 
 
 @pytest.fixture(scope="function")
-def test_db():
+def test_app():
+    """Create FastAPI test app without lifespan."""
+    # Create test app without lifespan (skip startup table creation)
+    app = FastAPI(
+        title="Clinical Analytics API (Test)",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+    )
+
+    # Register routes
+    app.include_router(sessions.router, prefix="/api", tags=["sessions"])
+
+    return app
+
+
+@pytest.fixture(scope="function")
+def test_db(test_app):
     """Create test database for each test function.
 
     Uses in-memory SQLite for fast, isolated tests.
     """
-    # Create in-memory SQLite database
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    # Create in-memory SQLite database with StaticPool to share connection
+    # This ensures all sessions use the same in-memory database
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
 
     # Create tables
     Base.metadata.create_all(bind=engine)
@@ -50,19 +74,19 @@ def test_db():
         finally:
             db.close()
 
-    app.dependency_overrides[get_db] = override_get_db
+    test_app.dependency_overrides[get_db] = override_get_db
 
     yield engine
 
     # Cleanup
     Base.metadata.drop_all(bind=engine)
-    app.dependency_overrides.clear()
+    test_app.dependency_overrides.clear()
 
 
 @pytest.fixture(scope="function")
-def client(test_db):
+def client(test_app, test_db):
     """FastAPI test client with test database."""
-    return TestClient(app)
+    return TestClient(test_app)
 
 
 # ============================================================================
