@@ -22,8 +22,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import from config (single source of truth)
 from clinical_analytics.core.column_parser import parse_column_name
+from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.error_translation import translate_error_with_llm
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
+from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
@@ -962,10 +964,14 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                     # ADR009 Phase 4: Show error with LLM translation
                     _render_error_with_translation(text, prefix="❌ Error")
                 elif status == "completed" and run_key:
-                    # Load result from session_state
-                    result_key = f"analysis_result:{dataset_version}:{run_key}"
-                    if result_key in st.session_state:
-                        result = st.session_state[result_key]
+                    # Load result from ResultCache (Milestone A: State Extraction)
+                    cache = st.session_state.get("result_cache")
+                    if cache is None:
+                        cache = ResultCache(max_size=50)
+                        st.session_state["result_cache"] = cache
+                    cached_result = cache.get(run_key, dataset_version)
+                    if cached_result is not None:
+                        result = cached_result.result
 
                         # Reconstruct context from result (minimal, for rendering)
                         # Note: Full context not stored in transcript for memory efficiency
@@ -990,7 +996,8 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                             dataset_version=dataset_version,
                         )
                     else:
-                        st.warning("⚠️ Result not found in cache")
+                        # Fallback: result not in cache (shouldn't happen, but handle gracefully)
+                        st.warning(f"⚠️ Result not found in cache for run_key: {run_key}")
                 else:
                     # Fallback: just display text
                     st.write(text)
@@ -1084,11 +1091,15 @@ def execute_analysis_with_idempotency(
         execution_result: Result from execute_query_plan() (Phase 3.1)
         semantic_layer: SemanticLayer instance for formatting (Phase 3.1)
     """
-    # Use dataset-scoped result key for trivial cleanup
-    result_key = f"analysis_result:{dataset_version}:{run_key}"
+    # Get result cache from session state (Milestone A: State Extraction)
+    cache = st.session_state.get("result_cache")
+    if cache is None:
+        cache = ResultCache(max_size=50)
+        st.session_state["result_cache"] = cache
 
-    # Check if already computed
-    if result_key in st.session_state:
+    # Check if already computed using ResultCache
+    cached_result = cache.get(run_key, dataset_version)
+    if cached_result is not None:
         logger.info(
             "analysis_result_cached",
             run_key=run_key,
@@ -1096,11 +1107,7 @@ def execute_analysis_with_idempotency(
             intent_type=context.inferred_intent.value,
         )
         # Render inline in chat message style (Phase 3.5)
-        result = st.session_state[result_key]
-
-        # PR25: Enforce remember_run() invariant - must be called even for cached results
-        # This ensures history tracking is consistent regardless of cache hits
-        remember_run(dataset_version, run_key)
+        result = cached_result.result
 
         # Render main results inline (no expander, no extra headers)
         render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
@@ -1170,12 +1177,17 @@ def execute_analysis_with_idempotency(
                     interpretation_length=len(interpretation),
                 )
 
-        # Store result (serializable format)
-        st.session_state[result_key] = result
-        st.session_state[f"last_run_key:{dataset_version}"] = run_key
+        # Store result using ResultCache (Milestone A: State Extraction)
+        from datetime import datetime
 
-        # Remember this run in history (O(1) eviction happens here)
-        remember_run(dataset_version, run_key)
+        cached_result = CachedResult(
+            run_key=run_key,
+            query=query_text,
+            result=result,
+            timestamp=datetime.now(),
+            dataset_version=dataset_version,
+        )
+        cache.put(cached_result)
 
         # Add to conversation history (lightweight storage per ADR001)
         query_text = query_text or getattr(context, "research_question", "")
@@ -1622,25 +1634,38 @@ def main():
 
     dataset, cohort_pd, dataset_choice, dataset_version = result
 
+    # Initialize core classes (Milestone A: State Extraction)
+    if "conversation_manager" not in st.session_state:
+        st.session_state["conversation_manager"] = ConversationManager()
+    if "result_cache" not in st.session_state:
+        st.session_state["result_cache"] = ResultCache(max_size=50)
+
+    manager = st.session_state["conversation_manager"]
+    cache = st.session_state["result_cache"]
+
     # Initialize chat transcript and pending state (Phase 2)
+    # Note: chat is now managed via ConversationManager, but we keep it for backward compatibility during transition
     if "chat" not in st.session_state:
         st.session_state["chat"] = []
     if "pending" not in st.session_state:
         st.session_state["pending"] = None
 
     # Detect dataset change and clear conversation history/context/chat
-    if "last_dataset_choice" not in st.session_state:
-        st.session_state["last_dataset_choice"] = dataset_choice
-    elif st.session_state["last_dataset_choice"] != dataset_choice:
+    last_dataset = manager.get_current_dataset()
+    if last_dataset != dataset_choice:
         # Dataset changed - clear conversation history, analysis context, and chat
-        if "conversation_history" in st.session_state:
-            st.session_state["conversation_history"] = []
+        manager.set_dataset(dataset_choice)
+        manager.clear()  # Clear conversation history
+        cache.clear(dataset_version)  # Clear results for old dataset
         if "analysis_context" in st.session_state:
             del st.session_state["analysis_context"]
         # Clear chat transcript on dataset change
         st.session_state["chat"] = []
         st.session_state["pending"] = None
-        st.session_state["last_dataset_choice"] = dataset_choice
+    else:
+        # Update dataset if not set
+        if last_dataset is None:
+            manager.set_dataset(dataset_choice)
 
     # Convert to Polars for compute functions (page-specific logic)
     cohort = pl.from_pandas(cohort_pd)
@@ -1708,7 +1733,13 @@ def main():
         st.session_state["intent_signal"] = None
 
     # PR25: Proactive cleanup - enforce lifecycle invariants
-    cleanup_old_results(dataset_version)
+    # Cleanup old results using ResultCache (Milestone A: State Extraction)
+    # Note: ResultCache handles LRU eviction automatically, but we can call cleanup if needed
+    cache = st.session_state.get("result_cache")
+    if cache is None:
+        cache = ResultCache(max_size=50)
+        st.session_state["result_cache"] = cache
+    # ResultCache handles eviction automatically via put(), no manual cleanup needed
 
     # Initialize conversation history (lightweight storage per ADR001 - keep for backward compat)
     if "conversation_history" not in st.session_state:
