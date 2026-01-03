@@ -55,42 +55,42 @@ todos:
       - a4-refactor-ui
   - id: a5-commit
     content: Commit Milestone A (feat - Extract state management from Streamlit)
-    status: pending
+    status: completed
     dependencies:
       - a4-verify
   - id: b1-test
     content: Write failing tests for StateStore interface and FileStateStore (TDD Red)
-    status: pending
+    status: completed
     dependencies:
       - a5-commit
   - id: b1-impl
     content: Create StateStore ABC and FileStateStore implementation
-    status: pending
+    status: completed
     dependencies:
       - b1-test
   - id: b1-refactor
     content: Run tests for StateStore, fix quality issues (TDD Refactor)
-    status: pending
+    status: completed
     dependencies:
       - b1-impl
   - id: b2-integrate
     content: Integrate StateStore into Ask_Questions.py (load on init, save on change)
-    status: pending
+    status: completed
     dependencies:
       - b1-refactor
   - id: b2-verify
     content: Verify persistence works (restart app, conversation + cache restored)
-    status: pending
+    status: completed
     dependencies:
       - b2-integrate
   - id: b3-integration-test
     content: Write integration test (Ask question -> persist -> restart -> restore -> continue)
-    status: pending
+    status: completed
     dependencies:
       - b2-verify
   - id: b4-commit
     content: Commit Milestone B (feat - Add persistence boundary StateStore + FileBackend)
-    status: pending
+    status: in_progress
     dependencies:
       - b3-integration-test
   - id: final-quality

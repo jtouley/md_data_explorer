@@ -8,6 +8,7 @@ import hashlib
 import sys
 import time
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -27,6 +28,7 @@ from clinical_analytics.core.error_translation import translate_error_with_llm
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
+from clinical_analytics.core.state_store import ConversationState, FileStateStore
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
     AnalysisContext,
@@ -1178,8 +1180,6 @@ def execute_analysis_with_idempotency(
                 )
 
         # Store result using ResultCache (Milestone A: State Extraction)
-        from datetime import datetime
-
         cached_result = CachedResult(
             run_key=run_key,
             query=query_text,
@@ -1188,6 +1188,12 @@ def execute_analysis_with_idempotency(
             dataset_version=dataset_version,
         )
         cache.put(cached_result)
+
+        # Save state to persistent storage (Milestone B: Persistence)
+        # Note: save_state() is defined in main() and captures manager, cache, store, etc.
+        # We need to access it via session_state or pass it as parameter
+        if "save_state_func" in st.session_state:
+            st.session_state["save_state_func"]()
 
         # Add to conversation history (lightweight storage per ADR001)
         query_text = query_text or getattr(context, "research_question", "")
@@ -1634,6 +1640,26 @@ def main():
 
     dataset, cohort_pd, dataset_choice, dataset_version = result
 
+    # Extract identifiers for persistence (Milestone B: Persistence)
+    upload_id = dataset_choice  # dataset_choice is the upload_id
+    dataset_id = getattr(dataset, "dataset_id", None) or dataset_choice  # Fallback to upload_id if no dataset_id
+
+    # Initialize StateStore (Milestone B: Persistence)
+    store = FileStateStore()
+
+    # Load persisted state if exists (Milestone B: Persistence)
+    saved_state = store.load(upload_id, dataset_version)
+    if saved_state:
+        st.session_state["conversation_manager"] = saved_state.conversation_manager
+        st.session_state["result_cache"] = saved_state.result_cache
+        logger.info(
+            "state_restored",
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+            message_count=len(saved_state.conversation_manager.get_transcript()),
+            cached_results=len(saved_state.result_cache.get_history(dataset_version)),
+        )
+
     # Initialize core classes (Milestone A: State Extraction)
     if "conversation_manager" not in st.session_state:
         st.session_state["conversation_manager"] = ConversationManager()
@@ -1642,6 +1668,26 @@ def main():
 
     manager = st.session_state["conversation_manager"]
     cache = st.session_state["result_cache"]
+
+    # Helper function to save state (Milestone B: Persistence)
+    def save_state() -> None:
+        """Save current conversation state to persistent storage."""
+        # Get current manager and cache from session_state (may have been updated)
+        current_manager = st.session_state.get("conversation_manager", manager)
+        current_cache = st.session_state.get("result_cache", cache)
+        state = ConversationState(
+            conversation_manager=current_manager,
+            result_cache=current_cache,
+            dataset_id=dataset_id,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+            last_updated=datetime.now(),
+        )
+        store.save(state)
+        logger.debug("state_saved", upload_id=upload_id, dataset_version=dataset_version)
+
+    # Store save_state function in session_state for access from other functions
+    st.session_state["save_state_func"] = save_state
 
     # Initialize chat transcript and pending state (Phase 2)
     # Note: chat is now managed via ConversationManager, but we keep it for backward compatibility during transition
