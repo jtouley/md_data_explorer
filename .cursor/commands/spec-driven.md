@@ -56,6 +56,7 @@ Execution Sequence (MANDATORY)
    - Run: make format
    - Run: make lint-fix
    - Fix any remaining issues manually
+   - **Invoke /deslop**: Remove AI-generated slop from all changed files
    - Update TODO
 
 7. Run Module Test Suite
@@ -123,6 +124,7 @@ Before claiming complete, verify:
 - [ ] Implementation passes tests (Green verified)
 - [ ] make format executed
 - [ ] make lint-fix executed
+- [ ] /deslop invoked to remove AI-generated slop
 - [ ] Zero NEW linting errors in changed files
 - [ ] Module tests passing
 - [ ] Changes committed with tests
