@@ -64,7 +64,9 @@ Execution Sequence (MANDATORY)
    - Update TODO
 
 7. Run Module Test Suite
-   - Command: make test-[module]
+   - **Before commit**: Full suite required - Command: make test-[module]
+   - **During development**: Subset acceptable for faster iteration (e.g., specific test files)
+   - **Critical**: Full suite must pass before committing to catch regressions
    - Verify no regressions
    - All tests must pass
    - Update TODO
