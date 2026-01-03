@@ -51,6 +51,7 @@ Execution Sequence
      * Read the review file
      * Apply feedback to update the plan
      * Follow TDD workflow if code changes are needed
+     * Invoke `/deslop` to remove AI-generated slop from any code changes
 
 5. Output Summary
    - Display brief summary of update operation

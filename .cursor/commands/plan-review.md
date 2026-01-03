@@ -48,6 +48,7 @@ Execution Sequence
    - Display concise summary in chat (see Output Format below)
    - Save detailed structured markdown to: `.context/reviews/plan_{plan-name}.md`
    - Create `.context/reviews/` directory if it doesn't exist
+   - **Note**: If plan involves code generation, recommend invoking `/deslop` after execution to remove AI-generated slop
 
 Staff Engineer Design/Execution Plan Review Prompt Template
 
@@ -189,6 +190,9 @@ Detailed Markdown File (`.context/reviews/plan_{plan-name}.md`):
 
 ### Quality Gates
 [Missing success criteria or validation steps]
+
+### Code Quality Recommendation
+If this plan involves code generation, recommend invoking `/deslop` after execution to remove AI-generated slop (extra comments, defensive checks, type casts, inconsistent style).
 
 ## Spec-Driven Execution Check
 

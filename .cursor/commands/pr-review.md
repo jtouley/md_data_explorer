@@ -36,7 +36,9 @@ Execution Sequence
      * Maintainability impact
      * System behavior changes
      * Long-term implications
+     * AI-generated slop (extra comments, defensive checks, type casts, inconsistent style)
    - Generate structured review
+   - **If AI-generated slop is detected**: Recommend invoking `/deslop` to clean up the diff before merge
 
 4. Output Review
    - Display concise summary in chat (see Output Format below)
@@ -60,6 +62,7 @@ Output requirements:
 	•	Major risks, architectural concerns, or correctness issues (if any)
 	•	Focus on system behavior, maintainability, and long-term impact
 	•	No restating code unless it reveals a real issue
+	•	If AI-generated slop detected, recommend invoking `/deslop` before merge
 	4.	Nits (Optional, short)
 	•	Minor improvements, naming, structure, clarity
 	•	Only include if they matter
@@ -120,6 +123,9 @@ Detailed Markdown File (`.context/reviews/{prnumber}.md`):
 
 ### Correctness Issues (if any)
 [Bugs, logic errors, edge cases]
+
+### AI-Generated Slop (if detected)
+[If AI-generated slop is detected (extra comments, defensive checks, type casts, inconsistent style), recommend invoking `/deslop` to clean up before merge]
 
 ## Nits
 
