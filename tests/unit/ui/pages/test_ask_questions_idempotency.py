@@ -27,15 +27,28 @@ def test_idempotency_same_query_uses_cached_result(
 
     Test name follows: test_unit_scenario_expectedBehavior
     """
+    from datetime import datetime
+
+    from clinical_analytics.core.result_cache import CachedResult, ResultCache
+
     # Arrange: Set up test data
     dataset_version = "test_dataset_v1"
     query_text = "describe all patients"
     run_key = _generate_test_run_key(dataset_version, query_text)
 
-    # Pre-populate session_state with cached result
-    result_key = f"analysis_result:{dataset_version}:{run_key}"
+    # Pre-populate ResultCache with cached result (Milestone A: State Extraction)
     cached_result = {"type": "descriptive", "row_count": 5, "column_count": 4}
-    mock_session_state[result_key] = cached_result
+    cache = ResultCache(max_size=50)
+    cache.put(
+        CachedResult(
+            run_key=run_key,
+            query=query_text,
+            result=cached_result,
+            timestamp=datetime.now(),
+            dataset_version=dataset_version,
+        )
+    )
+    mock_session_state["result_cache"] = cache
 
     # Mock Streamlit functions - patch st.session_state and st.spinner on the module
     spinner_context = Mock()
@@ -45,9 +58,9 @@ def test_idempotency_same_query_uses_cached_result(
     monkeypatch.setattr(ask_questions_page.st, "session_state", mock_session_state)
     monkeypatch.setattr(ask_questions_page.st, "spinner", Mock(return_value=spinner_context))
     with patch.object(ask_questions_page, "render_analysis_by_type") as mock_render:
-        # Act: Execute analysis
+        # Act: Execute analysis (with execution_result=None to test cache lookup)
         ask_questions_page.execute_analysis_with_idempotency(
-            sample_cohort, sample_context, run_key, dataset_version, query_text
+            sample_cohort, sample_context, run_key, dataset_version, query_text, execution_result=None
         )
 
         # Assert: Used cached result (render called once with cached data)
