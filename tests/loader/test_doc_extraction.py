@@ -210,6 +210,159 @@ This is a clinical dataset.
         assert isinstance(context, str)
 
 
+class TestAddDocumentationToUpload:
+    """Test suite for adding documentation to existing uploads."""
+
+    def test_add_documentation_to_upload_adds_doc_context_to_existing_upload(self, tmp_path):
+        """Test that add_documentation_to_upload() adds doc_context to existing upload metadata."""
+
+        import polars as pl
+
+        from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+        # Arrange: Create existing upload without doc_context
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        # Create a dataset and save it
+        df = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "age": [20 + (i % 50) for i in range(100)],
+                "outcome": [i % 2 for i in range(100)],
+            }
+        )
+
+        # Save upload (simulate existing upload without doc_context)
+        upload_id = storage.generate_upload_id("test_dataset.csv")
+        tables = [{"name": "patients", "data": df}]
+        metadata = {
+            "dataset_name": "test_dataset",
+            "table_count": 1,
+            "table_names": ["patients"],
+        }
+
+        from clinical_analytics.ui.storage.user_datasets import save_table_list
+
+        success, _ = save_table_list(storage, tables, upload_id, metadata)
+        assert success is True
+
+        # Verify no doc_context exists
+        existing_metadata = storage.get_upload_metadata(upload_id)
+        assert "doc_context" not in existing_metadata or existing_metadata.get("doc_context") == ""
+
+        # Create test documentation file (using text file for easier testing)
+        doc_path = tmp_path / "test_dictionary.txt"
+        doc_content = (
+            "patient_id: Unique patient identifier\n"
+            "age: Patient age in years\n"
+            "outcome: Binary outcome variable (0=no, 1=yes)"
+        )
+        doc_path.write_text(doc_content)
+
+        # Act: Add documentation to existing upload
+        success, message = storage.add_documentation_to_upload(upload_id, doc_path, re_infer_schema=False)
+
+        # Assert: Documentation added successfully
+        assert success is True, f"Failed to add documentation: {message}"
+
+        # Assert: doc_context exists in metadata
+        updated_metadata = storage.get_upload_metadata(upload_id)
+        assert "doc_context" in updated_metadata
+        assert updated_metadata["doc_context"] != ""
+
+    def test_add_documentation_to_upload_re_runs_schema_inference_with_doc_context(self, tmp_path):
+        """Test that add_documentation_to_upload() re-runs schema inference with doc_context when requested."""
+
+        import polars as pl
+
+        from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+        # Arrange: Create existing upload
+        storage = UserDatasetStorage(upload_dir=tmp_path)
+
+        df = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "current_regimen": [1, 2, 1] * 33 + [1],  # Categorical with codebook
+                "age": [20 + (i % 50) for i in range(100)],
+            }
+        )
+
+        upload_id = storage.generate_upload_id("test_dataset.csv")
+        tables = [{"name": "patients", "data": df}]
+        metadata = {
+            "dataset_name": "test_dataset",
+            "table_count": 1,
+            "table_names": ["patients"],
+        }
+
+        from clinical_analytics.ui.storage.user_datasets import save_table_list
+
+        success, _ = save_table_list(storage, tables, upload_id, metadata)
+        assert success is True
+
+        # Create test documentation file with codebook information
+        doc_path = tmp_path / "test_dictionary.txt"
+        text_content = "current_regimen: Current antiretroviral regimen\nCurrent Regimen: 1: Biktarvy, 2: Symtuza"
+        doc_path.write_text(text_content)
+
+        # Act: Add documentation and re-run schema inference
+        success, message = storage.add_documentation_to_upload(upload_id, doc_path, re_infer_schema=True)
+
+        # Assert: Documentation added and schema re-inferred
+        assert success is True, f"Failed to add documentation: {message}"
+
+        # Assert: doc_context exists
+        updated_metadata = storage.get_upload_metadata(upload_id)
+        assert "doc_context" in updated_metadata
+        assert updated_metadata["doc_context"] != ""
+
+        # Assert: variable_types enhanced with codebooks (if schema inference ran)
+        # Note: This depends on schema inference implementation
+        # For now, just verify doc_context is present
+
+
+class TestStandalonePdfUpload:
+    """Test suite for standalone PDF upload during new dataset upload."""
+
+    def test_normalize_upload_to_table_list_accepts_external_pdf_bytes(self, tmp_path):
+        """Test that normalize_upload_to_table_list() accepts external PDF bytes in metadata."""
+
+        import polars as pl
+
+        from clinical_analytics.ui.storage.user_datasets import normalize_upload_to_table_list
+
+        # Arrange: Create single-file upload with external PDF in metadata
+        df = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "age": [20 + (i % 50) for i in range(100)],
+            }
+        )
+        csv_bytes = df.write_csv().encode("utf-8")
+
+        # Create external PDF bytes (using text file for testing)
+        pdf_content = "patient_id: Unique patient identifier\nage: Patient age in years"
+        pdf_bytes = pdf_content.encode("utf-8")
+
+        metadata = {
+            "external_pdf_bytes": pdf_bytes,
+            "external_pdf_filename": "dictionary.txt",  # Using .txt for testing
+        }
+
+        # Act: Normalize upload with external PDF
+        tables, table_metadata = normalize_upload_to_table_list(csv_bytes, "test.csv", metadata)
+
+        # Assert: Tables extracted correctly
+        assert len(tables) == 1
+        assert tables[0]["name"] == "test"
+
+        # Assert: External PDF converted to doc_files format for processing
+        assert "doc_files" in table_metadata
+        assert len(table_metadata["doc_files"]) == 1
+        assert table_metadata["doc_files"][0].name == "dictionary.txt"
+
+
 class TestDocContextInMetadata:
     """Test suite for doc_context storage in upload metadata."""
 

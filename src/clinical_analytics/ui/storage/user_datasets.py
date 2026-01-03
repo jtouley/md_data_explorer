@@ -185,7 +185,25 @@ def normalize_upload_to_table_list(
         df = load_single_file(file_bytes, filename)
         table_name = Path(filename).stem  # Use original filename stem
         tables = [{"name": table_name, "data": df}]
-        doc_files = []  # No docs for single-file uploads
+        doc_files = []  # No docs for single-file uploads by default
+
+    # Handle external PDF/documentation files (standalone upload)
+    if metadata and "external_pdf_bytes" in metadata:
+        from dataclasses import dataclass
+
+        @dataclass
+        class DocFile:
+            """Documentation file info."""
+
+            name: str
+            path: str
+            content: bytes
+
+        # Convert external PDF bytes to DocFile format
+        pdf_bytes = metadata["external_pdf_bytes"]
+        pdf_filename = metadata.get("external_pdf_filename", "documentation.pdf")
+        doc_files.append(DocFile(name=pdf_filename, path=pdf_filename, content=pdf_bytes))
+        logger.info(f"Added external documentation file: {pdf_filename}")
 
     # Build metadata
     table_metadata = {
@@ -2341,6 +2359,120 @@ class UserDatasetStorage:
             return False, f"Failed to acquire lock on {metadata_path} (timeout after 10s)"
         except Exception as e:
             return False, f"Error updating metadata: {str(e)}"
+
+    def add_documentation_to_upload(
+        self,
+        upload_id: str,
+        pdf_path: Path | bytes,
+        re_infer_schema: bool = True,
+    ) -> tuple[bool, str]:
+        """
+        Add documentation to existing upload and optionally re-run schema inference.
+
+        Extracts doc_context from PDF and updates metadata. If re_infer_schema=True,
+        re-runs schema inference with doc_context to enhance variable_types.
+
+        Args:
+            upload_id: Existing upload ID
+            pdf_path: Path to PDF file or PDF bytes
+            re_infer_schema: If True, re-run schema inference with doc_context
+
+        Returns:
+            Tuple of (success, message)
+        """
+        metadata_path = self.metadata_dir / f"{upload_id}.json"
+
+        if not metadata_path.exists():
+            return False, f"Upload {upload_id} not found"
+
+        try:
+            # Load existing metadata
+            with open(metadata_path) as f:
+                metadata = json.load(f)
+
+            # Extract doc_context from PDF
+            import tempfile
+
+            from clinical_analytics.core.doc_parser import extract_context_from_docs
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+
+                # Handle both Path and bytes
+                if isinstance(pdf_path, bytes):
+                    # Save bytes to temp file
+                    pdf_temp_path = temp_path / "documentation.pdf"
+                    pdf_temp_path.write_bytes(pdf_path)
+                    doc_paths = [pdf_temp_path]
+                else:
+                    # Path provided
+                    if not pdf_path.exists():
+                        return False, f"PDF file not found: {pdf_path}"
+                    doc_paths = [pdf_path]
+
+                # Extract text context from PDF
+                doc_context = extract_context_from_docs(doc_paths)
+                if not doc_context:
+                    return False, "Failed to extract text from PDF (file may be empty or corrupted)"
+
+            # Update metadata with doc_context
+            metadata["doc_context"] = doc_context
+            logger.info(f"Extracted doc_context ({len(doc_context)} chars) from PDF")
+
+            # Optionally re-run schema inference with doc_context
+            if re_infer_schema:
+                # Load the dataset
+                tables = []
+                table_names = metadata.get("table_names", [])
+                for table_name in table_names:
+                    table_path = self.raw_dir / upload_id / f"{table_name}.parquet"
+                    if table_path.exists():
+                        df = pl.read_parquet(table_path)
+                        tables.append({"name": table_name, "data": df})
+
+                if tables:
+                    # Re-run schema inference with doc_context
+                    from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
+                    engine = SchemaInferenceEngine()
+                    # Use first table for schema inference (or combine if multi-table)
+                    main_df = tables[0]["data"]
+                    inferred_schema = engine.infer_schema(main_df, doc_context=doc_context)
+
+                    # Update variable_types with enhanced schema
+                    if inferred_schema.dictionary_metadata:
+                        # Convert DictionaryMetadata to variable_types format
+                        # This is a simplified version - full integration would use to_dataset_config()
+                        if "variable_types" not in metadata:
+                            metadata["variable_types"] = {}
+
+                        # Update variable_types with codebooks and descriptions
+                        for col_name, codebook in inferred_schema.dictionary_metadata.codebooks.items():
+                            if col_name in metadata["variable_types"]:
+                                if "codebook" not in metadata["variable_types"][col_name]:
+                                    metadata["variable_types"][col_name]["codebook"] = codebook
+
+                        for col_name, description in inferred_schema.dictionary_metadata.column_descriptions.items():
+                            if col_name in metadata["variable_types"]:
+                                if "description" not in metadata["variable_types"][col_name]:
+                                    metadata["variable_types"][col_name]["description"] = description
+
+                    logger.info("Re-ran schema inference with doc_context")
+
+            # Save updated metadata atomically
+            with file_lock(metadata_path, timeout=10.0) as f:
+                f.seek(0)
+                f.truncate()
+                json.dump(metadata, f, indent=2)
+                f.flush()
+
+            return True, f"Documentation added successfully ({len(doc_context)} chars extracted)"
+
+        except FileLockTimeoutError:
+            return False, f"Failed to acquire lock on {metadata_path} (timeout after 10s)"
+        except Exception as e:
+            logger.error(f"Error adding documentation to upload: {type(e).__name__}: {str(e)}")
+            return False, f"Error adding documentation: {str(e)}"
 
     def save_zip_upload(
         self,

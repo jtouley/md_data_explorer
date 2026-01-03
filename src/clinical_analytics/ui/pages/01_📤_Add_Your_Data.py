@@ -154,6 +154,29 @@ def render_upload_step():
 
             st.success("✅ File validation passed")
 
+            # Optional: Upload documentation PDF
+            st.markdown("### 📄 Documentation (Optional)")
+            st.markdown(
+                "Upload a data dictionary PDF to enhance schema inference with column descriptions and codebooks."
+            )
+
+            doc_file = st.file_uploader(
+                "Upload data dictionary PDF",
+                type=["pdf", "txt", "md"],
+                help="Optional: Upload a PDF, text, or Markdown file containing column descriptions, codebooks, etc.",
+                key="doc_uploader",
+            )
+
+            if doc_file is not None:
+                doc_bytes = doc_file.getvalue()
+                st.session_state["external_pdf_bytes"] = doc_bytes
+                st.session_state["external_pdf_filename"] = doc_file.name
+                st.success(f"✅ Documentation uploaded: {doc_file.name}")
+            else:
+                # Clear any previously uploaded documentation
+                st.session_state.pop("external_pdf_bytes", None)
+                st.session_state.pop("external_pdf_filename", None)
+
             # Check if ZIP file (multi-table)
             file_ext = Path(uploaded_file.name).suffix.lower()
 
@@ -714,6 +737,13 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
                         "validation_result": validation_result,
                     }
 
+                    # Add external PDF if uploaded
+                    if "external_pdf_bytes" in st.session_state:
+                        metadata["external_pdf_bytes"] = st.session_state["external_pdf_bytes"]
+                        metadata["external_pdf_filename"] = st.session_state.get(
+                            "external_pdf_filename", "documentation.pdf"
+                        )
+
                     # Run save with overwrite flag (Phase 9)
                     success, message, upload_id = storage.save_upload(
                         file_bytes=st.session_state["uploaded_bytes"],
@@ -855,6 +885,11 @@ def render_zip_review_step():
 
         # Prepare metadata
         metadata = {"dataset_name": dataset_name}
+
+        # Add external PDF if uploaded
+        if "external_pdf_bytes" in st.session_state:
+            metadata["external_pdf_bytes"] = st.session_state["external_pdf_bytes"]
+            metadata["external_pdf_filename"] = st.session_state.get("external_pdf_filename", "documentation.pdf")
 
         # Save ZIP upload (this processes everything)
         try:
