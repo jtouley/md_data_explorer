@@ -13,7 +13,7 @@ import uuid
 import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -801,6 +801,126 @@ def detect_schema_drift(schema1: dict[str, Any], schema2: dict[str, Any]) -> tup
     return has_drift, drift_details
 
 
+def classify_schema_drift(old_schema: dict[str, Any], new_schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Classify schema drift as 'additive', 'breaking', or 'none' (Phase 3).
+
+    Uses detect_schema_drift() to identify changes, then classifies:
+    - 'none': No changes
+    - 'additive': Only new columns added (no removals, no type changes)
+    - 'breaking': Removed columns, type changes, or mixed changes
+
+    Args:
+        old_schema: Old schema dict with 'columns' key (list of (name, type) tuples)
+        new_schema: New schema dict with 'columns' key (list of (name, type) tuples)
+
+    Returns:
+        Dict with keys:
+        - drift_type: "none" | "additive" | "breaking"
+        - added_columns: list[str] (empty if none)
+        - removed_columns: list[str] (empty if none)
+        - type_changes: dict[str, tuple[str, str]] (empty if none)
+    """
+    has_drift, drift_details = detect_schema_drift(old_schema, new_schema)
+
+    if not has_drift:
+        return {
+            "drift_type": "none",
+            "added_columns": [],
+            "removed_columns": [],
+            "type_changes": {},
+        }
+
+    added_columns = drift_details.get("added_columns", [])
+    removed_columns = drift_details.get("removed_columns", [])
+    type_changes = drift_details.get("type_changes", {})
+
+    # Classify drift type
+    if removed_columns or type_changes:
+        # Breaking: removals or type changes
+        drift_type = "breaking"
+    elif added_columns:
+        # Additive: only additions
+        drift_type = "additive"
+    else:
+        # No drift (shouldn't happen if has_drift is True, but defensive)
+        drift_type = "none"
+
+    return {
+        "drift_type": drift_type,
+        "added_columns": added_columns,
+        "removed_columns": removed_columns,
+        "type_changes": type_changes,
+    }
+
+
+def apply_schema_drift_policy(
+    drift_result: dict[str, Any],
+    override: bool = False,
+) -> tuple[bool, str, list[str]]:
+    """
+    Apply schema drift policy to determine if overwrite is allowed (Phase 3).
+
+    Policy rules:
+    - 'none': Always allowed
+    - 'additive': Allowed without override
+    - 'breaking': Blocked unless override=True
+
+    Args:
+        drift_result: Result from classify_schema_drift() with keys:
+            - drift_type: "none" | "additive" | "breaking"
+            - added_columns: list[str]
+            - removed_columns: list[str]
+            - type_changes: dict[str, tuple[str, str]]
+        override: If True, allow breaking changes (with warnings)
+
+    Returns:
+        Tuple of (allowed: bool, message: str, warnings: list[str])
+    """
+    drift_type = drift_result.get("drift_type", "none")
+    added_columns = drift_result.get("added_columns", [])
+    removed_columns = drift_result.get("removed_columns", [])
+    type_changes = drift_result.get("type_changes", {})
+
+    warnings = []
+
+    if drift_type == "none":
+        return True, "No schema changes detected", []
+
+    if drift_type == "additive":
+        message = f"Additive schema changes detected: {len(added_columns)} new column(s) added"
+        return True, message, []
+
+    # drift_type == "breaking"
+    if override:
+        # Allowed with override, but warn
+        warning_parts = []
+        if removed_columns:
+            warning_parts.append(f"{len(removed_columns)} column(s) removed: {', '.join(removed_columns)}")
+        if type_changes:
+            warning_parts.append(f"{len(type_changes)} type change(s): {', '.join(type_changes.keys())}")
+        if added_columns:
+            warning_parts.append(f"{len(added_columns)} column(s) added: {', '.join(added_columns)}")
+
+        warnings.append(f"Breaking schema changes overridden: {'; '.join(warning_parts)}")
+        message = "Breaking schema changes allowed with override"
+        return True, message, warnings
+    else:
+        # Blocked
+        error_parts = []
+        if removed_columns:
+            error_parts.append(f"removed columns: {', '.join(removed_columns)}")
+        if type_changes:
+            error_parts.append(f"type changes: {', '.join(type_changes.keys())}")
+
+        message = (
+            f"Breaking schema changes detected ({'; '.join(error_parts)}). "
+            "Overwrite blocked. Use override=True to proceed."
+        )
+        warnings.append(message)
+        return False, message, warnings
+
+
 def assert_metadata_invariants(metadata: dict[str, Any]) -> None:
     """
     Assert critical metadata invariants.
@@ -1021,14 +1141,21 @@ def save_table_list(
             }
 
         # Phase 2/5: Create version history entry with event metadata
-        event_type = "overwrite" if metadata.pop("_is_overwrite", False) else "upload"
+        is_overwrite = metadata.pop("_is_overwrite", False)
+        event_type_str = "overwrite" if is_overwrite else "upload"
+        # Phase 5: Event structure - UUID4 hex format, ISO 8601 UTC with Z suffix
+        now_utc = datetime.now(UTC)
+        event_id = uuid.uuid4().hex  # Phase 5: UUID4 hex format (no dashes)
+        timestamp = now_utc.isoformat().replace("+00:00", "Z")  # ISO 8601 UTC with Z
+
         version_entry = {
             "version": dataset_version,
-            "created_at": datetime.now().isoformat(),
-            "event_id": str(uuid.uuid4()),  # Phase 5: Unique event identifier
-            "event_type": event_type,  # Phase 5: upload/overwrite/rollback
+            "created_at": timestamp,
+            "event_id": event_id,
+            "event_type": event_type_str,  # Phase 5: upload/overwrite/rollback
             "is_active": True,  # New version is always active
             "tables": canonical_tables,
+            "source_filename": metadata.get("original_filename", ""),  # Phase 5: breadcrumbs
         }
 
         # Phase 4.2: Handle existing version history (overwrite case)
@@ -1040,6 +1167,43 @@ def save_table_list(
         else:
             # Initial upload: create new history
             version_history = [version_entry]
+
+        # Phase 2: Ensure version_history is sorted by created_at ascending (oldest first)
+        version_history.sort(key=lambda v: v.get("created_at", ""))
+
+        # Phase 5: Create separate event entry for events list
+        existing_events = metadata.pop("_existing_events", None)  # Phase 5: Preserve existing events
+        if is_overwrite:
+            # Overwrite: record version_activated event
+            event_entry = {
+                "event_id": event_id,
+                "timestamp": timestamp,
+                "event_type": "version_activated",
+                "version": dataset_version,
+                "upload_id": upload_id,
+            }
+            # Add previous_version if available
+            if existing_version_history:
+                previous_active = next((v for v in existing_version_history if v.get("is_active", False)), None)
+                if previous_active:
+                    event_entry["previous_version"] = previous_active["version"]
+        else:
+            # Initial upload: record upload_created event
+            event_entry = {
+                "event_id": event_id,
+                "timestamp": timestamp,
+                "event_type": "upload_created",
+                "version": dataset_version,
+                "upload_id": upload_id,
+            }
+
+        # Phase 5: Initialize or append to events list
+        if existing_events is not None:
+            # Overwrite: append to existing events
+            events = existing_events + [event_entry]
+        else:
+            # Initial upload: create new events list
+            events = [event_entry]
 
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
@@ -1066,6 +1230,8 @@ def save_table_list(
             ),
             # Phase 2/4.2: Version history (initial or appended)
             "version_history": version_history,
+            # Phase 5: Separate events list for audit trail
+            "events": events,
         }
 
         # Phase 0/8: Thread-safe metadata write using file lock
@@ -1149,10 +1315,17 @@ def _migrate_legacy_upload(
     metadata["tables"] = [table_name]
     metadata["migrated_to_v2"] = True
 
-    # Write back metadata
+    # Write back metadata with file locking (Phase 0)
     metadata_path = storage.metadata_dir / f"{upload_id}.json"
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
+    try:
+        with file_lock(metadata_path, timeout=10.0) as f:
+            # Use the locked file handle for atomic write
+            f.seek(0)
+            f.truncate()
+            json.dump(metadata, f, indent=2)
+            f.flush()  # Ensure write completes before lock releases
+    except FileLockTimeoutError:
+        raise RuntimeError(f"Failed to acquire lock on {metadata_path} (timeout after 10s)")
 
     logger.info(f"Migration complete for upload {upload_id}")
 
@@ -1305,14 +1478,68 @@ class UserDatasetStorage:
                         # Overwrite mode: preserve existing upload_id and version_history
                         existing_upload_id = existing_meta.get("upload_id")
                         existing_version_history = existing_meta.get("version_history", [])
+
+                        # Phase 4.2: Legacy dataset migration during overwrite
+                        # If existing_version_history is empty but legacy metadata exists,
+                        # create synthetic version entry
+                        if len(existing_version_history) == 0:
+                            # Legacy dataset: create synthetic version_history from top-level metadata
+                            legacy_version = existing_meta.get("dataset_version")
+                            legacy_created_at = existing_meta.get("created_at") or existing_meta.get("upload_timestamp")
+                            legacy_tables = {}
+
+                            # Reconstruct tables from parquet_paths or duckdb_tables if available
+                            parquet_paths = existing_meta.get("parquet_paths", {})
+                            if parquet_paths:
+                                # Convert parquet_paths dict to canonical tables structure
+                                for table_name, parquet_path in parquet_paths.items():
+                                    legacy_tables[table_name] = {
+                                        "parquet_path": parquet_path,
+                                        "duckdb_table": existing_meta.get("duckdb_tables", {}).get(
+                                            table_name, table_name
+                                        ),
+                                        "row_count": existing_meta.get("table_counts", {}).get(table_name, 0),
+                                        "column_count": existing_meta.get("column_count", 0),
+                                        "schema_fingerprint": existing_meta.get("schema_fingerprint", ""),
+                                    }
+                            else:
+                                # Fallback: create minimal table entry
+                                table_name = (
+                                    existing_meta.get("tables", ["table_0"])[0]
+                                    if existing_meta.get("tables")
+                                    else "table_0"
+                                )
+                                legacy_tables[table_name] = {
+                                    "parquet_path": "",  # Will be filled if parquet exists
+                                    "duckdb_table": table_name,
+                                    "row_count": existing_meta.get("row_count", 0),
+                                    "column_count": existing_meta.get("column_count", 0),
+                                    "schema_fingerprint": "",
+                                }
+
+                            synthetic_version_entry = {
+                                "version": legacy_version or "legacy",
+                                "created_at": (
+                                    legacy_created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                                ),
+                                "event_id": uuid.uuid4().hex,
+                                "event_type": "upload",
+                                "is_active": False,  # Will be marked inactive when new version added
+                                "tables": legacy_tables,
+                                "source_filename": existing_meta.get("original_filename", ""),
+                            }
+
+                            existing_version_history = [synthetic_version_entry]
+                            logger.info("Migrated legacy dataset to version_history (1 version)")
+
                         logger.info(
                             f"Overwriting existing dataset '{dataset_name}' "
                             f"(upload_id={existing_upload_id}, "
-                            f"{len(existing_version_history)} versions)"
+                            f"version_history={existing_version_history is not None}, "
+                            f"{len(existing_version_history) if existing_version_history else 0} versions)"
                         )
-                        # Mark all existing versions as inactive
-                        for version_entry in existing_version_history:
-                            version_entry["is_active"] = False
+                        # Mark all existing versions as inactive (after schema drift check)
+                        # Note: Schema drift check needs active version, so we mark inactive later
                         break
 
             # Generate upload ID (or use existing if overwriting)
@@ -1336,6 +1563,71 @@ class UserDatasetStorage:
                     pass  # Best-effort
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
+
+            # Phase 3: Schema drift policy enforcement (overwrite only) - BEFORE ensure_patient_id modifies schema
+            if (
+                existing_version_history is not None
+                and len(existing_version_history) > 0
+                and overwrite
+                and existing_upload_id
+            ):
+                logger.info(
+                    f"Schema drift check: existing_version_history={len(existing_version_history)} versions, "
+                    f"overwrite={overwrite}, existing_upload_id={existing_upload_id}"
+                )
+                # Get active version from existing history
+                active_version_entry = None
+                for version_entry in existing_version_history:
+                    if version_entry.get("is_active", False):
+                        active_version_entry = version_entry
+                        break
+
+                if active_version_entry:
+                    # Extract old schema from existing CSV file (simpler than parquet)
+                    old_schema = None
+                    try:
+                        # Load existing CSV to get schema
+                        existing_csv_path = self.raw_dir / f"{existing_upload_id}.csv"
+                        logger.debug(
+                            f"Checking schema drift: existing_csv_path={existing_csv_path}, "
+                            f"exists={existing_csv_path.exists()}"
+                        )
+                        if existing_csv_path.exists():
+                            # Scan CSV to get schema (lazy, doesn't load data)
+                            old_lf = pl.scan_csv(existing_csv_path, n_rows=0)
+                            old_schema_dict = old_lf.collect_schema()
+                            # Convert to format expected by classify_schema_drift
+                            old_schema = {"columns": [(col, str(dtype)) for col, dtype in old_schema_dict.items()]}
+                            logger.debug(f"Loaded old schema: {old_schema}")
+                    except Exception as e:
+                        logger.warning(f"Could not load old schema for drift check: {e}")
+
+                    # Extract new schema from current tables (BEFORE patient_id addition)
+                    if old_schema and tables:
+                        # Get schema from first table DataFrame (before ensure_patient_id modifies it)
+                        new_schema_dict = tables[0]["data"].schema
+                        new_schema = {"columns": [(col, str(dtype)) for col, dtype in new_schema_dict.items()]}
+                        logger.debug(f"New schema: {new_schema}")
+
+                        # Phase 3: Classify and apply schema drift policy
+                        drift_result = classify_schema_drift(old_schema, new_schema)
+                        logger.debug(f"Drift result: {drift_result}")
+                        override = metadata.get("schema_drift_override", False)
+                        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=override)
+                        logger.info(f"Schema drift policy: allowed={allowed}, message={message}, warnings={warnings}")
+
+                        if not allowed:
+                            # Block overwrite due to breaking schema changes
+                            return False, message, None
+
+                        # Log warnings if any (even if allowed)
+                        if warnings:
+                            logger.warning(f"Schema drift warnings: {'; '.join(warnings)}")
+
+            # Mark all existing versions as inactive (after schema drift check)
+            if existing_version_history is not None:
+                for version_entry in existing_version_history:
+                    version_entry["is_active"] = False
 
             # Phase 1: Compute dataset_version early for cross-dataset deduplication
             from clinical_analytics.storage.versioning import compute_dataset_version
@@ -1509,9 +1801,17 @@ class UserDatasetStorage:
                 }
             )
 
-            # Phase 4.2: Pass existing_version_history for overwrite
+            # Phase 4.2: Pass existing_version_history and events for overwrite
             if existing_version_history is not None:
                 metadata["_existing_version_history"] = existing_version_history
+                # Phase 5: Preserve existing events list
+                existing_meta_for_events = None
+                for meta in self.list_uploads():
+                    if meta.get("upload_id") == existing_upload_id:
+                        existing_meta_for_events = meta
+                        break
+                if existing_meta_for_events:
+                    metadata["_existing_events"] = existing_meta_for_events.get("events", [])
                 metadata["_is_overwrite"] = True  # Phase 5: Mark as overwrite event
 
             # Update table with validated data (convert back to Polars for save_table_list)
@@ -1607,10 +1907,11 @@ class UserDatasetStorage:
 
                 # Create rollback event entry with unique version identifier
                 # Use "rollback:<event_id>" to avoid duplicate version values in history
-                rollback_event_id = str(uuid.uuid4())
+                rollback_event_id = uuid.uuid4().hex  # Phase 5: UUID4 hex format
+                now_utc = datetime.now(UTC)
                 rollback_event = {
                     "version": f"rollback:{rollback_event_id}",  # Unique version identifier
-                    "created_at": datetime.now().isoformat(),
+                    "created_at": now_utc.isoformat().replace("+00:00", "Z"),  # ISO 8601 UTC with Z
                     "event_id": rollback_event_id,
                     "event_type": "rollback",
                     "is_active": False,  # Event entry itself is not active
@@ -1928,19 +2229,25 @@ class UserDatasetStorage:
             return False, f"Upload {upload_id} not found"
 
         try:
-            # Load existing metadata
-            with open(metadata_path) as f:
+            # Phase 0: Use file locking for thread-safe metadata write
+            with file_lock(metadata_path, timeout=10.0) as f:
+                # Load existing metadata
+                f.seek(0)
                 metadata = json.load(f)
 
-            # Update with new fields
-            metadata.update(metadata_updates)
+                # Update with new fields
+                metadata.update(metadata_updates)
 
-            # Save updated metadata
-            with open(metadata_path, "w") as f:
+                # Save updated metadata atomically
+                f.seek(0)
+                f.truncate()
                 json.dump(metadata, f, indent=2)
+                f.flush()  # Ensure write completes before lock releases
 
             return True, "Metadata updated successfully"
 
+        except FileLockTimeoutError:
+            return False, f"Failed to acquire lock on {metadata_path} (timeout after 10s)"
         except Exception as e:
             return False, f"Error updating metadata: {str(e)}"
 
@@ -1950,6 +2257,7 @@ class UserDatasetStorage:
         original_filename: str,
         metadata: dict[str, Any],
         progress_callback: Callable[[int, int, str, dict], None] | None = None,
+        overwrite: bool = False,
     ) -> tuple[bool, str, str | None]:
         """
         Save uploaded ZIP file containing multiple CSV files.
@@ -1982,8 +2290,76 @@ class UserDatasetStorage:
         if not valid:
             return False, error, None
 
-        # Generate upload ID
-        upload_id = self.generate_upload_id(original_filename)
+        # Phase 9: Handle overwrite for ZIP uploads
+        dataset_name = metadata.get("dataset_name")
+        existing_upload_id = None
+        existing_version_history = None
+        if overwrite and dataset_name:
+            # Check if dataset with this name already exists
+            existing_datasets = self.list_uploads()
+            for dataset in existing_datasets:
+                if dataset.get("dataset_name") == dataset_name:
+                    existing_upload_id = dataset.get("upload_id")
+                    existing_meta = self.get_upload_metadata(existing_upload_id)
+                    if existing_meta:
+                        existing_version_history = existing_meta.get("version_history", [])
+                        # Phase 4.2: Legacy dataset migration during overwrite
+                        if len(existing_version_history) == 0:
+                            # Legacy dataset: create synthetic version_history from top-level metadata
+                            legacy_version = existing_meta.get("dataset_version")
+                            legacy_created_at = existing_meta.get("created_at") or existing_meta.get("upload_timestamp")
+                            legacy_tables = {}
+
+                            # Reconstruct tables from parquet_paths or duckdb_tables if available
+                            parquet_paths = existing_meta.get("parquet_paths", {})
+                            if parquet_paths:
+                                # Convert parquet_paths dict to canonical tables structure
+                                for table_name, parquet_path in parquet_paths.items():
+                                    legacy_tables[table_name] = {
+                                        "parquet_path": parquet_path,
+                                        "duckdb_table": existing_meta.get("duckdb_tables", {}).get(
+                                            table_name, table_name
+                                        ),
+                                        "row_count": existing_meta.get("table_counts", {}).get(table_name, 0),
+                                        "column_count": existing_meta.get("column_count", 0),
+                                        "schema_fingerprint": existing_meta.get("schema_fingerprint", ""),
+                                    }
+                            else:
+                                # Fallback: create minimal table entry
+                                table_name = (
+                                    existing_meta.get("tables", ["table_0"])[0]
+                                    if existing_meta.get("tables")
+                                    else "table_0"
+                                )
+                                legacy_tables[table_name] = {
+                                    "parquet_path": "",
+                                    "duckdb_table": table_name,
+                                    "row_count": existing_meta.get("row_count", 0),
+                                    "column_count": existing_meta.get("column_count", 0),
+                                    "schema_fingerprint": "",
+                                }
+
+                            synthetic_version_entry = {
+                                "version": legacy_version or "legacy",
+                                "created_at": (
+                                    legacy_created_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                                ),
+                                "event_id": uuid.uuid4().hex,
+                                "event_type": "upload",
+                                "is_active": False,
+                                "tables": legacy_tables,
+                                "source_filename": existing_meta.get("original_filename", ""),
+                            }
+
+                            existing_version_history = [synthetic_version_entry]
+                            logger.info("Migrated legacy dataset to version_history (1 version)")
+                    break
+
+        # Generate upload ID (or use existing if overwriting)
+        if existing_upload_id and overwrite:
+            upload_id = existing_upload_id
+        else:
+            upload_id = self.generate_upload_id(original_filename)
 
         try:
             import logging
@@ -2064,6 +2440,16 @@ class UserDatasetStorage:
                     "file_format": "zip_multi_table",
                 }
             )
+
+            # Phase 9: Pass overwrite metadata to save_table_list
+            if overwrite and existing_version_history is not None:
+                metadata["_existing_version_history"] = existing_version_history
+                # Phase 5: Preserve existing events list
+                if existing_upload_id:
+                    existing_meta_for_events = self.get_upload_metadata(existing_upload_id)
+                    if existing_meta_for_events:
+                        metadata["_existing_events"] = existing_meta_for_events.get("events", [])
+                metadata["_is_overwrite"] = True
 
             # Save using unified save_table_list() function
             if progress_callback:

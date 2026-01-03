@@ -34,17 +34,36 @@ def test_customer_aggregation_sums_transactions():
 
 Test names must describe: **unit_scenario_expectedBehavior**
 
+**CRITICAL**: The pattern is `test_[unit]_[scenario]_[expectedBehavior]` where:
+- `unit`: The component/function being tested (e.g., `filter_extraction`, `compute_descriptive_analysis`)
+- `scenario`: The specific condition or input (e.g., `simple_query`, `null_keys`, `missing_column`)
+- `expectedBehavior`: What should happen (e.g., `returns_filters`, `preserves_first_occurrence`, `raises_valueerror`)
+
 ```python
-# CORRECT: Descriptive names
+# CORRECT: Descriptive names following pattern
+def test_filter_extraction_llm_simple_query_returns_filters():
+def test_filter_extraction_llm_function_exists_returns_callable():
+def test_compute_descriptive_analysis_serializable_dict_returns_expected_keys():
+def test_upload_security_validator_file_type_csv_returns_valid():
 def test_deduplication_with_null_keys_preserves_first_occurrence():
 def test_schema_validation_missing_required_column_raises_valueerror():
 def test_incremental_load_overlapping_dates_merges_correctly():
 
-# WRONG: Vague names
-def test_dedup():
-def test_validation():
-def test_load():
+# WRONG: Vague names or incorrect pattern
+def test_extract_filters_with_llm_function_exists():  # Missing scenario/behavior
+def test_extract_filters_with_llm_success_simple():  # Missing expected behavior
+def test_compute_descriptive_analysis_returns_serializable_dict():  # Wrong order
+def test_validate_file_type_csv():  # Missing unit prefix
+def test_dedup():  # Too vague
+def test_validation():  # Too vague
+def test_load():  # Too vague
 ```
+
+**Common Violations to Avoid**:
+- ❌ `test_extract_filters_with_llm_function_exists` → ✅ `test_filter_extraction_llm_function_exists_returns_callable`
+- ❌ `test_extract_filters_with_llm_success_simple` → ✅ `test_filter_extraction_llm_simple_query_returns_filters`
+- ❌ `test_compute_descriptive_analysis_returns_serializable_dict` → ✅ `test_compute_descriptive_analysis_serializable_dict_returns_expected_keys`
+- ❌ `test_validate_file_type_csv` → ✅ `test_upload_security_validator_file_type_csv_returns_valid`
 
 ## Fixture Discipline
 
@@ -233,6 +252,8 @@ def test_output_schema_matches_contract():
 ### Idempotency Tests
 
 ```python
+import polars.testing as plt
+
 def test_pipeline_is_idempotent(test_database):
     """Running pipeline twice produces same result."""
     run_pipeline(test_database)
@@ -241,7 +262,11 @@ def test_pipeline_is_idempotent(test_database):
     run_pipeline(test_database)
     second_result = test_database.read_table("output")
     
+    # ✅ CORRECT: Use Polars testing assertions for DataFrame comparison
     plt.assert_frame_equal(first_result, second_result)
+    
+    # ❌ WRONG: Never use list comparisons for DataFrames
+    # assert first_result["col"].to_list() == second_result["col"].to_list()
 ```
 
 ### Null Handling Tests
@@ -367,6 +392,40 @@ make test
 # OR for module-specific testing:
 make test-core
 ```
+
+## Polars Testing Assertions
+
+**MANDATORY**: Always use `pl.testing.assert_frame_equal()` for DataFrame comparisons.
+
+```python
+import polars.testing as plt
+
+# ✅ CORRECT: Comprehensive DataFrame comparison
+def test_transformation_produces_expected_output():
+    input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+    result = transform(input_df)
+    expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
+    plt.assert_frame_equal(result, expected)
+
+# ❌ WRONG: List comparisons miss schema/type differences
+def test_transformation_produces_expected_output():
+    input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+    result = transform(input_df)
+    expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
+    assert result["value"].to_list() == expected["value"].to_list()  # NO!
+```
+
+**Why**: `assert_frame_equal()` properly handles:
+- Schema differences (missing/extra columns)
+- Type mismatches (int vs float vs string)
+- Null value semantics
+- Float precision issues
+- Column order differences
+
+**When List Comparison is OK**:
+- Single scalar value: `assert result == 42`
+- Simple list of scalars: `assert [1, 2, 3] == [1, 2, 3]`
+- String content: `assert "error message" in str(exception)`
 
 See `.cursor/rules/000-project-setup-and-makefile.mdc` for full Makefile reference.
 See `tests/AGENTS.md` for comprehensive testing guidelines including unit vs integration test criteria.

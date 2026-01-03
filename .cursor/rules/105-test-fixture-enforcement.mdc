@@ -209,6 +209,7 @@ python -m pytest tests/
 2. If comparing **single values**: ✅ Use `assert result == value`
 3. If comparing **simple lists**: ✅ Use `assert [1, 2, 3] == [1, 2, 3]`
 4. **NEVER use list comparisons for DataFrame columns**: ❌ `assert df1["col"].to_list() == df2["col"].to_list()`
+5. **NEVER use pandas assertions**: ❌ `pd.testing.assert_frame_equal()` (pandas is prohibited)
 
 **Example**:
 
@@ -216,12 +217,35 @@ python -m pytest tests/
 import polars.testing as plt
 
 # ✅ CORRECT - Comprehensive DataFrame comparison
-plt.assert_frame_equal(result_df, expected_df)
+def test_transformation_produces_correct_output():
+    input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+    result = transform(input_df)
+    expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
+    plt.assert_frame_equal(result, expected)
 
 # ❌ WRONG - Misses schema/type differences
-assert result_df["col"].to_list() == expected_df["col"].to_list()
+def test_transformation_produces_correct_output():
+    input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+    result = transform(input_df)
+    expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
+    assert result["value"].to_list() == expected["value"].to_list()  # NO!
+
+# ❌ WRONG - Pandas is prohibited
+import pandas.testing as pdt
+pdt.assert_frame_equal(result_df, expected_df)  # NO!
 ```
-```
+
+**Why**: `assert_frame_equal()` properly handles:
+- Schema differences (missing/extra columns)
+- Type mismatches (int vs float vs string)
+- Null value semantics
+- Float precision issues
+- Column order differences
+
+**When List Comparison is OK**:
+- Single scalar value: `assert result == 42`
+- Simple list of scalars: `assert [1, 2, 3] == [1, 2, 3]`
+- String content: `assert "error message" in str(exception)`
 
 ### Before Committing
 

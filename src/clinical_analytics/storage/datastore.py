@@ -12,12 +12,36 @@ Deferred to Phase 5+: Table deduplication, storage optimization, compression.
 """
 
 import logging
+import re
 from pathlib import Path
 
 import duckdb
 import polars as pl
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_table_name(name: str) -> str:
+    """
+    Sanitize table name to SQL-safe identifier.
+
+    Replaces spaces, hyphens, and special characters with underscores.
+    Ensures identifier starts with letter/underscore (not number).
+
+    Args:
+        name: Original table name (can contain spaces, hyphens, etc.)
+
+    Returns:
+        SQL-safe identifier (e.g., "statin_use_deidentified")
+    """
+    # Replace non-alphanumeric (except underscore) with underscore
+    sanitized = re.sub(r"[^0-9a-zA-Z_]+", "_", name).strip("_").lower()
+
+    # Ensure it starts with letter or underscore (not a number)
+    if not sanitized or sanitized[0].isdigit():
+        sanitized = f"t_{sanitized}" if sanitized else "t"
+
+    return sanitized
 
 
 class DataStore:
@@ -76,8 +100,9 @@ class DataStore:
             IO Boundary: Accepts eager DataFrame for DuckDB write.
             Use collect() before calling if you have a LazyFrame.
         """
-        # Build qualified table name
-        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+        # Build qualified table name (sanitize table_name for SQL safety)
+        sanitized_table_name = _sanitize_table_name(table_name)
+        qualified_name = f"{upload_id}_{sanitized_table_name}_{dataset_version}"
 
         # Create table in DuckDB (overwrite if exists for idempotency)
         # Use CREATE OR REPLACE for MVP (deferred: IF NOT EXISTS + dedup logic)
@@ -107,8 +132,9 @@ class DataStore:
         Raises:
             ValueError: If table not found
         """
-        # Build qualified table name
-        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+        # Build qualified table name (sanitize table_name for SQL safety)
+        sanitized_table_name = _sanitize_table_name(table_name)
+        qualified_name = f"{upload_id}_{sanitized_table_name}_{dataset_version}"
 
         # Check if table exists
         tables = self.list_tables()
@@ -160,14 +186,41 @@ class DataStore:
         """
         tables = self.list_tables()
 
-        # Parse upload_id from table names (format: {upload_id}_{table_name}_{version})
+        # Parse upload_id from table names
+        # Format: {upload_id}_{sanitized_table_name}_{version}
+        # Version can be:
+        #   - 16 hex chars (new format: dataset_version from versioning.py)
+        #   - Short string (old format: "v1", "v2", etc.)
         upload_ids = {}
         for table in tables:
-            # Extract upload_id by removing last two components (table_name + version)
-            # Example: "upload_001_patients_v1" → "upload_001"
-            parts = table.rsplit("_", 2)  # Split from right, max 2 splits
-            if len(parts) >= 1:
-                upload_id = parts[0]  # Everything before last two underscores
+            upload_id = None
+
+            # Try new format first: version is always exactly 16 hex characters
+            if len(table) >= 17:
+                # Check if last segment looks like a 16-char hex version
+                last_segment = table.rsplit("_", 1)[-1] if "_" in table else ""
+                is_16_char_hex = len(last_segment) == 16 and all(c in "0123456789abcdef" for c in last_segment.lower())
+
+                if is_16_char_hex:
+                    # Remove version (last 16 chars) and trailing underscore (last 17 chars total)
+                    without_version = table[:-17]
+
+                    # Now we have: {upload_id}_{sanitized_table_name}
+                    # Upload_id format: user_upload_YYYYMMDD_HHMMSS_8charhash
+                    # Use regex to match the complete upload_id pattern
+                    upload_id_pattern = r"^user_upload_\d{8}_\d{6}_[a-f0-9]{8}"
+                    match = re.match(upload_id_pattern, without_version)
+                    if match:
+                        upload_id = match.group(0)
+
+            # Fallback: Old format or non-standard upload_ids
+            # Use rsplit to remove last two components (table_name + version)
+            if upload_id is None:
+                parts = table.rsplit("_", 2)  # Split from right, max 2 splits
+                if len(parts) >= 1:
+                    upload_id = parts[0]  # Everything before last two underscores
+
+            if upload_id:
                 if upload_id not in upload_ids:
                     upload_ids[upload_id] = 0
                 upload_ids[upload_id] += 1
@@ -198,8 +251,9 @@ class DataStore:
         Raises:
             ValueError: If table not found in DuckDB
         """
-        # Build qualified table name
-        qualified_name = f"{upload_id}_{table_name}_{dataset_version}"
+        # Build qualified table name (sanitize table_name for SQL safety)
+        sanitized_table_name = _sanitize_table_name(table_name)
+        qualified_name = f"{upload_id}_{sanitized_table_name}_{dataset_version}"
 
         # Check if table exists
         tables = self.list_tables()
