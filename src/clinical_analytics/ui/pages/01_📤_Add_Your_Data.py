@@ -130,6 +130,30 @@ def render_upload_step():
         key="file_uploader",
     )
 
+    # Optional: Upload documentation PDF (visible whenever on upload step)
+    st.markdown("### 📄 Documentation (Optional)")
+    st.markdown(
+        "Upload a data dictionary PDF, text, or Markdown file to enhance "
+        "schema inference with column descriptions and codebooks."
+    )
+
+    doc_file = st.file_uploader(
+        "Upload data dictionary",
+        type=["pdf", "txt", "md"],
+        help="Optional: Upload a PDF, text, or Markdown file containing column descriptions, codebooks, etc.",
+        key="doc_uploader",
+    )
+
+    if doc_file is not None:
+        doc_bytes = doc_file.getvalue()
+        st.session_state["external_pdf_bytes"] = doc_bytes
+        st.session_state["external_pdf_filename"] = doc_file.name
+        st.success(f"✅ Documentation uploaded: {doc_file.name}")
+    else:
+        # Clear any previously uploaded documentation
+        st.session_state.pop("external_pdf_bytes", None)
+        st.session_state.pop("external_pdf_filename", None)
+
     if uploaded_file is not None:
         # Only process on step 1 (prevents reprocessing on reruns)
         if st.session_state.get("upload_step", 1) == 1:
@@ -153,29 +177,6 @@ def render_upload_step():
                 return None
 
             st.success("✅ File validation passed")
-
-            # Optional: Upload documentation PDF
-            st.markdown("### 📄 Documentation (Optional)")
-            st.markdown(
-                "Upload a data dictionary PDF to enhance schema inference with column descriptions and codebooks."
-            )
-
-            doc_file = st.file_uploader(
-                "Upload data dictionary PDF",
-                type=["pdf", "txt", "md"],
-                help="Optional: Upload a PDF, text, or Markdown file containing column descriptions, codebooks, etc.",
-                key="doc_uploader",
-            )
-
-            if doc_file is not None:
-                doc_bytes = doc_file.getvalue()
-                st.session_state["external_pdf_bytes"] = doc_bytes
-                st.session_state["external_pdf_filename"] = doc_file.name
-                st.success(f"✅ Documentation uploaded: {doc_file.name}")
-            else:
-                # Clear any previously uploaded documentation
-                st.session_state.pop("external_pdf_bytes", None)
-                st.session_state.pop("external_pdf_filename", None)
 
             # Check if ZIP file (multi-table)
             file_ext = Path(uploaded_file.name).suffix.lower()
