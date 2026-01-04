@@ -1321,6 +1321,54 @@ def save_table_list(
             # Initial upload: create new events list
             events = [event_entry]
 
+        # Phase 4: Generate upload-time example questions (ADR004 Phase 4)
+        # Skip if example_questions already exists (idempotency safeguard)
+        if "example_questions" not in metadata:
+            try:
+                from unittest.mock import MagicMock
+
+                from clinical_analytics.core.question_generator import generate_upload_questions
+                from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
+                # Create minimal mock semantic layer for question generation
+                # We only need get_column_alias_index() which returns column aliases
+                # For upload-time questions, we can use column names directly
+                mock_semantic_layer = MagicMock()
+                # Build alias index from unified_df columns
+                # Simple mapping: column name -> column name (no aliases at upload time)
+                alias_index = {col: col for col in unified_df.columns}
+                mock_semantic_layer.get_column_alias_index.return_value = alias_index
+
+                # Get InferredSchema object (re-infer if needed, or use existing)
+                inferred_schema_config = metadata.get("inferred_schema")
+                if inferred_schema_config:
+                    # We have config, but need InferredSchema object
+                    # Re-infer to get InferredSchema (lightweight - just schema detection)
+                    engine = SchemaInferenceEngine()
+                    inferred_schema_obj = engine.infer_schema(unified_df)
+                else:
+                    # No inferred_schema yet - infer it now
+                    engine = SchemaInferenceEngine()
+                    inferred_schema_obj = engine.infer_schema(unified_df)
+                    # Store config for later use
+                    metadata["inferred_schema"] = inferred_schema_obj.to_dataset_config()
+
+                # Generate questions
+                # Use doc_context from metadata (already extracted earlier in function)
+                example_questions = generate_upload_questions(
+                    semantic_layer=mock_semantic_layer,
+                    inferred_schema=inferred_schema_obj,
+                    doc_context=metadata.get("doc_context"),
+                )
+
+                # Store in metadata
+                metadata["example_questions"] = example_questions
+                logger.info(f"Generated {len(example_questions)} example questions for upload {upload_id}")
+            except Exception as e:
+                # Graceful degradation: log error but don't fail upload
+                logger.warning(f"Failed to generate upload questions for {upload_id}: {e}", exc_info=True)
+                # Don't set example_questions - will be empty list or None
+
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
             **metadata,
@@ -2739,10 +2787,8 @@ class UserDatasetStorage:
             )
 
         except Exception as e:
-            import logging
             import traceback
 
-            logger = logging.getLogger(__name__)
             logger.error(f"Error processing ZIP upload: {type(e).__name__}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False, f"Error processing ZIP upload: {str(e)}", None

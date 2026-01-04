@@ -25,14 +25,16 @@ repos:
 
   # MyPy for type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.5.1
+    rev: v1.19.0
     hooks:
       - id: mypy
         name: mypy type check
         description: Type check with mypy
-        args: [--ignore-missing-imports]
+        args: [--ignore-missing-imports, --no-error-summary, --follow-imports=silent]
         types: [python]
         exclude: ^(tests/|scripts/|test_.*\.py$)  # Skip tests and scripts
+        pass_filenames: true  # Only check staged files, not entire codebase
+        require_serial: false  # Allow parallel execution
 
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks

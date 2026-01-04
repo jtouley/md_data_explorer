@@ -1606,7 +1606,10 @@ def _render_proactive_questions(
         """Streamlit session state cache backend (UI layer implementation)."""
 
         def get(self, key: str) -> list[str] | None:
-            return st.session_state.get(key)
+            value = st.session_state.get(key)
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                return value
+            return None
 
         def set(self, key: str, value: list[str]) -> None:
             st.session_state[key] = value
@@ -1669,6 +1672,64 @@ def get_dataset_version(dataset, dataset_choice: str) -> str:
     """
     # All datasets are uploaded datasets: use upload_id as version
     return dataset_choice  # This is the upload_id
+
+
+def _render_example_questions(dataset, chat: list[ChatMessage]) -> None:
+    """
+    Render upload-time example questions on first load (ADR004 Phase 4).
+
+    Displays example questions from metadata when chat is empty (first load).
+    Questions are clickable buttons that prefill the query input.
+
+    Args:
+        dataset: Dataset object (must have metadata attribute)
+        chat: Chat transcript (empty on first load)
+    """
+    # Only display on first load (chat is empty)
+    if len(chat) > 0:
+        return  # User has already interacted, don't show examples
+
+    # Get example_questions from metadata
+    if not hasattr(dataset, "metadata") or not dataset.metadata:
+        return  # No metadata available
+
+    example_questions = dataset.metadata.get("example_questions")
+    if not example_questions or len(example_questions) == 0:
+        return  # No example questions available
+
+    # Display example questions section
+    st.markdown("---")
+    st.subheader("💡 Example Questions")
+
+    # Render questions as buttons in columns
+    cols = st.columns(min(len(example_questions), 3))
+    for idx, question in enumerate(example_questions):
+        col_idx = idx % 3
+        with cols[col_idx]:
+            # Use button with unique key
+            button_key = f"example_question_{idx}"
+            if st.button(
+                question,
+                key=button_key,
+                use_container_width=True,
+                help="Click to use this example question",
+            ):
+                # Prefill query input with example question
+                st.session_state["prefilled_query"] = question
+                # Log selection event
+                logger.info(
+                    "example_question_selected",
+                    question=question,
+                    position=idx,
+                    upload_id=getattr(dataset, "upload_id", None),
+                )
+                st.rerun()
+
+    logger.debug(
+        "example_questions_rendered",
+        question_count=len(example_questions),
+        upload_id=getattr(dataset, "upload_id", None),
+    )
 
 
 def main():
@@ -1916,6 +1977,9 @@ def main():
     # This is the ONLY place where chat messages are rendered
     # Fixes empty emoji tiles by rendering from persistent state, not control flow
     render_chat(dataset_version=dataset_version, cohort=cohort_pl)
+
+    # Display upload-time example questions on first load (ADR004 Phase 4)
+    _render_example_questions(dataset, st.session_state.get("chat", []))
 
     # Check for semantic layer availability (show message if not available)
     # Phase 3: Use cached semantic layer for performance
