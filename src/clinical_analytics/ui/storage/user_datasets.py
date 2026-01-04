@@ -1721,6 +1721,18 @@ class UserDatasetStorage:
                         # Get schema from first table DataFrame (before ensure_patient_id modifies it)
                         new_schema_dict = tables[0]["data"].schema
                         new_schema = {"columns": [(col, str(dtype)) for col, dtype in new_schema_dict.items()]}
+
+                        # Account for patient_id being added by ensure_patient_id
+                        # If old schema has patient_id but new doesn't, it will be added by ensure_patient_id
+                        # So don't count it as "removed" in the drift check
+                        old_columns = {col for col, _ in old_schema.get("columns", [])}
+                        new_columns = set(new_schema_dict.keys())
+
+                        if "patient_id" in old_columns and "patient_id" not in new_columns:
+                            # Add patient_id to new schema for comparison (it will be added by ensure_patient_id)
+                            new_schema["columns"].append(("patient_id", "Utf8"))
+                            logger.debug("Added patient_id to new schema (will be created by ensure_patient_id)")
+
                         logger.debug(f"New schema: {new_schema}")
 
                         # Phase 3: Classify and apply schema drift policy

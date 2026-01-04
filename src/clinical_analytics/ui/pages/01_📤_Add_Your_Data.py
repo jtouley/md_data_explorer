@@ -745,6 +745,10 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
                             "external_pdf_filename", "documentation.pdf"
                         )
 
+                    # Phase 9: Add schema_drift_override when overwrite is enabled
+                    if overwrite:
+                        metadata["schema_drift_override"] = True
+
                     # Run save with overwrite flag (Phase 9)
                     success, message, upload_id = storage.save_upload(
                         file_bytes=st.session_state["uploaded_bytes"],
