@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import yaml
-
 from clinical_analytics.core.config_loader import (
     load_logging_config,
     load_nl_query_config,

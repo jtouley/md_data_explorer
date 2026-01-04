@@ -4,7 +4,6 @@ Tests for data profiling module.
 
 import pandas as pd
 import polars as pl
-
 from clinical_analytics.core.profiling import DataProfiler
 
 

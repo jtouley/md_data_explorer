@@ -55,9 +55,9 @@ class TestRunAppScriptCleanup:
 
         # Should handle at least EXIT and INT (Ctrl+C)
         required_signals = {"EXIT", "INT"}
-        assert required_signals.issubset(signals_found), (
-            f"trap must handle EXIT and INT signals, found: {signals_found}"
-        )
+        assert required_signals.issubset(
+            signals_found
+        ), f"trap must handle EXIT and INT signals, found: {signals_found}"
 
     def test_unit_cleanup_checks_ollama_pid(self, script_content: str):
         """Test that cleanup function checks OLLAMA_PID variable."""

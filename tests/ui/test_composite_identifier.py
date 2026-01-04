@@ -6,7 +6,6 @@ no single-column identifier is found.
 """
 
 import polars as pl
-
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
 

@@ -8,7 +8,6 @@ Tests verify:
 """
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
@@ -50,12 +49,12 @@ class TestQueryPlanConversion:
 
         # Assert: Phase 1.1.5 - nl_query_engine should NOT set run_key (semantic layer will generate it)
         assert isinstance(plan1, QueryPlan)
-        assert plan1.run_key is None, (
-            "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
-        )
-        assert plan2.run_key is None, (
-            "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
-        )
+        assert (
+            plan1.run_key is None
+        ), "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
+        assert (
+            plan2.run_key is None
+        ), "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
         assert plan1.intent == "COUNT"
         assert plan1.confidence == 0.9
         assert len(plan1.filters) == 1

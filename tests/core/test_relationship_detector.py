@@ -7,7 +7,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import polars as pl
-
 from clinical_analytics.core.relationship_detector import RelationshipDetector
 
 

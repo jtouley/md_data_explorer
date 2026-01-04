@@ -5,7 +5,6 @@ Tests for statistical analysis module.
 import numpy as np
 import pandas as pd
 import pytest
-
 from clinical_analytics.analysis.stats import run_logistic_regression
 
 

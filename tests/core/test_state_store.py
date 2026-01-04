@@ -8,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.state_store import ConversationState, FileStateStore, StateStore

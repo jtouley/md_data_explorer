@@ -13,15 +13,14 @@ TDD Workflow:
 """
 
 import pytest
+from clinical_analytics.api.db.database import get_db
+from clinical_analytics.api.models.database import Base
+from clinical_analytics.api.routes import sessions
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from clinical_analytics.api.db.database import get_db
-from clinical_analytics.api.models.database import Base
-from clinical_analytics.api.routes import sessions
 
 # ============================================================================
 # Test Database Setup

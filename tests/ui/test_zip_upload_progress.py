@@ -6,7 +6,6 @@ import io
 import zipfile
 
 import pytest
-
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 

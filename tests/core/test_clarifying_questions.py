@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from clinical_analytics.core.clarifying_questions import ClarifyingQuestionsEngine
 from clinical_analytics.core.nl_query_engine import QueryIntent
 

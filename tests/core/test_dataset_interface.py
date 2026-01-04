@@ -9,7 +9,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 import pandas as pd
 import pytest
-
 from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.core.schema import UnifiedCohort
 
@@ -332,9 +331,9 @@ class TestSchemaCompliance:
         cohort = dataset.get_cohort()
 
         # Assert: time_zero is datetime
-        assert pd.api.types.is_datetime64_any_dtype(cohort[UnifiedCohort.TIME_ZERO]), (
-            f"{dataset_name} time_zero is not datetime type"
-        )
+        assert pd.api.types.is_datetime64_any_dtype(
+            cohort[UnifiedCohort.TIME_ZERO]
+        ), f"{dataset_name} time_zero is not datetime type"
 
     def test_outcome_column_is_numeric(self, dataset_name):
         """Test that outcome column is numeric type."""
@@ -347,9 +346,9 @@ class TestSchemaCompliance:
         cohort = dataset.get_cohort()
 
         # Assert: outcome is numeric
-        assert pd.api.types.is_numeric_dtype(cohort[UnifiedCohort.OUTCOME]), (
-            f"{dataset_name} outcome is not numeric type"
-        )
+        assert pd.api.types.is_numeric_dtype(
+            cohort[UnifiedCohort.OUTCOME]
+        ), f"{dataset_name} outcome is not numeric type"
 
     def test_cohort_has_data(self, dataset_name):
         """Test that cohort returns non-empty DataFrame."""

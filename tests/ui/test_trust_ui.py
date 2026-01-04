@@ -6,7 +6,6 @@ Tests for trust verification expander, patient-level export, and cohort size cal
 
 import polars as pl
 import pytest
-
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 # ============================================================================

@@ -46,9 +46,9 @@ class TestSchemaDriftPatientIdHandling:
 
         # Assert: Currently flags patient_id as removed (this is the bug)
         removed_columns = drift_result.get("removed_columns", [])
-        assert "patient_id" in removed_columns, (
-            "Currently patient_id is flagged as removed (this is the bug we're fixing)"
-        )
+        assert (
+            "patient_id" in removed_columns
+        ), "Currently patient_id is flagged as removed (this is the bug we're fixing)"
 
         # Now test the fix: Account for patient_id being added by ensure_patient_id
         # If patient_id is in old schema but not in new, add it to new schema for comparison
@@ -65,6 +65,6 @@ class TestSchemaDriftPatientIdHandling:
 
             # Assert: Should NOT flag patient_id as removed
             removed_columns_fixed = drift_result_fixed.get("removed_columns", [])
-            assert "patient_id" not in removed_columns_fixed, (
-                "patient_id should not be flagged as removed when accounted for in comparison"
-            )
+            assert (
+                "patient_id" not in removed_columns_fixed
+            ), "patient_id should not be flagged as removed when accounted for in comparison"

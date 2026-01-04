@@ -82,9 +82,9 @@ class TestCachingImpact:
         # Assert: Cached loading should be faster (at least 30% improvement)
         # Note: Parquet read/write is already fast, so improvement may be modest
         # Real improvement comes from avoiding Excel generation, which is much slower
-        assert cached_time < baseline_time, (
-            f"Cached loading should be faster, but cached time ({cached_time:.4f}s) >= baseline ({baseline_time:.4f}s)"
-        )
+        assert (
+            cached_time < baseline_time
+        ), f"Cached loading should be faster, but cached time ({cached_time:.4f}s) >= baseline ({baseline_time:.4f}s)"
 
         # Log results for documentation
         print(

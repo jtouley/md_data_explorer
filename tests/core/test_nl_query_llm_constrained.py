@@ -36,22 +36,22 @@ class TestLLMQueryPlanSchema:
         # Assert: Prompt should use QueryPlan schema fields (NOT QueryIntent fields)
         # QueryPlan fields: intent, metric, group_by
         # QueryIntent fields (legacy): intent_type, primary_variable, grouping_variable
-        assert "- intent:" in system_prompt or "intent:" in system_prompt, (
-            "Prompt should specify 'intent' field (QueryPlan schema)"
-        )
-        assert "- metric:" in system_prompt or "metric:" in system_prompt, (
-            "Prompt should specify 'metric' field (QueryPlan schema)"
-        )
-        assert "- group_by:" in system_prompt or "group_by:" in system_prompt, (
-            "Prompt should specify 'group_by' field (QueryPlan schema)"
-        )
+        assert (
+            "- intent:" in system_prompt or "intent:" in system_prompt
+        ), "Prompt should specify 'intent' field (QueryPlan schema)"
+        assert (
+            "- metric:" in system_prompt or "metric:" in system_prompt
+        ), "Prompt should specify 'metric' field (QueryPlan schema)"
+        assert (
+            "- group_by:" in system_prompt or "group_by:" in system_prompt
+        ), "Prompt should specify 'group_by' field (QueryPlan schema)"
 
         # Verify QueryPlan schema is being used by checking field list
         assert "- intent: One of" in system_prompt, "Should specify intent field with allowed values"
         assert "- metric: Main variable" in system_prompt or "- metric:" in system_prompt, "Should specify metric field"
-        assert "- group_by: Variable to group by" in system_prompt or "- group_by:" in system_prompt, (
-            "Should specify group_by field"
-        )
+        assert (
+            "- group_by: Variable to group by" in system_prompt or "- group_by:" in system_prompt
+        ), "Should specify group_by field"
 
         # Should specify valid intent types
         assert "COUNT" in system_prompt or "DESCRIBE" in system_prompt, "Prompt should list valid intents"
@@ -167,9 +167,9 @@ class TestLLMQueryPlanSchema:
         result = engine._extract_query_intent_from_llm_response(llm_response)
 
         # Assert: Should return None (no 'intent' field at top level)
-        assert result is None, (
-            "Nested 'query' object structure should be rejected - missing required 'intent' field at top level"
-        )
+        assert (
+            result is None
+        ), "Nested 'query' object structure should be rejected - missing required 'intent' field at top level"
 
 
 class TestLLMConstrainedOutput:

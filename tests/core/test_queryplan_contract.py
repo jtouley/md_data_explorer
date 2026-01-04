@@ -8,7 +8,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import pytest
-
 from clinical_analytics.core.query_plan import QueryPlan
 
 
@@ -29,9 +28,9 @@ class TestQueryPlanContractEnforcement:
 
         # Assert: Should log execution (verify contract enforcement)
         log_messages = [record.message for record in caplog.records]
-        assert any("execute_query_plan" in msg.lower() or "query" in msg.lower() for msg in log_messages), (
-            "execute_query_plan should log execution for observability"
-        )
+        assert any(
+            "execute_query_plan" in msg.lower() or "query" in msg.lower() for msg in log_messages
+        ), "execute_query_plan should log execution for observability"
 
     def test_execute_query_plan_validates_plan_type(self, make_semantic_layer):
         """execute_query_plan() should reject non-QueryPlan inputs."""

@@ -14,10 +14,9 @@ import asyncio
 from typing import Annotated
 
 import pytest
+from clinical_analytics.core.semantic import SemanticLayer
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-
-from clinical_analytics.core.semantic import SemanticLayer
 
 
 # Test fixtures

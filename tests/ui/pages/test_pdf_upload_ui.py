@@ -27,9 +27,9 @@ class TestPdfUploadUI:
         assert "st.file_uploader" in content, "PDF upload should use st.file_uploader"
 
         # Assert: Component accepts correct file types
-        assert 'type=["pdf", "txt", "md"]' in content or 'type=["pdf","txt","md"]' in content, (
-            "PDF upload should accept PDF, TXT, and MD files"
-        )
+        assert (
+            'type=["pdf", "txt", "md"]' in content or 'type=["pdf","txt","md"]' in content
+        ), "PDF upload should accept PDF, TXT, and MD files"
 
     def test_pdf_upload_sets_session_state_when_file_uploaded(self):
         """Test that PDF upload sets session state correctly when file is uploaded."""
@@ -43,9 +43,9 @@ class TestPdfUploadUI:
         assert "external_pdf_bytes" in content, "PDF upload should set external_pdf_bytes in session state"
         assert "external_pdf_filename" in content, "PDF upload should set external_pdf_filename in session state"
         assert 'st.session_state["external_pdf_bytes"]' in content, "PDF upload should store bytes in session state"
-        assert 'st.session_state["external_pdf_filename"]' in content, (
-            "PDF upload should store filename in session state"
-        )
+        assert (
+            'st.session_state["external_pdf_filename"]' in content
+        ), "PDF upload should store filename in session state"
 
     def test_pdf_upload_clears_session_state_when_removed(self):
         """Test that PDF upload clears session state when file is removed."""
@@ -56,12 +56,12 @@ class TestPdfUploadUI:
             content = f.read()
 
         # Assert: Session state is cleared when file is removed
-        assert 'st.session_state.pop("external_pdf_bytes"' in content, (
-            "PDF upload should clear external_pdf_bytes when file removed"
-        )
-        assert 'st.session_state.pop("external_pdf_filename"' in content, (
-            "PDF upload should clear external_pdf_filename when file removed"
-        )
+        assert (
+            'st.session_state.pop("external_pdf_bytes"' in content
+        ), "PDF upload should clear external_pdf_bytes when file removed"
+        assert (
+            'st.session_state.pop("external_pdf_filename"' in content
+        ), "PDF upload should clear external_pdf_filename when file removed"
 
     def test_pdf_upload_component_visible_before_data_file_upload(self):
         """Test that PDF upload component is visible even before data file is uploaded."""
@@ -102,9 +102,9 @@ class TestPdfUploadUI:
 
         # Assert: doc_uploader is defined before the uploaded_file check
         # This ensures it's visible regardless of whether a file is uploaded
-        assert doc_uploader_line_idx < uploaded_file_check_idx, (
-            "PDF upload component should be visible before data file validation (not nested inside uploaded_file check)"
-        )
+        assert (
+            doc_uploader_line_idx < uploaded_file_check_idx
+        ), "PDF upload component should be visible before data file validation (not nested inside uploaded_file check)"
 
     def test_pdf_upload_passed_to_metadata_during_save(self):
         """Test that external PDF bytes are passed to metadata during save operations."""
@@ -116,9 +116,9 @@ class TestPdfUploadUI:
 
         # Assert: External PDF is added to metadata
         assert 'metadata["external_pdf_bytes"]' in content, "External PDF bytes should be added to metadata during save"
-        assert 'metadata["external_pdf_filename"]' in content, (
-            "External PDF filename should be added to metadata during save"
-        )
-        assert '"external_pdf_bytes" in st.session_state' in content, (
-            "Code should check if external PDF exists before adding to metadata"
-        )
+        assert (
+            'metadata["external_pdf_filename"]' in content
+        ), "External PDF filename should be added to metadata during save"
+        assert (
+            '"external_pdf_bytes" in st.session_state' in content
+        ), "Code should check if external PDF exists before adding to metadata"

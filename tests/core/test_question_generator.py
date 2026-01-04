@@ -13,7 +13,6 @@ Tests cover:
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import QueryIntent
 from clinical_analytics.core.question_generator import (
     _deterministic_questions,

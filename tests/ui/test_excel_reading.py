@@ -10,7 +10,6 @@ import io
 import pandas as pd
 import polars as pl
 import pytest
-
 from clinical_analytics.ui.components.data_validator import _ensure_polars
 from clinical_analytics.ui.storage.user_datasets import _detect_excel_header_row
 
@@ -247,9 +246,9 @@ class TestExcelHeaderDetection:
         assert len(df_read.columns) > 0, "DataFrame should have at least one column"
         assert len(df_read) >= min_rows, f"DataFrame should have at least {min_rows} rows, got {len(df_read)}"
         # Assert no "Unnamed:" columns (common failure mode)
-        assert not any("Unnamed" in str(col) for col in df_read.columns), (
-            "Header detection failed: found 'Unnamed' columns"
-        )
+        assert not any(
+            "Unnamed" in str(col) for col in df_read.columns
+        ), "Header detection failed: found 'Unnamed' columns"
         # Assert all column names are non-empty strings
         assert all(col and str(col).strip() for col in df_read.columns), "All column names should be non-empty"
 
