@@ -8,7 +8,6 @@ import pandas as pd
 import polars as pl
 from clinical_analytics.ui.storage.user_datasets import (
     UploadSecurityValidator,
-    UserDatasetStorage,
     save_table_list,
 )
 
@@ -82,25 +81,17 @@ class TestUploadSecurityValidator:
 class TestUserDatasetStorage:
     """Test suite for UserDatasetStorage."""
 
-    def test_storage_initialization(self, tmp_path):
+    def test_storage_initialization(self, upload_storage):
         """Test storage initialization."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
-        assert storage.upload_dir == tmp_path
-        assert storage.raw_dir == tmp_path / "raw"
-        assert storage.metadata_dir == tmp_path / "metadata"
+        storage = upload_storage
+        assert storage.upload_dir == storage.upload_dir
+        assert storage.raw_dir == storage.upload_dir / "raw"
+        assert storage.metadata_dir == storage.upload_dir / "metadata"
 
-    def test_save_upload(self, tmp_path):
+    def test_save_upload(self, upload_storage, large_test_df_pd):
         """Test saving an upload."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
-
-        # Create larger DataFrame to meet 1KB minimum (need ~150 rows to be safe)
-        df = pd.DataFrame(
-            {
-                "patient_id": [f"P{i:03d}" for i in range(150)],
-                "age": [20 + i for i in range(150)],
-                "outcome": [i % 2 for i in range(150)],
-            }
-        )
+        storage = upload_storage
+        df = large_test_df_pd
 
         # Convert DataFrame to CSV bytes
         csv_bytes = df.to_csv(index=False).encode("utf-8")
@@ -116,11 +107,11 @@ class TestUserDatasetStorage:
         assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
         # Check that CSV file exists with upload_id as filename
-        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()
+        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()
 
-    def test_get_upload_data(self, tmp_path):
+    def test_get_upload_data(self, upload_storage):
         """Test loading an upload."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Create larger DataFrame to meet 1KB minimum
         df = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
@@ -135,7 +126,7 @@ class TestUserDatasetStorage:
         assert len(loaded_df) == 150
         assert "patient_id" in loaded_df.columns
 
-    def test_get_upload_data_large_id_values(self, tmp_path):
+    def test_get_upload_data_large_id_values(self, upload_storage):
         """
         Test loading CSV with large patient_id values that exceed i64 range.
 
@@ -143,7 +134,7 @@ class TestUserDatasetStorage:
         (9223372036854775807) and must be read as strings (Utf8) to prevent
         integer overflow errors.
         """
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Create DataFrame with large ID values that exceed i64 range
         # These simulate composite identifier hashes
@@ -193,14 +184,14 @@ class TestUserDatasetStorage:
         unique_expected_ids = set(large_ids)
         assert unique_loaded_ids == unique_expected_ids, "All large ID values should be preserved"
 
-    def test_get_upload_data_synthetic_id_metadata(self, tmp_path):
+    def test_get_upload_data_synthetic_id_metadata(self, upload_storage):
         """
         Test that synthetic ID metadata is used to identify ID columns for schema override.
 
         When patient_id is created synthetically (composite hash), metadata should
         indicate this so we can force it to Utf8 during CSV reading.
         """
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Create DataFrame with composite identifier columns (no patient_id initially)
         # Add enough rows to meet 1KB minimum file size requirement
@@ -240,9 +231,9 @@ class TestUserDatasetStorage:
         patient_ids = loaded_df["patient_id"].to_list()
         assert all(isinstance(pid, str) for pid in patient_ids), "All patient_id values should be strings"
 
-    def test_list_uploads(self, tmp_path):
+    def test_list_uploads(self, upload_storage):
         """Test listing all uploads."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Create larger DataFrame to meet 1KB minimum - need multiple columns with more data
         df = pd.DataFrame(
@@ -271,9 +262,9 @@ class TestUserDatasetStorage:
         assert all("upload_id" in u for u in uploads)
         assert all("dataset_name" in u for u in uploads)
 
-    def test_get_upload_metadata(self, tmp_path):
+    def test_get_upload_metadata(self, upload_storage):
         """Test getting upload metadata."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Create larger DataFrame to meet 1KB minimum
         df = pd.DataFrame(
@@ -297,9 +288,9 @@ class TestUserDatasetStorage:
         assert retrieved_metadata["description"] == "Test"
         assert retrieved_metadata["source"] == "Manual upload"
 
-    def test_delete_upload(self, tmp_path):
+    def test_delete_upload(self, upload_storage):
         """Test deleting an upload."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Create larger DataFrame to meet 1KB minimum
         df = pd.DataFrame(
@@ -322,9 +313,9 @@ class TestUserDatasetStorage:
         # Upload data should no longer exist
         assert storage.get_upload_data(upload_id) is None
 
-    def test_overwrite_preserves_version_history(self, tmp_path):
+    def test_overwrite_preserves_version_history(self, upload_storage):
         """Overwrite should preserve version history and add new version."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df1 = pd.DataFrame(
             {
@@ -378,9 +369,9 @@ class TestUserDatasetStorage:
         v2_entry = [v for v in metadata2["version_history"] if v["version"] == version2][0]
         assert v2_entry["is_active"] is True, "New version should be active"
 
-    def test_overwrite_without_flag_rejected(self, tmp_path):
+    def test_overwrite_without_flag_rejected(self, upload_storage):
         """Uploading same name without overwrite=True should be rejected."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -408,9 +399,9 @@ class TestUserDatasetStorage:
         assert success2 is False, "Should reject duplicate name without overwrite=True"
         assert "already exists" in msg2.lower()
 
-    def test_duplicate_dataset_name_rejected(self, tmp_path):
+    def test_duplicate_dataset_name_rejected(self, upload_storage):
         """Test that uploading a dataset with the same name is rejected."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Create larger DataFrame to meet 1KB minimum
         df = pd.DataFrame(
@@ -445,9 +436,9 @@ class TestUserDatasetStorage:
         uploads = storage.list_uploads()
         assert len(uploads) == 1
 
-    def test_different_dataset_names_allowed(self, tmp_path):
+    def test_different_dataset_names_allowed(self, upload_storage):
         """Test that datasets with different names can be uploaded."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -482,10 +473,10 @@ class TestUserDatasetStorage:
 class TestSaveTableList:
     """Test suite for save_table_list() function (Fix #1)."""
 
-    def test_save_table_list_single_table_creates_tables_directory(self, tmp_path):
+    def test_save_table_list_single_table_creates_tables_directory(self, upload_storage):
         """Test that save_table_list() creates {upload_id}_tables/ directory for single-table."""
         # Arrange
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_123"
 
         df = pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30], "outcome": [0, 1]})
@@ -500,17 +491,16 @@ class TestSaveTableList:
 
         # Assert
         assert success is True, f"save_table_list failed: {message}"
-        assert (tmp_path / "raw" / f"{upload_id}_tables" / "patient_outcomes.csv").exists()
-        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
+        assert (upload_storage.upload_dir / "raw" / f"{upload_id}_tables" / "patient_outcomes.csv").exists()
+        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
 
-    def test_save_table_list_saves_metadata_with_tables_list(self, tmp_path):
+    def test_save_table_list_saves_metadata_with_tables_list(self, upload_storage, simple_test_df):
         """Test that save_table_list() saves metadata with tables list."""
         # Arrange
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_456"
 
-        df = pl.DataFrame({"patient_id": ["P001"], "age": [25]})
-        tables = [{"name": "data", "data": df}]
+        tables = [{"name": "data", "data": simple_test_df}]
         metadata = {"dataset_name": "test"}
 
         # Act
@@ -518,7 +508,7 @@ class TestSaveTableList:
 
         # Assert
         assert success is True
-        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        metadata_path = upload_storage.upload_dir / "metadata" / f"{upload_id}.json"
         assert metadata_path.exists()
 
         with open(metadata_path) as f:
@@ -528,10 +518,10 @@ class TestSaveTableList:
         assert saved_metadata["tables"] == ["data"]
         assert "inferred_schema" in saved_metadata
 
-    def test_save_table_list_converts_variable_mapping_to_inferred_schema(self, tmp_path):
+    def test_save_table_list_converts_variable_mapping_to_inferred_schema(self, upload_storage):
         """Test that save_table_list() converts variable_mapping to inferred_schema."""
         # Arrange
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_789"
 
         df = pl.DataFrame(
@@ -556,7 +546,7 @@ class TestSaveTableList:
 
         # Assert
         assert success is True
-        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        metadata_path = upload_storage.upload_dir / "metadata" / f"{upload_id}.json"
         with open(metadata_path) as f:
             saved_metadata = json.load(f)
 
@@ -566,10 +556,10 @@ class TestSaveTableList:
         assert "Outcome" in inferred.get("outcomes", {})
         assert inferred["outcomes"]["Outcome"]["type"] == "binary"  # Should infer binary
 
-    def test_save_table_list_multi_table_builds_unified_cohort(self, tmp_path):
+    def test_save_table_list_multi_table_builds_unified_cohort(self, upload_storage):
         """Test that save_table_list() builds unified cohort for multi-table uploads."""
         # Arrange
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_multi_upload"
 
         patients_df = pl.DataFrame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
@@ -589,13 +579,13 @@ class TestSaveTableList:
         # Assert
         assert success is True
         # Both tables should be saved
-        assert (tmp_path / "raw" / f"{upload_id}_tables" / "patients.csv").exists()
-        assert (tmp_path / "raw" / f"{upload_id}_tables" / "admissions.csv").exists()
+        assert (upload_storage.upload_dir / "raw" / f"{upload_id}_tables" / "patients.csv").exists()
+        assert (upload_storage.upload_dir / "raw" / f"{upload_id}_tables" / "admissions.csv").exists()
         # Unified cohort should exist
-        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()
+        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()
 
         # Metadata should have both tables
-        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        metadata_path = upload_storage.upload_dir / "metadata" / f"{upload_id}.json"
         with open(metadata_path) as f:
             saved_metadata = json.load(f)
 
@@ -605,7 +595,7 @@ class TestSaveTableList:
 class TestFileLocking:
     """Test suite for file locking helper (Phase 0)."""
 
-    def test_file_lock_exclusive_access(self, tmp_path):
+    def test_file_lock_exclusive_access(self, upload_storage):
         """File lock should provide exclusive access to metadata file."""
         import threading
         import time
@@ -613,7 +603,7 @@ class TestFileLocking:
         from clinical_analytics.ui.storage.user_datasets import file_lock
 
         # Arrange: Create a metadata file
-        metadata_file = tmp_path / "test_metadata.json"
+        metadata_file = upload_storage.upload_dir / "test_metadata.json"
         metadata_file.write_text('{"test": "data"}')
 
         # Track if second thread acquired lock
@@ -642,12 +632,12 @@ class TestFileLocking:
         # Assert: Second thread should not have acquired lock
         assert lock_acquired["value"] is False, "Second thread should not acquire lock while first holds it"
 
-    def test_file_lock_platform_support(self, tmp_path):
+    def test_file_lock_platform_support(self, upload_storage):
         """File lock should work on both Unix (fcntl) and Windows (msvcrt)."""
         from clinical_analytics.ui.storage.user_datasets import file_lock
 
         # Arrange: Create metadata file
-        metadata_file = tmp_path / "test_metadata.json"
+        metadata_file = upload_storage.upload_dir / "test_metadata.json"
         metadata_file.write_text('{"test": "data"}')
 
         # Act: Create lock helper (should auto-detect platform)
@@ -657,17 +647,16 @@ class TestFileLocking:
         # Assert: No exception raised (platform detection works)
         assert True
 
-    def test_file_lock_used_in_all_metadata_writes(self, tmp_path):
+    def test_file_lock_used_in_all_metadata_writes(self, upload_storage):
         """Verify file_lock() is used in all metadata write operations."""
         import inspect
 
         from clinical_analytics.ui.storage.user_datasets import (
-            UserDatasetStorage,
             save_table_list,
         )
 
         # Arrange: Get all functions that write metadata
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Functions that write metadata (must use file_lock)
         metadata_write_functions = [
@@ -697,10 +686,10 @@ class TestFileLocking:
 class TestCrossDatasetDeduplication:
     """Test suite for cross-dataset content deduplication (Phase 1)."""
 
-    def test_same_content_different_name_warns_with_link(self, tmp_path):
+    def test_same_content_different_name_warns_with_link(self, upload_storage):
         """Same file content with different dataset_name should warn with link to existing."""
         # Arrange: Upload same file twice with different names
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -732,10 +721,10 @@ class TestCrossDatasetDeduplication:
         # Should provide link to existing dataset
         assert "first_dataset" in msg2, f"Should mention existing dataset name: {msg2}"
 
-    def test_same_content_same_name_overwrite_allowed(self, tmp_path):
+    def test_same_content_same_name_overwrite_allowed(self, upload_storage):
         """Same content + same name + overwrite=True should proceed without warning."""
         # Arrange: Upload, then upload again with overwrite=True
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -764,10 +753,10 @@ class TestCrossDatasetDeduplication:
         # Currently this is rejected, but in Phase 4 with overwrite=True it will succeed
         assert success2 is False, "Same name currently rejected (until Phase 4 overwrite)"
 
-    def test_different_content_different_name_allowed(self, tmp_path):
+    def test_different_content_different_name_allowed(self, upload_storage):
         """Different content + different name should be allowed without warning."""
         # Arrange: Two different files with different names
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df1 = pd.DataFrame(
             {
@@ -806,9 +795,9 @@ class TestCrossDatasetDeduplication:
 class TestEventStructure:
     """Test suite for event structure (Phase 5)."""
 
-    def test_event_id_uses_uuid4_hex_format(self, tmp_path):
+    def test_event_id_uses_uuid4_hex_format(self, upload_storage):
         """Event IDs should use UUID4 hex format (no dashes)."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -840,9 +829,9 @@ class TestEventStructure:
         assert all(c in "0123456789abcdef" for c in event_id)
         assert "-" not in event_id
 
-    def test_timestamp_uses_iso8601_utc_with_z_suffix(self, tmp_path):
+    def test_timestamp_uses_iso8601_utc_with_z_suffix(self, upload_storage):
         """Timestamps should use ISO 8601 UTC format with Z suffix."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -882,9 +871,9 @@ class TestEventStructure:
 class TestVersionHistoryOrdering:
     """Test suite for version_history ordering (Phase 2)."""
 
-    def test_version_history_sorted_by_created_at_ascending(self, tmp_path):
+    def test_version_history_sorted_by_created_at_ascending(self, upload_storage):
         """version_history should be sorted by created_at ascending (oldest first)."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Arrange: Upload initial dataset
         df1 = pd.DataFrame(
@@ -936,9 +925,9 @@ class TestVersionHistoryOrdering:
 class TestLegacyDatasetMigration:
     """Test suite for legacy dataset migration during overwrite (Phase 4.2)."""
 
-    def test_overwrite_legacy_dataset_migrates_to_version_history(self, tmp_path):
+    def test_overwrite_legacy_dataset_migrates_to_version_history(self, upload_storage):
         """Overwriting legacy dataset (no version_history) should create synthetic version entry."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Arrange: Create legacy dataset metadata (without version_history)
         legacy_upload_id = "legacy_upload_123"
@@ -1002,9 +991,9 @@ class TestLegacyDatasetMigration:
 class TestSeparateEventsList:
     """Test suite for separate top-level events list (Phase 5)."""
 
-    def test_upload_creates_upload_created_event(self, tmp_path):
+    def test_upload_creates_upload_created_event(self, upload_storage):
         """New upload should record upload_created event in separate events list."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -1034,9 +1023,9 @@ class TestSeparateEventsList:
         assert "timestamp" in upload_event
         assert upload_event["event_id"] == metadata["version_history"][0]["event_id"]
 
-    def test_overwrite_creates_version_activated_event(self, tmp_path):
+    def test_overwrite_creates_version_activated_event(self, upload_storage):
         """Overwriting should record version_activated event in separate events list."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Arrange: Initial upload
         df1 = pd.DataFrame(
@@ -1084,9 +1073,9 @@ class TestSeparateEventsList:
         assert len(activated_events) > 0, "Should have version_activated event"
         assert activated_events[0]["event_id"] == metadata["version_history"][-1]["event_id"]
 
-    def test_events_are_append_only(self, tmp_path):
+    def test_events_are_append_only(self, upload_storage):
         """Events should be append-only (never deleted)."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Arrange: Multiple operations
         df = pd.DataFrame(
@@ -1132,9 +1121,9 @@ class TestSeparateEventsList:
             event_counts[i] <= event_counts[i + 1] for i in range(len(event_counts) - 1)
         ), "Event counts should never decrease"
 
-    def test_events_have_required_fields(self, tmp_path):
+    def test_events_have_required_fields(self, upload_storage):
         """Events should have event_id, timestamp, and event_type."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -1165,10 +1154,10 @@ class TestSeparateEventsList:
 class TestVersionHistoryMetadata:
     """Test suite for version history metadata structure (Phase 2)."""
 
-    def test_metadata_includes_version_history(self, tmp_path):
+    def test_metadata_includes_version_history(self, upload_storage):
         """Metadata should include version_history array."""
         # Arrange: Upload dataset
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -1194,10 +1183,10 @@ class TestVersionHistoryMetadata:
         assert isinstance(metadata["version_history"], list), "version_history should be a list"
         assert len(metadata["version_history"]) == 1, "Should have one version entry for initial upload"
 
-    def test_version_entry_has_canonical_tables_structure(self, tmp_path):
+    def test_version_entry_has_canonical_tables_structure(self, upload_storage):
         """Version entry should use tables map, not parquet_paths/duckdb_tables lists."""
         # Arrange: Upload dataset
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -1236,10 +1225,10 @@ class TestVersionHistoryMetadata:
         assert "column_count" in first_table, "Table should have column_count"
         assert "schema_fingerprint" in first_table, "Table should have schema_fingerprint"
 
-    def test_stable_internal_table_identifier_preserved(self, tmp_path):
+    def test_stable_internal_table_identifier_preserved(self, upload_storage):
         """Version entries should preserve stable internal identifier (table_0) for single-table uploads."""
         # Arrange: Upload single-table dataset
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -1274,7 +1263,7 @@ class TestVersionHistoryMetadata:
 class TestSchemaDriftDetection:
     """Test suite for schema drift detection and policy (Phase 3)."""
 
-    def test_detect_schema_drift_policy_defined(self, tmp_path):
+    def test_detect_schema_drift_policy_defined(self, upload_storage):
         """Schema drift detection should have defined policy constants."""
         from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
 
@@ -1283,7 +1272,7 @@ class TestSchemaDriftDetection:
         assert hasattr(SchemaDriftPolicy, "WARN")
         assert hasattr(SchemaDriftPolicy, "ALLOW")
 
-    def test_detect_schema_drift_same_schema(self, tmp_path):
+    def test_detect_schema_drift_same_schema(self, upload_storage):
         """Same schema should not trigger drift detection."""
         from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
 
@@ -1298,7 +1287,7 @@ class TestSchemaDriftDetection:
         assert has_drift is False
         assert drift_details == {}
 
-    def test_detect_schema_drift_new_column(self, tmp_path):
+    def test_detect_schema_drift_new_column(self, upload_storage):
         """New column should trigger drift detection."""
         from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
 
@@ -1314,7 +1303,7 @@ class TestSchemaDriftDetection:
         assert "added_columns" in drift_details
         assert "outcome" in drift_details["added_columns"]
 
-    def test_detect_schema_drift_removed_column(self, tmp_path):
+    def test_detect_schema_drift_removed_column(self, upload_storage):
         """Removed column should trigger drift detection."""
         from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
 
@@ -1330,7 +1319,7 @@ class TestSchemaDriftDetection:
         assert "removed_columns" in drift_details
         assert "outcome" in drift_details["removed_columns"]
 
-    def test_detect_schema_drift_type_change(self, tmp_path):
+    def test_detect_schema_drift_type_change(self, upload_storage):
         """Type change should trigger drift detection."""
         from clinical_analytics.ui.storage.user_datasets import detect_schema_drift
 
@@ -1350,7 +1339,7 @@ class TestSchemaDriftDetection:
 class TestSchemaFingerprint:
     """Test suite for schema fingerprint computation (Phase 3)."""
 
-    def test_compute_schema_fingerprint_uses_utf8_encoding(self, tmp_path):
+    def test_compute_schema_fingerprint_uses_utf8_encoding(self, upload_storage):
         """Schema fingerprint should use UTF-8 encoding."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
@@ -1370,7 +1359,7 @@ class TestSchemaFingerprint:
         assert len(fingerprint) == 64  # SHA256 hex digest length
         assert all(c in "0123456789abcdef" for c in fingerprint)
 
-    def test_compute_schema_fingerprint_sorts_by_column_name(self, tmp_path):
+    def test_compute_schema_fingerprint_sorts_by_column_name(self, upload_storage):
         """Schema fingerprint should sort columns alphabetically by name."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
@@ -1385,7 +1374,7 @@ class TestSchemaFingerprint:
         # Assert: Same fingerprint regardless of column order
         assert fp1 == fp2
 
-    def test_compute_schema_fingerprint_sorts_by_column_type(self, tmp_path):
+    def test_compute_schema_fingerprint_sorts_by_column_type(self, upload_storage):
         """Schema fingerprint should sort by column type when names are same."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
@@ -1402,12 +1391,12 @@ class TestSchemaFingerprint:
         # Assert: Different fingerprints due to different types
         assert fp1 != fp2
 
-    def test_compute_schema_fingerprint_deterministic(self, tmp_path):
+    def test_compute_schema_fingerprint_deterministic(self, upload_storage, simple_test_df):
         """Schema fingerprint should be deterministic (same schema = same fingerprint)."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: Same schema, different data
-        df1 = pl.DataFrame({"patient_id": ["P001"], "age": [25]})
+        df1 = simple_test_df
         df2 = pl.DataFrame({"patient_id": ["P999"], "age": [99]})
 
         # Act: Compute fingerprints
@@ -1421,7 +1410,7 @@ class TestSchemaFingerprint:
 class TestSchemaDriftClassification:
     """Test suite for schema drift classification (Phase 3)."""
 
-    def test_classify_schema_drift_none(self, tmp_path):
+    def test_classify_schema_drift_none(self, upload_storage):
         """No drift should be classified as 'none'."""
         from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
 
@@ -1438,7 +1427,7 @@ class TestSchemaDriftClassification:
         assert result.get("removed_columns") == []
         assert result.get("type_changes") == {}
 
-    def test_classify_schema_drift_additive(self, tmp_path):
+    def test_classify_schema_drift_additive(self, upload_storage):
         """Additive changes (new columns only) should be classified as 'additive'."""
         from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
 
@@ -1455,7 +1444,7 @@ class TestSchemaDriftClassification:
         assert result.get("removed_columns") == []
         assert result.get("type_changes") == {}
 
-    def test_classify_schema_drift_breaking_removed_column(self, tmp_path):
+    def test_classify_schema_drift_breaking_removed_column(self, upload_storage):
         """Removed columns should be classified as 'breaking'."""
         from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
 
@@ -1471,7 +1460,7 @@ class TestSchemaDriftClassification:
         assert "outcome" in result.get("removed_columns", [])
         assert result.get("added_columns") == []
 
-    def test_classify_schema_drift_breaking_type_change(self, tmp_path):
+    def test_classify_schema_drift_breaking_type_change(self, upload_storage):
         """Type changes should be classified as 'breaking'."""
         from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
 
@@ -1488,7 +1477,7 @@ class TestSchemaDriftClassification:
         assert result.get("added_columns") == []
         assert result.get("removed_columns") == []
 
-    def test_classify_schema_drift_breaking_mixed(self, tmp_path):
+    def test_classify_schema_drift_breaking_mixed(self, upload_storage):
         """Mixed additive and breaking changes should be classified as 'breaking'."""
         from clinical_analytics.ui.storage.user_datasets import classify_schema_drift
 
@@ -1508,7 +1497,7 @@ class TestSchemaDriftClassification:
 class TestSchemaDriftPolicy:
     """Test suite for schema drift policy enforcement (Phase 3)."""
 
-    def test_apply_schema_drift_policy_allows_additive(self, tmp_path):
+    def test_apply_schema_drift_policy_allows_additive(self, upload_storage):
         """Additive changes should be allowed without override."""
         from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
 
@@ -1528,7 +1517,7 @@ class TestSchemaDriftPolicy:
         assert "allowed" in message.lower() or "additive" in message.lower()
         assert len(warnings) == 0
 
-    def test_apply_schema_drift_policy_blocks_breaking_removal(self, tmp_path):
+    def test_apply_schema_drift_policy_blocks_breaking_removal(self, upload_storage):
         """Breaking changes (removed columns) should be blocked without override."""
         from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
 
@@ -1548,7 +1537,7 @@ class TestSchemaDriftPolicy:
         assert "blocked" in message.lower() or "removed" in message.lower() or "breaking" in message.lower()
         assert len(warnings) > 0
 
-    def test_apply_schema_drift_policy_blocks_breaking_type_change(self, tmp_path):
+    def test_apply_schema_drift_policy_blocks_breaking_type_change(self, upload_storage):
         """Breaking changes (type changes) should be blocked without override."""
         from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
 
@@ -1568,7 +1557,7 @@ class TestSchemaDriftPolicy:
         assert "blocked" in message.lower() or "type" in message.lower() or "breaking" in message.lower()
         assert len(warnings) > 0
 
-    def test_apply_schema_drift_policy_allows_breaking_with_override(self, tmp_path):
+    def test_apply_schema_drift_policy_allows_breaking_with_override(self, upload_storage):
         """Breaking changes should be allowed with override=True."""
         from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
 
@@ -1587,7 +1576,7 @@ class TestSchemaDriftPolicy:
         assert allowed is True
         assert len(warnings) > 0  # Should warn about breaking changes even with override
 
-    def test_apply_schema_drift_policy_no_drift(self, tmp_path):
+    def test_apply_schema_drift_policy_no_drift(self, upload_storage):
         """No drift should always be allowed."""
         from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
 
@@ -1610,10 +1599,10 @@ class TestSchemaDriftPolicy:
 class TestSchemaDriftPolicyEnforcement:
     """Test suite for schema drift policy enforcement in overwrite flow (Phase 3 integration)."""
 
-    def test_overwrite_with_breaking_schema_changes_blocked(self, tmp_path):
+    def test_overwrite_with_breaking_schema_changes_blocked(self, upload_storage):
         """Overwrite with breaking schema changes (removed column) should be blocked."""
         # Arrange: Upload initial dataset
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df1 = pd.DataFrame(
             {
@@ -1653,10 +1642,10 @@ class TestSchemaDriftPolicyEnforcement:
         assert success is False
         assert "blocked" in message.lower() or "breaking" in message.lower() or "removed" in message.lower()
 
-    def test_overwrite_with_additive_schema_changes_allowed(self, tmp_path):
+    def test_overwrite_with_additive_schema_changes_allowed(self, upload_storage):
         """Overwrite with additive schema changes (new column) should be allowed."""
         # Arrange: Upload initial dataset
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df1 = pd.DataFrame(
             {
@@ -1694,10 +1683,10 @@ class TestSchemaDriftPolicyEnforcement:
         # Assert: Should be allowed
         assert success is True
 
-    def test_overwrite_with_breaking_changes_allowed_with_override(self, tmp_path):
+    def test_overwrite_with_breaking_changes_allowed_with_override(self, upload_storage):
         """Overwrite with breaking schema changes should be allowed with override=True."""
         # Arrange: Upload initial dataset
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df1 = pd.DataFrame(
             {
@@ -1740,7 +1729,7 @@ class TestSchemaDriftPolicyEnforcement:
 class TestMetadataInvariants:
     """Test suite for metadata invariants (Phase 4.1)."""
 
-    def test_assert_invariants_valid_metadata(self, tmp_path):
+    def test_assert_invariants_valid_metadata(self, upload_storage):
         """Valid metadata should pass invariant assertions."""
         from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
 
@@ -1770,7 +1759,7 @@ class TestMetadataInvariants:
         # Act & Assert: Should not raise
         assert_metadata_invariants(metadata)
 
-    def test_assert_invariants_missing_version_history(self, tmp_path):
+    def test_assert_invariants_missing_version_history(self, upload_storage):
         """Missing version_history should raise ValueError."""
         from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
 
@@ -1787,7 +1776,7 @@ class TestMetadataInvariants:
         except ValueError as e:
             assert "version_history" in str(e).lower()
 
-    def test_assert_invariants_no_active_version(self, tmp_path):
+    def test_assert_invariants_no_active_version(self, upload_storage):
         """No active version should raise ValueError."""
         from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
 
@@ -1816,9 +1805,9 @@ class TestMetadataInvariants:
 class TestRollbackMechanism:
     """Test suite for rollback mechanism (Phase 6)."""
 
-    def test_rollback_to_previous_version(self, tmp_path):
+    def test_rollback_to_previous_version(self, upload_storage):
         """Rollback should switch active version to specified version."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Upload v1
         df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
@@ -1852,9 +1841,9 @@ class TestRollbackMechanism:
         assert v1_entry_after["is_active"] is True, "v1 should be active after rollback"
         assert v2_entry_after["is_active"] is False, "v2 should be inactive after rollback"
 
-    def test_rollback_creates_event_entry(self, tmp_path):
+    def test_rollback_creates_event_entry(self, upload_storage):
         """Rollback should create rollback event in version history."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Setup: Create v1 and v2
         df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
@@ -1879,9 +1868,9 @@ class TestRollbackMechanism:
 class TestActiveVersionResolution:
     """Test suite for active version resolution (Phase 7)."""
 
-    def test_get_active_version_returns_active_entry(self, tmp_path):
+    def test_get_active_version_returns_active_entry(self, upload_storage):
         """get_active_version should return the currently active version entry."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Upload v1
         df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
@@ -1897,9 +1886,9 @@ class TestActiveVersionResolution:
         assert "created_at" in active_version, "Should include timestamp"
         assert active_version.get("event_type") == "upload", "First version should be upload event"
 
-    def test_get_active_version_after_overwrite(self, tmp_path):
+    def test_get_active_version_after_overwrite(self, upload_storage):
         """get_active_version should return v2 after overwrite."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Upload v1
         df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
@@ -1923,9 +1912,9 @@ class TestActiveVersionResolution:
         assert active_version.get("version") != v1_hash, "Active version should be v2, not v1"
         assert active_version.get("event_type") == "overwrite", "Active version should be overwrite event"
 
-    def test_get_active_version_after_rollback(self, tmp_path):
+    def test_get_active_version_after_rollback(self, upload_storage):
         """get_active_version should return rolled-back version."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Upload v1, then v2, then rollback to v1
         df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
@@ -1951,9 +1940,9 @@ class TestActiveVersionResolution:
         assert active_version.get("version") == v1_hash, "Active version should be v1 after rollback"
         assert active_version.get("event_type") == "upload", "Active version should be original upload"
 
-    def test_get_active_version_nonexistent_dataset(self, tmp_path):
+    def test_get_active_version_nonexistent_dataset(self, upload_storage):
         """get_active_version should return None for nonexistent dataset."""
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         active_version = storage.get_active_version("nonexistent_id")
         assert active_version is None, "Should return None for nonexistent dataset"
 
@@ -1961,11 +1950,11 @@ class TestActiveVersionResolution:
 class TestQueryVersionIntegration:
     """Test suite for query execution with versioned datasets (Phase 8)."""
 
-    def test_get_cohort_works_after_rollback(self, tmp_path):
+    def test_get_cohort_works_after_rollback(self, upload_storage):
         """Queries should work correctly after rolling back to previous version."""
         from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Upload v1 with age column
         df1 = pd.DataFrame(
@@ -2034,10 +2023,10 @@ class TestQueryVersionIntegration:
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
 
-    def test_save_upload_creates_tables_directory(self, tmp_path):
+    def test_save_upload_creates_tables_directory(self, upload_storage):
         """Test that save_upload() creates {upload_id}_tables/ directory (unified persistence)."""
         # Arrange
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {
@@ -2060,8 +2049,8 @@ class TestSaveUploadIntegration:
         assert upload_id is not None
 
         # Verify unified persistence structure
-        assert (tmp_path / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
-        tables_dir = tmp_path / "raw" / f"{upload_id}_tables"
+        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
+        tables_dir = upload_storage.upload_dir / "raw" / f"{upload_id}_tables"
         assert tables_dir.exists(), "Tables directory should exist"
         assert tables_dir.is_dir()
 
@@ -2075,10 +2064,10 @@ class TestSaveUploadIntegration:
         assert "tables" in metadata
         assert len(metadata["tables"]) == 1
 
-    def test_save_upload_metadata_contains_inferred_schema(self, tmp_path):
+    def test_save_upload_metadata_contains_inferred_schema(self, upload_storage):
         """Test that save_upload() metadata contains inferred_schema."""
         # Arrange
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         df = pd.DataFrame(
             {

@@ -8,7 +8,6 @@ import zipfile
 import polars as pl
 import pytest
 from clinical_analytics.core.multi_table_handler import MultiTableHandler
-from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +22,7 @@ class TestZipExtraction:
     """Test suite for ZIP file extraction and processing."""
 
     def test_extract_zip_with_csv_files(
-        self, tmp_path, large_patients_csv, large_admissions_with_discharge_csv, large_diagnoses_csv
+        self, upload_storage, large_patients_csv, large_admissions_with_discharge_csv, large_diagnoses_csv
     ):
         """Test extracting ZIP file containing multiple CSV files."""
         # Create test ZIP file using shared fixtures
@@ -36,7 +35,7 @@ class TestZipExtraction:
         zip_bytes = zip_buffer.getvalue()
 
         # Test extraction
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test_dataset.zip",
@@ -49,7 +48,7 @@ class TestZipExtraction:
         assert upload_id is not None
         assert "tables" in message.lower() or "joined" in message.lower() or "successful" in message.lower()
 
-    def test_extract_zip_with_csv_gz_files(self, tmp_path, large_test_data_csv, large_admissions_csv):
+    def test_extract_zip_with_csv_gz_files(self, upload_storage, large_test_data_csv, large_admissions_csv):
         """Test extracting ZIP file containing compressed CSV files."""
         import gzip
 
@@ -65,7 +64,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="compressed.zip",
@@ -76,7 +75,7 @@ class TestZipExtraction:
         assert upload_id is not None
 
     def test_extract_zip_with_subdirectories(
-        self, tmp_path, large_test_data_csv, large_admissions_csv, large_diagnoses_csv
+        self, upload_storage, large_test_data_csv, large_admissions_csv, large_diagnoses_csv
     ):
         """Test extracting ZIP file with CSV files in subdirectories."""
         zip_buffer = io.BytesIO()
@@ -88,7 +87,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="mimic-iv-clinical-database-demo-2.2.zip",
@@ -100,7 +99,7 @@ class TestZipExtraction:
         assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
 
-    def test_extract_zip_ignores_macosx(self, tmp_path, large_test_data_csv):
+    def test_extract_zip_ignores_macosx(self, upload_storage, large_test_data_csv):
         """Test that ZIP extraction ignores __MACOSX files."""
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -111,7 +110,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes, original_filename="test.zip", metadata={"dataset_name": "test"}
         )
@@ -119,7 +118,7 @@ class TestZipExtraction:
         assert success is True
         # Should only process patients.csv, not __MACOSX files
 
-    def test_extract_zip_no_csv_files(self, tmp_path):
+    def test_extract_zip_no_csv_files(self, upload_storage):
         """Test ZIP file with no CSV files raises error."""
         zip_buffer = io.BytesIO()
 
@@ -133,7 +132,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes, original_filename="no_csv.zip", metadata={"dataset_name": "test"}
         )
@@ -141,12 +140,12 @@ class TestZipExtraction:
         assert success is False
         assert "no csv files" in message.lower()
 
-    def test_extract_zip_invalid_file(self, tmp_path):
+    def test_extract_zip_invalid_file(self, upload_storage):
         """Test handling invalid ZIP file."""
         # Create invalid ZIP that's large enough to pass size validation (1KB+)
         invalid_bytes = b"This is not a ZIP file" + b"x" * 2000
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=invalid_bytes,
             original_filename="invalid.zip",
@@ -156,7 +155,7 @@ class TestZipExtraction:
         assert success is False
         assert "error" in message.lower() or "invalid" in message.lower() or "corrupted" in message.lower()
 
-    def test_extract_zip_with_mixed_types(self, tmp_path):
+    def test_extract_zip_with_mixed_types(self, upload_storage):
         """Test ZIP extraction with tables having different key column types (int vs string)."""
         zip_buffer = io.BytesIO()
         # Generate data with integer patient_id
@@ -169,7 +168,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="mixed_types.zip",
@@ -179,7 +178,7 @@ class TestZipExtraction:
         # Should succeed despite type differences (normalization should handle it)
         assert success is True
 
-    def test_extract_zip_large_dataset(self, tmp_path, large_patients_csv, large_admissions_csv):
+    def test_extract_zip_large_dataset(self, upload_storage, large_patients_csv, large_admissions_csv):
         """Test extracting ZIP with larger dataset (multiple tables, many rows)."""
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -189,7 +188,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="large_dataset.zip",
@@ -200,7 +199,7 @@ class TestZipExtraction:
         assert upload_id is not None
 
     def test_extract_zip_creates_unified_cohort(
-        self, tmp_path, large_patients_csv, large_admissions_with_admission_date_csv
+        self, upload_storage, large_patients_csv, large_admissions_with_admission_date_csv
     ):
         """Test that ZIP extraction creates unified cohort with joined tables."""
         zip_buffer = io.BytesIO()
@@ -211,7 +210,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes, original_filename="test.zip", metadata={"dataset_name": "test"}
         )
@@ -219,7 +218,7 @@ class TestZipExtraction:
         assert success is True
 
         # Check that unified cohort CSV was created
-        csv_path = tmp_path / "raw" / f"{upload_id}.csv"
+        csv_path = upload_storage.upload_dir / "raw" / f"{upload_id}.csv"
         assert csv_path.exists()
 
         # Load and verify unified cohort
@@ -228,7 +227,7 @@ class TestZipExtraction:
         assert "age" in unified_df.columns
         assert "admission_date" in unified_df.columns
 
-    def test_extract_zip_saves_metadata(self, tmp_path, large_test_data_csv, large_admissions_csv):
+    def test_extract_zip_saves_metadata(self, upload_storage, large_test_data_csv, large_admissions_csv):
         """Test that ZIP extraction saves proper metadata."""
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -238,7 +237,7 @@ class TestZipExtraction:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",
@@ -250,7 +249,7 @@ class TestZipExtraction:
         # Check metadata file
         import json
 
-        metadata_path = tmp_path / "metadata" / f"{upload_id}.json"
+        metadata_path = upload_storage.upload_dir / "metadata" / f"{upload_id}.json"
         assert metadata_path.exists()
 
         with open(metadata_path) as f:
@@ -262,7 +261,7 @@ class TestZipExtraction:
         assert "inferred_schema" in metadata
         assert len(metadata["tables"]) == 2  # patients and admissions
 
-    def test_save_zip_upload_overwrite_reuses_upload_id(self, tmp_path, large_patients_csv, large_admissions_csv):
+    def test_save_zip_upload_overwrite_reuses_upload_id(self, upload_storage, large_patients_csv, large_admissions_csv):
         """Test that save_zip_upload() with overwrite=True reuses existing upload_id and appends to version_history."""
         # Arrange: Create initial ZIP upload
         zip_buffer1 = io.BytesIO()
@@ -272,7 +271,7 @@ class TestZipExtraction:
         zip_buffer1.seek(0)
         zip_bytes1 = zip_buffer1.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success1, message1, upload_id1 = storage.save_zip_upload(
             file_bytes=zip_bytes1,
             original_filename="test_dataset.zip",
@@ -340,7 +339,7 @@ class TestZipExtraction:
         # Assert: Metadata file is the same (not a new file)
         import json
 
-        metadata_path = tmp_path / "metadata" / f"{upload_id1}.json"
+        metadata_path = upload_storage.upload_dir / "metadata" / f"{upload_id1}.json"
         assert metadata_path.exists(), "Metadata file should exist"
         with open(metadata_path) as f:
             saved_metadata = json.load(f)

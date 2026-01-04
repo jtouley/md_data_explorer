@@ -163,11 +163,10 @@ class TestTableClassification:
         handler_original.close()
         handler_reordered.close()
 
-    def test_grain_level_detection(self):
+    def test_grain_level_detection(self, dummy_table):
         """Test grain level detection from grain key names."""
         # Arrange
-        tables = {"dummy": pl.DataFrame({"id": [1]})}
-        handler = MultiTableHandler(tables)
+        handler = MultiTableHandler(dummy_table)
 
         # Act & Assert: Patient grain
         assert handler._detect_grain_level("patient_id") == "patient"
@@ -184,7 +183,7 @@ class TestTableClassification:
 
         handler.close()
 
-    def test_time_column_detection(self):
+    def test_time_column_detection(self, dummy_table):
         """Test detection of time columns."""
         # Arrange: DataFrame with time column
         df_with_time = pl.DataFrame(
@@ -201,8 +200,7 @@ class TestTableClassification:
         # DataFrame with constant time column (should not detect)
         df_constant_time = pl.DataFrame({"id": [1, 2, 3], "timestamp": ["2024-01-01", "2024-01-01", "2024-01-01"]})
 
-        tables = {"dummy": pl.DataFrame({"id": [1]})}
-        handler = MultiTableHandler(tables)
+        handler = MultiTableHandler(dummy_table)
 
         # Act & Assert
         time_col, has_time = handler._detect_time_column(df_with_time)
@@ -267,12 +265,10 @@ class TestTableClassification:
 
         handler.close()
 
-    def test_null_rate_calculation(self):
+    def test_null_rate_calculation(self, patient_value_df):
         """Test null rate calculation in grain key."""
         # Arrange: DataFrame with NULLs in grain key
-        df_with_nulls = pl.DataFrame({"patient_id": ["P1", "P2", None, "P3", None], "value": [100, 200, 300, 400, 500]})
-
-        tables = {"test": df_with_nulls}
+        tables = {"test": patient_value_df}
 
         # Act
         handler = MultiTableHandler(tables)
@@ -290,12 +286,10 @@ class TestTableClassification:
 class TestTableClassificationEdgeCases:
     """Edge cases for table classification."""
 
-    def test_empty_dataframe(self):
+    def test_empty_dataframe(self, empty_patient_df):
         """Test classification with empty DataFrame."""
         # Arrange
-        empty_df = pl.DataFrame({"patient_id": pl.Series([], dtype=pl.Utf8), "value": pl.Series([], dtype=pl.Int64)})
-
-        tables = {"empty": empty_df}
+        tables = {"empty": empty_patient_df}
 
         # Act
         handler = MultiTableHandler(tables)
@@ -326,12 +320,10 @@ class TestTableClassificationEdgeCases:
 
         handler.close()
 
-    def test_all_nulls_grain_key(self):
+    def test_all_nulls_grain_key(self, all_nulls_patient_df):
         """Test classification when grain key is all NULLs."""
         # Arrange
-        all_nulls = pl.DataFrame({"patient_id": [None, None, None], "value": [100, 200, 300]})
-
-        tables = {"nulls": all_nulls}
+        tables = {"nulls": all_nulls_patient_df}
 
         # Act
         handler = MultiTableHandler(tables)
