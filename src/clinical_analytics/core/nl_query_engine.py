@@ -86,6 +86,7 @@ class QueryIntent:
     # ADR009 Phase 2: Query interpretation and confidence explanation
     interpretation: str = ""  # Human-readable explanation of what the query is asking
     confidence_explanation: str = ""  # Why the confidence score is what it is
+    explanation: str = ""  # Human-readable explanation (legacy alias for interpretation)
 
     def __post_init__(self):
         """Validate intent_type."""
@@ -319,16 +320,16 @@ class NLQueryEngine:
         if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
             pattern_intent.parsing_tier = "pattern_match"
             pattern_intent.parsing_attempts = parsing_attempts
-            matched_vars = self._get_matched_variables(pattern_intent)
+            matched_vars_initial = self._get_matched_variables(pattern_intent)
             logger.info(
                 "query_parse_success",
                 intent=pattern_intent.intent_type,
                 confidence=pattern_intent.confidence,
-                matched_vars=matched_vars,
+                matched_vars=matched_vars_initial,
                 tier="pattern_match",
                 **log_context,
             )
-            intent = pattern_intent  # Set for post-processing
+            intent: QueryIntent | None = pattern_intent  # Set for post-processing
         else:
             # Pattern match found something but below threshold - try semantic match
             # but keep pattern match as fallback if semantic match is worse
@@ -430,7 +431,7 @@ class NLQueryEngine:
         # Post-process: Extract and assign variables if missing (runs in src, not UI)
         if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
             # Extract variables from query if not already set
-            matched_vars: list[str] = []  # Initialize for logging
+            matched_vars_post: list[str] = []  # Initialize for logging
             if not intent.primary_variable or not intent.grouping_variable:
                 # For COMPARE_GROUPS: prioritize pattern-based extraction for "which X had lowest Y"
                 if intent.intent_type == "COMPARE_GROUPS":
@@ -946,7 +947,11 @@ class NLQueryEngine:
             if self.encoder is None:
                 from sentence_transformers import SentenceTransformer
 
-                self.encoder = SentenceTransformer(self.embedding_model_name)
+                encoder_obj = SentenceTransformer(self.embedding_model_name)
+                self.encoder = encoder_obj  # type: ignore[assignment]
+
+            if self.encoder is None:
+                return None
 
             # Lazy compute template embeddings
             if self.template_embeddings is None:
@@ -976,13 +981,13 @@ class NLQueryEngine:
 
                 # Assign variables to slots based on template
                 if "outcome" in best_template["slots"] and variables:
-                    intent.primary_variable = variables[0]
+                    intent.primary_variable = str(variables[0]) if variables[0] is not None else None
                 if "group" in best_template["slots"] and len(variables) > 1:
-                    intent.grouping_variable = variables[1]
+                    intent.grouping_variable = str(variables[1]) if variables[1] is not None else None
                 if "var1" in best_template["slots"] and variables:
-                    intent.primary_variable = variables[0]
+                    intent.primary_variable = str(variables[0]) if variables[0] is not None else None
                 if "var2" in best_template["slots"] and len(variables) > 1:
-                    intent.grouping_variable = variables[1]
+                    intent.grouping_variable = str(variables[1]) if variables[1] is not None else None
 
                 return intent
 
@@ -1054,7 +1059,8 @@ class NLQueryEngine:
 
             with open(golden_path) as f:
                 data = yaml.safe_load(f)
-            return data.get("golden_questions", [])
+            result = data.get("golden_questions", []) if isinstance(data, dict) else []
+            return list(result) if isinstance(result, list) else []
         except Exception as e:
             logger.warning("failed_to_load_golden_questions_for_rag", error=str(e))
             return []
@@ -2284,13 +2290,13 @@ Filter extraction (ADR009 Phase 5):
                         else:
                             # Coded column (not binary prescribed) - filter for non-zero values
                             # For "on statins" with "Statin Used", filter for != 0 or IN [1,2,3,4,5]
-                            non_zero_codes = [int(code) for code, _ in codes if int(code) != 0]
+                            non_zero_codes: list[int] = [int(code) for code, _ in codes if int(code) != 0]
                             if non_zero_codes:
                                 filters.append(
                                     FilterSpec(
                                         column=column_name,
                                         operator="IN",
-                                        value=non_zero_codes,
+                                        value=non_zero_codes,  # type: ignore[arg-type]
                                         exclude_nulls=True,
                                     )
                                 )
@@ -2373,10 +2379,12 @@ Filter extraction (ADR009 Phase 5):
                         value = float(value_str)
                         if value.is_integer():
                             value = int(value)
+                        # Type-safe operator
+                        operator_safe: str = str(operator)
                         filters.append(
                             FilterSpec(
                                 column=column_name,
-                                operator=operator,
+                                operator=operator_safe,  # type: ignore[arg-type]
                                 value=value,
                                 exclude_nulls=True,
                             )
@@ -2607,7 +2615,7 @@ Filter extraction (ADR009 Phase 5):
         for normalized_alias, canonical_name in alias_index.items():
             # Exact match (after normalization)
             if normalized_alias == normalized_search:
-                return canonical_name
+                return str(canonical_name) if canonical_name is not None else None
             # Starts with search term
             if normalized_alias.startswith(normalized_search):
                 score = len(normalized_search) / len(normalized_alias)
@@ -2629,7 +2637,7 @@ Filter extraction (ADR009 Phase 5):
 
         # Return if we found a reasonable match (score > 0.3)
         if best_match and best_score > 0.3:
-            return best_match
+            return str(best_match) if best_match is not None else None
 
         return None
 

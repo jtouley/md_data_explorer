@@ -24,7 +24,7 @@ from clinical_analytics.core.schema import UnifiedCohort
 st.set_page_config(page_title="Survival Analysis | Clinical Analytics", page_icon="⏱️", layout="wide")
 
 
-def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str = None):
+def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str | None = None):
     """
     Create Kaplan-Meier survival curve plot.
 

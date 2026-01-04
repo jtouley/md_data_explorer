@@ -6,6 +6,7 @@ and data characteristics.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -20,7 +21,7 @@ class AnalysisType:
     icon: str
     description: str
     when_to_use: str
-    requirements: dict[str, any]
+    requirements: dict[str, Any]
     page_path: str
 
 
@@ -368,16 +369,16 @@ class AnalysisWizard:
 
         # Render selector
         if multiple:
-            selected = st.multiselect(
+            selected_multiple = st.multiselect(
                 f"Select {role} variable(s)",
                 available_cols,
                 help=f"Choose one or more variables to use as {role}(s)",
             )
-            return selected if selected else None
+            return selected_multiple if selected_multiple else None
         else:
-            selected = st.selectbox(
+            selected_single: str | None = st.selectbox(
                 f"Select {role} variable",
                 ["(None)"] + available_cols,
                 help=f"Choose the variable to use as {role}",
             )
-            return None if selected == "(None)" else selected
+            return None if selected_single == "(None)" else selected_single

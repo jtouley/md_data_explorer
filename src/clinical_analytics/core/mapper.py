@@ -83,7 +83,7 @@ class ColumnMapper:
                     unique_values = df.select(pl.col(source_col)).unique().drop_nulls()
 
                     # Normalize mapping keys for comparison (lowercase strings)
-                    normalized_mapping = {}
+                    normalized_mapping: dict[str | bool, Any] = {}
                     for key in mapping.keys():
                         if isinstance(key, bool):
                             normalized_mapping[key] = key
@@ -98,7 +98,7 @@ class ColumnMapper:
                         value = row[0]
                         # Normalize value for comparison
                         if isinstance(value, str):
-                            normalized_value = value.lower()
+                            normalized_value: str | bool | Any = value.lower()
                         elif isinstance(value, bool):
                             normalized_value = value
                         else:
@@ -199,16 +199,16 @@ class ColumnMapper:
 
                     # Get the comparison value based on column type and filter value
                     if col_dtype in string_types:
-                        comparison_value = "yes" if filter_value else "no"
-                        df = df.filter(pl.col(column).str.to_lowercase() == comparison_value)
+                        comparison_value_str = "yes" if filter_value else "no"
+                        df = df.filter(pl.col(column).str.to_lowercase() == comparison_value_str)
                     elif col_dtype == pl.Boolean:
                         df = df.filter(pl.col(column) == filter_value)
                     elif col_dtype in int_types:
-                        comparison_value = 1 if filter_value else 0
-                        df = df.filter(pl.col(column) == comparison_value)
+                        comparison_value_int: int = 1 if filter_value else 0
+                        df = df.filter(pl.col(column) == comparison_value_int)
                     elif col_dtype in float_types:
-                        comparison_value = 1.0 if filter_value else 0.0
-                        df = df.filter(pl.col(column) == comparison_value)
+                        comparison_value_float: float = 1.0 if filter_value else 0.0
+                        df = df.filter(pl.col(column) == comparison_value_float)
                     else:
                         # Unknown type - try direct comparison
                         df = df.filter(pl.col(column) == filter_value)
@@ -424,24 +424,28 @@ class ColumnMapper:
         """
         for source, target in self.column_mapping.items():
             if target == target_col:
-                return source
+                return str(source)  # Explicitly convert to str
         return None
 
     def get_default_predictors(self) -> list[str]:
         """Get list of default predictor variables from config."""
-        return self.analysis_config.get("default_predictors", [])
+        result = self.analysis_config.get("default_predictors", [])
+        return list(result) if result else []
 
     def get_categorical_variables(self) -> list[str]:
         """Get list of categorical variables from config."""
-        return self.analysis_config.get("categorical_variables", [])
+        result = self.analysis_config.get("categorical_variables", [])
+        return list(result) if result else []
 
     def get_default_outcome(self) -> str:
         """Get default outcome column name from config."""
-        return self.analysis_config.get("default_outcome", "outcome")
+        result = self.analysis_config.get("default_outcome", "outcome")
+        return str(result)
 
     def get_default_filters(self) -> dict[str, Any]:
         """Get default filter settings from config."""
-        return self.config.get("default_filters", {})
+        result = self.config.get("default_filters", {})
+        return dict(result) if result else {}
 
     def get_time_zero_value(self) -> str | None:
         """
@@ -470,12 +474,12 @@ class ColumnMapper:
         # Check for explicit outcome label mapping in config
         outcome_labels = self.config.get("outcome_labels", {})
         if outcome_col in outcome_labels:
-            return outcome_labels[outcome_col]
+            return str(outcome_labels[outcome_col])
 
         # Check if outcome has a label in its definition
         outcome_def = self.outcomes.get(outcome_col, {})
         if "label" in outcome_def:
-            return outcome_def["label"]
+            return str(outcome_def["label"])
 
         # Default: use outcome column name
         return outcome_col
@@ -501,7 +505,10 @@ def load_dataset_config(dataset_name: str, config_path: Path | None = None) -> d
     if dataset_name not in all_configs:
         raise KeyError(f"Dataset '{dataset_name}' not found in config")
 
-    return all_configs[dataset_name]
+    result = all_configs[dataset_name]
+    if isinstance(result, dict):
+        return {k: v for k, v in result.items()}
+    return {}
 
 
 def get_global_config(config_path: Path | None = None) -> dict:
@@ -520,4 +527,5 @@ def get_global_config(config_path: Path | None = None) -> dict:
     with open(config_path) as f:
         all_configs = yaml.safe_load(f)
 
-    return all_configs.get("global", {})
+    result = all_configs.get("global", {}) if isinstance(all_configs, dict) else {}
+    return dict(result) if isinstance(result, dict) else {}

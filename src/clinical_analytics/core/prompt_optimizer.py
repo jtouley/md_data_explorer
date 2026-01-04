@@ -150,7 +150,8 @@ class PromptOptimizer:
         }
 
         try:
-            return eval(condition, {"__builtins__": {}}, ctx)
+            result = eval(condition, {"__builtins__": {}}, ctx)
+            return bool(result)
         except Exception as e:
             logger.warning("condition_evaluation_failed", condition=condition, error=str(e))
             return False
@@ -194,7 +195,7 @@ class PromptOptimizer:
 
         # Add pattern-specific replacements
         if pattern_type == "invalid_intent":
-            invalid_intents = {f.get("actual_intent") for f in failures if f.get("actual_intent") is not None}
+            invalid_intents = {str(f.get("actual_intent")) for f in failures if f.get("actual_intent") is not None}
             replacements["invalid_intent"] = ", ".join(invalid_intents)
 
         elif pattern_type == "intent_mismatch":

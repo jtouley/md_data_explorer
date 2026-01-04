@@ -7,6 +7,7 @@ Upload CSV, Excel, or SPSS files without code or YAML configuration.
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -68,7 +69,10 @@ if previous_datasets and "selected_upload_id" not in st.session_state:
                     metadata = storage.get_upload_metadata(selected_upload_id)
                     st.session_state["current_dataset_metadata"] = metadata
 
-                    st.success(f"✅ Loaded dataset: {metadata.get('dataset_name', selected_upload_id)}")
+                    if metadata:
+                        st.success(f"✅ Loaded dataset: {metadata.get('dataset_name', selected_upload_id)}")
+                    else:
+                        st.success(f"✅ Loaded dataset: {selected_upload_id}")
                     st.info("💡 Navigate to other pages (Ask Questions, Compare Groups, etc.) to analyze this dataset.")
 
             with col2:
@@ -355,7 +359,7 @@ def render_variable_detection_step(df: pd.DataFrame):
     st.markdown("### Detection Results")
 
     # Group by type
-    type_groups = {}
+    type_groups: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for col, info in variable_info.items():
         var_type = info["type"]
         if var_type not in type_groups:
@@ -403,7 +407,7 @@ def render_variable_detection_step(df: pd.DataFrame):
 
     # Auto-apply suggestions (doctors shouldn't have to map columns)
     # Build mapping automatically from detected types
-    auto_mapping = {
+    auto_mapping: dict[str, Any] = {
         "patient_id": suggestions.get("patient_id"),
         "outcome": suggestions.get("outcome"),
         "time_variables": {"time_zero": suggestions.get("time_zero")},
@@ -418,10 +422,12 @@ def render_variable_detection_step(df: pd.DataFrame):
     for col, info in variable_info.items():
         if col not in reserved_cols:
             # Include as predictor unless very high missing
-            if info["missing_pct"] < 80:
-                auto_mapping["predictors"].append(col)
-            else:
-                auto_mapping["excluded"].append(col)
+            if isinstance(auto_mapping["predictors"], list):
+                if info["missing_pct"] < 80:
+                    auto_mapping["predictors"].append(col)
+                else:
+                    if isinstance(auto_mapping["excluded"], list):
+                        auto_mapping["excluded"].append(col)
 
     # Store auto-mapping
     st.session_state["variable_mapping"] = auto_mapping
@@ -703,14 +709,18 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         if st.button("📤 Upload Another Dataset", key="success_upload_another"):
             # Clear all upload-related session state
             for key in list(st.session_state.keys()):
-                if key.startswith("upload") or key in [
-                    "uploaded_df",
-                    "uploaded_bytes",
-                    "uploaded_filename",
-                    "variable_info",
-                    "suggestions",
-                    "variable_mapping",
-                ]:
+                if isinstance(key, str) and (
+                    key.startswith("upload")
+                    or key
+                    in [
+                        "uploaded_df",
+                        "uploaded_bytes",
+                        "uploaded_filename",
+                        "variable_info",
+                        "suggestions",
+                        "variable_mapping",
+                    ]
+                ):
                     st.session_state.pop(key, None)
             st.session_state["upload_step"] = 1
             st.rerun()
@@ -782,7 +792,7 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         # Clear session state
         if st.button("Upload Another Dataset", key="error_upload_another"):
             for key in list(st.session_state.keys()):
-                if key.startswith("upload"):
+                if isinstance(key, str) and key.startswith("upload"):
                     del st.session_state[key]
             st.rerun()
 

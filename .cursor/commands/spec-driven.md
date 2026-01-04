@@ -74,7 +74,8 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
   All tests passing: X/Y
   Following TDD: Red-Green-Refactor
   ```
-- Include implementation AND tests
+- Include implementation AND tests AND documentation updates
+- All changes must be committed (code, tests, docs, config)
 - Update TODO to completed
 - **Cannot bypass**: Pre-commit hooks cannot be skipped (`--no-verify` blocked by policy)
 - **Cannot weaken**: Hooks MUST block commits unless all checks pass
@@ -88,10 +89,10 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 
 **10. HITL Safety Gate (if triggered)**
 - If rule 107-hitl-safety triggered:
-  - Halt execution
-  - Output C.O.R.E. format only (per rule 230)
-  - Populate DECISIONS NEEDED section
-  - Await human response
+  - Halt execution immediately
+  - Output C.O.R.E. format ONLY (per rule 230)
+  - Populate DECISIONS NEEDED section (max 3 items)
+  - Await human response before proceeding
 
 ## Checkpoint Logging (Lightweight)
 
@@ -179,43 +180,57 @@ Before claiming complete:
 
 ## Output Format
 
-**All outputs MUST follow C.O.R.E. (Cognitive-Optimized) format per rule 230-core-output-format.mdc.**
+**MANDATORY: All human-facing outputs MUST follow C.O.R.E. (Cognitive-Optimized) format per rule 230-core-output-format.mdc.**
 
-**Format:**
-```
+**Strict Format (NO DEVIATIONS):**
+```markdown
 ## SUMMARY
+
 **Status: ✅ [READY FOR USE | IN PROGRESS | BLOCKED]**
-[1-2 lines: outcome status, actionable result]
+
+(1–2 lines, outcome only)
+
+## DECISIONS NEEDED
+
+(Max 3 items)
+Each item MUST state:
+- the decision
+- why it matters
+- what happens if delayed
 
 ## ACTIONS REQUIRED 🚨
-- [ ] **Action 1** — [context/deadline/impact]
+
+Checklist format only.
+Each action must be explicit and bounded.
+Bold action text with context/deadline/impact.
 
 ## EVIDENCE
-**Created:**
-- `path/to/file.ext` (description)
 
-**Updated:**
-- `path/to/file.ext` (what changed)
-
-**Quality Gates:**
-- ✅ **Linting**: All checks passed
-- ✅ **Tests**: X/Y passing
+- file paths + section anchors (use backticks)
+- test names
+- diff references
+- Group by: Created / Updated / Quality Gates
+(NO large text blocks)
 
 ## OPTIONAL CONTEXT
-**Next Steps:**
-1. Step 1
-2. Step 2
 
-**Status: ✅ READY FOR USE**
+Only include if explicitly requested.
+Compress deferred items into bullets.
+Keep prose minimal.
 ```
 
-**For each major step during execution:**
-```
-## Step N: [Step Name]
-[Brief description]
-[Code/command output]
-✓ Verified: [What was confirmed]
-```
+**Prohibited:**
+- Long prose
+- Full file dumps
+- Narrative explanations
+- Unbounded output (>80 lines without override)
+- Missing required sections (SUMMARY, ACTIONS REQUIRED, EVIDENCE)
+- DECISIONS NEEDED with >3 items
+
+**Enforcement:**
+- If format is violated: Rewrite output to comply immediately
+- Do not proceed with execution until format is correct
+- All checkpoints, summaries, and status updates must use this format
 
 ## Communication Style
 
@@ -229,12 +244,49 @@ Before claiming complete:
 
 ```
 User: spec-driven add auto-download for missing LLM models
-Agent: [Follows complete TDD workflow as specified above]
+
+Agent Output (C.O.R.E. format):
+## SUMMARY
+
+**Status: ✅ IN PROGRESS**
+
+Implementing auto-download for missing LLM models with TDD workflow.
+
+## ACTIONS REQUIRED 🚨
+
+- [ ] **Write failing test for model download** — blocks implementation
+- [ ] **Implement download logic** — required for feature
+- [ ] **Add error handling** — required for robustness
+
+## EVIDENCE
+
+**Created:**
+- `tests/core/test_llm_download.py` (test suite for model download)
+
+**Updated:**
+- `src/clinical_analytics/core/llm_manager.py` (added download logic)
+
+**Quality Gates:**
+- ✅ **Linting**: All checks passed
+- ✅ **Tests**: 3/3 passing
+
+## OPTIONAL CONTEXT
+
+**Implementation approach:**
+- Using Ollama API for model management
+- Caching downloaded models locally
+- Graceful fallback if download fails
 ```
 
 ## Enforcement
 
-If you catch yourself:
+**Output Format Enforcement:**
+- Violating C.O.R.E. format → STOP, rewrite output immediately
+- Missing required sections → STOP, add missing sections
+- Exceeding 80 lines without override → STOP, compress output
+- Using narrative prose → STOP, use structured format only
+
+**TDD Workflow Enforcement:**
 - Running pytest directly (outside red phase) → STOP, use `make test-[module]`
 - Writing code before tests → STOP, write test first
 - Skipping test runs → STOP, run tests now
@@ -243,10 +295,14 @@ If you catch yourself:
 - Weakening pre-commit hooks → STOP, fix violations. Never weaken hooks
 - Adding bypasses to hooks → STOP, fix violations. Never add bypasses
 
-**MANDATORY**: Pre-commit hooks MUST block commits unless all checks pass. If hooks fail:
-1. Fix the violations
-2. Commit again
-3. Never weaken hooks to allow violations
+**MANDATORY**:
+- Pre-commit hooks MUST block commits unless all checks pass. If hooks fail:
+  1. Fix the violations
+  2. Commit again
+  3. Never weaken hooks to allow violations
+- C.O.R.E. format MUST be used for all human-facing outputs. If format is violated:
+  1. Rewrite output to comply
+  2. Do not proceed with execution until format is correct
 
 **Remember**: You're building production systems. Act like a Staff engineer.
 

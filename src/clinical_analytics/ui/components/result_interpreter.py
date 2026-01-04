@@ -4,6 +4,8 @@ Result Interpreter Component
 Provides plain-language interpretation of statistical results for clinicians.
 """
 
+from typing import Any
+
 import streamlit as st
 
 
@@ -16,7 +18,7 @@ class ResultInterpreter:
     """
 
     @staticmethod
-    def interpret_p_value(p_value: float, alpha: float = 0.05) -> dict[str, any]:
+    def interpret_p_value(p_value: float, alpha: float = 0.05) -> dict[str, Any]:
         """
         Interpret a p-value in plain language.
 
@@ -374,7 +376,7 @@ The correlation is {correlation:.3f}, but this could be due to chance.
         statistic: float,
         p_value: float,
         interpretation: str,
-        additional_info: dict[str, any] | None = None,
+        additional_info: dict[str, Any] | None = None,
     ):
         """
         Render a styled result card with interpretation.
@@ -420,7 +422,7 @@ The correlation is {correlation:.3f}, but this could be due to chance.
     def generate_methods_text(
         analysis_type: str,
         test_name: str,
-        variables: dict[str, any],
+        variables: dict[str, Any],
         software: str = "Clinical Analytics Platform",
     ) -> str:
         """

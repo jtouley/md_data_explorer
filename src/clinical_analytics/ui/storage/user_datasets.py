@@ -104,7 +104,7 @@ def file_lock(file_path: Path, timeout: float = 10.0):
             start_time = time.time()
             while True:
                 try:
-                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                     break  # Lock acquired
                 except OSError:
                     if time.time() - start_time > timeout:
@@ -133,7 +133,7 @@ def file_lock(file_path: Path, timeout: float = 10.0):
             if is_windows:
                 import msvcrt
 
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
             else:
                 import fcntl
 
@@ -438,7 +438,7 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
                 unique_count += 1
 
             if unique_count > 0:
-                avg_length = avg_length / unique_count
+                avg_length = int(avg_length / unique_count)
                 uniqueness_ratio = row.dropna().nunique() / unique_count
 
                 # 3. Higher string ratio = better (weight: 30%)
@@ -861,11 +861,13 @@ def detect_schema_drift(schema1: dict[str, Any], schema2: dict[str, Any]) -> tup
     # Detect drift
     added_columns = [col for col in cols2 if col not in cols1]
     removed_columns = [col for col in cols1 if col not in cols2]
-    type_changes = {col: (cols1[col], cols2[col]) for col in cols1 if col in cols2 and cols1[col] != cols2[col]}
+    type_changes: dict[str, tuple[Any, Any]] = {
+        col: (cols1[col], cols2[col]) for col in cols1 if col in cols2 and cols1[col] != cols2[col]
+    }
 
     has_drift = bool(added_columns or removed_columns or type_changes)
 
-    drift_details = {}
+    drift_details: dict[str, Any] = {}
     if added_columns:
         drift_details["added_columns"] = added_columns
     if removed_columns:
@@ -1770,10 +1772,10 @@ class UserDatasetStorage:
                 different_name_duplicates = [d for d in duplicate_datasets if d.get("dataset_name") != dataset_name]
                 if different_name_duplicates:
                     # Warn about duplicate content (UX polish - clinicians may intentionally duplicate)
-                    dup_names = [d.get("dataset_name") for d in different_name_duplicates]
+                    dup_names = [d.get("dataset_name") for d in different_name_duplicates if d.get("dataset_name")]
                     duplicate_warning = (
                         f"⚠️ Warning: This file has the same content as existing dataset(s): "
-                        f"{', '.join(dup_names)}. "
+                        f"{', '.join(str(n) for n in dup_names if n)}. "
                         f"Upload will proceed, but you may want to use the existing dataset instead."
                     )
                     logger.info(f"Duplicate content detected: {dup_names}")
@@ -2106,10 +2108,12 @@ class UserDatasetStorage:
                 f"Returning first one, but metadata is corrupted."
             )
             # Return first one but log the corruption
-            return active_versions[0]
+            result = active_versions[0]
+            return dict(result) if isinstance(result, dict) else {}
         else:
             # Exactly one active version (expected case)
-            return active_versions[0]
+            result = active_versions[0]
+            return dict(result) if isinstance(result, dict) else {}
 
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
         """
@@ -2127,7 +2131,8 @@ class UserDatasetStorage:
             return None
 
         with open(metadata_path) as f:
-            return json.load(f)
+            result = json.load(f)
+            return dict(result) if isinstance(result, dict) else None
 
     def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | pd.DataFrame | None:
         """
@@ -2198,11 +2203,14 @@ class UserDatasetStorage:
         if lazy:
             # Phase 3: Prefer Parquet for lazy loading (columnar, compressed, lazy IO)
             # Check if Parquet paths available in metadata (Phase 3+)
-            parquet_paths = metadata.get("parquet_paths", {})
+            from clinical_analytics.core.type_guards import safe_get
+
+            parquet_paths = safe_get(metadata, "parquet_paths", {})
             if parquet_paths:
                 # Try to load from Parquet first (single-table upload = first table)
                 # For multi-table, this loads the unified cohort's first table
-                first_table_name = metadata.get("tables", [])[0] if metadata.get("tables") else None
+                tables = safe_get(metadata, "tables", [])
+                first_table_name = tables[0] if tables else None
                 if first_table_name and first_table_name in parquet_paths:
                     from pathlib import Path
 
@@ -2231,7 +2239,9 @@ class UserDatasetStorage:
             }
 
             # Check metadata for synthetic ID info to identify ID columns
-            synthetic_id_metadata = metadata.get("synthetic_id_metadata", {})
+            from clinical_analytics.core.type_guards import safe_get
+
+            synthetic_id_metadata = safe_get(metadata, "synthetic_id_metadata", {})
             if "patient_id" in synthetic_id_metadata:
                 # If patient_id was created synthetically, it's definitely an ID column
                 id_column_names.add("patient_id")
@@ -2540,7 +2550,10 @@ class UserDatasetStorage:
             for dataset in existing_datasets:
                 if dataset.get("dataset_name") == dataset_name:
                     existing_upload_id = dataset.get("upload_id")
-                    existing_meta = self.get_upload_metadata(existing_upload_id)
+                    if existing_upload_id and isinstance(existing_upload_id, str):
+                        existing_meta = self.get_upload_metadata(existing_upload_id)
+                    else:
+                        existing_meta = None
                     if existing_meta:
                         existing_version_history = existing_meta.get("version_history", [])
                         # Phase 4.2: Legacy dataset migration during overwrite
@@ -2592,7 +2605,7 @@ class UserDatasetStorage:
                             }
 
                             existing_version_history = [synthetic_version_entry]
-                            logger.info("Migrated legacy dataset to version_history (1 version)")
+                            logger.info("Migrated legacy dataset to version_history (1 version)")  # noqa: F823
                     break
 
         # Generate upload ID (or use existing if overwriting)
@@ -2602,9 +2615,6 @@ class UserDatasetStorage:
             upload_id = self.generate_upload_id(original_filename)
 
         try:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.info(f"Starting ZIP upload processing: {original_filename}")
 
             # Normalize upload to table list (unified entry point)

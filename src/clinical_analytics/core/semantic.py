@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import ibis
 import pandas as pd
+import polars as pl
 from ibis import _
 
 from clinical_analytics.core.mapper import load_dataset_config
@@ -24,8 +25,6 @@ from clinical_analytics.core.schema import UnifiedCohort
 if TYPE_CHECKING:
     from clinical_analytics.core.dataset import Granularity
     from clinical_analytics.core.query_plan import QueryPlan
-else:
-    import polars as pl
 
 # Phase 3.3: Import chart_spec generation function
 from clinical_analytics.core.query_plan import generate_chart_spec
@@ -565,7 +564,7 @@ class SemanticLayer:
         column_mapping = self.config.get("column_mapping", {})
         for source, target in column_mapping.items():
             if target == target_col:
-                return source
+                return str(source)  # Explicitly convert to str
         return target_col  # Fallback: assume same name
 
     def get_data_quality_warnings(self) -> list[dict]:
@@ -580,7 +579,7 @@ class SemanticLayer:
         """
         validation = self.config.get("validation", {})
         quality_warnings = validation.get("quality_warnings", [])
-        return quality_warnings
+        return list(quality_warnings) if quality_warnings else []
 
     def get_cohort(
         self,
@@ -635,7 +634,8 @@ class SemanticLayer:
         Returns:
             Dictionary mapping metric names to their definitions
         """
-        return self.config.get("metrics", {})
+        result = self.config.get("metrics", {})
+        return dict(result) if isinstance(result, dict) else {}
 
     def get_available_dimensions(self) -> dict[str, dict[str, Any]]:
         """
@@ -644,7 +644,8 @@ class SemanticLayer:
         Returns:
             Dictionary mapping dimension names to their definitions
         """
-        return self.config.get("dimensions", {})
+        result = self.config.get("dimensions", {})
+        return dict(result) if isinstance(result, dict) else {}
 
     def get_available_filters(self) -> dict[str, dict[str, Any]]:
         """
@@ -653,7 +654,8 @@ class SemanticLayer:
         Returns:
             Dictionary mapping filter names to their definitions
         """
-        return self.config.get("filters", {})
+        result = self.config.get("filters", {})
+        return dict(result) if isinstance(result, dict) else {}
 
     def get_dataset_info(self) -> dict[str, Any]:
         """
@@ -690,14 +692,16 @@ class SemanticLayer:
         # This is stored in the config for uploaded datasets
         variable_types = self.config.get("variable_types")
         if variable_types and column_name in variable_types:
-            return variable_types[column_name]
+            result = variable_types[column_name]
+            return dict(result) if isinstance(result, dict) else None
 
         # Fallback: check if metadata is stored elsewhere in config
         metadata = self.config.get("metadata")
         if metadata:
             variable_types = metadata.get("variable_types")
             if variable_types and column_name in variable_types:
-                return variable_types[column_name]
+                result = variable_types[column_name]
+                return dict(result) if isinstance(result, dict) else None
 
         return None
 
@@ -1003,9 +1007,16 @@ class SemanticLayer:
         self._build_alias_index()
         normalized = self._normalize_alias(query_term)
 
-        if normalized in self._collision_warnings and self._alias_to_canonicals:
+        from clinical_analytics.core.type_guards import safe_get
+
+        if (
+            self._collision_warnings is not None
+            and normalized in self._collision_warnings
+            and self._alias_to_canonicals is not None
+        ):
             # Return all canonical names that match this alias
-            return sorted(list(self._alias_to_canonicals.get(normalized, set())))
+            canonicals = safe_get(self._alias_to_canonicals, normalized, set())
+            return sorted(list(canonicals))
         return None
 
     # ============================================================================
@@ -1044,7 +1055,8 @@ class SemanticLayer:
             import json
 
             with open(metadata_path) as f:
-                return json.load(f)
+                result = json.load(f)
+                return dict(result) if isinstance(result, dict) else None
         except Exception as e:
             logger.warning(f"Failed to load metadata for {upload_id}: {e}")
             return None
@@ -1171,7 +1183,7 @@ class SemanticLayer:
         self._build_alias_index()
 
         # Check if normalized term already maps to a different column
-        if normalized_term in self._alias_index:
+        if self._alias_index is not None and normalized_term in self._alias_index:
             existing_column = self._alias_index[normalized_term]
             if existing_column != column:
                 # Collision detected - surface in UI, don't silently remap
@@ -1360,10 +1372,11 @@ class SemanticLayer:
         if last_exception:
             logger.error(
                 "retry_exhausted",
-                max_attempts=max_retries + 1,
-                error_type=type(last_exception).__name__,
-                error_message=str(last_exception),
-                exc_info=True,
+                extra={
+                    "max_attempts": str(max_retries + 1),
+                    "error_type": type(last_exception).__name__,
+                    "error_message": str(last_exception),
+                },
             )
             raise last_exception
         raise RuntimeError("Unexpected retry loop exit")
@@ -1583,7 +1596,7 @@ class SemanticLayer:
         # _execute_plan always returns pd.DataFrame, but normalize for safety
         if isinstance(result_df, pd.DataFrame):
             result_df_pl = pl.from_pandas(result_df)
-        elif isinstance(result_df, (int, float)):
+        elif isinstance(result_df, int | float):
             # Scalar count result - convert to DataFrame for consistent handling
             result_df_pl = pl.DataFrame({"count": [int(result_df)]})
         elif isinstance(result_df, pl.DataFrame):
@@ -1898,12 +1911,22 @@ class SemanticLayer:
                                 # Cast filter values to match column dtype
                                 if "int" in col_dtype_lower:
                                     # Integer types - ensure all values are Python ints (which are int64)
-                                    cast_values = [int(v) for v in filter_spec.value]
+                                    if isinstance(filter_spec.value, list):
+                                        cast_values_int: list[int] = [
+                                            int(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                        ]
+                                    else:
+                                        cast_values_int = [int(filter_spec.value)]
                                     # Cast column to int64 to ensure compatibility
-                                    view = view.filter(col_expr.cast("int64").isin(cast_values))
+                                    view = view.filter(col_expr.cast("int64").isin(cast_values_int))
                                 elif "float" in col_dtype_lower:
-                                    cast_values = [float(v) for v in filter_spec.value]
-                                    view = view.filter(col_expr.cast("float64").isin(cast_values))
+                                    if isinstance(filter_spec.value, list):
+                                        cast_values_float: list[float] = [
+                                            float(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                        ]
+                                    else:
+                                        cast_values_float = [float(filter_spec.value)]
+                                    view = view.filter(col_expr.cast("float64").isin(cast_values_float))
                                 else:
                                     # String or other types - try direct isin
                                     view = view.filter(col_expr.isin(filter_spec.value))
@@ -1932,11 +1955,21 @@ class SemanticLayer:
                             if len(sample) > 0:
                                 col_dtype = sample[column].dtype
                                 if col_dtype in ["int8", "int16", "int32", "int64", "Int8", "Int16", "Int32", "Int64"]:
-                                    cast_values = [int(v) for v in filter_spec.value]
-                                    view = view.filter(~col_expr.isin(cast_values))
+                                    if isinstance(filter_spec.value, list):
+                                        cast_values_not_int: list[int] = [
+                                            int(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                        ]
+                                    else:
+                                        cast_values_not_int = [int(filter_spec.value)]
+                                    view = view.filter(~col_expr.isin(cast_values_not_int))
                                 elif col_dtype in ["float32", "float64", "Float32", "Float64"]:
-                                    cast_values = [float(v) for v in filter_spec.value]
-                                    view = view.filter(~col_expr.isin(cast_values))
+                                    if isinstance(filter_spec.value, list):
+                                        cast_values_not_float: list[float] = [
+                                            float(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                        ]
+                                    else:
+                                        cast_values_not_float = [float(filter_spec.value)]
+                                    view = view.filter(~col_expr.isin(cast_values_not_float))
                                 else:
                                     view = view.filter(~col_expr.isin(filter_spec.value))
                             else:

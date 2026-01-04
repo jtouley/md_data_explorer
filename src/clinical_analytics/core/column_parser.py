@@ -33,8 +33,8 @@ class ColumnMetadata:
 
     canonical_name: str
     display_name: str
-    value_mapping: dict[str, str] = None
-    reverse_mapping: dict[str, str] = None
+    value_mapping: dict[str, str] | None = None
+    reverse_mapping: dict[str, str] | None = None
     unit: str | None = None
 
     def __post_init__(self):

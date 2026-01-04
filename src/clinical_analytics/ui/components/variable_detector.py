@@ -108,10 +108,13 @@ class VariableTypeDetector:
                     "values": sorted(series.drop_nulls().unique().to_list()),
                 }
             # High cardinality numeric = continuous
+            min_val = series.min()
+            max_val = series.max()
+            mean_val = series.mean()
             return "continuous", {
-                "min": float(series.min()) if series.min() is not None else None,
-                "max": float(series.max()) if series.max() is not None else None,
-                "mean": float(series.mean()) if series.mean() is not None else None,
+                "min": float(min_val) if min_val is not None and isinstance(min_val, (int, float)) else None,
+                "max": float(max_val) if max_val is not None and isinstance(max_val, (int, float)) else None,
+                "mean": float(mean_val) if mean_val is not None and isinstance(mean_val, (int, float)) else None,
             }
 
         # String/other types
@@ -172,7 +175,7 @@ class VariableTypeDetector:
         return results
 
     @classmethod
-    def suggest_schema_mapping(cls, df: Any) -> dict[str, str | None]:
+    def suggest_schema_mapping(cls, df: Any) -> dict[str, str | None | dict[str, Any]]:
         """
         Suggest mapping to UnifiedCohort schema based on DATA characteristics.
 
@@ -194,7 +197,9 @@ class VariableTypeDetector:
         """
         variable_info = cls.detect_all_variables(df)
 
-        suggestions = {"patient_id": None, "outcome": None, "time_zero": None}
+        from clinical_analytics.core.type_aliases import OptionalStr
+
+        suggestions: dict[str, OptionalStr | dict[str, Any]] = {"patient_id": None, "outcome": None, "time_zero": None}
 
         # Check for patient_id - use ensure_patient_id logic but return original column name for suggestions
         if "patient_id" in df.columns:
@@ -349,7 +354,9 @@ class VariableTypeDetector:
             - 'patient_id_columns': list of source columns
         """
         df = _ensure_polars_df(df)
-        metadata = {"patient_id_source": None, "patient_id_columns": None}
+        from clinical_analytics.core.type_aliases import OptionalList, OptionalStr
+
+        metadata: dict[str, OptionalStr | OptionalList] = {"patient_id_source": None, "patient_id_columns": None}
         n_rows = df.height
 
         logger.debug(f"ensure_patient_id: Starting with {n_rows} rows, columns: {list(df.columns)}")

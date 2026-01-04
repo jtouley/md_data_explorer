@@ -32,7 +32,7 @@ class SepsisDataset(ClinicalDataset):
 
         super().__init__(name="sepsis", source_path=source_path)
         self._aggregated_data: pl.DataFrame | None = None
-        self.semantic: SemanticLayer | None = None
+        # semantic is set via property setter in load() method, not in __init__
 
     def validate(self) -> bool:
         """Validate that PSV files exist."""
@@ -59,6 +59,8 @@ class SepsisDataset(ClinicalDataset):
 
         # Use existing Polars aggregation logic (it works well for this)
         mapper = ColumnMapper(self.config)
+        if self.source_path is None:
+            raise ValueError("source_path must be set before calling load()")
         self._aggregated_data = load_and_aggregate(self.source_path, mapper=mapper)
 
         # Register aggregated data with DuckDB for semantic layer
@@ -105,7 +107,7 @@ class SepsisDataset(ClinicalDataset):
         if self._aggregated_data is None:
             self.load()
 
-        if len(self._aggregated_data) == 0:
+        if self._aggregated_data is None or len(self._aggregated_data) == 0:
             return pd.DataFrame(columns=UnifiedCohort.REQUIRED_COLUMNS)
 
         # Delegate to base class implementation

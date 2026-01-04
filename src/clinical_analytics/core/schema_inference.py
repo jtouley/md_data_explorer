@@ -94,7 +94,9 @@ class InferredSchema:
         Returns:
             Config dictionary compatible with ClinicalDataset
         """
-        config = {"column_mapping": {}, "outcomes": {}, "time_zero": {}}
+        from clinical_analytics.core.type_aliases import ConfigDict
+
+        config: ConfigDict = {"column_mapping": {}, "outcomes": {}, "time_zero": {}}
 
         # Map patient ID
         if self.patient_id_column:

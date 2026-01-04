@@ -52,7 +52,7 @@ class Mimic3Dataset(ClinicalDataset):
             # Try to query count to verify it works
             if hasattr(self.semantic, "raw") and self.semantic.raw is not None:
                 count = self.semantic.raw.count().execute()
-                return count > 0
+                return bool(count > 0) if count is not None else False
             return False
         except Exception as e:
             logger.warning(f"MIMIC-III validation failed: {e}")

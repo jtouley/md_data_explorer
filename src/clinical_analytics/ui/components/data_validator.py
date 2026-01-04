@@ -107,8 +107,8 @@ class DataQualityValidator:
                     "type": "missing_ids",
                     "message": f"{n_missing} missing values in ID column '{id_column}'",
                     "column": id_column,
-                    "count": int(n_missing),
-                    "pct": float(n_missing / n_rows * 100) if n_rows > 0 else 0,
+                    "count": str(int(n_missing)),
+                    "pct": str(float(n_missing / n_rows * 100) if n_rows > 0 else 0),
                 }
             )
 
@@ -127,8 +127,8 @@ class DataQualityValidator:
                         f"{n_duplicates} duplicate values in '{id_column}' (may indicate multi-row-per-patient data)"
                     ),
                     "column": id_column,
-                    "count": int(n_duplicates),
-                    "examples": sample_ids,
+                    "count": str(int(n_duplicates)),
+                    "examples": str(sample_ids) if isinstance(sample_ids, list) else sample_ids,
                 }
             )
 
@@ -142,9 +142,9 @@ class DataQualityValidator:
                     "type": "id_uniqueness",
                     "message": f"ID column '{id_column}' is {uniqueness_ratio * 100:.1f}% unique",
                     "column": id_column,
-                    "uniqueness": float(uniqueness_ratio),
-                    "unique_count": int(n_unique),
-                    "total_count": int(n_non_null),
+                    "uniqueness": str(float(uniqueness_ratio)),
+                    "unique_count": str(int(n_unique)),
+                    "total_count": str(int(n_non_null)),
                 }
             )
 
@@ -262,8 +262,8 @@ class DataQualityValidator:
                     "type": "missing_outcome",
                     "message": f"Outcome has {pct_missing:.1f}% missing values",
                     "column": outcome_column,
-                    "missing_count": int(n_missing),
-                    "missing_pct": float(pct_missing),
+                    "missing_count": str(int(n_missing)),
+                    "missing_pct": str(float(pct_missing)),
                 }
             )
 
@@ -275,7 +275,7 @@ class DataQualityValidator:
                 "type": "outcome_distribution",
                 "message": f"Outcome has {n_unique} unique value(s)",
                 "column": outcome_column,
-                "unique_count": int(n_unique),
+                "unique_count": str(int(n_unique)),
             }
         )
 
@@ -286,7 +286,7 @@ class DataQualityValidator:
                     "type": "no_variation",
                     "message": f"Outcome has only {n_unique} unique value(s) - no variation for analysis",
                     "column": outcome_column,
-                    "unique_count": int(n_unique),
+                    "unique_count": str(int(n_unique)),
                 }
             )
 
@@ -294,17 +294,20 @@ class DataQualityValidator:
         n_non_null = n_rows - n_missing
         if n_unique == 2 and n_non_null > 0:
             value_counts = outcome_series.drop_nulls().value_counts()
-            min_count = value_counts["count"].min()
-            minority_pct = (min_count / n_non_null * 100) if n_non_null > 0 else 0
+            min_count_val = value_counts["count"].min()
+            min_count = (
+                int(min_count_val) if min_count_val is not None and isinstance(min_count_val, (int, float)) else 0
+            )
+            minority_pct = (min_count / n_non_null * 100) if n_non_null > 0 else 0.0
 
-            if minority_pct < 5:
+            if minority_pct < 5.0:
                 observations.append(
                     {
                         "severity": "warning",
                         "type": "imbalanced_outcome",
                         "message": f"Outcome is very imbalanced ({minority_pct:.1f}% minority class)",
                         "column": outcome_column,
-                        "minority_pct": float(minority_pct),
+                        "minority_pct": str(float(minority_pct)),
                     }
                 )
 
@@ -345,7 +348,7 @@ class DataQualityValidator:
         # Convert pandas to polars at boundary
         df = _ensure_polars(df)
 
-        schema_errors = []
+        schema_errors: list[str] = []
         quality_warnings = []
         all_issues = []
 

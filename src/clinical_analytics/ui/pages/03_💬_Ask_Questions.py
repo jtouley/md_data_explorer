@@ -187,7 +187,7 @@ def canonicalize_scope(scope: dict | None) -> dict:
     if scope is None:
         return {}
 
-    canonical = {}
+    canonical: dict[str, Any] = {}
     for key in sorted(scope.keys()):
         value = scope[key]
         if value is None:
@@ -293,7 +293,11 @@ def cleanup_old_results(dataset_version: str) -> None:
 
     # Remove any dataset-scoped result keys not in keep set
     result_prefix = f"analysis_result:{dataset_version}:"
-    keys_to_remove = [key for key in st.session_state.keys() if key.startswith(result_prefix) and key not in keep_keys]
+    keys_to_remove = [
+        key
+        for key in st.session_state.keys()
+        if isinstance(key, str) and key.startswith(result_prefix) and key not in keep_keys
+    ]
 
     for key in keys_to_remove:
         del st.session_state[key]
@@ -312,7 +316,7 @@ def _evict_old_execution_cache(dataset_version: str) -> None:
         dataset_version: Dataset version to evict cache for
     """
     exec_prefix = f"exec_result:{dataset_version}:"
-    exec_keys = [key for key in st.session_state.keys() if key.startswith(exec_prefix)]
+    exec_keys = [key for key in st.session_state.keys() if isinstance(key, str) and key.startswith(exec_prefix)]
 
     if len(exec_keys) <= MAX_STORED_RESULTS_PER_DATASET:
         return
@@ -384,7 +388,7 @@ def clear_all_results(dataset_version: str) -> None:
 
     # Clear all dataset-scoped results (trivial with scoped keys)
     result_prefix = f"analysis_result:{dataset_version}:"
-    keys_to_remove = [key for key in st.session_state.keys() if key.startswith(result_prefix)]
+    keys_to_remove = [key for key in st.session_state.keys() if isinstance(key, str) and key.startswith(result_prefix)]
 
     for key in keys_to_remove:
         del st.session_state[key]
@@ -424,13 +428,16 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
 
         # Phase 2: Add "Add alias?" UI for unknown terms
         if "unknown_term" in result:
-            _render_add_alias_ui(
-                unknown_term=result["unknown_term"],
-                available_columns=result.get("available_columns", []),
-                upload_id=result.get("upload_id"),
-                dataset_version=result.get("dataset_version"),
-                semantic_layer=result.get("semantic_layer"),
-            )
+            upload_id = result.get("upload_id", "")
+            dataset_version = result.get("dataset_version", "")
+            if isinstance(upload_id, str) and isinstance(dataset_version, str):
+                _render_add_alias_ui(
+                    unknown_term=result["unknown_term"],
+                    available_columns=result.get("available_columns", []),
+                    upload_id=upload_id,
+                    dataset_version=dataset_version,
+                    semantic_layer=result.get("semantic_layer"),
+                )
         return
 
     # Check if this is a focused single-variable analysis
@@ -996,6 +1003,7 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                             query_plan=None,  # Not available from transcript
                             cohort=None,  # Not available for cached results
                             dataset_version=dataset_version,
+                            semantic_layer=None,  # Not available for cached results
                         )
                     else:
                         # Fallback: result not in cache (shouldn't happen, but handle gracefully)
@@ -1013,6 +1021,7 @@ def render_result(
     query_plan=None,
     cohort: pl.DataFrame | None = None,
     dataset_version: str | None = None,
+    semantic_layer=None,
 ) -> None:
     """
     Render analysis result (pure rendering, no computation, no side effects).
@@ -1061,6 +1070,16 @@ def render_result(
     # ADR009 Phase 1: Render LLM-generated follow-up questions
     if query_plan and query_plan.follow_ups:
         _render_llm_follow_ups(query_plan, run_key)
+
+    # ADR004 Phase 4: Render proactive follow-up questions (query-time)
+    if query_plan and semantic_layer and dataset_version:
+        _render_proactive_questions(
+            semantic_layer=semantic_layer,
+            query_plan=query_plan,  # QueryPlan has confidence and intent_type
+            dataset_version=dataset_version,
+            run_key=run_key,
+            normalized_query=query_text,
+        )
 
 
 def execute_analysis_with_idempotency(
@@ -1266,6 +1285,16 @@ def execute_analysis_with_idempotency(
         # PR25: _suggest_follow_ups() removed (disabled partial feature)
         # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
 
+        # ADR004 Phase 4: Render proactive follow-up questions (query-time)
+        if query_plan and semantic_layer and dataset_version:
+            _render_proactive_questions(
+                semantic_layer=semantic_layer,
+                query_plan=query_plan,
+                dataset_version=dataset_version,
+                run_key=run_key,
+                normalized_query=query_text,
+            )
+
         logger.info("analysis_rendering_complete", run_key=run_key)
 
         # Don't rerun - results are already rendered inline, conversation history will show on next query
@@ -1325,7 +1354,7 @@ def _render_thinking_indicator(steps: list[dict[str, Any]]) -> None:
     # Determine final status from last step
     last_step = steps[-1]
     status_label = "🤔 Processing your question..."
-    status_state = "running"
+    status_state: Literal["running", "complete", "error"] = "running"
     expanded = True  # Default to expanded
 
     if last_step["status"] == "completed":
@@ -1539,6 +1568,96 @@ def _render_llm_follow_ups(plan, run_key: str) -> None:
         run_key=run_key,
         follow_up_count=len(plan.follow_ups),
         has_explanation=bool(plan.follow_up_explanation),
+    )
+
+
+def _render_proactive_questions(
+    semantic_layer,
+    query_plan,
+    dataset_version: str,
+    run_key: str,
+    normalized_query: str,
+) -> None:
+    """
+    Render proactive follow-up questions (ADR004 Phase 4).
+
+    Displays confidence-gated proactive questions as clickable buttons that prefill
+    the query input. Questions are generated based on query intent and semantic layer.
+
+    Args:
+        semantic_layer: SemanticLayer instance
+        query_plan: QueryPlan with confidence and intent
+        dataset_version: Dataset version for caching
+        run_key: Run key for caching
+        normalized_query: Normalized query text for caching
+    """
+    from clinical_analytics.core.nl_query_engine import QueryIntent
+    from clinical_analytics.core.question_generator import generate_proactive_questions
+
+    # Create QueryIntent from QueryPlan for question generation
+    # QueryPlan uses 'intent' field, QueryIntent uses 'intent_type'
+    query_intent = QueryIntent(
+        intent_type=query_plan.intent if hasattr(query_plan, "intent") else "DESCRIBE",
+        confidence=query_plan.confidence if hasattr(query_plan, "confidence") else 0.0,
+    )
+
+    # Streamlit cache backend implementation
+    class StreamlitCacheBackend:
+        """Streamlit session state cache backend (UI layer implementation)."""
+
+        def get(self, key: str) -> list[str] | None:
+            return st.session_state.get(key)
+
+        def set(self, key: str, value: list[str]) -> None:
+            st.session_state[key] = value
+
+    # Generate proactive questions
+    questions = generate_proactive_questions(
+        semantic_layer=semantic_layer,
+        query_intent=query_intent,
+        dataset_version=dataset_version,
+        run_key=run_key,
+        normalized_query=normalized_query,
+        cache_backend=StreamlitCacheBackend(),
+    )
+
+    if not questions:
+        return  # No questions to render
+
+    st.markdown("---")
+    st.subheader("💡 Suggested Next Questions")
+
+    # Render questions as buttons in columns
+    cols = st.columns(min(len(questions), 3))
+    for idx, question in enumerate(questions):
+        col_idx = idx % 3
+        with cols[col_idx]:
+            # Use button with unique key
+            button_key = f"proactive_{run_key}_{idx}"
+            if st.button(
+                question,
+                key=button_key,
+                use_container_width=True,
+                help="Click to explore this question",
+            ):
+                # Prefill query input with proactive question
+                st.session_state["prefilled_query"] = question
+                # Log selection event
+                logger.info(
+                    "proactive_question_selected",
+                    run_key=run_key,
+                    question=question,
+                    position=idx,
+                    dataset_version=dataset_version,
+                )
+                st.rerun()
+
+    logger.info(
+        "proactive_questions_rendered",
+        run_key=run_key,
+        question_count=len(questions),
+        confidence=query_intent.confidence,
+        dataset_version=dataset_version,
     )
 
 

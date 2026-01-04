@@ -6,7 +6,6 @@ Tests ensure that:
 2. Overwrite works when only difference is patient_id being added automatically
 """
 
-
 from clinical_analytics.ui.storage.user_datasets import (
     classify_schema_drift,
 )

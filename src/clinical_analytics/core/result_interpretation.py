@@ -131,9 +131,9 @@ The comparison between treatment groups shows a statistically significant differ
         logger.debug(
             "result_interpretation_success",
             latency_ms=llm_result.latency_ms,
-            interpretation_length=len(interpretation),
+            interpretation_length=len(str(interpretation)),
         )
-        return interpretation
+        return str(interpretation) if interpretation is not None else None
 
     # Payload malformed or missing interpretation field
     logger.debug(

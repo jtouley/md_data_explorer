@@ -7,12 +7,12 @@ ClinicalDataset implementations without hardcoded if/else chains.
 
 import importlib
 import inspect
-import logging
 import pkgutil
 from pathlib import Path
 from typing import Any
 
 import polars as pl
+import structlog
 import yaml
 
 from clinical_analytics.core.dataset import ClinicalDataset
@@ -27,7 +27,7 @@ try:
 except ImportError:
     _UPLOADED_DATASET_CLASS = None  # type: ignore[assignment]
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 def _filter_kwargs_for_ctor(cls, kwargs: dict) -> dict:
@@ -96,7 +96,7 @@ class DatasetRegistry:
 
         logger.info(
             "dataset_discovery_started",
-            datasets_path=str(datasets_path),
+            datasets_path=str(datasets_path),  # type: ignore[call-arg]
             builtin_excluded=list(builtin_datasets),
         )
 

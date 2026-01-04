@@ -5,6 +5,7 @@ This module handles loading MIMIC-III data from DuckDB or Postgres databases.
 """
 
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import polars as pl
@@ -27,7 +28,7 @@ class MIMIC3Loader:
         """
         self.db_path = Path(db_path) if db_path else None
         self.db_connection = db_connection
-        self.conn = None
+        self.conn: Any = None
 
     def connect(self) -> None:
         """Establish database connection."""
@@ -62,7 +63,7 @@ class MIMIC3Loader:
         try:
             # DuckDB supports direct Polars conversion
             result = self.conn.execute(query).pl()
-            return result
+            return pl.DataFrame(result) if result is not None else pl.DataFrame()
         except Exception as e:
             raise RuntimeError(f"Query execution failed: {e}")
 
@@ -95,6 +96,9 @@ class MIMIC3Loader:
         """
         if not self.conn:
             self.connect()
+
+        if not self.conn:
+            raise RuntimeError("Database connection not available")
 
         required_tables = ["patients", "admissions", "diagnoses_icd", "chartevents"]
 
@@ -130,4 +134,5 @@ def load_mimic3_from_duckdb(db_path: str | Path, query: str) -> pl.DataFrame:
         Polars DataFrame with cohort data
     """
     with MIMIC3Loader(db_path=db_path) as loader:
-        return loader.load_cohort(query=query)
+        result = loader.load_cohort(query=query)
+        return pl.DataFrame(result) if result is not None else pl.DataFrame()
