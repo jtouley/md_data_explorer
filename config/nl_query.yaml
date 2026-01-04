@@ -59,3 +59,7 @@ llm_timeout_max_s: 30.0
 # ADR009: Feature Flags
 # Enable/disable LLM-enhanced features independently
 enable_result_interpretation: true
+
+# ADR004 Phase 4: Proactive Question Generation
+enable_proactive_questions: false  # Default: false for initial rollout
+llm_timeout_question_generation_s: 5.0  # Hard timeout (same as parsing tiers)

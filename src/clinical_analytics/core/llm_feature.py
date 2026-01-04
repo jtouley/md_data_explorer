@@ -35,6 +35,7 @@ class LLMFeature(Enum):
     - RESULT_INTERPRETATION: Clinical insights from results
     - ERROR_TRANSLATION: User-friendly error messages
     - FILTER_EXTRACTION: Complex filter pattern extraction
+    - QUESTION_GENERATION: Proactive question generation (upload-time and query-time)
     """
 
     PARSE = "parse"
@@ -43,6 +44,7 @@ class LLMFeature(Enum):
     RESULT_INTERPRETATION = "result_interpretation"
     ERROR_TRANSLATION = "error_translation"
     FILTER_EXTRACTION = "filter_extraction"
+    QUESTION_GENERATION = "question_generation"
 
 
 @dataclass

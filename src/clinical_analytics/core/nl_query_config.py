@@ -72,3 +72,7 @@ LLM_TIMEOUT_MAX_S: float = _config["llm_timeout_max_s"]
 # ADR009: Feature Flags
 # Enable/disable LLM-enhanced features independently
 ENABLE_RESULT_INTERPRETATION: bool = _config["enable_result_interpretation"]
+
+# ADR004 Phase 4: Proactive Question Generation
+ENABLE_PROACTIVE_QUESTIONS: bool = _config["enable_proactive_questions"]
+LLM_TIMEOUT_QUESTION_GENERATION_S: float = _config["llm_timeout_question_generation_s"]
