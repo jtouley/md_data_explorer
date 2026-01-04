@@ -827,6 +827,7 @@ def mock_cohort():
     - Predictors: age, score, group
     """
     import pandas as pd
+
     from clinical_analytics.core.schema import UnifiedCohort
 
     return pd.DataFrame(

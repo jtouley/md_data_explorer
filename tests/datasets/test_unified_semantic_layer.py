@@ -6,6 +6,7 @@ Tests that both single-table and multi-table uploads register tables identically
 
 import polars as pl
 import pytest
+
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 

@@ -7,6 +7,7 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import pytest
+
 from clinical_analytics.core.query_plan import QueryPlan
 
 
@@ -58,9 +59,9 @@ class TestQueryPlanOnlyPath:
                     calls.append(node.func.attr)
 
         # Assert: compute_analysis_by_type should not be called
-        assert (
-            "compute_analysis_by_type" not in calls
-        ), "Found legacy compute_analysis_by_type() call in Ask_Questions.py"
+        assert "compute_analysis_by_type" not in calls, (
+            "Found legacy compute_analysis_by_type() call in Ask_Questions.py"
+        )
 
     def test_no_direct_get_or_compute_result_calls_in_ui(self):
         """UI pages should not call get_or_compute_result() legacy path."""
@@ -200,6 +201,7 @@ class TestQueryPlanOnlyPath:
         """format_execution_result() should format COUNT result DataFrame correctly."""
         # Arrange: COUNT query result (already aggregated)
         import pandas as pd
+
         from clinical_analytics.core.query_plan import QueryPlan
         from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 

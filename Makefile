@@ -218,9 +218,9 @@ pre-commit-check: ensure-venv ## Run pre-commit checks (test fixture enforcement
 	@$(PYTHON_RUN) scripts/check_test_fixtures.py $$(find $(TEST_DIR) -name "test_*.py" -type f) || (echo "$(RED)❌ Pre-commit checks failed$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"
 
-type-check: ensure-venv ## Run mypy type checker
+type-check: ensure-venv ## Run mypy type checker (matches pre-commit config)
 	@echo "$(GREEN)Running mypy type checker...$(NC)"
-	$(MYPY) $(SRC_DIR)
+	$(MYPY) --ignore-missing-imports $(SRC_DIR)
 
 type-check-strict: ## Run mypy in strict mode
 	@echo "$(GREEN)Running mypy in strict mode...$(NC)"

@@ -23,9 +23,9 @@ from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 try:
     from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 
-    _UPLOADED_DATASET_CLASS = UploadedDataset
+    _UPLOADED_DATASET_CLASS: type[UploadedDataset] | None = UploadedDataset
 except ImportError:
-    _UPLOADED_DATASET_CLASS = None  # type: ignore[assignment]
+    _UPLOADED_DATASET_CLASS = None
 
 logger = structlog.get_logger()
 
@@ -238,7 +238,9 @@ class DatasetRegistry:
                 upload_id = name
 
             storage = override_params.get("storage") or config.get("init_params", {}).get("storage")
-            return dataset_class(upload_id=upload_id, storage=storage)
+            # Type narrowing: mypy knows dataset_class is UploadedDataset here
+            assert _UPLOADED_DATASET_CLASS is not None
+            return _UPLOADED_DATASET_CLASS(upload_id=upload_id, storage=storage)
 
         # Merge config with override params
         params = {**config.get("init_params", {}), **override_params}

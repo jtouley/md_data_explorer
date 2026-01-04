@@ -6,6 +6,7 @@ Tests that vectorized operations are used instead of apply(lambda).
 
 import numpy as np
 import pandas as pd
+
 from clinical_analytics.analysis.stats import run_logistic_regression
 
 

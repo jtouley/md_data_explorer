@@ -6,6 +6,7 @@ import json
 
 import pandas as pd
 import polars as pl
+
 from clinical_analytics.ui.storage.user_datasets import (
     UploadSecurityValidator,
     UserDatasetStorage,
@@ -1128,9 +1129,9 @@ class TestSeparateEventsList:
 
         # Assert: Events are append-only (counts increase)
         assert event_counts[0] < event_counts[1], "Events should be append-only"
-        assert all(
-            event_counts[i] <= event_counts[i + 1] for i in range(len(event_counts) - 1)
-        ), "Event counts should never decrease"
+        assert all(event_counts[i] <= event_counts[i + 1] for i in range(len(event_counts) - 1)), (
+            "Event counts should never decrease"
+        )
 
     def test_events_have_required_fields(self, tmp_path):
         """Events should have event_id, timestamp, and event_type."""

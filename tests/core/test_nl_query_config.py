@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch
 
 import yaml
+
 from clinical_analytics.core.config_loader import load_nl_query_config
 from clinical_analytics.core.nl_query_config import (
     AUTO_EXECUTE_CONFIDENCE_THRESHOLD,

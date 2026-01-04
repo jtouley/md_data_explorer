@@ -23,7 +23,7 @@ from clinical_analytics.core.schema import UnifiedCohort
 st.set_page_config(page_title="Descriptive Statistics | Clinical Analytics", page_icon="📊", layout="wide")
 
 
-def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFrame:
+def generate_table_one(df: pd.DataFrame, stratify_by: str | None = None) -> pd.DataFrame:
     """
     Generate Table 1 (demographic/characteristic table).
 
@@ -42,7 +42,7 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str = None) -> pd.DataFram
         overall = False
     else:
         groups = ["Overall"]
-        stratify_by = None
+        stratify_by = None  # type: ignore[assignment]
         overall = True
 
     for col in df.columns:

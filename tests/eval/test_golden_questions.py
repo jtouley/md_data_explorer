@@ -14,6 +14,7 @@ Regression test: If accuracy drops below 80%, the test fails.
 """
 
 import pytest
+
 from clinical_analytics.core.eval_harness import EvalHarness, load_golden_questions
 
 
@@ -86,9 +87,9 @@ def test_golden_questions_evaluation(make_semantic_layer):
     )
 
     # Assert: Intent accuracy must be above 85%
-    assert (
-        summary["intent_accuracy"] >= 0.85
-    ), f"Intent accuracy ({summary['intent_accuracy']:.1%}) is below 85% threshold."
+    assert summary["intent_accuracy"] >= 0.85, (
+        f"Intent accuracy ({summary['intent_accuracy']:.1%}) is below 85% threshold."
+    )
 
 
 def test_load_golden_questions_yaml():

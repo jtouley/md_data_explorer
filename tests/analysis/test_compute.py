@@ -9,6 +9,7 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 import polars as pl
 import pytest
+
 from clinical_analytics.analysis.compute import (
     compute_analysis_by_type,
     compute_comparison_analysis,

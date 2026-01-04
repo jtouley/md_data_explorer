@@ -535,14 +535,19 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             group_data = [analysis_df.filter(pl.col(group_col) == g)[outcome_col].to_numpy() for g in groups]
             statistic, p_value = stats.f_oneway(*group_data)
 
-            # Group means
-            group_means = {
-                str(g): float(analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean())
-                for g in groups  # type: ignore[arg-type]
-            }
+            # Group means - compute directly as dict comprehension
+            anova_group_means: dict[str, float] = {}
+            for g in groups:  # type: ignore[arg-type]
+                mean_value = analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()
+                # Handle various return types from .mean() - use numpy conversion for safety
+                if mean_value is not None:
+                    # Convert to numpy scalar first, then float
+                    anova_group_means[str(g)] = float(np.asarray(mean_value).item())
+                else:
+                    anova_group_means[str(g)] = 0.0
 
             # Compute headline answer
-            headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+            headline = _compute_headline_answer(anova_group_means, outcome_col, group_col, "lowest")
 
             return {
                 "type": "comparison",
@@ -553,7 +558,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "n_groups": n_groups,
                 "statistic": float(statistic),
                 "p_value": float(p_value),
-                "group_means": group_means,
+                "group_means": anova_group_means,
                 **headline,
             }
 

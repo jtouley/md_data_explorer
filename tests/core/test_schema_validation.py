@@ -14,6 +14,7 @@ from datetime import datetime
 # TODO: Update to Polars when get_cohort() returns pl.DataFrame
 import pandas as pd
 import pytest
+
 from clinical_analytics.core.schema import (
     SchemaValidationError,
     UnifiedCohort,

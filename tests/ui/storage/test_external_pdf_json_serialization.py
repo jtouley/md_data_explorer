@@ -10,6 +10,7 @@ import json
 
 import polars as pl
 import pytest
+
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage, save_table_list
 
 # ============================================================================
@@ -73,14 +74,14 @@ class TestExternalPdfJsonSerialization:
         assert success, f"save_table_list should succeed, got: {message}"
 
         # Assert: external_pdf_bytes is removed from metadata
-        assert (
-            "external_pdf_bytes" not in metadata
-        ), "external_pdf_bytes should be removed from metadata after processing"
+        assert "external_pdf_bytes" not in metadata, (
+            "external_pdf_bytes should be removed from metadata after processing"
+        )
 
         # Assert: external_pdf_filename is removed from metadata
-        assert (
-            "external_pdf_filename" not in metadata
-        ), "external_pdf_filename should be removed from metadata after processing"
+        assert "external_pdf_filename" not in metadata, (
+            "external_pdf_filename should be removed from metadata after processing"
+        )
 
         # Assert: Metadata can be serialized to JSON (no bytes objects)
         try:

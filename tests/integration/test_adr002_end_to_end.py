@@ -124,9 +124,9 @@ class TestADR002EndToEnd:
         parquet_size = parquet_path.stat().st_size
         compression_ratio = (csv_size - parquet_size) / csv_size
 
-        assert (
-            compression_ratio >= 0.40
-        ), f"Parquet compression {compression_ratio:.1%} < 40% (ADR002 Success Metric 3 FAILED)"
+        assert compression_ratio >= 0.40, (
+            f"Parquet compression {compression_ratio:.1%} < 40% (ADR002 Success Metric 3 FAILED)"
+        )
 
         # ========== Phase 2: Simulate Restart ==========
         # Close connections (simulate app shutdown)
@@ -285,9 +285,9 @@ class TestADR002EndToEnd:
         parquet_2 = datastore.export_to_parquet("upload_001", "patients", version_2, parquet_dir)
 
         # Both should point to same Parquet file (reuse)
-        assert (
-            parquet_1 == parquet_2
-        ), "Storage reuse failed: same (upload_id, version) produced different Parquet paths"
+        assert parquet_1 == parquet_2, (
+            "Storage reuse failed: same (upload_id, version) produced different Parquet paths"
+        )
 
         datastore.close()
 

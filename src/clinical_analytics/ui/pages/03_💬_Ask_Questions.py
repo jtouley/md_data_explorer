@@ -2079,7 +2079,14 @@ def main():
             QuestionEngine.render_progress_indicator(context)
 
         # If complete, check confidence gating (ADR003 Phase 3)
-        if context.is_complete_for_intent():
+        is_complete = context.is_complete_for_intent()
+        logger.debug(
+            "execution_completeness_check",
+            is_complete=is_complete,
+            intent_type=context.inferred_intent.value if context else None,
+            has_query_plan=hasattr(context, "query_plan") and context.query_plan is not None,
+        )
+        if is_complete:
             # Get QueryPlan if available (preferred), otherwise fallback to context
             query_plan = getattr(context, "query_plan", None)
 
@@ -2099,11 +2106,18 @@ def main():
                 threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
                 dataset_version=dataset_version,
                 query=getattr(context, "research_question", ""),
+                has_query_plan=query_plan is not None,
+                has_semantic_layer=semantic_layer is not None,
             )
 
             # ADR003 Phase 3: Use execute_query_plan() for confidence and completeness gating
             # semantic_layer is already available from line 1291
             if query_plan and semantic_layer:
+                logger.debug(
+                    "execution_path_entered",
+                    intent_type=context.inferred_intent.value,
+                    dataset_version=dataset_version,
+                )
                 query_text = getattr(context, "research_question", "")
 
                 # INVARIANT ENFORCEMENT (PR25): Normalize query text before passing to execute_query_plan()

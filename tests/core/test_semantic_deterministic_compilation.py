@@ -16,6 +16,7 @@ TODO: Migrate _execute_plan() to return pl.DataFrame in future refactor.
 import pandas as pd
 import pandas.testing as pdt
 import pytest
+
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 

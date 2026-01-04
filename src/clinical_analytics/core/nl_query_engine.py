@@ -1124,6 +1124,7 @@ class NLQueryEngine:
         query: str,
         context: dict,
         conversation_history: list[dict] | None = None,
+        autocontext=None,
     ) -> tuple[str, str]:
         """
         Build structured prompts for LLM with conversation context.
@@ -1135,6 +1136,7 @@ class NLQueryEngine:
             query: User's question
             context: RAG context with columns, aliases, examples
             conversation_history: Optional list of previous queries for refinement detection
+            autocontext: Optional AutoContext from ADR004 Phase 3 (schema context)
 
         Returns:
             Tuple of (system_prompt, user_prompt)
@@ -1197,6 +1199,52 @@ Result: {{"intent": "COUNT", "filters": [{{"column": "age", "operator": ">", "va
 **REMEMBER**: NEVER create intents like "REMOVE_NA", "FILTER_OUT", "EXCLUDE" - these are INVALID.
 Only use: COUNT, DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, CORRELATIONS"""
 
+        # Build AutoContext section if available
+        autocontext_section = ""
+        if autocontext:
+            # Format entity keys
+            entity_keys_str = ", ".join(autocontext.entity_keys[:5])  # Limit to top 5
+            if len(autocontext.entity_keys) > 5:
+                entity_keys_str += f" (and {len(autocontext.entity_keys) - 5} more)"
+
+            # Format column catalog (top 10 most relevant)
+            columns_info = []
+            for col in autocontext.columns[:10]:
+                col_info = f"- {col.name}"
+                if col.system_aliases:
+                    col_info += f" (aliases: {', '.join(col.system_aliases[:3])})"
+                if col.dtype:
+                    col_info += f" [type: {col.dtype}]"
+                if col.codebook:
+                    # Show sample codebook entries
+                    sample_codes = list(col.codebook.items())[:3]
+                    codebook_str = ", ".join(f"{k}: {v}" for k, v in sample_codes)
+                    if len(col.codebook) > 3:
+                        codebook_str += f" (and {len(col.codebook) - 3} more)"
+                    col_info += f" (codes: {codebook_str})"
+                columns_info.append(col_info)
+
+            # Format glossary (top 10 terms)
+            glossary_items = []
+            for term, definition in list(autocontext.glossary.items())[:10]:
+                glossary_items.append(f"- {term}: {definition}")
+
+            autocontext_section = f"""
+
+=== SCHEMA CONTEXT (AutoContext from ADR004) ===
+
+Entity Keys (primary identifiers): {entity_keys_str}
+
+Column Catalog (schema metadata):
+{chr(10).join(columns_info)}
+
+Glossary (abbreviations and definitions):
+{chr(10).join(glossary_items) if glossary_items else "None available"}
+
+**Use this schema context to match variables accurately.**
+**Only reference columns/aliases that exist in the schema above.**
+"""
+
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 
 Return JSON matching the QueryPlan schema with these REQUIRED fields:
@@ -1236,6 +1284,7 @@ Aliases: {aliases}
 
 Examples:
 {examples}
+{autocontext_section}
 
 Follow-up generation guidelines:
 - Provide 2-3 exploratory questions that build on the current query
@@ -1260,6 +1309,7 @@ Filter extraction (ADR009 Phase 5):
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
             conversation_context=conversation_context,
+            autocontext_section=autocontext_section,
         )
 
         user_prompt = f"Parse this query: {query}"
@@ -1384,8 +1434,31 @@ Filter extraction (ADR009 Phase 5):
             # Step 3: Build RAG context
             context = self._build_rag_context(query)
 
-            # Step 4: Build structured prompts
-            system_prompt, user_prompt = self._build_llm_prompt(query, context, conversation_history)
+            # Step 3.5: Build AutoContext (ADR004 Phase 3)
+            # Extract doc_context from metadata if available (for uploaded datasets)
+            doc_context = None
+            metadata = self.semantic_layer.config.get("metadata")
+            if metadata and isinstance(metadata, dict):
+                doc_context = metadata.get("doc_context")
+
+            # Build AutoContext on-demand
+            from clinical_analytics.core.autocontext import build_autocontext
+
+            # Extract query terms for relevance filtering
+            query_terms = query.lower().split() if query else None
+
+            autocontext = build_autocontext(
+                semantic_layer=self.semantic_layer,
+                inferred_schema=None,  # Will be reconstructed from semantic layer
+                doc_context=doc_context,
+                query_terms=query_terms,
+                max_tokens=4000,
+            )
+
+            # Step 4: Build structured prompts (with AutoContext)
+            system_prompt, user_prompt = self._build_llm_prompt(
+                query, context, conversation_history, autocontext=autocontext
+            )
 
             # Log conversation context for refinement debugging
             if conversation_history:

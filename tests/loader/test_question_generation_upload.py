@@ -6,6 +6,7 @@ and example questions are stored in metadata.
 """
 
 import polars as pl
+
 from clinical_analytics.ui.storage.user_datasets import save_table_list
 
 

@@ -56,7 +56,7 @@ def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str | None = Non
     ax.set_title("Kaplan-Meier Survival Curve", fontsize=14, fontweight="bold")
     ax.legend()
     ax.grid(True, alpha=0.3)
-    ax.set_ylim([0, 1])
+    ax.set_ylim((0, 1))
 
     return fig
 

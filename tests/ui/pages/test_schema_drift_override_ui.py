@@ -23,10 +23,10 @@ class TestSchemaDriftOverrideUI:
 
         # Assert: When overwrite is True, schema_drift_override should be set in metadata
         # Check that metadata includes schema_drift_override when overwrite is checked
-        assert (
-            "if overwrite:" in content or "if overwrite == True:" in content or "if overwrite is True:" in content
-        ), "UI should check overwrite flag before setting schema_drift_override"
+        assert "if overwrite:" in content or "if overwrite == True:" in content or "if overwrite is True:" in content, (
+            "UI should check overwrite flag before setting schema_drift_override"
+        )
         assert "schema_drift_override" in content, "UI should set schema_drift_override in metadata"
-        assert (
-            'metadata["schema_drift_override"]' in content or "metadata['schema_drift_override']" in content
-        ), "UI should set schema_drift_override in metadata dictionary"
+        assert 'metadata["schema_drift_override"]' in content or "metadata['schema_drift_override']" in content, (
+            "UI should set schema_drift_override in metadata dictionary"
+        )

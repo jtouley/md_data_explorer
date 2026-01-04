@@ -375,9 +375,9 @@ def test_llm_provides_explanation_for_refinement(
     assert len(result.interpretation) > 10, "Interpretation should be meaningful"
     # Interpretation should mention refinement or filter
     interpretation_lower = result.interpretation.lower()
-    assert any(
-        word in interpretation_lower for word in ["filter", "exclude", "refin", "previous"]
-    ), "Interpretation should describe the refinement"
+    assert any(word in interpretation_lower for word in ["filter", "exclude", "refin", "previous"]), (
+        "Interpretation should describe the refinement"
+    )
 
 
 def test_parse_query_refinement_handles_llm_failure_with_fallback(
@@ -443,9 +443,9 @@ def test_parse_query_refinement_handles_llm_failure_with_fallback(
 
     # CRITICAL: Should use numeric value 0, NOT string "the n/a"
     assert statin_filter.operator == "!=", "Should use != for exclusion"
-    assert (
-        statin_filter.value == 0
-    ), f"Should exclude value 0 (n/a), not string. Got: {statin_filter.value} (type: {type(statin_filter.value)})"
+    assert statin_filter.value == 0, (
+        f"Should exclude value 0 (n/a), not string. Got: {statin_filter.value} (type: {type(statin_filter.value)})"
+    )
 
     # Should have reasonable confidence (even with fallback)
     assert result.confidence >= 0.5, "Should have reasonable confidence even with fallback"

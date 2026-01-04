@@ -22,6 +22,7 @@ from zipfile import ZipFile
 
 import polars as pl
 import pytest
+
 from clinical_analytics.core.doc_parser import extract_context_from_docs
 from clinical_analytics.core.question_generator import generate_upload_questions
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine

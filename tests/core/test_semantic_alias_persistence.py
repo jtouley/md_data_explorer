@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import polars as pl
 import pytest
+
 from clinical_analytics.core.semantic import SemanticLayer
 
 # ============================================================================

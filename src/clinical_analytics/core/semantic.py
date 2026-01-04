@@ -705,6 +705,80 @@ class SemanticLayer:
 
         return None
 
+    def extract_column_metadata(self, column_name: str) -> dict[str, Any] | None:
+        """
+        Extract column metadata compatible with ColumnContext construction.
+
+        Uses existing get_column_metadata() internally but formats for AutoContext use.
+
+        Args:
+            column_name: Canonical column name
+
+        Returns:
+            Dict compatible with ColumnContext construction, or None if metadata unavailable
+
+        Example return structure:
+            {
+                "name": "Current Regimen",
+                "normalized_name": "current_regimen",  # lowercase, underscore-normalized
+                "dtype": "coded",  # Maps from variable_types["type"]: "numeric"|"categorical"|"coded"|"datetime"|"text"
+                "units": None,  # From variable_types["units"] if available
+                "codebook": {"1": "Biktarvy", "2": "Symtuza", ...},  # From variable_types["codebook"] if available
+            }
+
+        Dtype mapping:
+            - "numeric" → "numeric"
+            - "categorical" (with numeric=True) → "coded"
+            - "categorical" (with numeric=False) → "categorical"
+            - "datetime" → "datetime"
+            - "text" → "categorical" (fallback)
+            - "id" → "id" (for patient_id columns)
+
+        Normalized name: lowercase, replace spaces/special chars with underscores
+        """
+        import re
+
+        # Get base metadata
+        metadata = self.get_column_metadata(column_name)
+        if not metadata:
+            return None
+
+        # Normalize column name
+        normalized_name = column_name.lower()
+        normalized_name = re.sub(r"[^\w]+", "_", normalized_name)
+        normalized_name = re.sub(r"_+", "_", normalized_name).strip("_")
+
+        # Map dtype
+        var_type = metadata.get("type", "categorical")
+        metadata_info = metadata.get("metadata", {})
+        is_numeric = metadata_info.get("numeric", False)
+
+        if var_type == "numeric" or var_type == "continuous":
+            dtype = "numeric"
+        elif var_type == "datetime":
+            dtype = "datetime"
+        elif var_type in ("categorical", "binary") and is_numeric:
+            dtype = "coded"
+        elif "id" in column_name.lower():
+            dtype = "id"
+        else:
+            dtype = "categorical"
+
+        # Build result dict
+        result = {
+            "name": column_name,
+            "normalized_name": normalized_name,
+            "dtype": dtype,
+        }
+
+        # Add optional fields
+        if "units" in metadata:
+            result["units"] = metadata["units"]
+        if "codebook" in metadata:
+            result["codebook"] = metadata["codebook"]
+
+        return result
+
     def _build_metric_expression(self, metric_name: str, view: ibis.Table) -> ibis.Expr:
         """
         Build an Ibis expression for a metric from config.

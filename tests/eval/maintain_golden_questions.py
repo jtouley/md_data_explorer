@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+
 from clinical_analytics.core.golden_question_generator import (
     analyze_golden_question_coverage,
     generate_golden_questions_from_logs,

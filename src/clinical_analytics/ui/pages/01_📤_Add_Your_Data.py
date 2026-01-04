@@ -448,8 +448,9 @@ def render_variable_detection_step(df: pd.DataFrame):
         else:
             st.info("ℹ️ No outcome detected (optional)")
     with col3:
-        if suggestions.get("time_zero"):
-            st.metric("Time Variable", suggestions["time_zero"])
+        time_zero = suggestions.get("time_zero")
+        if time_zero and isinstance(time_zero, str):
+            st.metric("Time Variable", time_zero)
         else:
             st.info("ℹ️ No time column detected (optional)")
 
@@ -537,7 +538,11 @@ def render_mapping_step(df: pd.DataFrame, variable_info: dict, suggestions: dict
                 st.rerun()
 
 
-def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_info: dict = None):
+def render_review_step(
+    df: pd.DataFrame | None = None,
+    mapping: dict[str, Any] | None = None,
+    variable_info: dict[str, Any] | None = None,
+):
     """Step 5: Final Review & Save"""
     st.markdown("## ✅ Review & Save Dataset")
 
