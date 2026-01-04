@@ -86,7 +86,8 @@ Execution Sequence (MANDATORY)
 
 8. Commit Changes
    - **Pre-commit hooks run automatically**: Formatting, linting, type checking, and test fixture checks
-   - **If commit fails**: Pre-commit will show errors. Fix them and commit again (hooks auto-fix most issues)
+   - **If commit fails**: Pre-commit will show errors. **FIX THE VIOLATIONS** and commit again (hooks auto-fix most issues)
+   - **MANDATORY**: Never weaken hooks to allow violations. Fix violations instead.
    - Format: "feat/fix: [description]
 
      - Change 1
@@ -99,6 +100,7 @@ Execution Sequence (MANDATORY)
    - Update TODO to completed
    - **Before switching assistants**: Edit checkpoint file manually with conversation context
    - **Cannot bypass**: Pre-commit hooks cannot be skipped (--no-verify is blocked by project policy)
+   - **Cannot weaken**: Pre-commit hooks must block commits unless all checks pass. Never make hooks warn-only, less strict, or disabled.
 
 9. Final Quality Gate & PR Preparation
    - Run: make test-fast (confirms no regressions across entire codebase)
@@ -191,6 +193,9 @@ Critical Rules
 ❌ NEVER use --no-verify to bypass pre-commit hooks (project policy blocks this)
 ❌ NEVER commit without tests
 ❌ NEVER skip TODO updates
+❌ **NEVER weaken pre-commit hooks** - Never make hooks warn-only, less strict, or disabled
+❌ **NEVER add `|| true` or `pass_filenames: false` or `always_run: false` to bypass hook failures**
+❌ **NEVER disable mypy or test fixture checks** - Fix violations instead
 
 ✅ ALWAYS write test first
 ✅ ALWAYS run test immediately (Red phase) - direct pytest OK for quick verification
@@ -200,8 +205,10 @@ Critical Rules
 ✅ ALWAYS use gh CLI for PR creation (gh pr create)
 ✅ ALWAYS commit implementation + tests together (pre-commit enforces quality)
 ✅ ALWAYS update TODOs
+✅ **ALWAYS fix pre-existing violations** - If hooks fail, fix the violations before committing
+✅ **ALWAYS keep hooks strict** - All hooks must block commits unless passing
 
-**Pre-commit enforcement**: All quality checks (formatting, linting, type checking, test fixtures) are enforced automatically on commit. Cannot be bypassed.
+**Pre-commit enforcement**: All quality checks (formatting, linting, type checking, test fixtures) are enforced automatically on commit. Cannot be bypassed. Hooks MUST block commits unless all checks pass. Never weaken hooks to allow violations.
 
 Output Format
 
@@ -291,6 +298,13 @@ If you catch yourself:
 - Skipping test runs → STOP, run tests now
 - Accumulating lint errors → STOP, run make lint-fix
 - Not updating TODOs → STOP, update todo_write
+- **Weakening pre-commit hooks** → STOP, fix violations instead. Never make hooks warn-only, less strict, or disabled
+- **Adding bypasses to hooks** → STOP, fix violations instead. Never add `|| true`, `pass_filenames: false`, or disable hooks
+
+**MANDATORY**: Pre-commit hooks MUST block commits unless all checks pass. If hooks fail:
+1. Fix the violations
+2. Commit again
+3. Never weaken hooks to allow violations
 
 Remember: You're building production systems. Act like a Staff engineer.
 

@@ -23,17 +23,16 @@ repos:
         args: [--fix]
         types: [python]
 
-  # MyPy for type checking (disabled for now - many pre-existing errors to fix incrementally)
-  # Uncomment and fix type errors incrementally:
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v1.5.1
-  #   hooks:
-  #     - id: mypy
-  #       name: mypy type check
-  #       description: Type check with mypy
-  #       args: [--ignore-missing-imports]
-  #       types: [python]
-  #       exclude: ^(tests/|scripts/|test_.*\.py$)
+  # MyPy for type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.5.1
+    hooks:
+      - id: mypy
+        name: mypy type check
+        description: Type check with mypy
+        args: [--ignore-missing-imports]
+        types: [python]
+        exclude: ^(tests/|scripts/|test_.*\.py$)  # Skip tests and scripts
 
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -60,14 +59,13 @@ repos:
         args: [--maxkb=1000]
 
   # Custom hook: Test fixture enforcement
-  # Note: Many pre-existing violations. Fix incrementally, then make strict.
+  # MANDATORY: This hook MUST block commits. Never make it warn-only.
   - repo: local
     hooks:
       - id: check-test-fixtures
-        name: Check for duplicate test setup code (warn-only for now)
-        entry: bash -c 'uv run python scripts/check_test_fixtures.py "$@" || true' --
+        name: Check for duplicate test setup code
+        entry: bash -c 'uv run python scripts/check_test_fixtures.py "$@"' --
         language: system
         files: ^tests/.*\.py$
         pass_filenames: true
         always_run: false
-        # TODO: Remove `|| true` once pre-existing violations are fixed
