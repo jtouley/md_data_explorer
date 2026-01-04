@@ -205,6 +205,11 @@ format-check: ## Check code formatting without making changes
 	@echo "$(GREEN)Checking code formatting...$(NC)"
 	$(RUFF) format --check $(SRC_DIR) $(TEST_DIR)
 
+pre-commit-check: ensure-venv ## Run pre-commit checks (test fixture enforcement)
+	@echo "$(GREEN)Running pre-commit checks...$(NC)"
+	@$(PYTHON_RUN) scripts/check_test_fixtures.py $$(find $(TEST_DIR) -name "test_*.py" -type f) || (echo "$(RED)❌ Pre-commit checks failed$(NC)" && exit 1)
+	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"
+
 type-check: ensure-venv ## Run mypy type checker
 	@echo "$(GREEN)Running mypy type checker...$(NC)"
 	$(MYPY) $(SRC_DIR)

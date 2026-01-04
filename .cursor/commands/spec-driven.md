@@ -63,6 +63,18 @@ Execution Sequence (MANDATORY)
    - Run: make lint-fix
    - Fix any remaining issues manually
    - **Invoke /deslop**: Remove AI-generated slop from all changed files
+   - **Extract duplicate test setup to fixtures**: If ANY setup code appears in 2+ tests, extract to fixtures immediately
+   - **Verify fixture usage**: Check that all tests use fixtures from conftest.py or module-level fixtures
+   - Update TODO
+
+6.5. Extract Duplicate Setup to Fixtures (MANDATORY)
+   - **Check for duplicate setup**: Scan all test functions in the file
+   - **If setup appears 2+ times**: Extract to module-level fixture
+   - **If setup is similar but varies**: Create factory fixture with parameters
+   - **Place fixtures**: At module level (before test class), following pattern from `tests/datasets/test_uploaded_dataset_lazy_frames.py`
+   - **Update all tests**: Replace inline setup with fixture usage
+   - **Verify**: Run tests to ensure fixtures work correctly
+   - **Run pre-commit check**: `make pre-commit-check` to verify no violations
    - Update TODO
 
 7. Run Module Test Suite
@@ -146,6 +158,9 @@ Before claiming complete, verify:
 - [ ] Tests written BEFORE implementation
 - [ ] Tests run immediately after writing (Red verified)
 - [ ] Implementation passes tests (Green verified)
+- [ ] **Duplicate test setup extracted to fixtures** (if setup appears 2+ times)
+- [ ] **All tests use fixtures** (no inline duplicate setup)
+- [ ] **make pre-commit-check passed** (no fixture violations)
 - [ ] make format executed
 - [ ] make lint-fix executed
 - [ ] /deslop invoked to remove AI-generated slop

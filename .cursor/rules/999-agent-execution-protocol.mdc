@@ -272,10 +272,54 @@ def test_feature():
     ...
 ```
 
+### Extract Duplicate Setup to Fixtures
+
+**MANDATORY RULE**: If ANY setup code appears in 2+ test functions, extract to fixtures.
+
+**Before writing tests**:
+1. Identify all setup steps (Arrange phase)
+2. If setup appears in 2+ tests → Extract to fixture immediately
+3. If setup is similar but varies → Create factory fixture with parameters
+4. Place fixtures at module level (before test class)
+
+**Example Pattern** (from `tests/datasets/test_uploaded_dataset_lazy_frames.py`):
+```python
+# ============================================================================
+# Helper Fixtures (Module-level - shared across test classes)
+# ============================================================================
+
+@pytest.fixture
+def upload_storage(tmp_path):
+    """Create UserDatasetStorage with temp directory."""
+    return UserDatasetStorage(upload_dir=tmp_path)
+
+@pytest.fixture
+def make_test_metadata():
+    """Factory fixture for creating test metadata."""
+    def _make(**kwargs):
+        return {"dataset_name": "test", **kwargs}
+    return _make
+
+class TestFeature:
+    def test_one(upload_storage, make_test_metadata):
+        metadata = make_test_metadata(external_pdf_bytes=b"...")
+        # ... test code ...
+
+    def test_two(upload_storage, make_test_metadata):
+        metadata = make_test_metadata(external_pdf_bytes=b"...")
+        # ... test code ...
+```
+
 **DRY Principle:**
 - Check existing fixtures before creating new ones
-- Add to module-level `conftest.py` if reusable
-- Never duplicate test data setup
+- Add to module-level fixtures if reusable within file
+- Add to `conftest.py` if reusable across files
+- Never duplicate setup code across tests
+- **Rule of Two**: If setup appears 2+ times, extract to fixture
+
+**Pre-Commit Enforcement**:
+- Run `make pre-commit-check` to detect duplicate setup automatically
+- Pre-commit hook blocks commits with duplicate setup code
 
 **Reference**: See [105-test-fixture-enforcement.mdc](.cursor/rules/105-test-fixture-enforcement.mdc)
 

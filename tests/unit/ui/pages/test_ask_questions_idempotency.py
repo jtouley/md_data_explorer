@@ -123,23 +123,23 @@ def test_idempotency_different_query_computes_new_result(
     with patch.object(ask_questions_page.st, "session_state", mock_session_state):
         with patch.object(ask_questions_page.st, "spinner", mock_spinner):
             with patch.object(ask_questions_page, "render_analysis_by_type") as mock_render:
-                    # Act: Execute analysis with required parameters
-                    ask_questions_page.execute_analysis_with_idempotency(
-                        sample_cohort,
-                        sample_context,
-                        run_key,
-                        dataset_version,
-                        query_text,
-                        execution_result=execution_result,
-                        semantic_layer=mock_semantic_layer,
-                    )
+                # Act: Execute analysis with required parameters
+                ask_questions_page.execute_analysis_with_idempotency(
+                    sample_cohort,
+                    sample_context,
+                    run_key,
+                    dataset_version,
+                    query_text,
+                    execution_result=execution_result,
+                    semantic_layer=mock_semantic_layer,
+                )
 
                 # Assert: Result stored in ResultCache (idempotency works)
                 cached_result = cache.get(run_key, dataset_version)
                 assert cached_result is not None
                 assert cached_result.result["type"] == formatted_result["type"]
                 assert cached_result.result["row_count"] == formatted_result["row_count"]
-                    mock_render.assert_called_once()
+                mock_render.assert_called_once()
 
 
 def test_idempotency_result_persists_across_reruns(
@@ -253,16 +253,16 @@ def test_idempotency_result_stored_with_dataset_scoped_key(
     with patch.object(ask_questions_page.st, "session_state", mock_session_state):
         with patch.object(ask_questions_page.st, "spinner", mock_spinner):
             with patch.object(ask_questions_page, "render_analysis_by_type"):
-                    # Act: Execute analysis
-                    ask_questions_page.execute_analysis_with_idempotency(
-                        sample_cohort,
-                        sample_context,
-                        run_key,
-                        dataset_version,
-                        query_text,
-                        execution_result=execution_result,
-                        semantic_layer=mock_semantic_layer,
-                    )
+                # Act: Execute analysis
+                ask_questions_page.execute_analysis_with_idempotency(
+                    sample_cohort,
+                    sample_context,
+                    run_key,
+                    dataset_version,
+                    query_text,
+                    execution_result=execution_result,
+                    semantic_layer=mock_semantic_layer,
+                )
 
                 # Assert: Result stored in ResultCache with dataset-scoped key
                 cached_result = cache.get(run_key, dataset_version)

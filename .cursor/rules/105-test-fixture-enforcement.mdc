@@ -159,6 +159,120 @@ def test_relationship_detection():
 
 ## Enforcement Protocol
 
+## Mandatory Fixture Extraction Rule
+
+### When Setup Code Is Duplicated
+
+**CRITICAL**: If ANY test setup code appears in 2+ test functions, it MUST be extracted to a fixture.
+
+**MANDATORY CHECKLIST**:
+
+1. **Before writing test code**: Identify all setup steps (Arrange phase)
+2. **If setup appears in 2+ tests**: ✅ Extract to fixture immediately
+3. **If setup is similar but not identical**: ✅ Create factory fixture with parameters
+4. **If setup is unique to one test**: ✅ Keep inline (but consider if it will be reused)
+
+**Violation Examples**:
+
+**❌ WRONG** (Will be REJECTED):
+```python
+class TestExternalPdfJsonSerialization:
+    def test_save_table_list_removes_external_pdf_bytes(self, tmp_path):
+        # Duplicate setup
+        storage = UserDatasetStorage(tmp_path / "uploads")
+        tables = [{"name": "test_table", "data": pl.DataFrame(...)}]
+        metadata = {"dataset_name": "test", "external_pdf_bytes": b"..."}
+        # ... test code ...
+
+    def test_save_table_list_metadata_json_serializable(self, tmp_path):
+        # DUPLICATE setup - VIOLATION!
+        storage = UserDatasetStorage(tmp_path / "uploads")
+        tables = [{"name": "test_table", "data": pl.DataFrame(...)}]
+        metadata = {"dataset_name": "test", "external_pdf_bytes": b"..."}
+        # ... test code ...
+```
+
+**✅ CORRECT** (REQUIRED):
+```python
+# Module-level fixtures (shared across test class)
+@pytest.fixture
+def upload_storage(tmp_path):
+    """Create UserDatasetStorage with temp directory."""
+    return UserDatasetStorage(upload_dir=tmp_path / "uploads")
+
+@pytest.fixture
+def sample_test_tables():
+    """Standard test tables fixture."""
+    return [{"name": "test_table", "data": pl.DataFrame(...)}]
+
+@pytest.fixture
+def make_metadata_with_external_pdf():
+    """Factory fixture for creating metadata with external PDF."""
+    def _make(dataset_name="test", pdf_content=b"...", pdf_filename="test.pdf"):
+        return {"dataset_name": dataset_name, "external_pdf_bytes": pdf_content, ...}
+    return _make
+
+class TestExternalPdfJsonSerialization:
+    def test_save_table_list_removes_external_pdf_bytes(
+        self, upload_storage, sample_test_tables, make_metadata_with_external_pdf
+    ):
+        metadata = make_metadata_with_external_pdf()
+        # ... test code uses fixtures ...
+
+    def test_save_table_list_metadata_json_serializable(
+        self, upload_storage, sample_test_tables, make_metadata_with_external_pdf
+    ):
+        metadata = make_metadata_with_external_pdf()
+        # ... test code uses fixtures ...
+```
+
+### Rule of Two
+
+**If setup code appears in 2+ places, extract to fixture. No exceptions.**
+
+**Rationale**:
+- **Single source of truth**: Setup logic exists in ONE place
+- **Maintainability**: Changes require ONE update
+- **Test clarity**: Tests focus on behavior, not setup
+- **DRY compliance**: Eliminates duplicate code
+
+### Common Patterns Requiring Extraction
+
+1. **Storage/Service Initialization**: `UserDatasetStorage`, `DataStore`, etc.
+   - ✅ Extract to `upload_storage`, `datastore` fixtures
+   - ❌ Never create inline in multiple tests
+
+2. **Test Data Creation**: DataFrames, tables, metadata
+   - ✅ Extract to `sample_*` fixtures or `make_*` factories
+   - ❌ Never duplicate DataFrame creation
+
+3. **Mock Setup**: Complex mock configurations
+   - ✅ Extract to `mock_*` fixtures
+   - ❌ Never duplicate mock setup code
+
+4. **File/Path Setup**: Temporary directories, file creation
+   - ✅ Extract to fixtures using `tmp_path`
+   - ❌ Never duplicate path setup
+
+### Pre-Commit Hook Enforcement
+
+**Automatic Detection**: Pre-commit hook (`scripts/check_test_fixtures.py`) automatically detects:
+- Inline `UserDatasetStorage` creation in test functions
+- Duplicate `pl.DataFrame` creation patterns
+- Missing fixture usage for known patterns
+
+**Run manually**:
+```bash
+make pre-commit-check  # Check all test files
+```
+
+**Pre-commit hook** (if installed):
+```bash
+pre-commit run check-test-fixtures  # Check staged files only
+```
+
+**If hook fails**: Extract duplicate setup to fixtures before committing.
+
 ### Before Creating ANY Fixture
 
 **MANDATORY CHECKLIST**:
@@ -252,11 +366,13 @@ pdt.assert_frame_equal(result_df, expected_df)  # NO!
 **MANDATORY PRE-COMMIT SEQUENCE**:
 
 ```bash
-make format        # Auto-format code
-make lint-fix      # Auto-fix linting issues
-make check-fast    # Verify all quality gates
+make format           # Auto-format code
+make lint-fix         # Auto-fix linting issues
+make pre-commit-check  # Check for duplicate test setup (NEW)
+make check-fast        # Verify all quality gates
 ```
 
+**If `make pre-commit-check` fails → Extract duplicate setup to fixtures before commit.**
 **If `make check-fast` fails → Fix issues before commit. No exceptions.**
 
 ---

@@ -1,0 +1,11 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-test-fixtures
+        name: Check for duplicate test setup code
+        entry: bash -c 'python scripts/check_test_fixtures.py "$@"' --
+        language: system
+        files: ^tests/.*\.py$
+        pass_filenames: true
+        always_run: false
+

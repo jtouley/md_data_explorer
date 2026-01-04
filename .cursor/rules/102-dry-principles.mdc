@@ -407,6 +407,100 @@ def new_format_excel_file(tmp_path_factory):
 - `large_zip_with_csvs`, `large_zip_with_three_tables`
 - Solution: Generic `make_large_zip(csv_files: dict[str, str])` factory
 
+### Test Fixture Extraction: Rule of Two
+
+### Mandatory Extraction Rule
+
+**If ANY test setup code appears in 2+ test functions, extract to fixture immediately.**
+
+**Rationale**:
+- Single source of truth: Setup logic exists in ONE place
+- Maintainability: Changes require ONE update
+- Test clarity: Tests focus on behavior, not setup
+- DRY compliance: Eliminates duplicate code
+
+### Extraction Checklist
+
+**Before committing test code**:
+
+1. [ ] Scan all test functions for duplicate setup code
+2. [ ] If setup appears 2+ times → Extract to fixture
+3. [ ] If setup is similar but varies → Create factory fixture
+4. [ ] Place fixtures at module level (before test class)
+5. [ ] Update all tests to use fixtures
+6. [ ] Verify tests still pass
+7. [ ] Run `make pre-commit-check` to verify no violations
+
+### Common Patterns
+
+**Storage/Service Initialization**:
+```python
+# ❌ WRONG: Duplicate in 2+ tests
+def test_one(tmp_path):
+    storage = UserDatasetStorage(tmp_path / "uploads")
+    # ...
+
+def test_two(tmp_path):
+    storage = UserDatasetStorage(tmp_path / "uploads")  # DUPLICATE!
+    # ...
+
+# ✅ CORRECT: Extract to fixture
+@pytest.fixture
+def upload_storage(tmp_path):
+    return UserDatasetStorage(upload_dir=tmp_path / "uploads")
+
+def test_one(upload_storage):
+    # ...
+
+def test_two(upload_storage):
+    # ...
+```
+
+**Test Data Creation**:
+```python
+# ❌ WRONG: Duplicate DataFrame creation
+def test_one():
+    tables = [{"name": "test", "data": pl.DataFrame(...)}]
+    # ...
+
+def test_two():
+    tables = [{"name": "test", "data": pl.DataFrame(...)}]  # DUPLICATE!
+    # ...
+
+# ✅ CORRECT: Extract to fixture
+@pytest.fixture
+def sample_test_tables():
+    return [{"name": "test", "data": pl.DataFrame(...)}]
+
+def test_one(sample_test_tables):
+    # ...
+
+def test_two(sample_test_tables):
+    # ...
+```
+
+**Factory Pattern for Variations**:
+```python
+# ✅ CORRECT: Factory fixture for variations
+@pytest.fixture
+def make_metadata_with_pdf():
+    def _make(pdf_content=b"...", pdf_filename="test.pdf"):
+        return {
+            "dataset_name": "test",
+            "external_pdf_bytes": pdf_content,
+            "external_pdf_filename": pdf_filename,
+        }
+    return _make
+
+def test_one(make_metadata_with_pdf):
+    metadata = make_metadata_with_pdf(pdf_content=b"content1")
+    # ...
+
+def test_two(make_metadata_with_pdf):
+    metadata = make_metadata_with_pdf(pdf_content=b"content2")
+    # ...
+```
+
 ### Code Review Checklist
 
 Before approving fixture code:
@@ -415,3 +509,4 @@ Before approving fixture code:
 - [ ] Configuration extracted (no magic values)
 - [ ] Single source of truth (one implementation per concern)
 - [ ] Extensible (new cases via config, not code changes)
+- [ ] **Duplicate test setup extracted to fixtures** (Rule of Two enforced)
