@@ -1994,7 +1994,16 @@ def main():
     # Handle analysis execution if we have a context ready
     # PR25: State machine validation - enforce documented transitions
     intent_signal = st.session_state.get("intent_signal")
+    logger.debug(
+        "execution_block_check",
+        intent_signal=intent_signal,
+        has_analysis_context="analysis_context" in st.session_state,
+    )
     if intent_signal is not None:
+        logger.debug(
+            "execution_block_entered",
+            intent_signal=intent_signal,
+        )
         # Validate state machine invariant: intent_signal requires analysis_context
         context = st.session_state.get("analysis_context")
         if context is None:
@@ -2247,6 +2256,11 @@ def main():
                         }
                         st.session_state["chat"].append(assistant_msg)
 
+                    # Clear intent_signal after successful execution
+                    # This allows chat input to be available again for follow-up questions
+                    st.session_state["intent_signal"] = None
+                    logger.debug("intent_signal_cleared_after_execution", success=True)
+
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     # Use stable hash for button key (same normalization as cache key)
                     query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
@@ -2260,6 +2274,10 @@ def main():
                         error_msg += " - see warnings above for details"
                     # ADR009 Phase 4: Show error with LLM translation
                     _render_error_with_translation(error_msg, prefix="❌")
+
+                    # Clear intent_signal after failed execution
+                    st.session_state["intent_signal"] = None
+                    logger.debug("intent_signal_cleared_after_execution", success=False, reason="execution_failed")
             else:
                 # Phase 3.1: No fallback - QueryPlan is required
                 error_msg = (
@@ -2288,6 +2306,10 @@ def main():
                         "created_at": time.time(),
                     }
                     st.session_state["chat"].append(error_chat_msg)
+
+                    # Clear intent_signal after failed execution
+                    st.session_state["intent_signal"] = None
+                    logger.debug("intent_signal_cleared_after_execution", success=False)
                     st.rerun()
 
         else:
@@ -2444,16 +2466,25 @@ def main():
 
     # Always show query input at bottom (sticky) - Phase 3.3 UI Redesign
     # This provides a conversational interface for follow-up questions
-    # Check for prefilled query from follow-up suggestions
-    prefilled = st.session_state.get("prefilled_query", "")
+    # CRITICAL FIX: Only process chat input if not in execution phase
+    # When intent_signal is set, we're waiting for execution - don't process new input
+    # This prevents st.chat_input() form submission from clearing intent_signal
+    execution_phase = st.session_state.get("intent_signal") == "nl_parsed"
 
-    # If prefilled query exists, use it and clear it (user clicked a follow-up button)
-    if prefilled:
-        query = prefilled
-        # Clear prefilled immediately to prevent reuse
-        del st.session_state["prefilled_query"]
+    if not execution_phase:
+        # Check for prefilled query from follow-up suggestions
+        prefilled = st.session_state.get("prefilled_query", "")
+
+        # If prefilled query exists, use it and clear it (user clicked a follow-up button)
+        if prefilled:
+            query = prefilled
+            # Clear prefilled immediately to prevent reuse
+            del st.session_state["prefilled_query"]
+        else:
+            query = st.chat_input("Ask a question about your data...")
     else:
-        query = st.chat_input("Ask a question about your data...")
+        # In execution phase - don't show input, query will be processed by execution block
+        query = None
 
     if query:
         # Phase 1.3: Normalize query and reject if empty
