@@ -12,10 +12,10 @@ This rule enforces Staff-level engineering discipline for all AI agent work. Eve
 **Core Principle**: Write tests first, run tests immediately, fix quality issues instantly, commit with tests.
 
 **This rule integrates with:**
-- [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc) - Makefile commands
-- [101-testing-hygiene.mdc](.cursor/rules/101-testing-hygiene.mdc) - Testing patterns
+- [001-core-tdd-protocol.mdc](.cursor/rules/001-core-tdd-protocol.mdc) - TDD workflow & Makefile commands
+- [002-code-quality-standards.mdc](.cursor/rules/002-code-quality-standards.mdc) - Testing patterns & code quality
 - [104-plan-execution-hygiene.mdc](.cursor/rules/104-plan-execution-hygiene.mdc) - Plan execution
-- [103-staff-engineer-standards.mdc](.cursor/rules/103-staff-engineer-standards.mdc) - Code quality
+- [105-test-fixture-enforcement.mdc](.cursor/rules/105-test-fixture-enforcement.mdc) - Test fixture rules
 
 ## 1. Test-Driven Development (TDD) - NON-NEGOTIABLE
 
@@ -181,7 +181,7 @@ uv run pytest                    # Use: make test-*
 - Proper test markers and filters
 - Integration with CI/CD
 
-**Reference**: See [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc)
+**Reference**: See [001-core-tdd-protocol.mdc](.cursor/rules/001-core-tdd-protocol.mdc)
 
 ## 3. TODO Tracking - Track Progress
 

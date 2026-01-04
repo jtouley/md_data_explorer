@@ -1,9 +1,7 @@
 ---
 description: Active development session - terminal configuration fixes
-globs: ["**/*"]
-alwaysApply: true
+alwaysApply: false
 ---
-
 # Active Session: terminal-config-fix
 
 **Session ID**: `terminal-config-fix`

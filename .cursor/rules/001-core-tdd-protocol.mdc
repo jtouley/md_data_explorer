@@ -1,0 +1,343 @@
+---
+description: Core TDD workflow, Makefile commands, and tooling standards. ALWAYS use Makefile commands for testing/linting/formatting.
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# Core TDD Protocol
+
+## Project Stack
+
+**Clinical Analytics Platform**
+- Python 3.11+ (required)
+- `uv` package manager (NEVER use pip/python directly)
+- Polars for data processing
+- Streamlit UI, Ibis SQL generation, DuckDB analytics
+
+## Setup
+
+```bash
+make install-dev    # Install all dependencies
+make validate       # Verify platform setup
+```
+
+## TDD Workflow (MANDATORY)
+
+### Red-Green-Refactor Cycle
+
+**ALWAYS follow this sequence:**
+
+1. **Write Test First** (Red Phase)
+   - Write failing test BEFORE any implementation
+   - Run immediately to verify failure reason
+   - Use AAA pattern: Arrange → Act → Assert
+   - Name: `test_unit_scenario_expectedBehavior`
+
+2. **Implement** (Green Phase)
+   - Write minimum code to pass test
+   - Keep it simple
+
+3. **Verify** (Green Phase Confirmation)
+   - Run test to confirm it passes
+   - Update TODO status
+
+4. **Refactor** (Quality Phase)
+   - Pre-commit hooks auto-fix formatting/linting on commit
+   - Extract duplicate test setup to fixtures (Rule of Two)
+   - Run `/deslop` to remove AI-generated slop
+
+5. **Full Suite** (Regression Check)
+   - Run module tests: `make test-[module]`
+   - All tests must pass before commit
+
+6. **Commit** (with Tests)
+   - Commit implementation + tests together
+   - Pre-commit hooks enforce quality automatically
+   - Cannot be bypassed
+
+## Makefile Commands (ALWAYS Use These)
+
+### Testing
+
+```bash
+# Module-specific (fast feedback)
+make test-ui          # UI module tests
+make test-core        # Core module tests
+make test-analysis    # Analysis module tests
+make test-datasets    # Dataset module tests
+make test-loader      # Loader module tests
+make test-e2e         # End-to-end tests
+
+# Full suite
+make test             # All tests
+make test-fast        # Skip slow tests (recommended during dev)
+make test-unit        # Unit tests only
+make test-integration # Integration tests only
+make test-cov         # Tests with HTML coverage report
+```
+
+### Code Quality
+
+```bash
+make lint             # Check linting (read-only)
+make lint-fix         # Auto-fix linting issues
+make format           # Auto-format code
+make format-check     # Check formatting (read-only)
+make type-check       # Run mypy type checker
+```
+
+### Combined Checks
+
+```bash
+make check            # Full gate: lint, format-check, type-check, test
+make check-fast       # Fast gate: lint, format-check, test-fast
+make ci               # CI checks (for GitHub Actions)
+```
+
+### Application
+
+```bash
+make run              # Start Streamlit app
+make validate         # Run platform validation
+```
+
+### Cleanup
+
+```bash
+make clean            # Clean caches/generated files
+make clean-all        # Clean everything including venv
+```
+
+## Command Rules
+
+### NEVER Run Tools Directly
+
+```bash
+# ❌ WRONG
+pytest tests/
+ruff check src/
+mypy src/
+python script.py
+
+# ✅ CORRECT
+make test-fast
+make lint
+make type-check
+uv run python script.py
+```
+
+### EXCEPTION: Red Phase Verification
+
+Direct pytest is acceptable for quick Red phase verification only:
+
+```bash
+# ✅ OK for Red phase verification
+uv run pytest tests/ui/test_file.py::TestClass::test_method -xvs
+
+# ✅ PREFERRED for Green phase and full suite
+make test-ui PYTEST_ARGS="tests/ui/test_file.py -xvs"
+```
+
+### uv for All Python Commands
+
+```bash
+# ❌ NEVER
+python script.py
+pytest tests/
+pip install package
+
+# ✅ ALWAYS
+uv run python script.py
+uv run pytest tests/  # or make test-*
+uv add package        # add to pyproject.toml
+uv sync               # install dependencies
+```
+
+## Pre-Commit Hooks
+
+**Automatic enforcement on every commit:**
+
+- Code formatting (ruff format)
+- Linting (ruff check --fix)
+- Type checking (mypy)
+- Test fixture rules (custom hook)
+- File syntax validation (YAML, JSON, TOML)
+- Trailing whitespace removal
+- End-of-file newlines
+
+**If commit fails:**
+1. Pre-commit will show errors
+2. Most issues are auto-fixed
+3. Fix remaining violations
+4. Commit again
+
+**Cannot bypass:**
+- `--no-verify` is blocked by project policy
+- Hooks MUST block commits unless all checks pass
+- NEVER weaken hooks (make warn-only, less strict, or disabled)
+
+**Installation:**
+```bash
+make install-pre-commit  # After make install-dev
+```
+
+**Manual check** (optional, for faster feedback):
+```bash
+make pre-commit-check    # Check all files
+pre-commit run --all-files  # Run all hooks
+```
+
+## Testing Standards (Quick Reference)
+
+### AAA Pattern
+
+```python
+def test_customer_aggregation_sums_transactions():
+    # Arrange: Set up test data
+    transactions = pl.DataFrame({"customer_id": ["A", "A"], "amount": [100, 200]})
+
+    # Act: Execute function under test
+    result = aggregate_by_customer(transactions)
+
+    # Assert: Verify expected outcome
+    assert result.filter(pl.col("customer_id") == "A")["total"][0] == 300
+```
+
+### Test Naming
+
+**Pattern:** `test_[unit]_[scenario]_[expectedBehavior]`
+
+```python
+# ✅ CORRECT
+def test_filter_extraction_simple_query_returns_filters():
+def test_schema_validation_missing_column_raises_valueerror():
+
+# ❌ WRONG
+def test_extraction():  # Too vague
+def test_returns_filters():  # Missing unit/scenario
+```
+
+### Fixtures
+
+**Rule of Two:** If setup appears in 2+ tests, extract to fixture immediately.
+
+```python
+# ❌ WRONG: Duplicate setup
+def test_one(tmp_path):
+    storage = UserDatasetStorage(tmp_path / "uploads")
+    # ...
+
+def test_two(tmp_path):
+    storage = UserDatasetStorage(tmp_path / "uploads")  # DUPLICATE!
+    # ...
+
+# ✅ CORRECT: Extract to fixture
+@pytest.fixture
+def upload_storage(tmp_path):
+    return UserDatasetStorage(upload_dir=tmp_path / "uploads")
+
+def test_one(upload_storage):
+    # ...
+
+def test_two(upload_storage):
+    # ...
+```
+
+**Check `conftest.py` first** before creating any fixture.
+
+### Polars Assertions
+
+**MANDATORY:** Use `pl.testing.assert_frame_equal()` for DataFrame comparisons.
+
+```python
+import polars.testing as plt
+
+# ✅ CORRECT
+plt.assert_frame_equal(result, expected)
+
+# ❌ WRONG
+assert result["col"].to_list() == expected["col"].to_list()
+```
+
+## Code Style
+
+- **Formatter**: ruff (not black)
+- **Linter**: ruff (not flake8)
+- **Type checker**: mypy
+- **Line length**: 100 characters
+- **Python version**: 3.11+
+
+## Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| "ruff: command not found" | `make install-dev` |
+| "mypy: command not found" | `make install-dev` |
+| Tests fail with import errors | Use `make test-*` (not direct pytest) |
+| Formatting check fails | `make format` |
+| Linting finds errors | `make lint-fix` |
+| Commit fails | Fix violations shown by pre-commit, commit again |
+
+## Project Structure
+
+```
+project/
+├── src/clinical_analytics/     # Source code
+├── tests/                      # Test suite
+│   ├── conftest.py            # Shared fixtures
+│   ├── unit/                  # Unit tests
+│   ├── integration/           # Integration tests
+│   └── [module]/              # Module-specific tests
+├── config/                     # Configuration files
+├── data/                       # Data directory
+├── Makefile                    # Command interface (ALWAYS USE THIS)
+├── pyproject.toml             # Project config
+└── .venv/                     # Virtual environment (managed by uv)
+```
+
+## Quick Reference
+
+```bash
+# Daily workflow
+make format           # Format code
+make lint-fix         # Fix linting
+make test-fast        # Quick test (or test-ui, test-core, etc.)
+make check            # Full check before commit
+
+# Setup
+make install-dev      # Install dependencies
+make clean            # Clean caches
+
+# Troubleshooting
+make validate         # Validate platform
+```
+
+## Critical Rules
+
+### ❌ NEVER
+
+- Write code before tests
+- Skip running tests after writing them
+- Run pytest/ruff/mypy directly (use Makefile)
+- Use pip or python directly (use uv run)
+- Use --no-verify to bypass pre-commit hooks
+- Weaken pre-commit hooks (make warn-only, less strict, or disabled)
+- Commit without tests
+
+### ✅ ALWAYS
+
+- Write test first
+- Run test immediately (Red phase) - direct pytest OK for verification
+- Implement to pass test
+- Run test again (Green phase) - prefer Makefile
+- Use Makefile commands for green phase and full suite
+- Use uv for Python commands (uv run python, uv run pytest, etc.)
+- Commit implementation + tests together (pre-commit enforces quality)
+- Fix pre-commit violations before committing
+- Keep hooks strict (must block commits unless all checks pass)
+
+## Integration with Other Rules
+
+- **Testing patterns**: See `002-code-quality-standards.mdc`
+- **Data processing**: See `on-demand/100-polars-first.mdc`
+- **Plan execution**: See `104-plan-execution-hygiene.mdc`
