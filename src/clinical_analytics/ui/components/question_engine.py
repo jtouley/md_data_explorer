@@ -237,7 +237,7 @@ class QuestionEngine:
             help=f"Select at least {min_vars} variable(s) that might influence the outcome",
         )
 
-        return variables
+        return list(variables)
 
     @staticmethod
     def select_time_variables(df: pd.DataFrame) -> tuple[str | None, str | None]:
@@ -302,6 +302,8 @@ class QuestionEngine:
 
         if not ENABLE_PROGRESSIVE_FEEDBACK:
             # Fallback to simple parsing without feedback
+            from clinical_analytics.core.nl_query_engine import QueryIntent
+
             result = nl_engine.parse_query(query)
             return result if isinstance(result, QueryIntent) else None
 
