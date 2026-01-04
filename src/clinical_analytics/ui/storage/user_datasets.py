@@ -1104,6 +1104,11 @@ def save_table_list(
             # Always remove doc_files from metadata (not JSON serializable, only doc_context needed)
             metadata.pop("doc_files", None)
 
+        # Remove external_pdf_bytes and external_pdf_filename from metadata (not JSON serializable)
+        # These are processed into doc_files above, so they're no longer needed
+        metadata.pop("external_pdf_bytes", None)
+        metadata.pop("external_pdf_filename", None)
+
         # 2. Convert schema (AFTER normalization, has df access)
         if "variable_mapping" in metadata and tables:
             from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
