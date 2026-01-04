@@ -2248,18 +2248,33 @@ def main():
                     _render_error_with_translation(error_msg, prefix="❌")
             else:
                 # Phase 3.1: No fallback - QueryPlan is required
-                # ADR009 Phase 4: Show error with LLM translation
-                _render_error_with_translation(
+                error_msg = (
                     "Cannot execute query without QueryPlan. "
-                    "This indicates a problem with query parsing. Please try rephrasing your question.",
-                    prefix="❌",
+                    "This indicates a problem with query parsing. Please try rephrasing your question."
                 )
+                # ADR009 Phase 4: Show error with LLM translation
+                _render_error_with_translation(error_msg, prefix="❌")
                 logger.error(
                     "query_execution_failed_no_queryplan",
                     message="execute_query_plan requires QueryPlan - no fallback path available",
                     has_semantic_layer=semantic_layer is not None,
                     has_query_plan=query_plan is not None,
+                    dataset_version=dataset_version,
+                    intent_signal=intent_signal,
                 )
+                # Add error message to chat so user sees it
+                chat = st.session_state.get("chat", [])
+                if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
+                    # Query came from chat input - add error message to chat
+                    error_chat_msg: ChatMessage = {
+                        "role": "assistant",
+                        "text": error_msg,
+                        "run_key": None,
+                        "status": "error",
+                        "created_at": time.time(),
+                    }
+                    st.session_state["chat"].append(error_chat_msg)
+                    st.rerun()
 
         else:
             # Context not complete - show variable selection UI (for missing required variables)
@@ -2497,12 +2512,37 @@ def main():
 
                 # Convert QueryIntent to QueryPlan and store in context
                 if dataset_version and hasattr(nl_engine, "_intent_to_plan"):
-                    context.query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
-                    # Use QueryPlan confidence
-                    context.confidence = context.query_plan.confidence
+                    try:
+                        context.query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
+                        # Use QueryPlan confidence
+                        context.confidence = context.query_plan.confidence
+                        logger.debug(
+                            "query_plan_created",
+                            intent_type=query_intent.intent_type,
+                            has_plan=context.query_plan is not None,
+                            dataset_version=dataset_version,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "query_plan_creation_failed",
+                            error=str(e),
+                            intent_type=query_intent.intent_type,
+                            dataset_version=dataset_version,
+                            exc_info=True,
+                        )
+                        # Fallback: use QueryIntent confidence, but mark query_plan as None
+                        context.confidence = query_intent.confidence
+                        context.query_plan = None
                 else:
                     # Fallback: use QueryIntent confidence
                     context.confidence = query_intent.confidence
+                    logger.warning(
+                        "query_plan_not_created",
+                        reason="dataset_version missing or _intent_to_plan not available",
+                        dataset_version=dataset_version,
+                        has_intent_to_plan=hasattr(nl_engine, "_intent_to_plan") if nl_engine else False,
+                    )
+                    context.query_plan = None
 
                 # Set flags based on intent
                 context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
