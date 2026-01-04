@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest checkpoint-create checkpoint-resume
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
 
 # Default target
 .DEFAULT_GOAL := help
@@ -359,6 +359,11 @@ git-log-latest: ## Show latest commit history export
 		echo "$(GREEN)Latest commit history: $${LATEST}$(NC)"; \
 		head -50 "$$LATEST"; \
 	fi
+
+git-log-recent: ## Show last N commits (default: 10, override with N=20)
+	@N=$${N:-10}; \
+	echo "$(GREEN)Last $${N} commits:$(NC)"; \
+	git log --oneline -$${N}
 
 checkpoint-create: ## Create lightweight checkpoint template (requires TASK_ID="task_name")
 	@if [ -z "$(TASK_ID)" ]; then \
