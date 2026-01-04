@@ -52,11 +52,11 @@ class Columns:
     CUSTOMER_ID = "customer_id"
     TRANSACTION_DATE = "transaction_date"
     AMOUNT = "amount"
-    
+
     # Derived
     TOTAL_SPEND = "total_spend"
     DAYS_SINCE_LAST_ORDER = "days_since_last_order"
-    
+
     # Standardized audit columns
     LOADED_AT = "_loaded_at"
     SOURCE_FILE = "_source_file"
@@ -112,7 +112,7 @@ class DateExpressions:
             .then(((month - 7) // 3) + 1)
             .otherwise(((month + 5) // 3) + 1)
         )
-    
+
     @staticmethod
     def days_since(date_col: str, as_of: date | None = None) -> pl.Expr:
         """Calculate days since date column."""
@@ -125,7 +125,7 @@ class MoneyExpressions:
     def to_cents(amount_col: str) -> pl.Expr:
         """Convert decimal dollars to integer cents."""
         return (pl.col(amount_col) * 100).cast(pl.Int64)
-    
+
     @staticmethod
     def from_cents(cents_col: str) -> pl.Expr:
         """Convert integer cents to decimal dollars."""
@@ -154,7 +154,7 @@ def add_customer_tier(
 ) -> pl.DataFrame:
     """
     Assign customer tier based on total spend.
-    
+
     Tiers:
         - platinum: >= $10,000
         - gold: >= $5,000
@@ -295,11 +295,11 @@ When you have **3+ fixtures with similar patterns**, refactor to a generic facto
 @pytest.fixture
 def synthetic_dexa_excel_file(tmp_path_factory):
     # ... 50 lines of Excel generation code ...
-    
+
 @pytest.fixture
 def synthetic_statin_excel_file(tmp_path_factory):
     # ... 50 lines of similar Excel generation code ...
-    
+
 @pytest.fixture
 def synthetic_complex_excel_file(tmp_path_factory):
     # ... 50 lines of similar Excel generation code ...
@@ -313,7 +313,7 @@ def _create_synthetic_excel_file(
 ) -> Path:
     """
     Generic factory for creating synthetic Excel files with caching.
-    
+
     Args:
         tmp_path_factory: Pytest tmp_path_factory fixture
         data: Dictionary of column_name -> list of values

@@ -686,7 +686,8 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
     # Show success state if already saved
     if already_saved and st.session_state.get("upload_result"):
         result = st.session_state["upload_result"]
-        st.success(f"""
+        st.success(
+            f"""
         ✅ **Dataset saved successfully!**
 
         - **Upload ID:** `{result.get("upload_id", "N/A")}`
@@ -695,7 +696,8 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         - **Variables:** {len(mapping["predictors"]) + 1}
 
         You can now use this dataset in the main analysis interface.
-        """)
+        """
+        )
 
         # Option to upload another dataset
         if st.button("📤 Upload Another Dataset", key="success_upload_another"):
@@ -977,7 +979,8 @@ def render_zip_review_step():
                             for outcome, config in inferred_schema["outcomes"].items():
                                 st.markdown(f"- `{outcome}` ({config.get('type', 'unknown')})")
 
-            st.markdown(f"""
+            st.markdown(
+                f"""
             **Dataset saved successfully!**
 
             - **Upload ID:** `{upload_id}`
@@ -985,7 +988,8 @@ def render_zip_review_step():
             - **Format:** Multi-table (ZIP)
 
             You can now use this dataset in the main analysis interface.
-            """)
+            """
+            )
 
             # Clear session state
             if st.button("Upload Another Dataset", key="zip_success_another"):

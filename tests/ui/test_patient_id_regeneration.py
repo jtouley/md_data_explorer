@@ -8,7 +8,6 @@ for all patient ID regeneration decisions and validation.
 import polars as pl
 import polars.testing as plt
 import pytest
-
 from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
     PatientIdRegenerationError,
     can_regenerate_patient_id,

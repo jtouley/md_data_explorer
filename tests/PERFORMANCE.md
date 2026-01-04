@@ -13,7 +13,7 @@ This document tracks test performance, identifies slow tests (>30 seconds), and 
 2. **SentenceTransformer reloading**: Each test created a new `NLQueryEngine` instance, which loaded the SentenceTransformer model (`all-MiniLM-L6-v2`) fresh each time (2-5 seconds per test)
 3. **Real LLM calls**: Some tests were making real LLM calls even when they should be unit tests
 
-**Solution**: 
+**Solution**:
 1. **Enhanced `mock_llm_calls` fixture**: Now patches both `OllamaClient.generate()` AND `OllamaClient.is_available()` to return `True` immediately, preventing HTTP requests
 2. **Session-scoped SentenceTransformer caching**: Added `cached_sentence_transformer` fixture that loads the model once per test session
 3. **Factory fixture for cached engines**: Added `nl_query_engine_with_cached_model` fixture that creates `NLQueryEngine` instances with pre-loaded SentenceTransformer
@@ -525,4 +525,3 @@ python scripts/generate_performance_report.py --create-baseline --individual-thr
 - All slow tests must be marked with `@pytest.mark.slow`
 - Integration tests must be marked with `@pytest.mark.integration`
 - Use `make test-fast` for quick feedback during development
-

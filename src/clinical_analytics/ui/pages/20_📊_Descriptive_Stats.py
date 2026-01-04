@@ -139,10 +139,12 @@ def main():
     from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 
     st.title("📊 Descriptive Statistics")
-    st.markdown("""
+    st.markdown(
+        """
     Create **Table 1** with patient characteristics - the foundation of any research paper.
     No statistical tests, just clear descriptions of your data.
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=False)
@@ -288,7 +290,8 @@ frequencies and percentages.
 
             # Interpretation guide
             with st.expander("📖 How to Read Table 1"):
-                st.markdown("""
+                st.markdown(
+                    """
                 **Continuous Variables** (e.g., Age, Weight):
                 - Shown as: Mean ± Standard Deviation
                 - Example: "45.3 ± 12.1" means average age is 45.3 years,
@@ -300,7 +303,8 @@ frequencies and percentages.
 
                 **Sample Size (N)**:
                 - Total number of patients in each group
-                """)
+                """
+                )
 
 
 if __name__ == "__main__":

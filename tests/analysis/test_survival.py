@@ -4,7 +4,6 @@ Tests for survival analysis module.
 
 import pandas as pd
 import pytest
-
 from clinical_analytics.analysis.survival import (
     calculate_median_survival,
     run_cox_regression,

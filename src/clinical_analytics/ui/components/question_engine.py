@@ -494,7 +494,8 @@ class QuestionEngine:
         """
         st.markdown("## 💬 Ask your question")
 
-        st.markdown("""
+        st.markdown(
+            """
         Just type what you want to know in plain English. I'll figure out the right analysis.
 
         **Examples:**
@@ -502,7 +503,8 @@ class QuestionEngine:
         - "What predicts mortality?"
         - "Show me correlation between age and outcome"
         - "Descriptive statistics for all patients"
-        """)
+        """
+        )
 
         # Text input for query
         query = st.text_input(

@@ -11,7 +11,6 @@ import pandas as pd
 import polars as pl
 import polars.testing as plt
 import pytest
-
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
@@ -140,7 +139,7 @@ class TestUploadedDatasetLoadLazy:
         dataset.load()
 
         # Assert
-        assert isinstance(dataset.data, (pd.DataFrame, pl.LazyFrame)), "Should handle both types"
+        assert isinstance(dataset.data, pd.DataFrame | pl.LazyFrame), "Should handle both types"
 
 
 class TestGetCohortLazyEvaluation:

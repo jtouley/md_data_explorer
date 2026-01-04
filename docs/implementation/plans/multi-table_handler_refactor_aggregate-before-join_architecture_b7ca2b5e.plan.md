@@ -221,7 +221,7 @@ def get_cohort(
 Map internal grains to API grains:
 
 - `patient` → `patient_level`
-- `admission` → `admission_level`  
+- `admission` → `admission_level`
 - `event` → `event_level`
 
 ### Background Processing Fixes
@@ -233,7 +233,7 @@ In `UserDatasetStorage.save_zip_upload()`:
 3. Use **cross-platform** file lock for metadata writes:
    ```python
             from filelock import FileLock
-            
+
             lock = FileLock(str(metadata_path) + ".lock")
             with lock:
                 # Atomic write via temp file + rename

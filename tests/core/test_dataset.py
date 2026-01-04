@@ -1,7 +1,6 @@
 """Unit tests for ClinicalDataset base class."""
 
 import pytest
-
 from clinical_analytics.core.dataset import ClinicalDataset
 
 

@@ -273,58 +273,58 @@ graph TD
         system_prompt: |
           You are a database administrator reviewing query plans for type safety.
           Review the query plan and identify type mismatches.
-          
+
           Check for:
             1. Filter values that don't match column types (e.g., string "n/a" for numeric column)
             2. Operators invalid for column types (e.g., ">" on categorical column)
             3. Missing columns in schema
-          
+
           Return JSON:
           {
             "is_valid": true/false,
             "errors": ["error1", "error2"],
             "warnings": ["warning1"]
           }
-        
+
         response_schema:
           is_valid: bool
           errors: list[str]
           warnings: list[str]
-      
+
       analyst:
         system_prompt: |
           You are a clinical analyst reviewing query plans for business logic.
           Review the query plan. Does the intent make sense? Is the grouping variable appropriate?
           Is the metric selection reasonable? Is the filter logic coherent?
-          
+
           Return JSON:
           {
             "is_valid": true/false,
             "errors": [],
             "warnings": ["concern1", "concern2"]
           }
-      
+
       manager:
         system_prompt: |
           You are a manager reviewing query plans for final approval.
           Review the query plan and validation results. Should we proceed?
           Consider confidence, errors, warnings.
-          
+
           Return JSON:
           {
             "approved": true/false,
             "reason": "explanation",
             "confidence_adjustment": 0.0
           }
-      
+
       retry:
         system_prompt: |
           You made these type errors: {errors}. Fix them and return corrected query plan.
           Original query: {query}
           Original intent: {intent_json}
-          
+
           Return corrected QueryIntent JSON matching QueryPlan schema.
-    
+
     validation_rules:
       max_retries: 1
       confidence_threshold: 0.6
@@ -355,15 +355,15 @@ graph TD
   ```python
   def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
       """Load validation config from YAML with env var overrides.
-      
+
       Args:
           config_path: Path to validation.yaml (defaults to config/validation.yaml)
-      
+
       Returns:
           dict with keys:
           - validation_layers: dict (dba, analyst, manager, retry)
           - validation_rules: dict (max_retries, confidence_threshold, timeout_seconds)
-      
+
       Raises:
           FileNotFoundError: If config file missing
           ValueError: If YAML is invalid
@@ -769,10 +769,10 @@ import statistics
 def compute_validation_metrics(events: list[LLMEvent]) -> dict[str, float]:
     """
     Compute validation metrics from LLMEvent logs.
-    
+
     Args:
         events: List of LLMEvent instances from validation layers
-    
+
     Returns:
         Dict with metric names and values
     """
@@ -781,21 +781,21 @@ def compute_validation_metrics(events: list[LLMEvent]) -> dict[str, float]:
     analyst_events = [e for e in events if e.feature == "analyst_validation"]
     manager_events = [e for e in events if e.feature == "manager_approval"]
     retry_events = [e for e in events if e.feature == "validation_retry"]
-    
+
     metrics = {}
-    
+
     # DBA validation error rate
     if dba_events:
         error_count = sum(1 for e in dba_events if not e.success or e.error_type)
         metrics["dba_validation_error_rate"] = error_count / len(dba_events)
-        
+
         # DBA latency percentiles
         latencies = [e.latency_ms for e in dba_events]
         metrics["dba_validation_latency_p50"] = statistics.median(latencies)
         metrics["dba_validation_latency_p95"] = statistics.quantiles(latencies, n=20)[18] if len(latencies) > 1 else latencies[0]
-    
+
     # ... compute other metrics ...
-    
+
     return metrics
 ```
 
@@ -1161,7 +1161,7 @@ mock_client.generate.return_value = json.dumps({
 - Runtime type errors indicate validation bug (fail fast, don't silently fix)
 - Performance: 3 LLM calls for validation (DBA, Analyst, Manager) - acceptable for correctness
 - Legacy runtime code removal: If type error occurs at runtime, it's a validation bug - fail fast with clear error
-- **Rollback Strategy**: 
+- **Rollback Strategy**:
   - LLM validation: Disable via feature flag `ENABLE_LLM_VALIDATION=false` (falls back to code-based validation only). Measure regression via error rate increase or latency increase.
   - Phase 3.6 (UI changes): If UI changes cause regressions, revert Phase 3.6 changes independently (UI changes are isolated from core validation logic). UI changes can be rolled back without affecting validation layers.
 

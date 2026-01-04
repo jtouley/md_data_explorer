@@ -48,9 +48,9 @@ class TestBinaryColumnPrioritization:
                 # Binary filter should use == operator with value 1
                 binary_filter = binary_filters[0]
                 assert binary_filter.operator == "==", f"Binary filter should use ==, got: {binary_filter.operator}"
-                assert binary_filter.value == 1, (
-                    f"Binary filter should extract code 1 (Yes), got: {binary_filter.value}"
-                )
+                assert (
+                    binary_filter.value == 1
+                ), f"Binary filter should extract code 1 (Yes), got: {binary_filter.value}"
 
     def test_prioritization_works_for_any_medication_type(self, mock_semantic_layer):
         """Test that prioritization is generic and works for any medication type."""
@@ -102,12 +102,12 @@ class TestBinaryColumnPrioritization:
                 if prescribed_filters and type_filters:
                     # Binary should be used (prescribed filter should have == operator with value 1)
                     prescribed_filter = prescribed_filters[0]
-                    assert prescribed_filter.operator == "==", (
-                        f"Binary filter should use ==, got: {prescribed_filter.operator}"
-                    )
-                    assert prescribed_filter.value == 1, (
-                        f"Binary filter should extract code 1 (Yes), got: {prescribed_filter.value}"
-                    )
+                    assert (
+                        prescribed_filter.operator == "=="
+                    ), f"Binary filter should use ==, got: {prescribed_filter.operator}"
+                    assert (
+                        prescribed_filter.value == 1
+                    ), f"Binary filter should extract code 1 (Yes), got: {prescribed_filter.value}"
 
     def test_prioritization_detects_binary_by_pattern_not_hardcoding(self, mock_semantic_layer):
         """Test that binary detection uses generic patterns, not hardcoded column names."""

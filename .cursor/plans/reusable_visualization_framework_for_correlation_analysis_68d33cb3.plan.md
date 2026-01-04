@@ -421,12 +421,12 @@ Recommend visualization type and configuration."""
 - Integration code:
   ```python
   # After line 1419: chart_spec = {...} if chart_spec_obj else None
-  
+
   # Phase 4: LLM enhancement (if available and enabled)
   if chart_spec and ENABLE_LLM_VISUALIZATION_RECOMMENDATION:
       # Sanitize result for LLM prompt
       sanitized_result = _sanitize_result_for_visualization_prompt(result_dict)
-      
+
       # Generate LLM recommendation
       llm_spec = generate_visualization_recommendation(
           query_text=query_text,
@@ -435,7 +435,7 @@ Recommend visualization type and configuration."""
           conversation_history=conversation_history,
           user_requested_type=plan.requested_visualization,
       )
-      
+
       # Override deterministic spec if LLM recommendation exists
       if llm_spec:
           chart_spec = {
@@ -501,13 +501,13 @@ Recommend visualization type and configuration."""
   ```python
   # In NLQueryEngine.parse_query(), after query normalization
   normalized_query = normalize_query(query)
-  
+
   # Phase 5: Extract user-requested visualization type
   requested_viz = extract_user_visualization_request(normalized_query)
-  
+
   # Continue with existing parsing logic...
   query_intent = self._parse_with_tiers(normalized_query, ...)
-  
+
   # Store in QueryIntent (add field if needed) or propagate directly to QueryPlan
   ```
 - Propagation: Store in `QueryIntent` first (add `requested_visualization: str | None` field), then propagate to `QueryPlan` during `_intent_to_plan()` conversion
@@ -645,12 +645,12 @@ import streamlit as st
 
 def render_relationship_analysis(result: dict) -> None:
     # ... existing text output ...
-    
+
     # Decision: Show heatmap if <= 6 variables
     if len(variables) <= 6 and corr_data:
         # Build correlation matrix from correlation data (list of dicts)
         corr_matrix = _build_matrix_from_corr_data(corr_data, variables)
-        
+
         # Create heatmap (accepts pl.DataFrame, converts to pandas internally)
         fig = create_correlation_heatmap(
             corr_matrix,  # pl.DataFrame
@@ -659,17 +659,17 @@ def render_relationship_analysis(result: dict) -> None:
             cmap="coolwarm",
         )
         st.pyplot(fig)  # or st.plotly_chart(fig) if backend="plotly"
-    
+
     # Decision: Show scatter plots for top 3 strong correlations
     if strong_correlations:
         # Fetch cohort data (render function handles data fetching)
         cohort = get_cohort_data()  # Returns pl.DataFrame
-        
+
         for corr in strong_correlations[:3]:
             # Extract data arrays from Polars DataFrame
             x_data = cohort.select(pl.col(corr["var1"])).to_series().to_numpy()
             y_data = cohort.select(pl.col(corr["var2"])).to_series().to_numpy()
-            
+
             # Create scatter plot
             fig = create_scatter_plot(
                 x_data=x_data,  # numpy array
@@ -701,10 +701,10 @@ def render_relationship_analysis(
     conversation_history: list[dict] | None = None,
 ) -> None:
     # ... existing text output ...
-    
+
     # Phase 6: Use ChartSpec from result (LLM-generated or deterministic)
     chart_spec = result.get("chart_spec")
-    
+
     if chart_spec and chart_spec.get("type") == "heatmap":
         # LLM recommended heatmap or user requested it
         if corr_data:
@@ -716,7 +716,7 @@ def render_relationship_analysis(
                 cmap="coolwarm",
             )
             st.pyplot(fig) if chart_spec.get("backend") != "plotly" else st.plotly_chart(fig)
-    
+
     elif chart_spec and chart_spec.get("type") == "scatter":
         # LLM recommended scatter plots or user requested them
         if strong_correlations:
@@ -734,7 +734,7 @@ def render_relationship_analysis(
                     backend=chart_spec.get("backend", "matplotlib"),
                 )
                 st.pyplot(fig) if chart_spec.get("backend") != "plotly" else st.plotly_chart(fig)
-    
+
     else:
         # Fallback to default behavior (Phase 2 logic)
         # ... existing default visualization logic ...
@@ -884,10 +884,10 @@ def test_generate_visualization_recommendation_success(mock_call_llm):
         timed_out=False,
         error=None,
     )
-    
+
     # Act
     result = generate_visualization_recommendation(...)
-    
+
     # Assert
     assert result is not None
     assert result.type == "scatter"
@@ -913,10 +913,10 @@ def test_llm_unavailable_falls_back(mock_generate_chart_spec, mock_call_llm):
         error="ollama_unavailable",
     )
     mock_generate_chart_spec.return_value = ChartSpec(type="heatmap", ...)
-    
+
     # Act
     result = generate_visualization_recommendation(...)
-    
+
     # Assert: Falls back to deterministic
     assert result is not None
     assert result.type == "heatmap"
@@ -966,7 +966,7 @@ Use shared fixtures from `tests/conftest.py`:
 
 1. **Added TDD Workflow**: Each phase now specifies test-first development (write failing test → implement → verify pass)
 
-2. **Specified Polars-First Compliance**: 
+2. **Specified Polars-First Compliance**:
    - Functions accept `pl.DataFrame` and `pl.Series`
    - Convert to pandas only at visualization boundary with `# PANDAS EXCEPTION` comment
    - Updated example code to use Polars syntax
@@ -977,19 +977,19 @@ Use shared fixtures from `tests/conftest.py`:
 
 5. **Fixed Phase 3**: Removed non-actionable phase, noted that utilities are already available via import
 
-6. **Specified Input/Output Contracts**: 
+6. **Specified Input/Output Contracts**:
    - Documented exact structure for correlation data (list of dicts)
    - Added helper function: `_build_matrix_from_corr_data()`
    - Documented data fetching strategy (render function fetches, passes arrays)
 
-7. **Added Error Handling**: 
+7. **Added Error Handling**:
    - Plotly availability check with fallback
    - Input validation with clear error messages
    - Edge case handling (empty data, single variable, all NaN)
 
 8. **Added Success Criteria**: Each phase now has explicit success criteria
 
-9. **Expanded Testing Section**: 
+9. **Expanded Testing Section**:
    - Comprehensive test examples (unit, integration, deterministic)
    - Test file location and structure
    - Test execution commands
@@ -1018,7 +1018,7 @@ Use shared fixtures from `tests/conftest.py`:
 
 **Architecture Flow**:
 ```
-User Query → NLQueryEngine.parse_query() 
+User Query → NLQueryEngine.parse_query()
   → Extract visualization request → QueryPlan.requested_visualization
   → Execute Query → Result computed
   → generate_visualization_recommendation() (LLM)

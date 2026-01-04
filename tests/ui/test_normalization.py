@@ -9,7 +9,6 @@ import zipfile
 
 import polars as pl
 import pytest
-
 from clinical_analytics.ui.storage.user_datasets import (
     SecurityError,
     UploadError,

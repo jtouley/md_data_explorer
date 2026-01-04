@@ -1629,9 +1629,11 @@ def main():
     See ADR008 for full refactor plan.
     """
     st.title("💬 Ask Questions")
-    st.markdown("""
+    st.markdown(
+        """
     Ask questions about your data in plain English. I'll figure out the right analysis and explain the results.
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=True)

@@ -7,7 +7,6 @@ Phase 3: Integration tests for NL query flow with single-table uploads.
 import json
 
 import pandas as pd
-
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 

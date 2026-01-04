@@ -178,10 +178,12 @@ class AnalysisWizard:
             Selected analysis type ID or None
         """
         st.markdown("## 🧭 Choose Your Analysis")
-        st.markdown("""
+        st.markdown(
+            """
         Select what you want to do with your data. Don't worry about statistical terminology -
         we'll guide you to the right test.
-        """)
+        """
+        )
 
         # Get suggestions
         suggestions = AnalysisRecommender.suggest_analyses(df, outcome_col, time_col)

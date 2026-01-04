@@ -8,7 +8,6 @@ import json
 
 import pandas as pd
 import pytest
-
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 

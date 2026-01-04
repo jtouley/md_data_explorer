@@ -63,4 +63,3 @@ make check         # Full quality gate (recommended)
 - `make check` (full quality gate)
 
 **Reference: [000-project-setup-and-makefile.mdc](.cursor/rules/000-project-setup-and-makefile.mdc)**
-

@@ -550,16 +550,16 @@ graph TD
     C --> D[Phase 3: Build AutoContext]
     D --> E[Phase 4: Generate Questions]
     E --> F[Store in Metadata]
-    
+
     G[User Query] --> H[Query-Time: RAG Type Safety]
     H --> I[Enhance RAG Context with Types]
     I --> J[Use AutoContext from Phase 3]
     J --> K[Multi-Layer LLM Validation]
-    
+
     D -.->|Consumed by| J
     C -.->|Used by| I
     B -.->|Used by| I
-    
+
     style B fill:#e1f5ff
     style C fill:#e1f5ff
     style D fill:#e1f5ff
@@ -647,10 +647,10 @@ from typing import Any
 def extract_context_from_docs(file_paths: list[Path]) -> str:
     """
     Extract text content from documentation files.
-    
+
     Args:
         file_paths: List of paths to documentation files
-        
+
     Returns:
         Concatenated text context (truncated to 50,000 chars if needed)
     """
@@ -781,8 +781,8 @@ def extract_markdown_text(md_path: Path) -> str:
 - **Add `codebooks` field to DictionaryMetadata**: Add `codebooks: dict[str, dict[str, str]] = field(default_factory=dict)` to dataclass. Structure: `{column_name: {"1": "Biktarvy", "2": "Symtuza", ...}}`
 - **Extract codebooks from documentation**: Parse patterns like "1: Biktarvy, 2: Symtuza" → `{"1": "Biktarvy", "2": "Symtuza"}`. Consider reusing `_extract_value_mapping()` from `column_parser.py` to avoid duplication.
 - **Extract column descriptions**: Parse "Column: Description" patterns from documentation
-- **Extract units**: 
-  - From column names: Reuse `_extract_unit()` from `column_parser.py` 
+- **Extract units**:
+  - From column names: Reuse `_extract_unit()` from `column_parser.py`
   - From documentation: Parse patterns like "Units: mg/dL" or "measured in mg/dL"
 - Use `doc_context` to populate `DictionaryMetadata` with codebooks, descriptions, units
 - **Enhance `InferredSchema.to_dataset_config()`**: Populate `variable_types` dict with:
@@ -818,7 +818,7 @@ def extract_markdown_text(md_path: Path) -> str:
   - **Regex pattern**: Use pattern like `r"(\d+)\s*:\s*([^,0-9]+)"` to extract code-value pairs
   - **Store structure**: `DictionaryMetadata.codebooks[column_name] = {"1": "Biktarvy", "2": "Symtuza", ...}`
 - **Dictionary Text Format**: Plain text dictionaries should follow patterns like "Column: Description" or "Column Name | Type | Description". If format is unclear, log warning and use data-driven inference only.
-- **Units Extraction**: 
+- **Units Extraction**:
   - **From column names**: Reuse `_extract_unit()` from `src/clinical_analytics/core/column_parser.py` (line 69) which extracts units like "mg/dL", "%", etc. from column names
   - **From documentation**: Parse patterns like "Units: mg/dL" or "measured in mg/dL" or "(mg/dL)" in column descriptions
   - **Priority**: Column name extraction takes precedence (more reliable), fallback to documentation parsing
@@ -999,7 +999,7 @@ def build_autocontext(
 ) -> AutoContext:
     """
     Build AutoContext pack from schema inference, documentation, and aliases.
-    
+
     **Deterministic construction** - no LLM inference. Same inputs always produce same output.
     Think: compiler metadata, not chat memory.
     """
@@ -1049,15 +1049,15 @@ AutoContext **supplements** `_build_rag_context()`, they are **not replacements*
 def extract_column_metadata(self, column_name: str) -> dict[str, Any] | None:
     """
     Extract column metadata compatible with ColumnContext construction.
-    
+
     Uses existing get_column_metadata() internally but formats for AutoContext use.
-    
+
     Args:
         column_name: Canonical column name
-        
+
     Returns:
         Dict compatible with ColumnContext construction, or None if metadata unavailable
-        
+
     Example return structure:
         {
             "name": "Current Regimen",
@@ -1066,7 +1066,7 @@ def extract_column_metadata(self, column_name: str) -> dict[str, Any] | None:
             "units": None,  # From variable_types["units"] if available
             "codebook": {"1": "Biktarvy", "2": "Symtuza", ...},  # From variable_types["codebook"] if available
         }
-    
+
     Dtype mapping:
         - "numeric" → "numeric"
         - "categorical" (with numeric=True) → "coded"
@@ -1074,7 +1074,7 @@ def extract_column_metadata(self, column_name: str) -> dict[str, Any] | None:
         - "datetime" → "datetime"
         - "text" → "categorical" (fallback)
         - "id" → "id" (for patient_id columns)
-    
+
     Normalized name: lowercase, replace spaces/special chars with underscores
     """
 ```
@@ -1218,11 +1218,11 @@ from clinical_analytics.core.nl_query_config import ENABLE_PROACTIVE_QUESTIONS
 
 class CacheBackend(Protocol):
     """Protocol for cache backend (UI-agnostic, no Streamlit coupling)."""
-    
+
     def get(self, key: str) -> list[str] | None:
         """Get cached value by key. Returns None if not cached."""
         ...
-    
+
     def set(self, key: str, value: list[str]) -> None:
         """Cache value by key."""
         ...
@@ -1234,31 +1234,31 @@ def generate_upload_questions(
 ) -> list[str]:
     """
     Generate simple example questions during upload (stored in metadata).
-    
+
     **Upload-Time Only**: These are simple examples, not confidence-gated.
     Stored in metadata JSON and displayed on first load.
-    
+
     Args:
         semantic_layer: SemanticLayer instance (for column bounds)
         inferred_schema: InferredSchema from Phase 2
         doc_context: Extracted documentation text from Phase 1
-    
+
     Returns:
         List of 3-5 simple example questions
     """
     # Get available columns for bounding
     alias_index = semantic_layer.get_column_alias_index()
     available_columns = list(alias_index.values()) if alias_index else []
-    
+
     if not available_columns:
         return []
-    
+
     # Try LLM first (if available)
     if _is_ollama_available():
         questions = _llm_generate_simple_examples(available_columns, inferred_schema, doc_context)
         if questions:
             return _validate_questions_bounded(questions, available_columns, [])
-    
+
     # Fallback: deterministic questions
     return _deterministic_upload_questions(available_columns, inferred_schema)
 
@@ -1272,16 +1272,16 @@ def generate_proactive_questions(
 ) -> list[str]:
     """
     Generate proactive follow-up questions based on query intent and semantic layer.
-    
+
     **Semantic Layer Bounded**: Only generates questions about columns/aliases in semantic layer.
     **Confidence Gated**: Respects deterministic thresholds:
         - confidence ≥ 0.85: suggest next questions freely
         - 0.5-0.85: suggest only clarification/disambiguation questions
         - < 0.5: do not suggest proactively (ask user to rephrase)
-    
+
     **Idempotent**: Cached by (dataset_version, run_key, normalized_query) to prevent duplicates.
     **Architecture**: Uses CacheBackend protocol for UI independence (no Streamlit imports in core).
-    
+
     Args:
         semantic_layer: SemanticLayer instance (for column/alias bounds)
         query_intent: QueryIntent from previous parse (for confidence gating)
@@ -1289,36 +1289,36 @@ def generate_proactive_questions(
         run_key: Run key for caching
         normalized_query: Normalized query text for caching
         cache_backend: CacheBackend protocol for UI-agnostic caching (injected dependency)
-    
+
     Returns:
         List of 3-5 example questions (empty if confidence too low or feature disabled)
-    
+
     Raises:
         AssertionError: If semantic layer missing required metadata
     """
     # Feature flag check
     if not ENABLE_PROACTIVE_QUESTIONS:
         return []
-    
+
     # Confidence gating (deterministic, not vibes-based)
     if query_intent is None or query_intent.confidence < 0.5:
         return []  # Don't suggest proactively if confidence too low
-    
+
     # Check cache for idempotency (uses injected CacheBackend, no Streamlit coupling)
     cache_key = _build_cache_key(dataset_version, run_key, normalized_query)
     if cache_backend:
         cached = cache_backend.get(cache_key)
         if cached is not None:
             return cached
-    
+
     # Get available columns/aliases from semantic layer (hard boundary)
     alias_index = semantic_layer.get_column_alias_index()
     available_columns = list(alias_index.values()) if alias_index else []
     available_aliases = list(alias_index.keys()) if alias_index else []
-    
+
     if not available_columns:
         return []  # No columns available, can't generate questions
-    
+
     # Try LLM first (if available and confidence high enough)
     questions: list[str] = []
     if query_intent.confidence >= 0.85:
@@ -1339,21 +1339,21 @@ def generate_proactive_questions(
             query_intent,
             question_type="clarification",
         )
-    
+
     # Fallback: deterministic questions if LLM unavailable
     if not questions:
         questions = _deterministic_questions(semantic_layer, available_columns, query_intent)
-    
+
     # Validate questions are bounded by semantic layer
     questions = _validate_questions_bounded(questions, available_columns, available_aliases)
-    
+
     # Cache results for idempotency (uses injected CacheBackend)
     if cache_backend:
         cache_backend.set(cache_key, questions)
-    
+
     # Log observability event
     _log_question_generation(questions, query_intent.confidence, dataset_version, len(available_columns))
-    
+
     return questions
 
 def _llm_generate_questions(
@@ -1366,11 +1366,11 @@ def _llm_generate_questions(
 ) -> list[str] | None:
     """
     Generate questions using local LLM via call_llm().
-    
+
     **Semantic Layer Bounded**: Prompt explicitly lists only available columns/aliases.
     **Clinical Safety**: Prompts emphasize analysis navigation, not medical advice.
     **Time Budgeted**: Hard timeout (5s default, same as parsing tiers).
-    
+
     Args:
         semantic_layer: SemanticLayer instance
         available_columns: List of column names (hard boundary)
@@ -1378,7 +1378,7 @@ def _llm_generate_questions(
         query_intent: QueryIntent from previous parse
         question_type: "next_questions" (confidence ≥0.85) or "clarification" (0.5-0.85)
         timeout_s: Hard timeout (default 5.0s, same as parsing tiers)
-    
+
     Returns:
         List of questions or None if LLM unavailable/failed
     """
@@ -1400,16 +1400,16 @@ def _llm_generate_questions(
 **Previous Query Intent**: {query_intent.intent_type} (confidence: {query_intent.confidence:.2f})
 
 Return JSON: {{"questions": ["question1", "question2", ...]}}"""
-    
+
     user_prompt = f"Generate {question_type} questions based on the previous query intent."
-    
+
     result = call_llm(
         feature=LLMFeature.QUESTION_GENERATION,
         system=system_prompt,
         user=user_prompt,
         timeout_s=timeout_s,  # Hard time budget
     )
-    
+
     if result.payload and "questions" in result.payload:
         questions = result.payload["questions"]
         # Validate questions are bounded (check for hallucinated columns)
@@ -1423,26 +1423,26 @@ def _validate_questions_bounded(
 ) -> list[str]:
     """
     Validate that questions only reference known columns/aliases.
-    
+
     Filters out questions that reference columns not in semantic layer.
     This prevents hallucination.
-    
-    **Validation Strategy**: 
+
+    **Validation Strategy**:
     - Primary: Substring matching (case-insensitive) - fast and sufficient for most cases
     - Future enhancement: Could use NLQueryEngine's column matching logic for more sophisticated parsing
     - Edge cases: Partial matches (e.g., "age" matches "age_group") are acceptable (conservative filtering)
-    
+
     Args:
         questions: List of generated questions
         available_columns: List of canonical column names (hard boundary)
         available_aliases: List of alias names (hard boundary)
-    
+
     Returns:
         Filtered list of questions (only those referencing known columns/aliases)
     """
     validated = []
     all_valid_names = set(available_columns + available_aliases)
-    
+
     for question in questions:
         # Check if question mentions any valid column/alias (case-insensitive substring match)
         question_lower = question.lower()
@@ -1450,7 +1450,7 @@ def _validate_questions_bounded(
             validated.append(question)
         # Note: Substring matching is sufficient for MVP. More sophisticated parsing (extracting
         # column references via NLQueryEngine) can be added in future if needed.
-    
+
     return validated
 
 def _deterministic_questions(
@@ -1460,14 +1460,14 @@ def _deterministic_questions(
 ) -> list[str]:
     """
     Generate deterministic questions without LLM (fallback).
-    
+
     Uses template-based generation based on available columns.
     Always bounded by semantic layer.
     """
     # Template-based questions (e.g., "What is the average {column}?")
     # Only use columns from available_columns (semantic layer bounded)
     questions = []
-    
+
     # Simple templates based on intent type
     if query_intent:
         if query_intent.intent_type == "DESCRIBE":
@@ -1478,7 +1478,7 @@ def _deterministic_questions(
             # Suggest additional grouping variables
             for col in available_columns[:3]:
                 questions.append(f"Would you like to compare by {col}?")
-    
+
     # Default: generic analysis questions
     if not questions:
         questions = [
@@ -1486,7 +1486,7 @@ def _deterministic_questions(
             "Are there any outliers?",
             "What are the key relationships?",
         ]
-    
+
     return questions[:5]  # Limit to 5 questions
 
 def _build_cache_key(
@@ -1496,16 +1496,16 @@ def _build_cache_key(
 ) -> str:
     """
     Build cache key for idempotency.
-    
+
     Uses same pattern as execution result caching in 03_💬_Ask_Questions.py:
     - Key format: "proactive_questions:{dataset_version}:{run_key}:{query_hash}"
     - query_hash: SHA256 hash of normalized_query (first 16 chars, same as exec_result caching)
-    
+
     Args:
         dataset_version: Dataset version identifier
         run_key: Run key for idempotency
         normalized_query: Normalized query text (for hashing)
-        
+
     Returns:
         Cache key string with "proactive_questions:" prefix for use with CacheBackend
     """
@@ -1523,7 +1523,7 @@ def _log_question_generation(
     """Log observability event for question generation."""
     from clinical_analytics.core.llm_observability import log_llm_event
     import structlog
-    
+
     logger = structlog.get_logger()
     logger.info(
         "proactive_questions_generated",
@@ -1536,7 +1536,7 @@ def _log_question_generation(
 def _validate_privacy_safe_stats(stats: dict[str, Any]) -> None:
     """
     Validate that stats contain only aggregated data, no row-level values.
-    
+
     Raises AssertionError if row-level data detected.
     """
     # Implementation: Check that stats dict contains only aggregated keys
@@ -1552,10 +1552,10 @@ def _validate_privacy_safe_stats(stats: dict[str, Any]) -> None:
       """Streamlit session state cache backend (UI layer implementation)."""
       def get(self, key: str) -> list[str] | None:
           return st.session_state.get(key)
-      
+
       def set(self, key: str, value: list[str]) -> None:
           st.session_state[key] = value
-  
+
   # Usage:
   questions = generate_proactive_questions(
       semantic_layer,

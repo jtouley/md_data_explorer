@@ -41,4 +41,3 @@ fi
 
 echo "✓ Regression protection check passed"
 exit 0
-

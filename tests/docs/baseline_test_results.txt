@@ -1,4 +1,4 @@
-[0;32mRunning all tests...[0m 
+[0;32mRunning all tests...[0m
 uv run pytest tests -v
 ============================= test session starts ==============================
 platform darwin -- Python 3.13.11, pytest-9.0.2, pluggy-1.6.0 -- /Users/jasontouleyrou/Projects/md_data_explorer/.venv/bin/python
@@ -1232,10 +1232,10 @@ skip_if_ollama_unavailable = None
     def test_ollama_client_real_generate(ollama_client, skip_if_ollama_unavailable):
         """Verify real OllamaClient can generate responses."""
         from clinical_analytics.core.nl_query_config import OLLAMA_DEFAULT_MODEL
-    
+
         if not ollama_client.is_model_available(OLLAMA_DEFAULT_MODEL):
             pytest.skip(f"Model {OLLAMA_DEFAULT_MODEL} not available")
-    
+
         prompt = "What is 2+2? Respond with just the number."
 >       response = ollama_client.generate(prompt, model=OLLAMA_DEFAULT_MODEL)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1255,11 +1255,11 @@ discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs':
 >       config = get_first_available_dataset_config(discovered_datasets)
                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_mapper.py:63: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:63:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_mapper.py:38: in get_first_available_dataset_config
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_mapper (WARNING)>
 msg = 'test_mapper_no_datasets_available', args = ()
@@ -1268,10 +1268,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -1292,11 +1292,11 @@ discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs':
 >       config = get_first_available_dataset_config(discovered_datasets)
                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_mapper.py:79: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:79:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_mapper.py:38: in get_first_available_dataset_config
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_mapper (WARNING)>
 msg = 'test_mapper_no_datasets_available', args = ()
@@ -1305,10 +1305,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -1329,11 +1329,11 @@ discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs':
 >       config = get_first_available_dataset_config(discovered_datasets)
                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_mapper.py:96: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:96:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_mapper.py:38: in get_first_available_dataset_config
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_mapper (WARNING)>
 msg = 'test_mapper_no_datasets_available', args = ()
@@ -1342,10 +1342,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -1366,11 +1366,11 @@ discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs':
 >       config = get_first_available_dataset_config(discovered_datasets)
                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_mapper.py:112: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:112:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_mapper.py:38: in get_first_available_dataset_config
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_mapper (WARNING)>
 msg = 'test_mapper_no_datasets_available', args = ()
@@ -1379,10 +1379,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -1403,11 +1403,11 @@ discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs':
 >       config = get_first_available_dataset_config(discovered_datasets)
                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_mapper.py:129: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_mapper.py:129:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_mapper.py:38: in get_first_available_dataset_config
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_mapper (WARNING)>
 msg = 'test_mapper_no_datasets_available', args = ()
@@ -1416,10 +1416,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -1440,7 +1440,7 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
         """
         Test that when Strategy 1 finds a coded column via fuzzy matching,
         Strategy 2 uses it directly instead of searching again.
-    
+
         This fixes the bug where "statins" (plural) matched to "Statin Used" (singular)
         but Strategy 2 couldn't find it because it searched for "statins" in aliases.
         """
@@ -1450,10 +1450,10 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
         # should return {alias: canonical}. So we need to set it up correctly
         statin_alias = "Statin Used: 0: n/a 1: Atorvastatin 2: Rosuvastatin 3: Simvastatin"
         canonical_name = "statin_used"
-    
+
         # Mock returns {alias: canonical} for get_column_alias_index (as per real semantic layer)
         from unittest.mock import MagicMock
-    
+
         mock = MagicMock()
         mock.get_column_alias_index.return_value = {
             statin_alias: canonical_name,  # {alias: canonical}
@@ -1468,23 +1468,23 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             "type": "categorical",
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
-    
+
         engine = nl_query_engine_with_cached_model(semantic_layer=mock)
         # Override _fuzzy_match_variable to return canonical_name for "statins"
         original_fuzzy = engine._fuzzy_match_variable
-    
+
         def mock_fuzzy(term):
             if "statin" in term.lower():
                 return canonical_name, 0.9, None
             return original_fuzzy(term)
-    
+
         engine._fuzzy_match_variable = mock_fuzzy
-    
+
         # Act: Extract filters - "statins" should match to "statin_used" via Strategy 1,
         # then Strategy 2 should use that column directly instead of searching
         query = "how many patients were on statins"
         intent = engine.parse_query(query)
-    
+
         # Assert: Should extract filter with numeric codes (not string "statins")
         assert intent is not None, "Query should parse successfully"
 >       assert len(intent.filters) > 0, "Should extract at least one filter for 'on statins'"
@@ -1527,18 +1527,18 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
         engine = nl_query_engine_with_cached_model(semantic_layer=mock)
-    
+
         # Act: Extract filters from exclusion query (different domain)
         query = "excluding those not on diabetes medication"
         intent = engine.parse_query(query)
-    
+
         # Assert: Should extract filter to exclude code 0 (generic, not hardcoded)
         assert intent is not None
         assert len(intent.filters) > 0
         exclusion_filter = intent.filters[0]
 >       assert exclusion_filter.column == "diabetes_medication"
 E       AssertionError: assert 'statin_used' == 'diabetes_medication'
-E         
+E
 E         - diabetes_medication
 E         + statin_used
 
@@ -1577,18 +1577,18 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             "metadata": {"numeric": True, "values": [0, 1, 2, 3]},
         }
         engine = nl_query_engine_with_cached_model(semantic_layer=mock)
-    
+
         # Act: Extract filters from exclusion query (different domain)
         query = "excluding patients not on treatment"
         intent = engine.parse_query(query)
-    
+
         # Assert: Should extract filter to exclude code 0 (generic pattern)
         assert intent is not None
         assert len(intent.filters) > 0
         exclusion_filter = intent.filters[0]
 >       assert exclusion_filter.column == "treatment_type"
 E       AssertionError: assert 'statin_used' == 'treatment_type'
-E         
+E
 E         - treatment_type
 E         + statin_used
 
@@ -1623,7 +1623,7 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             },
         )
         engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
-    
+
         # Previous query already had an age filter
         conversation_history = [
             {
@@ -1640,17 +1640,17 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
                 ],
             }
         ]
-    
+
         # Act: Add refinement to exclude unknown status
         result = engine.parse_query(
             query="exclude unknown status",
             conversation_history=conversation_history,
         )
-    
+
         # Assert: Should have both filters
         assert result.intent_type == "COUNT"
         assert len(result.filters) >= 2, "Should have age + status filters"
-    
+
         # Should preserve age filter
         age_filters = [f for f in result.filters if f.column == "age"]
 >       assert len(age_filters) == 1
@@ -1689,7 +1689,7 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             },
         )
         engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
-    
+
         conversation_history = [
             {
                 "query": "patients over 50",
@@ -1704,13 +1704,13 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
                 ],
             }
         ]
-    
+
         # Act: Refine the age filter
         result = engine.parse_query(
             query="actually make it over 65",
             conversation_history=conversation_history,
         )
-    
+
         # Assert: LLM should update age filter, not duplicate
         age_filters = [f for f in result.filters if f.column == "age"]
 >       assert len(age_filters) == 1, "Should only have one age filter (updated)"
@@ -1750,13 +1750,13 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             treatment=["1: Control", "2: Treatment A", "1: Control", "2: Treatment A"],
         )
 
-tests/core/test_nl_query_refinement.py:313: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_nl_query_refinement.py:313:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/conftest.py:1024: in _make
     return pl.DataFrame(
 .venv/lib/python3.13/site-packages/polars/dataframe/frame.py:377: in __init__
     self._df = dict_to_pydf(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 data = {'age': [45, 52, 38, 61], 'patient_id': ['P1', 'P2', 'P3', 'P4'], 'status': ['1: Active', '2: Inactive', '1: Active', '1: Active', '2: Inactive'], 'treatment': ['1: Control', '2: Treatment A', '1: Control', '2: Treatment A']}
 schema = None
@@ -1776,13 +1776,13 @@ schema = None
                 msg = "the given column-schema names do not match the data dictionary"
                 raise ValueError(msg)
             data = {col: data[col] for col in schema}
-    
+
         column_names, schema_overrides = _unpack_schema(
             schema, lookup_names=data.keys(), schema_overrides=schema_overrides
         )
         if not column_names:
             column_names = list(data)
-    
+
         if data and _NUMPY_AVAILABLE:
             # if there are 3 or more numpy arrays of sufficient size, we multi-thread:
             count_numpy = sum(
@@ -1800,12 +1800,12 @@ schema = None
             if count_numpy >= 3:
                 # yes, multi-threading was easier in python here; we cannot have multiple
                 # threads running python and release the gil in pyo3 (it will deadlock).
-    
+
                 # (note: 'dummy' is threaded)
                 # We catch FileNotFoundError: see 16675
                 try:
                     import multiprocessing.dummy
-    
+
                     pool_size = thread_pool_size()
                     with multiprocessing.dummy.Pool(pool_size) as pool:
                         data = dict(
@@ -1830,7 +1830,7 @@ schema = None
                         nan_to_null=nan_to_null,
                         allow_multithreaded=False,
                     )
-    
+
         if not data and schema_overrides:
             data_series = [
                 pl.Series(
@@ -1852,7 +1852,7 @@ schema = None
                     nan_to_null=nan_to_null,
                 ).values()
             ]
-    
+
         data_series = _handle_columns_arg(data_series, columns=column_names, from_dict=True)
 >       pydf = PyDataFrame(data_series)
                ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1877,20 +1877,20 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             data={"patient_id": ["P1", "P2"], "status": [0, 1]},
         )
         engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
-    
+
         conversation_history = [
             {
                 "query": "count patients",
                 "intent": "COUNT",
             }
         ]
-    
+
         # Act
         result = engine.parse_query(
             query="exclude unknowns",
             conversation_history=conversation_history,
         )
-    
+
         # Assert: LLM should provide explanation of refinement
         # QueryIntent uses 'interpretation' field, not 'explanation'
 >       assert result.interpretation, "Should have interpretation"
@@ -1922,7 +1922,7 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
     ):
         """
         Test that refinement queries work even when LLM returns invalid response.
-    
+
         This tests the exact scenario from the terminal where LLM returns
         {"query": "remove the n/a"} instead of proper QueryPlan schema.
         The system should fall back to refinement handler that merges with previous context.
@@ -1941,7 +1941,7 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
             },
         )
         engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
-    
+
         # Previous query: count by statin (all values including n/a)
         conversation_history = [
             {
@@ -1954,20 +1954,20 @@ nl_query_engine_with_cached_model = <function nl_query_engine_with_cached_model.
                 "timestamp": 100.0,
             }
         ]
-    
+
         # Act: Parse refinement query "remove the n/a" with conversation context
         # This should work even if LLM fails and returns invalid response
         result = engine.parse_query(
             query="remove the n/a",
             conversation_history=conversation_history,
         )
-    
+
         # Assert: Should maintain previous intent and grouping
         assert result.intent_type == "COUNT", "Should maintain previous COUNT intent"
 >       assert result.grouping_variable == statin_col, "Should maintain previous grouping"
 E       AssertionError: Should maintain previous grouping
 E       assert 'statin_used' == 'Statin Used:...: Simvastatin'
-E         
+E
 E         - Statin Used:    0: n/a                       1: Atorvastatin  2: Rosuvastatin 3: Pravastatin   4: Pitavastatin  5: Simvastatin
 E         + statin_used
 
@@ -1997,14 +1997,14 @@ sample_test_results_with_invalid_intent = [{'actual_intent': 'REMOVE_NA', 'expec
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:165: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:165:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x12a0db300>
 args = (None,), paths = [], arg = None, path = None
@@ -2044,14 +2044,14 @@ sample_test_results_with_refinement_failures = [{'actual_intent': 'DESCRIBE', 'c
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:183: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:183:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e198740>
 args = (None,), paths = [], arg = None, path = None
@@ -2091,14 +2091,14 @@ sample_test_results_all_passing = [{'actual_intent': 'COUNT', 'expected_intent':
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:201: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:201:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e199ee0>
 args = (None,), paths = [], arg = None, path = None
@@ -2135,14 +2135,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:214: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:214:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x12a331850>
 args = (None,), paths = [], arg = None, path = None
@@ -2182,14 +2182,14 @@ sample_test_results_with_invalid_intent = [{'actual_intent': 'REMOVE_NA', 'expec
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:232: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:232:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37d700>
 args = (None,), paths = [], arg = None, path = None
@@ -2228,14 +2228,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:248: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:248:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37d230>
 args = (None,), paths = [], arg = None, path = None
@@ -2274,14 +2274,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:264: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:264:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37d3f0>
 args = (None,), paths = [], arg = None, path = None
@@ -2318,14 +2318,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:277: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:277:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37e5e0>
 args = (None,), paths = [], arg = None, path = None
@@ -2364,14 +2364,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:292: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:292:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37f1b0>
 args = (None,), paths = [], arg = None, path = None
@@ -2410,14 +2410,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:307: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:307:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37ece0>
 args = (None,), paths = [], arg = None, path = None
@@ -2456,14 +2456,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:368: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:368:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37f4c0>
 args = (None,), paths = [], arg = None, path = None
@@ -2502,14 +2502,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:388: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:388:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37eea0>
 args = (None,), paths = [], arg = None, path = None
@@ -2546,14 +2546,14 @@ sample_learning_config = LearningConfig(intent_keywords={'COUNT': ['how many', '
 >       optimizer = PromptOptimizer(config=sample_learning_config)
                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_prompt_optimizer.py:433: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_prompt_optimizer.py:433:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 src/clinical_analytics/core/prompt_optimizer.py:72: in __init__
     self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 /opt/homebrew/Cellar/python@3.13/3.13.11/Frameworks/Python.framework/Versions/3.13/lib/python3.13/pathlib/_local.py:503: in __init__
     super().__init__(*args)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <[AttributeError("'pathlib._local.PosixPath' object has no attribute '_raw_paths'") raised in repr()] PosixPath object at 0x31e37d2a0>
 args = (None,), paths = [], arg = None, path = None
@@ -2593,11 +2593,11 @@ discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs':
 >       dataset_name = get_first_available_dataset(discovered_datasets)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_registry.py:110: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_registry.py:110:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_registry.py:39: in get_first_available_dataset
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_registry (WARNING)>
 msg = 'test_registry_no_datasets_available', args = ()
@@ -2606,10 +2606,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -2630,11 +2630,11 @@ discovered_datasets = {'all_datasets': ['uploaded'], 'available': [], 'configs':
 >       dataset_name = get_first_available_dataset(discovered_datasets)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_registry.py:236: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_registry.py:236:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_registry.py:39: in get_first_available_dataset
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_registry (WARNING)>
 msg = 'test_registry_no_datasets_available', args = ()
@@ -2643,10 +2643,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -2668,11 +2668,11 @@ caplog = <_pytest.logging.LogCaptureFixture object at 0x310f2b610>
 >       dataset_name = get_first_available_dataset(discovered_datasets)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/core/test_registry.py:253: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/core/test_registry.py:253:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 tests/core/test_registry.py:39: in get_first_available_dataset
     logger.warning(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 self = <Logger core.test_registry (WARNING)>
 msg = 'test_registry_no_datasets_available', args = ()
@@ -2681,10 +2681,10 @@ kwargs = {'all_datasets': ['uploaded'], 'reason': 'all datasets filtered out or 
     def warning(self, msg, *args, **kwargs):
         """
         Log 'msg % args' with severity 'WARNING'.
-    
+
         To pass exception information, use the keyword argument exc_info with
         a true value, e.g.
-    
+
         logger.warning("Houston, we have a %s", "bit of a problem", exc_info=True)
         """
         if self.isEnabledFor(WARNING):
@@ -2701,10 +2701,10 @@ make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x31e2f068
     def test_golden_questions_evaluation(make_semantic_layer):
         """
         Evaluate all golden questions and ensure accuracy is above threshold.
-    
+
         This is a regression test - if parsing accuracy drops below 80%,
         the test will fail and alert us to degradation.
-    
+
         Integration test: Uses real NLQueryEngine and SemanticLayer to test
         end-to-end query parsing pipeline.
         """
@@ -2722,16 +2722,16 @@ make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x31e2f068
                 "statin": [i % 6 for i in range(100)],  # 0=n/a, 1-5=different statins
             }
         )
-    
+
         # Load golden questions
         yaml_path = "tests/eval/golden_questions.yaml"
         questions = load_golden_questions(yaml_path)
-    
+
         # Act: Run evaluation
         harness = EvalHarness(semantic_layer)
         results = harness.evaluate_batch(questions)
         summary = harness.get_summary(results)
-    
+
         # Print detailed results for failures
         failures = [r for r in results if not r.get("correct", False)]
         if failures:
@@ -2746,7 +2746,7 @@ make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x31e2f068
                 print(f"  Confidence: {result.get('confidence', 0.0):.2f}")
                 if not result.get("intent_match"):
                     print(f"  ❌ Intent: expected {result.get('expected_intent')}, got {result.get('actual_intent')}")
-    
+
         # Print summary
         print("\n" + "=" * 80)
         print("SUMMARY")
@@ -2757,7 +2757,7 @@ make_semantic_layer = <function make_semantic_layer.<locals>._make at 0x31e2f068
         print(f"Accuracy: {summary['accuracy']:.1%}")
         print(f"Intent Accuracy: {summary['intent_accuracy']:.1%}")
         print(f"Average Confidence: {summary['average_confidence']:.2f}")
-    
+
         # Assert: Accuracy must be above 80%
 >       assert summary["accuracy"] >= 0.80, (
             f"Golden questions accuracy ({summary['accuracy']:.1%}) "
@@ -3091,32 +3091,32 @@ self = <ui.test_integration.TestUIDatasetIntegration object at 0x12a5cb650>
         """Test complete UI workflow: select dataset -> get cohort -> verify schema."""
         # Arrange: Get all available datasets
         available_datasets = DatasetRegistry.list_datasets()
-    
+
         tested_count = 0
         for dataset_name in available_datasets:
             # Skip uploaded class (requires upload_id)
             if dataset_name == "uploaded":
                 continue
-    
+
             # Act: Create dataset instance (UI pattern)
             dataset = DatasetRegistry.get_dataset(dataset_name)
-    
+
             if not dataset.validate():
                 continue
-    
+
             # Get cohort (as UI would)
             cohort = dataset.get_cohort()
-    
+
             # Assert: Verify results
             assert isinstance(cohort, pd.DataFrame)
             assert len(cohort) > 0
-    
+
             # Check schema compliance
             for col in UnifiedCohort.REQUIRED_COLUMNS:
                 assert col in cohort.columns, f"Dataset {dataset_name} missing required column: {col}"
-    
+
             tested_count += 1
-    
+
         # Assert: At least one dataset was tested
 >       assert tested_count > 0, "No datasets available for testing"
 E       AssertionError: No datasets available for testing
@@ -3175,13 +3175,13 @@ tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression_w
 
 tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
   /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/fitters/coxph_fitter.py:1589: ConvergenceWarning: The log-likelihood is getting suspiciously close to 0 and the delta is still large. There may be complete separation in the dataset. This may result in incorrect inference of coefficients. See https://stats.stackexchange.com/q/11109/11867 for more.
-  
+
     warnings.warn(
 
 tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
 tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression_with_nulls
   /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/utils/__init__.py:1163: ConvergenceWarning: Column age has high sample correlation with the duration column. This may harm convergence. This could be a form of 'complete separation'.     See https://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression
-  
+
     warnings.warn(dedent(warning_text), ConvergenceWarning)
 
 tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
@@ -3190,7 +3190,7 @@ tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression
 
 tests/analysis/test_survival.py::TestSurvivalAnalysis::test_run_cox_regression_with_nulls
   /Users/jasontouleyrou/Projects/md_data_explorer/.venv/lib/python3.13/site-packages/lifelines/fitters/coxph_fitter.py:1607: ConvergenceWarning: Newton-Raphson convergence completed successfully but norm(delta) is still high, 0.707. This may imply non-unique solutions to the maximum likelihood. Perhaps there is collinearity or complete separation in the dataset?
-  
+
     warnings.warn(
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

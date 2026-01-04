@@ -9,7 +9,6 @@ Tests verify:
 """
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 

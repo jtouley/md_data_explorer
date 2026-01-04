@@ -1,7 +1,7 @@
 # Architecture Overview: Semantic NL Query Platform
 
-**Version:** 2.0  
-**Date:** 2025-12-24  
+**Version:** 2.0
+**Date:** 2025-12-24
 **Status:** 🎯 Current Architecture + Strategic Direction
 
 ---
@@ -193,23 +193,23 @@ dataset_name:
   # Metadata
   display_name: "..."
   status: "available"
-  
+
   # Semantic layer config
   outcomes:
     outcome_name:
       source_column: "..."
       type: "binary"
-  
+
   metrics:
     metric_name:
       expression: "..."
       label: "..."
-  
+
   dimensions:
     dimension_name:
       label: "..."
       type: "categorical"
-  
+
   # Column mappings
   column_mapping:
     source_col: target_col
@@ -237,18 +237,18 @@ class QuestionEngine:
     ) -> AnalysisIntent:
         # 1. Get semantic layer metadata
         config = semantic_layer.config
-        
+
         # 2. Extract available entities
         outcomes = list(config.get('outcomes', {}).keys())
         variables = list(config.get('column_mapping', {}).values())
-        
+
         # 3. Use embeddings to match query to entities
         matched_outcome = match_entity(query, outcomes)
         matched_variables = match_entities(query, variables)
-        
+
         # 4. Infer intent
         intent = infer_intent_from_query(query)
-        
+
         return AnalysisIntent(
             intent=intent,
             outcome=matched_outcome,
@@ -352,4 +352,3 @@ cohort = semantic_layer.get_cohort(
 ---
 
 **This architecture enables natural language query capabilities while building on the existing config-driven, semantic layer foundation.**
-

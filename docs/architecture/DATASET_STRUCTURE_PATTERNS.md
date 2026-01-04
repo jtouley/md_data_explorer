@@ -1,6 +1,6 @@
 # Dataset Structure Patterns
 
-**Date:** 2025-12-24  
+**Date:** 2025-12-24
 **Purpose:** Document the consistent file structure patterns across datasets
 
 ---
@@ -46,12 +46,12 @@ covid_ms/
 Patient-level dataset to study the effect of COVID-19 in people with Multiple Sclerosis
 
 Description:
-This repository contains the anonymized open-sourced dataset from the 
+This repository contains the anonymized open-sourced dataset from the
 COVID-19 and Multiple Sclerosis (MS) Global Data Sharing Initiative (GDSI).
 The dataset comprises data entered by people with MS and clinicians...
 
 Repository Contents:
-- 'GDSI_OpenDataset_Final.csv': The anonymized and de-identified dataset 
+- 'GDSI_OpenDataset_Final.csv': The anonymized and de-identified dataset
   containing data collected from 1141 people with Multiple Sclerosis...
 ```
 
@@ -234,7 +234,7 @@ def parse_data_dictionary(dict_path: str) -> dict:
     - Data types
     - Relationships
     - Outcome definitions
-    
+
     Supports:
     - README.md or README.txt (text/markdown)
     - PDF files (from data/dictionaries/ or raw locations)
@@ -397,4 +397,3 @@ When adding a new dataset, ensure it includes:
 ---
 
 **This consistent structure enables the platform to automatically understand and integrate new datasets, supporting both current config-driven architecture and future NL query capabilities.**
-

@@ -11,7 +11,6 @@ Detection is based on:
 from datetime import datetime
 
 import polars as pl
-
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
 

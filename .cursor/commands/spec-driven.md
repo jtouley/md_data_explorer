@@ -59,12 +59,11 @@ Execution Sequence (MANDATORY)
    - Update TODO
 
 6. Fix Quality Issues (Refactor Phase)
-   - Run: make format
-   - Run: make lint-fix
-   - Fix any remaining issues manually
+   - **Pre-commit hooks enforce**: Formatting, linting, and type checking run automatically on commit
    - **Invoke /deslop**: Remove AI-generated slop from all changed files
    - **Extract duplicate test setup to fixtures**: If ANY setup code appears in 2+ tests, extract to fixtures immediately
    - **Verify fixture usage**: Check that all tests use fixtures from conftest.py or module-level fixtures
+   - **Note**: Pre-commit will auto-fix formatting/linting. If commit fails, fix remaining issues and commit again.
    - Update TODO
 
 6.5. Extract Duplicate Setup to Fixtures (MANDATORY)
@@ -74,7 +73,7 @@ Execution Sequence (MANDATORY)
    - **Place fixtures**: At module level (before test class), following pattern from `tests/datasets/test_uploaded_dataset_lazy_frames.py`
    - **Update all tests**: Replace inline setup with fixture usage
    - **Verify**: Run tests to ensure fixtures work correctly
-   - **Run pre-commit check**: `make pre-commit-check` to verify no violations
+   - **Note**: Pre-commit hook enforces test fixture rules automatically
    - Update TODO
 
 7. Run Module Test Suite
@@ -86,17 +85,20 @@ Execution Sequence (MANDATORY)
    - Update TODO
 
 8. Commit Changes
+   - **Pre-commit hooks run automatically**: Formatting, linting, type checking, and test fixture checks
+   - **If commit fails**: Pre-commit will show errors. Fix them and commit again (hooks auto-fix most issues)
    - Format: "feat/fix: [description]
-     
+
      - Change 1
      - Change 2
      - Add comprehensive test suite (X tests passing)
-     
+
      All tests passing: X/Y
      Following TDD: Red-Green-Refactor"
    - Include implementation AND tests
    - Update TODO to completed
    - **Before switching assistants**: Edit checkpoint file manually with conversation context
+   - **Cannot bypass**: Pre-commit hooks cannot be skipped (--no-verify is blocked by project policy)
 
 9. Final Quality Gate & PR Preparation
    - Run: make test-fast (confirms no regressions across entire codebase)
@@ -160,17 +162,24 @@ Before claiming complete, verify:
 - [ ] Implementation passes tests (Green verified)
 - [ ] **Duplicate test setup extracted to fixtures** (if setup appears 2+ times)
 - [ ] **All tests use fixtures** (no inline duplicate setup)
-- [ ] **make pre-commit-check passed** (no fixture violations)
-- [ ] make format executed
-- [ ] make lint-fix executed
 - [ ] /deslop invoked to remove AI-generated slop
-- [ ] Zero NEW linting errors in changed files
 - [ ] Module tests passing
-- [ ] Changes committed with tests
+- [ ] **Commit succeeds** (pre-commit hooks enforce formatting, linting, type checking, test fixtures)
 - [ ] make test-fast executed (final quality gate)
 - [ ] Changes pushed to remote
 - [ ] All TODOs marked completed
 - [ ] Checkpoint created and manually updated with conversation context (if switching assistants)
+
+**Note**: Pre-commit hooks automatically enforce:
+- Code formatting (ruff format)
+- Linting (ruff check --fix)
+- Type checking (mypy)
+- Test fixture rules (custom hook)
+- File syntax validation (YAML, JSON, TOML)
+- Trailing whitespace removal
+- End of file newlines
+
+These cannot be bypassed. If commit fails, fix the issues and commit again.
 
 Critical Rules
 
@@ -179,7 +188,7 @@ Critical Rules
 ❌ NEVER run pytest/ruff/mypy directly (use Makefile) - EXCEPTION: Red phase verification allows direct pytest
 ❌ NEVER run Python commands directly - ALWAYS use uv run (e.g., uv run python, uv run pytest)
 ❌ NEVER use pip or python directly - ALWAYS use uv
-❌ NEVER accumulate quality issues
+❌ NEVER use --no-verify to bypass pre-commit hooks (project policy blocks this)
 ❌ NEVER commit without tests
 ❌ NEVER skip TODO updates
 
@@ -189,9 +198,10 @@ Critical Rules
 ✅ ALWAYS use Makefile commands for green phase and full suite runs
 ✅ ALWAYS use uv for Python commands (uv run python, uv run pytest, etc.)
 ✅ ALWAYS use gh CLI for PR creation (gh pr create)
-✅ ALWAYS fix quality issues immediately
-✅ ALWAYS commit implementation + tests together
+✅ ALWAYS commit implementation + tests together (pre-commit enforces quality)
 ✅ ALWAYS update TODOs
+
+**Pre-commit enforcement**: All quality checks (formatting, linting, type checking, test fixtures) are enforced automatically on commit. Cannot be bypassed.
 
 Output Format
 
@@ -285,4 +295,3 @@ If you catch yourself:
 Remember: You're building production systems. Act like a Staff engineer.
 
 End of command.
-

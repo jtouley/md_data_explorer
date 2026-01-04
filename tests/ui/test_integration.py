@@ -10,7 +10,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 import pandas as pd
 import pytest
-
 from clinical_analytics.core.registry import DatasetRegistry
 from clinical_analytics.core.schema import UnifiedCohort
 

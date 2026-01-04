@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest checkpoint-create checkpoint-resume
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest checkpoint-create checkpoint-resume
 
 # Default target
 .DEFAULT_GOAL := help
@@ -53,6 +53,14 @@ install-dev: ## Install all dependencies including dev tools
 	@echo "  • Dev tools: ruff, mypy, pytest, pytest-cov (from optional-dependencies)"
 	@echo "  • Docs tools: mkdocs and related packages (from dependency-groups)"
 	$(UV) sync --extra dev --group dev
+
+install-pre-commit: ensure-venv ## Install pre-commit hooks (run after install-dev)
+	@echo "$(GREEN)Installing pre-commit hooks...$(NC)"
+	$(PYTHON_RUN) -m pip install pre-commit
+	$(PYTHON_RUN) -m pre_commit install
+	@echo "$(GREEN)✓ Pre-commit hooks installed$(NC)"
+	@echo "$(YELLOW)Note: Hooks will run automatically on git commit$(NC)"
+	@echo "$(YELLOW)Run 'pre-commit run --all-files' to check all files now$(NC)"
 
 test: ensure-venv ## Run all tests in parallel (default)
 	@echo "$(GREEN)Running all tests in parallel...$(NC)"
@@ -385,4 +393,3 @@ checkpoint-resume: ## Show checkpoint for resuming work (requires TASK_ID)
 		exit 1; \
 	fi; \
 	cat "$$FILE"
-

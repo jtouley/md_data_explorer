@@ -5,7 +5,6 @@ Tests schema inference with documentation context integration.
 """
 
 import polars as pl
-
 from clinical_analytics.core.schema_inference import (
     DictionaryMetadata,
     InferredSchema,

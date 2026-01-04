@@ -9,7 +9,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 import polars as pl
 import pytest
-
 from clinical_analytics.core.mapper import ColumnMapper, get_global_config, load_dataset_config
 from clinical_analytics.core.schema import DataQualityError, UnifiedCohort
 

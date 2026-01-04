@@ -256,22 +256,20 @@ class TestExternalPdfJsonSerialization:
 
 ### Pre-Commit Hook Enforcement
 
-**Automatic Detection**: Pre-commit hook (`scripts/check_test_fixtures.py`) automatically detects:
+**Automatic Detection**: Pre-commit hook (`scripts/check_test_fixtures.py`) automatically detects on every commit:
 - Inline `UserDatasetStorage` creation in test functions
 - Duplicate `pl.DataFrame` creation patterns
 - Missing fixture usage for known patterns
 
-**Run manually**:
+**Cannot be bypassed**: Pre-commit hooks run automatically on `git commit`. If commit fails, extract duplicate setup to fixtures and commit again.
+
+**Run manually** (for faster feedback during development):
 ```bash
 make pre-commit-check  # Check all test files
-```
-
-**Pre-commit hook** (if installed):
-```bash
 pre-commit run check-test-fixtures  # Check staged files only
 ```
 
-**If hook fails**: Extract duplicate setup to fixtures before committing.
+**Installation**: Run `make install-pre-commit` after `make install-dev`.
 
 ### Before Creating ANY Fixture
 
@@ -363,17 +361,19 @@ pdt.assert_frame_equal(result_df, expected_df)  # NO!
 
 ### Before Committing
 
-**MANDATORY PRE-COMMIT SEQUENCE**:
+**Pre-commit hooks automatically enforce**:
+- Code formatting (ruff format)
+- Linting (ruff check --fix)
+- Type checking (mypy)
+- Test fixture rules (custom hook)
+- File syntax validation
 
+**Manual verification** (optional, for faster feedback):
 ```bash
-make format           # Auto-format code
-make lint-fix         # Auto-fix linting issues
-make pre-commit-check  # Check for duplicate test setup (NEW)
-make check-fast        # Verify all quality gates
+make test-fast        # Run fast tests before committing
 ```
 
-**If `make pre-commit-check` fails → Extract duplicate setup to fixtures before commit.**
-**If `make check-fast` fails → Fix issues before commit. No exceptions.**
+**If commit fails**: Pre-commit will show errors. Fix them and commit again. Most issues auto-fix.
 
 ---
 
@@ -395,7 +395,7 @@ def test_query_execution(tmp_path):
     config_path.parent.mkdir(parents=True)
     with open(config_path, "w") as f:
         yaml.dump(config, f)
-    
+
     layer = SemanticLayer(
         dataset_name="test",
         workspace_root=workspace,

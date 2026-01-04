@@ -9,7 +9,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 import pandas as pd
 import pytest
-
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 from clinical_analytics.core.semantic import SemanticLayer
 
@@ -318,9 +317,9 @@ class TestRunKeyDeterminismAllExecutionPaths:
         execution_key = result["run_key"]
 
         # Assert: Keys should match
-        assert direct_key == execution_key, (
-            f"Direct generation and execution should produce same key: {direct_key} != {execution_key}"
-        )
+        assert (
+            direct_key == execution_key
+        ), f"Direct generation and execution should produce same key: {direct_key} != {execution_key}"
 
     def test_run_key_deterministic_across_multiple_executions(self, semantic_layer):
         """Same query executed multiple times should produce same run_key (Phase 1.1.5)."""

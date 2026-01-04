@@ -6,7 +6,6 @@ fuzzy matching of individual variables may fail.
 """
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 
@@ -103,9 +102,9 @@ def test_parse_query_extracts_variables_when_pattern_match_partial(mock_semantic
     # Should still be COMPARE_GROUPS
     assert intent.intent_type == "COMPARE_GROUPS"
     # Variables should be extracted by post-processing
-    assert intent.primary_variable is not None or intent.grouping_variable is not None, (
-        "At least one variable should be extracted"
-    )
+    assert (
+        intent.primary_variable is not None or intent.grouping_variable is not None
+    ), "At least one variable should be extracted"
 
 
 def test_parse_query_extracts_variables_for_find_predictors(mock_semantic_layer):
@@ -129,9 +128,9 @@ def test_parse_query_extracts_variables_for_correlations(mock_semantic_layer):
 
     # May be CORRELATIONS or fall through to DESCRIBE, but if CORRELATIONS, should have variables
     if intent.intent_type == "CORRELATIONS":
-        assert intent.primary_variable is not None or intent.grouping_variable is not None, (
-            "At least one variable should be extracted for correlations"
-        )
+        assert (
+            intent.primary_variable is not None or intent.grouping_variable is not None
+        ), "At least one variable should be extracted for correlations"
 
 
 def test_variable_extraction_logs_when_variables_found(mock_semantic_layer):
@@ -159,9 +158,9 @@ def test_variable_extraction_logs_when_variables_found(mock_semantic_layer):
         if intent.primary_variable or intent.grouping_variable:
             # Check if variables_extracted_post_parse was called
             log_calls = [str(call) for call in mock_logger.info.call_args_list]
-            assert any("variables_extracted_post_parse" in str(call) for call in log_calls), (
-                "Should log variable extraction during post-processing"
-            )
+            assert any(
+                "variables_extracted_post_parse" in str(call) for call in log_calls
+            ), "Should log variable extraction during post-processing"
 
 
 def test_pattern_match_returns_compare_groups_even_without_variable_match(mock_semantic_layer):
@@ -182,6 +181,6 @@ def test_pattern_match_returns_compare_groups_even_without_variable_match(mock_s
     assert intent.intent_type == "COMPARE_GROUPS", "Should be COMPARE_GROUPS"
     assert intent.confidence == 0.85, "Should have lower confidence when variables not matched"
     # Variables may be None at this stage, but will be extracted later
-    assert intent.primary_variable is None or intent.grouping_variable is None, (
-        "Variables may be None if fuzzy matching failed"
-    )
+    assert (
+        intent.primary_variable is None or intent.grouping_variable is None
+    ), "Variables may be None if fuzzy matching failed"

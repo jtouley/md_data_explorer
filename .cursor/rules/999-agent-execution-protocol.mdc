@@ -33,10 +33,10 @@ class TestFeatureName:
         """Test that X does Y when Z."""
         # Arrange: Set up test data
         input_data = create_test_data()
-        
+
         # Act: Execute code under test
         result = function_under_test(input_data)
-        
+
         # Assert: Verify expected behavior
         assert result.status == "expected"
 ```
@@ -84,12 +84,10 @@ make test-ui PYTEST_ARGS="tests/ui/test_feature.py -xvs"
 ### Step 5: Fix Quality Issues Immediately (Refactor Phase)
 
 ```bash
-# Auto-fix formatting and linting
-make format
-make lint-fix
-
-# Verify no new issues
-make lint
+# Pre-commit hooks automatically fix formatting and linting on commit
+# For manual verification during development:
+make format-check  # Check formatting (no changes)
+make lint          # Check linting (no changes)
 ```
 
 **Fix:**
@@ -151,17 +149,18 @@ Following TDD: Red-Green-Refactor"
 
 ```bash
 # CORRECT - Use Makefile
-make format          # Format code with ruff
-make lint-fix        # Auto-fix linting issues
-make lint            # Check linting (no fix)
-make type-check      # Run mypy type checker
+make format-check    # Check formatting (pre-commit auto-fixes on commit)
+make lint            # Check linting (pre-commit auto-fixes on commit)
+make type-check      # Run mypy type checker (pre-commit enforces on commit)
 make test-fast       # Run fast tests (skip slow)
 make test-ui         # Run UI module tests
 make test-core       # Run core module tests
 make test-analysis   # Run analysis module tests
 make test-datasets   # Run datasets module tests
 make test            # Run ALL tests
-make check           # Full quality gate (format, lint, type, test)
+make check           # Full quality gate (format-check, lint, type, test)
+
+# Note: Pre-commit hooks automatically enforce formatting, linting, and type checking on commit
 ```
 
 ### Wrong Usage - PROHIBITED
@@ -194,7 +193,7 @@ Use `todo_write` tool to manage workflow:
   {"id": "2", "content": "Run test to verify failure (Red phase)", "status": "pending"},
   {"id": "3", "content": "Implement feature", "status": "pending"},
   {"id": "4", "content": "Run test to verify pass (Green phase)", "status": "pending"},
-  {"id": "5", "content": "Run make format && make lint-fix", "status": "pending"},
+  {"id": "5", "content": "Pre-commit hooks will auto-fix formatting/linting on commit", "status": "pending"},
   {"id": "6", "content": "Run module tests (make test-ui)", "status": "pending"},
   {"id": "7", "content": "Commit with tests and implementation", "status": "pending"}
 ]
@@ -210,28 +209,31 @@ Use `todo_write` tool to manage workflow:
 
 ### Linting
 
-**After writing ANY code:**
+**Pre-commit hooks automatically fix linting on commit.**
+
+**For manual verification during development:**
 
 ```bash
-make lint-fix  # Auto-fix issues
-make lint      # Verify clean
+make lint      # Check linting (no changes)
 ```
 
 **Requirements:**
-- Fix ALL linting errors in files you changed
-- Zero new linting errors allowed
+- Pre-commit hooks auto-fix linting errors on commit
+- Zero new linting errors allowed (enforced by pre-commit)
 - Pre-existing errors in other files are OK (note them)
 
 ### Formatting
 
-**Before every commit:**
+**Pre-commit hooks automatically format code on commit.**
+
+**For manual verification during development:**
 
 ```bash
-make format    # Auto-format all code
+make format-check    # Check formatting (no changes)
 ```
 
 **Requirements:**
-- All code must be ruff-formatted
+- All code must be ruff-formatted (enforced by pre-commit)
 - No manual formatting debates
 - Non-negotiable
 
@@ -351,20 +353,20 @@ class TestFeatureGroup:
 
 ### Pre-Commit Checklist
 
-**Before EVERY commit, run:**
+**Before EVERY commit:**
 
 ```bash
-# 1. Format code
-make format
-
-# 2. Fix linting
-make lint-fix
-
-# 3. Run tests for module you changed
+# 1. Run tests for module you changed
 make test-ui  # or test-core, test-analysis, etc.
 
-# 4. (Optional but recommended) Full quality gate
+# 2. (Optional but recommended) Full quality gate
 make check
+
+# 3. Commit - pre-commit hooks automatically enforce:
+#    - Formatting (ruff format)
+#    - Linting (ruff check --fix)
+#    - Type checking (mypy)
+#    - Test fixture rules (custom hook)
 ```
 
 ### Commit Message Format
@@ -446,13 +448,13 @@ make test-ui PYTEST_ARGS="tests/ui/test_failing.py::test_name -xvs"
 - [ ] Tests run immediately after writing (Red phase verified)
 - [ ] Implementation written to pass tests
 - [ ] Tests run again after implementation (Green phase verified)
-- [ ] `make format` executed successfully
-- [ ] `make lint-fix` executed successfully
-- [ ] Zero NEW linting errors in changed files
 - [ ] Module-specific tests passing (e.g., `make test-ui`)
+- [ ] **Commit succeeds** (pre-commit hooks automatically enforce formatting, linting, type checking, test fixtures)
 - [ ] Changes committed with tests in same commit
 - [ ] Commit message includes test count and TDD confirmation
 - [ ] All TODOs marked as completed
+
+**Pre-commit enforcement**: Formatting, linting, type checking, and test fixture rules are enforced automatically on commit. Cannot be bypassed.
 
 **If ANY checkbox is unchecked, you are NOT done.**
 
@@ -517,9 +519,7 @@ PASSED
 
 ## Step 5: Fix Quality Issues (Refactor Phase)
 
-$ make format && make lint-fix
-
-All checks passed!
+Pre-commit hooks will automatically fix formatting and linting on commit.
 
 ## Step 6: Run Module Tests
 
@@ -588,10 +588,9 @@ Following TDD: Red-Green-Refactor"
 
 ✅ CORRECT:
 1. Write code
-2. Run make lint-fix
-3. Fix remaining issues
-4. Verify clean with make lint
-5. Now move to next feature
+2. Commit - pre-commit hooks auto-fix formatting and linting
+3. If commit fails, fix remaining issues and commit again
+4. Now move to next feature
 ```
 
 ### Anti-Pattern 4: Direct Tool Usage
@@ -627,8 +626,8 @@ git commit -m "feat: Add feature with tests"  # Implementation + tests
 3. **Skipping test runs**
    → STOP, run tests now
 
-4. **Accumulating lint errors**
-   → STOP, run `make lint-fix` immediately
+4. **Commit fails due to lint errors**
+   → STOP, pre-commit will show errors. Fix them and commit again
 
 5. **Committing without running tests**
    → STOP, run tests, then commit

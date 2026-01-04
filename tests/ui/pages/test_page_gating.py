@@ -34,9 +34,9 @@ class TestPageGating:
                 content = f.read()
 
             # Assert: Page has V1_MVP_GATED marker
-            assert "V1_MVP_GATED" in content or "st.warning" in content or "st.info" in content, (
-                f"Page {page_file} should have gating logic (V1_MVP_GATED marker or st.warning/info)"
-            )
+            assert (
+                "V1_MVP_GATED" in content or "st.warning" in content or "st.info" in content
+            ), f"Page {page_file} should have gating logic (V1_MVP_GATED marker or st.warning/info)"
 
     def test_core_pages_have_no_gating_marker(self):
         """Core pages (Upload, Summary, Ask Questions) should NOT have V1_MVP_GATED marker."""
@@ -83,9 +83,9 @@ class TestPageGating:
             has_info_message = (
                 "Ask Questions" in content or "natural language" in content.lower() or "V1 MVP" in content
             )
-            assert has_info_message, (
-                f"Page {page_file} should have informative message directing users to Ask Questions"
-            )
+            assert (
+                has_info_message
+            ), f"Page {page_file} should have informative message directing users to Ask Questions"
 
     def test_v1_mvp_mode_reduces_page_count(self):
         """V1 MVP mode should significantly reduce visible page count."""

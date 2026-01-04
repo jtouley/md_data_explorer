@@ -43,9 +43,9 @@ class TestRunKeyDeterminismUIFlow:
         cache_key_2 = f"exec_result:{dataset_version}:{query_hash_2}"
 
         # Assert: Same cache key across "sessions" (stable hashing)
-        assert cache_key_1 == cache_key_2, (
-            f"Cache key should be stable across sessions. Got: {cache_key_1} vs {cache_key_2}"
-        )
+        assert (
+            cache_key_1 == cache_key_2
+        ), f"Cache key should be stable across sessions. Got: {cache_key_1} vs {cache_key_2}"
         assert len(query_hash) == 16, "Query hash should be 16 chars"
 
     def test_cache_key_different_for_different_queries(self):
@@ -66,9 +66,9 @@ class TestRunKeyDeterminismUIFlow:
         cache_key2 = f"exec_result:{dataset_version}:{hash2}"
 
         # Assert: Different cache keys
-        assert cache_key1 != cache_key2, (
-            f"Different queries should produce different cache keys. Got: {cache_key1} == {cache_key2}"
-        )
+        assert (
+            cache_key1 != cache_key2
+        ), f"Different queries should produce different cache keys. Got: {cache_key1} == {cache_key2}"
 
     def test_cache_key_whitespace_normalization(self):
         """Whitespace variations in query should produce same cache key."""
@@ -92,9 +92,9 @@ class TestRunKeyDeterminismUIFlow:
         cache_key3 = f"exec_result:{dataset_version}:{hash3}"
 
         # Assert: All produce same cache key (whitespace normalized)
-        assert cache_key1 == cache_key2 == cache_key3, (
-            f"Whitespace variations should produce same cache key. Got: {cache_key1}, {cache_key2}, {cache_key3}"
-        )
+        assert (
+            cache_key1 == cache_key2 == cache_key3
+        ), f"Whitespace variations should produce same cache key. Got: {cache_key1}, {cache_key2}, {cache_key3}"
 
     def test_cache_key_uses_stable_sha256_not_python_hash(self):
         """

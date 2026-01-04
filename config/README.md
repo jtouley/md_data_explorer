@@ -231,4 +231,3 @@ This configuration system was migrated from Python constants to YAML files to:
 4. Support schema validation
 
 The migration maintains 100% backward compatibility - all existing imports continue to work.
-

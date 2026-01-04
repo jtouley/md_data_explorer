@@ -62,9 +62,9 @@ class TestUploadProgress:
         # Assert: Page uses spinners for quality checks and variable analysis
         assert "st.spinner" in content, "Upload page should use st.spinner for async operations"
         # Check for specific spinner messages (indicates real processing steps)
-        assert "Running quality checks" in content or "quality checks" in content.lower(), (
-            "Upload page should show quality check progress"
-        )
+        assert (
+            "Running quality checks" in content or "quality checks" in content.lower()
+        ), "Upload page should show quality check progress"
 
     def test_progress_calculation_capped_at_one(self):
         """Test that progress calculation is capped at 1.0 to prevent StreamlitAPIException."""

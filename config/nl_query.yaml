@@ -59,4 +59,3 @@ llm_timeout_max_s: 30.0
 # ADR009: Feature Flags
 # Enable/disable LLM-enhanced features independently
 enable_result_interpretation: true
-

@@ -200,15 +200,15 @@ def test_transformation():
         "id": [1, 2, 3],
         "value": [10, 20, 30],
     })
-    
+
     result = transform(input_df)
-    
+
     expected = pl.DataFrame({
         "id": [1, 2, 3],
         "value": [10, 20, 30],
         "doubled": [20, 40, 60],
     })
-    
+
     plt.assert_frame_equal(result, expected)
 ```
 

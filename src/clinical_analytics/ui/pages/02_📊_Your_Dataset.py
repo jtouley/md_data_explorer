@@ -21,9 +21,11 @@ st.set_page_config(page_title="Your Dataset | Clinical Analytics", page_icon="ðŸ
 
 def main():
     st.title("ðŸ“Š Your Dataset")
-    st.markdown("""
+    st.markdown(
+        """
     Overview of your dataset: patient counts, outcomes, and data quality.
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=True)

@@ -21,10 +21,10 @@ def test_customer_aggregation_sums_transactions():
         "customer_id": ["A", "A", "B"],
         "amount": [100, 200, 50],
     })
-    
+
     # Act: Execute the unit under test
     result = aggregate_by_customer(transactions)
-    
+
     # Assert: Verify expected outcomes
     assert result.filter(pl.col("customer_id") == "A")["total"][0] == 300
     assert result.filter(pl.col("customer_id") == "B")["total"][0] == 50
@@ -146,10 +146,10 @@ project/
 # WRONG: Tests depend on execution order
 class TestBadIsolation:
     results = []  # Shared state!
-    
+
     def test_first(self):
         self.results.append(1)
-        
+
     def test_second(self):
         assert len(self.results) == 1  # Fails if run alone
 
@@ -214,17 +214,17 @@ def test_parse_date(date_str, expected):
 ```python
 def test_validation_rejects_negative_amounts():
     invalid_df = pl.DataFrame({"amount": [-100, 50, -25]})
-    
+
     with pytest.raises(ValueError, match="Negative amounts not allowed"):
         validate_transactions(invalid_df)
 
 
 def test_missing_required_column_error_message():
     incomplete_df = pl.DataFrame({"id": [1, 2]})  # Missing 'amount'
-    
+
     with pytest.raises(ValueError) as exc_info:
         validate_schema(incomplete_df)
-    
+
     assert "amount" in str(exc_info.value)
     assert "required" in str(exc_info.value).lower()
 ```
@@ -237,13 +237,13 @@ def test_missing_required_column_error_message():
 def test_output_schema_matches_contract():
     """Ensure transform output matches downstream expectations."""
     result = transform_pipeline(sample_input)
-    
+
     expected_schema = {
         "customer_id": pl.Utf8,
         "total_amount": pl.Decimal,
         "last_transaction_date": pl.Date,
     }
-    
+
     for col, dtype in expected_schema.items():
         assert col in result.columns, f"Missing column: {col}"
         assert result.schema[col] == dtype, f"Type mismatch for {col}"
@@ -258,13 +258,13 @@ def test_pipeline_is_idempotent(test_database):
     """Running pipeline twice produces same result."""
     run_pipeline(test_database)
     first_result = test_database.read_table("output")
-    
+
     run_pipeline(test_database)
     second_result = test_database.read_table("output")
-    
+
     # ✅ CORRECT: Use Polars testing assertions for DataFrame comparison
     plt.assert_frame_equal(first_result, second_result)
-    
+
     # ❌ WRONG: Never use list comparisons for DataFrames
     # assert first_result["col"].to_list() == second_result["col"].to_list()
 ```
@@ -335,7 +335,7 @@ def test_schema_compliance_all_datasets(dataset_name):
     dataset = DatasetRegistry.get_dataset(dataset_name)
     if not dataset.validate():
         pytest.skip(f"{dataset_name} data not available")
-    
+
     cohort = dataset.get_cohort()
     for col in UnifiedCohort.REQUIRED_COLUMNS:
         assert col in cohort.columns

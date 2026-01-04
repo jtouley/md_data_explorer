@@ -157,7 +157,7 @@
 
   1. Security (Critical)
   Priority 1: Fix SQL injection (#1) - 2 days
-  Priority 2: Add path traversal protection (#2) - 1 day  
+  Priority 2: Add path traversal protection (#2) - 1 day
   Priority 3: Sanitize error messages (#3) - 1 day
   Priority 4: Input validation (#4) - 2 days
 

@@ -10,7 +10,6 @@ import os
 from unittest.mock import patch
 
 import yaml
-
 from clinical_analytics.core.config_loader import load_ui_config
 from clinical_analytics.ui.config import (
     ASK_QUESTIONS_PAGE,

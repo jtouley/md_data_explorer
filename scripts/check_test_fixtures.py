@@ -18,10 +18,9 @@ Exit codes:
 import re
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 
-def find_inline_storage_creation(content: str, filepath: Path) -> List[Tuple[int, str]]:
+def find_inline_storage_creation(content: str, filepath: Path) -> list[tuple[int, str]]:
     """Find inline UserDatasetStorage creation in test functions."""
     violations = []
     lines = content.split("\n")
@@ -49,7 +48,7 @@ def find_inline_storage_creation(content: str, filepath: Path) -> List[Tuple[int
     return violations
 
 
-def find_duplicate_dataframe_creation(content: str, filepath: Path) -> List[Tuple[int, str]]:
+def find_duplicate_dataframe_creation(content: str, filepath: Path) -> list[tuple[int, str]]:
     """Find duplicate pl.DataFrame creation patterns in same file."""
     violations = []
     lines = content.split("\n")
@@ -68,7 +67,7 @@ def find_duplicate_dataframe_creation(content: str, filepath: Path) -> List[Tupl
                 df_lines.append(lines[j])
                 brace_count += lines[j].count("{") - lines[j].count("}")
                 j += 1
-            
+
             context = "\n".join(df_lines)
             # Extract column names from DataFrame
             cols = re.findall(r'"([^"]+)":', context)
@@ -97,7 +96,7 @@ def find_duplicate_dataframe_creation(content: str, filepath: Path) -> List[Tupl
     return violations
 
 
-def check_file(filepath: Path) -> List[Tuple[int, str]]:
+def check_file(filepath: Path) -> list[tuple[int, str]]:
     """Check a single test file for violations."""
     violations = []
 
@@ -152,4 +151,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

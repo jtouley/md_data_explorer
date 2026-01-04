@@ -141,7 +141,7 @@ This command is a convenience wrapper around /spec-driven that:
 Example Invocation
 
 User: /plan-update adr004_phase_4_proactive_question_generation_864660ab
-Agent: 
+Agent:
 - Resolves: `.cursor/plans/adr004_phase_4_proactive_question_generation_864660ab.plan.md`
 - Resolves: `.context/reviews/plan_adr004_phase_4_proactive_question_generation_864660ab.md`
 - Executes: `/spec-driven update .cursor/plans/adr004_phase_4_proactive_question_generation_864660ab.plan.md with feedback here .context/reviews/plan_adr004_phase_4_proactive_question_generation_864660ab.md`
@@ -153,4 +153,3 @@ Agent:
 - Executes: `/spec-driven update .cursor/plans/config_migration_to_yaml_ed79c904.plan.md with feedback here .context/reviews/plan_config_migration_to_yaml_ed79c904.md`
 
 End of command.
-

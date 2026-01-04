@@ -35,7 +35,7 @@ def load_data(path: str) -> pl.DataFrame:
     """Load parquet file. Raises LoadError with context on failure."""
     if not Path(path).exists():
         raise LoadError(path, "File not found")
-    
+
     try:
         return pl.read_parquet(path)
     except pl.exceptions.ComputeError as e:
@@ -99,13 +99,13 @@ logger = structlog.get_logger()
 
 def process_batch(batch_id: str, source_path: str) -> int:
     log = logger.bind(batch_id=batch_id, source_path=source_path)
-    
+
     log.info("batch_processing_started")
-    
+
     df = pl.read_parquet(source_path)
     row_count = len(df)
     log.info("batch_loaded", row_count=row_count)
-    
+
     result = transform(df)
     output_count = len(result)
     log.info(
@@ -114,7 +114,7 @@ def process_batch(batch_id: str, source_path: str) -> int:
         output_rows=output_count,
         delta=output_count - row_count,
     )
-    
+
     return output_count
 ```
 
@@ -159,7 +159,7 @@ with stage_duration.labels(pipeline="customers", stage="transform").time():
 def process_file(file_path: str, processing_date: date) -> pl.DataFrame:
     """
     Idempotent file processing.
-    
+
     Same inputs always produce same outputs:
     - No random values
     - No current timestamps (use processing_date)
@@ -188,16 +188,16 @@ def upsert_to_delta(
     Idempotent upsert: running twice with same data = no change.
     """
     from deltalake import DeltaTable, write_deltalake
-    
+
     if not DeltaTable.is_deltatable(table_path):
         write_deltalake(table_path, df.to_arrow())
         return
-    
+
     dt = DeltaTable(table_path)
     merge_predicate = " AND ".join(
         f"source.{k} = target.{k}" for k in merge_keys
     )
-    
+
     (
         dt.merge(
             source=df.to_arrow(),
@@ -218,24 +218,24 @@ def upsert_to_delta(
 ```python
 def ingest_external_data(api_response: dict) -> pl.DataFrame:
     """Validate untrusted external data at ingestion boundary."""
-    
+
     # Validate structure
     required_fields = {"records", "metadata"}
     missing = required_fields - set(api_response.keys())
     if missing:
         raise ValueError(f"API response missing fields: {missing}")
-    
+
     # Validate types
     if not isinstance(api_response["records"], list):
         raise TypeError("records must be a list")
-    
+
     # Parse and validate schema
     df = pl.DataFrame(api_response["records"])
-    
+
     # Validate business rules
     if (df["amount"] < 0).any():
         raise DataQualityError("negative_amounts", (df["amount"] < 0).sum(), df)
-    
+
     return df
 ```
 
@@ -248,22 +248,22 @@ def merge_datasets(
     join_key: str,
 ) -> pl.DataFrame:
     """Merge with invariant checks."""
-    
+
     # Pre-conditions
     assert join_key in left.columns, f"{join_key} not in left"
     assert join_key in right.columns, f"{join_key} not in right"
     assert left[join_key].null_count() == 0, "Nulls in left join key"
     assert right[join_key].null_count() == 0, "Nulls in right join key"
-    
+
     left_count = len(left)
     result = left.join(right, on=join_key, how="left")
-    
+
     # Post-conditions: left join should preserve left row count
     assert len(result) == left_count, (
         f"Row count changed: {left_count} -> {len(result)}. "
         "Right side has duplicates on join key."
     )
-    
+
     return result
 ```
 
@@ -300,7 +300,7 @@ def process_large_dataset(path_pattern: str, chunk_size: int = 100_000) -> None:
     Uses streaming when possible, chunking when not.
     """
     lf = pl.scan_parquet(path_pattern)
-    
+
     # Try streaming first
     try:
         result = lf.collect(streaming=True)
@@ -308,10 +308,10 @@ def process_large_dataset(path_pattern: str, chunk_size: int = 100_000) -> None:
         return
     except pl.exceptions.ComputeError:
         logger.warning("Streaming failed, falling back to chunked processing")
-    
+
     # Chunked fallback
     total_rows = lf.select(pl.len()).collect().item()
-    
+
     for offset in range(0, total_rows, chunk_size):
         chunk = lf.slice(offset, chunk_size).collect()
         mode = "overwrite" if offset == 0 else "append"
@@ -330,25 +330,25 @@ def calculate_customer_ltv(
 ) -> pl.DataFrame:
     """
     Calculate customer lifetime value using discounted cash flow.
-    
+
     Uses a simplified DCF model where future value is projected based on
     historical transaction patterns and discounted to present value.
-    
+
     Args:
         transactions: Must contain columns: customer_id, amount, transaction_date
         as_of_date: Reference date for calculations
         discount_rate: Annual discount rate (default 10%)
-    
+
     Returns:
         DataFrame with columns: customer_id, ltv, confidence
-        
+
     Raises:
         SchemaValidationError: If required columns are missing
-        
+
     Example:
         >>> ltv = calculate_customer_ltv(txns, date(2024, 1, 1))
         >>> top_customers = ltv.filter(pl.col("ltv") > 10000)
-        
+
     Note:
         LTV calculations require at least 3 months of transaction history.
         Customers with insufficient history will have confidence='low'.

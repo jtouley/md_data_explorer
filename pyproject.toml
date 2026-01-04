@@ -39,6 +39,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.1.0",
     "mypy>=1.5.0",
+    "pre-commit>=3.5.0",
 ]
 
 [build-system]
@@ -56,6 +57,11 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 # Test files use camelCase naming per CLAUDE.md: test_unit_scenario_expectedBehavior
 "tests/**/*.py" = ["N802", "N806"]
+# Scripts and UI pages need sys.path manipulation before imports
+"scripts/**/*.py" = ["E402"]
+"src/clinical_analytics/ui/**/*.py" = ["E402"]
+"test_*.py" = ["E402"]
+"tests/eval/**/*.py" = ["E402"]  # Eval scripts need sys.path manipulation
 
 [tool.mypy]
 python_version = "3.11"

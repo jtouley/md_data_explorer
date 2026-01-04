@@ -217,7 +217,6 @@ class TestAddDocumentationToUpload:
         """Test that add_documentation_to_upload() adds doc_context to existing upload metadata."""
 
         import polars as pl
-
         from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
         # Arrange: Create existing upload without doc_context
@@ -274,7 +273,6 @@ class TestAddDocumentationToUpload:
         """Test that add_documentation_to_upload() re-runs schema inference with doc_context when requested."""
 
         import polars as pl
-
         from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
         # Arrange: Create existing upload
@@ -329,7 +327,6 @@ class TestStandalonePdfUpload:
         """Test that normalize_upload_to_table_list() accepts external PDF bytes in metadata."""
 
         import polars as pl
-
         from clinical_analytics.ui.storage.user_datasets import normalize_upload_to_table_list
 
         # Arrange: Create single-file upload with external PDF in metadata
@@ -372,7 +369,6 @@ class TestDocContextInMetadata:
         from zipfile import ZipFile
 
         import polars as pl
-
         from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
         # Arrange: Create ZIP with data files and documentation
@@ -430,7 +426,6 @@ class TestDocContextInMetadata:
         from zipfile import ZipFile
 
         import polars as pl
-
         from clinical_analytics.ui.storage.user_datasets import (
             UserDatasetStorage,
             save_table_list,

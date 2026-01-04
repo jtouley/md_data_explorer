@@ -9,7 +9,6 @@ Acceptance criteria for Milestone 1:
 
 import polars as pl
 import pytest
-
 from clinical_analytics.core.multi_table_handler import (
     MultiTableHandler,
 )
@@ -50,24 +49,25 @@ class TestTableClassification:
         assert "patient_medications" in classifications, "Bridge table should be classified"
 
         bridge_class = classifications["patient_medications"]
-        assert bridge_class.classification == "bridge", (
-            f"patient_medications should be classified as bridge, got {bridge_class.classification}"
-        )
+        assert (
+            bridge_class.classification == "bridge"
+        ), f"patient_medications should be classified as bridge, got {bridge_class.classification}"
 
         # Verify bridge characteristics
-        assert bridge_class.relationship_degree >= 2, (
-            f"Bridge should have 2+ foreign keys, got {bridge_class.relationship_degree}"
-        )
+        assert (
+            bridge_class.relationship_degree >= 2
+        ), f"Bridge should have 2+ foreign keys, got {bridge_class.relationship_degree}"
 
         # Verify patients is dimension
-        assert classifications["patients"].classification == "dimension", (
-            f"patients should be dimension, got {classifications['patients'].classification}"
-        )
+        assert (
+            classifications["patients"].classification == "dimension"
+        ), f"patients should be dimension, got {classifications['patients'].classification}"
 
         # Verify medications is dimension or reference
-        assert classifications["medications"].classification in ["dimension", "reference"], (
-            f"medications should be dimension or reference, got {classifications['medications'].classification}"
-        )
+        assert classifications["medications"].classification in [
+            "dimension",
+            "reference",
+        ], f"medications should be dimension or reference, got {classifications['medications'].classification}"
 
         handler.close()
 
@@ -107,9 +107,9 @@ class TestTableClassification:
         theoretical_min = 25_000
         theoretical_max = theoretical_min * 2  # Allow 2x overhead
 
-        assert theoretical_min <= estimated_bytes <= theoretical_max, (
-            f"Byte estimate {estimated_bytes:,} outside sane range [{theoretical_min:,}, {theoretical_max:,}]"
-        )
+        assert (
+            theoretical_min <= estimated_bytes <= theoretical_max
+        ), f"Byte estimate {estimated_bytes:,} outside sane range [{theoretical_min:,}, {theoretical_max:,}]"
 
         # Verify estimate is reasonable per row
         bytes_per_row = estimated_bytes / num_rows
@@ -151,9 +151,9 @@ class TestTableClassification:
         grain_key_3 = handler_reordered._detect_grain_key(df_reordered)  # Different order
 
         # Assert: Deterministic grain key
-        assert grain_key_1 == grain_key_2, (
-            f"Same DataFrame should return same grain key: {grain_key_1} != {grain_key_2}"
-        )
+        assert (
+            grain_key_1 == grain_key_2
+        ), f"Same DataFrame should return same grain key: {grain_key_1} != {grain_key_2}"
 
         assert grain_key_1 == grain_key_3, f"Column order should not affect grain key: {grain_key_1} != {grain_key_3}"
 
@@ -482,16 +482,16 @@ class TestPerformanceOptimizations:
         elapsed = time.perf_counter() - start
 
         # Assert: Must complete within 3 seconds
-        assert elapsed < 3.0, (
-            f"Classification of 1M-row table took {elapsed:.3f}s, exceeds 3s bound (sampling may not be working)"
-        )
+        assert (
+            elapsed < 3.0
+        ), f"Classification of 1M-row table took {elapsed:.3f}s, exceeds 3s bound (sampling may not be working)"
 
         # Verify classification worked correctly
         assert "large" in handler.classifications
         classification = handler.classifications["large"]
-        assert classification.grain_key == "patient_id", (
-            f"Should pick patient_id over event_id (grain_key={classification.grain_key})"
-        )
+        assert (
+            classification.grain_key == "patient_id"
+        ), f"Should pick patient_id over event_id (grain_key={classification.grain_key})"
 
         handler.close()
 
@@ -560,14 +560,15 @@ class TestAnchorSelection:
 
         # Assert: Never anchor on event, fact, or bridge
         anchor_class = handler.classifications[anchor]
-        assert anchor_class.classification == "dimension", (
-            f"Anchor '{anchor}' must be dimension, got {anchor_class.classification}"
-        )
+        assert (
+            anchor_class.classification == "dimension"
+        ), f"Anchor '{anchor}' must be dimension, got {anchor_class.classification}"
 
         # Verify it's actually patients (the only dimension)
-        assert anchor in ["patients", "medications"], (
-            f"Anchor should be patients or medications (dimensions), got '{anchor}'"
-        )
+        assert anchor in [
+            "patients",
+            "medications",
+        ], f"Anchor should be patients or medications (dimensions), got '{anchor}'"
 
         handler.close()
 
@@ -797,14 +798,14 @@ class TestDimensionMart:
 
         # Verify vitals was not joined (would appear as vitals_heart_rate column)
         vitals_columns = [col for col in mart.columns if "heart_rate" in col]
-        assert len(vitals_columns) == 0, (
-            f"Vitals table (non-unique key) should not be joined, found columns: {vitals_columns}"
-        )
+        assert (
+            len(vitals_columns) == 0
+        ), f"Vitals table (non-unique key) should not be joined, found columns: {vitals_columns}"
 
         # Verify demographics WAS joined (unique key)
-        assert "gender" in mart.columns or "demographics_gender" in mart.columns, (
-            "Demographics (unique key) should be joined"
-        )
+        assert (
+            "gender" in mart.columns or "demographics_gender" in mart.columns
+        ), "Demographics (unique key) should be joined"
 
         handler.close()
 
@@ -1037,9 +1038,9 @@ class TestFactAggregation:
 
         # Assert: Result should be LazyFrame
         assert "vitals_features" in feature_tables
-        assert isinstance(feature_tables["vitals_features"], pl.LazyFrame), (
-            "Feature tables must be LazyFrames, not collected DataFrames"
-        )
+        assert isinstance(
+            feature_tables["vitals_features"], pl.LazyFrame
+        ), "Feature tables must be LazyFrames, not collected DataFrames"
 
         handler.close()
 
@@ -1228,9 +1229,9 @@ class TestBuildUnifiedCohort:
         result = handler.build_unified_cohort(anchor_table=anchor)
 
         # Assert
-        assert result.height == mart_height, (
-            f"Row count changed: {mart_height} -> {result.height}. Feature joins may have caused row explosion."
-        )
+        assert (
+            result.height == mart_height
+        ), f"Row count changed: {mart_height} -> {result.height}. Feature joins may have caused row explosion."
 
         handler.close()
 
@@ -1277,9 +1278,9 @@ class TestBuildUnifiedCohort:
         result2 = handler.build_unified_cohort()
 
         # Assert: Column order should be deterministic
-        assert result1.columns == result2.columns, (
-            f"Column order not deterministic: {result1.columns} != {result2.columns}"
-        )
+        assert (
+            result1.columns == result2.columns
+        ), f"Column order not deterministic: {result1.columns} != {result2.columns}"
 
         handler.close()
 
@@ -1415,9 +1416,9 @@ class TestMaterializeMart:
         metadata = handler.materialize_mart(output_path=output_path, grain="patient")
 
         # Assert
-        assert metadata.row_count == cohort_height, (
-            f"Materialized rowcount {metadata.row_count} != cohort height {cohort_height}"
-        )
+        assert (
+            metadata.row_count == cohort_height
+        ), f"Materialized rowcount {metadata.row_count} != cohort height {cohort_height}"
 
         handler.close()
 
@@ -1670,9 +1671,9 @@ class TestPlanMart:
         result = plan.execute()
 
         # Assert: Rowcount matches
-        assert len(result) == metadata.row_count, (
-            f"Query result rowcount {len(result)} != metadata.row_count {metadata.row_count}"
-        )
+        assert (
+            len(result) == metadata.row_count
+        ), f"Query result rowcount {len(result)} != metadata.row_count {metadata.row_count}"
 
         handler.close()
 

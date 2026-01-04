@@ -86,7 +86,7 @@ flowchart TD
     L --> M[Start Streamlit Server]
     M --> N[Write run_state.json]
     N --> O[Open Browser to localhost:PORT]
-    
+
     style A fill:#e1f5ff
     style D fill:#c8e6c9
     style O fill:#fff9c4
