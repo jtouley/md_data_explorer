@@ -2567,6 +2567,14 @@ def main():
                 st.session_state["analysis_context"] = context
                 st.session_state["intent_signal"] = "nl_parsed"
 
+                logger.debug(
+                    "context_stored_for_execution",
+                    intent_type=context.inferred_intent.value,
+                    has_query_plan=hasattr(context, "query_plan") and context.query_plan is not None,
+                    is_complete=context.is_complete_for_intent(),
+                    dataset_version=dataset_version,
+                )
+
                 # Phase 3.1: Chat handler should NOT execute - only parse and rerun
                 # Main flow (lines 1630-1720) will handle execution after rerun
                 if context.is_complete_for_intent():
