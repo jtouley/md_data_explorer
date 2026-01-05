@@ -1635,7 +1635,7 @@ class SemanticLayer:
                 "chart_spec": chart_spec,  # Phase 3.3: Chart specification (still included on error)
             }
 
-    def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:  # type: ignore[valid-type]
+    def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:
         """
         Format execution result from execute_query_plan() for UI consumption (Phase 3.1).
 

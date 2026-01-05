@@ -1051,7 +1051,7 @@ class NLQueryEngine:
         try:
             from pathlib import Path
 
-            import yaml  # type: ignore[import-untyped]
+            import yaml  # type: ignore
 
             golden_path = Path(__file__).parent.parent.parent / "tests" / "eval" / "golden_questions.yaml"
             if not golden_path.exists():
@@ -1427,7 +1427,7 @@ Filter extraction (ADR009 Phase 5):
             client = self._get_ollama_client()
 
             # Step 2: Check if Ollama is available
-            if not client.is_available():
+            if client is None or not client.is_available():
                 logger.info("ollama_not_available_fallback_to_stub", query=query)
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 

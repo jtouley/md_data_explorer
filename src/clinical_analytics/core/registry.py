@@ -13,7 +13,7 @@ from typing import Any
 
 import polars as pl
 import structlog
-import yaml  # type: ignore[import-untyped]
+import yaml  # type: ignore
 
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine

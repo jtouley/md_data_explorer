@@ -6,7 +6,7 @@ Privacy-preserving: All data stays on-device, no external API calls.
 
 from typing import Any
 
-import requests  # type: ignore[import-untyped]
+import requests  # type: ignore
 import structlog
 
 logger = structlog.get_logger()
