@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import tiktoken
+
 
 @dataclass
 class ColumnContext:
@@ -184,8 +186,6 @@ def _estimate_tokens(text: str) -> int:
         Token count
     """
     try:
-        import tiktoken
-
         encoding = tiktoken.get_encoding("cl100k_base")
         return len(encoding.encode(text))
     except Exception:
