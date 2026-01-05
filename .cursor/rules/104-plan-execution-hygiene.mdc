@@ -270,6 +270,21 @@ make check
 git commit -m "feat: Phase N - [description]"
 ```
 
+### Assertion Quality (MANDATORY)
+
+**NEVER weaken test assertions:**
+- Don't reduce success rate thresholds (100% → 70%)
+- Don't increase timeout values without root cause fix
+- Don't add exception handlers to silence failures
+
+**If test is flaky:**
+1. Fix root cause (connection pooling, async patterns, proper mocking)
+2. If infeasible immediately, mark `@pytest.mark.skip` with TODO
+3. Document what needs to be fixed for test to be enabled
+4. NEVER accept partial success as "good enough"
+
+> **Reference**: `.cursor/rules/106-test-quality-thresholds.mdc`
+
 ## Rule Cross-Reference Summary
 
 | Rule | Key Topics | When to Consult |

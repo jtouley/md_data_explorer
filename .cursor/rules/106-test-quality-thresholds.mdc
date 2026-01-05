@@ -1,0 +1,175 @@
+---
+description: Prevent quality regression by forbidding weakened test assertions
+globs: tests/**/*.py
+alwaysApply: true
+---
+
+# Test Quality Thresholds
+
+## Role
+
+This rule prevents quality regression by forbidding weakened test assertions. It applies when:
+- Writing or modifying test assertions
+- Encountering flaky or intermittent test failures
+- Reviewing test code that has partial success criteria
+- Dealing with threading/concurrency test issues
+
+## Triggers
+
+Apply this rule when you encounter:
+- Test assertions with tolerance/thresholds (e.g., "at least 50% must pass")
+- Flaky tests that pass sometimes and fail other times
+- Requests to "make test less strict" or "allow some failures"
+- Concurrent/threading tests with partial success acceptance
+- Timeout increases without root cause analysis
+
+## Mandatory Behavior
+
+**NEVER weaken test assertions to make flaky tests pass:**
+
+❌ **PROHIBITED**:
+- Reducing success rate thresholds (100% → 70% → 50%)
+- Accepting partial success (e.g., "7 out of 10 requests must succeed")
+- Increasing timeout values without fixing root cause
+- Adding broad exception handlers to silence failures
+- Using `@pytest.mark.flaky` or similar "ignore intermittent failures" markers
+- Wrapping assertions in try/except to ignore errors
+
+✅ **REQUIRED**: Fix root cause
+
+When test is flaky:
+1. **First**: Identify root cause (threading, race conditions, resource contention, improper mocking)
+2. **Then**: Fix root cause (connection pooling, async patterns, proper synchronization, better mocks)
+3. **If unfixable now**: Use `@pytest.mark.skip(reason="TODO: <specific fix needed>")` with clear TODO
+4. **Never**: Weaken assertion to accept partial success
+
+## Examples
+
+### WRONG: Weakening Assertions
+
+```python
+# ❌ BAD: Accept 50% success rate
+@pytest.mark.integration
+def test_concurrent_requests():
+    responses = make_10_concurrent_requests()
+    success_count = sum(1 for r in responses if r.status_code == 200)
+    assert success_count >= 5  # Only 50% need to pass - WRONG!
+```
+
+```python
+# ❌ BAD: Silencing errors with broad exception handler
+def test_data_processing():
+    try:
+        result = process_data(input)
+        assert result.is_valid()
+    except Exception:
+        pass  # Ignore all errors - WRONG!
+```
+
+```python
+# ❌ BAD: Increasing timeout without fixing root cause
+@pytest.mark.timeout(300)  # Was 30s, now 300s - why?
+def test_api_call():
+    response = slow_api_call()
+    assert response.success
+```
+
+### CORRECT: Skip Until Fixed
+
+```python
+# ✅ GOOD: Skip test with clear TODO
+@pytest.mark.skip(
+    reason="DuckDB threading issues - need connection pooling. "
+           "TODO: Implement async connection pool and restore 100% assertion"
+)
+def test_concurrent_requests():
+    """Test concurrent access to DuckDB.
+
+    SKIPPED: DuckDB has threading limitations causing intermittent failures.
+
+    To fix:
+    1. Implement connection pooling for DuckDB
+    2. Use async patterns for concurrent access
+    3. Restore 100% success assertion (all 10 requests must succeed)
+
+    DO NOT weaken assertion to accept partial success - fix root cause instead.
+    """
+    responses = make_10_concurrent_requests()
+
+    # Original (correct) assertion - restore when threading is fixed
+    assert all(r.status_code == 200 for r in responses)
+```
+
+### CORRECT: Fix Root Cause
+
+```python
+# ✅ GOOD: Fix threading issue with connection pool
+@pytest.fixture
+def db_connection_pool():
+    """Connection pool for thread-safe database access."""
+    pool = ConnectionPool(max_connections=10)
+    yield pool
+    pool.close()
+
+def test_concurrent_requests(db_connection_pool):
+    """Test concurrent access with proper connection pooling."""
+    responses = make_10_concurrent_requests(db_connection_pool)
+
+    # 100% success required - root cause fixed
+    assert all(r.status_code == 200 for r in responses)
+```
+
+## Why This Matters
+
+**Weakened assertions mask real bugs:**
+- 50% success hides that 50% of requests are failing
+- Partial success normalizes flakiness
+- Future developers see weak assertions and think they're acceptable
+- Production systems fail in ways tests didn't catch
+
+**Sets dangerous precedent:**
+- "If one test can accept 50%, why not others?"
+- Quality bar gradually erodes
+- Technical debt compounds
+- Team velocity appears faster but quality suffers
+
+**Example**: PR34 weakened concurrent test from 100% to 50% success to avoid DuckDB threading issues. This masked real concurrency bugs and set precedent that flaky tests are acceptable.
+
+## Enforcement
+
+**Pre-commit hook** (future enhancement):
+- Regex scan for weakened assertions: `assert.*>=.*[0-9]+` in test files
+- Flag increases in timeout decorators without justification
+- Detect broad exception handlers in test assertions
+
+**Code review checklist**:
+- [ ] All test assertions require 100% success (no partial thresholds)
+- [ ] Flaky tests are skipped with `@pytest.mark.skip`, not weakened
+- [ ] Skip reasons include specific TODO for fix
+- [ ] Timeout changes justified in commit message with root cause
+
+**Plan review enforcement**:
+- Plans with weakened assertions are blocked ("READY WITH CHANGES")
+- Must fix root cause or skip test before execution
+
+## Integration with Other Rules
+
+**Related rules**:
+- [`.cursor/rules/104-plan-execution-hygiene.mdc`](.cursor/rules/104-plan-execution-hygiene.mdc) - References this rule for assertion quality standards
+- [`.cursor/rules/001-core-tdd-protocol.mdc`](.cursor/rules/001-core-tdd-protocol.mdc) - TDD workflow requires strict assertions
+- [`.cursor/rules/002-code-quality-standards.mdc`](.cursor/rules/002-code-quality-standards.mdc) - Quality thresholds
+
+**Referenced by**:
+- `.cursor/commands/plan-review.md` - Plan reviews check for quality threshold violations
+- `.context/postmortems/pr34_integration_test_quality_regression.md` - Example of violation
+
+## Summary
+
+**Core principle**: Tests must be 100% deterministic or explicitly skipped.
+
+**Three options for flaky tests**:
+1. **Best**: Fix root cause (threading, mocking, resource management)
+2. **Acceptable**: Skip with `@pytest.mark.skip` and clear TODO
+3. **Never**: Weaken assertion to accept partial success
+
+**When in doubt**: Skip the test until root cause can be fixed properly.
