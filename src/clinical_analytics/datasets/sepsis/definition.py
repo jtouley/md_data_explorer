@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import ibis
 import pandas as pd
@@ -88,7 +89,7 @@ class SepsisDataset(ClinicalDataset):
             self.semantic.raw = con.table("sepsis_aggregated")
             self.semantic._base_view = None  # Force rebuild with new raw table
 
-    def get_cohort(self, granularity: Granularity = "patient_level", **filters) -> pd.DataFrame:
+    def get_cohort(self, granularity: Granularity = "patient_level", **filters: Any) -> pd.DataFrame:
         """
         Return analysis cohort - uses semantic layer for SQL generation.
 

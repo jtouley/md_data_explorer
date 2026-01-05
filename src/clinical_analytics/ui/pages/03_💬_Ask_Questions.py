@@ -10,7 +10,7 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -28,6 +28,7 @@ from clinical_analytics.core.error_translation import translate_error_with_llm
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
+from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.state_store import ConversationState, FileStateStore
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
@@ -139,7 +140,7 @@ def get_cached_semantic_layer(dataset_version: str, _dataset: Any) -> "SemanticL
     Raises:
         ValueError: If semantic layer not available
     """
-    return _dataset.get_semantic_layer()
+    return cast(SemanticLayer, _dataset.get_semantic_layer())
 
 
 def normalize_query(q: str | None) -> str:

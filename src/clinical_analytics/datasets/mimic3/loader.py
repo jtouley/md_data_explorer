@@ -18,7 +18,7 @@ class MIMIC3Loader:
     Supports both DuckDB files and PostgreSQL connections.
     """
 
-    def __init__(self, db_path: str | Path | None = None, db_connection=None):
+    def __init__(self, db_path: str | Path | None = None, db_connection: Any = None) -> None:
         """
         Initialize MIMIC-III loader.
 
@@ -87,7 +87,7 @@ class MIMIC3Loader:
 
         return self.execute_query(query)
 
-    def check_tables_exist(self) -> dict:
+    def check_tables_exist(self) -> dict[str, bool]:
         """
         Check which MIMIC-III tables exist in the database.
 
@@ -112,12 +112,12 @@ class MIMIC3Loader:
 
         return table_status
 
-    def __enter__(self):
+    def __enter__(self) -> "MIMIC3Loader":
         """Context manager entry."""
         self.connect()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.disconnect()
 

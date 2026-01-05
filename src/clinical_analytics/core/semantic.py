@@ -264,7 +264,7 @@ class SemanticLayer:
         )
         return fallback_root.resolve()
 
-    def _register_source(self):
+    def _register_source(self) -> None:
         """Register the raw data source (CSV, table, etc.) with DuckDB."""
         init_params = self.config.get("init_params", {})
 
@@ -348,7 +348,7 @@ class SemanticLayer:
         else:
             raise ValueError(f"No valid source found in config for {self.dataset_name}")
 
-    def get_base_view(self):
+    def get_base_view(self) -> Any:
         """
         Build the semantic view from config - defines logic, doesn't execute.
 
@@ -1987,7 +1987,7 @@ class SemanticLayer:
                                     # Integer types - ensure all values are Python ints (which are int64)
                                     if isinstance(filter_spec.value, list):
                                         cast_values_int: list[int] = [
-                                            int(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                            int(v) for v in filter_spec.value if isinstance(v, int | float | str)
                                         ]
                                     else:
                                         cast_values_int = [int(filter_spec.value)]
@@ -1996,7 +1996,7 @@ class SemanticLayer:
                                 elif "float" in col_dtype_lower:
                                     if isinstance(filter_spec.value, list):
                                         cast_values_float: list[float] = [
-                                            float(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                            float(v) for v in filter_spec.value if isinstance(v, int | float | str)
                                         ]
                                     else:
                                         cast_values_float = [float(filter_spec.value)]
@@ -2031,7 +2031,7 @@ class SemanticLayer:
                                 if col_dtype in ["int8", "int16", "int32", "int64", "Int8", "Int16", "Int32", "Int64"]:
                                     if isinstance(filter_spec.value, list):
                                         cast_values_not_int: list[int] = [
-                                            int(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                            int(v) for v in filter_spec.value if isinstance(v, int | float | str)
                                         ]
                                     else:
                                         cast_values_not_int = [int(filter_spec.value)]
@@ -2039,7 +2039,7 @@ class SemanticLayer:
                                 elif col_dtype in ["float32", "float64", "Float32", "Float64"]:
                                     if isinstance(filter_spec.value, list):
                                         cast_values_not_float: list[float] = [
-                                            float(v) for v in filter_spec.value if isinstance(v, (int, float, str))
+                                            float(v) for v in filter_spec.value if isinstance(v, int | float | str)
                                         ]
                                     else:
                                         cast_values_not_float = [float(filter_spec.value)]

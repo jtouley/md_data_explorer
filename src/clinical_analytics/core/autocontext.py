@@ -35,7 +35,7 @@ class AutoContext:
     constraints: dict[str, Any] = field(default_factory=lambda: {"no_row_level_data": True, "max_tokens": 4000})
 
 
-def _extract_entity_keys(inferred_schema) -> list[str]:
+def _extract_entity_keys(inferred_schema: Any) -> list[str]:
     """
     Extract entity keys from inferred schema with deterministic ranking.
 
@@ -184,8 +184,8 @@ def _estimate_tokens(text: str) -> int:
 
 
 def _build_column_contexts(
-    semantic_layer,
-    inferred_schema,
+    semantic_layer: Any,
+    inferred_schema: Any,
     query_terms: list[str] | None = None,
 ) -> list[ColumnContext]:
     """
@@ -393,7 +393,7 @@ def _enforce_token_budget(
     return autocontext
 
 
-def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer):
+def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer: Any) -> Any:
     """
     Reconstruct minimal InferredSchema from semantic layer config and base view.
 
@@ -446,8 +446,8 @@ def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer):
 
 
 def build_autocontext(
-    semantic_layer,
-    inferred_schema=None,
+    semantic_layer: Any,
+    inferred_schema: Any = None,
     doc_context: str | None = None,
     query_terms: list[str] | None = None,
     max_tokens: int = 4000,
@@ -510,15 +510,15 @@ def build_autocontext(
         if col.stats:
             # Stats should only contain aggregated data
             allowed_keys = {"min", "max", "mean", "median", "std", "count", "unique_count", "top_values"}
-            assert all(key in allowed_keys for key in col.stats.keys()), (
-                f"Column {col.name} stats contains non-aggregated data: {col.stats}"
-            )
+            assert all(
+                key in allowed_keys for key in col.stats.keys()
+            ), f"Column {col.name} stats contains non-aggregated data: {col.stats}"
             # top_values should be value -> count mapping, not raw row data
             if "top_values" in col.stats:
                 top_vals = col.stats["top_values"]
                 if isinstance(top_vals, dict):
-                    assert all(isinstance(v, int | float) for v in top_vals.values()), (
-                        f"Column {col.name} top_values contains non-count data: {top_vals}"
-                    )
+                    assert all(
+                        isinstance(v, int | float) for v in top_vals.values()
+                    ), f"Column {col.name} top_values contains non-count data: {top_vals}"
 
     return autocontext
