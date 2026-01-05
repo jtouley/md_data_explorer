@@ -4,7 +4,6 @@ These tests validate that diagnostic helpers can dump state correctly
 and that assert_with_diagnostics produces useful output on failure.
 """
 
-
 import pytest
 
 # Import helpers (will fail until implemented)

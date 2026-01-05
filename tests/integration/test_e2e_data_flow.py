@@ -85,10 +85,10 @@ def test_integration_e2e_upload_query_analyze_fullPipeline(real_storage, sample_
 
     except Exception as e:
         # Dump pipeline state on failure
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"PIPELINE FAILED AT STAGE: {pipeline_state.get('stage', 'unknown')}")
         print(f"ERROR: {type(e).__name__}: {e}")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
         print(json.dumps(pipeline_state, indent=2, default=str))
-        print(f"{'='*80}\n")
+        print(f"{'=' * 80}\n")
         raise
