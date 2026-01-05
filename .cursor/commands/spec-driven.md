@@ -53,11 +53,14 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 - Extract duplicate test setup to fixtures (Rule of Two)
 - Update TODO
 
-**7. Run Module Test Suite**
-- Full suite required before commit: `make test-[module]`
+**7. Run Quality Gate Before Commit**
+- Command: `make check` (includes format-check, lint, type-check, all tests)
+- Alternative for speed: `make check-fast` (skips slow tests)
+- Catches issues BEFORE commit fails
 - Update TODO
 
 **8. Commit Changes**
+- All quality gates passed in Step 7
 - Include implementation AND tests AND documentation
 - Format:
   ```
@@ -162,7 +165,9 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 - `path/to/file.ext` (what changed)
 
 **Quality Gates:**
-- ✅ **Linting**: All checks passed
+- ✅ **Format**: Code formatted (ruff)
+- ✅ **Linting**: All checks passed (ruff)
+- ✅ **Types**: Type checking passed (mypy)
 - ✅ **Tests**: X/Y passing
 
 ## OPTIONAL CONTEXT
@@ -192,6 +197,7 @@ If you catch yourself:
 - Writing code before tests → Write test first
 - Skipping test runs → Run tests now
 - Accumulating lint errors → Run `make lint-fix`
+- Committing without running `make check` → Run quality gate first
 - Not updating TODOs → Update `todo_write`
 - Weakening pre-commit hooks → Fix violations, never weaken hooks
 
