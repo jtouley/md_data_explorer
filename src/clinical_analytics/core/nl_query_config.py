@@ -82,7 +82,15 @@ ADR004_ENABLE_AUTOCONTEXT: bool = _config.get("adr004_enable_autocontext", True)
 ADR004_ENABLE_QUESTION_GENERATION: bool = _config.get("adr004_enable_question_generation", False)
 
 # Legacy alias for Phase 4 (maintained for backward compatibility)
-ENABLE_PROACTIVE_QUESTIONS: bool = _config["enable_proactive_questions"]
+# DEPRECATED: Use ADR004_ENABLE_QUESTION_GENERATION instead
+ENABLE_PROACTIVE_QUESTIONS: bool = _config.get("enable_proactive_questions", False)
+
+# Log deprecation warning if legacy key is explicitly set in config
+if "enable_proactive_questions" in _config and "adr004_enable_question_generation" not in _config:
+    logger.warning(
+        "Config key 'enable_proactive_questions' is deprecated. "
+        "Use 'adr004_enable_question_generation' instead. Will be removed in v2.0."
+    )
 
 # ADR004 Phase 4: Proactive Question Generation Timeout
 LLM_TIMEOUT_QUESTION_GENERATION_S: float = _config["llm_timeout_question_generation_s"]
