@@ -275,6 +275,77 @@ Start: What are you testing?
    └─> Write INTEGRATION TEST (real services)
 ```
 
+### Diagnostic Integration Tests
+
+**New in 2025-01**: Diagnostic integration tests provide detailed failure diagnostics showing exactly where in the pipeline issues occur.
+
+**Location**: `tests/integration/test_*_integration.py`
+
+**Characteristics:**
+- ✅ Use real components (no mocks for DuckDB/storage/semantic layer)
+- ✅ Use diagnostic helpers from `tests/integration/diagnostic_helpers.py`
+- ✅ Provide state dumps on failure (storage metadata, DuckDB schema, semantic layer config)
+- ✅ Mark with `@pytest.mark.integration` AND `@pytest.mark.slow`
+- ✅ Run slower (1-10s per test) but catch real system failures
+
+**When to use diagnostic helpers:**
+- Integration tests that exercise multiple components
+- Tests that need to diagnose where in the pipeline failures occur
+- Tests that verify component boundaries (storage ↔ DuckDB ↔ SemanticLayer)
+
+**Available diagnostic helpers:**
+- `dump_storage_state(storage, upload_id)` - Dumps UserDatasetStorage metadata and file paths
+- `dump_semantic_layer_state(semantic)` - Dumps SemanticLayer config and schema
+- `assert_with_diagnostics(condition, diagnostic_fn, **kwargs)` - Prints diagnostics on assertion failure
+
+**Example:**
+```python
+from tests.integration.diagnostic_helpers import (
+    assert_with_diagnostics,
+    dump_storage_state,
+)
+
+def test_integration_upload_to_storage(real_storage, sample_csv_file):
+    """Test upload with diagnostics on failure."""
+    success, message, upload_id = real_storage.save_upload(...)
+
+    assert_with_diagnostics(
+        success,
+        dump_storage_state,
+        storage=real_storage,
+        upload_id=upload_id,
+    )
+```
+
+**How to read integration test failure output:**
+
+When an integration test fails, diagnostic helpers automatically print:
+1. **Where it failed**: Pipeline stage (upload, semantic_layer, query, analysis)
+2. **What the state was**: Storage metadata, DuckDB schema, semantic layer config
+3. **Why it failed**: Error message with context
+
+Example diagnostic output:
+```
+================================================================================
+ASSERTION FAILED - DIAGNOSTIC DUMP:
+================================================================================
+{
+  "upload_id": "user_upload_20260105_004722_531f844b",
+  "metadata_file_exists": true,
+  "unified_csv_exists": false,
+  "semantic_layer": {
+    "dataset_name": "Test Dataset",
+    "config": {...}
+  }
+}
+================================================================================
+```
+
+**Key differences from unit tests:**
+- Unit tests: Fast, isolated, test logic with mocks
+- Integration tests: Slower, test real components, provide diagnostics
+- Diagnostic integration tests: Same as integration tests, but with automatic state dumps on failure
+
 ### Rules of Thumb
 
 1. **Default to unit tests** - 95% of tests should be unit tests
