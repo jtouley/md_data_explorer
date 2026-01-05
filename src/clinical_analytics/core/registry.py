@@ -13,7 +13,7 @@ from typing import Any
 
 import polars as pl
 import structlog
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
@@ -96,7 +96,7 @@ class DatasetRegistry:
 
         logger.info(
             "dataset_discovery_started",
-            datasets_path=str(datasets_path),  # type: ignore[call-arg]
+            datasets_path=str(datasets_path),
             builtin_excluded=list(builtin_datasets),
         )
 

@@ -708,7 +708,7 @@ class QuestionEngine:
                 # Convert QueryIntent to QueryPlan and store in context
                 if dataset_version:
                     query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
-                    context.query_plan = query_plan  # type: ignore[assignment]
+                    context.query_plan = query_plan
                     # Use QueryPlan confidence (may differ from QueryIntent)
                     context.confidence = query_plan.confidence
                 else:

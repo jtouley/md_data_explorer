@@ -1457,7 +1457,7 @@ class SemanticLayer:
 
     def execute_query_plan(
         self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
-    ) -> dict[str, Any]:  # type: ignore[valid-type]
+    ) -> dict[str, Any]:
         """
         Execute a QueryPlan with warnings for observability (ADR003 Phase 3 + Phase 2.2).
 

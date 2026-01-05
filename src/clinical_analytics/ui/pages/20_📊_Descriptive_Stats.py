@@ -42,7 +42,7 @@ def generate_table_one(df: pd.DataFrame, stratify_by: str | None = None) -> pd.D
         overall = False
     else:
         groups = ["Overall"]
-        stratify_by = None  # type: ignore[assignment]
+        stratify_by = None
         overall = True
 
     for col in df.columns:

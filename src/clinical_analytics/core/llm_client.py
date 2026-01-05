@@ -6,7 +6,7 @@ Privacy-preserving: All data stays on-device, no external API calls.
 
 from typing import Any
 
-import requests  # type: ignore[import]
+import requests  # type: ignore[import-untyped]
 import structlog
 
 logger = structlog.get_logger()
@@ -151,7 +151,7 @@ class OllamaClient:
                 return None
 
             result = response.json()
-            response_text: str | None = result.get("response")  # type: ignore[no-any-return]
+            response_text: str | None = result.get("response")
             return response_text
 
         except requests.Timeout:

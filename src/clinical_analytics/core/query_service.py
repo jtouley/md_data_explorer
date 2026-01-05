@@ -180,6 +180,6 @@ class QueryService:
         context.filters = intent.filters
 
         # Set query plan (type: ignore for AnalysisContext.query_plan which is typed as None)
-        context.query_plan = plan  # type: ignore[assignment]
+        context.query_plan = plan
 
         return context

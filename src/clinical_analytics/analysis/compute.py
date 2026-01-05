@@ -537,7 +537,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
 
             # Group means - compute directly as dict comprehension
             anova_group_means: dict[str, float] = {}
-            for g in groups:  # type: ignore[arg-type]
+            for g in groups:
                 mean_value = analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()
                 # Handle various return types from .mean() - use numpy conversion for safety
                 if mean_value is not None:
@@ -568,7 +568,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         contingency = (
             analysis_df.group_by([outcome_col, group_col])
             .agg(pl.len().alias("count"))
-            .pivot(on=group_col, index=outcome_col, values="count")  # type: ignore[call-arg]
+            .pivot(on=group_col, index=outcome_col, values="count")
             .fill_null(0)
         )
 

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml  # type: ignore[import]
+import yaml  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

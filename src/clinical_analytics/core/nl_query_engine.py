@@ -1051,7 +1051,7 @@ class NLQueryEngine:
         try:
             from pathlib import Path
 
-            import yaml
+            import yaml  # type: ignore[import-untyped]
 
             golden_path = Path(__file__).parent.parent.parent / "tests" / "eval" / "golden_questions.yaml"
             if not golden_path.exists():
@@ -1346,7 +1346,7 @@ Filter extraction (ADR009 Phase 5):
                 # ADR009 Phase 1: Preserve follow_ups fields
                 # ADR009 Phase 2: Preserve interpretation fields
                 return QueryIntent(
-                    intent_type=query_plan.intent,  # type: ignore[arg-type]
+                    intent_type=query_plan.intent,
                     primary_variable=query_plan.metric,
                     grouping_variable=query_plan.group_by,
                     confidence=query_plan.confidence,
@@ -1503,7 +1503,7 @@ Filter extraction (ADR009 Phase 5):
                 if self._is_refinement_query(query) and previous_intent:
                     # Preserve previous intent if LLM changed it
                     if intent.intent_type != previous_intent:
-                        intent.intent_type = previous_intent  # type: ignore[assignment]
+                        intent.intent_type = previous_intent
                         logger.info(
                             "refinement_intent_corrected",
                             query=query,
@@ -1688,7 +1688,7 @@ Filter extraction (ADR009 Phase 5):
 
         # Create base intent from previous context
         intent = QueryIntent(
-            intent_type=previous_intent,  # type: ignore[arg-type]
+            intent_type=previous_intent,
             primary_variable=previous_metric,
             grouping_variable=previous_group_by,
             confidence=0.6,  # Moderate confidence for fallback
