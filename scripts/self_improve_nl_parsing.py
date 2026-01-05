@@ -127,9 +127,7 @@ def refresh_golden_questions_from_logs(
     )
 
     # Deduplicate and limit
-    new_questions = [
-        c for c in candidates if c["query"].lower() not in existing_queries
-    ][:max_new_questions]
+    new_questions = [c for c in candidates if c["query"].lower() not in existing_queries][:max_new_questions]
 
     if new_questions:
         existing_data["questions"].extend(new_questions)
@@ -156,9 +154,7 @@ def convert_eval_results_to_optimizer_format(eval_results: dict) -> list[dict]:
                 "actual_group_by": result.get("parsed_query", {}).get("grouping_variable"),
                 "expected_filters": result.get("question", {}).get("expected_filters", []),
                 "actual_filters": result.get("parsed_query", {}).get("filters", []),
-                "conversation_history": result.get("question", {}).get(
-                    "conversation_history", []
-                ),
+                "conversation_history": result.get("question", {}).get("conversation_history", []),
                 "passed": result.get("passed", False),
                 "confidence": result.get("parsed_query", {}).get("confidence", 0.0),
             }
@@ -176,9 +172,7 @@ def main():
         default=0.95,
         help="Target accuracy threshold (default: 0.95)",
     )
-    parser.add_argument(
-        "--max-iterations", type=int, default=10, help="Maximum iterations (default: 10)"
-    )
+    parser.add_argument("--max-iterations", type=int, default=10, help="Maximum iterations (default: 10)")
     parser.add_argument(
         "--questions-file",
         type=Path,
@@ -223,14 +217,15 @@ def main():
 
         # Run evaluation with FRESH engine (Fix #4 - picks up overlay changes)
         # Note: EvalHarness needs semantic_layer - using mock for self-improvement
-        from clinical_analytics.core.semantic import SemanticLayer
         from unittest.mock import MagicMock
-        
+
+        from clinical_analytics.core.semantic import SemanticLayer
+
         # Create mock semantic layer for golden question testing
         mock_layer = MagicMock(spec=SemanticLayer)
         mock_layer.get_column_alias_index.return_value = {}
         mock_layer.available_columns = []
-        
+
         harness = EvalHarness(mock_layer)
         results = harness.evaluate_batch(questions)
         summary = harness.get_summary(results)
@@ -265,13 +260,13 @@ def main():
         prompt_additions = optimizer.generate_improved_prompt_additions(patterns)
 
         # Hard cap overlay length (prevent bloat) (Fix #7)
-        MAX_OVERLAY_LENGTH = 8000
-        if len(prompt_additions) > MAX_OVERLAY_LENGTH:
-            prompt_additions = prompt_additions[:MAX_OVERLAY_LENGTH]
+        max_overlay_length = 8000
+        if len(prompt_additions) > max_overlay_length:
+            prompt_additions = prompt_additions[:max_overlay_length]
             logger.warning(
                 "prompt_overlay_truncated",
                 original_length=len(prompt_additions),
-                capped_length=MAX_OVERLAY_LENGTH,
+                capped_length=max_overlay_length,
             )
 
         # Write overlay atomically (Fix #3)
@@ -293,10 +288,10 @@ def main():
         print(f"  Patterns detected: {len(patterns)}")
         for pattern in patterns:
             print(f"    - {pattern.pattern_type}: {pattern.count} failures")
-        print(f"\n📝 Prompt improvements applied:")
+        print("\n📝 Prompt improvements applied:")
         print(f"   {len(prompt_additions)} characters written to {overlay_path.name}")
         print(f"   Top {len(patterns)} patterns addressed")
-        print(f"   Re-running evaluation with updated prompt...")
+        print("   Re-running evaluation with updated prompt...")
 
         # NO BREAK - let loop continue to next iteration
 
@@ -314,4 +309,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

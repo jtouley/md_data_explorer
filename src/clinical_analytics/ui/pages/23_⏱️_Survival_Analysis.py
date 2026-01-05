@@ -24,7 +24,7 @@ from clinical_analytics.core.schema import UnifiedCohort
 st.set_page_config(page_title="Survival Analysis | Clinical Analytics", page_icon="⏱️", layout="wide")
 
 
-def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str = None):
+def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str | None = None):
     """
     Create Kaplan-Meier survival curve plot.
 
@@ -56,7 +56,7 @@ def plot_kaplan_meier(kmf, summary_df: pd.DataFrame, group_col: str = None):
     ax.set_title("Kaplan-Meier Survival Curve", fontsize=14, fontweight="bold")
     ax.legend()
     ax.grid(True, alpha=0.3)
-    ax.set_ylim([0, 1])
+    ax.set_ylim((0, 1))
 
     return fig
 
@@ -80,10 +80,12 @@ def main():
     from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 
     st.title("⏱️ Survival Analysis")
-    st.markdown("""
+    st.markdown(
+        """
     Analyze **time-to-event** data. How long do patients survive? How quickly do events occur?
     We'll use **Kaplan-Meier curves** and **Cox regression** to answer these questions.
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=False)
@@ -285,7 +287,8 @@ def main():
                         # Interpretation
                         st.markdown("### 📖 Interpretation")
                         if p_interp["is_significant"]:
-                            st.markdown(f"""
+                            st.markdown(
+                                f"""
 **Significant difference in survival** {p_interp["emoji"]}
 
 The log-rank test shows that survival curves differ significantly between groups
@@ -293,16 +296,19 @@ The log-rank test shows that survival curves differ significantly between groups
 
 **Clinical Interpretation**: The {group_col} groups have different survival patterns.
 Look at the survival curves and median survival times to see which group has better survival.
-""")
+"""
+                            )
                         else:
-                            st.markdown(f"""
+                            st.markdown(
+                                f"""
 **No significant difference in survival** ❌
 
 The log-rank test shows no significant difference in survival between groups
 (p={logrank_results["p_value"]:.4f}).
 
 **Clinical Interpretation**: The {group_col} groups have similar survival patterns.
-""")
+"""
+                            )
 
                     # Export options
                     st.markdown("## 📥 Export")

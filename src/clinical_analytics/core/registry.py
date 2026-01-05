@@ -7,13 +7,13 @@ ClinicalDataset implementations without hardcoded if/else chains.
 
 import importlib
 import inspect
-import logging
 import pkgutil
 from pathlib import Path
 from typing import Any
 
 import polars as pl
-import yaml
+import structlog
+import yaml  # type: ignore
 
 from clinical_analytics.core.dataset import ClinicalDataset
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
@@ -23,14 +23,14 @@ from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 try:
     from clinical_analytics.datasets.uploaded.definition import UploadedDataset
 
-    _UPLOADED_DATASET_CLASS = UploadedDataset
+    _UPLOADED_DATASET_CLASS: type[UploadedDataset] | None = UploadedDataset
 except ImportError:
-    _UPLOADED_DATASET_CLASS = None  # type: ignore[assignment]
+    _UPLOADED_DATASET_CLASS = None
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
-def _filter_kwargs_for_ctor(cls, kwargs: dict) -> dict:
+def _filter_kwargs_for_ctor(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     """
     Filter kwargs to only include parameters accepted by the class constructor.
 
@@ -73,9 +73,9 @@ class DatasetRegistry:
     """
 
     _datasets: dict[str, type[ClinicalDataset]] = {}
-    _configs: dict[str, dict] = {}
+    _configs: dict[str, dict[str, Any]] = {}
     _config_loaded: bool = False
-    _auto_inferred: dict[str, pl.DataFrame] = {}  # Store DataFrames for auto-inferred datasets
+    _auto_inferred: dict[str, Any] = {}  # Store DataFrames for auto-inferred datasets
 
     @classmethod
     def discover_datasets(cls) -> dict[str, type[ClinicalDataset]]:
@@ -238,7 +238,9 @@ class DatasetRegistry:
                 upload_id = name
 
             storage = override_params.get("storage") or config.get("init_params", {}).get("storage")
-            return dataset_class(upload_id=upload_id, storage=storage)
+            # Type narrowing: mypy knows dataset_class is UploadedDataset here
+            assert _UPLOADED_DATASET_CLASS is not None
+            return _UPLOADED_DATASET_CLASS(upload_id=upload_id, storage=storage)
 
         # Merge config with override params
         params = {**config.get("init_params", {}), **override_params}
@@ -263,7 +265,7 @@ class DatasetRegistry:
         return list(cls._datasets.keys())
 
     @classmethod
-    def get_dataset_info(cls, name: str) -> dict:
+    def get_dataset_info(cls, name: str) -> dict[str, Any]:
         """
         Get configuration and metadata for a dataset.
 
@@ -294,7 +296,7 @@ class DatasetRegistry:
         return info
 
     @classmethod
-    def get_all_dataset_info(cls) -> dict[str, dict]:
+    def get_all_dataset_info(cls) -> dict[str, dict[str, Any]]:
         """
         Get info for all available datasets.
 

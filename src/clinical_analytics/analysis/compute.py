@@ -237,10 +237,10 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             logger.warning(
                 "compute_descriptive_column_not_found",
                 primary_var=primary_var,
-                available_columns=df.columns.tolist(),
+                available_columns=list(df.columns),
             )
             # Return error result instead of falling through to "all"
-            cols_preview = df.columns[:10].tolist()
+            cols_preview = list(df.columns[:10])
             cols_str = ", ".join(cols_preview)
             if len(df.columns) > 10:
                 cols_str += "..."
@@ -248,7 +248,7 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
                 "type": "descriptive",
                 "error": f"Column '{primary_var}' not found in dataset. Available columns: {cols_str}",
                 "requested_column": primary_var,
-                "available_columns": df.columns.tolist(),
+                "available_columns": list(df.columns),
             }
 
     if focus_on_single and matched_col:
@@ -302,11 +302,16 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             # Numeric variable - compute mean, median, std, min, max
             clean_series = analysis_series.drop_nulls()
             if len(clean_series) > 0:
-                result["mean"] = float(clean_series.mean())
-                result["median"] = float(clean_series.median())
-                result["std"] = float(clean_series.std()) if len(clean_series) > 1 else 0.0
-                result["min"] = float(clean_series.min())
-                result["max"] = float(clean_series.max())
+                mean_val = clean_series.mean()
+                median_val = clean_series.median()
+                std_val = clean_series.std() if len(clean_series) > 1 else 0.0
+                min_val = clean_series.min()
+                max_val = clean_series.max()
+                result["mean"] = float(mean_val) if mean_val is not None else 0.0  # type: ignore[arg-type]
+                result["median"] = float(median_val) if median_val is not None else 0.0  # type: ignore[arg-type]
+                result["std"] = float(std_val) if std_val is not None else 0.0  # type: ignore[arg-type]
+                result["min"] = float(min_val) if min_val is not None else 0.0  # type: ignore[arg-type]
+                result["max"] = float(max_val) if max_val is not None else 0.0  # type: ignore[arg-type]
                 result["is_numeric"] = True
 
                 # Add headline answer for the query
@@ -390,9 +395,9 @@ def _compute_headline_answer(
         return {}
 
     if query_direction == "lowest":
-        best_group = min(group_means, key=group_means.get)
+        best_group = min(group_means, key=lambda k: group_means.get(k, float("inf")))
     else:
-        best_group = max(group_means, key=group_means.get)
+        best_group = max(group_means, key=lambda k: group_means.get(k, float("-inf")))
 
     best_value = group_means[best_group]
 
@@ -446,6 +451,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     """
     outcome_col = context.primary_variable
     group_col = context.grouping_variable
+
+    if outcome_col is None or group_col is None:
+        return {"type": "comparison", "error": "Missing required columns for comparison"}
 
     # Clean data
     analysis_df = df.select([outcome_col, group_col]).drop_nulls()
@@ -527,13 +535,19 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             group_data = [analysis_df.filter(pl.col(group_col) == g)[outcome_col].to_numpy() for g in groups]
             statistic, p_value = stats.f_oneway(*group_data)
 
-            # Group means
-            group_means = {
-                str(g): float(analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()) for g in groups
-            }
+            # Group means - compute directly as dict comprehension
+            anova_group_means: dict[str, float] = {}
+            for g in groups:
+                mean_value = analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()
+                # Handle various return types from .mean() - use numpy conversion for safety
+                if mean_value is not None:
+                    # Convert to numpy scalar first, then float
+                    anova_group_means[str(g)] = float(np.asarray(mean_value).item())
+                else:
+                    anova_group_means[str(g)] = 0.0
 
             # Compute headline answer
-            headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
+            headline = _compute_headline_answer(anova_group_means, outcome_col, group_col, "lowest")
 
             return {
                 "type": "comparison",
@@ -544,7 +558,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "n_groups": n_groups,
                 "statistic": float(statistic),
                 "p_value": float(p_value),
-                "group_means": group_means,
+                "group_means": anova_group_means,
                 **headline,
             }
 
@@ -554,7 +568,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         contingency = (
             analysis_df.group_by([outcome_col, group_col])
             .agg(pl.len().alias("count"))
-            .pivot(index=outcome_col, columns=group_col, values="count", aggregate_function="sum")
+            .pivot(on=group_col, index=outcome_col, values="count")
             .fill_null(0)
         )
 
@@ -568,8 +582,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
 
         # Try to compute group means if outcome can be converted to numeric
         # This allows answering "which group had the lowest X" for pseudo-numeric data
-        headline: dict[str, Any] = {}
-        group_means: dict[str, float] = {}
+        headline: dict[str, Any] = {}  # type: ignore[no-redef]
+        group_means: dict[str, float] = {}  # type: ignore[no-redef]
         numeric_outcome, success = _try_numeric_conversion(analysis_df[outcome_col])
 
         if success and numeric_outcome is not None:
@@ -821,6 +835,9 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
     outcome_col = context.primary_variable
     predictors = context.predictor_variables
 
+    if outcome_col is None:
+        return {"type": "predictor", "error": "No outcome variable specified"}
+
     # Prepare data
     analysis_cols = [outcome_col] + predictors
     analysis_df = df.select(analysis_cols).drop_nulls()
@@ -894,6 +911,9 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
     time_col = context.time_variable
     event_col = context.event_variable
 
+    if time_col is None or event_col is None:
+        return {"type": "survival", "error": "Time and event variables required for survival analysis"}
+
     # Prepare data
     analysis_df = df.select([time_col, event_col]).drop_nulls()
 
@@ -966,7 +986,7 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
             missing_variables.append(var)
 
     if missing_variables:
-        cols_preview = actual_columns[:10].tolist()
+        cols_preview = actual_columns[:10]
         cols_str = ", ".join(cols_preview)
         if len(actual_columns) > 10:
             cols_str += "..."
@@ -1060,12 +1080,16 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
 
     # Find strong correlations (|r| >= 0.5)
     strong_correlations = [
-        item for item in corr_data if item["var1"] != item["var2"] and abs(item["correlation"]) >= 0.5
+        item
+        for item in corr_data
+        if item["var1"] != item["var2"] and abs(float(item["correlation"])) >= 0.5  # type: ignore[arg-type]
     ]
 
     # Find moderate correlations (0.3 <= |r| < 0.5)
     moderate_correlations = [
-        item for item in corr_data if item["var1"] != item["var2"] and 0.3 <= abs(item["correlation"]) < 0.5
+        item
+        for item in corr_data
+        if item["var1"] != item["var2"] and 0.3 <= abs(float(item["correlation"])) < 0.5  # type: ignore[arg-type]
     ]
 
     return {

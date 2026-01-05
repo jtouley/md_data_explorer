@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +198,8 @@ class NLQueryConfigDefaults:
     llm_timeout_filter_extraction_s: float = 30.0
     llm_timeout_max_s: float = 30.0
     enable_result_interpretation: bool = True
+    enable_proactive_questions: bool = False
+    llm_timeout_question_generation_s: float = 5.0
 
     def to_dict(self) -> dict[str, Any]:
         """Convert dataclass to dictionary."""
@@ -228,6 +230,8 @@ class NLQueryConfigDefaults:
             "llm_timeout_filter_extraction_s": self.llm_timeout_filter_extraction_s,
             "llm_timeout_max_s": self.llm_timeout_max_s,
             "enable_result_interpretation": self.enable_result_interpretation,
+            "enable_proactive_questions": self.enable_proactive_questions,
+            "llm_timeout_question_generation_s": self.llm_timeout_question_generation_s,
         }
 
 
@@ -331,6 +335,8 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "LLM_TIMEOUT_FILTER_EXTRACTION_S": "llm_timeout_filter_extraction_s",
         "LLM_TIMEOUT_MAX_S": "llm_timeout_max_s",
         "ENABLE_RESULT_INTERPRETATION": "enable_result_interpretation",
+        "ENABLE_PROACTIVE_QUESTIONS": "enable_proactive_questions",
+        "LLM_TIMEOUT_QUESTION_GENERATION_S": "llm_timeout_question_generation_s",
     }
 
     # Apply environment variable overrides
@@ -432,10 +438,10 @@ class LoggingConfigDefaults:
 
     root_level: str = "INFO"
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    module_levels: dict[str, str] = None
-    reduce_noise: dict[str, str] = None
+    module_levels: dict[str, str] | None = None
+    reduce_noise: dict[str, str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize default dict values."""
         if self.module_levels is None:
             self.module_levels = {
@@ -456,8 +462,8 @@ class LoggingConfigDefaults:
         return {
             "root_level": self.root_level,
             "format": self.format,
-            "module_levels": self.module_levels.copy(),
-            "reduce_noise": self.reduce_noise.copy(),
+            "module_levels": self.module_levels.copy() if self.module_levels else {},
+            "reduce_noise": self.reduce_noise.copy() if self.reduce_noise else {},
         }
 
 

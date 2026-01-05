@@ -104,7 +104,7 @@ def file_lock(file_path: Path, timeout: float = 10.0):
             start_time = time.time()
             while True:
                 try:
-                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
                     break  # Lock acquired
                 except OSError:
                     if time.time() - start_time > timeout:
@@ -133,7 +133,7 @@ def file_lock(file_path: Path, timeout: float = 10.0):
             if is_windows:
                 import msvcrt
 
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
             else:
                 import fcntl
 
@@ -174,19 +174,94 @@ def normalize_upload_to_table_list(
     if filename.endswith(".zip"):
         # Multi-table: extract from ZIP
         tables = extract_zip_tables(file_bytes)
+
+        # Extract documentation files from ZIP (Phase 1: ADR004)
+        from io import BytesIO
+
+        doc_files = extract_documentation_files(BytesIO(file_bytes))
+        logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
         df = load_single_file(file_bytes, filename)
         table_name = Path(filename).stem  # Use original filename stem
         tables = [{"name": table_name, "data": df}]
+        doc_files = []  # No docs for single-file uploads by default
+
+    # Handle external PDF/documentation files (standalone upload)
+    if metadata and "external_pdf_bytes" in metadata:
+        from dataclasses import dataclass
+
+        @dataclass
+        class DocFile:
+            """Documentation file info."""
+
+            name: str
+            path: str
+            content: bytes
+
+        # Convert external PDF bytes to DocFile format
+        pdf_bytes = metadata["external_pdf_bytes"]
+        pdf_filename = metadata.get("external_pdf_filename", "documentation.pdf")
+        doc_files.append(DocFile(name=pdf_filename, path=pdf_filename, content=pdf_bytes))
+        logger.info(f"Added external documentation file: {pdf_filename}")
 
     # Build metadata
     table_metadata = {
         "table_count": len(tables),
         "table_names": [t["name"] for t in tables],
+        "doc_files": doc_files,  # Phase 1: Store doc files for processing
     }
 
     return tables, table_metadata
+
+
+def extract_documentation_files(zip_file: Any) -> list[Any]:
+    """
+    Extract documentation files (PDF, Markdown, text) from ZIP archive.
+
+    Args:
+        zip_file: ZIP file (bytes, BytesIO, or file path)
+
+    Returns:
+        List of documentation file info objects with .name attribute
+
+    Example:
+        >>> zip_buffer = BytesIO(zip_data)
+        >>> doc_files = extract_documentation_files(zip_buffer)
+        >>> doc_names = [f.name for f in doc_files]
+        ['README.md', 'dictionary.txt', 'study_protocol.pdf']
+    """
+    from dataclasses import dataclass
+
+    @dataclass
+    class DocFile:
+        """Documentation file info."""
+
+        name: str
+        path: str
+        content: bytes
+
+    doc_extensions = {".pdf", ".md", ".txt"}
+    doc_files = []
+
+    try:
+        with zipfile.ZipFile(zip_file) as zf:
+            for file_info in zf.filelist:
+                # Skip directories
+                if file_info.is_dir():
+                    continue
+
+                # Check if file has documentation extension
+                file_path = Path(file_info.filename)
+                if file_path.suffix.lower() in doc_extensions:
+                    content = zf.read(file_info.filename)
+                    doc_files.append(DocFile(name=file_path.name, path=file_info.filename, content=content))
+
+        return doc_files
+
+    except zipfile.BadZipFile as e:
+        logger.warning(f"Failed to extract documentation files from ZIP: {e}")
+        return []
 
 
 def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
@@ -363,7 +438,7 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
                 unique_count += 1
 
             if unique_count > 0:
-                avg_length = avg_length / unique_count
+                avg_length = int(avg_length / unique_count)
                 uniqueness_ratio = row.dropna().nunique() / unique_count
 
                 # 3. Higher string ratio = better (weight: 30%)
@@ -786,11 +861,13 @@ def detect_schema_drift(schema1: dict[str, Any], schema2: dict[str, Any]) -> tup
     # Detect drift
     added_columns = [col for col in cols2 if col not in cols1]
     removed_columns = [col for col in cols1 if col not in cols2]
-    type_changes = {col: (cols1[col], cols2[col]) for col in cols1 if col in cols2 and cols1[col] != cols2[col]}
+    type_changes: dict[str, tuple[Any, Any]] = {
+        col: (cols1[col], cols2[col]) for col in cols1 if col in cols2 and cols1[col] != cols2[col]
+    }
 
     has_drift = bool(added_columns or removed_columns or type_changes)
 
-    drift_details = {}
+    drift_details: dict[str, Any] = {}
     if added_columns:
         drift_details["added_columns"] = added_columns
     if removed_columns:
@@ -998,7 +1075,43 @@ def save_table_list(
         (success, message)
     """
     try:
-        # 1. Convert schema (AFTER normalization, has df access)
+        # 1. Extract documentation context (Phase 1: ADR004)
+        # Skip extraction if doc_context already exists (idempotency safeguard)
+        if "doc_files" in metadata and metadata["doc_files"]:
+            if "doc_context" not in metadata:
+                # Extract doc_context from doc_files
+                import tempfile
+
+                from clinical_analytics.core.doc_parser import extract_context_from_docs
+
+                # Save doc files to temp directory for extraction
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    doc_paths = []
+
+                    for doc_file in metadata["doc_files"]:
+                        # Save doc file content to temp file
+                        doc_temp_path = temp_path / doc_file.name
+                        doc_temp_path.write_bytes(doc_file.content)
+                        doc_paths.append(doc_temp_path)
+
+                    # Extract text context from all documentation files
+                    doc_context = extract_context_from_docs(doc_paths)
+                    metadata["doc_context"] = doc_context
+                    logger.info(f"Extracted doc_context ({len(doc_context)} chars) from {len(doc_paths)} files")
+            else:
+                # doc_context already exists, skip extraction (idempotency)
+                logger.debug("doc_context already exists, skipping extraction")
+
+            # Always remove doc_files from metadata (not JSON serializable, only doc_context needed)
+            metadata.pop("doc_files", None)
+
+        # Remove external_pdf_bytes and external_pdf_filename from metadata (not JSON serializable)
+        # These are processed into doc_files above, so they're no longer needed
+        metadata.pop("external_pdf_bytes", None)
+        metadata.pop("external_pdf_filename", None)
+
+        # 2. Convert schema (AFTER normalization, has df access)
         if "variable_mapping" in metadata and tables:
             from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
 
@@ -1007,7 +1120,7 @@ def save_table_list(
                 tables[0]["data"],  # Access normalized DataFrame
             )
 
-        # 2. Compute dataset version and table fingerprints (MVP - Phase 1)
+        # 3. Compute dataset version and table fingerprints (MVP - Phase 1)
         from clinical_analytics.storage.versioning import (
             compute_dataset_version,
             compute_table_fingerprint,
@@ -1161,6 +1274,9 @@ def save_table_list(
         # Phase 4.2: Handle existing version history (overwrite case)
         existing_version_history = metadata.pop("_existing_version_history", None)
         if existing_version_history:
+            # Mark all existing versions as inactive before appending new version
+            for existing_version in existing_version_history:
+                existing_version["is_active"] = False
             # Overwrite: append to existing history
             version_history = existing_version_history + [version_entry]
             logger.info(f"Appending to existing version history (now {len(version_history)} versions)")
@@ -1204,6 +1320,54 @@ def save_table_list(
         else:
             # Initial upload: create new events list
             events = [event_entry]
+
+        # Phase 4: Generate upload-time example questions (ADR004 Phase 4)
+        # Skip if example_questions already exists (idempotency safeguard)
+        if "example_questions" not in metadata:
+            try:
+                from unittest.mock import MagicMock
+
+                from clinical_analytics.core.question_generator import generate_upload_questions
+                from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
+                # Create minimal mock semantic layer for question generation
+                # We only need get_column_alias_index() which returns column aliases
+                # For upload-time questions, we can use column names directly
+                mock_semantic_layer = MagicMock()
+                # Build alias index from unified_df columns
+                # Simple mapping: column name -> column name (no aliases at upload time)
+                alias_index = {col: col for col in unified_df.columns}
+                mock_semantic_layer.get_column_alias_index.return_value = alias_index
+
+                # Get InferredSchema object (re-infer if needed, or use existing)
+                inferred_schema_config = metadata.get("inferred_schema")
+                if inferred_schema_config:
+                    # We have config, but need InferredSchema object
+                    # Re-infer to get InferredSchema (lightweight - just schema detection)
+                    engine = SchemaInferenceEngine()
+                    inferred_schema_obj = engine.infer_schema(unified_df)
+                else:
+                    # No inferred_schema yet - infer it now
+                    engine = SchemaInferenceEngine()
+                    inferred_schema_obj = engine.infer_schema(unified_df)
+                    # Store config for later use
+                    metadata["inferred_schema"] = inferred_schema_obj.to_dataset_config()
+
+                # Generate questions
+                # Use doc_context from metadata (already extracted earlier in function)
+                example_questions = generate_upload_questions(
+                    semantic_layer=mock_semantic_layer,
+                    inferred_schema=inferred_schema_obj,
+                    doc_context=metadata.get("doc_context"),
+                )
+
+                # Store in metadata
+                metadata["example_questions"] = example_questions
+                logger.info(f"Generated {len(example_questions)} example questions for upload {upload_id}")
+            except Exception as e:
+                # Graceful degradation: log error but don't fail upload
+                logger.warning(f"Failed to generate upload questions for {upload_id}: {e}", exc_info=True)
+                # Don't set example_questions - will be empty list or None
 
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
@@ -1607,6 +1771,18 @@ class UserDatasetStorage:
                         # Get schema from first table DataFrame (before ensure_patient_id modifies it)
                         new_schema_dict = tables[0]["data"].schema
                         new_schema = {"columns": [(col, str(dtype)) for col, dtype in new_schema_dict.items()]}
+
+                        # Account for patient_id being added by ensure_patient_id
+                        # If old schema has patient_id but new doesn't, it will be added by ensure_patient_id
+                        # So don't count it as "removed" in the drift check
+                        old_columns = {col for col, _ in old_schema.get("columns", [])}
+                        new_columns = set(new_schema_dict.keys())
+
+                        if "patient_id" in old_columns and "patient_id" not in new_columns:
+                            # Add patient_id to new schema for comparison (it will be added by ensure_patient_id)
+                            new_schema["columns"].append(("patient_id", "Utf8"))
+                            logger.debug("Added patient_id to new schema (will be created by ensure_patient_id)")
+
                         logger.debug(f"New schema: {new_schema}")
 
                         # Phase 3: Classify and apply schema drift policy
@@ -1644,10 +1820,10 @@ class UserDatasetStorage:
                 different_name_duplicates = [d for d in duplicate_datasets if d.get("dataset_name") != dataset_name]
                 if different_name_duplicates:
                     # Warn about duplicate content (UX polish - clinicians may intentionally duplicate)
-                    dup_names = [d.get("dataset_name") for d in different_name_duplicates]
+                    dup_names = [d.get("dataset_name") for d in different_name_duplicates if d.get("dataset_name")]
                     duplicate_warning = (
                         f"⚠️ Warning: This file has the same content as existing dataset(s): "
-                        f"{', '.join(dup_names)}. "
+                        f"{', '.join(str(n) for n in dup_names if n)}. "
                         f"Upload will proceed, but you may want to use the existing dataset instead."
                     )
                     logger.info(f"Duplicate content detected: {dup_names}")
@@ -1980,10 +2156,12 @@ class UserDatasetStorage:
                 f"Returning first one, but metadata is corrupted."
             )
             # Return first one but log the corruption
-            return active_versions[0]
+            result = active_versions[0]
+            return dict(result) if isinstance(result, dict) else {}
         else:
             # Exactly one active version (expected case)
-            return active_versions[0]
+            result = active_versions[0]
+            return dict(result) if isinstance(result, dict) else {}
 
     def get_upload_metadata(self, upload_id: str) -> dict[str, Any] | None:
         """
@@ -2001,7 +2179,8 @@ class UserDatasetStorage:
             return None
 
         with open(metadata_path) as f:
-            return json.load(f)
+            result = json.load(f)
+            return dict(result) if isinstance(result, dict) else None
 
     def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | pd.DataFrame | None:
         """
@@ -2072,11 +2251,14 @@ class UserDatasetStorage:
         if lazy:
             # Phase 3: Prefer Parquet for lazy loading (columnar, compressed, lazy IO)
             # Check if Parquet paths available in metadata (Phase 3+)
-            parquet_paths = metadata.get("parquet_paths", {})
+            from clinical_analytics.core.type_guards import safe_get
+
+            parquet_paths = safe_get(metadata, "parquet_paths", {})
             if parquet_paths:
                 # Try to load from Parquet first (single-table upload = first table)
                 # For multi-table, this loads the unified cohort's first table
-                first_table_name = metadata.get("tables", [])[0] if metadata.get("tables") else None
+                tables = safe_get(metadata, "tables", [])
+                first_table_name = tables[0] if tables else None
                 if first_table_name and first_table_name in parquet_paths:
                     from pathlib import Path
 
@@ -2105,7 +2287,9 @@ class UserDatasetStorage:
             }
 
             # Check metadata for synthetic ID info to identify ID columns
-            synthetic_id_metadata = metadata.get("synthetic_id_metadata", {})
+            from clinical_analytics.core.type_guards import safe_get
+
+            synthetic_id_metadata = safe_get(metadata, "synthetic_id_metadata", {})
             if "patient_id" in synthetic_id_metadata:
                 # If patient_id was created synthetically, it's definitely an ID column
                 id_column_names.add("patient_id")
@@ -2251,6 +2435,120 @@ class UserDatasetStorage:
         except Exception as e:
             return False, f"Error updating metadata: {str(e)}"
 
+    def add_documentation_to_upload(
+        self,
+        upload_id: str,
+        pdf_path: Path | bytes,
+        re_infer_schema: bool = True,
+    ) -> tuple[bool, str]:
+        """
+        Add documentation to existing upload and optionally re-run schema inference.
+
+        Extracts doc_context from PDF and updates metadata. If re_infer_schema=True,
+        re-runs schema inference with doc_context to enhance variable_types.
+
+        Args:
+            upload_id: Existing upload ID
+            pdf_path: Path to PDF file or PDF bytes
+            re_infer_schema: If True, re-run schema inference with doc_context
+
+        Returns:
+            Tuple of (success, message)
+        """
+        metadata_path = self.metadata_dir / f"{upload_id}.json"
+
+        if not metadata_path.exists():
+            return False, f"Upload {upload_id} not found"
+
+        try:
+            # Load existing metadata
+            with open(metadata_path) as f:
+                metadata = json.load(f)
+
+            # Extract doc_context from PDF
+            import tempfile
+
+            from clinical_analytics.core.doc_parser import extract_context_from_docs
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+
+                # Handle both Path and bytes
+                if isinstance(pdf_path, bytes):
+                    # Save bytes to temp file
+                    pdf_temp_path = temp_path / "documentation.pdf"
+                    pdf_temp_path.write_bytes(pdf_path)
+                    doc_paths = [pdf_temp_path]
+                else:
+                    # Path provided
+                    if not pdf_path.exists():
+                        return False, f"PDF file not found: {pdf_path}"
+                    doc_paths = [pdf_path]
+
+                # Extract text context from PDF
+                doc_context = extract_context_from_docs(doc_paths)
+                if not doc_context:
+                    return False, "Failed to extract text from PDF (file may be empty or corrupted)"
+
+            # Update metadata with doc_context
+            metadata["doc_context"] = doc_context
+            logger.info(f"Extracted doc_context ({len(doc_context)} chars) from PDF")
+
+            # Optionally re-run schema inference with doc_context
+            if re_infer_schema:
+                # Load the dataset
+                tables = []
+                table_names = metadata.get("table_names", [])
+                for table_name in table_names:
+                    table_path = self.raw_dir / upload_id / f"{table_name}.parquet"
+                    if table_path.exists():
+                        df = pl.read_parquet(table_path)
+                        tables.append({"name": table_name, "data": df})
+
+                if tables:
+                    # Re-run schema inference with doc_context
+                    from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
+                    engine = SchemaInferenceEngine()
+                    # Use first table for schema inference (or combine if multi-table)
+                    main_df = tables[0]["data"]
+                    inferred_schema = engine.infer_schema(main_df, doc_context=doc_context)
+
+                    # Update variable_types with enhanced schema
+                    if inferred_schema.dictionary_metadata:
+                        # Convert DictionaryMetadata to variable_types format
+                        # This is a simplified version - full integration would use to_dataset_config()
+                        if "variable_types" not in metadata:
+                            metadata["variable_types"] = {}
+
+                        # Update variable_types with codebooks and descriptions
+                        for col_name, codebook in inferred_schema.dictionary_metadata.codebooks.items():
+                            if col_name in metadata["variable_types"]:
+                                if "codebook" not in metadata["variable_types"][col_name]:
+                                    metadata["variable_types"][col_name]["codebook"] = codebook
+
+                        for col_name, description in inferred_schema.dictionary_metadata.column_descriptions.items():
+                            if col_name in metadata["variable_types"]:
+                                if "description" not in metadata["variable_types"][col_name]:
+                                    metadata["variable_types"][col_name]["description"] = description
+
+                    logger.info("Re-ran schema inference with doc_context")
+
+            # Save updated metadata atomically
+            with file_lock(metadata_path, timeout=10.0) as f:
+                f.seek(0)
+                f.truncate()
+                json.dump(metadata, f, indent=2)
+                f.flush()
+
+            return True, f"Documentation added successfully ({len(doc_context)} chars extracted)"
+
+        except FileLockTimeoutError:
+            return False, f"Failed to acquire lock on {metadata_path} (timeout after 10s)"
+        except Exception as e:
+            logger.error(f"Error adding documentation to upload: {type(e).__name__}: {str(e)}")
+            return False, f"Error adding documentation: {str(e)}"
+
     def save_zip_upload(
         self,
         file_bytes: bytes,
@@ -2300,7 +2598,10 @@ class UserDatasetStorage:
             for dataset in existing_datasets:
                 if dataset.get("dataset_name") == dataset_name:
                     existing_upload_id = dataset.get("upload_id")
-                    existing_meta = self.get_upload_metadata(existing_upload_id)
+                    if existing_upload_id and isinstance(existing_upload_id, str):
+                        existing_meta = self.get_upload_metadata(existing_upload_id)
+                    else:
+                        existing_meta = None
                     if existing_meta:
                         existing_version_history = existing_meta.get("version_history", [])
                         # Phase 4.2: Legacy dataset migration during overwrite
@@ -2352,7 +2653,7 @@ class UserDatasetStorage:
                             }
 
                             existing_version_history = [synthetic_version_entry]
-                            logger.info("Migrated legacy dataset to version_history (1 version)")
+                            logger.info("Migrated legacy dataset to version_history (1 version)")  # noqa: F823
                     break
 
         # Generate upload ID (or use existing if overwriting)
@@ -2362,9 +2663,6 @@ class UserDatasetStorage:
             upload_id = self.generate_upload_id(original_filename)
 
         try:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.info(f"Starting ZIP upload processing: {original_filename}")
 
             # Normalize upload to table list (unified entry point)
@@ -2441,6 +2739,10 @@ class UserDatasetStorage:
                 }
             )
 
+            # Phase 1: Merge table_metadata (includes doc_files) into metadata
+            # This ensures doc_files are available for save_table_list() to extract doc_context
+            metadata.update(table_metadata)
+
             # Phase 9: Pass overwrite metadata to save_table_list
             if overwrite and existing_version_history is not None:
                 metadata["_existing_version_history"] = existing_version_history
@@ -2485,10 +2787,8 @@ class UserDatasetStorage:
             )
 
         except Exception as e:
-            import logging
             import traceback
 
-            logger = logging.getLogger(__name__)
             logger.error(f"Error processing ZIP upload: {type(e).__name__}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False, f"Error processing ZIP upload: {str(e)}", None

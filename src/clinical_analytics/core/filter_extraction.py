@@ -222,6 +222,9 @@ Return JSON with "filters" array. Use EXACT column names from the list above."""
         return [], 0.0, []
 
     # Extract filters from payload
+    if not isinstance(result.payload, dict):
+        logger.warning("filter_extraction_invalid_payload_type", query=query[:100])
+        return [], 0.0, []
     filters_data = result.payload.get("filters", [])
     if not isinstance(filters_data, list):
         logger.warning(

@@ -27,12 +27,12 @@ STOP_OLLAMA_ON_EXIT="${STOP_OLLAMA_ON_EXIT:-true}"
 cleanup() {
     echo ""
     echo -e "${YELLOW}🛑 Shutting down...${NC}"
-    
+
     # Stop Ollama if we started it AND flag is set
     if [ -n "$OLLAMA_PID" ] && [ "$STOP_OLLAMA_ON_EXIT" = "true" ]; then
         echo -e "${YELLOW}   Stopping Ollama service (PID: $OLLAMA_PID)...${NC}"
         kill "$OLLAMA_PID" 2>/dev/null || true
-        
+
         # Also stop any running models gracefully
         if command -v ollama >/dev/null 2>&1; then
             # Get list of running models and stop them
@@ -45,12 +45,12 @@ cleanup() {
                     fi
                 done
         fi
-        
+
         echo -e "${GREEN}✓ Ollama stopped${NC}"
     elif [ -n "$OLLAMA_PID" ]; then
         echo -e "${CYAN}ℹ Keeping Ollama service running (PID: $OLLAMA_PID)${NC}"
     fi
-    
+
     echo -e "${GREEN}✓ Cleanup complete${NC}"
     exit 0
 }
@@ -68,14 +68,14 @@ install_homebrew() {
     if command_exists brew; then
         return 0
     fi
-    
+
     echo -e "${YELLOW}📦 Homebrew not found. Installing Homebrew...${NC}"
     echo -e "${CYAN}   This may take a few minutes and will prompt for your password.${NC}"
     echo ""
-    
+
     # Install Homebrew
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    
+
     if [ $? -eq 0 ]; then
         # Add Homebrew to PATH for Apple Silicon Macs
         if [ -f /opt/homebrew/bin/brew ]; then
@@ -83,7 +83,7 @@ install_homebrew() {
         elif [ -f /usr/local/bin/brew ]; then
             eval "$(/usr/local/bin/brew shellenv)"
         fi
-        
+
         echo -e "${GREEN}✓ Homebrew installed successfully${NC}"
         return 0
     else
@@ -98,11 +98,11 @@ install_ollama() {
     if command_exists ollama; then
         return 0
     fi
-    
+
     echo -e "${YELLOW}🤖 Ollama not found. Installing via Homebrew...${NC}"
     echo -e "${CYAN}   This may take a few minutes.${NC}"
     echo ""
-    
+
     # Ensure Homebrew is available
     if ! command_exists brew; then
         install_homebrew
@@ -110,10 +110,10 @@ install_ollama() {
             return 1
         fi
     fi
-    
+
     # Install Ollama
     brew install ollama
-    
+
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Ollama installed successfully${NC}"
         return 0
@@ -132,13 +132,13 @@ start_ollama_service() {
         # Don't set OLLAMA_PID - we didn't start it
         return 0
     fi
-    
+
     echo -e "${YELLOW}🚀 Starting Ollama service...${NC}"
-    
+
     # Start Ollama in background (remove nohup to allow cleanup)
     ollama serve > /tmp/ollama.log 2>&1 &
     OLLAMA_PID=$!
-    
+
     # Wait for service to start (max 10 seconds)
     for i in {1..10}; do
         sleep 1
@@ -147,7 +147,7 @@ start_ollama_service() {
             return 0
         fi
     done
-    
+
     echo -e "${YELLOW}⚠ Ollama service is starting in the background${NC}"
     echo -e "${CYAN}   It may take a moment to be ready.${NC}"
     return 0
@@ -157,19 +157,19 @@ start_ollama_service() {
 ensure_ollama_model() {
     # Check if any models are available
     MODELS=$(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('models', [])))" 2>/dev/null || echo "0")
-    
+
     if [ "$MODELS" -gt 0 ]; then
         return 0
     fi
-    
+
     echo -e "${YELLOW}📥 No Ollama models found. Downloading default model (llama3.2:3b)...${NC}"
     echo -e "${CYAN}   This is a one-time download (~2GB) and may take several minutes.${NC}"
     echo -e "${CYAN}   You can continue using the app - queries will use pattern matching until the model is ready.${NC}"
     echo ""
-    
+
     # Download model in background
     ollama pull llama3.2:3b > /tmp/ollama_pull.log 2>&1 &
-    
+
     echo -e "${GREEN}✓ Model download started in background${NC}"
     return 0
 }
@@ -281,14 +281,14 @@ fi
 # Start Ollama service if available
 if [ "$OLLAMA_AVAILABLE" = true ]; then
     start_ollama_service
-    
+
     # Wait a moment for service to be ready
     sleep 2
-    
+
     # Check if service is running
     if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Ollama service running${NC}"
-        
+
         # Check for models and download if needed
         MODELS=$(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); print(len(data.get('models', [])))" 2>/dev/null || echo "0")
         if [ "$MODELS" -gt 0 ]; then

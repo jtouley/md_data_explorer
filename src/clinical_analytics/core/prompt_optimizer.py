@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 logger = structlog.get_logger(__name__)
 
@@ -46,11 +46,14 @@ class LearningConfig:
             project_root = current_file.parent.parent.parent.parent
             config_path = project_root / "config" / "prompt_learning.yaml"
 
+        # Ensure config_path is a Path object
+        config_path = Path(config_path) if not isinstance(config_path, Path) else config_path
+
         if not config_path.exists():
             logger.warning("config_not_found", path=str(config_path))
             return cls()
 
-        with open(config_path) as f:
+        with open(str(config_path)) as f:
             data = yaml.safe_load(f)
 
         return cls(
@@ -150,7 +153,8 @@ class PromptOptimizer:
         }
 
         try:
-            return eval(condition, {"__builtins__": {}}, ctx)
+            result = eval(condition, {"__builtins__": {}}, ctx)
+            return bool(result)
         except Exception as e:
             logger.warning("condition_evaluation_failed", condition=condition, error=str(e))
             return False
@@ -194,7 +198,7 @@ class PromptOptimizer:
 
         # Add pattern-specific replacements
         if pattern_type == "invalid_intent":
-            invalid_intents = {f.get("actual_intent") for f in failures if f.get("actual_intent") is not None}
+            invalid_intents = {str(f.get("actual_intent")) for f in failures if f.get("actual_intent") is not None}
             replacements["invalid_intent"] = ", ".join(invalid_intents)
 
         elif pattern_type == "intent_mismatch":

@@ -165,7 +165,7 @@ Currently, prompt improvements are **not automatically applied**. To integrate:
 ```python
 def _build_llm_prompt(self, query: str, ...):
     system_prompt = """You are a medical data query parser.
-    
+
     Return JSON matching the QueryPlan schema...
     """
 ```
@@ -175,11 +175,11 @@ def _build_llm_prompt(self, query: str, ...):
 ```python
 def _build_llm_prompt(self, query: str, ...):
     system_prompt = """You are a medical data query parser.
-    
+
     Return JSON matching the QueryPlan schema...
-    
+
     === AUTO-GENERATED FIXES (Learning Iteration 1) ===
-    
+
     **VALIDATION RULE (CRITICAL):**
     You MUST use EXACTLY one of these intents: COUNT, DESCRIBE, COMPARE_GROUPS...
     """
@@ -215,7 +215,7 @@ def test_optimizer_detects_missing_metric_pattern(sample_learning_config):
     ]
     optimizer = PromptOptimizer(config=sample_learning_config)
     patterns = optimizer.analyze_failures(failures)
-    
+
     assert any(p.pattern_type == "missing_metric" for p in patterns)
 ```
 
@@ -333,8 +333,3 @@ Planned improvements:
 - **[Prompt Optimizer Tests](../../tests/core/test_prompt_optimizer.py)** - Test coverage
 - **[Golden Questions](../../tests/eval/golden_questions.yaml)** - Regression test suite
 - **[Eval Harness](../eval_harness.py)** - Evaluation framework
-
-
-
-
-

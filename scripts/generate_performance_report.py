@@ -2,7 +2,6 @@
 """CLI tool for generating performance reports and managing baselines."""
 
 import argparse
-import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -16,7 +15,7 @@ from performance.storage import load_baseline, load_performance_data, save_basel
 
 # Import categorization script
 sys.path.insert(0, str(project_root))
-from scripts.categorize_slow_tests import categorize_slow_tests, generate_report as generate_categorization_report
+from scripts.categorize_slow_tests import generate_report as generate_categorization_report
 
 
 def get_default_paths() -> tuple[Path, Path]:
@@ -28,7 +27,9 @@ def get_default_paths() -> tuple[Path, Path]:
     return data_file, baseline_file
 
 
-def create_baseline(data_file: Path, baseline_file: Path, individual_threshold: float = 20.0, suite_threshold: float = 15.0) -> None:
+def create_baseline(
+    data_file: Path, baseline_file: Path, individual_threshold: float = 20.0, suite_threshold: float = 15.0
+) -> None:
     """
     Create baseline from performance data.
 
@@ -173,7 +174,11 @@ def update_docs(data_file: Path, baseline_file: Path | None = None) -> None:
             # Find next section
             next_section_idx = content.find(end_marker, start_idx + len(start_marker))
             if next_section_idx != -1:
-                content = content[:start_idx] + f"## Automated Performance Tracking\n\n{report}\n\n" + content[next_section_idx:]
+                content = (
+                    content[:start_idx]
+                    + f"## Automated Performance Tracking\n\n{report}\n\n"
+                    + content[next_section_idx:]
+                )
             else:
                 content = content[:start_idx] + f"## Automated Performance Tracking\n\n{report}\n"
     else:
@@ -222,4 +227,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -1,0 +1,73 @@
+# Pre-commit hooks for automatic code quality enforcement
+# Install: pre-commit install
+# Run manually: pre-commit run --all-files
+#
+# These hooks run automatically on git commit and cannot be bypassed.
+# Agents MUST ensure code passes these checks before committing.
+
+repos:
+  # Ruff for formatting and linting (replaces black, flake8, isort, etc.)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.15
+    hooks:
+      # Format code (auto-fix)
+      - id: ruff-format
+        name: ruff format
+        description: Auto-format code with ruff
+        types: [python]
+
+      # Lint code (auto-fix)
+      - id: ruff
+        name: ruff check
+        description: Lint code with ruff (auto-fix)
+        args: [--fix]
+        types: [python]
+
+  # MyPy for type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.0
+    hooks:
+      - id: mypy
+        name: mypy type check
+        description: Type check with mypy
+        args: [--ignore-missing-imports, --no-error-summary, --follow-imports=silent]
+        types: [python]
+        exclude: ^(tests/|scripts/|test_.*\.py$)  # Skip tests and scripts
+        pass_filenames: true  # Only check staged files, not entire codebase
+        require_serial: false  # Allow parallel execution
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        description: Remove trailing whitespace
+      - id: end-of-file-fixer
+        name: Fix end of files
+        description: Ensure files end with newline
+      - id: check-yaml
+        name: Check YAML syntax
+        description: Validate YAML files
+      - id: check-json
+        name: Check JSON syntax
+        description: Validate JSON files
+      - id: check-toml
+        name: Check TOML syntax
+        description: Validate TOML files
+      - id: check-added-large-files
+        name: Check for large files
+        description: Prevent accidentally committing large files
+        args: [--maxkb=1000]
+
+  # Custom hook: Test fixture enforcement
+  # MANDATORY: This hook MUST block commits. Never make it warn-only.
+  - repo: local
+    hooks:
+      - id: check-test-fixtures
+        name: Check for duplicate test setup code
+        entry: bash -c 'uv run python scripts/check_test_fixtures.py "$@"' --
+        language: system
+        files: ^tests/.*\.py$
+        pass_filenames: true
+        always_run: false

@@ -4,6 +4,8 @@ Variable Mapping Wizard Component
 Interactive UI component for mapping user columns to UnifiedCohort schema.
 """
 
+from typing import Any
+
 import pandas as pd
 import streamlit as st
 
@@ -58,7 +60,7 @@ class VariableMappingWizard:
     @staticmethod
     def render_outcome_selector(
         columns: list[str],
-        variable_info: dict[str, dict],
+        variable_info: dict[str, dict[str, Any]],
         suggested_column: str | None = None,
         key_prefix: str = "upload",
     ) -> str | None:
@@ -121,10 +123,10 @@ class VariableMappingWizard:
     @staticmethod
     def render_time_variable_selector(
         columns: list[str],
-        variable_info: dict[str, dict],
+        variable_info: dict[str, dict[str, Any]],
         suggested_column: str | None = None,
         key_prefix: str = "upload",
-    ) -> dict[str, any] | None:
+    ) -> dict[str, Any] | None:
         """
         Render time variable selector (optional).
 
@@ -180,7 +182,7 @@ class VariableMappingWizard:
     @staticmethod
     def render_variable_roles(
         columns: list[str],
-        variable_info: dict[str, dict],
+        variable_info: dict[str, dict[str, Any]],
         excluded_columns: list[str],
         key_prefix: str = "upload",
     ) -> dict[str, list[str]]:
@@ -210,7 +212,7 @@ class VariableMappingWizard:
 
         # Show variable type summary
         with st.expander("📊 Variable Type Summary"):
-            type_counts = {}
+            type_counts: dict[str, int] = {}
             for col in available:
                 var_type = variable_info.get(col, {}).get("type", "unknown")
                 type_counts[var_type] = type_counts.get(var_type, 0) + 1
@@ -245,7 +247,7 @@ class VariableMappingWizard:
         variable_info: dict[str, dict],
         suggestions: dict[str, str | None],
         key_prefix: str = "upload",
-    ) -> dict[str, any] | None:
+    ) -> dict[str, Any] | None:
         """
         Render complete mapping wizard.
 

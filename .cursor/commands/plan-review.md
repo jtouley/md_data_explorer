@@ -76,7 +76,7 @@ Output requirements:
    • Violations of stated architecture or standards
    • Unbounded scope or unclear exit criteria
    • Missing dependencies or unclear prerequisites
-   
+
    If there are no blockers, state that clearly.
 
 4. Non-Blocking Feedback (Concise)
@@ -84,7 +84,7 @@ Output requirements:
    • Phase boundaries, naming, validation points, or rollback considerations
    • Observability, testing, or migration safety gaps
    • Missing quality gates or success criteria
-   
+
    Do not restate the plan unless highlighting a concrete issue.
 
 5. Spec-Driven Execution Check
@@ -94,7 +94,7 @@ Output requirements:
    • Can execution proceed incrementally without hidden coupling?
    • Are test requirements specified (TDD workflow)?
    • Are Makefile commands identified for each phase?
-   
+
    Flag any ambiguity that would force ad-hoc decisions during implementation.
 
 6. Update Instructions (If Needed)
@@ -295,4 +295,3 @@ User: /plan-review config_migration_to_yaml
 Agent: [Searches for matching plan in .cursor/plans/, loads plan, performs review, outputs summary in chat, saves detailed review]
 
 End of command.
-

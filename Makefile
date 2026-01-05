@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest checkpoint-create checkpoint-resume
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
 
 # Default target
 .DEFAULT_GOAL := help
@@ -53,6 +53,14 @@ install-dev: ## Install all dependencies including dev tools
 	@echo "  • Dev tools: ruff, mypy, pytest, pytest-cov (from optional-dependencies)"
 	@echo "  • Docs tools: mkdocs and related packages (from dependency-groups)"
 	$(UV) sync --extra dev --group dev
+
+install-pre-commit: ensure-venv ## Install pre-commit hooks (run after install-dev)
+	@echo "$(GREEN)Installing pre-commit hooks...$(NC)"
+	$(PYTHON_RUN) -m pip install pre-commit
+	$(PYTHON_RUN) -m pre_commit install
+	@echo "$(GREEN)✓ Pre-commit hooks installed$(NC)"
+	@echo "$(YELLOW)Note: Hooks will run automatically on git commit$(NC)"
+	@echo "$(YELLOW)Run 'pre-commit run --all-files' to check all files now$(NC)"
 
 test: ensure-venv ## Run all tests in parallel (default)
 	@echo "$(GREEN)Running all tests in parallel...$(NC)"
@@ -205,9 +213,14 @@ format-check: ## Check code formatting without making changes
 	@echo "$(GREEN)Checking code formatting...$(NC)"
 	$(RUFF) format --check $(SRC_DIR) $(TEST_DIR)
 
-type-check: ensure-venv ## Run mypy type checker
+pre-commit-check: ensure-venv ## Run pre-commit checks (test fixture enforcement)
+	@echo "$(GREEN)Running pre-commit checks...$(NC)"
+	@$(PYTHON_RUN) scripts/check_test_fixtures.py $$(find $(TEST_DIR) -name "test_*.py" -type f) || (echo "$(RED)❌ Pre-commit checks failed$(NC)" && exit 1)
+	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"
+
+type-check: ensure-venv ## Run mypy type checker (matches pre-commit config)
 	@echo "$(GREEN)Running mypy type checker...$(NC)"
-	$(MYPY) $(SRC_DIR)
+	$(MYPY) --ignore-missing-imports $(SRC_DIR)
 
 type-check-strict: ## Run mypy in strict mode
 	@echo "$(GREEN)Running mypy in strict mode...$(NC)"
@@ -347,6 +360,11 @@ git-log-latest: ## Show latest commit history export
 		head -50 "$$LATEST"; \
 	fi
 
+git-log-recent: ## Show last N commits (default: 10, override with N=20)
+	@N=$${N:-10}; \
+	echo "$(GREEN)Last $${N} commits:$(NC)"; \
+	git log --oneline -$${N}
+
 checkpoint-create: ## Create lightweight checkpoint template (requires TASK_ID="task_name")
 	@if [ -z "$(TASK_ID)" ]; then \
 		echo "$(RED)❌ Error: TASK_ID required. Usage: make checkpoint-create TASK_ID=\"task_name\"$(NC)"; \
@@ -380,4 +398,3 @@ checkpoint-resume: ## Show checkpoint for resuming work (requires TASK_ID)
 		exit 1; \
 	fi; \
 	cat "$$FILE"
-

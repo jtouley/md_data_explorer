@@ -57,10 +57,10 @@ def load_golden_questions(yaml_path: Path | str) -> list[dict[str, Any]]:
     if not data or "questions" not in data:
         raise ValueError(f"YAML must have 'questions' key: {yaml_path}")
 
-    questions = data["questions"]
+    questions = data.get("questions", []) if isinstance(data, dict) else []
     logger.info(f"Loaded {len(questions)} golden questions from {yaml_path}")
 
-    return questions
+    return list(questions) if isinstance(questions, list) else []
 
 
 class EvalHarness:

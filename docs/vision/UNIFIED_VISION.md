@@ -1,7 +1,7 @@
 # Unified Vision: Semantic Natural Language Query Platform
 
-**Version:** 2.0  
-**Date:** 2025-12-24  
+**Version:** 2.0
+**Date:** 2025-12-24
 **Status:** 🎯 Strategic Direction
 
 ---
@@ -144,14 +144,14 @@ class QuestionEngine:
     ) -> AnalysisIntent:
         """
         Parse free-form natural language using semantic understanding.
-        
+
         Uses semantic layer metadata + embeddings for intent classification.
         """
         # 1. Semantic embeddings for intent matching
         from sentence_transformers import SentenceTransformer
-        
+
         model = SentenceTransformer('all-mpnet-base-v2')
-        
+
         # Canonical intents (from research/NL_QUERY_BEST_PRACTICES.md)
         canonical_intents = {
             "compare_groups": "Compare outcomes between patient groups",
@@ -160,15 +160,15 @@ class QuestionEngine:
             "survival": "Analyze time until an event occurs",
             "correlate": "Explore relationships between variables"
         }
-        
+
         # Embed user query
         query_embedding = model.encode(query)
-        
+
         # Embed canonical intents
         intent_embeddings = {
             k: model.encode(v) for k, v in canonical_intents.items()
         }
-        
+
         # Find most similar intent
         from sklearn.metrics.pairwise import cosine_similarity
         similarities = {
@@ -178,22 +178,22 @@ class QuestionEngine:
             )[0][0]
             for intent, emb in intent_embeddings.items()
         }
-        
+
         best_intent = max(similarities, key=similarities.get)
         confidence = similarities[best_intent]
-        
+
         # 2. Use semantic layer to extract entities
         entities = QuestionEngine.extract_entities(
-            query, 
+            query,
             semantic_layer.config  # Your semantic layer config!
         )
-        
+
         return AnalysisIntent(
             intent=best_intent,
             confidence=confidence,
             entities=entities
         )
-    
+
     @staticmethod
     def extract_entities(
         query: str,
@@ -201,7 +201,7 @@ class QuestionEngine:
     ) -> dict:
         """
         Extract relevant variables from query using semantic layer metadata.
-        
+
         This is where RAG pattern comes in - we use semantic layer
         as the knowledge base for entity extraction.
         """
@@ -209,10 +209,10 @@ class QuestionEngine:
         available_outcomes = list(semantic_config.get('outcomes', {}).keys())
         available_variables = list(semantic_config.get('column_mapping', {}).values())
         available_metrics = list(semantic_config.get('metrics', {}).keys())
-        
+
         # Use embeddings to match query terms to semantic layer entities
         # (Implementation details in research/NL_QUERY_BEST_PRACTICES.md)
-        
+
         return {
             'outcome': matched_outcome,
             'predictors': matched_predictors,
@@ -226,32 +226,32 @@ class QuestionEngine:
 # In Analyze.py page
 def main():
     st.title("🔬 Analyze Your Data")
-    
+
     # Option 1: Free-form natural language (primary)
     nl_query = st.text_input(
         "💬 Ask your research question:",
         placeholder="e.g., 'Do older patients have worse outcomes?'"
     )
-    
+
     # Option 2: Structured questions (fallback)
     use_structured = st.checkbox("Or use guided questions instead")
-    
+
     if nl_query and not use_structured:
         # Use semantic understanding
         intent = QuestionEngine.parse_natural_language_query(
             nl_query,
             semantic_layer=dataset.semantic  # Your semantic layer!
         )
-        
+
         # Show what we understood
         st.info(f"✓ I understand: {intent.intent} (confidence: {intent.confidence:.0%})")
-        
+
         # Prompt for missing info if needed
         if not intent.is_complete():
             missing = intent.get_missing_info()
             st.warning(f"I need to know: {', '.join(missing)}")
             # Show structured prompts for missing info
-    
+
     elif use_structured:
         # Fall back to current structured approach
         intent_signal = QuestionEngine.ask_initial_question(cohort)
@@ -272,7 +272,7 @@ class QuestionEngine:
     ) -> AnalysisContext:
         """
         Use semantic layer metadata for RAG-based query understanding.
-        
+
         This follows the Looker pattern from research/NL_QUERY_BEST_PRACTICES.md:
         - Semantic layer provides metadata (outcomes, variables, relationships)
         - RAG retrieves relevant context
@@ -280,7 +280,7 @@ class QuestionEngine:
         """
         # 1. Get semantic layer metadata
         config = semantic_layer.config
-        
+
         # 2. Build context from semantic layer
         semantic_context = {
             'outcomes': list(config.get('outcomes', {}).keys()),
@@ -288,28 +288,28 @@ class QuestionEngine:
             'metrics': list(config.get('metrics', {}).keys()),
             'dimensions': list(config.get('dimensions', {}).keys())
         }
-        
+
         # 3. Use semantic matching to find relevant variables
         # (from research/NL_QUERY_BEST_PRACTICES.md embedding approach)
         relevant_variables = QuestionEngine.match_variables(
-            query, 
+            query,
             semantic_context
         )
-        
+
         # 4. Infer intent using semantic understanding
         intent = QuestionEngine.infer_intent_semantic(
             query,
             relevant_variables,
             semantic_context
         )
-        
+
         # 5. Build AnalysisContext from semantic understanding
         context = AnalysisContext()
         context.inferred_intent = intent
         context.primary_variable = relevant_variables.get('outcome')
         context.predictor_variables = relevant_variables.get('predictors', [])
         # ... etc
-        
+
         return context
 ```
 
@@ -499,25 +499,25 @@ mimic4_demo:
   display_name: "MIMIC-IV Demo (100 patients)"
   source: "PhysioNet"
   status: "available"
-  
+
   init_params:
     source_path: "data/raw/mimic4_demo/hosp/"
-  
+
   # Semantic layer automatically understands:
   outcomes:
     mortality:
       source_column: "deathtime"  # From admissions table
       type: "binary"
-  
+
   metrics:
     admission_count:
       expression: "COUNT(*)"
       label: "Number of Admissions"
-    
+
     avg_los:
       expression: "AVG(los)"
       label: "Average Length of Stay"
-  
+
   dimensions:
     diagnosis:
       label: "Primary Diagnosis"
@@ -613,4 +613,3 @@ This unified vision consolidates:
 ---
 
 **This unified vision brings together all our architectural investments (config-driven design, semantic layer, QuestionEngine) with modern NL query best practices to create a truly intuitive clinical analytics platform.**
-

@@ -23,4 +23,3 @@ module_levels:
 reduce_noise:
   streamlit: "WARNING"
   urllib3: "WARNING"
-
