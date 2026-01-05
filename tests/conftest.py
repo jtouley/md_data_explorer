@@ -1046,7 +1046,23 @@ def make_cohort_with_categorical():
         treatment: list[str] | None = None,
         status: list[str] | None = None,
         ages: list[int] | None = None,
+        n_patients: int | None = None,
     ) -> pl.DataFrame:
+        # If n_patients provided, generate defaults
+        if n_patients is not None:
+            if patient_ids is None:
+                patient_ids = [f"P{i:03d}" for i in range(1, n_patients + 1)]
+            elif len(patient_ids) != n_patients:
+                raise ValueError(f"patient_ids length ({len(patient_ids)}) != n_patients ({n_patients})")
+
+            if treatment is None:
+                treatment = ["control"] * n_patients
+            if status is None:
+                status = ["active"] * n_patients
+            if ages is None:
+                ages = [30 + i for i in range(n_patients)]
+
+        # Fallback for when n_patients not provided (backward compatibility)
         if patient_ids is None:
             patient_ids = [f"P{i:03d}" for i in range(1, 6)]
 
@@ -1070,6 +1086,19 @@ def make_cohort_with_categorical():
         )
 
     return _make
+
+
+def test_make_cohort_with_categorical_n_patients_generates_defaults(make_cohort_with_categorical):
+    """Test that n_patients parameter generates default patient IDs."""
+    # Arrange
+    n_patients = 5
+
+    # Act
+    cohort = make_cohort_with_categorical(n_patients=n_patients)
+
+    # Assert
+    assert cohort.height == 5
+    assert cohort["patient_id"].to_list() == ["P001", "P002", "P003", "P004", "P005"]
 
 
 @pytest.fixture

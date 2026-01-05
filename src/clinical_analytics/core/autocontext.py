@@ -9,6 +9,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import tiktoken
+
 
 @dataclass
 class ColumnContext:
@@ -172,15 +174,23 @@ def _extract_glossary_from_docs(doc_context: str | None, max_terms: int = 50) ->
 
 def _estimate_tokens(text: str) -> int:
     """
-    Estimate token count from text (approximation: 1 token ≈ 4 characters).
+    Estimate token count using tiktoken (accurate for OpenAI models).
+
+    Uses cl100k_base encoding (standard for GPT-4).
+    Falls back to character approximation if encoding fails.
 
     Args:
         text: Text to estimate
 
     Returns:
-        Estimated token count
+        Token count
     """
-    return len(text) // 4
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(text))
+    except Exception:
+        # Fallback to approximation if encoding fails
+        return len(text) // 4
 
 
 def _build_column_contexts(
