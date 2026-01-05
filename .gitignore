@@ -57,6 +57,10 @@ tests/.performance_data_worker_*.json
 tests/.test_cache/
 cover/
 
+# SQLite database files (runtime-generated)
+*.db
+data/*.db
+
 # Translations
 *.mo
 *.pot
