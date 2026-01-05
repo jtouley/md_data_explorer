@@ -2241,6 +2241,7 @@ def main():
                     # Phase 3.1: Add assistant message to chat if query came from chat input
                     # Check if last chat message is user message (indicates chat input was used)
                     chat = st.session_state.get("chat", [])
+                    added_assistant_msg = False
                     if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
                         # Query came from chat input - add assistant message with actual answer content
                         # Get formatted result headline/summary from ResultCache (not legacy session_state key)
@@ -2262,11 +2263,16 @@ def main():
                             "created_at": time.time(),
                         }
                         st.session_state["chat"].append(assistant_msg)
+                        added_assistant_msg = True
 
                     # Clear intent_signal after successful execution
                     # This allows chat input to be available again for follow-up questions
                     st.session_state["intent_signal"] = None
                     logger.debug("intent_signal_cleared_after_execution", success=True)
+
+                    # Rerun to display the assistant message in chat (after clearing intent_signal)
+                    if added_assistant_msg:
+                        st.rerun()
 
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     # Use stable hash for button key (same normalization as cache key)

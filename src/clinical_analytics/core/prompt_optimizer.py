@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 logger = structlog.get_logger(__name__)
 
@@ -46,11 +46,14 @@ class LearningConfig:
             project_root = current_file.parent.parent.parent.parent
             config_path = project_root / "config" / "prompt_learning.yaml"
 
+        # Ensure config_path is a Path object
+        config_path = Path(config_path) if not isinstance(config_path, Path) else config_path
+
         if not config_path.exists():
             logger.warning("config_not_found", path=str(config_path))
             return cls()
 
-        with open(config_path) as f:
+        with open(str(config_path)) as f:
             data = yaml.safe_load(f)
 
         return cls(

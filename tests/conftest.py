@@ -827,7 +827,6 @@ def mock_cohort():
     - Predictors: age, score, group
     """
     import pandas as pd
-
     from clinical_analytics.core.schema import UnifiedCohort
 
     return pd.DataFrame(
@@ -1050,12 +1049,16 @@ def make_cohort_with_categorical():
     ) -> pl.DataFrame:
         if patient_ids is None:
             patient_ids = [f"P{i:03d}" for i in range(1, 6)]
+
+        # Ensure all arrays have same length as patient_ids
+        n = len(patient_ids)
+
         if treatment is None:
-            treatment = ["1: Yes", "2: No", "1: Yes", "1: Yes", "2: No"]
+            treatment = ["1: Yes", "2: No"] * (n // 2) + ["1: Yes"] * (n % 2)
         if status is None:
-            status = ["1: Active", "2: Inactive", "1: Active", "1: Active", "2: Inactive"]
+            status = ["1: Active", "2: Inactive"] * (n // 2) + ["1: Active"] * (n % 2)
         if ages is None:
-            ages = [45, 52, 38, 61, 49]
+            ages = [45 + i * 5 for i in range(n)]
 
         return pl.DataFrame(
             {
@@ -1696,33 +1699,70 @@ def dummy_table():
 
 
 @pytest.fixture
-def patient_value_df():
+def make_patient_value_df():
+    """
+    Factory fixture for creating patient-value DataFrames.
+
+    DRY principle: Single factory for all patient-value DataFrame patterns.
+    Eliminates duplicate DataFrame creation code.
+
+    Usage:
+        df = make_patient_value_df()  # Default: with some nulls
+        df = make_patient_value_df(pattern="empty")  # Empty
+        df = make_patient_value_df(pattern="all_nulls")  # All nulls
+    """
+
+    def _make(pattern: str = "default") -> pl.DataFrame:
+        if pattern == "default":
+            return pl.DataFrame(
+                {
+                    "patient_id": ["P1", "P2", None, "P3", None],
+                    "value": [100, 200, 300, 400, 500],
+                }
+            )
+        elif pattern == "empty":
+            return pl.DataFrame(
+                {
+                    "patient_id": pl.Series([], dtype=pl.Utf8),
+                    "value": pl.Series([], dtype=pl.Int64),
+                }
+            )
+        elif pattern == "all_nulls":
+            return pl.DataFrame({"patient_id": [None, None, None], "value": [100, 200, 300]})
+        else:
+            raise ValueError(f"Unknown pattern: {pattern}")
+
+    return _make
+
+
+@pytest.fixture
+def patient_value_df(make_patient_value_df):
     """
     Create patient-value DataFrame with nulls for testing.
 
-    DRY principle: Extract common patient-value DataFrame pattern with nulls.
+    DRY principle: Uses factory fixture to avoid duplication.
     """
-    return pl.DataFrame({"patient_id": ["P1", "P2", None, "P3", None], "value": [100, 200, 300, 400, 500]})
+    return make_patient_value_df("default")
 
 
 @pytest.fixture
-def empty_patient_df():
+def empty_patient_df(make_patient_value_df):
     """
     Create empty patient-value DataFrame for testing.
 
-    DRY principle: Extract common empty DataFrame pattern.
+    DRY principle: Uses factory fixture to avoid duplication.
     """
-    return pl.DataFrame({"patient_id": pl.Series([], dtype=pl.Utf8), "value": pl.Series([], dtype=pl.Int64)})
+    return make_patient_value_df("empty")
 
 
 @pytest.fixture
-def all_nulls_patient_df():
+def all_nulls_patient_df(make_patient_value_df):
     """
     Create patient-value DataFrame with all null patient_ids.
 
-    DRY principle: Extract common all-nulls pattern for testing.
+    DRY principle: Uses factory fixture to avoid duplication.
     """
-    return pl.DataFrame({"patient_id": [None, None, None], "value": [100, 200, 300]})
+    return make_patient_value_df("all_nulls")
 
 
 # ============================================================================

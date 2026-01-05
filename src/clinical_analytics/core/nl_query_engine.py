@@ -306,6 +306,7 @@ class NLQueryEngine:
 
         # Track parsing attempts for diagnostics
         parsing_attempts = []
+        matched_vars = []  # Initialize to avoid UnboundLocalError in logging
 
         # Tier 1: Pattern matching
         pattern_intent = self._pattern_match(query)
@@ -406,6 +407,70 @@ class NLQueryEngine:
                     **log_context,
                 )
 
+        # Detect if this is a refinement query
+        refinement_phrases = ["remove", "exclude", "without", "get rid of", "only", "also", "actually"]
+        query_lower = query.lower()
+        is_likely_refinement = any(phrase in query_lower for phrase in refinement_phrases)
+
+        # Refinement handling: If LLM returns a stub with low confidence and we have history,
+        # try to inherit intent from previous query
+        if (
+            intent
+            and intent.confidence < 0.5
+            and intent.intent_type == "DESCRIBE"
+            and conversation_history
+            and len(conversation_history) > 0
+            and is_likely_refinement
+        ):
+            # Inherit intent and structure from previous query
+            previous = conversation_history[-1]
+            previous_intent = previous.get("intent", "DESCRIBE")
+
+            if previous_intent in ["COUNT", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
+                intent.intent_type = previous_intent
+                intent.confidence = max(intent.confidence, 0.6)  # Boost confidence for refinements
+
+                # Inherit other relevant fields from previous query
+                if "group_by" in previous and not intent.grouping_variable:
+                    intent.grouping_variable = previous.get("group_by")
+                if "metric" in previous and not intent.primary_variable:
+                    intent.primary_variable = previous.get("metric")
+
+                logger.info(
+                    "query_parse_refinement_intent_inherited",
+                    previous_intent=previous_intent,
+                    **log_context,
+                )
+
+        # ADDITIONAL REFINEMENT CHECK: If LLM returned valid response but mismatched
+        # grouping_variable from previous query, correct it
+        if (
+            intent
+            and is_likely_refinement
+            and conversation_history
+            and len(conversation_history) > 0
+            and intent.intent_type in ["COUNT", "COMPARE_GROUPS"]
+        ):
+            previous = conversation_history[-1]
+            previous_group_by = previous.get("group_by")
+            previous_intent = previous.get("intent")
+
+            # If previous query had a group_by and current one has a different one,
+            # prefer the previous one (user is likely refining the same grouping)
+            if (
+                previous_group_by
+                and intent.grouping_variable
+                and intent.grouping_variable != previous_group_by
+                and previous_intent == intent.intent_type
+            ):
+                logger.info(
+                    "query_parse_refinement_correcting_mismatched_grouping",
+                    previous_group_by=previous_group_by,
+                    llm_group_by=intent.grouping_variable,
+                    **log_context,
+                )
+                intent.grouping_variable = previous_group_by
+
         # If we still don't have a good intent, set failure diagnostics
         if not intent or (intent.confidence < 0.3 and intent.intent_type == "DESCRIBE"):
             if intent is None:
@@ -430,9 +495,18 @@ class NLQueryEngine:
             )
 
         # Post-process: Extract and assign variables if missing (runs in src, not UI)
+        # Skip variable extraction for refinement queries that already inherited variables
+        is_refinement_with_inherited_vars = (
+            intent
+            and intent.confidence >= 0.6  # Refinement-inherited queries have >= 0.6 confidence
+            and conversation_history
+            and len(conversation_history) > 0
+        )
+
         if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
             # Extract variables from query if not already set
-            if not intent.primary_variable or not intent.grouping_variable:
+            # Skip for refinement queries that have inherited variables
+            if (not intent.primary_variable or not intent.grouping_variable) and not is_refinement_with_inherited_vars:
                 # For COMPARE_GROUPS: prioritize pattern-based extraction for "which X had lowest Y"
                 if intent.intent_type == "COMPARE_GROUPS":
                     # First, try to extract directly from "which X had lowest Y" pattern
@@ -602,7 +676,8 @@ class NLQueryEngine:
 
             # Extract grouping variable from compound queries (e.g., "which X was most Y")
             # This handles queries like "how many patients were on statins and which statin was most prescribed?"
-            if intent.intent_type == "COUNT" and not intent.grouping_variable:
+            # Skip for refinement queries that have inherited grouping from conversation history
+            if intent.intent_type == "COUNT" and not intent.grouping_variable and not is_refinement_with_inherited_vars:
                 grouping_var = self._extract_grouping_from_compound_query(query)
                 if grouping_var:
                     intent.grouping_variable = grouping_var
