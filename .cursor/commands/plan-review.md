@@ -42,6 +42,8 @@ Execution Sequence
      * Ambiguity that would force ad-hoc decisions
      * Missing quality gates or validation points
      * Rollback or migration safety concerns
+     * **TDD workflow specification** (Red-Green-Refactor cycle explicit per phase)
+     * **Phase commit checkpoints** (what to commit after each phase)
      * **Dependency validation** (APIs/methods/routes exist in codebase)
      * **Contract verification** (test fixtures use actual implementations)
      * **Value alignment** (deliverables match claims)
@@ -53,6 +55,12 @@ Execution Sequence
    - Save detailed structured markdown to: `.context/reviews/plan_{plan-name}.md`
    - Create `.context/reviews/` directory if it doesn't exist
    - **Note**: If plan involves code generation, recommend invoking `/deslop` after execution to remove AI-generated slop
+
+5. Require Plan Update After Review
+   - If review status is "READY WITH CHANGES" or "NOT READY", execution is blocked
+   - User MUST run `/plan-update {plan-name}` to address blocking issues
+   - Updated plan MUST be re-reviewed before execution
+   - Only "READY TO EXECUTE" plans can be used with `/spec-driven`
 
 Staff Engineer Design/Execution Plan Review Prompt Template
 
