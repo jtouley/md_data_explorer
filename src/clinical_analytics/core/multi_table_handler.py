@@ -2033,11 +2033,11 @@ class MultiTableHandler:
 
         return "\n".join(lines)
 
-    def close(self):
+    def close(self) -> None:
         """Close DuckDB connection."""
         if self.conn:
             self.conn.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup DuckDB connection on deletion."""
         self.close()

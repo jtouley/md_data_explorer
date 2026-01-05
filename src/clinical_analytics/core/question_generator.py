@@ -21,7 +21,7 @@ falling back to deterministic generation if LLM unavailable.
 """
 
 import hashlib
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import structlog
 
@@ -48,8 +48,8 @@ class CacheBackend(Protocol):
 
 
 def generate_upload_questions(
-    semantic_layer,
-    inferred_schema,
+    semantic_layer: Any,
+    inferred_schema: Any,
     doc_context: str | None = None,
 ) -> list[str]:
     """
@@ -79,7 +79,7 @@ def generate_upload_questions(
 
 def _deterministic_upload_questions(
     available_columns: list[str],
-    inferred_schema,
+    inferred_schema: Any,
 ) -> list[str]:
     """
     Generate deterministic questions without LLM (fallback).
@@ -102,9 +102,9 @@ def _deterministic_upload_questions(
 
 
 def _deterministic_questions(
-    semantic_layer,
+    semantic_layer: Any,
     available_columns: list[str],
-    query_intent=None,
+    query_intent: Any = None,
 ) -> list[str]:
     """
     Generate deterministic questions without LLM (fallback).
@@ -190,7 +190,7 @@ def _validate_questions_bounded(
 
 
 def generate_proactive_questions(
-    semantic_layer,
+    semantic_layer: Any,
     query_intent: QueryIntent | None = None,
     dataset_version: str | None = None,
     run_key: str | None = None,
@@ -289,7 +289,7 @@ def generate_proactive_questions(
 
 
 def _llm_generate_questions(
-    semantic_layer,
+    semantic_layer: Any,
     available_columns: list[str],
     available_aliases: list[str],
     query_intent: QueryIntent,

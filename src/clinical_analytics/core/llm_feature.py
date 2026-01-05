@@ -14,6 +14,7 @@ All LLM features must use call_llm() instead of calling OllamaClient directly.
 import time
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 import structlog
 
@@ -61,7 +62,7 @@ class LLMCallResult:
     """
 
     raw_text: str | None
-    payload: dict | list | None
+    payload: dict[str, Any] | list[Any] | None
     latency_ms: float
     timed_out: bool
     error: str | None
