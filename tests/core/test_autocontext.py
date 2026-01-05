@@ -279,3 +279,30 @@ class TestBuildAutoContext:
                     if isinstance(top_vals, dict):
                         # Should be value -> count mapping, not raw row data
                         assert all(isinstance(v, int | float) for v in top_vals.values())
+
+
+class TestEstimateTokens:
+    """Test suite for _estimate_tokens() function."""
+
+    def test_estimate_tokens_accuracy_with_tiktoken(self):
+        """Test token estimation accuracy using tiktoken."""
+        # Arrange
+        from clinical_analytics.core.autocontext import _estimate_tokens
+
+        # Text that exposes character approximation inaccuracy:
+        # Long text with punctuation has different char/token ratio than simple text
+        long_text = "The quick brown fox jumps over the lazy dog. " * 10
+        # Character approximation: 450 chars / 4 = 112 tokens
+        # Actual tiktoken count: 101 tokens (10% difference)
+
+        # Act
+        result = _estimate_tokens(long_text)
+
+        # Assert: Should be close to tiktoken count (not character approximation)
+        # With tiktoken: 101 tokens
+        # With char approximation: 112 tokens
+        # Test expects tiktoken accuracy (within 2 tokens of 101)
+        assert 99 <= result <= 103, (
+            f"Token count should be ~101 with tiktoken (got {result}). "
+            f"Character approximation gives ~{len(long_text) // 4}"
+        )
