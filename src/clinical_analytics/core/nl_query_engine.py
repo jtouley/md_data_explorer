@@ -331,6 +331,13 @@ class NLQueryEngine:
                 tier="pattern_match",
                 **log_context,
             )
+            # Granular instrumentation: tier1 parse_outcome
+            logger.info(
+                "parse_outcome",
+                tier="tier1",
+                success=True,
+                query_hash=_stable_hash(query),
+            )
             intent: QueryIntent | None = pattern_intent  # Set for post-processing
         else:
             # Pattern match found something but below threshold - try semantic match
@@ -360,6 +367,13 @@ class NLQueryEngine:
                     tier="semantic_match",
                     **log_context,
                 )
+                # Granular instrumentation: tier2 parse_outcome
+                logger.info(
+                    "parse_outcome",
+                    tier="tier2",
+                    success=True,
+                    query_hash=_stable_hash(query),
+                )
             elif pattern_intent and pattern_intent.intent_type != "DESCRIBE":
                 # Use pattern match result even if below threshold, if it's more specific than DESCRIBE
                 # Also prefer pattern match if it's better than semantic match
@@ -385,6 +399,13 @@ class NLQueryEngine:
 
         # Tier 3: LLM fallback (stub for now) - only if we don't have a good intent yet
         if not intent or (intent.confidence < 0.5 and intent.intent_type == "DESCRIBE"):
+            # Granular instrumentation: tier3 llm_called
+            logger.info(
+                "parse_outcome",
+                tier="tier3",
+                llm_called=True,
+                query_hash=_stable_hash(query),
+            )
             llm_intent = self._llm_parse(query, conversation_history=conversation_history)
             attempt = {
                 "tier": "llm_fallback",
@@ -1396,7 +1417,9 @@ Filter extraction (ADR009 Phase 5):
 
         return (system_prompt, user_prompt)
 
-    def _extract_query_intent_from_llm_response(self, response: str, max_retries: int = 3) -> QueryIntent | None:
+    def _extract_query_intent_from_llm_response(
+        self, response: str, query: str | None = None, max_retries: int = 3
+    ) -> QueryIntent | None:
         """
         Extract QueryIntent from LLM JSON response with retries.
 
@@ -1412,6 +1435,16 @@ Filter extraction (ADR009 Phase 5):
 
         try:
             data = json.loads(response)
+            json_parse_success = True
+
+            # Granular instrumentation: tier3 json_parse_success
+            if query:
+                logger.info(
+                    "parse_outcome",
+                    tier="tier3",
+                    json_parse_success=json_parse_success,
+                    query_hash=_stable_hash(query),
+                )
 
             # Phase 5.1: Validate using QueryPlan.from_dict() (raises on invalid schema)
             try:
@@ -1420,7 +1453,7 @@ Filter extraction (ADR009 Phase 5):
                 # Convert validated QueryPlan back to QueryIntent for backward compatibility
                 # ADR009 Phase 1: Preserve follow_ups fields
                 # ADR009 Phase 2: Preserve interpretation fields
-                return QueryIntent(
+                intent = QueryIntent(
                     intent_type=query_plan.intent,
                     primary_variable=query_plan.metric,
                     grouping_variable=query_plan.group_by,
@@ -1432,6 +1465,18 @@ Filter extraction (ADR009 Phase 5):
                     interpretation=query_plan.interpretation,  # Preserve LLM-generated interpretation
                     confidence_explanation=query_plan.confidence_explanation,  # Preserve confidence explanation
                 )
+
+                # Granular instrumentation: tier3 schema_validate_success
+                if query:
+                    logger.info(
+                        "parse_outcome",
+                        tier="tier3",
+                        schema_validate_success=True,
+                        final_returned_from_tier3=True,
+                        query_hash=_stable_hash(query),
+                    )
+
+                return intent
 
             except (ValueError, KeyError) as validation_error:
                 # If QueryPlan validation fails, try legacy QueryIntent format for backward compatibility
@@ -1447,6 +1492,15 @@ Filter extraction (ADR009 Phase 5):
                 # Legacy format fallback
                 if "intent_type" not in data:
                     logger.warning("llm_response_missing_required_fields", response=response[:100])
+                    # Granular instrumentation: tier3 schema_validate_success (failed)
+                    if query:
+                        logger.info(
+                            "parse_outcome",
+                            tier="tier3",
+                            schema_validate_success=False,
+                            final_returned_from_tier3=False,
+                            query_hash=_stable_hash(query),
+                        )
                     return None
 
                 # Extract fields with defaults (legacy format)
@@ -1458,7 +1512,7 @@ Filter extraction (ADR009 Phase 5):
                 # Clamp confidence to valid range
                 confidence = max(0.0, min(1.0, confidence))
 
-                return QueryIntent(
+                intent = QueryIntent(
                     intent_type=intent_type,
                     primary_variable=primary_variable,
                     grouping_variable=grouping_variable,
@@ -1466,7 +1520,40 @@ Filter extraction (ADR009 Phase 5):
                     parsing_tier="llm_fallback",
                 )
 
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
+                # Granular instrumentation: tier3 schema_validate_success (legacy format)
+                if query:
+                    logger.info(
+                        "parse_outcome",
+                        tier="tier3",
+                        schema_validate_success=True,
+                        final_returned_from_tier3=True,
+                        query_hash=_stable_hash(query),
+                    )
+
+                return intent
+
+        except json.JSONDecodeError as e:
+            json_parse_success = False
+
+            # Granular instrumentation: tier3 json_parse_success (failed)
+            if query:
+                logger.info(
+                    "parse_outcome",
+                    tier="tier3",
+                    json_parse_success=json_parse_success,
+                    query_hash=_stable_hash(query),
+                )
+
+            logger.warning(
+                "llm_response_parse_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                response=response[:200] if len(response) > 200 else response,
+                response_length=len(response),
+            )
+            return None
+
+        except (ValueError, KeyError) as e:
             logger.warning(
                 "llm_response_parse_failed",
                 error=str(e),
@@ -1551,8 +1638,17 @@ Filter extraction (ADR009 Phase 5):
 
             # Step 5: Call Ollama with JSON mode
             response = client.generate(user_prompt, system_prompt=system_prompt, json_mode=True)
+            llm_http_success = response is not None
 
-            if response is None:
+            # Granular instrumentation: tier3 llm_http_success
+            logger.info(
+                "parse_outcome",
+                tier="tier3",
+                llm_http_success=llm_http_success,
+                query_hash=_stable_hash(query),
+            )
+
+            if not llm_http_success:
                 logger.info("ollama_generate_failed_fallback_to_stub", query=query)
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
@@ -1566,7 +1662,7 @@ Filter extraction (ADR009 Phase 5):
             )
 
             # Step 6: Extract QueryIntent from response
-            intent = self._extract_query_intent_from_llm_response(response)
+            intent = self._extract_query_intent_from_llm_response(response, query=query)
 
             # Log extracted intent for refinement debugging
             if conversation_history and intent:
