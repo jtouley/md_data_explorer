@@ -71,7 +71,7 @@ class QueryLogger:
         if timestamp is None:
             timestamp = datetime.now().isoformat()
 
-        entry = {
+        entry: dict[str, Any] = {
             "event_type": "query",
             "upload_id": upload_id,
             "query_text": query_text,
@@ -185,7 +185,7 @@ class QueryLogger:
         if timestamp is None:
             timestamp = datetime.now().isoformat()
 
-        entry = {
+        entry: dict[str, Any] = {
             "event_type": "failure",
             "upload_id": upload_id,
             "query_text": query_text,

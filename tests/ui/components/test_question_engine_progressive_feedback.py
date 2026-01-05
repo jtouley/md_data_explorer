@@ -109,14 +109,29 @@ def test_progressive_feedback_handles_timeout(mock_nl_engine):
 
 def test_progressive_feedback_respects_feature_flag(mock_nl_engine):
     """Progressive feedback should respect ENABLE_PROGRESSIVE_FEEDBACK feature flag."""
+    from clinical_analytics.core.nl_query_engine import QueryIntent
     from clinical_analytics.ui.components.question_engine import QuestionEngine
 
     query = "compare mortality by treatment"
 
+    # Mock parse_query to return a QueryIntent when feature flag is disabled
+    mock_intent = QueryIntent(
+        intent_type="COMPARE_GROUPS",
+        primary_variable="mortality",
+        grouping_variable="treatment",
+        confidence=0.8,
+        parsing_tier="pattern_match",
+        parsing_attempts=[{"tier": "pattern_match", "confidence": 0.8}],
+    )
+
     # When feature flag is disabled, should fall back to simple parsing
-    with patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False):
+    with (
+        patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False),
+        patch.object(mock_nl_engine, "parse_query", return_value=mock_intent) as mock_parse,
+    ):
         intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
-        # Should still return intent (via simple parse_query)
+        # Should call parse_query when feature flag is disabled
+        mock_parse.assert_called_once_with(query)
+        # Should return the intent from parse_query
         assert intent is not None
-        # Should have diagnostics from parse_query
-        assert intent.parsing_tier is not None or intent.parsing_attempts
+        assert intent == mock_intent

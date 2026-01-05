@@ -62,10 +62,12 @@ class UploadedDataset(ClinicalDataset):
         if storage is None:
             storage = UserDatasetStorage()
 
+        from clinical_analytics.core.type_aliases import OptionalDict
+
         self.storage = storage
         self.upload_id = upload_id
-        self.metadata = None
-        self.data = None
+        self.metadata: OptionalDict = None
+        self.data: pl.LazyFrame | None = None
         self._semantic_initialized = False  # Track lazy init
 
         # Load metadata
@@ -75,7 +77,9 @@ class UploadedDataset(ClinicalDataset):
 
         # Validate synthetic_id_metadata once at load time (not lazily during cohort)
         # Staff Engineer Standard: Validate at boundaries
-        raw_synthetic_id_metadata = self.metadata.get("synthetic_id_metadata")
+        from clinical_analytics.core.type_guards import safe_get
+
+        raw_synthetic_id_metadata = safe_get(self.metadata, "synthetic_id_metadata")
         try:
             self._validated_synthetic_id_metadata = validate_synthetic_id_metadata(raw_synthetic_id_metadata)
         except PatientIdRegenerationError as e:
@@ -87,7 +91,7 @@ class UploadedDataset(ClinicalDataset):
             self._validated_synthetic_id_metadata = {}
 
         # Initialize with upload info
-        dataset_name = self.metadata.get("dataset_name", upload_id)
+        dataset_name = safe_get(self.metadata, "dataset_name", upload_id)
         super().__init__(name=dataset_name, source_path=None)
 
     def validate(self) -> bool:
@@ -159,8 +163,10 @@ class UploadedDataset(ClinicalDataset):
         # Runtime validation: check if requested granularity is supported
         if granularity != "patient_level":
             # Get inferred_schema (or convert variable_mapping if needed)
-            inferred_schema = self.metadata.get("inferred_schema")
-            if not inferred_schema and self.metadata.get("variable_mapping"):
+            from clinical_analytics.core.type_guards import safe_get
+
+            inferred_schema = safe_get(self.metadata, "inferred_schema")
+            if not inferred_schema and safe_get(self.metadata, "variable_mapping"):
                 # Convert variable_mapping to inferred_schema for granularity check
                 if self.data is None:
                     self.load()
@@ -175,11 +181,18 @@ class UploadedDataset(ClinicalDataset):
                     data_for_schema = pl.DataFrame(schema={k: v for k, v in schema.items()})
                 elif isinstance(self.data, pd.DataFrame):
                     data_for_schema = pl.from_pandas(self.data)
-                else:
+                elif self.data is not None:
                     data_for_schema = self.data
+                else:
+                    data_for_schema = pl.DataFrame()
 
+                from clinical_analytics.core.type_guards import safe_get
+
+                variable_mapping_val = safe_get(self.metadata, "variable_mapping")
+                if variable_mapping_val is None:
+                    raise ValueError("variable_mapping not found in metadata")
                 inferred_schema = convert_schema(
-                    self.metadata["variable_mapping"],
+                    variable_mapping_val,
                     data_for_schema,
                 )
 
@@ -216,11 +229,13 @@ class UploadedDataset(ClinicalDataset):
                 lf = lf.filter(combined_filter)
 
         # Get variable mapping from metadata (single-table uploads)
-        variable_mapping = self.metadata.get("variable_mapping", {})
+        from clinical_analytics.core.type_guards import safe_get
+
+        variable_mapping = safe_get(self.metadata, "variable_mapping", {})
 
         # If no variable mapping, try to build it from inferred schema (ZIP uploads)
         if not variable_mapping:
-            inferred_schema = self.metadata.get("inferred_schema", {})
+            inferred_schema = safe_get(self.metadata, "inferred_schema", {})
 
             if inferred_schema:
                 # Convert inferred_schema to variable_mapping format
@@ -255,7 +270,7 @@ class UploadedDataset(ClinicalDataset):
                     logger.error(
                         f"Patient ID column '{patient_id_col}' not found in data. "
                         f"Available columns: {list(schema_names)}. "
-                        f"Metadata: {self.metadata.get('synthetic_id_metadata', {})}"
+                        f"Metadata: {safe_get(self.metadata, 'synthetic_id_metadata', {})}"
                     )
                     # If patient_id was created synthetically, it should be in the CSV
                     # Check if it exists with different casing or was lost
@@ -299,8 +314,9 @@ class UploadedDataset(ClinicalDataset):
                         )
 
                         # Persist as LazyFrame for future calls (avoids re-materialization)
-                        self.data = df_with_id.lazy()
-                        lf = self.data  # Update lf to use corrected LazyFrame
+                        lazy_result = df_with_id.lazy()
+                        self.data = lazy_result
+                        lf = lazy_result  # Update lf to use corrected LazyFrame
 
                         if "patient_id" not in df_with_id.columns:
                             raise ValueError(
@@ -335,7 +351,12 @@ class UploadedDataset(ClinicalDataset):
             select_exprs.append(pl.lit(outcome_label).alias(UnifiedCohort.OUTCOME_LABEL))
 
         # Map time zero (use upload date if not provided)
-        upload_timestamp = pd.Timestamp(self.metadata["upload_timestamp"])
+        from clinical_analytics.core.type_guards import safe_get
+
+        upload_timestamp_val = safe_get(self.metadata, "upload_timestamp")
+        if upload_timestamp_val is None:
+            raise ValueError("upload_timestamp not found in metadata")
+        upload_timestamp = pd.Timestamp(upload_timestamp_val)
         if time_vars and time_vars.get("time_zero"):
             time_col = time_vars["time_zero"]
             if time_col in schema_names:
@@ -404,7 +425,9 @@ class UploadedDataset(ClinicalDataset):
         Returns:
             variable_mapping dictionary compatible with get_cohort()
         """
-        variable_mapping = {
+        from clinical_analytics.core.type_aliases import OptionalStr
+
+        variable_mapping: dict[str, OptionalStr | dict[str, Any] | list[str]] = {
             "patient_id": None,
             "outcome": None,
             "time_variables": {},
@@ -428,7 +451,9 @@ class UploadedDataset(ClinicalDataset):
         # Extract time_zero
         time_zero_config = inferred_schema.get("time_zero", {})
         if "source_column" in time_zero_config:
-            variable_mapping["time_variables"]["time_zero"] = time_zero_config["source_column"]
+            time_vars = variable_mapping.get("time_variables")
+            if isinstance(time_vars, dict):
+                time_vars["time_zero"] = time_zero_config["source_column"]
 
         # Add all other columns as predictors (exclude patient_id and outcome)
         # Use schema to get column names without collecting (avoid materializing large datasets)
@@ -469,7 +494,9 @@ class UploadedDataset(ClinicalDataset):
             raise ValueError("Metadata not initialized")
 
         # Check for inferred_schema first (multi-table path)
-        inferred_schema = self.metadata.get("inferred_schema")
+        from clinical_analytics.core.type_guards import safe_get
+
+        inferred_schema = safe_get(self.metadata, "inferred_schema")
         if inferred_schema:
             config = self._build_config_from_inferred_schema(inferred_schema)
             upload_type = "multi-table"
@@ -586,9 +613,11 @@ class UploadedDataset(ClinicalDataset):
         outcomes = inferred_schema.get("outcomes", {})
         default_outcome = list(outcomes.keys())[0] if outcomes else None
 
+        from clinical_analytics.core.type_guards import safe_get
+
         config = {
             "name": self.name,
-            "display_name": self.metadata.get("original_filename", self.name),
+            "display_name": safe_get(self.metadata, "original_filename", self.name),
             "status": "available",
             "init_params": {},  # Will be set to absolute CSV path
             "column_mapping": inferred_schema.get("column_mapping", {}),
@@ -600,7 +629,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": inferred_schema.get("categorical_columns", []),
             },
             # Include variable_types metadata for column type detection
-            "variable_types": self.metadata.get("variable_types"),
+            "variable_types": safe_get(self.metadata, "variable_types"),
         }
         return config
 
@@ -688,9 +717,10 @@ class UploadedDataset(ClinicalDataset):
                 if unique_count <= CATEGORICAL_THRESHOLD:
                     categorical_variables.append(col)
 
+        metadata_dict = self.metadata if self.metadata is not None else {}
         config = {
             "name": self.name,
-            "display_name": self.metadata.get("original_filename", self.name),
+            "display_name": metadata_dict.get("original_filename", self.name),
             "status": "available",
             "init_params": {},  # Will be set to absolute CSV path in _maybe_init_semantic()
             "column_mapping": column_mapping,
@@ -702,7 +732,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": categorical_variables,
             },
             # Include variable_types metadata for column type detection
-            "variable_types": self.metadata.get("variable_types"),
+            "variable_types": metadata_dict.get("variable_types"),
         }
         return config
 

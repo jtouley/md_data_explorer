@@ -827,7 +827,6 @@ def mock_cohort():
     - Predictors: age, score, group
     """
     import pandas as pd
-
     from clinical_analytics.core.schema import UnifiedCohort
 
     return pd.DataFrame(
@@ -1050,12 +1049,16 @@ def make_cohort_with_categorical():
     ) -> pl.DataFrame:
         if patient_ids is None:
             patient_ids = [f"P{i:03d}" for i in range(1, 6)]
+
+        # Ensure all arrays have same length as patient_ids
+        n = len(patient_ids)
+
         if treatment is None:
-            treatment = ["1: Yes", "2: No", "1: Yes", "1: Yes", "2: No"]
+            treatment = ["1: Yes", "2: No"] * (n // 2) + ["1: Yes"] * (n % 2)
         if status is None:
-            status = ["1: Active", "2: Inactive", "1: Active", "1: Active", "2: Inactive"]
+            status = ["1: Active", "2: Inactive"] * (n // 2) + ["1: Active"] * (n % 2)
         if ages is None:
-            ages = [45, 52, 38, 61, 49]
+            ages = [45 + i * 5 for i in range(n)]
 
         return pl.DataFrame(
             {
@@ -1598,6 +1601,170 @@ def get_dataset_by_name(dataset_registry):
 
 # ============================================================================
 # Performance Tracking Plugin Registration
+# ============================================================================
+# Test Fixture Enforcement (Phase 8: DRY Test Patterns)
+# ============================================================================
+
+
+@pytest.fixture
+def upload_storage(tmp_path):
+    """
+    Create UserDatasetStorage with temp directory.
+
+    DRY principle: Extract common UserDatasetStorage setup used across
+    10+ test files to avoid duplicate inline creation.
+    """
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    return UserDatasetStorage(upload_dir=tmp_path)
+
+
+@pytest.fixture
+def large_test_df(num_records: int = 150) -> pl.DataFrame:
+    """
+    Create large test Polars DataFrame with patient_id and other columns.
+
+    DRY principle: Extract common DataFrame creation pattern used across
+    multiple test files to meet 1KB minimum requirement.
+    """
+    return pl.DataFrame(
+        {
+            "patient_id": [f"P{i:03d}" for i in range(num_records)],
+            "age": [25 + (i % 50) for i in range(num_records)],
+            "sex": ["M" if i % 2 == 0 else "F" for i in range(num_records)],
+            "outcome": [1 if i % 3 == 0 else 0 for i in range(num_records)],
+            "medication": [f"Med{i % 5}" for i in range(num_records)],
+            "dosage": [100 + (i % 200) for i in range(num_records)],
+        }
+    )
+
+
+@pytest.fixture
+def large_test_df_pd(num_records: int = 150):
+    """
+    Create large test pandas DataFrame with patient_id and other columns.
+
+    DRY principle: Extract common pandas DataFrame creation pattern used across
+    multiple test files to meet 1KB minimum requirement.
+    """
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "patient_id": [f"P{i:03d}" for i in range(num_records)],
+            "age": [25 + (i % 50) for i in range(num_records)],
+            "sex": ["M" if i % 2 == 0 else "F" for i in range(num_records)],
+            "outcome": [1 if i % 3 == 0 else 0 for i in range(num_records)],
+            "medication": [f"Med{i % 5}" for i in range(num_records)],
+            "dosage": [100 + (i % 200) for i in range(num_records)],
+        }
+    )
+
+
+@pytest.fixture
+def sample_patient_medication_df() -> pl.DataFrame:
+    """
+    Create sample patient-medication DataFrame.
+
+    DRY principle: Extract common multi-table test pattern.
+    """
+    return pl.DataFrame(
+        {
+            "patient_id": ["P001", "P002", "P003", "P004", "P005"],
+            "medication": ["Aspirin", "Lisinopril", "Metformin", "Atorvastatin", "Warfarin"],
+            "dosage_mg": [81, 10, 500, 20, 5],
+            "start_date": ["2023-01-01", "2023-01-15", "2023-02-01", "2023-02-15", "2023-03-01"],
+        }
+    )
+
+
+@pytest.fixture
+def simple_test_df() -> pl.DataFrame:
+    """
+    Create simple single-row test DataFrame.
+
+    DRY principle: Extract common single-row DataFrame pattern used in tests.
+    """
+    return pl.DataFrame({"patient_id": ["P001"], "age": [25]})
+
+
+@pytest.fixture
+def dummy_table():
+    """
+    Create dummy table dict for MultiTableHandler tests.
+
+    DRY principle: Extract common dummy table pattern used in multi-table tests.
+    """
+    return {"dummy": pl.DataFrame({"id": [1]})}
+
+
+@pytest.fixture
+def make_patient_value_df():
+    """
+    Factory fixture for creating patient-value DataFrames.
+
+    DRY principle: Single factory for all patient-value DataFrame patterns.
+    Eliminates duplicate DataFrame creation code.
+
+    Usage:
+        df = make_patient_value_df()  # Default: with some nulls
+        df = make_patient_value_df(pattern="empty")  # Empty
+        df = make_patient_value_df(pattern="all_nulls")  # All nulls
+    """
+
+    def _make(pattern: str = "default") -> pl.DataFrame:
+        if pattern == "default":
+            return pl.DataFrame(
+                {
+                    "patient_id": ["P1", "P2", None, "P3", None],
+                    "value": [100, 200, 300, 400, 500],
+                }
+            )
+        elif pattern == "empty":
+            return pl.DataFrame(
+                {
+                    "patient_id": pl.Series([], dtype=pl.Utf8),
+                    "value": pl.Series([], dtype=pl.Int64),
+                }
+            )
+        elif pattern == "all_nulls":
+            return pl.DataFrame({"patient_id": [None, None, None], "value": [100, 200, 300]})
+        else:
+            raise ValueError(f"Unknown pattern: {pattern}")
+
+    return _make
+
+
+@pytest.fixture
+def patient_value_df(make_patient_value_df):
+    """
+    Create patient-value DataFrame with nulls for testing.
+
+    DRY principle: Uses factory fixture to avoid duplication.
+    """
+    return make_patient_value_df("default")
+
+
+@pytest.fixture
+def empty_patient_df(make_patient_value_df):
+    """
+    Create empty patient-value DataFrame for testing.
+
+    DRY principle: Uses factory fixture to avoid duplication.
+    """
+    return make_patient_value_df("empty")
+
+
+@pytest.fixture
+def all_nulls_patient_df(make_patient_value_df):
+    """
+    Create patient-value DataFrame with all null patient_ids.
+
+    DRY principle: Uses factory fixture to avoid duplication.
+    """
+    return make_patient_value_df("all_nulls")
+
+
 # ============================================================================
 
 

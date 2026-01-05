@@ -143,11 +143,13 @@ def main():
     from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 
     st.title("🔗 Explore Relationships")
-    st.markdown("""
+    st.markdown(
+        """
     Discover how variables relate to each other using **correlation analysis**.
     See which variables move together (positive correlation) or in opposite directions
     (negative correlation).
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=False)

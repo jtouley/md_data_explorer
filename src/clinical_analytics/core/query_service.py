@@ -6,6 +6,7 @@ Manages query parsing, validation, and execution without Streamlit dependencies.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
@@ -19,8 +20,8 @@ class QueryResult:
     """Result of query execution."""
 
     plan: QueryPlan | None  # QueryPlan from NLQueryEngine (None if parse failed)
-    issues: list[dict[str, str]]  # Validation issues (list of dicts with 'message', 'severity')
-    result: dict | None  # Analysis result if executed
+    issues: list[dict[str, Any]]  # Validation issues (list of dicts with 'message', 'severity')
+    result: dict[str, Any] | None  # Analysis result if executed
     confidence: float  # Parsing confidence (0.0-1.0)
     run_key: str | None  # Deterministic run key (None if parse failed)
     context: AnalysisContext | None  # Analysis context (None if parse failed)
@@ -51,7 +52,7 @@ class QueryService:
         dataset_id: str | None = None,
         upload_id: str | None = None,
         dataset_version: str | None = None,
-        conversation_history: list[dict] | None = None,
+        conversation_history: list[dict[str, Any]] | None = None,
     ) -> QueryResult:
         """
         Parse and execute query, return structured result.
@@ -179,6 +180,6 @@ class QueryService:
         context.filters = intent.filters
 
         # Set query plan (type: ignore for AnalysisContext.query_plan which is typed as None)
-        context.query_plan = plan  # type: ignore[assignment]
+        context.query_plan = plan
 
         return context

@@ -234,7 +234,7 @@ class MultiTableHandler:
         logger.debug("Starting key column normalization")
 
         # Count how many tables each column appears in
-        column_counts = {}
+        column_counts: dict[str, int] = {}
         for df in self.tables.values():
             for col in df.columns:
                 column_counts[col] = column_counts.get(col, 0) + 1
@@ -608,7 +608,7 @@ class MultiTableHandler:
 
         # Return highest scoring column
         if scores:
-            best_col = max(scores, key=scores.get)
+            best_col = max(scores.keys(), key=lambda k: scores[k])
             logger.debug(f"Selected grain key: '{best_col}' (score={scores[best_col]:.2f})")
             return best_col
 
@@ -670,8 +670,9 @@ class MultiTableHandler:
                 bytes_per_row += 8
             elif dtype == pl.Utf8:
                 # Estimate string column bytes
-                avg_str_len = sample[col].drop_nulls().str.len_chars().mean() or 0
-                bytes_per_row += int(avg_str_len)
+                avg_str_len = sample[col].drop_nulls().str.len_chars().mean()
+                if avg_str_len is not None and isinstance(avg_str_len, (int, float)):
+                    bytes_per_row += int(avg_str_len)
             elif dtype == pl.Boolean:
                 bytes_per_row += 1
             else:
@@ -991,6 +992,8 @@ class MultiTableHandler:
                     next_df = self.tables[next_table]
 
                     # Use sampled uniqueness to check if RHS key is unique
+                    if join_key_right is None:
+                        continue
                     rhs_unique_count, rhs_null_rate = self._compute_sampled_uniqueness(next_df, join_key_right)
                     s = self._sample_df(next_df)
                     non_null_sample = s.height - int(rhs_null_rate * s.height)
@@ -1012,11 +1015,13 @@ class MultiTableHandler:
                     # Join next dimension table
                     next_lazy = next_df.lazy()
 
+                    # Type-safe join type
+                    join_type_safe: str = join_type if isinstance(join_type, str) else "left"
                     mart = mart.join(
                         next_lazy,
                         left_on=join_key_left,
                         right_on=join_key_right,
-                        how=join_type,
+                        how=join_type_safe,  # type: ignore[arg-type]
                         suffix=f"_{next_table}",
                         validate="m:1",  # fail fast if RHS key is not unique
                     )
@@ -1037,7 +1042,9 @@ class MultiTableHandler:
 
         return mart
 
-    def _aggregate_fact_tables(self, grain_key: str, policy: AggregationPolicy = None) -> dict[str, pl.LazyFrame]:
+    def _aggregate_fact_tables(
+        self, grain_key: str, policy: AggregationPolicy | None = None
+    ) -> dict[str, pl.LazyFrame]:
         """
         Aggregate fact/event tables by grain key with policy enforcement.
 
@@ -1546,8 +1553,9 @@ class MultiTableHandler:
         schema_dict = {col: str(dtype) for col, dtype in zip(mart_df.columns, mart_df.dtypes)}
 
         # Create metadata
+        grain_safe: str = str(grain) if grain is not None else "patient"
         metadata = CohortMetadata(
-            grain=grain,
+            grain=grain_safe,  # type: ignore[arg-type]
             grain_key=grain_key,
             anchor_table=anchor_table,
             output_path=output_path,
@@ -1844,7 +1852,7 @@ class MultiTableHandler:
         logger.warning("_find_anchor_table() is deprecated, use _find_anchor_by_centrality() instead")
 
         # Count relationships for each table
-        table_counts = {}
+        table_counts: dict[str, int] = {}
 
         for rel in self.relationships:
             table_counts[rel.parent_table] = table_counts.get(rel.parent_table, 0) + 1
@@ -1859,7 +1867,7 @@ class MultiTableHandler:
 
         # Fallback: table with most relationships
         if table_counts:
-            return max(table_counts, key=table_counts.get)
+            return max(table_counts.keys(), key=lambda k: table_counts[k])
 
         # Last resort: first table
         return list(self.tables.keys())[0]
@@ -1923,7 +1931,7 @@ class MultiTableHandler:
             raise ValueError("No suitable anchor table found. All dimensions have >50% NULLs or non-unique grain keys.")
 
         # Count relationships per table
-        relationship_counts = {}
+        relationship_counts: dict[str, int] = {}
         for rel in self.relationships:
             relationship_counts[rel.parent_table] = relationship_counts.get(rel.parent_table, 0) + 1
             relationship_counts[rel.child_table] = relationship_counts.get(rel.child_table, 0) + 1
@@ -2025,11 +2033,11 @@ class MultiTableHandler:
 
         return "\n".join(lines)
 
-    def close(self):
+    def close(self) -> None:
         """Close DuckDB connection."""
         if self.conn:
             self.conn.close()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup DuckDB connection on deletion."""
         self.close()

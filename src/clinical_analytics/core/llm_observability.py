@@ -261,11 +261,13 @@ def log_llm_event(
     sanitized = sanitize_query(query)
 
     # Create event
+    query_hash_val = sanitized.get("query_hash")
+    query_hash_str = str(query_hash_val) if query_hash_val is not None else ""
     event_obj = LLMEvent(
         event=event,
         timestamp=datetime.now(),
         run_key=run_key,
-        query_hash=sanitized["query_hash"],
+        query_hash=query_hash_str,
         dataset_version=dataset_version,
         tier=tier,
         model=model,

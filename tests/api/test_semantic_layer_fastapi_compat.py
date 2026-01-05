@@ -22,17 +22,18 @@ from clinical_analytics.core.semantic import SemanticLayer
 
 # Test fixtures
 @pytest.fixture
-def sample_dataset(make_cohort_with_categorical):
+def sample_dataset(make_cohort_with_categorical, make_semantic_layer):
     """Create a sample uploaded dataset for testing."""
-    # Use existing conftest fixture to create test data
-    cohort_df = make_cohort_with_categorical(n_patients=100)
+    # Use existing conftest fixture to create test data (default: 5 patients)
+    cohort_df = make_cohort_with_categorical()
 
     # For this test, we'll mock an uploaded dataset
     # In real usage, UploadedDatasetFactory.create_dataset() would be called
     # For now, we'll create a minimal mock
     class MockDataset:
-        def __init__(self, cohort):
+        def __init__(self, cohort, semantic_layer):
             self.cohort = cohort
+            self.semantic_layer = semantic_layer
             self.config = {
                 "name": "test_dataset",
                 "patient_id_column": "patient_id",
@@ -41,13 +42,15 @@ def sample_dataset(make_cohort_with_categorical):
 
         def get_semantic_layer(self):
             """Get semantic layer for this dataset."""
-            return SemanticLayer(
-                dataset_name=self.config["name"],
-                cohort=self.cohort,
-                config=self.config,
-            )
+            return self.semantic_layer
 
-    return MockDataset(cohort_df)
+    # Create semantic layer using factory fixture with cohort data
+    semantic_layer = make_semantic_layer(
+        dataset_name="test_dataset",
+        data=cohort_df,
+    )
+
+    return MockDataset(cohort_df, semantic_layer)
 
 
 @pytest.fixture

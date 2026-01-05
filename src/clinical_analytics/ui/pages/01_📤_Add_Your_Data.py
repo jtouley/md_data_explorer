@@ -7,6 +7,7 @@ Upload CSV, Excel, or SPSS files without code or YAML configuration.
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -68,7 +69,10 @@ if previous_datasets and "selected_upload_id" not in st.session_state:
                     metadata = storage.get_upload_metadata(selected_upload_id)
                     st.session_state["current_dataset_metadata"] = metadata
 
-                    st.success(f"✅ Loaded dataset: {metadata.get('dataset_name', selected_upload_id)}")
+                    if metadata:
+                        st.success(f"✅ Loaded dataset: {metadata.get('dataset_name', selected_upload_id)}")
+                    else:
+                        st.success(f"✅ Loaded dataset: {selected_upload_id}")
                     st.info("💡 Navigate to other pages (Ask Questions, Compare Groups, etc.) to analyze this dataset.")
 
             with col2:
@@ -129,6 +133,30 @@ def render_upload_step():
         help=uploader_help,
         key="file_uploader",
     )
+
+    # Optional: Upload documentation PDF (visible whenever on upload step)
+    st.markdown("### 📄 Documentation (Optional)")
+    st.markdown(
+        "Upload a data dictionary PDF, text, or Markdown file to enhance "
+        "schema inference with column descriptions and codebooks."
+    )
+
+    doc_file = st.file_uploader(
+        "Upload data dictionary",
+        type=["pdf", "txt", "md"],
+        help="Optional: Upload a PDF, text, or Markdown file containing column descriptions, codebooks, etc.",
+        key="doc_uploader",
+    )
+
+    if doc_file is not None:
+        doc_bytes = doc_file.getvalue()
+        st.session_state["external_pdf_bytes"] = doc_bytes
+        st.session_state["external_pdf_filename"] = doc_file.name
+        st.success(f"✅ Documentation uploaded: {doc_file.name}")
+    else:
+        # Clear any previously uploaded documentation
+        st.session_state.pop("external_pdf_bytes", None)
+        st.session_state.pop("external_pdf_filename", None)
 
     if uploaded_file is not None:
         # Only process on step 1 (prevents reprocessing on reruns)
@@ -331,7 +359,7 @@ def render_variable_detection_step(df: pd.DataFrame):
     st.markdown("### Detection Results")
 
     # Group by type
-    type_groups = {}
+    type_groups: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for col, info in variable_info.items():
         var_type = info["type"]
         if var_type not in type_groups:
@@ -379,7 +407,7 @@ def render_variable_detection_step(df: pd.DataFrame):
 
     # Auto-apply suggestions (doctors shouldn't have to map columns)
     # Build mapping automatically from detected types
-    auto_mapping = {
+    auto_mapping: dict[str, Any] = {
         "patient_id": suggestions.get("patient_id"),
         "outcome": suggestions.get("outcome"),
         "time_variables": {"time_zero": suggestions.get("time_zero")},
@@ -394,10 +422,12 @@ def render_variable_detection_step(df: pd.DataFrame):
     for col, info in variable_info.items():
         if col not in reserved_cols:
             # Include as predictor unless very high missing
-            if info["missing_pct"] < 80:
-                auto_mapping["predictors"].append(col)
-            else:
-                auto_mapping["excluded"].append(col)
+            if isinstance(auto_mapping["predictors"], list):
+                if info["missing_pct"] < 80:
+                    auto_mapping["predictors"].append(col)
+                else:
+                    if isinstance(auto_mapping["excluded"], list):
+                        auto_mapping["excluded"].append(col)
 
     # Store auto-mapping
     st.session_state["variable_mapping"] = auto_mapping
@@ -418,8 +448,9 @@ def render_variable_detection_step(df: pd.DataFrame):
         else:
             st.info("ℹ️ No outcome detected (optional)")
     with col3:
-        if suggestions.get("time_zero"):
-            st.metric("Time Variable", suggestions["time_zero"])
+        time_zero = suggestions.get("time_zero")
+        if time_zero and isinstance(time_zero, str):
+            st.metric("Time Variable", time_zero)
         else:
             st.info("ℹ️ No time column detected (optional)")
 
@@ -507,7 +538,11 @@ def render_mapping_step(df: pd.DataFrame, variable_info: dict, suggestions: dict
                 st.rerun()
 
 
-def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_info: dict = None):
+def render_review_step(
+    df: pd.DataFrame | None = None,
+    mapping: dict[str, Any] | None = None,
+    variable_info: dict[str, Any] | None = None,
+):
     """Step 5: Final Review & Save"""
     st.markdown("## ✅ Review & Save Dataset")
 
@@ -662,7 +697,8 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
     # Show success state if already saved
     if already_saved and st.session_state.get("upload_result"):
         result = st.session_state["upload_result"]
-        st.success(f"""
+        st.success(
+            f"""
         ✅ **Dataset saved successfully!**
 
         - **Upload ID:** `{result.get("upload_id", "N/A")}`
@@ -671,20 +707,25 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         - **Variables:** {len(mapping["predictors"]) + 1}
 
         You can now use this dataset in the main analysis interface.
-        """)
+        """
+        )
 
         # Option to upload another dataset
         if st.button("📤 Upload Another Dataset", key="success_upload_another"):
             # Clear all upload-related session state
             for key in list(st.session_state.keys()):
-                if key.startswith("upload") or key in [
-                    "uploaded_df",
-                    "uploaded_bytes",
-                    "uploaded_filename",
-                    "variable_info",
-                    "suggestions",
-                    "variable_mapping",
-                ]:
+                if isinstance(key, str) and (
+                    key.startswith("upload")
+                    or key
+                    in [
+                        "uploaded_df",
+                        "uploaded_bytes",
+                        "uploaded_filename",
+                        "variable_info",
+                        "suggestions",
+                        "variable_mapping",
+                    ]
+                ):
                     st.session_state.pop(key, None)
             st.session_state["upload_step"] = 1
             st.rerun()
@@ -713,6 +754,17 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
                         "variable_mapping": mapping,
                         "validation_result": validation_result,
                     }
+
+                    # Add external PDF if uploaded
+                    if "external_pdf_bytes" in st.session_state:
+                        metadata["external_pdf_bytes"] = st.session_state["external_pdf_bytes"]
+                        metadata["external_pdf_filename"] = st.session_state.get(
+                            "external_pdf_filename", "documentation.pdf"
+                        )
+
+                    # Phase 9: Add schema_drift_override when overwrite is enabled
+                    if overwrite:
+                        metadata["schema_drift_override"] = True
 
                     # Run save with overwrite flag (Phase 9)
                     success, message, upload_id = storage.save_upload(
@@ -745,7 +797,7 @@ def render_review_step(df: pd.DataFrame = None, mapping: dict = None, variable_i
         # Clear session state
         if st.button("Upload Another Dataset", key="error_upload_another"):
             for key in list(st.session_state.keys()):
-                if key.startswith("upload"):
+                if isinstance(key, str) and key.startswith("upload"):
                     del st.session_state[key]
             st.rerun()
 
@@ -824,6 +876,8 @@ def render_zip_review_step():
         def progress_callback(step, total_steps, message, details):
             """Update progress UI with current step information."""
             progress = step / total_steps if total_steps > 0 else 0
+            # Cap progress at 1.0 to prevent StreamlitAPIException when step > total_steps
+            progress = min(progress, 1.0)
             progress_bar.progress(progress)
             status_text.info(f"🔄 {message}")
 
@@ -853,6 +907,11 @@ def render_zip_review_step():
 
         # Prepare metadata
         metadata = {"dataset_name": dataset_name}
+
+        # Add external PDF if uploaded
+        if "external_pdf_bytes" in st.session_state:
+            metadata["external_pdf_bytes"] = st.session_state["external_pdf_bytes"]
+            metadata["external_pdf_filename"] = st.session_state.get("external_pdf_filename", "documentation.pdf")
 
         # Save ZIP upload (this processes everything)
         try:
@@ -935,7 +994,8 @@ def render_zip_review_step():
                             for outcome, config in inferred_schema["outcomes"].items():
                                 st.markdown(f"- `{outcome}` ({config.get('type', 'unknown')})")
 
-            st.markdown(f"""
+            st.markdown(
+                f"""
             **Dataset saved successfully!**
 
             - **Upload ID:** `{upload_id}`
@@ -943,7 +1003,8 @@ def render_zip_review_step():
             - **Format:** Multi-table (ZIP)
 
             You can now use this dataset in the main analysis interface.
-            """)
+            """
+            )
 
             # Clear session state
             if st.button("Upload Another Dataset", key="zip_success_another"):

@@ -1,6 +1,6 @@
 # Documentation Index
 
-**Last Updated:** 2025-12-24  
+**Last Updated:** 2025-12-24
 **Status:** ✅ Consolidated around unified vision
 
 ---
@@ -296,4 +296,3 @@ All docs now align around:
 ---
 
 **All documentation is now consolidated and aligned around the semantic NL query vision.** 🎯
-

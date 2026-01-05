@@ -32,7 +32,7 @@ class ValidationResult:
     errors: list[str]
 
 
-def parse_json_response(raw: str | None) -> dict | list | None:
+def parse_json_response(raw: str | None) -> dict[str, Any] | list[Any] | None:
     """
     Parse raw LLM response into Python dict or list.
 
@@ -60,7 +60,9 @@ def parse_json_response(raw: str | None) -> dict | list | None:
     try:
         parsed = json.loads(raw)
         logger.debug("llm_json_parse_success", length=len(str(parsed)))
-        return parsed
+        from typing import cast
+
+        return cast(dict[str, Any] | list[Any], parsed)
     except json.JSONDecodeError as e:
         logger.warning(
             "llm_json_parse_failed",
@@ -123,7 +125,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
-def validate_shape(payload: dict | list | None, schema_name: str) -> ValidationResult:
+def validate_shape(payload: dict[str, Any] | list[Any] | None, schema_name: str) -> ValidationResult:
     """
     Validate parsed JSON payload against expected schema.
 

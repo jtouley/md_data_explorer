@@ -81,9 +81,9 @@ Try 'LDL mg/dL' or 'Total Cholesterol mg/dL' instead."}"""
         logger.debug(
             "error_translation_success",
             latency_ms=llm_result.latency_ms,
-            message_length=len(friendly_message),
+            message_length=len(str(friendly_message)),
         )
-        return friendly_message
+        return str(friendly_message) if friendly_message is not None else None
 
     # Payload malformed or missing friendly_message field
     logger.debug(

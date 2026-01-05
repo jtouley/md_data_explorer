@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -59,7 +60,7 @@ class AnalysisContext:
     filters: list = field(default_factory=list)  # List of FilterSpec objects
 
     # QueryPlan (structured plan from NLU)
-    query_plan = None  # QueryPlan | None - will be set after QueryIntent conversion (type: ignore for forward ref)
+    query_plan: Any = None  # QueryPlan | None - will be set after QueryIntent conversion
 
     # Original query text (for "most" detection, etc.)
     query_text: str | None = None
@@ -204,7 +205,7 @@ class QuestionEngine:
         return None if variable == "(Choose one)" else variable
 
     @staticmethod
-    def select_grouping_variable(df: pd.DataFrame, exclude: list[str] = None) -> str | None:
+    def select_grouping_variable(df: pd.DataFrame, exclude: list[str] | None = None) -> str | None:
         """Ask user to select groups to compare."""
         available_cols = [c for c in df.columns if c not in ["patient_id", "time_zero"]]
         if exclude:
@@ -221,7 +222,7 @@ class QuestionEngine:
         return None if variable == "(Choose one)" else variable
 
     @staticmethod
-    def select_predictor_variables(df: pd.DataFrame, exclude: list[str] = None, min_vars: int = 1) -> list[str]:
+    def select_predictor_variables(df: pd.DataFrame, exclude: list[str] | None = None, min_vars: int = 1) -> list[str]:
         """Ask user to select predictor variables."""
         available_cols = [c for c in df.columns if c not in ["patient_id", "time_zero"]]
         if exclude:
@@ -236,7 +237,7 @@ class QuestionEngine:
             help=f"Select at least {min_vars} variable(s) that might influence the outcome",
         )
 
-        return variables
+        return list(variables)
 
     @staticmethod
     def select_time_variables(df: pd.DataFrame) -> tuple[str | None, str | None]:
@@ -301,7 +302,10 @@ class QuestionEngine:
 
         if not ENABLE_PROGRESSIVE_FEEDBACK:
             # Fallback to simple parsing without feedback
-            return nl_engine.parse_query(query)
+            from clinical_analytics.core.nl_query_engine import QueryIntent
+
+            result = nl_engine.parse_query(query)
+            return result if isinstance(result, QueryIntent) else None
 
         @contextmanager
         def timeout_context(seconds: float):
@@ -347,7 +351,7 @@ class QuestionEngine:
                     tier1_intent.parsing_tier = "pattern_match"
                     tier1_intent.parsing_attempts = parsing_attempts
                     status.update(label=f"✅ Matched via pattern matching (confidence: {tier1_intent.confidence:.0%})")
-                    return tier1_intent
+                    return tier1_intent  # type: ignore[no-any-return]
                 elif tier1_intent and tier1_intent.intent_type != "DESCRIBE":
                     # Save as potential fallback if it's more specific than DESCRIBE
                     best_partial_intent = tier1_intent
@@ -375,7 +379,7 @@ class QuestionEngine:
                     tier2_intent.parsing_tier = "semantic_match"
                     tier2_intent.parsing_attempts = parsing_attempts
                     status.update(label=f"✅ Matched via semantic search (confidence: {tier2_intent.confidence:.0%})")
-                    return tier2_intent
+                    return tier2_intent  # type: ignore[no-any-return]
             except TimeoutError:
                 status.update(label="⏱️ Semantic search timed out, trying advanced parsing...")
                 logger.warning("semantic_match_timeout", query=query)
@@ -398,7 +402,7 @@ class QuestionEngine:
                     tier3_intent.parsing_tier = "llm_fallback"
                     tier3_intent.parsing_attempts = parsing_attempts
                     status.update(label=f"✅ Matched via advanced parsing (confidence: {tier3_intent.confidence:.0%})")
-                    return tier3_intent
+                    return tier3_intent  # type: ignore[no-any-return]
                 final_intent = tier3_intent  # May be None
             except TimeoutError:
                 status.update(label="❌ Advanced parsing timed out")
@@ -424,7 +428,7 @@ class QuestionEngine:
                     confidence=best_partial_intent.confidence,
                     query=query,
                 )
-                return best_partial_intent
+                return best_partial_intent  # type: ignore[no-any-return]
             elif final_intent is None:
                 # Create a failure intent if all tiers failed
                 from clinical_analytics.core.nl_query_engine import QueryIntent
@@ -494,7 +498,8 @@ class QuestionEngine:
         """
         st.markdown("## 💬 Ask your question")
 
-        st.markdown("""
+        st.markdown(
+            """
         Just type what you want to know in plain English. I'll figure out the right analysis.
 
         **Examples:**
@@ -502,7 +507,8 @@ class QuestionEngine:
         - "What predicts mortality?"
         - "Show me correlation between age and outcome"
         - "Descriptive statistics for all patients"
-        """)
+        """
+        )
 
         # Text input for query
         query = st.text_input(
@@ -734,4 +740,5 @@ class QuestionEngine:
         except Exception as e:
             st.error(f"❌ Error parsing query: {str(e)}")
             st.info("💡 Please try rephrasing your question.")
-            return None
+
+        return None

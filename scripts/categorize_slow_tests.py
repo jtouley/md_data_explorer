@@ -168,11 +168,13 @@ def generate_report(
     # 1. Uncategorized slow tests
     uncategorized_slow = categorize_slow_tests(data_file, slow_threshold)
     if uncategorized_slow:
-        report_lines.extend([
-            f"Uncategorized Slow Tests (>{slow_threshold}s without @pytest.mark.slow)",
-            "=" * 80,
-            "",
-        ])
+        report_lines.extend(
+            [
+                f"Uncategorized Slow Tests (>{slow_threshold}s without @pytest.mark.slow)",
+                "=" * 80,
+                "",
+            ]
+        )
         for test in uncategorized_slow:
             nodeid = test.get("nodeid", "unknown")
             duration = test.get("duration", 0)
@@ -180,7 +182,7 @@ def generate_report(
             report_lines.append(f"Test: {nodeid}")
             report_lines.append(f"  Duration: {duration:.2f}s")
             report_lines.append(f"  Module: {module}")
-            report_lines.append(f"  Recommendation: Add @pytest.mark.slow marker")
+            report_lines.append("  Recommendation: Add @pytest.mark.slow marker")
             report_lines.append("")
         report_lines.append(f"Total: {len(uncategorized_slow)} uncategorized slow test(s)")
         report_lines.append("")
@@ -190,11 +192,13 @@ def generate_report(
     # 2. Fast tests incorrectly marked as slow
     incorrectly_slow = find_incorrectly_marked_slow_tests(data_file, fast_threshold)
     if incorrectly_slow:
-        report_lines.extend([
-            f"Incorrectly Marked Slow Tests (<{fast_threshold}s with @pytest.mark.slow)",
-            "=" * 80,
-            "",
-        ])
+        report_lines.extend(
+            [
+                f"Incorrectly Marked Slow Tests (<{fast_threshold}s with @pytest.mark.slow)",
+                "=" * 80,
+                "",
+            ]
+        )
         for test in incorrectly_slow:
             nodeid = test.get("nodeid", "unknown")
             duration = test.get("duration", 0)
@@ -202,7 +206,7 @@ def generate_report(
             report_lines.append(f"Test: {nodeid}")
             report_lines.append(f"  Duration: {duration:.2f}s")
             report_lines.append(f"  Module: {module}")
-            report_lines.append(f"  Recommendation: Remove @pytest.mark.slow marker")
+            report_lines.append("  Recommendation: Remove @pytest.mark.slow marker")
             report_lines.append("")
         report_lines.append(f"Total: {len(incorrectly_slow)} incorrectly marked slow test(s)")
         report_lines.append("")
@@ -212,11 +216,13 @@ def generate_report(
     # 3. Uncategorized integration tests
     uncategorized_integration = find_uncategorized_integration_tests(data_file, integration_threshold)
     if uncategorized_integration:
-        report_lines.extend([
-            f"Uncategorized Integration Tests (>{integration_threshold}s without @pytest.mark.integration)",
-            "=" * 80,
-            "",
-        ])
+        report_lines.extend(
+            [
+                f"Uncategorized Integration Tests (>{integration_threshold}s without @pytest.mark.integration)",
+                "=" * 80,
+                "",
+            ]
+        )
         for test in uncategorized_integration:
             nodeid = test.get("nodeid", "unknown")
             duration = test.get("duration", 0)
@@ -224,7 +230,7 @@ def generate_report(
             report_lines.append(f"Test: {nodeid}")
             report_lines.append(f"  Duration: {duration:.2f}s")
             report_lines.append(f"  Module: {module}")
-            report_lines.append(f"  Recommendation: Add @pytest.mark.integration marker (if using real services)")
+            report_lines.append("  Recommendation: Add @pytest.mark.integration marker (if using real services)")
             report_lines.append("")
         report_lines.append(f"Total: {len(uncategorized_integration)} uncategorized integration test(s)")
         report_lines.append("")
@@ -234,11 +240,13 @@ def generate_report(
     # 4. Fast tests incorrectly marked as integration
     incorrectly_integration = find_incorrectly_marked_integration_tests(data_file, fast_threshold)
     if incorrectly_integration:
-        report_lines.extend([
-            f"Incorrectly Marked Integration Tests (<{fast_threshold}s with @pytest.mark.integration)",
-            "=" * 80,
-            "",
-        ])
+        report_lines.extend(
+            [
+                f"Incorrectly Marked Integration Tests (<{fast_threshold}s with @pytest.mark.integration)",
+                "=" * 80,
+                "",
+            ]
+        )
         for test in incorrectly_integration:
             nodeid = test.get("nodeid", "unknown")
             duration = test.get("duration", 0)
@@ -246,7 +254,7 @@ def generate_report(
             report_lines.append(f"Test: {nodeid}")
             report_lines.append(f"  Duration: {duration:.2f}s")
             report_lines.append(f"  Module: {module}")
-            report_lines.append(f"  Recommendation: Remove @pytest.mark.integration marker (likely unit test)")
+            report_lines.append("  Recommendation: Remove @pytest.mark.integration marker (likely unit test)")
             report_lines.append("")
         report_lines.append(f"Total: {len(incorrectly_integration)} incorrectly marked integration test(s)")
         report_lines.append("")
@@ -255,22 +263,21 @@ def generate_report(
 
     # Summary
     total_issues = (
-        len(uncategorized_slow)
-        + len(incorrectly_slow)
-        + len(uncategorized_integration)
-        + len(incorrectly_integration)
+        len(uncategorized_slow) + len(incorrectly_slow) + len(uncategorized_integration) + len(incorrectly_integration)
     )
     if total_issues > 0:
-        report_lines.extend([
-            "=" * 80,
-            f"Summary: {total_issues} categorization issue(s) found",
-            "",
-            "To fix:",
-            "  - Add @pytest.mark.slow to slow tests (>30s)",
-            "  - Remove @pytest.mark.slow from fast tests (<1s)",
-            "  - Add @pytest.mark.integration to integration tests (>10s, using real services)",
-            "  - Remove @pytest.mark.integration from unit tests (<1s, using mocks)",
-        ])
+        report_lines.extend(
+            [
+                "=" * 80,
+                f"Summary: {total_issues} categorization issue(s) found",
+                "",
+                "To fix:",
+                "  - Add @pytest.mark.slow to slow tests (>30s)",
+                "  - Remove @pytest.mark.slow from fast tests (<1s)",
+                "  - Add @pytest.mark.integration to integration tests (>10s, using real services)",
+                "  - Remove @pytest.mark.integration from unit tests (<1s, using mocks)",
+            ]
+        )
     else:
         report_lines.append("✅ All tests correctly categorized!")
 
@@ -279,9 +286,7 @@ def generate_report(
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Categorize slow tests using performance tracking data"
-    )
+    parser = argparse.ArgumentParser(description="Categorize slow tests using performance tracking data")
     parser.add_argument(
         "--data-file",
         type=Path,
@@ -313,10 +318,7 @@ def main():
     incorrectly_integration = find_incorrectly_marked_integration_tests(args.data_file)
 
     total_issues = (
-        len(uncategorized_slow)
-        + len(incorrectly_slow)
-        + len(uncategorized_integration)
-        + len(incorrectly_integration)
+        len(uncategorized_slow) + len(incorrectly_slow) + len(uncategorized_integration) + len(incorrectly_integration)
     )
 
     if total_issues > 0:
@@ -327,4 +329,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

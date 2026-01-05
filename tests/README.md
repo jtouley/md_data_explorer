@@ -97,7 +97,7 @@ make check         # Full quality gate (format + lint + type + test)
    - Parametrized tests use **sample datasets** (1-2) for fast unit testing
    - **Full integration tests** across all datasets are marked `@pytest.mark.slow` and `@pytest.mark.integration`
    - No hardcoded dataset names in integration tests
-   
+
    **Test Optimization Strategy:**
    - Fast tests (`make test-fast`): Use `get_sample_datasets()` - 1-2 representative datasets
    - Integration tests (`make test-integration`): Use `get_available_datasets()` - all datasets for critical schema/compliance tests

@@ -4,7 +4,7 @@ Interactive questions to help users refine their queries when confidence is low.
 Leverages semantic layer metadata to provide context-aware suggestions.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import streamlit as st
 import structlog
@@ -30,7 +30,7 @@ class ClarifyingQuestionsEngine:
     @staticmethod
     def ask_clarifying_questions(
         intent: "QueryIntent",
-        semantic_layer,
+        semantic_layer: Any,
         available_columns: list[str],  # Just column names, not DataFrame
     ) -> "QueryIntent":
         """Ask targeted questions to refine intent using semantic layer metadata.

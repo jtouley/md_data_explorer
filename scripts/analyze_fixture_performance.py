@@ -129,7 +129,7 @@ def main():
             print(f"\n  Module: {module}")
             print(f"    Slow tests: {info['test_count']}")
             print(f"    Avg duration: {info['avg_duration']:.2f}s")
-            print(f"    Sample tests:")
+            print("    Sample tests:")
             for test in info["tests"]:
                 print(f"      - {test['nodeid']}: {test['duration']:.2f}s")
 
@@ -150,4 +150,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

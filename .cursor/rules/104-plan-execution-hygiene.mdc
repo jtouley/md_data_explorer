@@ -19,24 +19,30 @@ This rule defines mandatory hygiene standards for executing implementation plans
 
 ## Code Quality Gates
 
-### Mandatory Pre-Commit Checks
+### Pre-Commit Hooks (Automatic Enforcement)
 
-**Before every commit/PR, you MUST run:**
+**Pre-commit hooks automatically enforce quality checks on every commit. Cannot be bypassed.**
 
-1. **Formatting**: `make format` (auto-fix) or `make format-check` (verify)
-2. **Linting**: `make lint-fix` (auto-fix) or `make lint` (verify)
-3. **Type checking**: `make type-check`
-4. **Testing**: `make test-fast` (quick feedback) or module-specific tests (`make test-core`, `make test-analysis`, etc.) or `make test` (full suite)
+**Installed hooks:**
+1. **Formatting**: `ruff format` (auto-fixes)
+2. **Linting**: `ruff check --fix` (auto-fixes)
+3. **Type checking**: `mypy` (validates types)
+4. **Test fixture rules**: Custom hook checks for duplicate test setup
+5. **File validation**: YAML, JSON, TOML syntax checks
+6. **File hygiene**: Trailing whitespace, end of file newlines
 
-**Never commit code that fails these checks.**
-
-### Pre-commit Hook (Recommended)
-
+**Installation:**
 ```bash
-# .git/hooks/pre-commit
-#!/bin/sh
-make format-check && make lint && make type-check && make test-fast
+make install-pre-commit  # After make install-dev
 ```
+
+**If commit fails**: Pre-commit will show errors. Fix them and commit again (most issues auto-fix).
+
+**Manual checks (optional, for faster feedback during development):**
+- `make format-check` - Verify formatting without committing
+- `make lint` - Verify linting without committing
+- `make type-check` - Verify types without committing
+- `make test-fast` - Run fast tests before committing
 
 ### CI/CD Integration
 
@@ -46,10 +52,9 @@ make format-check && make lint && make type-check && make test-fast
 
 ### Code Quality Fixes
 
-- **Fix issues immediately** - Don't accumulate technical debt
-- **Run linting after writing code** - `make lint-fix` to auto-fix issues
+- **Pre-commit hooks auto-fix** - Formatting and linting are fixed automatically on commit
+- **Fix remaining issues** - If commit fails, fix the issues shown and commit again
 - **Check for duplicate imports** - Remove redundant imports immediately
-- **Verify formatting** - `make format` before committing
 - **No duplicate imports** - If you see the same import pattern in multiple files, extract to `conftest.py` or shared module
 
 ### Makefile Usage (MANDATORY)
@@ -79,9 +84,9 @@ make format-check && make lint && make type-check && make test-fast
 2. **Run test immediately** - Use module-specific test command (e.g., `make test-core`) or `make test-fast` to verify it fails as expected
 3. **Implement minimum code to pass** (Green)
 4. **Run test again** - Use module-specific test command or `make test-fast` to verify it passes
-5. **Fix code quality issues immediately** - Run `make lint-fix` and `make format` if needed
-6. **Refactor** (Refactor)
-7. **Run full test suite** - `make test-fast` before commit
+5. **Refactor** (Refactor)
+6. **Run full test suite** - `make test-fast` before commit
+7. **Commit** - Pre-commit hooks automatically enforce formatting, linting, type checking, and test fixture rules
 
 ### Test Structure Standards
 

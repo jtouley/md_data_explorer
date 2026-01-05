@@ -160,10 +160,12 @@ def main():
     from clinical_analytics.ui.components.result_interpreter import ResultInterpreter
 
     st.title("📈 Compare Groups")
-    st.markdown("""
+    st.markdown(
+        """
     Compare outcomes or characteristics between groups.
     We'll automatically select the right statistical test for your data.
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=False)
@@ -291,7 +293,8 @@ def main():
                 p_interp = ResultInterpreter.interpret_p_value(results["p_value"])
 
                 if p_interp["is_significant"]:
-                    st.markdown(f"""
+                    st.markdown(
+                        f"""
 **Significant difference found** {p_interp["emoji"]}
 
 The ANOVA test shows that at least one group differs significantly from the others
@@ -299,15 +302,18 @@ The ANOVA test shows that at least one group differs significantly from the othe
 
 **Next steps**: Perform post-hoc tests (e.g., Tukey's HSD) to identify which specific
 groups differ from each other.
-""")
+"""
+                    )
                 else:
-                    st.markdown(f"""
+                    st.markdown(
+                        f"""
 **No significant difference** ❌
 
 The ANOVA test shows no significant difference in {outcome_col} across groups
 (p={results["p_value"]:.4f}).
 All groups appear similar on this measure.
-""")
+"""
+                    )
 
             elif results["test_type"] == "chi-square":
                 # Chi-square results
@@ -337,23 +343,27 @@ All groups appear similar on this measure.
                 p_interp = ResultInterpreter.interpret_p_value(results["p_value"])
 
                 if p_interp["is_significant"]:
-                    st.markdown(f"""
+                    st.markdown(
+                        f"""
 **Significant association found** {p_interp["emoji"]}
 
 The chi-square test shows a significant association between {group_col} and {outcome_col}
 (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} differs significantly across {group_col} groups.
-""")
+"""
+                    )
                 else:
-                    st.markdown(f"""
+                    st.markdown(
+                        f"""
 **No significant association** ❌
 
 The chi-square test shows no significant association between {group_col} and {outcome_col}
 (χ²={results["statistic"]:.2f}, p={results["p_value"]:.4f}).
 
 The distribution of {outcome_col} is similar across groups.
-""")
+"""
+                    )
 
             # Export and methods
             st.markdown("## 📥 Export & Methods")

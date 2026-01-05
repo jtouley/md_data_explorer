@@ -4,7 +4,9 @@ LLM Client for local Ollama integration (ADR003 Phase 0).
 Privacy-preserving: All data stays on-device, no external API calls.
 """
 
-import requests
+from typing import Any
+
+import requests  # type: ignore
 import structlog
 
 logger = structlog.get_logger()
@@ -61,7 +63,7 @@ class OllamaClient:
         """
         try:
             response = requests.get(f"{self.base_url}/api/tags", timeout=self.timeout)
-            return response.status_code == 200
+            return bool(response.status_code == 200)
         except (requests.RequestException, ConnectionError) as e:
             logger.warning(
                 "ollama_connection_failed",
@@ -122,7 +124,7 @@ class OllamaClient:
             return None
 
         try:
-            payload: dict = {
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
@@ -149,7 +151,8 @@ class OllamaClient:
                 return None
 
             result = response.json()
-            return result.get("response")
+            response_text: str | None = result.get("response")
+            return response_text
 
         except requests.Timeout:
             logger.warning(

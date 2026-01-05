@@ -101,10 +101,10 @@ The self-improvement script detects failure patterns and generates prompt fixes,
 From test logs showing 3b model failures:
 
 ```javascript
-[warning] llm_queryplan_validation_failed_trying_legacy_format 
+[warning] llm_queryplan_validation_failed_trying_legacy_format
 error="Invalid intent 'FILTER_OUT'. Must be one of ['COUNT'...]"
 
-[warning] llm_queryplan_validation_failed_trying_legacy_format 
+[warning] llm_queryplan_validation_failed_trying_legacy_format
 error="Invalid intent 'FILTERS'. Must be one of ['COUNT'...]"
 ```
 
@@ -193,7 +193,7 @@ In `__init__` method, verify or add overlay cache fields:
 ```python
 def __init__(self, semantic_layer, embedding_model: str = "all-MiniLM-L6-v2"):
     # ... existing fields ...
-    
+
     # Overlay cache (mtime-based hot reload)
     self._overlay_cache_text = ""
     self._overlay_cache_mtime_ns = 0
@@ -209,21 +209,21 @@ Verify or add method after `__init__`:
 def _prompt_overlay_path(self) -> Path:
     """
     Get overlay file path (configurable via env var).
-    
+
     Defaults to /tmp/nl_query_learning/prompt_overlay.txt to keep
     learning artifacts out of source tree.
-    
+
     Returns:
         Path to overlay file
     """
     import os
     from pathlib import Path
-    
+
     # Prefer explicit override
     p = os.getenv("NL_PROMPT_OVERLAY_PATH")
     if p:
         return Path(p)
-    
+
     # Default: same directory as self-improve logs
     # (keeps artifacts out of source tree)
     return Path("/tmp/nl_query_learning/prompt_overlay.txt")
@@ -237,25 +237,25 @@ def _prompt_overlay_path(self) -> Path:
 def _load_prompt_overlay(self) -> str:
     """
     Load prompt overlay from disk with mtime-based caching.
-    
+
     Only re-reads file if modified since last load (hot reload).
-    
+
     Returns:
         Overlay text to append to system prompt, or empty string
     """
     p = self._prompt_overlay_path()
-    
+
     try:
         st = p.stat()
     except FileNotFoundError:
         self._overlay_cache_text = ""
         self._overlay_cache_mtime_ns = 0
         return ""
-    
+
     # Cache hit: file unchanged since last load
     if st.st_mtime_ns == self._overlay_cache_mtime_ns:
         return self._overlay_cache_text
-    
+
     # Cache miss: file changed, reload
     try:
         text = p.read_text(encoding="utf-8").strip()
@@ -300,26 +300,26 @@ return system_prompt, user_prompt
 def write_prompt_overlay(prompt_additions: str, overlay_path: Path) -> None:
     """
     Write prompt additions atomically to overlay file.
-    
+
     Uses temp + replace to prevent race conditions if engine reads
     while script is writing.
-    
+
     Args:
         prompt_additions: Generated fixes from failure patterns
         overlay_path: Target overlay file path
     """
     import os
-    
+
     # Ensure parent directory exists
     overlay_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Write to temp file
     tmp = overlay_path.with_suffix(".tmp")
     tmp.write_text(prompt_additions, encoding="utf-8")
-    
+
     # Atomic replace (POSIX guarantee)
     os.replace(tmp, overlay_path)
-    
+
     logger.info("prompt_overlay_written", path=str(overlay_path), length=len(prompt_additions))
 ```
 
@@ -437,7 +437,7 @@ import hashlib
 def _stable_hash(s: str) -> str:
     """
     Stable hash for metrics (SHA256, not Python's randomized hash()).
-    
+
     Returns:
         First 12 chars of SHA256 hex digest
     """
@@ -453,33 +453,33 @@ def _stable_hash(s: str) -> str:
 ```python
 # After tier 1 pattern match (in parse_query method, after tier1_match check)
 if tier1_match:
-    logger.info("parse_outcome", 
-                tier="tier1", 
-                success=True, 
+    logger.info("parse_outcome",
+                tier="tier1",
+                success=True,
                 query_hash=_stable_hash(query))
     return tier1_result
 
 # After tier 2 semantic match (in parse_query method, after tier2_match check)
 if tier2_match:
-    logger.info("parse_outcome", 
-                tier="tier2", 
-                success=True, 
+    logger.info("parse_outcome",
+                tier="tier2",
+                success=True,
                 query_hash=_stable_hash(query))
     return tier2_result
 
 # Tier 3 LLM fallback (in parse_query method, when entering LLM path)
-logger.info("parse_outcome", 
-            tier="tier3", 
-            llm_called=True, 
+logger.info("parse_outcome",
+            tier="tier3",
+            llm_called=True,
             query_hash=_stable_hash(query))
 
 # After LLM call (in parse_query method, after client.generate call)
 response = client.generate(...)
 llm_http_success = response is not None
 
-logger.info("parse_outcome", 
-            tier="tier3", 
-            llm_http_success=llm_http_success, 
+logger.info("parse_outcome",
+            tier="tier3",
+            llm_http_success=llm_http_success,
             query_hash=_stable_hash(query))
 
 if not llm_http_success:
@@ -492,17 +492,17 @@ try:
 except json.JSONDecodeError:
     json_parse_success = False
 
-logger.info("parse_outcome", 
-            tier="tier3", 
-            json_parse_success=json_parse_success, 
+logger.info("parse_outcome",
+            tier="tier3",
+            json_parse_success=json_parse_success,
             query_hash=_stable_hash(query))
 
 # After schema validation (in parse_query method, after _extract_query_intent_from_llm_response)
 intent = self._extract_query_intent_from_llm_response(response)
 schema_validate_success = intent is not None
 
-logger.info("parse_outcome", 
-            tier="tier3", 
+logger.info("parse_outcome",
+            tier="tier3",
             schema_validate_success=schema_validate_success,
             final_returned_from_tier3=schema_validate_success,
             query_hash=_stable_hash(query))
@@ -525,7 +525,7 @@ from pathlib import Path
 def analyze_logs(log_file: Path):
     """Parse structlog output and compute metrics with granular checkpoints."""
     outcomes = []
-    
+
     with open(log_file) as f:
         for line in f:
             if "parse_outcome" in line:
@@ -534,24 +534,24 @@ def analyze_logs(log_file: Path):
                     outcomes.append(entry)
                 except json.JSONDecodeError:
                     continue
-    
+
     if not outcomes:
         print("No parse outcomes found in logs")
         return
-    
+
     total = len(outcomes)
     tier_counts = Counter(o.get("tier") for o in outcomes if "tier" in o)
-    
+
     tier3_outcomes = [o for o in outcomes if o.get("tier") == "tier3"]
     tier3_total = len(tier3_outcomes)
-    
+
     # Granular checkpoints
     llm_called = sum(1 for o in tier3_outcomes if o.get("llm_called"))
     llm_http_success = sum(1 for o in tier3_outcomes if o.get("llm_http_success"))
     json_parse_success = sum(1 for o in tier3_outcomes if o.get("json_parse_success"))
     schema_validate_success = sum(1 for o in tier3_outcomes if o.get("schema_validate_success"))
     final_returned = sum(1 for o in tier3_outcomes if o.get("final_returned_from_tier3"))
-    
+
     print(f"Parse Outcome Analysis")
     print(f"=" * 50)
     print(f"Total parses: {total}")
@@ -559,7 +559,7 @@ def analyze_logs(log_file: Path):
     print(f"  Tier 1 (pattern): {tier_counts.get('tier1', 0)} ({tier_counts.get('tier1', 0)/total*100:.1f}%)")
     print(f"  Tier 2 (semantic): {tier_counts.get('tier2', 0)} ({tier_counts.get('tier2', 0)/total*100:.1f}%)")
     print(f"  Tier 3 (LLM): {tier3_total} ({tier3_total/total*100:.1f}%)")
-    
+
     if tier3_total > 0:
         print(f"\nTier 3 Pipeline (Granular Checkpoints):")
         print(f"  LLM called: {llm_called}/{tier3_total} ({llm_called/tier3_total*100:.1f}%)")
@@ -567,7 +567,7 @@ def analyze_logs(log_file: Path):
         print(f"  JSON parse success: {json_parse_success}/{tier3_total} ({json_parse_success/tier3_total*100:.1f}%)")
         print(f"  Schema validate success: {schema_validate_success}/{tier3_total} ({schema_validate_success/tier3_total*100:.1f}%)")
         print(f"  Final returned: {final_returned}/{tier3_total} ({final_returned/tier3_total*100:.1f}%)")
-    
+
     print(f"\nDiagnostics:")
     print(f"  Tier 3 rate <10%: LLM path bypassed (lower tier thresholds)")
     print(f"  LLM HTTP <80%: Ollama unavailable/timing out")
@@ -597,7 +597,7 @@ flowchart TD
     generate --> write[Write prompt_overlay.txt]
     write --> reload[Next Iteration Loads Overlay]
     reload --> start
-    
+
     style write fill:#90EE90
     style done fill:#90EE90
 ```
@@ -619,7 +619,7 @@ If accuracy doesn't improve, check metrics:
 If you see these in logs, model is too small:
 
 ```javascript
-llm_queryplan_validation_failed_trying_legacy_format 
+llm_queryplan_validation_failed_trying_legacy_format
 error="Invalid intent 'FILTER_OUT'..."
 ```
 
@@ -679,11 +679,11 @@ def test_overlay_loads_from_env_var_path():
     from pathlib import Path
     os.environ["NL_PROMPT_OVERLAY_PATH"] = "/tmp/test_overlay.txt"
     Path("/tmp/test_overlay.txt").write_text("test overlay")
-    
+
     # Act
     engine = NLQueryEngine(mock_semantic_layer)
     overlay = engine._load_prompt_overlay()
-    
+
     # Assert
     assert overlay == "test overlay"
 ```

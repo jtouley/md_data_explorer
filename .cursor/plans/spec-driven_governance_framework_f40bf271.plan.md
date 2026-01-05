@@ -942,7 +942,7 @@ Execution Sequence (MANDATORY)
             - New constraint discovered that changes approach
             - Tests reveal ambiguous behavior
             - Implementation choice not stated in spec
-   
+
    Actions:
    1) Declare SPEC GAP (per 106-spec-change-control.mdc)
    2) Append ONE Spec Delta to .context/specs/<task_id>.md
@@ -1469,7 +1469,7 @@ flowchart LR
     ToolExec --> Verify[git/make/rg]
     Verify --> Evidence[.context/evidence/]
     Evidence --> Audit[Audits/Postmortems]
-    
+
     style Gov fill:#ff6b6b
     style Tools fill:#4ecdc4
     style Evidence fill:#95e1d3
@@ -2021,21 +2021,21 @@ flowchart TD
     Telemetry --> CheckWaste{Waste Flags?}
     CheckWaste -->|Yes| WasteDelta[Create Token Waste Delta]
     CheckWaste -->|No| Done[Continue]
-    
+
     WasteDelta --> Postmortem[Next Postmortem]
     Postmortem --> Consume[Consume Token Waste Deltas]
     Consume --> Patches[Generate Patch-Style Edits]
     Patches --> Apply[Apply to Commands/Rules]
     Apply --> FutureRuns[Future Runs]
-    
+
     FutureRuns --> EmbedLess[Embed Less]
     FutureRuns --> ReferenceMore[Reference More]
     FutureRuns --> ConstrainOutput[Constrain Output]
-    
+
     EmbedLess --> Command
     ReferenceMore --> Command
     ConstrainOutput --> Command
-    
+
     style Telemetry fill:#4ecdc4
     style WasteDelta fill:#ff6b6b
     style Patches fill:#95e1d3

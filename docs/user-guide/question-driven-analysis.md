@@ -104,7 +104,7 @@ The platform fuzzy-matches variable names in your question to actual column name
 "How does BMI relate to CD4 counts and statin use?"
 ```
 
-**What it does:** 
+**What it does:**
 - Automatically filters to numeric variables only (text/categorical variables are excluded)
 - Computes correlation matrix for all numeric variables mentioned
 - Highlights strong correlations (|r| ≥ 0.5) and moderate correlations (0.3 ≤ |r| < 0.5)

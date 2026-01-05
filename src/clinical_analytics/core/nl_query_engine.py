@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -77,7 +78,7 @@ class QueryIntent:
     filters: list[FilterSpec] = field(default_factory=list)
     confidence: float = 0.0
     parsing_tier: str | None = None  # "pattern_match", "semantic_match", "llm_fallback"
-    parsing_attempts: list[dict] = field(default_factory=list)  # What was tried
+    parsing_attempts: list[dict[str, Any]] = field(default_factory=list)  # What was tried
     failure_reason: str | None = None  # Why it failed
     suggestions: list[str] = field(default_factory=list)  # How to improve query
     # ADR009 Phase 1: LLM-generated follow-up questions
@@ -86,8 +87,9 @@ class QueryIntent:
     # ADR009 Phase 2: Query interpretation and confidence explanation
     interpretation: str = ""  # Human-readable explanation of what the query is asking
     confidence_explanation: str = ""  # Why the confidence score is what it is
+    explanation: str = ""  # Human-readable explanation (legacy alias for interpretation)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate intent_type."""
         if self.intent_type not in VALID_INTENT_TYPES:
             raise ValueError(f"Invalid intent_type: {self.intent_type}. Must be one of {VALID_INTENT_TYPES}")
@@ -304,6 +306,7 @@ class NLQueryEngine:
 
         # Track parsing attempts for diagnostics
         parsing_attempts = []
+        matched_vars = []  # Initialize to avoid UnboundLocalError in logging
 
         # Tier 1: Pattern matching
         pattern_intent = self._pattern_match(query)
@@ -319,16 +322,16 @@ class NLQueryEngine:
         if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
             pattern_intent.parsing_tier = "pattern_match"
             pattern_intent.parsing_attempts = parsing_attempts
-            matched_vars = self._get_matched_variables(pattern_intent)
+            matched_vars_initial = self._get_matched_variables(pattern_intent)
             logger.info(
                 "query_parse_success",
                 intent=pattern_intent.intent_type,
                 confidence=pattern_intent.confidence,
-                matched_vars=matched_vars,
+                matched_vars=matched_vars_initial,
                 tier="pattern_match",
                 **log_context,
             )
-            intent = pattern_intent  # Set for post-processing
+            intent: QueryIntent | None = pattern_intent  # Set for post-processing
         else:
             # Pattern match found something but below threshold - try semantic match
             # but keep pattern match as fallback if semantic match is worse
@@ -404,6 +407,70 @@ class NLQueryEngine:
                     **log_context,
                 )
 
+        # Detect if this is a refinement query
+        refinement_phrases = ["remove", "exclude", "without", "get rid of", "only", "also", "actually"]
+        query_lower = query.lower()
+        is_likely_refinement = any(phrase in query_lower for phrase in refinement_phrases)
+
+        # Refinement handling: If LLM returns a stub with low confidence and we have history,
+        # try to inherit intent from previous query
+        if (
+            intent
+            and intent.confidence < 0.5
+            and intent.intent_type == "DESCRIBE"
+            and conversation_history
+            and len(conversation_history) > 0
+            and is_likely_refinement
+        ):
+            # Inherit intent and structure from previous query
+            previous = conversation_history[-1]
+            previous_intent = previous.get("intent", "DESCRIBE")
+
+            if previous_intent in ["COUNT", "COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
+                intent.intent_type = previous_intent
+                intent.confidence = max(intent.confidence, 0.6)  # Boost confidence for refinements
+
+                # Inherit other relevant fields from previous query
+                if "group_by" in previous and not intent.grouping_variable:
+                    intent.grouping_variable = previous.get("group_by")
+                if "metric" in previous and not intent.primary_variable:
+                    intent.primary_variable = previous.get("metric")
+
+                logger.info(
+                    "query_parse_refinement_intent_inherited",
+                    previous_intent=previous_intent,
+                    **log_context,
+                )
+
+        # ADDITIONAL REFINEMENT CHECK: If LLM returned valid response but mismatched
+        # grouping_variable from previous query, correct it
+        if (
+            intent
+            and is_likely_refinement
+            and conversation_history
+            and len(conversation_history) > 0
+            and intent.intent_type in ["COUNT", "COMPARE_GROUPS"]
+        ):
+            previous = conversation_history[-1]
+            previous_group_by = previous.get("group_by")
+            previous_intent = previous.get("intent")
+
+            # If previous query had a group_by and current one has a different one,
+            # prefer the previous one (user is likely refining the same grouping)
+            if (
+                previous_group_by
+                and intent.grouping_variable
+                and intent.grouping_variable != previous_group_by
+                and previous_intent == intent.intent_type
+            ):
+                logger.info(
+                    "query_parse_refinement_correcting_mismatched_grouping",
+                    previous_group_by=previous_group_by,
+                    llm_group_by=intent.grouping_variable,
+                    **log_context,
+                )
+                intent.grouping_variable = previous_group_by
+
         # If we still don't have a good intent, set failure diagnostics
         if not intent or (intent.confidence < 0.3 and intent.intent_type == "DESCRIBE"):
             if intent is None:
@@ -428,10 +495,18 @@ class NLQueryEngine:
             )
 
         # Post-process: Extract and assign variables if missing (runs in src, not UI)
+        # Skip variable extraction for refinement queries that already inherited variables
+        is_refinement_with_inherited_vars = (
+            intent
+            and intent.confidence >= 0.6  # Refinement-inherited queries have >= 0.6 confidence
+            and conversation_history
+            and len(conversation_history) > 0
+        )
+
         if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
             # Extract variables from query if not already set
-            matched_vars: list[str] = []  # Initialize for logging
-            if not intent.primary_variable or not intent.grouping_variable:
+            # Skip for refinement queries that have inherited variables
+            if (not intent.primary_variable or not intent.grouping_variable) and not is_refinement_with_inherited_vars:
                 # For COMPARE_GROUPS: prioritize pattern-based extraction for "which X had lowest Y"
                 if intent.intent_type == "COMPARE_GROUPS":
                     # First, try to extract directly from "which X had lowest Y" pattern
@@ -601,7 +676,8 @@ class NLQueryEngine:
 
             # Extract grouping variable from compound queries (e.g., "which X was most Y")
             # This handles queries like "how many patients were on statins and which statin was most prescribed?"
-            if intent.intent_type == "COUNT" and not intent.grouping_variable:
+            # Skip for refinement queries that have inherited grouping from conversation history
+            if intent.intent_type == "COUNT" and not intent.grouping_variable and not is_refinement_with_inherited_vars:
                 grouping_var = self._extract_grouping_from_compound_query(query)
                 if grouping_var:
                     intent.grouping_variable = grouping_var
@@ -946,7 +1022,11 @@ class NLQueryEngine:
             if self.encoder is None:
                 from sentence_transformers import SentenceTransformer
 
-                self.encoder = SentenceTransformer(self.embedding_model_name)
+                encoder_obj = SentenceTransformer(self.embedding_model_name)
+                self.encoder = encoder_obj  # type: ignore[assignment]
+
+            if self.encoder is None:
+                return None
 
             # Lazy compute template embeddings
             if self.template_embeddings is None:
@@ -976,13 +1056,13 @@ class NLQueryEngine:
 
                 # Assign variables to slots based on template
                 if "outcome" in best_template["slots"] and variables:
-                    intent.primary_variable = variables[0]
+                    intent.primary_variable = str(variables[0]) if variables[0] is not None else None
                 if "group" in best_template["slots"] and len(variables) > 1:
-                    intent.grouping_variable = variables[1]
+                    intent.grouping_variable = str(variables[1]) if variables[1] is not None else None
                 if "var1" in best_template["slots"] and variables:
-                    intent.primary_variable = variables[0]
+                    intent.primary_variable = str(variables[0]) if variables[0] is not None else None
                 if "var2" in best_template["slots"] and len(variables) > 1:
-                    intent.grouping_variable = variables[1]
+                    intent.grouping_variable = str(variables[1]) if variables[1] is not None else None
 
                 return intent
 
@@ -1008,7 +1088,7 @@ class NLQueryEngine:
 
         return self._ollama_client
 
-    def _build_rag_context(self, query: str) -> dict:
+    def _build_rag_context(self, query: str) -> dict[str, Any]:
         """
         Build RAG context from semantic layer metadata and golden questions.
 
@@ -1041,12 +1121,12 @@ class NLQueryEngine:
             "query": query,
         }
 
-    def _load_golden_questions_rag(self) -> list[dict]:
+    def _load_golden_questions_rag(self) -> list[dict[str, Any]]:
         """Load golden questions for RAG retrieval."""
         try:
             from pathlib import Path
 
-            import yaml
+            import yaml  # type: ignore
 
             golden_path = Path(__file__).parent.parent.parent / "tests" / "eval" / "golden_questions.yaml"
             if not golden_path.exists():
@@ -1054,7 +1134,8 @@ class NLQueryEngine:
 
             with open(golden_path) as f:
                 data = yaml.safe_load(f)
-            return data.get("golden_questions", [])
+            result = data.get("golden_questions", []) if isinstance(data, dict) else []
+            return list(result) if isinstance(result, list) else []
         except Exception as e:
             logger.warning("failed_to_load_golden_questions_for_rag", error=str(e))
             return []
@@ -1116,8 +1197,9 @@ class NLQueryEngine:
     def _build_llm_prompt(
         self,
         query: str,
-        context: dict,
-        conversation_history: list[dict] | None = None,
+        context: dict[str, Any],
+        conversation_history: list[dict[str, Any]] | None = None,
+        autocontext: Any = None,
     ) -> tuple[str, str]:
         """
         Build structured prompts for LLM with conversation context.
@@ -1129,6 +1211,7 @@ class NLQueryEngine:
             query: User's question
             context: RAG context with columns, aliases, examples
             conversation_history: Optional list of previous queries for refinement detection
+            autocontext: Optional AutoContext from ADR004 Phase 3 (schema context)
 
         Returns:
             Tuple of (system_prompt, user_prompt)
@@ -1191,6 +1274,52 @@ Result: {{"intent": "COUNT", "filters": [{{"column": "age", "operator": ">", "va
 **REMEMBER**: NEVER create intents like "REMOVE_NA", "FILTER_OUT", "EXCLUDE" - these are INVALID.
 Only use: COUNT, DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, CORRELATIONS"""
 
+        # Build AutoContext section if available
+        autocontext_section = ""
+        if autocontext:
+            # Format entity keys
+            entity_keys_str = ", ".join(autocontext.entity_keys[:5])  # Limit to top 5
+            if len(autocontext.entity_keys) > 5:
+                entity_keys_str += f" (and {len(autocontext.entity_keys) - 5} more)"
+
+            # Format column catalog (top 10 most relevant)
+            columns_info = []
+            for col in autocontext.columns[:10]:
+                col_info = f"- {col.name}"
+                if col.system_aliases:
+                    col_info += f" (aliases: {', '.join(col.system_aliases[:3])})"
+                if col.dtype:
+                    col_info += f" [type: {col.dtype}]"
+                if col.codebook:
+                    # Show sample codebook entries
+                    sample_codes = list(col.codebook.items())[:3]
+                    codebook_str = ", ".join(f"{k}: {v}" for k, v in sample_codes)
+                    if len(col.codebook) > 3:
+                        codebook_str += f" (and {len(col.codebook) - 3} more)"
+                    col_info += f" (codes: {codebook_str})"
+                columns_info.append(col_info)
+
+            # Format glossary (top 10 terms)
+            glossary_items = []
+            for term, definition in list(autocontext.glossary.items())[:10]:
+                glossary_items.append(f"- {term}: {definition}")
+
+            autocontext_section = f"""
+
+=== SCHEMA CONTEXT (AutoContext from ADR004) ===
+
+Entity Keys (primary identifiers): {entity_keys_str}
+
+Column Catalog (schema metadata):
+{chr(10).join(columns_info)}
+
+Glossary (abbreviations and definitions):
+{chr(10).join(glossary_items) if glossary_items else "None available"}
+
+**Use this schema context to match variables accurately.**
+**Only reference columns/aliases that exist in the schema above.**
+"""
+
         system_prompt = """You are a medical data query parser. Extract structured query intent from natural language.
 
 Return JSON matching the QueryPlan schema with these REQUIRED fields:
@@ -1230,6 +1359,7 @@ Aliases: {aliases}
 
 Examples:
 {examples}
+{autocontext_section}
 
 Follow-up generation guidelines:
 - Provide 2-3 exploratory questions that build on the current query
@@ -1254,6 +1384,7 @@ Filter extraction (ADR009 Phase 5):
             aliases=str(context["aliases"]),
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
             conversation_context=conversation_context,
+            autocontext_section=autocontext_section,
         )
 
         user_prompt = f"Parse this query: {query}"
@@ -1290,7 +1421,7 @@ Filter extraction (ADR009 Phase 5):
                 # ADR009 Phase 1: Preserve follow_ups fields
                 # ADR009 Phase 2: Preserve interpretation fields
                 return QueryIntent(
-                    intent_type=query_plan.intent,  # type: ignore[arg-type]
+                    intent_type=query_plan.intent,
                     primary_variable=query_plan.metric,
                     grouping_variable=query_plan.group_by,
                     confidence=query_plan.confidence,
@@ -1371,15 +1502,38 @@ Filter extraction (ADR009 Phase 5):
             client = self._get_ollama_client()
 
             # Step 2: Check if Ollama is available
-            if not client.is_available():
+            if client is None or not client.is_available():
                 logger.info("ollama_not_available_fallback_to_stub", query=query)
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
             # Step 3: Build RAG context
             context = self._build_rag_context(query)
 
-            # Step 4: Build structured prompts
-            system_prompt, user_prompt = self._build_llm_prompt(query, context, conversation_history)
+            # Step 3.5: Build AutoContext (ADR004 Phase 3)
+            # Extract doc_context from metadata if available (for uploaded datasets)
+            doc_context = None
+            metadata = self.semantic_layer.config.get("metadata")
+            if metadata and isinstance(metadata, dict):
+                doc_context = metadata.get("doc_context")
+
+            # Build AutoContext on-demand
+            from clinical_analytics.core.autocontext import build_autocontext
+
+            # Extract query terms for relevance filtering
+            query_terms = query.lower().split() if query else None
+
+            autocontext = build_autocontext(
+                semantic_layer=self.semantic_layer,
+                inferred_schema=None,  # Will be reconstructed from semantic layer
+                doc_context=doc_context,
+                query_terms=query_terms,
+                max_tokens=4000,
+            )
+
+            # Step 4: Build structured prompts (with AutoContext)
+            system_prompt, user_prompt = self._build_llm_prompt(
+                query, context, conversation_history, autocontext=autocontext
+            )
 
             # Log conversation context for refinement debugging
             if conversation_history:
@@ -1424,7 +1578,7 @@ Filter extraction (ADR009 Phase 5):
                 if self._is_refinement_query(query) and previous_intent:
                     # Preserve previous intent if LLM changed it
                     if intent.intent_type != previous_intent:
-                        intent.intent_type = previous_intent  # type: ignore[assignment]
+                        intent.intent_type = previous_intent
                         logger.info(
                             "refinement_intent_corrected",
                             query=query,
@@ -1609,7 +1763,7 @@ Filter extraction (ADR009 Phase 5):
 
         # Create base intent from previous context
         intent = QueryIntent(
-            intent_type=previous_intent,  # type: ignore[arg-type]
+            intent_type=previous_intent,
             primary_variable=previous_metric,
             grouping_variable=previous_group_by,
             confidence=0.6,  # Moderate confidence for fallback
@@ -2284,13 +2438,13 @@ Filter extraction (ADR009 Phase 5):
                         else:
                             # Coded column (not binary prescribed) - filter for non-zero values
                             # For "on statins" with "Statin Used", filter for != 0 or IN [1,2,3,4,5]
-                            non_zero_codes = [int(code) for code, _ in codes if int(code) != 0]
+                            non_zero_codes: list[int] = [int(code) for code, _ in codes if int(code) != 0]
                             if non_zero_codes:
                                 filters.append(
                                     FilterSpec(
                                         column=column_name,
                                         operator="IN",
-                                        value=non_zero_codes,
+                                        value=non_zero_codes,  # type: ignore[arg-type]
                                         exclude_nulls=True,
                                     )
                                 )
@@ -2373,10 +2527,12 @@ Filter extraction (ADR009 Phase 5):
                         value = float(value_str)
                         if value.is_integer():
                             value = int(value)
+                        # Type-safe operator
+                        operator_safe: str = str(operator)
                         filters.append(
                             FilterSpec(
                                 column=column_name,
-                                operator=operator,
+                                operator=operator_safe,  # type: ignore[arg-type]
                                 value=value,
                                 exclude_nulls=True,
                             )
@@ -2607,7 +2763,7 @@ Filter extraction (ADR009 Phase 5):
         for normalized_alias, canonical_name in alias_index.items():
             # Exact match (after normalization)
             if normalized_alias == normalized_search:
-                return canonical_name
+                return str(canonical_name) if canonical_name is not None else None
             # Starts with search term
             if normalized_alias.startswith(normalized_search):
                 score = len(normalized_search) / len(normalized_alias)
@@ -2629,7 +2785,7 @@ Filter extraction (ADR009 Phase 5):
 
         # Return if we found a reasonable match (score > 0.3)
         if best_match and best_score > 0.3:
-            return best_match
+            return str(best_match) if best_match is not None else None
 
         return None
 

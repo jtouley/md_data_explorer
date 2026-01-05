@@ -9,7 +9,7 @@ This prevents ad-hoc dict structures and ensures type safety.
 """
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -57,7 +57,7 @@ class QueryPlan:
     confidence_explanation: str = ""  # Why the confidence score is what it is
 
     @classmethod
-    def from_dict(cls, data: dict) -> "QueryPlan":
+    def from_dict(cls, data: dict[str, Any]) -> "QueryPlan":
         """
         Create QueryPlan from dictionary with validation (Phase 5.2).
 

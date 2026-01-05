@@ -189,4 +189,3 @@ User: /pr-review PR25
 Agent: [Loads pr25.diff, performs review, outputs summary in chat, saves detailed review to .context/reviews/25.md]
 
 End of command.
-

@@ -60,3 +60,15 @@ llm_timeout_max_s: 30.0
 # Enable/disable LLM-enhanced features independently
 enable_result_interpretation: true
 
+# ADR004: Feature Flags for Surgical Rollback
+# Enable/disable each phase independently for operational safety
+adr004_enable_doc_extraction: true  # Phase 1: PDF/MD/TXT extraction from ZIP uploads
+adr004_enable_schema_context: true  # Phase 2: Context-aware schema inference with docs
+adr004_enable_autocontext: true  # Phase 3: Tier 3 AutoContext packager for LLM fallback
+adr004_enable_question_generation: false  # Phase 4: Proactive question generation (default: false for rollout)
+
+# Legacy alias for Phase 4 (maintained for backward compatibility)
+enable_proactive_questions: false  # Deprecated: use adr004_enable_question_generation
+
+# ADR004 Phase 4: Proactive Question Generation Timeout
+llm_timeout_question_generation_s: 5.0  # Hard timeout (same as parsing tiers)

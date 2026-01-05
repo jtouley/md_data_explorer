@@ -10,7 +10,7 @@ intent_keywords:
     - "what leads to"
     - "best predicts"
     - "risk factors"
-  
+
   COMPARE_GROUPS:
     - "compare"
     - "difference"
@@ -18,7 +18,7 @@ intent_keywords:
     - "vs"
     - "versus"
     - "stratified by"
-  
+
   COUNT:
     - "how many"
     - "count"
@@ -27,7 +27,7 @@ intent_keywords:
     - "most prescribed"
     - "breakdown"
     - "broken down"
-  
+
   DESCRIBE:
     - "average"
     - "mean"
@@ -35,7 +35,7 @@ intent_keywords:
     - "describe"
     - "distribution"
     - "summary"
-  
+
   CORRELATIONS:
     - "correlate"
     - "correlation"
@@ -76,7 +76,7 @@ failure_patterns:
       **VALIDATION RULE (CRITICAL):**
       You MUST use EXACTLY one of these intents: {valid_intents}
       ANY other intent (like '{invalid_intent}') is INVALID and will cause system failure.
-      
+
       If the query doesn't clearly match an intent, choose the closest one:
       - Unclear counting questions → COUNT
       - Unclear analysis → DESCRIBE
@@ -88,7 +88,7 @@ failure_patterns:
     priority: 2
     fix_template: |
       **REFINEMENT DETECTION ALGORITHM:**
-      
+
       STEP 1: Check if query contains refinement phrase: {refinement_phrases}
       STEP 2: IF YES → This is a REFINEMENT
               - COPY previous_intent → current_intent (DO NOT CREATE NEW)
@@ -103,10 +103,10 @@ failure_patterns:
     priority: 3
     fix_template: |
       **INTENT CLASSIFICATION HINTS:**
-      
+
       Queries containing these keywords should use these intents:
       {keyword_hints}
-      
+
       Common misclassifications to avoid:
       - "what predicts X" is FIND_PREDICTORS, not COUNT
       - "compare between groups" is COMPARE_GROUPS, not DESCRIBE
@@ -118,13 +118,13 @@ failure_patterns:
     priority: 4
     fix_template: |
       **FILTER EXTRACTION RULES:**
-      
+
       Extract filters from these patterns:
       - "remove X" / "exclude X" → filter X != value
       - "only X" / "just X" → filter X == value
       - "patients on X" → filter X == 1 (if coded column)
       - "without X" / "no X" → filter X == 0 or != value
-      
+
       For coded columns, use numeric codes (0=n/a, 1=yes, 2=no, etc.)
 
   - type: "wrong_grouping"
@@ -133,7 +133,7 @@ failure_patterns:
     priority: 5
     fix_template: |
       **GROUPING DETECTION:**
-      
+
       Look for "by", "per", "broken down by", "stratified by" to identify grouping.
       Examples:
       - "count by statin" → group_by: "statin"
@@ -143,7 +143,7 @@ failure_patterns:
 # Prompt structure template
 prompt_template: |
   You are a medical data query parser. Extract structured query intent from natural language.
-  
+
   Return JSON matching the QueryPlan schema with these REQUIRED fields:
   - intent: One of {valid_intents}
   - metric: Main variable to analyze (string or null)
@@ -151,15 +151,15 @@ prompt_template: |
   - filters: List of filter objects (empty list if none)
   - confidence: Your confidence 0.0-1.0
   - explanation: Brief explanation of what the query asks for
-  
+
   {dynamic_fixes}
-  
+
   Available columns: {columns}
   Aliases: {aliases}
-  
+
   Examples:
   {examples}
-  
+
   {conversation_context}
 
 # Logging configuration
@@ -168,4 +168,3 @@ logging:
   log_dir: "/tmp/nl_query_learning"
   log_level: "INFO"
   log_failures_only: false
-

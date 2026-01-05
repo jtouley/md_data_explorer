@@ -10,7 +10,7 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -28,6 +28,7 @@ from clinical_analytics.core.error_translation import translate_error_with_llm
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
+from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.state_store import ConversationState, FileStateStore
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
@@ -117,7 +118,7 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 
 
 @st.cache_resource(show_spinner="Loading semantic layer...")
-def get_cached_semantic_layer(dataset_version: str, _dataset):
+def get_cached_semantic_layer(dataset_version: str, _dataset: Any) -> "SemanticLayer":
     """
     Get semantic layer with caching (Phase 1.2 - PR20 P0 Fix).
 
@@ -139,7 +140,7 @@ def get_cached_semantic_layer(dataset_version: str, _dataset):
     Raises:
         ValueError: If semantic layer not available
     """
-    return _dataset.get_semantic_layer()
+    return cast(SemanticLayer, _dataset.get_semantic_layer())
 
 
 def normalize_query(q: str | None) -> str:
@@ -187,7 +188,7 @@ def canonicalize_scope(scope: dict | None) -> dict:
     if scope is None:
         return {}
 
-    canonical = {}
+    canonical: dict[str, Any] = {}
     for key in sorted(scope.keys()):
         value = scope[key]
         if value is None:
@@ -293,7 +294,11 @@ def cleanup_old_results(dataset_version: str) -> None:
 
     # Remove any dataset-scoped result keys not in keep set
     result_prefix = f"analysis_result:{dataset_version}:"
-    keys_to_remove = [key for key in st.session_state.keys() if key.startswith(result_prefix) and key not in keep_keys]
+    keys_to_remove = [
+        key
+        for key in st.session_state.keys()
+        if isinstance(key, str) and key.startswith(result_prefix) and key not in keep_keys
+    ]
 
     for key in keys_to_remove:
         del st.session_state[key]
@@ -312,7 +317,7 @@ def _evict_old_execution_cache(dataset_version: str) -> None:
         dataset_version: Dataset version to evict cache for
     """
     exec_prefix = f"exec_result:{dataset_version}:"
-    exec_keys = [key for key in st.session_state.keys() if key.startswith(exec_prefix)]
+    exec_keys = [key for key in st.session_state.keys() if isinstance(key, str) and key.startswith(exec_prefix)]
 
     if len(exec_keys) <= MAX_STORED_RESULTS_PER_DATASET:
         return
@@ -384,7 +389,7 @@ def clear_all_results(dataset_version: str) -> None:
 
     # Clear all dataset-scoped results (trivial with scoped keys)
     result_prefix = f"analysis_result:{dataset_version}:"
-    keys_to_remove = [key for key in st.session_state.keys() if key.startswith(result_prefix)]
+    keys_to_remove = [key for key in st.session_state.keys() if isinstance(key, str) and key.startswith(result_prefix)]
 
     for key in keys_to_remove:
         del st.session_state[key]
@@ -424,13 +429,16 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
 
         # Phase 2: Add "Add alias?" UI for unknown terms
         if "unknown_term" in result:
-            _render_add_alias_ui(
-                unknown_term=result["unknown_term"],
-                available_columns=result.get("available_columns", []),
-                upload_id=result.get("upload_id"),
-                dataset_version=result.get("dataset_version"),
-                semantic_layer=result.get("semantic_layer"),
-            )
+            upload_id = result.get("upload_id", "")
+            dataset_version = result.get("dataset_version", "")
+            if isinstance(upload_id, str) and isinstance(dataset_version, str):
+                _render_add_alias_ui(
+                    unknown_term=result["unknown_term"],
+                    available_columns=result.get("available_columns", []),
+                    upload_id=upload_id,
+                    dataset_version=dataset_version,
+                    semantic_layer=result.get("semantic_layer"),
+                )
         return
 
     # Check if this is a focused single-variable analysis
@@ -996,6 +1004,7 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                             query_plan=None,  # Not available from transcript
                             cohort=None,  # Not available for cached results
                             dataset_version=dataset_version,
+                            semantic_layer=None,  # Not available for cached results
                         )
                     else:
                         # Fallback: result not in cache (shouldn't happen, but handle gracefully)
@@ -1013,6 +1022,7 @@ def render_result(
     query_plan=None,
     cohort: pl.DataFrame | None = None,
     dataset_version: str | None = None,
+    semantic_layer=None,
 ) -> None:
     """
     Render analysis result (pure rendering, no computation, no side effects).
@@ -1061,6 +1071,16 @@ def render_result(
     # ADR009 Phase 1: Render LLM-generated follow-up questions
     if query_plan and query_plan.follow_ups:
         _render_llm_follow_ups(query_plan, run_key)
+
+    # ADR004 Phase 4: Render proactive follow-up questions (query-time)
+    if query_plan and semantic_layer and dataset_version:
+        _render_proactive_questions(
+            semantic_layer=semantic_layer,
+            query_plan=query_plan,  # QueryPlan has confidence and intent_type
+            dataset_version=dataset_version,
+            run_key=run_key,
+            normalized_query=query_text,
+        )
 
 
 def execute_analysis_with_idempotency(
@@ -1266,6 +1286,16 @@ def execute_analysis_with_idempotency(
         # PR25: _suggest_follow_ups() removed (disabled partial feature)
         # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
 
+        # ADR004 Phase 4: Render proactive follow-up questions (query-time)
+        if query_plan and semantic_layer and dataset_version:
+            _render_proactive_questions(
+                semantic_layer=semantic_layer,
+                query_plan=query_plan,
+                dataset_version=dataset_version,
+                run_key=run_key,
+                normalized_query=query_text,
+            )
+
         logger.info("analysis_rendering_complete", run_key=run_key)
 
         # Don't rerun - results are already rendered inline, conversation history will show on next query
@@ -1325,7 +1355,7 @@ def _render_thinking_indicator(steps: list[dict[str, Any]]) -> None:
     # Determine final status from last step
     last_step = steps[-1]
     status_label = "🤔 Processing your question..."
-    status_state = "running"
+    status_state: Literal["running", "complete", "error"] = "running"
     expanded = True  # Default to expanded
 
     if last_step["status"] == "completed":
@@ -1542,6 +1572,99 @@ def _render_llm_follow_ups(plan, run_key: str) -> None:
     )
 
 
+def _render_proactive_questions(
+    semantic_layer,
+    query_plan,
+    dataset_version: str,
+    run_key: str,
+    normalized_query: str,
+) -> None:
+    """
+    Render proactive follow-up questions (ADR004 Phase 4).
+
+    Displays confidence-gated proactive questions as clickable buttons that prefill
+    the query input. Questions are generated based on query intent and semantic layer.
+
+    Args:
+        semantic_layer: SemanticLayer instance
+        query_plan: QueryPlan with confidence and intent
+        dataset_version: Dataset version for caching
+        run_key: Run key for caching
+        normalized_query: Normalized query text for caching
+    """
+    from clinical_analytics.core.nl_query_engine import QueryIntent
+    from clinical_analytics.core.question_generator import generate_proactive_questions
+
+    # Create QueryIntent from QueryPlan for question generation
+    # QueryPlan uses 'intent' field, QueryIntent uses 'intent_type'
+    query_intent = QueryIntent(
+        intent_type=query_plan.intent if hasattr(query_plan, "intent") else "DESCRIBE",
+        confidence=query_plan.confidence if hasattr(query_plan, "confidence") else 0.0,
+    )
+
+    # Streamlit cache backend implementation
+    class StreamlitCacheBackend:
+        """Streamlit session state cache backend (UI layer implementation)."""
+
+        def get(self, key: str) -> list[str] | None:
+            value = st.session_state.get(key)
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                return value
+            return None
+
+        def set(self, key: str, value: list[str]) -> None:
+            st.session_state[key] = value
+
+    # Generate proactive questions
+    questions = generate_proactive_questions(
+        semantic_layer=semantic_layer,
+        query_intent=query_intent,
+        dataset_version=dataset_version,
+        run_key=run_key,
+        normalized_query=normalized_query,
+        cache_backend=StreamlitCacheBackend(),
+    )
+
+    if not questions:
+        return  # No questions to render
+
+    st.markdown("---")
+    st.subheader("💡 Suggested Next Questions")
+
+    # Render questions as buttons in columns
+    cols = st.columns(min(len(questions), 3))
+    for idx, question in enumerate(questions):
+        col_idx = idx % 3
+        with cols[col_idx]:
+            # Use button with unique key
+            button_key = f"proactive_{run_key}_{idx}"
+            if st.button(
+                question,
+                key=button_key,
+                use_container_width=True,
+                help="Click to explore this question",
+            ):
+                # Prefill query input with proactive question
+                st.session_state["prefilled_query"] = question
+                # Log selection event
+                logger.info(
+                    "proactive_question_selected",
+                    run_key=run_key,
+                    question=question,
+                    position=idx,
+                    dataset_version=dataset_version,
+                )
+                st.rerun()
+
+    logger.info(
+        "proactive_questions_rendered",
+        run_key=run_key,
+        question_count=len(questions),
+        confidence=query_intent.confidence,
+        dataset_version=dataset_version,
+    )
+
+
 def get_dataset_version(dataset, dataset_choice: str) -> str:
     """
     Get stable dataset version identifier for caching and lifecycle management.
@@ -1550,6 +1673,64 @@ def get_dataset_version(dataset, dataset_choice: str) -> str:
     """
     # All datasets are uploaded datasets: use upload_id as version
     return dataset_choice  # This is the upload_id
+
+
+def _render_example_questions(dataset, chat: list[ChatMessage]) -> None:
+    """
+    Render upload-time example questions on first load (ADR004 Phase 4).
+
+    Displays example questions from metadata when chat is empty (first load).
+    Questions are clickable buttons that prefill the query input.
+
+    Args:
+        dataset: Dataset object (must have metadata attribute)
+        chat: Chat transcript (empty on first load)
+    """
+    # Only display on first load (chat is empty)
+    if len(chat) > 0:
+        return  # User has already interacted, don't show examples
+
+    # Get example_questions from metadata
+    if not hasattr(dataset, "metadata") or not dataset.metadata:
+        return  # No metadata available
+
+    example_questions = dataset.metadata.get("example_questions")
+    if not example_questions or len(example_questions) == 0:
+        return  # No example questions available
+
+    # Display example questions section
+    st.markdown("---")
+    st.subheader("💡 Example Questions")
+
+    # Render questions as buttons in columns
+    cols = st.columns(min(len(example_questions), 3))
+    for idx, question in enumerate(example_questions):
+        col_idx = idx % 3
+        with cols[col_idx]:
+            # Use button with unique key
+            button_key = f"example_question_{idx}"
+            if st.button(
+                question,
+                key=button_key,
+                use_container_width=True,
+                help="Click to use this example question",
+            ):
+                # Prefill query input with example question
+                st.session_state["prefilled_query"] = question
+                # Log selection event
+                logger.info(
+                    "example_question_selected",
+                    question=question,
+                    position=idx,
+                    upload_id=getattr(dataset, "upload_id", None),
+                )
+                st.rerun()
+
+    logger.debug(
+        "example_questions_rendered",
+        question_count=len(example_questions),
+        upload_id=getattr(dataset, "upload_id", None),
+    )
 
 
 def main():
@@ -1629,9 +1810,11 @@ def main():
     See ADR008 for full refactor plan.
     """
     st.title("💬 Ask Questions")
-    st.markdown("""
+    st.markdown(
+        """
     Ask questions about your data in plain English. I'll figure out the right analysis and explain the results.
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=True)
@@ -1796,6 +1979,9 @@ def main():
     # Fixes empty emoji tiles by rendering from persistent state, not control flow
     render_chat(dataset_version=dataset_version, cohort=cohort_pl)
 
+    # Display upload-time example questions on first load (ADR004 Phase 4)
+    _render_example_questions(dataset, st.session_state.get("chat", []))
+
     # Check for semantic layer availability (show message if not available)
     # Phase 3: Use cached semantic layer for performance
     try:
@@ -1809,7 +1995,16 @@ def main():
     # Handle analysis execution if we have a context ready
     # PR25: State machine validation - enforce documented transitions
     intent_signal = st.session_state.get("intent_signal")
+    logger.debug(
+        "execution_block_check",
+        intent_signal=intent_signal,
+        has_analysis_context="analysis_context" in st.session_state,
+    )
     if intent_signal is not None:
+        logger.debug(
+            "execution_block_entered",
+            intent_signal=intent_signal,
+        )
         # Validate state machine invariant: intent_signal requires analysis_context
         context = st.session_state.get("analysis_context")
         if context is None:
@@ -1894,7 +2089,14 @@ def main():
             QuestionEngine.render_progress_indicator(context)
 
         # If complete, check confidence gating (ADR003 Phase 3)
-        if context.is_complete_for_intent():
+        is_complete = context.is_complete_for_intent()
+        logger.debug(
+            "execution_completeness_check",
+            is_complete=is_complete,
+            intent_type=context.inferred_intent.value if context else None,
+            has_query_plan=hasattr(context, "query_plan") and context.query_plan is not None,
+        )
+        if is_complete:
             # Get QueryPlan if available (preferred), otherwise fallback to context
             query_plan = getattr(context, "query_plan", None)
 
@@ -1914,11 +2116,18 @@ def main():
                 threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
                 dataset_version=dataset_version,
                 query=getattr(context, "research_question", ""),
+                has_query_plan=query_plan is not None,
+                has_semantic_layer=semantic_layer is not None,
             )
 
             # ADR003 Phase 3: Use execute_query_plan() for confidence and completeness gating
             # semantic_layer is already available from line 1291
             if query_plan and semantic_layer:
+                logger.debug(
+                    "execution_path_entered",
+                    intent_type=context.inferred_intent.value,
+                    dataset_version=dataset_version,
+                )
                 query_text = getattr(context, "research_question", "")
 
                 # INVARIANT ENFORCEMENT (PR25): Normalize query text before passing to execute_query_plan()
@@ -2032,12 +2241,19 @@ def main():
                     # Phase 3.1: Add assistant message to chat if query came from chat input
                     # Check if last chat message is user message (indicates chat input was used)
                     chat = st.session_state.get("chat", [])
+                    added_assistant_msg = False
                     if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
                         # Query came from chat input - add assistant message with actual answer content
-                        # Get formatted result headline/summary (not the query text)
-                        result_key = f"analysis_result:{dataset_version}:{run_key}"
-                        result = st.session_state.get(result_key, {})
-                        assistant_text = result.get("headline") or result.get("headline_text") or "Analysis completed"
+                        # Get formatted result headline/summary from ResultCache (not legacy session_state key)
+                        cache = st.session_state.get("result_cache")
+                        assistant_text = "Analysis completed"  # Default fallback
+                        if cache is not None:
+                            cached_result = cache.get(run_key, dataset_version)
+                            if cached_result is not None:
+                                result = cached_result.result
+                                assistant_text = (
+                                    result.get("headline") or result.get("headline_text") or "Analysis completed"
+                                )
 
                         assistant_msg: ChatMessage = {
                             "role": "assistant",
@@ -2047,6 +2263,16 @@ def main():
                             "created_at": time.time(),
                         }
                         st.session_state["chat"].append(assistant_msg)
+                        added_assistant_msg = True
+
+                    # Clear intent_signal after successful execution
+                    # This allows chat input to be available again for follow-up questions
+                    st.session_state["intent_signal"] = None
+                    logger.debug("intent_signal_cleared_after_execution", success=True)
+
+                    # Rerun to display the assistant message in chat (after clearing intent_signal)
+                    if added_assistant_msg:
+                        st.rerun()
 
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     # Use stable hash for button key (same normalization as cache key)
@@ -2061,20 +2287,43 @@ def main():
                         error_msg += " - see warnings above for details"
                     # ADR009 Phase 4: Show error with LLM translation
                     _render_error_with_translation(error_msg, prefix="❌")
+
+                    # Clear intent_signal after failed execution
+                    st.session_state["intent_signal"] = None
+                    logger.debug("intent_signal_cleared_after_execution", success=False, reason="execution_failed")
             else:
                 # Phase 3.1: No fallback - QueryPlan is required
-                # ADR009 Phase 4: Show error with LLM translation
-                _render_error_with_translation(
+                error_msg = (
                     "Cannot execute query without QueryPlan. "
-                    "This indicates a problem with query parsing. Please try rephrasing your question.",
-                    prefix="❌",
+                    "This indicates a problem with query parsing. Please try rephrasing your question."
                 )
+                # ADR009 Phase 4: Show error with LLM translation
+                _render_error_with_translation(error_msg, prefix="❌")
                 logger.error(
                     "query_execution_failed_no_queryplan",
                     message="execute_query_plan requires QueryPlan - no fallback path available",
                     has_semantic_layer=semantic_layer is not None,
                     has_query_plan=query_plan is not None,
+                    dataset_version=dataset_version,
+                    intent_signal=intent_signal,
                 )
+                # Add error message to chat so user sees it
+                chat = st.session_state.get("chat", [])
+                if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
+                    # Query came from chat input - add error message to chat
+                    error_chat_msg: ChatMessage = {
+                        "role": "assistant",
+                        "text": error_msg,
+                        "run_key": None,
+                        "status": "error",
+                        "created_at": time.time(),
+                    }
+                    st.session_state["chat"].append(error_chat_msg)
+
+                    # Clear intent_signal after failed execution
+                    st.session_state["intent_signal"] = None
+                    logger.debug("intent_signal_cleared_after_execution", success=False)
+                    st.rerun()
 
         else:
             # Context not complete - show variable selection UI (for missing required variables)
@@ -2230,16 +2479,25 @@ def main():
 
     # Always show query input at bottom (sticky) - Phase 3.3 UI Redesign
     # This provides a conversational interface for follow-up questions
-    # Check for prefilled query from follow-up suggestions
-    prefilled = st.session_state.get("prefilled_query", "")
+    # CRITICAL FIX: Only process chat input if not in execution phase
+    # When intent_signal is set, we're waiting for execution - don't process new input
+    # This prevents st.chat_input() form submission from clearing intent_signal
+    execution_phase = st.session_state.get("intent_signal") == "nl_parsed"
 
-    # If prefilled query exists, use it and clear it (user clicked a follow-up button)
-    if prefilled:
-        query = prefilled
-        # Clear prefilled immediately to prevent reuse
-        del st.session_state["prefilled_query"]
+    if not execution_phase:
+        # Check for prefilled query from follow-up suggestions
+        prefilled = st.session_state.get("prefilled_query", "")
+
+        # If prefilled query exists, use it and clear it (user clicked a follow-up button)
+        if prefilled:
+            query = prefilled
+            # Clear prefilled immediately to prevent reuse
+            del st.session_state["prefilled_query"]
+        else:
+            query = st.chat_input("Ask a question about your data...")
     else:
-        query = st.chat_input("Ask a question about your data...")
+        # In execution phase - don't show input, query will be processed by execution block
+        query = None
 
     if query:
         # Phase 1.3: Normalize query and reject if empty
@@ -2312,12 +2570,37 @@ def main():
 
                 # Convert QueryIntent to QueryPlan and store in context
                 if dataset_version and hasattr(nl_engine, "_intent_to_plan"):
-                    context.query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
-                    # Use QueryPlan confidence
-                    context.confidence = context.query_plan.confidence
+                    try:
+                        context.query_plan = nl_engine._intent_to_plan(query_intent, dataset_version)
+                        # Use QueryPlan confidence
+                        context.confidence = context.query_plan.confidence
+                        logger.debug(
+                            "query_plan_created",
+                            intent_type=query_intent.intent_type,
+                            has_plan=context.query_plan is not None,
+                            dataset_version=dataset_version,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "query_plan_creation_failed",
+                            error=str(e),
+                            intent_type=query_intent.intent_type,
+                            dataset_version=dataset_version,
+                            exc_info=True,
+                        )
+                        # Fallback: use QueryIntent confidence, but mark query_plan as None
+                        context.confidence = query_intent.confidence
+                        context.query_plan = None
                 else:
                     # Fallback: use QueryIntent confidence
                     context.confidence = query_intent.confidence
+                    logger.warning(
+                        "query_plan_not_created",
+                        reason="dataset_version missing or _intent_to_plan not available",
+                        dataset_version=dataset_version,
+                        has_intent_to_plan=hasattr(nl_engine, "_intent_to_plan") if nl_engine else False,
+                    )
+                    context.query_plan = None
 
                 # Set flags based on intent
                 context.compare_groups = query_intent.intent_type == "COMPARE_GROUPS"
@@ -2327,6 +2610,14 @@ def main():
                 # Store context
                 st.session_state["analysis_context"] = context
                 st.session_state["intent_signal"] = "nl_parsed"
+
+                logger.debug(
+                    "context_stored_for_execution",
+                    intent_type=context.inferred_intent.value,
+                    has_query_plan=hasattr(context, "query_plan") and context.query_plan is not None,
+                    is_complete=context.is_complete_for_intent(),
+                    dataset_version=dataset_version,
+                )
 
                 # Phase 3.1: Chat handler should NOT execute - only parse and rerun
                 # Main flow (lines 1630-1720) will handle execution after rerun

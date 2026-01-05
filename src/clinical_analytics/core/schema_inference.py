@@ -36,12 +36,14 @@ class DictionaryMetadata:
         column_descriptions: Dict mapping column names to descriptions
         column_types: Dict mapping column names to expected data types
         valid_values: Dict mapping column names to valid value sets
+        codebooks: Dict mapping column names to codebook dictionaries {code: label}
         source_file: Path to the PDF dictionary
     """
 
     column_descriptions: dict[str, str] = field(default_factory=dict)
     column_types: dict[str, str] = field(default_factory=dict)
     valid_values: dict[str, list[str]] = field(default_factory=dict)
+    codebooks: dict[str, dict[str, str]] = field(default_factory=dict)
     source_file: Path | None = None
 
     def get_description(self, column: str) -> str | None:
@@ -92,7 +94,9 @@ class InferredSchema:
         Returns:
             Config dictionary compatible with ClinicalDataset
         """
-        config = {"column_mapping": {}, "outcomes": {}, "time_zero": {}}
+        from clinical_analytics.core.type_aliases import ConfigDict
+
+        config: ConfigDict = {"column_mapping": {}, "outcomes": {}, "time_zero": {}}
 
         # Map patient ID
         if self.patient_id_column:
@@ -144,6 +148,65 @@ class InferredSchema:
         lines.append(f"Continuous: {len(self.continuous_columns)} columns")
 
         return "\n".join(lines)
+
+
+def extract_codebooks_from_docs(doc_text: str) -> dict[str, dict[str, str]]:
+    """
+    Extract codebooks from documentation text.
+
+    Parses patterns like "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No" from documentation
+    and matches them to column names.
+
+    Args:
+        doc_text: Documentation text containing codebook patterns
+
+    Returns:
+        Dict mapping column names to codebooks: {column_name: {"1": "Biktarvy", "2": "Symtuza"}}
+
+    Example:
+        >>> text = "Current Regimen: 1: Biktarvy, 2: Symtuza"
+        >>> codebooks = extract_codebooks_from_docs(text)
+        >>> codebooks["current_regimen"]
+        {'1': 'Biktarvy', '2': 'Symtuza'}
+    """
+    codebooks: dict[str, dict[str, str]] = {}
+
+    # Pattern to find codebook patterns: "ColumnName: 1: Value1, 2: Value2" or "ColumnName: 1: Value1 2: Value2"
+    # Match column name followed by colon and then code:value pairs on same line or next line
+    # Pattern: column_name : code:value pairs (stops at newline or end of codebook pattern)
+    pattern = r"^([A-Za-z_][A-Za-z0-9_\s]*?)\s*:\s*((?:\d+\s*:\s*[A-Za-z\s/]+(?:,\s*|\s+))*\d+\s*:\s*[A-Za-z\s/]+)"
+
+    # Process line by line to avoid cross-line matching
+    for line in doc_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        match = re.match(pattern, line, re.IGNORECASE)
+        if match:
+            col_name_raw = match.group(1).strip()
+            codebook_text = match.group(2).strip()
+
+            # Normalize column name (lowercase, replace spaces with underscores)
+            col_name = re.sub(r"\s+", "_", col_name_raw.lower())
+
+            # Extract code:value pairs from codebook_text
+            # Pattern: "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No"
+            codebook: dict[str, str] = {}
+
+            # Pattern for code:value pairs (handles comma-separated and space-separated)
+            code_value_pattern = r"(\d+)\s*:\s*([A-Za-z\s/]+?)(?=\s*\d+\s*:|,|$)"
+
+            for code_match in re.finditer(code_value_pattern, codebook_text):
+                code = code_match.group(1).strip()
+                value = code_match.group(2).strip().rstrip(",").strip()
+                if code and value:
+                    codebook[code] = value
+
+            if codebook:
+                codebooks[col_name] = codebook
+
+    return codebooks
 
 
 class SchemaInferenceEngine:
@@ -220,12 +283,13 @@ class SchemaInferenceEngine:
         """Initialize schema inference engine."""
         pass
 
-    def infer_schema(self, df: pl.DataFrame) -> InferredSchema:
+    def infer_schema(self, df: pl.DataFrame, doc_context: str | None = None) -> InferredSchema:
         """
         Infer complete schema from Polars DataFrame.
 
         Args:
             df: Raw Polars DataFrame to analyze
+            doc_context: Optional documentation context text (extracted from PDF/Markdown/text files)
 
         Returns:
             InferredSchema with all detected columns and confidence scores
@@ -277,6 +341,22 @@ class SchemaInferenceEngine:
         else:
             # No time columns - use static time_zero
             schema.time_zero = "2020-01-01"
+
+        # 7. Parse doc_context if provided (populate DictionaryMetadata)
+        if doc_context:
+            # Parse descriptions using parse_dictionary_text (accepts str)
+            dict_metadata = self.parse_dictionary_text(doc_context)
+            if dict_metadata is None:
+                # Create empty DictionaryMetadata if parsing fails
+                dict_metadata = DictionaryMetadata()
+
+            # Extract codebooks from doc_context
+            codebooks = extract_codebooks_from_docs(doc_context)
+            if codebooks:
+                dict_metadata.codebooks.update(codebooks)
+
+            # Attach to schema
+            schema.dictionary_metadata = dict_metadata
 
         return schema
 
@@ -473,6 +553,130 @@ class SchemaInferenceEngine:
 
         # Default to categorical for unknown types
         return True
+
+    def parse_dictionary_text(self, source: Path | str) -> DictionaryMetadata | None:
+        """
+        Parse data dictionary text to extract column metadata.
+
+        Accepts both file paths (Path) and text strings (str).
+        For PDF files, extracts text using LangChain's PyPDFLoader.
+        For text files, reads directly.
+        For string input, uses text directly.
+
+        Uses pattern matching to find:
+        - Column names
+        - Descriptions
+        - Data types
+        - Valid values
+
+        Args:
+            source: Path to dictionary file (PDF or text) or text string
+
+        Returns:
+            DictionaryMetadata with extracted information, or None if parsing fails
+
+        Note:
+            This is a best-effort extraction. Dictionary structure varies widely,
+            so we use heuristics to identify column documentation.
+        """
+        # Extract text from source
+        if isinstance(source, str):
+            # Direct text input
+            full_text = source
+            source_file = None
+        elif isinstance(source, Path):
+            # File path input
+            if not source.exists():
+                return None
+
+            source_file = source
+
+            # Determine file type and extract text
+            if source.suffix.lower() == ".pdf":
+                # PDF file - use LangChain
+                try:
+                    from langchain_community.document_loaders import PyPDFLoader
+                except ImportError:
+                    print("Warning: LangChain not installed. Install with: uv add langchain langchain-community")
+                    return None
+
+                try:
+                    loader = PyPDFLoader(str(source))
+                    pages = loader.load()
+                    full_text = "\n".join([page.page_content for page in pages])
+                except Exception as e:
+                    print(f"Error loading PDF: {e}")
+                    return None
+            else:
+                # Text file - read directly
+                try:
+                    full_text = source.read_text(encoding="utf-8")
+                except Exception as e:
+                    print(f"Error reading text file: {e}")
+                    return None
+        else:
+            return None
+
+        metadata = DictionaryMetadata(source_file=source_file)
+
+        try:
+            # Pattern 1: "ColumnName: Description" or "ColumnName - Description"
+            pattern1 = r"^([a-z_][a-z0-9_]*)\s*[:\-]\s*(.+)$"
+
+            # Pattern 2: "Variable Name: Description" format
+            pattern2 = (
+                r"(?:variable|column|field)\s+(?:name|id)?\s*[:\-]?\s*([a-z_][a-z0-9_]*)\s*"
+                r"(?:description|meaning)?[:\-]\s*(.+)$"
+            )
+
+            for line in full_text.split("\n"):
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                # Try pattern 1
+                match = re.match(pattern1, line, re.IGNORECASE)
+                if match:
+                    col_name = match.group(1).lower()
+                    description = match.group(2).strip()
+
+                    # Skip if description is too short (likely not a real description)
+                    if len(description) > 10:
+                        metadata.column_descriptions[col_name] = description
+                    continue
+
+                # Try pattern 2
+                match = re.match(pattern2, line, re.IGNORECASE)
+                if match:
+                    col_name = match.group(1).lower()
+                    description = match.group(2).strip()
+
+                    if len(description) > 10:
+                        metadata.column_descriptions[col_name] = description
+
+            # Extract data types if mentioned
+            type_patterns = {
+                "integer": ["integer", "int", "numeric", "number"],
+                "float": ["float", "decimal", "real", "double"],
+                "string": ["string", "text", "varchar", "char"],
+                "date": ["date", "datetime", "timestamp"],
+                "boolean": ["boolean", "bool", "binary", "yes/no"],
+            }
+
+            for col_name, desc in metadata.column_descriptions.items():
+                desc_lower = desc.lower()
+
+                for dtype, keywords in type_patterns.items():
+                    if any(kw in desc_lower for kw in keywords):
+                        metadata.column_types[col_name] = dtype
+                        break
+
+            return metadata if metadata.column_descriptions else None
+
+        except Exception as e:
+            print(f"Error parsing dictionary text: {e}")
+            return None
 
     def parse_dictionary_pdf(self, pdf_path: Path) -> DictionaryMetadata | None:
         """

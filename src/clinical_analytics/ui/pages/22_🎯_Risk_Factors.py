@@ -38,10 +38,12 @@ def main():
     from clinical_analytics.ui.helpers import require_outcome
 
     st.title("🎯 Identify Risk Factors")
-    st.markdown("""
+    st.markdown(
+        """
     Find which variables predict an outcome. We'll use **regression analysis** to identify
     risk factors and calculate odds ratios or effect sizes.
-    """)
+    """
+    )
 
     # Dataset selection (Phase 8.2: Use reusable component)
     result = render_dataset_selector(show_semantic_scope=False)

@@ -254,7 +254,7 @@ class DataProfiler:
         return html
 
 
-def profile_dataset(dataset, save_path: str | Path = None) -> dict[str, Any]:
+def profile_dataset(dataset, save_path: str | Path | None = None) -> dict[str, Any]:
     """
     Profile a clinical dataset and optionally save report.
 

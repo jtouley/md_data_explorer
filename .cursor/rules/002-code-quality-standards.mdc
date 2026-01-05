@@ -1,0 +1,554 @@
+---
+description: Staff-level code quality standards. Testing patterns, DRY principles, error handling, and operational excellence.
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# Code Quality Standards
+
+> **Source of Truth for Testing**: See **[tests/AGENTS.md](../../tests/AGENTS.md)** for comprehensive testing guidelines.
+
+## Staff Engineer Mindset
+
+Staff engineers build **systems that build systems**. Your code is read by others, maintained for years, and runs at 3 AM when you're asleep. Design accordingly.
+
+---
+
+## Testing Patterns
+
+### Test Structure: AAA Pattern
+
+```python
+def test_customer_aggregation_sums_transactions():
+    # Arrange: Set up test data and dependencies
+    transactions = pl.DataFrame({"customer_id": ["A", "A", "B"], "amount": [100, 200, 50]})
+
+    # Act: Execute the unit under test
+    result = aggregate_by_customer(transactions)
+
+    # Assert: Verify expected outcomes
+    assert result.filter(pl.col("customer_id") == "A")["total"][0] == 300
+    assert result.filter(pl.col("customer_id") == "B")["total"][0] == 50
+```
+
+### Test Naming Convention
+
+**Pattern:** `test_[unit]_[scenario]_[expectedBehavior]`
+
+- `unit`: Component/function being tested (e.g., `filter_extraction`, `compute_descriptive_analysis`)
+- `scenario`: Specific condition/input (e.g., `simple_query`, `null_keys`, `missing_column`)
+- `expectedBehavior`: What should happen (e.g., `returns_filters`, `raises_valueerror`)
+
+```python
+# ✅ CORRECT
+def test_filter_extraction_llm_simple_query_returns_filters():
+def test_schema_validation_missing_column_raises_valueerror():
+def test_deduplication_null_keys_preserves_first_occurrence():
+
+# ❌ WRONG
+def test_extraction():  # Too vague
+def test_returns_filters():  # Missing unit/scenario
+def test_validate_file_type_csv():  # Wrong pattern
+```
+
+### Fixture Discipline
+
+#### Scope Appropriately
+
+```python
+# Session: Expensive, immutable resources
+@pytest.fixture(scope="session")
+def database_connection():
+    # Only created once per test run
+    ...
+
+# Module: Shared across tests in one file
+@pytest.fixture(scope="module")
+def reference_data():
+    return pl.read_parquet("tests/fixtures/reference.parquet")
+
+# Function (default): Fresh per test, use for mutable state
+@pytest.fixture
+def empty_staging_table(test_database):
+    test_database.execute("TRUNCATE staging.events")
+    yield
+    test_database.execute("TRUNCATE staging.events")
+```
+
+#### Factory Fixtures for Variations
+
+```python
+@pytest.fixture
+def make_transaction():
+    """Factory fixture for creating test transactions."""
+    def _make(
+        customer_id: str = "CUST001",
+        amount: float = 100.0,
+        status: str = "completed",
+    ) -> dict:
+        return {"customer_id": customer_id, "amount": amount, "status": status}
+    return _make
+
+def test_refund_calculation(make_transaction):
+    txn = make_transaction(amount=500.0, status="refunded")
+    result = calculate_refund(txn)
+    assert result == -500.0
+```
+
+#### Rule of Two (MANDATORY)
+
+**If ANY test setup code appears in 2+ test functions, extract to fixture immediately.**
+
+```python
+# ❌ WRONG: Duplicate setup
+def test_one(tmp_path):
+    storage = UserDatasetStorage(tmp_path / "uploads")
+    tables = [{"name": "test", "data": pl.DataFrame(...)}]
+    # ...
+
+def test_two(tmp_path):
+    storage = UserDatasetStorage(tmp_path / "uploads")  # DUPLICATE!
+    tables = [{"name": "test", "data": pl.DataFrame(...)}]  # DUPLICATE!
+    # ...
+
+# ✅ CORRECT: Extract to fixtures
+@pytest.fixture
+def upload_storage(tmp_path):
+    return UserDatasetStorage(upload_dir=tmp_path / "uploads")
+
+@pytest.fixture
+def sample_test_tables():
+    return [{"name": "test", "data": pl.DataFrame(...)}]
+
+def test_one(upload_storage, sample_test_tables):
+    # ...
+
+def test_two(upload_storage, sample_test_tables):
+    # ...
+```
+
+**Pre-commit enforcement:** Custom hook automatically detects duplicate test setup on commit.
+
+**Before creating ANY fixture:** Check `tests/conftest.py` first for existing fixtures.
+
+### Parameterization
+
+```python
+@pytest.mark.parametrize("input_status,expected_output", [
+    ("active", True),
+    ("inactive", False),
+    ("ACTIVE", True),  # Case insensitivity
+    (None, False),     # Null handling
+    ("", False),       # Empty string
+])
+def test_is_active_customer(input_status, expected_output):
+    result = is_active_customer(input_status)
+    assert result == expected_output
+```
+
+### Error Testing
+
+```python
+def test_validation_rejects_negative_amounts():
+    invalid_df = pl.DataFrame({"amount": [-100, 50, -25]})
+
+    with pytest.raises(ValueError, match="Negative amounts not allowed"):
+        validate_transactions(invalid_df)
+```
+
+### Polars Assertions (MANDATORY)
+
+**ALWAYS use `pl.testing.assert_frame_equal()` for DataFrame comparisons.**
+
+```python
+import polars.testing as plt
+
+# ✅ CORRECT
+def test_transformation_produces_expected_output():
+    input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
+    result = transform(input_df)
+    expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
+    plt.assert_frame_equal(result, expected)
+
+# ❌ WRONG: List comparisons miss schema/type differences
+assert result["value"].to_list() == expected["value"].to_list()
+```
+
+**Why:** `assert_frame_equal()` properly handles schema differences, type mismatches, null values, float precision, and column order.
+
+**When list comparison is OK:**
+- Single scalar: `assert result == 42`
+- Simple list: `assert [1, 2, 3] == [1, 2, 3]`
+- String content: `assert "error" in str(exception)`
+
+### Test Markers
+
+```python
+# Mark slow tests for optional exclusion
+@pytest.mark.slow
+@pytest.mark.integration
+def test_full_backfill_processing():
+    """Takes 2+ minutes; skip in quick feedback loops."""
+    ...
+
+# Run fast tests only: make test-fast
+```
+
+**Marker usage:**
+- `@pytest.mark.slow`: Tests >1s (skipped by `make test-fast`)
+- `@pytest.mark.integration`: Tests requiring real data/connections
+- **Always use both** for data-loading tests
+
+---
+
+## DRY Principles
+
+### The DRY Mandate
+
+Don't Repeat Yourself is about **single source of truth**. When a business rule exists in two places, they will diverge.
+
+### Configuration Over Code
+
+```python
+# ❌ WRONG: Magic values scattered
+def filter_active_customers(df):
+    return df.filter(
+        (pl.col("status") == "active") &
+        (pl.col("days_since_last_order") < 90) &
+        (pl.col("total_spend") > 100)
+    )
+
+# ✅ CORRECT: Configuration-driven
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ActiveCustomerCriteria:
+    status: str = "active"
+    max_days_inactive: int = 90
+    min_total_spend: float = 100.0
+
+def filter_active_customers(
+    df: pl.DataFrame,
+    criteria: ActiveCustomerCriteria = ActiveCustomerCriteria(),
+) -> pl.DataFrame:
+    return df.filter(
+        (pl.col("status") == criteria.status) &
+        (pl.col("days_since_last_order") < criteria.max_days_inactive) &
+        (pl.col("total_spend") > criteria.min_total_spend)
+    )
+```
+
+### Centralize Column Definitions
+
+```python
+# columns.py - Single source of truth
+class Columns:
+    CUSTOMER_ID = "customer_id"
+    TRANSACTION_DATE = "transaction_date"
+    AMOUNT = "amount"
+    TOTAL_SPEND = "total_spend"
+
+# Usage
+from columns import Columns as C
+
+df.select(pl.col(C.CUSTOMER_ID), pl.col(C.AMOUNT).sum().alias(C.TOTAL_SPEND))
+```
+
+### Expression Libraries
+
+```python
+# expressions.py
+class DateExpressions:
+    @staticmethod
+    def fiscal_quarter(date_col: str = "date") -> pl.Expr:
+        """Convert date to fiscal quarter (July start)."""
+        month = pl.col(date_col).dt.month()
+        return (
+            pl.when(month >= 7)
+            .then(((month - 7) // 3) + 1)
+            .otherwise(((month + 5) // 3) + 1)
+        )
+
+# Usage
+from expressions import DateExpressions as DX
+
+df.with_columns(DX.fiscal_quarter("order_date").alias("fiscal_qtr"))
+```
+
+### Rule of Three
+
+**Don't abstract prematurely.** Wait until you have three concrete instances before creating an abstraction.
+
+```python
+# First instance: Just write the code
+def process_sales():
+    df = pl.scan_parquet("sales/*.parquet")
+    df.filter(pl.col("date") >= "2024-01-01").collect()
+
+# Second instance: Still just write it
+def process_returns():
+    df = pl.scan_parquet("returns/*.parquet")
+    df.filter(pl.col("date") >= "2024-01-01").collect()
+
+# Third instance: NOW abstract
+def process_dated_files(path_pattern: str, min_date: str | None = None) -> pl.DataFrame:
+    lf = pl.scan_parquet(path_pattern)
+    if min_date:
+        lf = lf.filter(pl.col("date") >= min_date)
+    return lf.collect()
+```
+
+---
+
+## Error Handling
+
+### Fail Fast, Fail Loud
+
+```python
+# ❌ WRONG: Silent failures
+def load_data(path: str) -> pl.DataFrame | None:
+    try:
+        return pl.read_parquet(path)
+    except Exception:
+        return None  # Caller has no idea what happened
+
+# ✅ CORRECT: Explicit, typed failures
+from dataclasses import dataclass
+
+@dataclass
+class LoadError(Exception):
+    path: str
+    reason: str
+    original_error: Exception | None = None
+
+def load_data(path: str) -> pl.DataFrame:
+    """Load parquet file. Raises LoadError with context on failure."""
+    if not Path(path).exists():
+        raise LoadError(path, "File not found")
+
+    try:
+        return pl.read_parquet(path)
+    except pl.exceptions.ComputeError as e:
+        raise LoadError(path, "Corrupted parquet file", e) from e
+```
+
+### Never Catch Exception
+
+```python
+# ❌ WRONG: Catches everything, including bugs
+try:
+    result = complex_transform(df)
+except Exception as e:
+    logger.error(f"Transform failed: {e}")
+    return fallback_value
+
+# ✅ CORRECT: Catch specific, expected failures
+try:
+    result = complex_transform(df)
+except pl.exceptions.SchemaError as e:
+    logger.error(f"Schema mismatch: {e}")
+    raise
+except pl.exceptions.ComputeError as e:
+    logger.error(f"Compute error: {e}")
+    raise
+# Let unexpected exceptions propagate
+```
+
+---
+
+## Observability
+
+### Structured Logging
+
+```python
+import structlog
+
+logger = structlog.get_logger()
+
+def process_batch(batch_id: str, source_path: str) -> int:
+    log = logger.bind(batch_id=batch_id, source_path=source_path)
+
+    log.info("batch_processing_started")
+
+    df = pl.read_parquet(source_path)
+    log.info("batch_loaded", row_count=len(df))
+
+    result = transform(df)
+    log.info("batch_processing_completed", output_rows=len(result))
+
+    return len(result)
+```
+
+---
+
+## Idempotency
+
+### Deterministic Processing
+
+```python
+def process_file(file_path: str, processing_date: date) -> pl.DataFrame:
+    """
+    Idempotent file processing.
+
+    Same inputs always produce same outputs:
+    - No random values
+    - No current timestamps (use processing_date)
+    - Deterministic ordering
+    """
+    return (
+        pl.scan_parquet(file_path)
+        .with_columns(
+            pl.lit(processing_date).alias("processing_date"),  # Deterministic
+            pl.lit(file_path).alias("source_file"),
+        )
+        .sort("id")  # Deterministic order
+        .collect()
+    )
+```
+
+---
+
+## Defensive Programming
+
+### Validate at Boundaries
+
+```python
+def ingest_external_data(api_response: dict) -> pl.DataFrame:
+    """Validate untrusted external data at ingestion boundary."""
+
+    # Validate structure
+    required_fields = {"records", "metadata"}
+    missing = required_fields - set(api_response.keys())
+    if missing:
+        raise ValueError(f"API response missing fields: {missing}")
+
+    # Validate types
+    if not isinstance(api_response["records"], list):
+        raise TypeError("records must be a list")
+
+    # Parse and validate schema
+    df = pl.DataFrame(api_response["records"])
+
+    # Validate business rules
+    if (df["amount"] < 0).any():
+        raise DataQualityError("negative_amounts", (df["amount"] < 0).sum(), df)
+
+    return df
+```
+
+### Assertion-Based Invariants
+
+```python
+def merge_datasets(
+    left: pl.DataFrame,
+    right: pl.DataFrame,
+    join_key: str,
+) -> pl.DataFrame:
+    """Merge with invariant checks."""
+
+    # Pre-conditions
+    assert join_key in left.columns, f"{join_key} not in left"
+    assert join_key in right.columns, f"{join_key} not in right"
+    assert left[join_key].null_count() == 0, "Nulls in left join key"
+
+    left_count = len(left)
+    result = left.join(right, on=join_key, how="left")
+
+    # Post-conditions
+    assert len(result) == left_count, (
+        f"Row count changed: {left_count} -> {len(result)}. "
+        "Right side has duplicates on join key."
+    )
+
+    return result
+```
+
+---
+
+## Documentation Standards
+
+### Docstrings with Purpose
+
+```python
+def calculate_customer_ltv(
+    transactions: pl.DataFrame,
+    as_of_date: date,
+    discount_rate: float = 0.1,
+) -> pl.DataFrame:
+    """
+    Calculate customer lifetime value using discounted cash flow.
+
+    Uses a simplified DCF model where future value is projected based on
+    historical transaction patterns and discounted to present value.
+
+    Args:
+        transactions: Must contain columns: customer_id, amount, transaction_date
+        as_of_date: Reference date for calculations
+        discount_rate: Annual discount rate (default 10%)
+
+    Returns:
+        DataFrame with columns: customer_id, ltv, confidence
+
+    Raises:
+        SchemaValidationError: If required columns are missing
+
+    Example:
+        >>> ltv = calculate_customer_ltv(txns, date(2024, 1, 1))
+        >>> top_customers = ltv.filter(pl.col("ltv") > 10000)
+
+    Note:
+        LTV calculations require at least 3 months of transaction history.
+        Customers with insufficient history will have confidence='low'.
+    """
+```
+
+---
+
+## Code Review Checklist
+
+Before approving any PR:
+
+1. **Error handling**: Are failures explicit and recoverable?
+2. **Observability**: Can we debug this at 3 AM?
+3. **Idempotency**: Is it safe to run twice?
+4. **Boundaries**: Is external data validated at entry?
+5. **Performance**: Any unbounded operations?
+6. **Testing**: Are edge cases covered?
+7. **Documentation**: Can someone new understand the why?
+8. **Code quality**: Run `make check` - all checks must pass
+9. **Test fixtures**: No duplicate setup (Rule of Two enforced)?
+10. **Polars assertions**: Using `plt.assert_frame_equal()`?
+
+---
+
+## Summary: Critical Rules
+
+### ❌ NEVER
+
+- Use pandas in new code (use Polars)
+- Catch generic `Exception` (catch specific exceptions)
+- Return None for errors (raise explicit exceptions)
+- Duplicate test setup (extract to fixtures)
+- Use list comparisons for DataFrames (use `plt.assert_frame_equal()`)
+
+### ✅ ALWAYS
+
+- Write tests first (TDD)
+- Use AAA pattern in tests
+- Extract duplicate setup to fixtures (Rule of Two)
+- Use factory fixtures for variations
+- Check `conftest.py` before creating fixtures
+- Use Polars assertions for DataFrame comparisons
+- Validate external data at boundaries
+- Use structured logging
+- Make processing idempotent
+- Document the "why" in docstrings
+
+---
+
+## Integration with Other Rules
+
+- **TDD workflow**: See `001-core-tdd-protocol.mdc`
+- **Test fixture enforcement**: See `105-test-fixture-enforcement.mdc`
+- **Data processing patterns**: See `on-demand/100-polars-first.mdc`
+- **Plan execution**: See `104-plan-execution-hygiene.mdc`

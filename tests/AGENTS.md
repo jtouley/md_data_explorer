@@ -212,13 +212,13 @@ def test_parse_query_with_refinement_context_adds_filter(
         data={"patient_id": ["P1", "P2"], "statin_used": [0, 1]},
     )
     engine = nl_query_engine_with_cached_model(semantic_layer=semantic)
-    
+
     # Act
     result = engine.parse_query(
         query="remove the n/a",
         conversation_history=[{"query": "count patients", "intent": "COUNT"}],
     )
-    
+
     # Assert: Tests logic, not real LLM
     assert result.intent_type == "COUNT"
     assert len(result.filters) >= 1
@@ -248,10 +248,10 @@ def test_parse_query_with_refinement_context_adds_filter(
 def test_llm_parse_with_real_ollama(mock_semantic_layer, skip_if_ollama_unavailable):
     """Verify real Ollama service returns valid responses."""
     from clinical_analytics.core.nl_query_engine import NLQueryEngine
-    
+
     engine = NLQueryEngine(mock_semantic_layer)
     intent = engine._llm_parse("complex query that needs real LLM")
-    
+
     # Assert: Tests real LLM, not mocked
     assert intent is not None
     assert intent.confidence >= 0.5  # Real LLM should have good confidence
@@ -395,11 +395,11 @@ def sample_cohort():  # Already exists in conftest.py!
 @pytest.fixture
 def synthetic_dexa_excel_file(tmp_path_factory):
     # ... 50 lines of Excel generation code ...
-    
+
 @pytest.fixture
 def synthetic_statin_excel_file(tmp_path_factory):
     # ... 50 lines of similar Excel generation code ...
-    
+
 @pytest.fixture
 def synthetic_complex_excel_file(tmp_path_factory):
     # ... 50 lines of similar Excel generation code ...
@@ -997,7 +997,7 @@ See `tests/conftest.py` for complete list. Key fixtures:
 - **Use `low_confidence_context`** for testing clarifying questions
 - **Use `high_confidence_context`** for testing auto-execution
 
-**🚨 RULE OF THUMB:** 
+**🚨 RULE OF THUMB:**
 - If you need variations → Use **factory fixtures**
 - If standard data suffices → Use **direct fixtures**
 - If unsure → **Search `conftest.py` first!**

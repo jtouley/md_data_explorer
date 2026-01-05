@@ -167,37 +167,37 @@ graph TD
         pageConfig[PageConfig Dataclass]
         pathCleanup[Remove sys.path Hacks]
     end
-    
+
     subgraph phase2 [Phase 2: Error Handling]
         exceptions[exceptions.py<br/>Hierarchy]
         errorContext[Add Context to Errors]
         errorLogging[Structured Error Logging]
     end
-    
+
     subgraph phase3 [Phase 3: Dataset Patterns]
         datasetFactory[DatasetFactory]
         granularityValidation[Base Class Validation]
         configLoading[Lazy Config Property]
         sepsisIbis[Remove Pandas from Sepsis]
     end
-    
+
     subgraph phase4 [Phase 4: UI Architecture]
         analysisPage[AnalysisPage Base Class]
         exportButtons[ExportButtons Component]
         gatedPage[GatedPage Pattern]
     end
-    
+
     subgraph phase5 [Phase 5: LLM Abstraction]
         llmInterface[LLMProvider Interface]
         ollamaProvider[OllamaProvider Implementation]
         llmFactory[LLMFactory]
     end
-    
+
     phase1 --> phase2
     phase2 --> phase3
     phase3 --> phase4
     phase4 --> phase5
-    
+
     constants --> datasetFactory
     emptyDF --> datasetFactory
     exceptions --> datasetFactory
@@ -256,7 +256,7 @@ class UIConfig:
 ```python
 class UnifiedCohort:
     # ... existing code ...
-    
+
     @staticmethod
     def empty_dataframe() -> pl.DataFrame:
         """Return empty DataFrame with required cohort columns."""
@@ -286,7 +286,7 @@ class PageConfig:
     title: str
     icon: str
     layout: str = "wide"
-    
+
     def apply(self):
         st.set_page_config(
             page_title=f"{self.title} | Clinical Analytics",
@@ -330,7 +330,7 @@ class ClinicalAnalyticsError(Exception):
         super().__init__(message)
         self.message = message
         self.details = details or {}
-    
+
     def to_dict(self) -> dict:
         return {
             "error_type": self.__class__.__name__,
@@ -439,7 +439,7 @@ class DatasetFactory:
 ```python
 class ClinicalDataset(ABC):
     SUPPORTED_GRANULARITIES: ClassVar[frozenset[Granularity]] = frozenset(["patient_level"])
-    
+
     def validate_granularity(self, granularity: Granularity) -> None:
         if granularity not in self.SUPPORTED_GRANULARITIES:
             supported = ", ".join(self.SUPPORTED_GRANULARITIES)
@@ -466,7 +466,7 @@ class ClinicalDataset(ABC):
     def __init__(self, name: str, ...):
         self.name = name
         self._config = None
-    
+
     @property
     def config(self) -> dict:
         if self._config is None:
@@ -517,7 +517,7 @@ class AnalysisPage:
     def __init__(self, page_config: PageConfig):
         self.page_config = page_config
         self.page_config.apply()
-    
+
     def load_dataset(self, show_semantic_scope: bool = False):
         result = render_dataset_selector(show_semantic_scope=show_semantic_scope)
         if result is None:
@@ -595,10 +595,10 @@ class ExportButtons:
 class LLMProvider(ABC):
     @abstractmethod
     def is_available(self) -> bool: pass
-    
+
     @abstractmethod
     def generate(self, prompt: str, model: str, **kwargs) -> str: pass
-    
+
     @abstractmethod
     def generate_json(self, prompt: str, model: str, **kwargs) -> dict: pass
 ```
@@ -649,41 +649,41 @@ graph LR
         testFactory[test_dataset_factory.py]
         testProviders[test_llm_providers.py]
     end
-    
+
     subgraph integration [Integration Tests]
         testDatasets[test_dataset_refactored.py]
         testPages[test_page_base.py]
         testPipeline[test_full_pipeline.py]
     end
-    
+
     subgraph regression [Regression Tests]
         existingTests[Existing 786 Tests]
     end
-    
+
     unit --> integration
     integration --> regression
 ```
 
 ### Test Execution Per Phase
 
-**Phase 1**: 
+**Phase 1**:
 - `make test-core PYTEST_ARGS="tests/core/test_constants.py tests/core/test_schema.py -xvs"`
 - `make test-ui PYTEST_ARGS="tests/ui/test_page_base.py -xvs"`
 
-**Phase 2**: 
+**Phase 2**:
 - `make test-core PYTEST_ARGS="tests/core/test_exceptions.py -xvs"`
 - `make test-integration PYTEST_ARGS="tests/integration/test_error_handling.py -xvs"`
 
-**Phase 3**: 
+**Phase 3**:
 - `make test-datasets PYTEST_ARGS="tests/datasets/test_dataset_factory.py -xvs"`
 - `make test-core PYTEST_ARGS="tests/core/test_dataset.py -xvs"`
 - `make test-loader PYTEST_ARGS="tests/loader/test_sepsis_loader.py -xvs"`
 
-**Phase 4**: 
+**Phase 4**:
 - `make test-ui PYTEST_ARGS="tests/ui/test_page_base.py tests/ui/test_export_buttons.py -xvs"`
 - `make test-integration PYTEST_ARGS="tests/integration/test_page_migration.py -xvs"`
 
-**Phase 5**: 
+**Phase 5**:
 - `make test-core PYTEST_ARGS="tests/core/test_llm_interface.py tests/core/test_llm_factory.py tests/core/test_providers.py -xvs"`
 
 ### Regression Protection

@@ -159,9 +159,11 @@ class TestGroupingVariableValidation:
 
         # Assert: Should accept categorical grouping variable (intent should be valid)
         assert intent is not None
-        assert intent.intent_type in ["COMPARE_GROUPS", "DESCRIBE", "COUNT"], (
-            f"Should produce valid intent for categorical grouping, got {intent.intent_type}"
-        )
+        assert intent.intent_type in [
+            "COMPARE_GROUPS",
+            "DESCRIBE",
+            "COUNT",
+        ], f"Should produce valid intent for categorical grouping, got {intent.intent_type}"
         # No error or crash expected for categorical grouping
 
 

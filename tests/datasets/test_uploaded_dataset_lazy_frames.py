@@ -140,7 +140,7 @@ class TestUploadedDatasetLoadLazy:
         dataset.load()
 
         # Assert
-        assert isinstance(dataset.data, (pd.DataFrame, pl.LazyFrame)), "Should handle both types"
+        assert isinstance(dataset.data, pd.DataFrame | pl.LazyFrame), "Should handle both types"
 
 
 class TestGetCohortLazyEvaluation:

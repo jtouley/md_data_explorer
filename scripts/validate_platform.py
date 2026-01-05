@@ -13,20 +13,20 @@ import sys
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import polars as pl
+
 import pandas as pd
-from typing import List, Tuple
-
+import polars as pl
+from clinical_analytics.analysis.stats import run_logistic_regression
+from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.datasets.covid_ms.definition import CovidMSDataset
 from clinical_analytics.datasets.sepsis.definition import SepsisDataset
-from clinical_analytics.core.schema import UnifiedCohort
-from clinical_analytics.analysis.stats import run_logistic_regression
 
 
 class ValidationError(Exception):
     """Custom exception for validation failures"""
+
     pass
 
 
@@ -83,20 +83,16 @@ class PlatformValidator:
 
     def log_test(self, test_name: str, status: str, message: str = ""):
         """Log test results"""
-        symbols = {
-            'pass': '✅',
-            'fail': '❌',
-            'warn': '⚠️ '
-        }
+        symbols = {"pass": "✅", "fail": "❌", "warn": "⚠️ "}
         print(f"{symbols[status]} {test_name}")
         if message:
             print(f"   {message}")
 
-        if status == 'pass':
+        if status == "pass":
             self.passed_tests += 1
-        elif status == 'fail':
+        elif status == "fail":
             self.failed_tests += 1
-        elif status == 'warn':
+        elif status == "warn":
             self.warnings += 1
 
     # COVID-MS Dataset Tests
@@ -110,31 +106,24 @@ class PlatformValidator:
 
             # Validation
             if not dataset.validate():
-                self.log_test(
-                    "COVID-MS data file exists",
-                    'fail',
-                    "GDSI_OpenDataset_Final.csv not found"
-                )
+                self.log_test("COVID-MS data file exists", "fail", "GDSI_OpenDataset_Final.csv not found")
                 return
 
-            self.log_test("COVID-MS data file exists", 'pass')
+            self.log_test("COVID-MS data file exists", "pass")
 
             # Load
             dataset.load()
-            self.log_test("COVID-MS dataset loads successfully", 'pass')
+            self.log_test("COVID-MS dataset loads successfully", "pass")
 
             # Check record count
-            if hasattr(dataset, '_data') and dataset._data is not None:
+            if hasattr(dataset, "_data") and dataset._data is not None:
                 record_count = len(dataset._data)
-                self.log_test(
-                    f"COVID-MS loaded {record_count} records",
-                    'pass' if record_count > 0 else 'fail'
-                )
+                self.log_test(f"COVID-MS loaded {record_count} records", "pass" if record_count > 0 else "fail")
             else:
-                self.log_test("COVID-MS data loaded", 'fail', "No data found")
+                self.log_test("COVID-MS data loaded", "fail", "No data found")
 
         except Exception as e:
-            self.log_test("COVID-MS dataset loading", 'fail', str(e))
+            self.log_test("COVID-MS dataset loading", "fail", str(e))
 
     def test_covid_ms_polars_backend(self):
         """Verify COVID-MS uses Polars backend"""
@@ -145,29 +134,27 @@ class PlatformValidator:
             dataset = CovidMSDataset()
 
             if not dataset.validate():
-                self.log_test("COVID-MS Polars backend", 'warn', "Data not available")
+                self.log_test("COVID-MS Polars backend", "warn", "Data not available")
                 return
 
             dataset.load()
 
             # Check if internal data is Polars DataFrame
-            if hasattr(dataset, '_data') and isinstance(dataset._data, pl.DataFrame):
-                self.log_test("COVID-MS uses Polars DataFrame internally", 'pass')
+            if hasattr(dataset, "_data") and isinstance(dataset._data, pl.DataFrame):
+                self.log_test("COVID-MS uses Polars DataFrame internally", "pass")
 
                 # Check Polars-specific operations
-                if 'outcome_hospitalized' in dataset._data.columns:
-                    self.log_test("Polars data cleaning applied", 'pass')
+                if "outcome_hospitalized" in dataset._data.columns:
+                    self.log_test("Polars data cleaning applied", "pass")
                 else:
-                    self.log_test("Polars data cleaning", 'fail', "Missing expected columns")
+                    self.log_test("Polars data cleaning", "fail", "Missing expected columns")
             else:
                 self.log_test(
-                    "COVID-MS uses Polars DataFrame",
-                    'fail',
-                    f"Expected pl.DataFrame, got {type(dataset._data)}"
+                    "COVID-MS uses Polars DataFrame", "fail", f"Expected pl.DataFrame, got {type(dataset._data)}"
                 )
 
         except Exception as e:
-            self.log_test("COVID-MS Polars backend", 'fail', str(e))
+            self.log_test("COVID-MS Polars backend", "fail", str(e))
 
     def test_covid_ms_schema_compliance(self):
         """Test COVID-MS UnifiedCohort schema compliance"""
@@ -178,20 +165,16 @@ class PlatformValidator:
             dataset = CovidMSDataset()
 
             if not dataset.validate():
-                self.log_test("COVID-MS schema compliance", 'warn', "Data not available")
+                self.log_test("COVID-MS schema compliance", "warn", "Data not available")
                 return
 
             cohort = dataset.get_cohort()
 
             # Check return type (should be Pandas for statsmodels)
             if isinstance(cohort, pd.DataFrame):
-                self.log_test("get_cohort() returns Pandas DataFrame", 'pass')
+                self.log_test("get_cohort() returns Pandas DataFrame", "pass")
             else:
-                self.log_test(
-                    "get_cohort() returns Pandas DataFrame",
-                    'fail',
-                    f"Got {type(cohort)}"
-                )
+                self.log_test("get_cohort() returns Pandas DataFrame", "fail", f"Got {type(cohort)}")
                 return
 
             # Check required columns
@@ -201,47 +184,37 @@ class PlatformValidator:
                     missing_cols.append(col)
 
             if not missing_cols:
-                self.log_test("All required UnifiedCohort columns present", 'pass')
+                self.log_test("All required UnifiedCohort columns present", "pass")
             else:
-                self.log_test(
-                    "Required columns check",
-                    'fail',
-                    f"Missing: {missing_cols}"
-                )
+                self.log_test("Required columns check", "fail", f"Missing: {missing_cols}")
 
             # Check data types
             if UnifiedCohort.PATIENT_ID in cohort.columns:
                 if cohort[UnifiedCohort.PATIENT_ID].dtype == object:
-                    self.log_test("patient_id is string type", 'pass')
+                    self.log_test("patient_id is string type", "pass")
                 else:
                     self.log_test(
-                        "patient_id type",
-                        'warn',
-                        f"Expected string, got {cohort[UnifiedCohort.PATIENT_ID].dtype}"
+                        "patient_id type", "warn", f"Expected string, got {cohort[UnifiedCohort.PATIENT_ID].dtype}"
                     )
 
             if UnifiedCohort.TIME_ZERO in cohort.columns:
                 if pd.api.types.is_datetime64_any_dtype(cohort[UnifiedCohort.TIME_ZERO]):
-                    self.log_test("time_zero is datetime type", 'pass')
+                    self.log_test("time_zero is datetime type", "pass")
                 else:
                     self.log_test(
-                        "time_zero type",
-                        'fail',
-                        f"Expected datetime, got {cohort[UnifiedCohort.TIME_ZERO].dtype}"
+                        "time_zero type", "fail", f"Expected datetime, got {cohort[UnifiedCohort.TIME_ZERO].dtype}"
                     )
 
             if UnifiedCohort.OUTCOME in cohort.columns:
                 if pd.api.types.is_numeric_dtype(cohort[UnifiedCohort.OUTCOME]):
-                    self.log_test("outcome is numeric type", 'pass')
+                    self.log_test("outcome is numeric type", "pass")
                 else:
                     self.log_test(
-                        "outcome type",
-                        'fail',
-                        f"Expected numeric, got {cohort[UnifiedCohort.OUTCOME].dtype}"
+                        "outcome type", "fail", f"Expected numeric, got {cohort[UnifiedCohort.OUTCOME].dtype}"
                     )
 
         except Exception as e:
-            self.log_test("COVID-MS schema compliance", 'fail', str(e))
+            self.log_test("COVID-MS schema compliance", "fail", str(e))
 
     def test_covid_ms_data_quality(self):
         """Test COVID-MS data quality"""
@@ -252,44 +225,36 @@ class PlatformValidator:
             dataset = CovidMSDataset()
 
             if not dataset.validate():
-                self.log_test("COVID-MS data quality", 'warn', "Data not available")
+                self.log_test("COVID-MS data quality", "warn", "Data not available")
                 return
 
             cohort = dataset.get_cohort()
 
             # Check for duplicates
             if cohort[UnifiedCohort.PATIENT_ID].duplicated().any():
-                self.log_test("No duplicate patient IDs", 'warn', "Duplicates found")
+                self.log_test("No duplicate patient IDs", "warn", "Duplicates found")
             else:
-                self.log_test("No duplicate patient IDs", 'pass')
+                self.log_test("No duplicate patient IDs", "pass")
 
             # Check outcome values
             outcome_values = cohort[UnifiedCohort.OUTCOME].unique()
             if all(v in [0, 1] for v in outcome_values if pd.notna(v)):
-                self.log_test("Outcome values are binary (0/1)", 'pass')
+                self.log_test("Outcome values are binary (0/1)", "pass")
             else:
-                self.log_test(
-                    "Binary outcome values",
-                    'warn',
-                    f"Found values: {outcome_values}"
-                )
+                self.log_test("Binary outcome values", "warn", f"Found values: {outcome_values}")
 
             # Check for missing data
-            missing_pct = (cohort.isnull().sum() / len(cohort) * 100)
+            missing_pct = cohort.isnull().sum() / len(cohort) * 100
             critical_cols = UnifiedCohort.REQUIRED_COLUMNS
             critical_missing = missing_pct[critical_cols]
 
             if (critical_missing > 0).any():
-                self.log_test(
-                    "No missing values in critical columns",
-                    'warn',
-                    f"Missing data found"
-                )
+                self.log_test("No missing values in critical columns", "warn", "Missing data found")
             else:
-                self.log_test("No missing values in critical columns", 'pass')
+                self.log_test("No missing values in critical columns", "pass")
 
         except Exception as e:
-            self.log_test("COVID-MS data quality", 'fail', str(e))
+            self.log_test("COVID-MS data quality", "fail", str(e))
 
     # Sepsis Dataset Tests
     def test_sepsis_loading(self):
@@ -302,25 +267,21 @@ class PlatformValidator:
 
             # Validation
             if not dataset.validate():
-                self.log_test(
-                    "Sepsis data loading",
-                    'warn',
-                    "No PSV files found (expected for demo)"
-                )
+                self.log_test("Sepsis data loading", "warn", "No PSV files found (expected for demo)")
                 return
 
             # If data exists, load it
             dataset.load()
-            self.log_test("Sepsis dataset loads successfully", 'pass')
+            self.log_test("Sepsis dataset loads successfully", "pass")
 
             cohort = dataset.get_cohort()
             if len(cohort) > 0:
-                self.log_test(f"Sepsis loaded {len(cohort)} patients", 'pass')
+                self.log_test(f"Sepsis loaded {len(cohort)} patients", "pass")
             else:
-                self.log_test("Sepsis data", 'warn', "No patients loaded")
+                self.log_test("Sepsis data", "warn", "No patients loaded")
 
         except Exception as e:
-            self.log_test("Sepsis dataset loading", 'fail', str(e))
+            self.log_test("Sepsis dataset loading", "fail", str(e))
 
     def test_sepsis_schema_compliance(self):
         """Test Sepsis UnifiedCohort schema compliance"""
@@ -331,7 +292,7 @@ class PlatformValidator:
             dataset = SepsisDataset()
 
             if not dataset.validate():
-                self.log_test("Sepsis schema compliance", 'warn', "Data not available")
+                self.log_test("Sepsis schema compliance", "warn", "Data not available")
                 return
 
             cohort = dataset.get_cohort()
@@ -343,16 +304,12 @@ class PlatformValidator:
                     missing_cols.append(col)
 
             if not missing_cols:
-                self.log_test("Sepsis schema compliance", 'pass')
+                self.log_test("Sepsis schema compliance", "pass")
             else:
-                self.log_test(
-                    "Sepsis required columns",
-                    'fail',
-                    f"Missing: {missing_cols}"
-                )
+                self.log_test("Sepsis required columns", "fail", f"Missing: {missing_cols}")
 
         except Exception as e:
-            self.log_test("Sepsis schema compliance", 'fail', str(e))
+            self.log_test("Sepsis schema compliance", "fail", str(e))
 
     # Statistical Analysis Tests
     def test_logistic_regression(self):
@@ -365,63 +322,44 @@ class PlatformValidator:
             dataset = CovidMSDataset()
 
             if not dataset.validate():
-                self.log_test("Logistic regression test", 'warn', "No data for testing")
+                self.log_test("Logistic regression test", "warn", "No data for testing")
                 return
 
             cohort = dataset.get_cohort()
 
             # Prepare data
-            predictors = ['age_group', 'sex']
+            predictors = ["age_group", "sex"]
             analysis_data = cohort[[UnifiedCohort.OUTCOME] + predictors].copy()
 
             # Convert categorical to dummies
-            analysis_data = pd.get_dummies(
-                analysis_data,
-                columns=['age_group', 'sex'],
-                drop_first=True
-            )
+            analysis_data = pd.get_dummies(analysis_data, columns=["age_group", "sex"], drop_first=True)
             analysis_data = analysis_data.dropna()
 
             if len(analysis_data) < 10:
-                self.log_test(
-                    "Logistic regression",
-                    'warn',
-                    "Insufficient data after cleaning"
-                )
+                self.log_test("Logistic regression", "warn", "Insufficient data after cleaning")
                 return
 
             # Get updated predictor names after dummy encoding
             predictor_cols = [c for c in analysis_data.columns if c != UnifiedCohort.OUTCOME]
 
             # Run regression
-            model, summary_df = run_logistic_regression(
-                analysis_data,
-                UnifiedCohort.OUTCOME,
-                predictor_cols
-            )
+            model, summary_df = run_logistic_regression(analysis_data, UnifiedCohort.OUTCOME, predictor_cols)
 
-            self.log_test("Logistic regression executes successfully", 'pass')
+            self.log_test("Logistic regression executes successfully", "pass")
 
             # Check model output
-            if hasattr(model, 'prsquared'):
-                self.log_test(
-                    f"Model Pseudo R² = {model.prsquared:.4f}",
-                    'pass'
-                )
+            if hasattr(model, "prsquared"):
+                self.log_test(f"Model Pseudo R² = {model.prsquared:.4f}", "pass")
 
             # Check summary DataFrame
-            required_summary_cols = ['Odds Ratio', 'CI Lower', 'CI Upper', 'P-Value']
+            required_summary_cols = ["Odds Ratio", "CI Lower", "CI Upper", "P-Value"]
             if all(col in summary_df.columns for col in required_summary_cols):
-                self.log_test("Summary DataFrame has required columns", 'pass')
+                self.log_test("Summary DataFrame has required columns", "pass")
             else:
-                self.log_test(
-                    "Summary DataFrame columns",
-                    'fail',
-                    "Missing required columns"
-                )
+                self.log_test("Summary DataFrame columns", "fail", "Missing required columns")
 
         except Exception as e:
-            self.log_test("Logistic regression", 'fail', str(e))
+            self.log_test("Logistic regression", "fail", str(e))
 
     # Schema Tests
     def test_unified_cohort_schema(self):
@@ -431,13 +369,7 @@ class PlatformValidator:
 
         try:
             # Check required constants exist
-            required_attrs = [
-                'PATIENT_ID',
-                'TIME_ZERO',
-                'OUTCOME',
-                'OUTCOME_LABEL',
-                'REQUIRED_COLUMNS'
-            ]
+            required_attrs = ["PATIENT_ID", "TIME_ZERO", "OUTCOME", "OUTCOME_LABEL", "REQUIRED_COLUMNS"]
 
             missing_attrs = []
             for attr in required_attrs:
@@ -445,30 +377,21 @@ class PlatformValidator:
                     missing_attrs.append(attr)
 
             if not missing_attrs:
-                self.log_test("UnifiedCohort schema attributes defined", 'pass')
+                self.log_test("UnifiedCohort schema attributes defined", "pass")
             else:
-                self.log_test(
-                    "UnifiedCohort schema",
-                    'fail',
-                    f"Missing: {missing_attrs}"
-                )
+                self.log_test("UnifiedCohort schema", "fail", f"Missing: {missing_attrs}")
 
             # Check REQUIRED_COLUMNS is a list
             if isinstance(UnifiedCohort.REQUIRED_COLUMNS, list):
-                self.log_test("REQUIRED_COLUMNS is a list", 'pass')
-                self.log_test(
-                    f"Required columns: {', '.join(UnifiedCohort.REQUIRED_COLUMNS)}",
-                    'pass'
-                )
+                self.log_test("REQUIRED_COLUMNS is a list", "pass")
+                self.log_test(f"Required columns: {', '.join(UnifiedCohort.REQUIRED_COLUMNS)}", "pass")
             else:
                 self.log_test(
-                    "REQUIRED_COLUMNS type",
-                    'fail',
-                    f"Expected list, got {type(UnifiedCohort.REQUIRED_COLUMNS)}"
+                    "REQUIRED_COLUMNS type", "fail", f"Expected list, got {type(UnifiedCohort.REQUIRED_COLUMNS)}"
                 )
 
         except Exception as e:
-            self.log_test("UnifiedCohort schema", 'fail', str(e))
+            self.log_test("UnifiedCohort schema", "fail", str(e))
 
 
 def main():

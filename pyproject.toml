@@ -15,6 +15,7 @@ dependencies = [
     "lifelines>=0.27.0",
     "openpyxl>=3.1.0",  # Excel file support
     "pyreadstat>=1.2.0",  # SPSS file support
+    "pymupdf>=1.23.0",  # PDF text extraction
     "sentence-transformers>=5.2.0",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
@@ -37,7 +38,10 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.1.0",
-    "mypy>=1.5.0",
+    "mypy>=1.19.0",
+    "pre-commit>=3.5.0",
+    "types-requests>=2.31.0",
+    "types-PyYAML>=6.0.0",
 ]
 
 [build-system]
@@ -55,6 +59,11 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 # Test files use camelCase naming per CLAUDE.md: test_unit_scenario_expectedBehavior
 "tests/**/*.py" = ["N802", "N806"]
+# Scripts and UI pages need sys.path manipulation before imports
+"scripts/**/*.py" = ["E402"]
+"src/clinical_analytics/ui/**/*.py" = ["E402"]
+"test_*.py" = ["E402"]
+"tests/eval/**/*.py" = ["E402"]  # Eval scripts need sys.path manipulation
 
 [tool.mypy]
 python_version = "3.11"

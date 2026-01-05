@@ -146,6 +146,9 @@ Generate canonical questions that capture the most important analysis patterns."
         return []
 
     # Extract and validate questions
+    if not isinstance(result.payload, dict):
+        logger.warning("golden_question_generation_invalid_payload_type")
+        return []
     questions_data = result.payload.get("golden_questions", [])
     if not isinstance(questions_data, list):
         logger.warning("golden_question_generation_invalid_payload")
@@ -233,7 +236,9 @@ Analyze coverage gaps and identify missing patterns."""
         logger.debug("golden_question_coverage_analysis_failed", error=result.error)
         return {"gaps": [], "coverage_by_intent": {}, "error": result.error}
 
-    return result.payload or {}
+    if isinstance(result.payload, dict):
+        return result.payload
+    return {}
 
 
 def maintain_golden_questions_automatically(

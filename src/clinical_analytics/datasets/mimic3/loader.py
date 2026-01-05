@@ -5,6 +5,7 @@ This module handles loading MIMIC-III data from DuckDB or Postgres databases.
 """
 
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import polars as pl
@@ -17,7 +18,7 @@ class MIMIC3Loader:
     Supports both DuckDB files and PostgreSQL connections.
     """
 
-    def __init__(self, db_path: str | Path | None = None, db_connection=None):
+    def __init__(self, db_path: str | Path | None = None, db_connection: Any = None) -> None:
         """
         Initialize MIMIC-III loader.
 
@@ -27,7 +28,7 @@ class MIMIC3Loader:
         """
         self.db_path = Path(db_path) if db_path else None
         self.db_connection = db_connection
-        self.conn = None
+        self.conn: Any = None
 
     def connect(self) -> None:
         """Establish database connection."""
@@ -62,7 +63,7 @@ class MIMIC3Loader:
         try:
             # DuckDB supports direct Polars conversion
             result = self.conn.execute(query).pl()
-            return result
+            return pl.DataFrame(result) if result is not None else pl.DataFrame()
         except Exception as e:
             raise RuntimeError(f"Query execution failed: {e}")
 
@@ -86,7 +87,7 @@ class MIMIC3Loader:
 
         return self.execute_query(query)
 
-    def check_tables_exist(self) -> dict:
+    def check_tables_exist(self) -> dict[str, bool]:
         """
         Check which MIMIC-III tables exist in the database.
 
@@ -95,6 +96,9 @@ class MIMIC3Loader:
         """
         if not self.conn:
             self.connect()
+
+        if not self.conn:
+            raise RuntimeError("Database connection not available")
 
         required_tables = ["patients", "admissions", "diagnoses_icd", "chartevents"]
 
@@ -108,12 +112,12 @@ class MIMIC3Loader:
 
         return table_status
 
-    def __enter__(self):
+    def __enter__(self) -> "MIMIC3Loader":
         """Context manager entry."""
         self.connect()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.disconnect()
 
@@ -130,4 +134,5 @@ def load_mimic3_from_duckdb(db_path: str | Path, query: str) -> pl.DataFrame:
         Polars DataFrame with cohort data
     """
     with MIMIC3Loader(db_path=db_path) as loader:
-        return loader.load_cohort(query=query)
+        result = loader.load_cohort(query=query)
+        return pl.DataFrame(result) if result is not None else pl.DataFrame()

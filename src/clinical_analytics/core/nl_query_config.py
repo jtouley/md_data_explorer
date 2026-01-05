@@ -72,3 +72,25 @@ LLM_TIMEOUT_MAX_S: float = _config["llm_timeout_max_s"]
 # ADR009: Feature Flags
 # Enable/disable LLM-enhanced features independently
 ENABLE_RESULT_INTERPRETATION: bool = _config["enable_result_interpretation"]
+
+# ADR004: Feature Flags for Surgical Rollback
+# Enable/disable each phase independently for operational safety
+# Defaults to True for backward compatibility - phases are enabled unless explicitly disabled
+ADR004_ENABLE_DOC_EXTRACTION: bool = _config.get("adr004_enable_doc_extraction", True)
+ADR004_ENABLE_SCHEMA_CONTEXT: bool = _config.get("adr004_enable_schema_context", True)
+ADR004_ENABLE_AUTOCONTEXT: bool = _config.get("adr004_enable_autocontext", True)
+ADR004_ENABLE_QUESTION_GENERATION: bool = _config.get("adr004_enable_question_generation", False)
+
+# Legacy alias for Phase 4 (maintained for backward compatibility)
+# DEPRECATED: Use ADR004_ENABLE_QUESTION_GENERATION instead
+ENABLE_PROACTIVE_QUESTIONS: bool = _config.get("enable_proactive_questions", False)
+
+# Log deprecation warning if legacy key is explicitly set in config
+if "enable_proactive_questions" in _config and "adr004_enable_question_generation" not in _config:
+    logger.warning(
+        "Config key 'enable_proactive_questions' is deprecated. "
+        "Use 'adr004_enable_question_generation' instead. Will be removed in v2.0."
+    )
+
+# ADR004 Phase 4: Proactive Question Generation Timeout
+LLM_TIMEOUT_QUESTION_GENERATION_S: float = _config["llm_timeout_question_generation_s"]

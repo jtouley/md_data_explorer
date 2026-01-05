@@ -10,16 +10,15 @@ import pandas as pd
 import pytest
 
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
-from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 
 class TestBuildConfigFromVariableMapping:
     """Tests for _build_config_from_variable_mapping() method."""
 
-    def test_build_config_from_variable_mapping_with_all_fields_returns_complete_config(self, tmp_path):
+    def test_build_config_from_variable_mapping_with_all_fields_returns_complete_config(self, upload_storage):
         """Test that config is built correctly with all fields present."""
         # Arrange: Create UploadedDataset with variable_mapping containing all fields
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_all_fields"
 
         # Create test data
@@ -89,10 +88,10 @@ class TestBuildConfigFromVariableMapping:
         assert set(config["analysis"]["default_predictors"]) == {"age", "sex", "treatment"}
         assert "categorical_variables" in config["analysis"]
 
-    def test_build_config_from_variable_mapping_without_outcome_handles_gracefully(self, tmp_path):
+    def test_build_config_from_variable_mapping_without_outcome_handles_gracefully(self, upload_storage):
         """Test that config handles missing outcome gracefully."""
         # Arrange: Create UploadedDataset with variable_mapping without outcome
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_no_outcome"
 
         # Create test data
@@ -138,10 +137,10 @@ class TestBuildConfigFromVariableMapping:
         assert config["analysis"]["default_outcome"] is None
         assert "patient_id" in config["column_mapping"]
 
-    def test_build_config_from_variable_mapping_detects_categorical_variables(self, tmp_path):
+    def test_build_config_from_variable_mapping_detects_categorical_variables(self, upload_storage):
         """Test that categorical variables are correctly detected."""
         # Arrange: Create UploadedDataset with data containing categorical predictors
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_categorical"
 
         # Create test data with various types:
@@ -201,10 +200,10 @@ class TestBuildConfigFromVariableMapping:
         # Numeric with >20 unique should NOT be categorical
         assert "age" not in categorical_vars
 
-    def test_build_config_from_variable_mapping_infers_outcome_type_from_data(self, tmp_path):
+    def test_build_config_from_variable_mapping_infers_outcome_type_from_data(self, upload_storage):
         """Test that outcome type is inferred from data characteristics."""
         # Arrange: Create UploadedDataset with different outcome types
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
 
         # Test case 1: Binary outcome (2 unique values)
         upload_id_binary = "test_upload_binary_outcome"
@@ -277,10 +276,10 @@ class TestBuildConfigFromVariableMapping:
         outcome_type = config_continuous["outcomes"]["survival_days"]["type"]
         assert outcome_type in ["binary", "continuous"]  # May default to binary with warning
 
-    def test_build_config_from_variable_mapping_time_zero_matches_multi_table_format(self, tmp_path):
+    def test_build_config_from_variable_mapping_time_zero_matches_multi_table_format(self, upload_storage):
         """Test that time_zero config matches multi-table format exactly."""
         # Arrange: Create UploadedDataset with time_zero in variable_mapping
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_time_zero"
 
         # Create test data
@@ -332,10 +331,10 @@ class TestBuildConfigFromVariableMapping:
 class TestMaybeInitSemantic:
     """Tests for _maybe_init_semantic() method single-table path."""
 
-    def test_maybe_init_semantic_with_variable_mapping_initializes_semantic_layer(self, tmp_path):
+    def test_maybe_init_semantic_with_variable_mapping_initializes_semantic_layer(self, upload_storage):
         """Test that semantic layer is initialized for single-table uploads with variable_mapping."""
         # Arrange: Create UploadedDataset with variable_mapping (no inferred_schema), mock CSV file exists
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_single_table"
 
         # Create test data
@@ -383,10 +382,10 @@ class TestMaybeInitSemantic:
         assert dataset.semantic.config["column_mapping"]["patient_id"] == "patient_id"
         assert "mortality" in dataset.semantic.config["outcomes"]
 
-    def test_maybe_init_semantic_with_inferred_schema_still_works_multi_table(self, tmp_path):
+    def test_maybe_init_semantic_with_inferred_schema_still_works_multi_table(self, upload_storage):
         """Test that multi-table uploads still work (regression test)."""
         # Arrange: Create UploadedDataset with inferred_schema
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_multi_table"
 
         # Create test data
@@ -434,10 +433,10 @@ class TestMaybeInitSemantic:
         assert dataset.semantic.config["column_mapping"]["patient_id"] == "patient_id"
         assert "mortality" in dataset.semantic.config["outcomes"]
 
-    def test_maybe_init_semantic_with_variable_mapping_registers_table_after_migration(self, tmp_path):
+    def test_maybe_init_semantic_with_variable_mapping_registers_table_after_migration(self, upload_storage):
         """Test that legacy single-table uploads register tables after migration (Fix #2)."""
         # Arrange: Create legacy UploadedDataset with variable_mapping, no {upload_id}_tables directory
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_no_tables"
 
         # Create test data
@@ -490,10 +489,10 @@ class TestMaybeInitSemantic:
         assert "tables" in updated_metadata
         assert updated_metadata.get("migrated_to_v2", False)
 
-    def test_maybe_init_semantic_without_schema_or_mapping_raises_valueerror(self, tmp_path):
+    def test_maybe_init_semantic_without_schema_or_mapping_raises_valueerror(self, upload_storage):
         """Test that missing both schema and mapping raises ValueError."""
         # Arrange: Create UploadedDataset with neither inferred_schema nor variable_mapping
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_no_schema"
 
         # Create test data
@@ -523,10 +522,10 @@ class TestMaybeInitSemantic:
         with pytest.raises(ValueError, match="No schema or mapping found"):
             dataset.get_semantic_layer()
 
-    def test_maybe_init_semantic_sets_init_params_with_absolute_csv_path(self, tmp_path):
+    def test_maybe_init_semantic_sets_init_params_with_absolute_csv_path(self, upload_storage):
         """Test that init_params is set with absolute CSV path."""
         # Arrange: Create UploadedDataset with variable_mapping, mock CSV file exists
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         upload_id = "test_upload_init_params"
 
         # Create test data
