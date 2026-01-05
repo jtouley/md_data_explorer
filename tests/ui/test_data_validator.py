@@ -241,6 +241,7 @@ class TestEnsurePolars:
     def test_ensure_polars_with_normal_pandas(self):
         """Test that normal pandas DataFrames convert successfully."""
         import pandas as pd
+
         from clinical_analytics.ui.components.data_validator import _ensure_polars
 
         df_pandas = pd.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
@@ -254,6 +255,7 @@ class TestEnsurePolars:
     def test_ensure_polars_handles_mixed_types(self):
         """Test that mixed types in pandas DataFrame are handled gracefully."""
         import pandas as pd
+
         from clinical_analytics.ui.components.data_validator import _ensure_polars
 
         # Create DataFrame with mixed types that could cause conversion issues

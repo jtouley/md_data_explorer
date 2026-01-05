@@ -7,6 +7,7 @@ import zipfile
 
 import polars as pl
 import pytest
+
 from clinical_analytics.core.multi_table_handler import MultiTableHandler
 
 
@@ -323,18 +324,18 @@ class TestZipExtraction:
 
         active_versions = [v for v in metadata2["version_history"] if v.get("is_active", False)]
         all_versions_info = [(v.get("version"), v.get("is_active")) for v in metadata2["version_history"]]
-        assert (
-            len(active_versions) == 1
-        ), f"Should have exactly one active version, got {len(active_versions)}. All versions: {all_versions_info}"
+        assert len(active_versions) == 1, (
+            f"Should have exactly one active version, got {len(active_versions)}. All versions: {all_versions_info}"
+        )
 
         # Assert: Active version is the newer one (check created_at timestamp, not version,
         # since same content = same version)
         active_version = active_versions[0]
         v1_created_at = v1_entry.get("created_at")
         active_created_at = active_version.get("created_at")
-        assert (
-            active_created_at > v1_created_at
-        ), f"Active version should be newer. v1={v1_created_at}, active={active_created_at}"
+        assert active_created_at > v1_created_at, (
+            f"Active version should be newer. v1={v1_created_at}, active={active_created_at}"
+        )
 
         # Assert: Metadata file is the same (not a new file)
         import json

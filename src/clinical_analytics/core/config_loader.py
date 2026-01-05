@@ -441,7 +441,7 @@ class LoggingConfigDefaults:
     module_levels: dict[str, str] | None = None
     reduce_noise: dict[str, str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize default dict values."""
         if self.module_levels is None:
             self.module_levels = {

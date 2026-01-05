@@ -45,7 +45,7 @@ class VariableTypeDetector:
     ID_UNIQUENESS_THRESHOLD = 0.95  # If >95% unique, likely an identifier
 
     @classmethod
-    def detect_variable_type(cls, series: pl.Series, column_name: str) -> tuple[str, dict]:
+    def detect_variable_type(cls, series: pl.Series, column_name: str) -> tuple[str, dict[str, Any]]:
         """
         Detect variable type for a single column.
 
@@ -135,7 +135,7 @@ class VariableTypeDetector:
         }
 
     @classmethod
-    def detect_all_variables(cls, df: Any) -> dict[str, dict]:
+    def detect_all_variables(cls, df: Any) -> dict[str, dict[str, Any]]:
         """
         Detect variable types for all columns in a DataFrame.
 

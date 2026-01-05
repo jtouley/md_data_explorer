@@ -8,6 +8,8 @@ Provides trust verification expander showing:
 - Patient-Level Export (capped, with download button)
 """
 
+from typing import Any
+
 import polars as pl
 
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
@@ -18,7 +20,7 @@ class TrustUI:
     """Trust UI component for transparent verification and patient-level export."""
 
     @staticmethod
-    def _extract_raw_fields(query_plan: QueryPlan) -> dict:
+    def _extract_raw_fields(query_plan: QueryPlan) -> dict[str, Any]:
         """
         Extract raw QueryPlan fields for display.
 
@@ -43,7 +45,7 @@ class TrustUI:
         }
 
     @staticmethod
-    def _resolve_aliases(query_plan: QueryPlan, semantic_layer: SemanticLayer) -> dict:
+    def _resolve_aliases(query_plan: QueryPlan, semantic_layer: SemanticLayer) -> dict[str, Any]:
         """
         Resolve aliases to canonical column names.
 
@@ -93,7 +95,7 @@ class TrustUI:
         cohort: pl.DataFrame,
         dataset_version: str,
         entity_key: str | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Compute effective execution details.
 
@@ -179,7 +181,7 @@ class TrustUI:
         cohort: pl.DataFrame,
         filters: list[FilterSpec],
         entity_key: str | None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Calculate cohort size (count_total, count_filtered, percentage).
 
@@ -243,7 +245,7 @@ class TrustUI:
     def _normalize_effective_filters(
         filters: list[FilterSpec],
         cohort: pl.DataFrame,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """
         Normalize filters and detect tautologies.
 

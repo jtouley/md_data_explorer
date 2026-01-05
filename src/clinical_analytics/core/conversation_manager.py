@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+__all__ = ["Message", "ConversationManager"]
+
 
 @dataclass
 class Message:
@@ -215,7 +217,7 @@ class ConversationManager:
 
         return canonical
 
-    def serialize(self) -> dict:
+    def serialize(self) -> dict[str, Any]:
         """
         Serialize conversation state to dict for persistence.
 
@@ -239,7 +241,7 @@ class ConversationManager:
         }
 
     @classmethod
-    def deserialize(cls, data: dict) -> "ConversationManager":
+    def deserialize(cls, data: dict[str, Any]) -> "ConversationManager":
         """
         Deserialize conversation state from dict.
 

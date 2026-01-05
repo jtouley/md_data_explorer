@@ -4,6 +4,8 @@ LLM Client for local Ollama integration (ADR003 Phase 0).
 Privacy-preserving: All data stays on-device, no external API calls.
 """
 
+from typing import Any
+
 import requests  # type: ignore[import]
 import structlog
 
@@ -122,7 +124,7 @@ class OllamaClient:
             return None
 
         try:
-            payload: dict = {
+            payload: dict[str, Any] = {
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,

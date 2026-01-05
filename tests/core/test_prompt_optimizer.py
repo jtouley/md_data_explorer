@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from clinical_analytics.core.prompt_optimizer import (
     FailurePattern,
     LearningConfig,

@@ -20,7 +20,7 @@ class ColumnMapper:
     based on configuration rather than hardcoded logic.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict[str, Any]) -> None:
         """
         Initialize mapper with dataset configuration.
 
@@ -33,7 +33,7 @@ class ColumnMapper:
         self.analysis_config = config.get("analysis", {})
 
     @classmethod
-    def from_yaml(cls, dataset_name: str, config_path: Path | None = None):
+    def from_yaml(cls, dataset_name: str, config_path: Path | None = None) -> "ColumnMapper":
         """
         Create mapper from YAML config file.
 
@@ -485,7 +485,7 @@ class ColumnMapper:
         return outcome_col
 
 
-def load_dataset_config(dataset_name: str, config_path: Path | None = None) -> dict:
+def load_dataset_config(dataset_name: str, config_path: Path | None = None) -> dict[str, Any]:
     """
     Load configuration for a specific dataset.
 

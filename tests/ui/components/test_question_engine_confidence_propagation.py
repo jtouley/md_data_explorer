@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import QueryIntent
 from clinical_analytics.ui.components.question_engine import AnalysisContext, QuestionEngine
 
@@ -44,12 +45,12 @@ def test_ask_free_form_question_propagates_confidence_to_context(mock_semantic_l
 
                                     # Assert: Context should have confidence propagated
                                     assert context is not None, "Should return AnalysisContext"
-                                    assert hasattr(
-                                        context, "confidence"
-                                    ), "AnalysisContext should have confidence attribute"
-                                    assert (
-                                        context.confidence == 0.85
-                                    ), "Confidence should be propagated from QueryIntent"
+                                    assert hasattr(context, "confidence"), (
+                                        "AnalysisContext should have confidence attribute"
+                                    )
+                                    assert context.confidence == 0.85, (
+                                        "Confidence should be propagated from QueryIntent"
+                                    )
 
 
 def test_ask_free_form_question_propagates_low_confidence(mock_semantic_layer):

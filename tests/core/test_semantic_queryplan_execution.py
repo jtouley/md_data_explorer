@@ -12,6 +12,7 @@ Tests for execute_query_plan() method with:
 
 import polars as pl
 import pytest
+
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 # ============================================================================

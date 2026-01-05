@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -77,7 +78,7 @@ class QueryIntent:
     filters: list[FilterSpec] = field(default_factory=list)
     confidence: float = 0.0
     parsing_tier: str | None = None  # "pattern_match", "semantic_match", "llm_fallback"
-    parsing_attempts: list[dict] = field(default_factory=list)  # What was tried
+    parsing_attempts: list[dict[str, Any]] = field(default_factory=list)  # What was tried
     failure_reason: str | None = None  # Why it failed
     suggestions: list[str] = field(default_factory=list)  # How to improve query
     # ADR009 Phase 1: LLM-generated follow-up questions
@@ -88,7 +89,7 @@ class QueryIntent:
     confidence_explanation: str = ""  # Why the confidence score is what it is
     explanation: str = ""  # Human-readable explanation (legacy alias for interpretation)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate intent_type."""
         if self.intent_type not in VALID_INTENT_TYPES:
             raise ValueError(f"Invalid intent_type: {self.intent_type}. Must be one of {VALID_INTENT_TYPES}")
@@ -431,7 +432,6 @@ class NLQueryEngine:
         # Post-process: Extract and assign variables if missing (runs in src, not UI)
         if intent and intent.intent_type in ["COMPARE_GROUPS", "FIND_PREDICTORS", "CORRELATIONS"]:
             # Extract variables from query if not already set
-            matched_vars_post: list[str] = []  # Initialize for logging
             if not intent.primary_variable or not intent.grouping_variable:
                 # For COMPARE_GROUPS: prioritize pattern-based extraction for "which X had lowest Y"
                 if intent.intent_type == "COMPARE_GROUPS":
@@ -1013,7 +1013,7 @@ class NLQueryEngine:
 
         return self._ollama_client
 
-    def _build_rag_context(self, query: str) -> dict:
+    def _build_rag_context(self, query: str) -> dict[str, Any]:
         """
         Build RAG context from semantic layer metadata and golden questions.
 
@@ -1046,7 +1046,7 @@ class NLQueryEngine:
             "query": query,
         }
 
-    def _load_golden_questions_rag(self) -> list[dict]:
+    def _load_golden_questions_rag(self) -> list[dict[str, Any]]:
         """Load golden questions for RAG retrieval."""
         try:
             from pathlib import Path
@@ -1122,9 +1122,9 @@ class NLQueryEngine:
     def _build_llm_prompt(
         self,
         query: str,
-        context: dict,
-        conversation_history: list[dict] | None = None,
-        autocontext=None,
+        context: dict[str, Any],
+        conversation_history: list[dict[str, Any]] | None = None,
+        autocontext: Any = None,
     ) -> tuple[str, str]:
         """
         Build structured prompts for LLM with conversation context.

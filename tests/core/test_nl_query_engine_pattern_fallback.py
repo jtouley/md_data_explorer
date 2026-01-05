@@ -6,6 +6,7 @@ we should preserve the pattern match result.
 """
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 
 
@@ -60,9 +61,9 @@ def test_parse_query_preserves_pattern_match_below_threshold(mock_semantic_layer
     intent = engine.parse_query(query)
 
     # Should be COMPARE_GROUPS, not DESCRIBE
-    assert (
-        intent.intent_type == "COMPARE_GROUPS"
-    ), f"Should preserve COMPARE_GROUPS from pattern match, got {intent.intent_type}"
+    assert intent.intent_type == "COMPARE_GROUPS", (
+        f"Should preserve COMPARE_GROUPS from pattern match, got {intent.intent_type}"
+    )
     assert intent.confidence == 0.85, f"Should preserve pattern match confidence 0.85, got {intent.confidence}"
     assert intent.parsing_tier == "pattern_match", "Should mark as pattern_match tier"
 
@@ -152,6 +153,6 @@ def test_parse_query_logs_partial_pattern_match(mock_semantic_layer):
 
         # Should log query_parse_partial_pattern_match
         log_calls = [str(call) for call in mock_logger.info.call_args_list]
-        assert any(
-            "query_parse_partial_pattern_match" in str(call) for call in log_calls
-        ), "Should log partial pattern match when using pattern result below threshold"
+        assert any("query_parse_partial_pattern_match" in str(call) for call in log_calls), (
+            "Should log partial pattern match when using pattern result below threshold"
+        )

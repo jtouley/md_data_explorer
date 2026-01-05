@@ -8,6 +8,7 @@ Ensures:
 """
 
 import pytest
+
 from clinical_analytics.storage.query_logger import QueryLogger
 
 

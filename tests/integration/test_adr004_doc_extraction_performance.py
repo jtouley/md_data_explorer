@@ -7,6 +7,7 @@ Tests that documentation extraction completes within performance budget (<5s for
 import time
 
 import pytest
+
 from clinical_analytics.core.doc_parser import extract_context_from_docs
 
 
@@ -50,9 +51,9 @@ class TestDocExtractionPerformance:
         # Verify performance budget (5s for typical PDFs)
         # For text/markdown files, should be much faster (<1s)
         # For PDFs with pymupdf, budget is 5s
-        assert (
-            elapsed_time < 5.0
-        ), f"Doc extraction took {elapsed_time:.2f}s, exceeds 5s budget. This indicates performance regression."
+        assert elapsed_time < 5.0, (
+            f"Doc extraction took {elapsed_time:.2f}s, exceeds 5s budget. This indicates performance regression."
+        )
 
         # Success: Performance within budget
         print(f"\n✅ Doc Extraction Performance: {elapsed_time:.2f}s (< 5s budget)")
@@ -77,9 +78,9 @@ class TestDocExtractionPerformance:
         assert len(doc_context) <= 50000, "doc_context should be truncated to 50k chars"
 
         # Verify performance (truncation should be fast, <1s)
-        assert (
-            elapsed_time < 1.0
-        ), f"Truncation took {elapsed_time:.2f}s, should be <1s. This indicates performance regression."
+        assert elapsed_time < 1.0, (
+            f"Truncation took {elapsed_time:.2f}s, should be <1s. This indicates performance regression."
+        )
 
         # Success: Truncation efficient
         print(f"\n✅ Doc Truncation Performance: {elapsed_time:.2f}s (< 1s budget)")

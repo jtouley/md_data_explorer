@@ -9,6 +9,8 @@ Key functions:
 - _sanitize_result_for_prompt: Privacy-preserving result sanitization
 """
 
+from typing import Any
+
 import structlog
 
 from clinical_analytics.core.llm_feature import LLMFeature, call_llm
@@ -17,7 +19,7 @@ from clinical_analytics.core.nl_query_config import LLM_TIMEOUT_RESULT_INTERPRET
 logger = structlog.get_logger()
 
 
-def _sanitize_result_for_prompt(result: dict) -> dict:
+def _sanitize_result_for_prompt(result: dict[str, Any]) -> dict[str, Any]:
     """
     Sanitize result for LLM prompt (privacy-preserving).
 
@@ -62,7 +64,7 @@ def _sanitize_result_for_prompt(result: dict) -> dict:
     return sanitized
 
 
-def interpret_result_with_llm(result: dict, model: str | None = None) -> str | None:
+def interpret_result_with_llm(result: dict[str, Any], model: str | None = None) -> str | None:
     """
     Generate human-readable interpretation of analysis result using LLM.
 

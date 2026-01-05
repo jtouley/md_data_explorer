@@ -30,7 +30,7 @@ except ImportError:
 logger = structlog.get_logger()
 
 
-def _filter_kwargs_for_ctor(cls, kwargs: dict) -> dict:
+def _filter_kwargs_for_ctor(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     """
     Filter kwargs to only include parameters accepted by the class constructor.
 
@@ -73,9 +73,9 @@ class DatasetRegistry:
     """
 
     _datasets: dict[str, type[ClinicalDataset]] = {}
-    _configs: dict[str, dict] = {}
+    _configs: dict[str, dict[str, Any]] = {}
     _config_loaded: bool = False
-    _auto_inferred: dict[str, pl.DataFrame] = {}  # Store DataFrames for auto-inferred datasets
+    _auto_inferred: dict[str, Any] = {}  # Store DataFrames for auto-inferred datasets
 
     @classmethod
     def discover_datasets(cls) -> dict[str, type[ClinicalDataset]]:
@@ -265,7 +265,7 @@ class DatasetRegistry:
         return list(cls._datasets.keys())
 
     @classmethod
-    def get_dataset_info(cls, name: str) -> dict:
+    def get_dataset_info(cls, name: str) -> dict[str, Any]:
         """
         Get configuration and metadata for a dataset.
 
@@ -296,7 +296,7 @@ class DatasetRegistry:
         return info
 
     @classmethod
-    def get_all_dataset_info(cls) -> dict[str, dict]:
+    def get_all_dataset_info(cls) -> dict[str, dict[str, Any]]:
         """
         Get info for all available datasets.
 

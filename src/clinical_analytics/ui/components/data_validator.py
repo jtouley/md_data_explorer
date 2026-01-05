@@ -69,7 +69,7 @@ class DataQualityValidator:
     VERY_HIGH_MISSING_THRESHOLD = 80  # % missing per column - likely unusable
 
     @classmethod
-    def observe_id_column(cls, df: pl.DataFrame, id_column: str) -> list[dict]:
+    def observe_id_column(cls, df: pl.DataFrame, id_column: str) -> list[dict[str, Any]]:
         """
         Observe characteristics of a patient ID column.
 
@@ -151,7 +151,7 @@ class DataQualityValidator:
         return observations
 
     @classmethod
-    def observe_missing_data(cls, df: pl.DataFrame) -> list[dict]:
+    def observe_missing_data(cls, df: pl.DataFrame) -> list[dict[str, Any]]:
         """
         Observe missing data patterns across all columns.
 
@@ -222,7 +222,7 @@ class DataQualityValidator:
         return observations
 
     @classmethod
-    def observe_outcome_column(cls, df: pl.DataFrame, outcome_column: str) -> list[dict]:
+    def observe_outcome_column(cls, df: pl.DataFrame, outcome_column: str) -> list[dict[str, Any]]:
         """
         Observe characteristics of an outcome column.
 
@@ -320,7 +320,7 @@ class DataQualityValidator:
         id_column: str | None = None,
         outcome_column: str | None = None,
         granularity: str = "unknown",
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Run complete data quality observation.
 

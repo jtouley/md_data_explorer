@@ -4,6 +4,7 @@ import os
 from unittest.mock import patch
 
 import yaml
+
 from clinical_analytics.core.config_loader import load_nl_query_config
 from clinical_analytics.core.nl_query_config import (
     AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
@@ -189,3 +190,58 @@ class TestNLQueryConfigYAMLLoading:
         """Test that AUTO_EXECUTE_CONFIDENCE_THRESHOLD matches TIER_2_SEMANTIC_MATCH_THRESHOLD."""
         # This test ensures the relationship is maintained after refactoring
         assert AUTO_EXECUTE_CONFIDENCE_THRESHOLD == TIER_2_SEMANTIC_MATCH_THRESHOLD
+
+    def test_nl_query_config_deprecation_warning_logs_correctly(self, tmp_path, caplog):
+        """Test that deprecation warning for enable_proactive_questions logs correctly with standard logger."""
+        # Arrange: Create YAML config with legacy key
+        import logging
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query.yaml"
+        config_data = {
+            "tier_1_pattern_match_threshold": 0.9,
+            "tier_2_semantic_match_threshold": 0.75,
+            "clarifying_questions_threshold": 0.5,
+            "auto_execute_confidence_threshold": 0.75,
+            "tier_timeout_seconds": 5.0,
+            "semantic_similarity_threshold": 0.7,
+            "fuzzy_match_cutoff": 0.7,
+            "enable_clarifying_questions": True,
+            "enable_progressive_feedback": True,
+            "ollama_base_url": "http://localhost:11434",
+            "ollama_default_model": "llama3.1:8b",
+            "ollama_fallback_model": "llama3.2:3b",
+            "ollama_timeout_seconds": 25.0,
+            "ollama_max_retries": 2,
+            "ollama_json_mode": True,
+            "tier_3_min_confidence": 0.45,
+            "tier_3_execution_threshold": 0.70,
+            "llm_timeout_parse_s": 25.0,
+            "llm_timeout_followups_s": 25.0,
+            "llm_timeout_interpretation_s": 25.0,
+            "llm_timeout_result_interpretation_s": 15.0,
+            "llm_timeout_error_translation_s": 4.0,
+            "llm_timeout_filter_extraction_s": 25.0,
+            "llm_timeout_max_s": 25.0,
+            "llm_timeout_question_generation_s": 25.0,
+            "enable_result_interpretation": True,
+            "enable_proactive_questions": True,  # Legacy key (should trigger warning)
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Import module with legacy key (this triggers the warning at module level)
+        with caplog.at_level(logging.WARNING):
+            # Reload module to trigger the deprecation warning
+            import importlib
+
+            import clinical_analytics.core.nl_query_config as config_module
+
+            # Clear any existing config
+            importlib.reload(config_module)
+
+        # Assert: Warning was logged with correct message format (standard string, not structured)
+        warning_messages = [record.message for record in caplog.records if record.levelname == "WARNING"]
+        assert any("enable_proactive_questions" in msg and "deprecated" in msg.lower() for msg in warning_messages), (
+            f"Expected deprecation warning, got: {warning_messages}"
+        )

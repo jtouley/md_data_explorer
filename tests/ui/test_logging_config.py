@@ -9,6 +9,7 @@ Following AGENTS.md guidelines:
 import logging
 
 import yaml
+
 from clinical_analytics.core.config_loader import load_logging_config
 from clinical_analytics.ui.logging_config import configure_logging
 

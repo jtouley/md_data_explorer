@@ -39,9 +39,9 @@ class TestDatasetSwitching:
 
             # Assert: Conversation history should be cleared
             assert "conversation_history" in session_state
-            assert (
-                len(session_state["conversation_history"]) == 0
-            ), "Conversation history should be cleared on dataset change"
+            assert len(session_state["conversation_history"]) == 0, (
+                "Conversation history should be cleared on dataset change"
+            )
 
     def test_dataset_change_clears_analysis_context(self):
         """Test that changing dataset clears analysis context."""
@@ -100,15 +100,15 @@ class TestDatasetSwitching:
                     session_state["last_dataset_choice"] = current_dataset
 
                 # Assert: State should be cleared regardless of dataset names
-                assert (
-                    len(session_state["conversation_history"]) == 0
-                ), f"Conversation history should be cleared when switching from {dataset_a} to {dataset_b}"
-                assert (
-                    "analysis_context" not in session_state
-                ), f"Analysis context should be cleared when switching from {dataset_a} to {dataset_b}"
-                assert (
-                    session_state["last_dataset_choice"] == dataset_b
-                ), f"last_dataset_choice should be updated to {dataset_b}"
+                assert len(session_state["conversation_history"]) == 0, (
+                    f"Conversation history should be cleared when switching from {dataset_a} to {dataset_b}"
+                )
+                assert "analysis_context" not in session_state, (
+                    f"Analysis context should be cleared when switching from {dataset_a} to {dataset_b}"
+                )
+                assert session_state["last_dataset_choice"] == dataset_b, (
+                    f"last_dataset_choice should be updated to {dataset_b}"
+                )
 
     def test_same_dataset_does_not_clear_history(self):
         """Test that selecting the same dataset does not clear conversation history."""
@@ -134,6 +134,6 @@ class TestDatasetSwitching:
                 session_state["last_dataset_choice"] = current_dataset
 
             # Assert: Conversation history should be preserved
-            assert (
-                len(session_state["conversation_history"]) == 1
-            ), "Conversation history should be preserved when same dataset is selected"
+            assert len(session_state["conversation_history"]) == 1, (
+                "Conversation history should be preserved when same dataset is selected"
+            )

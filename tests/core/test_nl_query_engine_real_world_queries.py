@@ -13,6 +13,7 @@ This test suite:
 """
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 
@@ -48,32 +49,32 @@ class TestRealWorldCorrelationQueries:
 
         # Assert
         assert intent is not None, f"Query should parse: {query}"
-        assert (
-            intent.intent_type == test_case["expected_intent"]
-        ), f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
-        assert (
-            intent.confidence >= test_case["min_confidence"]
-        ), f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+        assert intent.intent_type == test_case["expected_intent"], (
+            f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
+        )
+        assert intent.confidence >= test_case["min_confidence"], (
+            f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+        )
 
         # Verify parsing tier if specified
         if "parsing_tier" in test_case and test_case["parsing_tier"]:
-            assert (
-                intent.parsing_tier == test_case["parsing_tier"]
-            ), f"Expected tier {test_case['parsing_tier']}, got {intent.parsing_tier} for: {query}"
+            assert intent.parsing_tier == test_case["parsing_tier"], (
+                f"Expected tier {test_case['parsing_tier']}, got {intent.parsing_tier} for: {query}"
+            )
 
         # Verify primary variable if expected
         if test_case.get("expected_primary_variable"):
             expected_primary = test_case["expected_primary_variable"]
-            assert (
-                intent.primary_variable == expected_primary
-            ), f"Expected primary variable {expected_primary}, got {intent.primary_variable} for: {query}"
+            assert intent.primary_variable == expected_primary, (
+                f"Expected primary variable {expected_primary}, got {intent.primary_variable} for: {query}"
+            )
 
         # Verify grouping variable if expected
         if test_case.get("expected_grouping_variable"):
             expected_grouping = test_case["expected_grouping_variable"]
-            assert (
-                intent.grouping_variable == expected_grouping
-            ), f"Expected grouping variable {expected_grouping}, got {intent.grouping_variable} for: {query}"
+            assert intent.grouping_variable == expected_grouping, (
+                f"Expected grouping variable {expected_grouping}, got {intent.grouping_variable} for: {query}"
+            )
 
 
 class TestRealWorldCountQueries:
@@ -139,25 +140,25 @@ class TestRealWorldCountQueries:
 
         # Assert
         assert intent is not None, f"Query should parse: {query}"
-        assert (
-            intent.intent_type == test_case["expected_intent"]
-        ), f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
-        assert (
-            intent.confidence >= test_case["min_confidence"]
-        ), f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+        assert intent.intent_type == test_case["expected_intent"], (
+            f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
+        )
+        assert intent.confidence >= test_case["min_confidence"], (
+            f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+        )
 
         # Verify parsing tier if specified
         if "parsing_tier" in test_case and test_case["parsing_tier"]:
-            assert (
-                intent.parsing_tier == test_case["parsing_tier"]
-            ), f"Expected tier {test_case['parsing_tier']}, got {intent.parsing_tier} for: {query}"
+            assert intent.parsing_tier == test_case["parsing_tier"], (
+                f"Expected tier {test_case['parsing_tier']}, got {intent.parsing_tier} for: {query}"
+            )
 
         # Verify grouping variable if expected
         if test_case.get("expected_grouping_variable"):
             expected_grouping = test_case["expected_grouping_variable"]
-            assert (
-                intent.grouping_variable == expected_grouping
-            ), f"Expected grouping variable {expected_grouping}, got {intent.grouping_variable} for: {query}"
+            assert intent.grouping_variable == expected_grouping, (
+                f"Expected grouping variable {expected_grouping}, got {intent.grouping_variable} for: {query}"
+            )
 
     def test_count_query_with_filter_parsing(self, semantic_layer_with_clinical_columns):
         """Test COUNT query with filter: 'excluding those not on statins, which was the most prescribed statin?'"""
@@ -200,9 +201,9 @@ class TestRealWorldCountQueries:
             # Assert
             assert intent is not None, f"Query should parse: {test_case['query']}"
             assert intent.intent_type == "COUNT", f"Expected COUNT, got {intent.intent_type} for: {test_case['query']}"
-            assert (
-                intent.confidence >= 0.7
-            ), f"Confidence {intent.confidence} below minimum 0.7 for: {test_case['query']}"
+            assert intent.confidence >= 0.7, (
+                f"Confidence {intent.confidence} below minimum 0.7 for: {test_case['query']}"
+            )
             # Note: Grouping variable extraction may require semantic matching
             # This test verifies basic intent recognition
 
@@ -228,9 +229,9 @@ class TestRealWorldDescribeQueries:
         # Assert
         assert intent is not None, f"Query should parse: {query}"
         assert intent.intent_type == "DESCRIBE", f"Expected DESCRIBE, got {intent.intent_type} for: {query}"
-        assert (
-            intent.primary_variable == expected_variable
-        ), f"Expected variable {expected_variable}, got {intent.primary_variable} for: {query}"
+        assert intent.primary_variable == expected_variable, (
+            f"Expected variable {expected_variable}, got {intent.primary_variable} for: {query}"
+        )
         assert intent.confidence >= 0.85, f"Confidence {intent.confidence} below minimum 0.85 for: {query}"
         assert intent.parsing_tier == "pattern_match", f"Expected pattern_match tier for: {query}"
 
@@ -251,12 +252,12 @@ class TestRealWorldQueryTracking:
 
             # Basic validation
             assert intent is not None, f"Query should parse: {query}"
-            assert (
-                intent.intent_type == test_case["expected_intent"]
-            ), f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
-            assert (
-                intent.confidence >= test_case["min_confidence"]
-            ), f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+            assert intent.intent_type == test_case["expected_intent"], (
+                f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
+            )
+            assert intent.confidence >= test_case["min_confidence"], (
+                f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+            )
 
             # Log parsing tier for tracking
             if intent.parsing_tier:
@@ -275,16 +276,16 @@ class TestRealWorldQueryTracking:
 
             # Basic validation
             assert intent is not None, f"Query should parse: {query}"
-            assert (
-                intent.intent_type == test_case["expected_intent"]
-            ), f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
+            assert intent.intent_type == test_case["expected_intent"], (
+                f"Expected {test_case['expected_intent']}, got {intent.intent_type} for: {query}"
+            )
             expected_var = test_case["expected_primary_variable"]
-            assert (
-                intent.primary_variable == expected_var
-            ), f"Expected variable {expected_var}, got {intent.primary_variable} for: {query}"
-            assert (
-                intent.confidence >= test_case["min_confidence"]
-            ), f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+            assert intent.primary_variable == expected_var, (
+                f"Expected variable {expected_var}, got {intent.primary_variable} for: {query}"
+            )
+            assert intent.confidence >= test_case["min_confidence"], (
+                f"Confidence {intent.confidence} below minimum {test_case['min_confidence']} for: {query}"
+            )
 
             # Log parsing tier for tracking
             if intent.parsing_tier:

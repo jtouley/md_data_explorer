@@ -117,7 +117,7 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 
 
 @st.cache_resource(show_spinner="Loading semantic layer...")
-def get_cached_semantic_layer(dataset_version: str, _dataset):
+def get_cached_semantic_layer(dataset_version: str, _dataset: Any) -> "SemanticLayer":
     """
     Get semantic layer with caching (Phase 1.2 - PR20 P0 Fix).
 
@@ -2242,10 +2242,16 @@ def main():
                     chat = st.session_state.get("chat", [])
                     if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
                         # Query came from chat input - add assistant message with actual answer content
-                        # Get formatted result headline/summary (not the query text)
-                        result_key = f"analysis_result:{dataset_version}:{run_key}"
-                        result = st.session_state.get(result_key, {})
-                        assistant_text = result.get("headline") or result.get("headline_text") or "Analysis completed"
+                        # Get formatted result headline/summary from ResultCache (not legacy session_state key)
+                        cache = st.session_state.get("result_cache")
+                        assistant_text = "Analysis completed"  # Default fallback
+                        if cache is not None:
+                            cached_result = cache.get(run_key, dataset_version)
+                            if cached_result is not None:
+                                result = cached_result.result
+                                assistant_text = (
+                                    result.get("headline") or result.get("headline_text") or "Analysis completed"
+                                )
 
                         assistant_msg: ChatMessage = {
                             "role": "assistant",

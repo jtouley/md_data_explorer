@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.semantic import SemanticLayer
 

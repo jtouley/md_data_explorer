@@ -8,6 +8,7 @@ Run with: pytest tests/core/test_ollama_manager_integration.py -v -m integration
 """
 
 import pytest
+
 from clinical_analytics.core.ollama_manager import get_ollama_manager
 
 # Mark all tests in this file as integration tests

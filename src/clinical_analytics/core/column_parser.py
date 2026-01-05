@@ -37,7 +37,7 @@ class ColumnMetadata:
     reverse_mapping: dict[str, str] | None = None
     unit: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize reverse mapping if value_mapping exists."""
         if self.value_mapping is None:
             self.value_mapping = {}

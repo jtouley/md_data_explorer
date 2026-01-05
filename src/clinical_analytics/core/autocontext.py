@@ -510,15 +510,15 @@ def build_autocontext(
         if col.stats:
             # Stats should only contain aggregated data
             allowed_keys = {"min", "max", "mean", "median", "std", "count", "unique_count", "top_values"}
-            assert all(
-                key in allowed_keys for key in col.stats.keys()
-            ), f"Column {col.name} stats contains non-aggregated data: {col.stats}"
+            assert all(key in allowed_keys for key in col.stats.keys()), (
+                f"Column {col.name} stats contains non-aggregated data: {col.stats}"
+            )
             # top_values should be value -> count mapping, not raw row data
             if "top_values" in col.stats:
                 top_vals = col.stats["top_values"]
                 if isinstance(top_vals, dict):
-                    assert all(
-                        isinstance(v, int | float) for v in top_vals.values()
-                    ), f"Column {col.name} top_values contains non-count data: {top_vals}"
+                    assert all(isinstance(v, int | float) for v in top_vals.values()), (
+                        f"Column {col.name} top_values contains non-count data: {top_vals}"
+                    )
 
     return autocontext

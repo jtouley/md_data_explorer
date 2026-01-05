@@ -9,6 +9,7 @@ Ensures:
 """
 
 import pytest
+
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 
