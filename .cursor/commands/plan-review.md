@@ -42,6 +42,10 @@ Execution Sequence
      * Ambiguity that would force ad-hoc decisions
      * Missing quality gates or validation points
      * Rollback or migration safety concerns
+     * **Dependency validation** (APIs/methods/routes exist in codebase)
+     * **Contract verification** (test fixtures use actual implementations)
+     * **Value alignment** (deliverables match claims)
+     * **Quality standards** (no weakened assertions or partial solutions)
    - Generate structured review
 
 4. Output Review
@@ -76,6 +80,10 @@ Output requirements:
    • Violations of stated architecture or standards
    • Unbounded scope or unclear exit criteria
    • Missing dependencies or unclear prerequisites
+   • **Unverified dependencies** - code/fixtures calling unverified APIs
+   • **Misaligned claims** - plan title/scope doesn't match deliverables
+   • **Compromised quality** - weakened test criteria without root cause fixes
+   • **Skeleton implementations** - placeholder code without implementation path
 
    If there are no blockers, state that clearly.
 
@@ -94,6 +102,9 @@ Output requirements:
    • Can execution proceed incrementally without hidden coupling?
    • Are test requirements specified (TDD workflow)?
    • Are Makefile commands identified for each phase?
+   • **Dependency validation**: Are all APIs/methods verified to exist?
+   • **Value delivery**: Do deliverables match title/overview claims?
+   • **Quality standards**: Are assertions strict (no partial pass thresholds)?
 
    Flag any ambiguity that would force ad-hoc decisions during implementation.
 
@@ -203,6 +214,18 @@ Detailed Markdown File (`.context/reviews/plan_{plan-name}.md`):
 ### Unbounded Scope or Unclear Exit Criteria (if any)
 [Scope issues that would prevent completion]
 
+### Dependency & Contract Validation
+**Verify:**
+- Do all referenced APIs/methods exist in the codebase?
+- Do test fixture method signatures match actual implementations?
+- Are integration tests testing real integrations (not invented APIs)?
+- Do bug fixes include regression tests?
+
+**Red flags:**
+- Fixtures calling methods not found in source code
+- Tests for routes/endpoints with no implementation plan
+- Bug fixes without corresponding tests
+
 ## Non-Blocking Feedback
 
 ### Phase Boundaries and Validation Points
@@ -239,6 +262,14 @@ If this plan involves code generation, recommend invoking `/deslop` after execut
 
 ### Ambiguity Flags
 [Any ambiguity that would force ad-hoc decisions during implementation]
+
+### Dependency & Contract Check
+- [ ] All methods/APIs verified to exist in codebase
+- [ ] Fixture signatures match actual implementations
+- [ ] Integration tests use real (not assumed) dependencies
+- [ ] Deliverables align with plan title/overview
+- [ ] Quality bars maintained (no weakened assertions)
+- [ ] Bug fixes include regression tests
 
 ## Update Instructions
 
