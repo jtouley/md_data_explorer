@@ -151,6 +151,14 @@ test-ui-serial: ensure-venv ## Run UI module tests serially (for debugging)
 	@echo "$(GREEN)Running UI module tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR)/ui -v
 
+test-api: ensure-venv ## Run all API tests (unit + integration)
+	@echo "$(GREEN)Running all API tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/api -v --tb=short
+
+test-api-integration: ensure-venv ## Run API integration tests (with real server)
+	@echo "$(GREEN)Running API integration tests...$(NC)"
+	$(PYTEST) $(TEST_DIR)/api/integration -v --tb=short -m integration
+
 test-performance: ensure-venv ## Run tests with performance tracking in parallel (default)
 	@echo "$(GREEN)Running tests with performance tracking in parallel...$(NC)"
 	$(PYTEST) $(TEST_DIR) -v --track-performance -n auto -m "not serial"

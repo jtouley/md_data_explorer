@@ -814,7 +814,7 @@ class SemanticLayer:
                 elif agg_func == "count()":
                     return col_expr.count()
         elif expression == "count()":
-            return ibis.count()
+            return view.count()
 
         # Fallback: try to use column directly
         if metric_name in view.columns:

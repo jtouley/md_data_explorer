@@ -6,7 +6,6 @@ import logging
 
 import pandas as pd
 import pytest
-
 from clinical_analytics.core.semantic import SemanticLayer
 
 
@@ -534,3 +533,40 @@ class TestSemanticLayerSafeIdentifiers:
         # Table should be accessible
         result = layer.raw.select("id", "value").limit(1).execute()
         assert len(result) > 0
+
+
+def test_metric_count_expression_without_column_succeeds(make_semantic_layer, tmp_path):
+    """Regression test: count() metric works without column reference.
+
+    Bug: ibis.count() doesn't exist, must use view.count()
+    Fix: src/clinical_analytics/core/semantic.py:817
+    """
+    import polars as pl
+
+    # Arrange
+    data = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [25, 35, 45]})
+    semantic = make_semantic_layer(
+        dataset_name="test_count",
+        data=data,
+        config_overrides={
+            "metrics": {
+                "patient_count": {
+                    "expression": "count()",
+                    "type": "count",
+                    "label": "Patient Count",
+                }
+            }
+        },
+    )
+
+    # Act: Query metric with count() expression (should not raise error)
+    # The metric uses count() which requires view.count() to be fixed (ibis.count() doesn't exist)
+    try:
+        result = semantic.query(metrics=["patient_count"])
+        # Verify we got a result
+        assert result is not None
+        assert len(result) > 0
+    except Exception as e:
+        # If bug is not fixed, ibis.count() error would be raised
+        assert "ibis.count" not in str(e), f"Count metric failed due to ibis.count() bug: {e}"
+        raise
