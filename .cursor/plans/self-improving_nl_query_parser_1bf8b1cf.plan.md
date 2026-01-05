@@ -199,8 +199,6 @@ def __init__(self, semantic_layer, embedding_model: str = "all-MiniLM-L6-v2"):
     self._overlay_cache_mtime_ns = 0
 ```
 
-
-
 ### 1.2 Verify/Add overlay path resolver (env var support)
 
 Verify or add method after `__init__`:
@@ -228,8 +226,6 @@ def _prompt_overlay_path(self) -> Path:
     # (keeps artifacts out of source tree)
     return Path("/tmp/nl_query_learning/prompt_overlay.txt")
 ```
-
-
 
 ### 1.3 Verify/Add overlay loader with mtime caching
 
@@ -268,8 +264,6 @@ def _load_prompt_overlay(self) -> str:
         logger.warning("prompt_overlay_load_failed", path=str(p), error=str(e))
         return ""
 ```
-
-
 
 ### 1.4 Verify/Modify `_build_llm_prompt` to append overlay
 
@@ -323,8 +317,6 @@ def write_prompt_overlay(prompt_additions: str, overlay_path: Path) -> None:
     logger.info("prompt_overlay_written", path=str(overlay_path), length=len(prompt_additions))
 ```
 
-
-
 ### 2.2 Update main loop with capping + atomic writes
 
 Replace lines 122-160 with:
@@ -362,8 +354,6 @@ print(f"   Re-running evaluation with updated prompt...")
 
 # NO BREAK - let loop continue
 ```
-
-
 
 ### 2.3 Rollback Mechanism
 
@@ -444,8 +434,6 @@ def _stable_hash(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
 ```
 
-
-
 ### 4.2 Add granular instrumentation in `parse_query`
 
 **Log format**: structlog JSON lines**Log location**: Configured via structlog (default: stdout, can be redirected to file)**Log file**: `/tmp/nl_query.log` (if redirected via `> /tmp/nl_query.log`)**Event name**: `parse_outcome` (structured log with fields: tier, success, query_hash, etc.)In `parse_query` method, add checkpoints at each decision point:
@@ -507,8 +495,6 @@ logger.info("parse_outcome",
             final_returned_from_tier3=schema_validate_success,
             query_hash=_stable_hash(query))
 ```
-
-
 
 ### 4.3 Update metrics aggregation script
 
@@ -601,8 +587,6 @@ flowchart TD
     style write fill:#90EE90
     style done fill:#90EE90
 ```
-
-
 
 ### Instrumentation Signals
 
