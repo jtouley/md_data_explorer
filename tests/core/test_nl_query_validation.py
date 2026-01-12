@@ -118,6 +118,151 @@ class TestBuildRagContextWithTypes:
         assert "score" in column_types
 
 
+class TestDBAValidation:
+    """Test suite for _dba_validate_llm method."""
+
+    def test_dba_validate_llm_method_exists(self, make_semantic_layer):
+        """Test that _dba_validate_llm method exists."""
+        # Arrange
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(
+            dataset_name="test_dba_exists",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Act & Assert
+        assert hasattr(engine, "_dba_validate_llm")
+        assert callable(engine._dba_validate_llm)
+
+    def test_dba_validate_llm_returns_validation_result(self, make_semantic_layer):
+        """Test that _dba_validate_llm returns a ValidationResult."""
+        # Arrange
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent, ValidationResult
+
+        semantic = make_semantic_layer(
+            dataset_name="test_dba_returns",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        intent = QueryIntent(
+            intent_type="DESCRIBE",
+            primary_variable="age",
+            confidence=0.9,
+        )
+
+        # Mock the LLM client to return a valid response
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.return_value = '{"is_valid": true, "errors": [], "warnings": []}'
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            # Act
+            result = engine._dba_validate_llm(intent, "describe age")
+
+        # Assert
+        assert isinstance(result, ValidationResult)
+        assert result.is_valid is True
+
+    def test_dba_validate_llm_invalid_returns_errors(self, make_semantic_layer):
+        """Test that _dba_validate_llm returns errors for invalid intent."""
+        # Arrange
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent, ValidationResult
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        semantic = make_semantic_layer(
+            dataset_name="test_dba_invalid",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        intent = QueryIntent(
+            intent_type="DESCRIBE",
+            primary_variable="age",
+            filters=[FilterSpec(column="age", operator="!=", value="n/a")],
+            confidence=0.8,
+        )
+
+        # Mock the LLM client to return invalid response
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.return_value = (
+            '{"is_valid": false, "errors": ["Type mismatch: age expects numeric"], "warnings": []}'
+        )
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            # Act
+            result = engine._dba_validate_llm(intent, "remove the n/a")
+
+        # Assert
+        assert isinstance(result, ValidationResult)
+        assert result.is_valid is False
+        assert len(result.errors) >= 1
+
+
+class TestAnalystValidation:
+    """Test suite for _analyst_validate_llm method."""
+
+    def test_analyst_validate_llm_method_exists(self, make_semantic_layer):
+        """Test that _analyst_validate_llm method exists."""
+        # Arrange
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(
+            dataset_name="test_analyst_exists",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Act & Assert
+        assert hasattr(engine, "_analyst_validate_llm")
+        assert callable(engine._analyst_validate_llm)
+
+
+class TestManagerApproval:
+    """Test suite for _manager_approve_llm method."""
+
+    def test_manager_approve_llm_method_exists(self, make_semantic_layer):
+        """Test that _manager_approve_llm method exists."""
+        # Arrange
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(
+            dataset_name="test_manager_exists",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Act & Assert
+        assert hasattr(engine, "_manager_approve_llm")
+        assert callable(engine._manager_approve_llm)
+
+
+class TestRetryWithFeedback:
+    """Test suite for _retry_with_dba_feedback_llm method."""
+
+    def test_retry_with_dba_feedback_llm_method_exists(self, make_semantic_layer):
+        """Test that _retry_with_dba_feedback_llm method exists."""
+        # Arrange
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(
+            dataset_name="test_retry_exists",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Act & Assert
+        assert hasattr(engine, "_retry_with_dba_feedback_llm")
+        assert callable(engine._retry_with_dba_feedback_llm)
+
+
 class TestValidationResult:
     """Test suite for ValidationResult dataclass."""
 
