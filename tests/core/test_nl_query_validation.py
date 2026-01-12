@@ -263,6 +263,99 @@ class TestRetryWithFeedback:
         assert callable(engine._retry_with_dba_feedback_llm)
 
 
+class TestMultiLayerValidationIntegration:
+    """Test suite for multi-layer validation in _llm_parse."""
+
+    def test_llm_parse_calls_dba_validation(self, make_semantic_layer):
+        """Test that _llm_parse calls DBA validation."""
+        # Arrange
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, ValidationResult
+
+        semantic = make_semantic_layer(
+            dataset_name="test_integration",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Mock OllamaClient to return valid intent
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
+
+        # Track DBA validation calls
+        dba_called = []
+
+        def mock_dba_validate(intent, query):
+            dba_called.append({"intent": intent.intent_type, "query": query})
+            return ValidationResult(is_valid=True, errors=[], warnings=[])
+
+        def mock_analyst_validate(intent, query):
+            return ValidationResult(is_valid=True, errors=[], warnings=[])
+
+        def mock_manager_approve(intent, query):
+            return ValidationResult(is_valid=True, errors=[], warnings=[])
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
+                with patch.object(engine, "_analyst_validate_llm", side_effect=mock_analyst_validate):
+                    with patch.object(engine, "_manager_approve_llm", side_effect=mock_manager_approve):
+                        # Act
+                        result = engine._llm_parse("describe age")
+
+        # Assert - DBA validation must be called
+        assert len(dba_called) == 1, f"DBA validation should be called once, was called {len(dba_called)} times"
+        assert dba_called[0]["query"] == "describe age"
+        assert result.intent_type == "DESCRIBE"
+
+    def test_llm_parse_retries_on_dba_validation_failure(self, make_semantic_layer):
+        """Test that _llm_parse retries when DBA validation fails."""
+        # Arrange
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent, ValidationResult
+
+        semantic = make_semantic_layer(
+            dataset_name="test_retry",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
+
+        # DBA returns invalid on first call
+        retry_called = []
+
+        def mock_dba_validate(intent, query):
+            return ValidationResult(is_valid=False, errors=["Type mismatch"], warnings=[])
+
+        def mock_retry(query, errors, history):
+            retry_called.append({"query": query, "errors": errors})
+            return QueryIntent(intent_type="DESCRIBE", confidence=0.7, parsing_tier="retry")
+
+        def mock_analyst_validate(intent, query):
+            return ValidationResult(is_valid=True, errors=[], warnings=[])
+
+        def mock_manager_approve(intent, query):
+            return ValidationResult(is_valid=True, errors=[], warnings=[])
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
+                with patch.object(engine, "_retry_with_dba_feedback_llm", side_effect=mock_retry):
+                    with patch.object(engine, "_analyst_validate_llm", side_effect=mock_analyst_validate):
+                        with patch.object(engine, "_manager_approve_llm", side_effect=mock_manager_approve):
+                            # Act
+                            result = engine._llm_parse("describe age")
+
+        # Assert - retry should be called and intent should be from retry
+        assert len(retry_called) == 1, "Retry should be called once"
+        assert retry_called[0]["errors"] == ["Type mismatch"]
+        assert result.confidence == 0.7  # Confidence from retry mock
+
+
 class TestValidationResult:
     """Test suite for ValidationResult dataclass."""
 
