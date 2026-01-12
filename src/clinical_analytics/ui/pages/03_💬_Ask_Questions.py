@@ -983,7 +983,8 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                 if status == "pending":
                     st.info("💭 Thinking...")
                 elif status == "error":
-                    st.error(f"❌ Error: {content}")
+                    # ADR009 Phase 4: Show error with LLM translation
+                    _render_error_with_translation(content, prefix="❌ Error")
                 elif status == "completed" and run_key:
                     # Load result from ResultCache (Milestone A: State Extraction)
                     cache = st.session_state.get("result_cache")
@@ -1209,7 +1210,8 @@ def execute_analysis_with_idempotency(
         )
 
         # ADR009 Phase 3: Generate LLM result interpretation (if enabled)
-        if ENABLE_RESULT_INTERPRETATION and "error" not in result:
+        # Skip if interpretation already exists (cached from previous execution)
+        if ENABLE_RESULT_INTERPRETATION and "error" not in result and not result.get("llm_interpretation"):
             interpretation = interpret_result_with_llm(result)
             if interpretation:
                 result["llm_interpretation"] = interpretation
@@ -1218,6 +1220,12 @@ def execute_analysis_with_idempotency(
                     run_key=run_key,
                     interpretation_length=len(interpretation),
                 )
+        elif result.get("llm_interpretation"):
+            logger.debug(
+                "result_interpretation_cached",
+                run_key=run_key,
+                interpretation_length=len(result["llm_interpretation"]),
+            )
 
         # Store result using ResultCache (Milestone A: State Extraction)
         cached_result = CachedResult(
