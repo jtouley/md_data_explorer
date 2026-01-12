@@ -570,3 +570,57 @@ def test_metric_count_expression_without_column_succeeds(make_semantic_layer, tm
         # If bug is not fixed, ibis.count() error would be raised
         assert "ibis.count" not in str(e), f"Count metric failed due to ibis.count() bug: {e}"
         raise
+
+
+class TestTypeValidationError:
+    """Test suite for TypeValidationError exception class."""
+
+    def test_type_validation_error_exists(self):
+        """Test that TypeValidationError exception class exists."""
+        # Arrange & Act & Assert
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        assert TypeValidationError is not None
+
+    def test_type_validation_error_is_exception(self):
+        """Test that TypeValidationError is an Exception subclass."""
+        # Arrange
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        # Act & Assert
+        assert issubclass(TypeValidationError, Exception)
+
+    def test_type_validation_error_has_column_and_type_info(self):
+        """Test that TypeValidationError stores column name and type info."""
+        # Arrange
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        # Act
+        error = TypeValidationError(
+            column="age",
+            expected_type="float64",
+            actual_type="str",
+            message="Type mismatch",
+        )
+
+        # Assert
+        assert error.column == "age"
+        assert error.expected_type == "float64"
+        assert error.actual_type == "str"
+        assert "Type mismatch" in str(error)
+
+    def test_type_validation_error_default_message(self):
+        """Test that TypeValidationError generates default message."""
+        # Arrange
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        # Act
+        error = TypeValidationError(
+            column="score",
+            expected_type="int64",
+            actual_type="string",
+        )
+
+        # Assert: Default message includes column and type info
+        assert "score" in str(error)
+        assert "int64" in str(error) or "expected" in str(error).lower()

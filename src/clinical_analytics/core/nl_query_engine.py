@@ -54,6 +54,22 @@ def _stable_hash(s: str) -> str:
 
 
 @dataclass
+class ValidationResult:
+    """
+    Result from LLM-based validation layer (DBA/Analyst/Manager).
+
+    Attributes:
+        is_valid: Whether the validation passed
+        errors: List of error messages (blocking issues)
+        warnings: List of warning messages (non-blocking concerns)
+    """
+
+    is_valid: bool
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class QueryIntent:
     """
     Parsed intent from natural language query.
@@ -744,7 +760,7 @@ class NLQueryEngine:
         """
         query_lower = query.lower()
 
-        # Pattern: "compare X by Y" or "compare X between Y"
+        # Pattern: "compare X by Y" or "compare X between Y"  # noqa: ERA001
         match = re.search(r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)", query_lower)
         if match:
             primary_var, _, _ = self._fuzzy_match_variable(match.group(1))
@@ -758,7 +774,7 @@ class NLQueryEngine:
                     confidence=0.95,
                 )
 
-        # Pattern: "what predicts X" or "predictors of X"
+        # Pattern: "what predicts X" or "predictors of X"  # noqa: ERA001
         match = re.search(r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)", query_lower)
         if match:
             outcome_var, _, _ = self._fuzzy_match_variable(match.group(1))
@@ -766,11 +782,11 @@ class NLQueryEngine:
             if outcome_var:
                 return QueryIntent(intent_type="FIND_PREDICTORS", primary_variable=outcome_var, confidence=0.95)
 
-        # Pattern: "survival" or "time to event"
+        # Pattern: "survival" or "time to event"  # noqa: ERA001
         if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
             return QueryIntent(intent_type="SURVIVAL", confidence=0.9)
 
-        # Pattern: "correlation" or "relationship" or "relate" or "association"
+        # Pattern: "correlation" or "relationship" etc  # noqa: ERA001
         # Matches: "correlate", "correlation", "relationship", "relate", "relates", "associated", "association"
         if re.search(r"\b(correlat|relationship|relate|associat)\b", query_lower):
             # Try to extract variables from query
@@ -936,7 +952,7 @@ class NLQueryEngine:
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
             return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
 
-        # Pattern: "compare X across/between Y" - COMPARE_GROUPS
+        # Pattern: "compare X across/between Y" - COMPARE_GROUPS  # noqa: ERA001
         # Examples: "compare age across different statuses", "compare LDL between treatment groups"
         compare_match = re.search(
             r"\bcompare\s+(\w+(?:\s+\w+)*?)\s+(?:across|between)\s+(?:different\s+)?(\w+(?:\s+\w+)*?)(?:\s+and|$)",
@@ -982,7 +998,7 @@ class NLQueryEngine:
                     confidence=0.95,
                 )
 
-        # Pattern: "which X had the lowest/highest Y" or "what X had the lowest/highest Y"
+        # Pattern: "which X had lowest/highest Y"  # noqa: ERA001
         match = re.search(
             r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had\s+the\s+(lowest|highest)\s+(\w+(?:\s+\w+)*)", query_lower
         )
