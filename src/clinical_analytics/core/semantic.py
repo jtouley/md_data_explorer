@@ -32,6 +32,50 @@ from clinical_analytics.core.query_plan import generate_chart_spec
 logger = logging.getLogger(__name__)
 
 
+class TypeValidationError(Exception):
+    """
+    Exception raised when filter type validation fails.
+
+    This indicates a validation bug - LLM validation layers should have
+    caught the type mismatch before execution.
+
+    Attributes:
+        column: Column name where type mismatch occurred
+        expected_type: Expected column type (e.g., "float64", "int64")
+        actual_type: Actual type of the filter value (e.g., "str")
+        message: Optional custom message
+    """
+
+    def __init__(
+        self,
+        column: str,
+        expected_type: str,
+        actual_type: str,
+        message: str | None = None,
+    ) -> None:
+        """
+        Initialize TypeValidationError.
+
+        Args:
+            column: Column name where type mismatch occurred
+            expected_type: Expected column type
+            actual_type: Actual type of the filter value
+            message: Optional custom message (defaults to generated message)
+        """
+        self.column = column
+        self.expected_type = expected_type
+        self.actual_type = actual_type
+
+        if message is None:
+            message = (
+                f"Type validation failed for column '{column}': "
+                f"expected {expected_type}, got {actual_type}. "
+                "Pre-execution validation should have caught this - this is a validation bug."
+            )
+
+        super().__init__(message)
+
+
 def validate_query_against_schema(plan: "QueryPlan", active_version: dict[str, Any]) -> list[str]:
     """
     Validate QueryPlan column references against active version schema (Phase 8).
@@ -798,7 +842,7 @@ class SemanticLayer:
         expression = metric_def.get("expression", "")
 
         # Parse expression (simple cases for now)
-        # Format: "column.aggregation()" or "aggregation()"
+        # Format: column.aggregation() or aggregation()  # noqa: ERA001
         if "." in expression:
             col_name, agg_func = expression.rsplit(".", 1)
             if col_name in view.columns:
