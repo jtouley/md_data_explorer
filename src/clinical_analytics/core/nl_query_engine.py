@@ -2199,6 +2199,43 @@ Fix the errors and return a corrected query intent as JSON.
                             f"Filter validation issues: {len(validation_failures)} invalid filter(s)."
                         )
 
+            # Step 6.5: Multi-layer LLM validation (ADR: RAG Type Safety)
+            # DBA validation for type safety
+            from clinical_analytics.core.config_loader import load_validation_config
+
+            validation_config = load_validation_config()
+            max_retries = validation_config.get("validation_rules", {}).get("max_retries", 1)
+
+            dba_result = self._dba_validate_llm(intent, query)
+            if not dba_result.is_valid and max_retries > 0:
+                # Retry with DBA feedback
+                logger.info(
+                    "dba_validation_failed_retrying",
+                    errors=dba_result.errors,
+                    query=query,
+                )
+                corrected_intent = self._retry_with_dba_feedback_llm(query, dba_result.errors, conversation_history)
+                intent = corrected_intent
+
+            # Analyst validation for statistical validity (optional)
+            analyst_result = self._analyst_validate_llm(intent, query)
+            if analyst_result.warnings:
+                logger.info(
+                    "analyst_validation_warnings",
+                    warnings=analyst_result.warnings,
+                    query=query,
+                )
+
+            # Manager approval (final check)
+            manager_result = self._manager_approve_llm(intent, query)
+            if not manager_result.is_valid:
+                logger.warning(
+                    "manager_approval_failed",
+                    errors=manager_result.errors,
+                    query=query,
+                )
+                # Still proceed but log the issue
+
             # Step 7: Validate confidence meets minimum threshold
             if intent.confidence < TIER_3_MIN_CONFIDENCE:
                 logger.info(
