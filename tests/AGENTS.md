@@ -53,25 +53,68 @@
 - ❌ **FORBIDDEN** to use pandas for new test code (exceptions require comment)
 - ❌ **FORBIDDEN** to use `len(df)` instead of `df.height`
 
+### Rule 6: Coverage Requirements Are MANDATORY
+- ✅ **MUST** maintain 67% minimum coverage (target: 95%)
+- ✅ **MUST** run `make test-cov-check` before pushing
+- ✅ **MUST** update baseline after adding tests: `make coverage-baseline`
+- ❌ **FORBIDDEN** to push code that drops coverage below threshold
+- ❌ **FORBIDDEN** to add code without corresponding tests
+
+---
+
+## Coverage Requirements
+
+### Enforcement
+
+- **Minimum**: 67% line coverage (target: 95%)
+- **Branch coverage**: Required
+- **Regression tolerance**: 0.5% from baseline
+
+### Commands
+
+| Command | Purpose |
+|---------|---------|
+| `make test-cov-check` | Verify coverage threshold (blocks if below 67%) |
+| `make test-cov-diff` | Check regression against baseline |
+| `make coverage-baseline` | Update baseline after adding tests |
+| `make coverage-report` | Generate HTML report |
+
+### Adding Tests for Coverage
+
+When coverage drops:
+
+1. Run `make coverage-report` to see HTML report
+2. Open `htmlcov/index.html` in browser
+3. Find red (uncovered) lines
+4. Write tests for uncovered code paths
+5. Run `make test-cov-check` to verify
+
+### Pre-Push Hook
+
+Coverage is checked on `git push`. If coverage is below 67%, the push will be blocked.
+
+> **Reference**: [.cursor/rules/108-coverage-enforcement.mdc](../.cursor/rules/108-coverage-enforcement.mdc)
+
 ---
 
 ## Table of Contents
 
-1. [Test Structure: AAA Pattern](#test-structure-aaa-pattern)
-2. [Test Naming Convention](#test-naming-convention)
-3. [Unit Tests vs Integration Tests: Decision Criteria](#unit-tests-vs-integration-tests-decision-criteria)
-4. [DRY Principles for Tests](#dry-principles-for-tests)
-5. [Fixture Discipline](#fixture-discipline)
-6. [Test Isolation](#test-isolation)
-7. [Parameterization](#parameterization)
-8. [Error Testing](#error-testing)
-9. [Data Engineering Specific Patterns](#data-engineering-specific-patterns)
-10. [Polars Testing Assertions](#polars-testing-assertions)
-11. [Common Anti-Patterns to Avoid](#common-anti-patterns-to-avoid)
-12. [Standard Fixtures Reference](#standard-fixtures-reference)
-13. [Makefile Usage](#makefile-usage)
-14. [Test Writing Checklist](#test-writing-checklist)
-15. [Examples](#examples)
+1. [Coverage Requirements](#coverage-requirements)
+2. [Test Structure: AAA Pattern](#test-structure-aaa-pattern)
+3. [Test Naming Convention](#test-naming-convention)
+4. [Unit Tests vs Integration Tests: Decision Criteria](#unit-tests-vs-integration-tests-decision-criteria)
+5. [DRY Principles for Tests](#dry-principles-for-tests)
+6. [Fixture Discipline](#fixture-discipline)
+7. [Test Isolation](#test-isolation)
+8. [Parameterization](#parameterization)
+9. [Error Testing](#error-testing)
+10. [Data Engineering Specific Patterns](#data-engineering-specific-patterns)
+11. [Polars Testing Assertions](#polars-testing-assertions)
+12. [Common Anti-Patterns to Avoid](#common-anti-patterns-to-avoid)
+13. [Standard Fixtures Reference](#standard-fixtures-reference)
+14. [Makefile Usage](#makefile-usage)
+15. [Test Writing Checklist](#test-writing-checklist)
+16. [Examples](#examples)
 
 ---
 
