@@ -556,25 +556,36 @@ class UploadedDataset(ClinicalDataset):
             dataset_version = self.metadata.get("dataset_version")
             use_persistent_duckdb = db_path.exists() and dataset_version
 
+            # Use separate DuckDB connection to read from persistent DB
+            # This avoids ATTACH conflicts when multiple SemanticLayers exist
+            persistent_con = None
             if use_persistent_duckdb:
                 logger.info(f"Loading tables from persistent DuckDB: {db_path}")
-                # Attach persistent DuckDB to semantic layer's in-memory DuckDB
-                duckdb_con.execute(f"ATTACH '{db_path}' AS persistent_db")
+                import duckdb
+
+                persistent_con = duckdb.connect(str(db_path), read_only=True)
 
             for table_name in table_names:  # Use metadata list, not directory listing
                 safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
 
                 # Phase 2: Try loading from persistent DuckDB first
-                if use_persistent_duckdb:
+                if persistent_con is not None:
                     # Table name in persistent DB: {upload_id}_{table_name}_{dataset_version}
-                    persistent_table_name = f"{self.upload_id}_{table_name}_{dataset_version}"
+                    # Use SAME sanitization as DataStore.save_table() to match stored names
+                    from clinical_analytics.storage.datastore import _sanitize_table_name
+
+                    sanitized_table_name = _sanitize_table_name(table_name)
+                    persistent_table_name = f"{self.upload_id}_{sanitized_table_name}_{dataset_version}"
 
                     # Check if table exists in persistent DB
                     try:
+                        # Read from persistent DB, then create in in-memory DB
+                        data = persistent_con.execute(f"SELECT * FROM {persistent_table_name}").fetchdf()
+                        duckdb_con.register("_temp_table", data)
                         duckdb_con.execute(
-                            f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS "
-                            f"SELECT * FROM persistent_db.{persistent_table_name}"
+                            f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS " "SELECT * FROM _temp_table"
                         )
+                        duckdb_con.unregister("_temp_table")
                         logger.info(f"Registered table '{safe_table_name}' from persistent DuckDB")
                         continue  # Successfully loaded from DuckDB, skip CSV fallback
                     except Exception as e:
@@ -600,8 +611,15 @@ class UploadedDataset(ClinicalDataset):
                 )
                 logger.info(f"Registered table '{safe_table_name}' from CSV (fallback): {abs_path}")
 
+            # Close persistent connection if opened
+            if persistent_con is not None:
+                persistent_con.close()
+
             logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
         except Exception as e:
+            # Close persistent connection on error
+            if "persistent_con" in locals() and persistent_con is not None:
+                persistent_con.close()
             logger.warning(f"Failed to create semantic layer: {e}")
             import traceback
 
@@ -688,7 +706,7 @@ class UploadedDataset(ClinicalDataset):
             time_zero["source_column"] = time_zero_col
 
         # Detect categorical variables from predictors
-        # TODO: Consider sampling strategy for large columns (series.n_unique() can be expensive)
+        # NOTE: Consider sampling strategy for large columns (series.n_unique() can be expensive)
         predictors = variable_mapping.get("predictors", [])
         categorical_variables = []
 
@@ -707,7 +725,7 @@ class UploadedDataset(ClinicalDataset):
                 categorical_variables.append(col)
             # Numeric with ≤CATEGORICAL_THRESHOLD unique values → categorical
             elif dtype.is_numeric():
-                # For large columns, consider sampling (TODO: implement if performance issues)
+                # For large columns, consider sampling if performance issues arise
                 unique_count = series.n_unique()
                 if unique_count > 100_000:
                     logger.warning(

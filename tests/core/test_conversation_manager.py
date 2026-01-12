@@ -299,3 +299,255 @@ class TestConversationManager:
         assert restored.get_current_dataset() == "test_dataset"
         assert len(restored.get_transcript()) == 1
         assert restored.get_transcript()[0].content == "test message"
+
+
+class TestMessageStatus:
+    """Test suite for Message.status field and related functionality."""
+
+    def test_message_dataclass_status_defaults_to_completed(self):
+        """Test that Message.status defaults to 'completed'."""
+        # Arrange & Act
+        from clinical_analytics.core.conversation_manager import Message
+
+        message = Message(
+            id="test-id",
+            role="assistant",
+            content="test content",
+            timestamp=datetime.now(),
+        )
+
+        # Assert
+        assert message.status == "completed"
+
+    def test_message_dataclass_status_accepts_pending(self):
+        """Test that Message.status accepts 'pending' value."""
+        # Arrange & Act
+        from clinical_analytics.core.conversation_manager import Message
+
+        message = Message(
+            id="test-id",
+            role="assistant",
+            content="",
+            timestamp=datetime.now(),
+            status="pending",
+        )
+
+        # Assert
+        assert message.status == "pending"
+
+    def test_message_dataclass_status_accepts_error(self):
+        """Test that Message.status accepts 'error' value."""
+        # Arrange & Act
+        from clinical_analytics.core.conversation_manager import Message
+
+        message = Message(
+            id="test-id",
+            role="assistant",
+            content="Error occurred",
+            timestamp=datetime.now(),
+            status="error",
+        )
+
+        # Assert
+        assert message.status == "error"
+
+    def test_add_message_status_parameter_creates_pending_message(self):
+        """Test that add_message accepts status parameter for pending messages."""
+        # Arrange
+        manager = ConversationManager()
+
+        # Act
+        message_id = manager.add_message("assistant", "", status="pending")
+        transcript = manager.get_transcript()
+
+        # Assert
+        assert len(transcript) == 1
+        message = transcript[0]
+        assert message.id == message_id
+        assert message.status == "pending"
+        assert message.content == ""
+
+    def test_add_message_status_defaults_to_completed(self):
+        """Test that add_message defaults status to 'completed'."""
+        # Arrange
+        manager = ConversationManager()
+
+        # Act
+        manager.add_message("user", "What is the average age?")
+        transcript = manager.get_transcript()
+
+        # Assert
+        message = transcript[0]
+        assert message.status == "completed"
+
+
+class TestUpdateMessage:
+    """Test suite for ConversationManager.update_message() method."""
+
+    def test_update_message_status_changes_status(self):
+        """Test that update_message changes status from pending to completed."""
+        # Arrange
+        manager = ConversationManager()
+        message_id = manager.add_message("assistant", "", status="pending")
+
+        # Act
+        result = manager.update_message(message_id, status="completed")
+        transcript = manager.get_transcript()
+
+        # Assert
+        assert result is True
+        assert transcript[0].status == "completed"
+
+    def test_update_message_content_changes_content(self):
+        """Test that update_message changes message content."""
+        # Arrange
+        manager = ConversationManager()
+        message_id = manager.add_message("assistant", "", status="pending")
+
+        # Act
+        result = manager.update_message(message_id, content="The answer is 42")
+        transcript = manager.get_transcript()
+
+        # Assert
+        assert result is True
+        assert transcript[0].content == "The answer is 42"
+
+    def test_update_message_run_key_changes_run_key(self):
+        """Test that update_message changes run_key."""
+        # Arrange
+        manager = ConversationManager()
+        message_id = manager.add_message("assistant", "", status="pending")
+
+        # Act
+        result = manager.update_message(message_id, run_key="run_123")
+        transcript = manager.get_transcript()
+
+        # Assert
+        assert result is True
+        assert transcript[0].run_key == "run_123"
+
+    def test_update_message_multiple_fields_changes_all(self):
+        """Test that update_message can change multiple fields at once."""
+        # Arrange
+        manager = ConversationManager()
+        message_id = manager.add_message("assistant", "", status="pending")
+
+        # Act
+        result = manager.update_message(
+            message_id,
+            status="completed",
+            content="Analysis complete",
+            run_key="run_456",
+        )
+        transcript = manager.get_transcript()
+
+        # Assert
+        assert result is True
+        message = transcript[0]
+        assert message.status == "completed"
+        assert message.content == "Analysis complete"
+        assert message.run_key == "run_456"
+
+    def test_update_message_invalid_id_returns_false(self):
+        """Test that update_message returns False for non-existent message ID."""
+        # Arrange
+        manager = ConversationManager()
+        manager.add_message("assistant", "test")
+
+        # Act
+        result = manager.update_message("invalid-id", status="completed")
+
+        # Assert
+        assert result is False
+
+    def test_update_message_ignores_invalid_fields(self):
+        """Test that update_message ignores fields that don't exist on Message."""
+        # Arrange
+        manager = ConversationManager()
+        message_id = manager.add_message("assistant", "test")
+
+        # Act - should not raise, just ignore invalid field
+        result = manager.update_message(message_id, invalid_field="value")
+
+        # Assert
+        assert result is True  # Message was found, field just ignored
+
+
+class TestSerializeDeserializeStatus:
+    """Test suite for serialization/deserialization of Message.status."""
+
+    def test_serialize_includes_status_field(self):
+        """Test that serialize includes status field in messages."""
+        # Arrange
+        manager = ConversationManager()
+        manager.add_message("assistant", "test", status="pending")
+
+        # Act
+        serialized = manager.serialize()
+
+        # Assert
+        assert "messages" in serialized
+        assert len(serialized["messages"]) == 1
+        assert "status" in serialized["messages"][0]
+        assert serialized["messages"][0]["status"] == "pending"
+
+    def test_deserialize_restores_status_field(self):
+        """Test that deserialize restores status field."""
+        # Arrange
+        manager = ConversationManager()
+        manager.add_message("assistant", "test", status="pending")
+        serialized = manager.serialize()
+
+        # Act
+        restored = ConversationManager.deserialize(serialized)
+        transcript = restored.get_transcript()
+
+        # Assert
+        assert len(transcript) == 1
+        assert transcript[0].status == "pending"
+
+    def test_deserialize_backward_compat_defaults_status_to_completed(self):
+        """Test that deserialize defaults status to 'completed' for old data."""
+        # Arrange - simulate old serialized data without status field
+        old_data = {
+            "messages": [
+                {
+                    "id": "old-msg-id",
+                    "role": "assistant",
+                    "content": "old message",
+                    "timestamp": datetime.now().isoformat(),
+                    "run_key": None,
+                    # No status field - old format
+                }
+            ],
+            "dataset_id": None,
+            "active_query": None,
+            "follow_ups": [],
+        }
+
+        # Act
+        restored = ConversationManager.deserialize(old_data)
+        transcript = restored.get_transcript()
+
+        # Assert
+        assert len(transcript) == 1
+        assert transcript[0].status == "completed"  # Should default to completed
+
+    def test_serialize_deserialize_roundtrip_preserves_status(self):
+        """Test that serialize/deserialize roundtrip preserves all status values."""
+        # Arrange
+        manager = ConversationManager()
+        manager.add_message("user", "question", status="completed")
+        manager.add_message("assistant", "", status="pending")
+        manager.add_message("assistant", "error msg", status="error")
+
+        # Act
+        serialized = manager.serialize()
+        restored = ConversationManager.deserialize(serialized)
+        transcript = restored.get_transcript()
+
+        # Assert
+        assert len(transcript) == 3
+        assert transcript[0].status == "completed"
+        assert transcript[1].status == "pending"
+        assert transcript[2].status == "error"

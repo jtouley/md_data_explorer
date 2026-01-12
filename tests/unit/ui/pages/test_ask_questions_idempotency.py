@@ -4,6 +4,10 @@ Test idempotency guard with result persistence.
 Note: run_key generation is now handled by the semantic layer (PR21 refactor).
 These tests use pre-defined run_keys since the UI receives run_key from execution results.
 
+Phase 4: Inline rendering removed from execute_analysis_with_idempotency.
+Rendering now happens exclusively through render_chat() which reads from
+ConversationManager transcript. Tests updated to verify caching behavior only.
+
 Test name follows: test_unit_scenario_expectedBehavior
 """
 
@@ -25,6 +29,9 @@ def test_idempotency_same_query_uses_cached_result(
     """
     Test that identical query uses cached result (idempotency).
 
+    Phase 4: Now verifies caching behavior without inline rendering checks.
+    render_chat handles all rendering via ConversationManager transcript.
+
     Test name follows: test_unit_scenario_expectedBehavior
     """
     from datetime import datetime
@@ -37,13 +44,20 @@ def test_idempotency_same_query_uses_cached_result(
     run_key = _generate_test_run_key(dataset_version, query_text)
 
     # Pre-populate ResultCache with cached result (Milestone A: State Extraction)
-    cached_result = {"type": "descriptive", "row_count": 5, "column_count": 4}
+    cached_result_data = {
+        "type": "descriptive",
+        "row_count": 5,
+        "column_count": 4,
+        "missing_pct": 0.0,
+        "summary_stats": [],
+        "categorical_summary": {},
+    }
     cache = ResultCache(max_size=50)
     cache.put(
         CachedResult(
             run_key=run_key,
             query=query_text,
-            result=cached_result,
+            result=cached_result_data,
             timestamp=datetime.now(),
             dataset_version=dataset_version,
         )
@@ -57,18 +71,17 @@ def test_idempotency_same_query_uses_cached_result(
     # Patch session_state directly on the st object in the module
     monkeypatch.setattr(ask_questions_page.st, "session_state", mock_session_state)
     monkeypatch.setattr(ask_questions_page.st, "spinner", Mock(return_value=spinner_context))
-    with patch.object(ask_questions_page, "render_analysis_by_type") as mock_render:
-        # Act: Execute analysis (with execution_result=None to test cache lookup)
-        ask_questions_page.execute_analysis_with_idempotency(
-            sample_cohort, sample_context, run_key, dataset_version, query_text, execution_result=None
-        )
 
-        # Assert: Used cached result (render called once with cached data)
-        # Note: render_analysis_by_type now accepts optional query_text parameter
-        mock_render.assert_called_once()
-        call_args = mock_render.call_args
-        assert call_args[0][0] == cached_result
-        assert call_args[0][1] == sample_context.inferred_intent
+    # Act: Execute analysis (with execution_result=None to test cache lookup)
+    ask_questions_page.execute_analysis_with_idempotency(
+        sample_cohort, sample_context, run_key, dataset_version, query_text, execution_result=None
+    )
+
+    # Assert: Cached result still in cache (idempotency preserved)
+    cached_result = cache.get(run_key, dataset_version)
+    assert cached_result is not None
+    assert cached_result.result["type"] == cached_result_data["type"]
+    assert cached_result.result["row_count"] == cached_result_data["row_count"]
 
 
 def test_idempotency_different_query_computes_new_result(
@@ -79,6 +92,8 @@ def test_idempotency_different_query_computes_new_result(
 
     PR21 refactor: Now requires execution_result and semantic_layer parameters.
     The semantic layer handles all execution; this function only formats and caches.
+
+    Phase 4: Inline rendering removed - verify caching only.
 
     Test name: test_unit_scenario_expectedBehavior
     """
@@ -122,24 +137,25 @@ def test_idempotency_different_query_computes_new_result(
 
     with patch.object(ask_questions_page.st, "session_state", mock_session_state):
         with patch.object(ask_questions_page.st, "spinner", mock_spinner):
-            with patch.object(ask_questions_page, "render_analysis_by_type") as mock_render:
-                # Act: Execute analysis with required parameters
-                ask_questions_page.execute_analysis_with_idempotency(
-                    sample_cohort,
-                    sample_context,
-                    run_key,
-                    dataset_version,
-                    query_text,
-                    execution_result=execution_result,
-                    semantic_layer=mock_semantic_layer,
-                )
+            # Act: Execute analysis with required parameters
+            # Phase 4: No inline rendering - verify caching only
+            ask_questions_page.execute_analysis_with_idempotency(
+                sample_cohort,
+                sample_context,
+                run_key,
+                dataset_version,
+                query_text,
+                execution_result=execution_result,
+                semantic_layer=mock_semantic_layer,
+            )
 
-                # Assert: Result stored in ResultCache (idempotency works)
-                cached_result = cache.get(run_key, dataset_version)
-                assert cached_result is not None
-                assert cached_result.result["type"] == formatted_result["type"]
-                assert cached_result.result["row_count"] == formatted_result["row_count"]
-                mock_render.assert_called_once()
+            # Assert: Result stored in ResultCache (idempotency works)
+            cached_result = cache.get(run_key, dataset_version)
+            assert cached_result is not None
+            assert cached_result.result["type"] == formatted_result["type"]
+            assert cached_result.result["row_count"] == formatted_result["row_count"]
+            # Phase 4: Verify semantic_layer was used for formatting
+            mock_semantic_layer.format_execution_result.assert_called_once()
 
 
 def test_idempotency_result_persists_across_reruns(
@@ -148,14 +164,22 @@ def test_idempotency_result_persists_across_reruns(
     """
     Test that result persists across Streamlit reruns.
 
+    Phase 4: Verify caching without inline rendering checks.
+
     Test name: test_unit_scenario_expectedBehavior
     """
+    from clinical_analytics.core.result_cache import ResultCache
+
     # Arrange: Set up test data with UNIQUE query to avoid conflicts
     mock_session_state.clear()
     dataset_version = "test_dataset_v3_unique"
     query_text = "show patient demographics"
     sample_context.research_question = query_text
     run_key = _generate_test_run_key(dataset_version, query_text)
+
+    # Initialize ResultCache
+    cache = ResultCache(max_size=50)
+    mock_session_state["result_cache"] = cache
 
     # Create mock execution_result and semantic_layer
     execution_result = {"success": True, "result_df": Mock(), "run_key": run_key}
@@ -178,37 +202,38 @@ def test_idempotency_result_persists_across_reruns(
 
     with patch.object(ask_questions_page.st, "session_state", mock_session_state):
         with patch.object(ask_questions_page.st, "spinner", mock_spinner):
-            with patch.object(ask_questions_page, "render_analysis_by_type") as mock_render:
-                with patch.object(ask_questions_page, "remember_run"):
-                    # First execution: compute and store
-                    ask_questions_page.execute_analysis_with_idempotency(
-                        sample_cohort,
-                        sample_context,
-                        run_key,
-                        dataset_version,
-                        query_text,
-                        execution_result=execution_result,
-                        semantic_layer=mock_semantic_layer,
-                    )
+            with patch.object(ask_questions_page, "remember_run"):
+                # First execution: compute and store
+                ask_questions_page.execute_analysis_with_idempotency(
+                    sample_cohort,
+                    sample_context,
+                    run_key,
+                    dataset_version,
+                    query_text,
+                    execution_result=execution_result,
+                    semantic_layer=mock_semantic_layer,
+                )
 
-                    # Verify format_execution_result was called
-                    assert mock_semantic_layer.format_execution_result.call_count == 1
+                # Verify format_execution_result was called
+                assert mock_semantic_layer.format_execution_result.call_count == 1
 
-                    # Second execution (simulating rerun): should use cache
-                    ask_questions_page.execute_analysis_with_idempotency(
-                        sample_cohort,
-                        sample_context,
-                        run_key,
-                        dataset_version,
-                        query_text,
-                        execution_result=execution_result,
-                        semantic_layer=mock_semantic_layer,
-                    )
+                # Verify result is in cache
+                cached_result = cache.get(run_key, dataset_version)
+                assert cached_result is not None
 
-                    # Assert: format_execution_result not called again (used cache)
-                    assert mock_semantic_layer.format_execution_result.call_count == 1
-                    # Render called twice (once per execution)
-                    assert mock_render.call_count == 2
+                # Second execution (simulating rerun): should use cache
+                ask_questions_page.execute_analysis_with_idempotency(
+                    sample_cohort,
+                    sample_context,
+                    run_key,
+                    dataset_version,
+                    query_text,
+                    execution_result=execution_result,
+                    semantic_layer=mock_semantic_layer,
+                )
+
+                # Assert: format_execution_result not called again (used cache)
+                assert mock_semantic_layer.format_execution_result.call_count == 1
 
 
 def test_idempotency_result_stored_with_dataset_scoped_key(
