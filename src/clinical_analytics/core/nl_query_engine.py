@@ -53,10 +53,10 @@ def _stable_hash(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
 
 
-@dataclass
+@dataclass(frozen=True)
 class ValidationResult:
     """
-    Result from LLM-based validation layer (DBA/Analyst/Manager).
+    Result from LLM-based validation layer (DBA validation).
 
     Attributes:
         is_valid: Whether the validation passed
@@ -65,8 +65,8 @@ class ValidationResult:
     """
 
     is_valid: bool
-    errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -147,6 +147,9 @@ class NLQueryEngine:
         # Overlay cache (mtime-based hot reload)
         self._overlay_cache_text = ""
         self._overlay_cache_mtime_ns = 0
+
+        # Validation config cache (lazy loaded)
+        self._validation_config: dict | None = None
 
         # Build query templates from metadata
         self._build_query_templates()
@@ -786,7 +789,7 @@ class NLQueryEngine:
         if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
             return QueryIntent(intent_type="SURVIVAL", confidence=0.9)
 
-        # Pattern: "correlation" or "relationship" etc  # noqa: ERA001
+        # Pattern: "correlation" or "relationship" etc
         # Matches: "correlate", "correlation", "relationship", "relate", "relates", "associated", "association"
         if re.search(r"\b(correlat|relationship|relate|associat)\b", query_lower):
             # Try to extract variables from query
@@ -1704,6 +1707,21 @@ Filter extraction (ADR009 Phase 5):
             )
             return None
 
+    def _get_validation_config(self) -> dict:
+        """
+        Get validation config with lazy loading and caching.
+
+        Config is loaded once and cached in the instance for subsequent calls.
+
+        Returns:
+            Validation config dict from config/validation.yaml
+        """
+        if self._validation_config is None:
+            from clinical_analytics.core.config_loader import load_validation_config
+
+            self._validation_config = load_validation_config()
+        return self._validation_config
+
     def _dba_validate_llm(self, intent: "QueryIntent", query: str) -> "ValidationResult":
         """
         DBA validation layer - checks type safety and schema correctness.
@@ -1721,15 +1739,14 @@ Filter extraction (ADR009 Phase 5):
         import json
         import time
 
-        from clinical_analytics.core.config_loader import load_validation_config
         from clinical_analytics.core.llm_feature import LLMFeature
 
         start_time = time.time()
         feature = LLMFeature.DBA_VALIDATION
 
         try:
-            # Load config-driven prompts
-            config = load_validation_config()
+            # Load config-driven prompts (cached)
+            config = self._get_validation_config()
             dba_config = config.get("validation_layers", {}).get("dba", {})
             system_prompt = dba_config.get("system_prompt", "Validate query types.")
 
@@ -1764,7 +1781,7 @@ Validate this query intent for type safety. Return JSON:
             client = self._get_ollama_client()
             if client is None or not client.is_available():
                 logger.info("dba_validation_llm_unavailable")
-                return ValidationResult(is_valid=True, errors=[], warnings=["LLM unavailable for validation"])
+                return ValidationResult(is_valid=True, errors=(), warnings=("LLM unavailable for validation",))
 
             # Call LLM
             timeout = config.get("validation_rules", {}).get("timeout_seconds", 20.0)
@@ -1775,12 +1792,12 @@ Validate this query intent for type safety. Return JSON:
                 result_data = json.loads(response)
                 result = ValidationResult(
                     is_valid=result_data.get("is_valid", True),
-                    errors=result_data.get("errors", []),
-                    warnings=result_data.get("warnings", []),
+                    errors=tuple(result_data.get("errors", [])),
+                    warnings=tuple(result_data.get("warnings", [])),
                 )
             except json.JSONDecodeError:
                 logger.warning("dba_validation_json_parse_failed", response=response[:200])
-                result = ValidationResult(is_valid=True, errors=[], warnings=["Validation response parse failed"])
+                result = ValidationResult(is_valid=True, errors=(), warnings=("Validation response parse failed",))
 
             # Log observability
             duration_ms = (time.time() - start_time) * 1000
@@ -1798,156 +1815,8 @@ Validate this query intent for type safety. Return JSON:
 
         except Exception as e:
             logger.warning("dba_validation_error", extra={"error": str(e)})
-            # Don't block on validation errors
-            return ValidationResult(is_valid=True, errors=[], warnings=[f"Validation error: {str(e)}"])
-
-    def _analyst_validate_llm(self, intent: "QueryIntent", query: str) -> "ValidationResult":
-        """
-        Analyst validation layer - checks statistical validity and business logic.
-
-        Uses config-driven prompts from config/validation.yaml.
-        Logs calls with structured observability (LLMFeature.ANALYST_VALIDATION).
-
-        Args:
-            intent: QueryIntent to validate
-            query: Original user query for context
-
-        Returns:
-            ValidationResult with is_valid, errors, and warnings
-        """
-        import json
-        import time
-
-        from clinical_analytics.core.config_loader import load_validation_config
-        from clinical_analytics.core.llm_feature import LLMFeature
-
-        start_time = time.time()
-        feature = LLMFeature.ANALYST_VALIDATION
-
-        try:
-            # Load config-driven prompts
-            config = load_validation_config()
-            analyst_config = config.get("validation_layers", {}).get("analyst", {})
-            system_prompt = analyst_config.get("system_prompt", "Validate query logic.")
-
-            # Build intent context
-            intent_json = json.dumps(
-                {
-                    "intent_type": intent.intent_type,
-                    "primary_variable": intent.primary_variable,
-                    "grouping_variable": intent.grouping_variable,
-                    "filters": [
-                        {"column": f.column, "operator": f.operator, "value": f.value} for f in (intent.filters or [])
-                    ],
-                }
-            )
-
-            user_prompt = f"""
-Query: {query}
-Intent: {intent_json}
-
-Validate this query for statistical validity and business logic.
-Return JSON: {{"is_valid": true/false, "errors": [...], "warnings": [...]}}
-"""
-
-            client = self._get_ollama_client()
-            if client is None or not client.is_available():
-                return ValidationResult(is_valid=True, warnings=["LLM unavailable"])
-
-            timeout = config.get("validation_rules", {}).get("timeout_seconds", 20.0)
-            response = client.generate(system_prompt, user_prompt, timeout)
-
-            try:
-                result_data = json.loads(response)
-                result = ValidationResult(
-                    is_valid=result_data.get("is_valid", True),
-                    errors=result_data.get("errors", []),
-                    warnings=result_data.get("warnings", []),
-                )
-            except json.JSONDecodeError:
-                result = ValidationResult(is_valid=True, warnings=["Parse failed"])
-
-            duration_ms = (time.time() - start_time) * 1000
-            logger.info(
-                "analyst_validation_completed",
-                extra={"feature": feature.value, "duration_ms": duration_ms, "is_valid": result.is_valid},
-            )
-            return result
-
-        except Exception as e:
-            logger.warning("analyst_validation_error", extra={"error": str(e)})
-            return ValidationResult(is_valid=True, warnings=[f"Validation error: {str(e)}"])
-
-    def _manager_approve_llm(self, intent: "QueryIntent", query: str) -> "ValidationResult":
-        """
-        Manager approval layer - final sanity check before execution.
-
-        Uses config-driven prompts from config/validation.yaml.
-        Logs calls with structured observability (LLMFeature.MANAGER_APPROVAL).
-
-        Args:
-            intent: QueryIntent to approve
-            query: Original user query for context
-
-        Returns:
-            ValidationResult with is_valid, errors, and warnings
-        """
-        import json
-        import time
-
-        from clinical_analytics.core.config_loader import load_validation_config
-        from clinical_analytics.core.llm_feature import LLMFeature
-
-        start_time = time.time()
-        feature = LLMFeature.MANAGER_APPROVAL
-
-        try:
-            config = load_validation_config()
-            manager_config = config.get("validation_layers", {}).get("manager", {})
-            system_prompt = manager_config.get("system_prompt", "Approve query execution.")
-
-            intent_json = json.dumps(
-                {
-                    "intent_type": intent.intent_type,
-                    "primary_variable": intent.primary_variable,
-                    "confidence": intent.confidence,
-                }
-            )
-
-            user_prompt = f"""
-Query: {query}
-Intent: {intent_json}
-
-Final approval check. Return JSON: {{"is_valid": true/false, "errors": [...], "warnings": [...]}}
-"""
-
-            client = self._get_ollama_client()
-            if client is None or not client.is_available():
-                return ValidationResult(is_valid=True, warnings=["LLM unavailable"])
-
-            timeout = config.get("validation_rules", {}).get("timeout_seconds", 20.0)
-            response = client.generate(system_prompt, user_prompt, timeout)
-
-            try:
-                result_data = json.loads(response)
-                result = ValidationResult(
-                    is_valid=result_data.get("is_valid", True),
-                    errors=result_data.get("errors", []),
-                    warnings=result_data.get("warnings", []),
-                )
-            except json.JSONDecodeError:
-                result = ValidationResult(is_valid=True, warnings=["Parse failed"])
-
-            duration_ms = (time.time() - start_time) * 1000
-            logger.info(
-                "manager_approval_completed",
-                extra={"feature": feature.value, "duration_ms": duration_ms, "is_valid": result.is_valid},
-            )
-            return result
-
-        except Exception as e:
-            logger.warning("manager_approval_error", extra={"error": str(e)})
-            return ValidationResult(is_valid=True, warnings=[f"Approval error: {str(e)}"])
+            # Fail closed: validation errors should return is_valid=False (PR38 fix)
+            return ValidationResult(is_valid=False, errors=(f"Validation error: {str(e)}",), warnings=())
 
     def _retry_with_dba_feedback_llm(
         self, query: str, errors: list[str], conversation_history: list[dict] | None = None
@@ -2234,41 +2103,34 @@ Fix the errors and return a corrected query intent as JSON.
                         )
 
             # Step 6.5: Multi-layer LLM validation (ADR: RAG Type Safety)
-            # DBA validation for type safety
-            from clinical_analytics.core.config_loader import load_validation_config
+            # Only run validation if feature flag is enabled (default: disabled)
+            from clinical_analytics.core.config_loader import load_nl_query_config, load_validation_config
 
-            validation_config = load_validation_config()
-            max_retries = validation_config.get("validation_rules", {}).get("max_retries", 1)
+            nl_query_config = load_nl_query_config()
+            enable_validation = nl_query_config.get("enable_multi_layer_validation", False)
 
-            dba_result = self._dba_validate_llm(intent, query)
-            if not dba_result.is_valid and max_retries > 0:
-                # Retry with DBA feedback
-                logger.info(
-                    "dba_validation_failed_retrying",
-                    errors=dba_result.errors,
+            if enable_validation:
+                validation_config = load_validation_config()
+                max_retries = validation_config.get("validation_rules", {}).get("max_retries", 1)
+
+                dba_result = self._dba_validate_llm(intent, query)
+                if not dba_result.is_valid and max_retries > 0:
+                    # Retry with DBA feedback
+                    logger.info(
+                        "dba_validation_failed_retrying",
+                        errors=dba_result.errors,
+                        query=query,
+                    )
+                    corrected_intent = self._retry_with_dba_feedback_llm(
+                        query, list(dba_result.errors), conversation_history
+                    )
+                    intent = corrected_intent
+            else:
+                logger.debug(
+                    "multi_layer_validation_skipped",
                     query=query,
+                    reason="enable_multi_layer_validation=False",
                 )
-                corrected_intent = self._retry_with_dba_feedback_llm(query, dba_result.errors, conversation_history)
-                intent = corrected_intent
-
-            # Analyst validation for statistical validity (optional)
-            analyst_result = self._analyst_validate_llm(intent, query)
-            if analyst_result.warnings:
-                logger.info(
-                    "analyst_validation_warnings",
-                    warnings=analyst_result.warnings,
-                    query=query,
-                )
-
-            # Manager approval (final check)
-            manager_result = self._manager_approve_llm(intent, query)
-            if not manager_result.is_valid:
-                logger.warning(
-                    "manager_approval_failed",
-                    errors=manager_result.errors,
-                    query=query,
-                )
-                # Still proceed but log the issue
 
             # Step 7: Validate confidence meets minimum threshold
             if intent.confidence < TIER_3_MIN_CONFIDENCE:

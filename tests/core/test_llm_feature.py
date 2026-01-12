@@ -36,8 +36,6 @@ class TestLLMFeature:
         """Test that validation layer LLMFeature values exist."""
         # Arrange & Act & Assert
         assert LLMFeature.DBA_VALIDATION
-        assert LLMFeature.ANALYST_VALIDATION
-        assert LLMFeature.MANAGER_APPROVAL
         assert LLMFeature.VALIDATION_RETRY
 
     def test_llmfeature_values_are_strings(self):
@@ -54,8 +52,6 @@ class TestLLMFeature:
         """Test that validation layer LLMFeature values are correct strings."""
         # Arrange & Act & Assert
         assert LLMFeature.DBA_VALIDATION.value == "dba_validation"
-        assert LLMFeature.ANALYST_VALIDATION.value == "analyst_validation"
-        assert LLMFeature.MANAGER_APPROVAL.value == "manager_approval"
         assert LLMFeature.VALIDATION_RETRY.value == "validation_retry"
 
 

@@ -206,42 +206,93 @@ class TestDBAValidation:
         assert len(result.errors) >= 1
 
 
-class TestAnalystValidation:
-    """Test suite for _analyst_validate_llm method."""
+class TestConfigCaching:
+    """Test suite for validation config caching in NLQueryEngine."""
 
-    def test_analyst_validate_llm_method_exists(self, make_semantic_layer):
-        """Test that _analyst_validate_llm method exists."""
+    def test_nlquery_engine_caches_validation_config(self, make_semantic_layer):
+        """Test that NLQueryEngine caches validation config to avoid repeated loading."""
         # Arrange
-        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.config_loader import load_validation_config
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 
         semantic = make_semantic_layer(
-            dataset_name="test_analyst_exists",
+            dataset_name="test_cache",
             data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
         )
         engine = NLQueryEngine(semantic)
 
-        # Act & Assert
-        assert hasattr(engine, "_analyst_validate_llm")
-        assert callable(engine._analyst_validate_llm)
+        # Verify engine has a cached config attribute (None initially)
+        assert hasattr(engine, "_validation_config"), "Engine should have _validation_config attribute"
+
+        intent = QueryIntent(
+            intent_type="DESCRIBE",
+            primary_variable="age",
+            confidence=0.9,
+        )
+
+        # Mock the LLM client
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.return_value = '{"is_valid": true, "errors": [], "warnings": []}'
+
+        # Track config loading calls
+        load_count = [0]
+        real_config = load_validation_config()
+
+        def mock_load_validation_config():
+            load_count[0] += 1
+            return real_config
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            with patch(
+                "clinical_analytics.core.config_loader.load_validation_config",
+                mock_load_validation_config,
+            ):
+                # Act - call validation twice
+                engine._dba_validate_llm(intent, "describe age")
+                engine._dba_validate_llm(intent, "describe age again")
+
+        # Assert - config should only be loaded once (cached)
+        assert load_count[0] == 1, f"Config should be loaded only once, was loaded {load_count[0]} times"
 
 
-class TestManagerApproval:
-    """Test suite for _manager_approve_llm method."""
+class TestValidationErrorHandling:
+    """Test suite for validation error handling - fail closed, not open."""
 
-    def test_manager_approve_llm_method_exists(self, make_semantic_layer):
-        """Test that _manager_approve_llm method exists."""
+    def test_dba_validate_llm_exception_returns_invalid(self, make_semantic_layer):
+        """Test that _dba_validate_llm returns is_valid=False on exception."""
         # Arrange
-        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 
         semantic = make_semantic_layer(
-            dataset_name="test_manager_exists",
+            dataset_name="test_exception_handling",
             data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
         )
         engine = NLQueryEngine(semantic)
 
-        # Act & Assert
-        assert hasattr(engine, "_manager_approve_llm")
-        assert callable(engine._manager_approve_llm)
+        intent = QueryIntent(
+            intent_type="DESCRIBE",
+            primary_variable="age",
+            confidence=0.9,
+        )
+
+        # Mock the LLM client to raise an exception
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.side_effect = Exception("LLM connection error")
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            # Act
+            result = engine._dba_validate_llm(intent, "describe age")
+
+        # Assert - should return is_valid=False on exception (fail closed)
+        assert result.is_valid is False, "Validation should return is_valid=False on exception"
+        assert len(result.errors) >= 1, "Should include error message"
+        assert "error" in result.errors[0].lower() or "connection" in result.errors[0].lower()
 
 
 class TestRetryWithFeedback:
@@ -267,10 +318,11 @@ class TestMultiLayerValidationIntegration:
     """Test suite for multi-layer validation in _llm_parse."""
 
     def test_llm_parse_calls_dba_validation(self, make_semantic_layer):
-        """Test that _llm_parse calls DBA validation."""
+        """Test that _llm_parse calls DBA validation when feature flag is enabled."""
         # Arrange
         from unittest.mock import MagicMock, patch
 
+        from clinical_analytics.core.config_loader import load_nl_query_config
         from clinical_analytics.core.nl_query_engine import NLQueryEngine, ValidationResult
 
         semantic = make_semantic_layer(
@@ -289,31 +341,32 @@ class TestMultiLayerValidationIntegration:
 
         def mock_dba_validate(intent, query):
             dba_called.append({"intent": intent.intent_type, "query": query})
-            return ValidationResult(is_valid=True, errors=[], warnings=[])
+            return ValidationResult(is_valid=True, errors=(), warnings=())
 
-        def mock_analyst_validate(intent, query):
-            return ValidationResult(is_valid=True, errors=[], warnings=[])
-
-        def mock_manager_approve(intent, query):
-            return ValidationResult(is_valid=True, errors=[], warnings=[])
+        # Enable feature flag for this test
+        real_config = load_nl_query_config()
+        mock_config = {**real_config, "enable_multi_layer_validation": True}
 
         with patch.object(engine, "_get_ollama_client", return_value=mock_client):
             with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
-                with patch.object(engine, "_analyst_validate_llm", side_effect=mock_analyst_validate):
-                    with patch.object(engine, "_manager_approve_llm", side_effect=mock_manager_approve):
-                        # Act
-                        result = engine._llm_parse("describe age")
+                with patch(
+                    "clinical_analytics.core.config_loader.load_nl_query_config",
+                    return_value=mock_config,
+                ):
+                    # Act
+                    result = engine._llm_parse("describe age")
 
-        # Assert - DBA validation must be called
+        # Assert - DBA validation must be called when flag is enabled
         assert len(dba_called) == 1, f"DBA validation should be called once, was called {len(dba_called)} times"
         assert dba_called[0]["query"] == "describe age"
         assert result.intent_type == "DESCRIBE"
 
     def test_llm_parse_retries_on_dba_validation_failure(self, make_semantic_layer):
-        """Test that _llm_parse retries when DBA validation fails."""
+        """Test that _llm_parse retries when DBA validation fails (with feature flag enabled)."""
         # Arrange
         from unittest.mock import MagicMock, patch
 
+        from clinical_analytics.core.config_loader import load_nl_query_config
         from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent, ValidationResult
 
         semantic = make_semantic_layer(
@@ -330,29 +383,29 @@ class TestMultiLayerValidationIntegration:
         retry_called = []
 
         def mock_dba_validate(intent, query):
-            return ValidationResult(is_valid=False, errors=["Type mismatch"], warnings=[])
+            return ValidationResult(is_valid=False, errors=("Type mismatch",), warnings=())
 
         def mock_retry(query, errors, history):
             retry_called.append({"query": query, "errors": errors})
             return QueryIntent(intent_type="DESCRIBE", confidence=0.7, parsing_tier="retry")
 
-        def mock_analyst_validate(intent, query):
-            return ValidationResult(is_valid=True, errors=[], warnings=[])
-
-        def mock_manager_approve(intent, query):
-            return ValidationResult(is_valid=True, errors=[], warnings=[])
+        # Enable feature flag for this test
+        real_config = load_nl_query_config()
+        mock_config = {**real_config, "enable_multi_layer_validation": True}
 
         with patch.object(engine, "_get_ollama_client", return_value=mock_client):
             with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
                 with patch.object(engine, "_retry_with_dba_feedback_llm", side_effect=mock_retry):
-                    with patch.object(engine, "_analyst_validate_llm", side_effect=mock_analyst_validate):
-                        with patch.object(engine, "_manager_approve_llm", side_effect=mock_manager_approve):
-                            # Act
-                            result = engine._llm_parse("describe age")
+                    with patch(
+                        "clinical_analytics.core.config_loader.load_nl_query_config",
+                        return_value=mock_config,
+                    ):
+                        # Act
+                        result = engine._llm_parse("describe age")
 
         # Assert - retry should be called and intent should be from retry
         assert len(retry_called) == 1, "Retry should be called once"
-        assert retry_called[0]["errors"] == ["Type mismatch"]
+        assert retry_called[0]["errors"] == ("Type mismatch",)
         assert result.confidence == 0.7  # Confidence from retry mock
 
 
@@ -398,6 +451,114 @@ class TestBuildTypeRulesSection:
         assert "numbers only" in result.lower()
 
 
+class TestFeatureFlag:
+    """Test suite for enable_multi_layer_validation feature flag."""
+
+    def test_llm_parse_only_calls_dba_validation_when_enabled(self, make_semantic_layer):
+        """Test that _llm_parse only calls DBA validation (not analyst/manager) when enabled."""
+        # Arrange
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.config_loader import load_nl_query_config
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine, ValidationResult
+
+        semantic = make_semantic_layer(
+            dataset_name="test_dba_only",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Mock OllamaClient to return valid intent
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
+
+        # Track validation calls
+        dba_called = []
+
+        def mock_dba_validate(intent, query):
+            dba_called.append(True)
+            return ValidationResult(is_valid=True, errors=(), warnings=())
+
+        # Enable feature flag
+        real_config = load_nl_query_config()
+        mock_config = {**real_config, "enable_multi_layer_validation": True}
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
+                with patch(
+                    "clinical_analytics.core.config_loader.load_nl_query_config",
+                    return_value=mock_config,
+                ):
+                    # Act
+                    result = engine._llm_parse("describe age")
+
+        # Assert - only DBA validation should be called
+        assert len(dba_called) == 1, "DBA validation should be called once"
+        assert result.intent_type == "DESCRIBE"
+
+        # Analyst and Manager should NOT exist (removed per PR38)
+        assert not hasattr(engine, "_analyst_validate_llm"), "_analyst_validate_llm should be removed"
+        assert not hasattr(engine, "_manager_approve_llm"), "_manager_approve_llm should be removed"
+
+    def test_config_loader_enable_multi_layer_validation_defaults_false(self):
+        """Test that enable_multi_layer_validation defaults to false."""
+        # Arrange
+        from clinical_analytics.core.config_loader import load_nl_query_config
+
+        # Act
+        config = load_nl_query_config()
+
+        # Assert
+        assert "enable_multi_layer_validation" in config
+        assert config["enable_multi_layer_validation"] is False
+
+    def test_llm_parse_skips_validation_when_flag_disabled(self, make_semantic_layer):
+        """Test that _llm_parse skips validation when feature flag is disabled."""
+        # Arrange
+        from unittest.mock import MagicMock, patch
+
+        from clinical_analytics.core.config_loader import load_nl_query_config
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(
+            dataset_name="test_flag_disabled",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Mock OllamaClient to return valid intent
+        mock_client = MagicMock()
+        mock_client.is_available.return_value = True
+        mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
+
+        # Track validation calls
+        dba_called = []
+
+        def mock_dba_validate(intent, query):
+            dba_called.append(True)
+            from clinical_analytics.core.nl_query_engine import ValidationResult
+
+            return ValidationResult(is_valid=True, errors=(), warnings=())
+
+        # Get real config and override just the validation flag
+        real_config = load_nl_query_config()
+        mock_config = {**real_config, "enable_multi_layer_validation": False}
+
+        with patch.object(engine, "_get_ollama_client", return_value=mock_client):
+            with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
+                with patch(
+                    "clinical_analytics.core.config_loader.load_nl_query_config",
+                    return_value=mock_config,
+                ):
+                    # Act
+                    result = engine._llm_parse("describe age")
+
+        # Assert - DBA validation should NOT be called when flag is disabled
+        assert len(dba_called) == 0, "DBA validation should not be called when flag is disabled"
+        assert result.intent_type == "DESCRIBE"
+
+
 class TestValidationResult:
     """Test suite for ValidationResult dataclass."""
 
@@ -426,14 +587,14 @@ class TestValidationResult:
         # Act
         result = ValidationResult(
             is_valid=True,
-            errors=[],
-            warnings=["Some warning"],
+            errors=(),
+            warnings=("Some warning",),
         )
 
         # Assert
         assert result.is_valid is True
-        assert result.errors == []
-        assert result.warnings == ["Some warning"]
+        assert result.errors == ()
+        assert result.warnings == ("Some warning",)
 
     def test_validation_result_invalid_with_errors(self):
         """Test ValidationResult with is_valid=False and errors."""
@@ -443,8 +604,8 @@ class TestValidationResult:
         # Act
         result = ValidationResult(
             is_valid=False,
-            errors=["Type mismatch: column 'age' expects float, got str"],
-            warnings=[],
+            errors=("Type mismatch: column 'age' expects float, got str",),
+            warnings=(),
         )
 
         # Assert
@@ -460,6 +621,6 @@ class TestValidationResult:
         # Act: Create with only is_valid (if defaults exist)
         result = ValidationResult(is_valid=True)
 
-        # Assert: Defaults should be empty lists
-        assert result.errors == []
-        assert result.warnings == []
+        # Assert: Defaults should be empty tuples (frozen dataclass)
+        assert result.errors == ()
+        assert result.warnings == ()
