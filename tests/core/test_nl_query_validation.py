@@ -405,7 +405,8 @@ class TestMultiLayerValidationIntegration:
 
         # Assert - retry should be called and intent should be from retry
         assert len(retry_called) == 1, "Retry should be called once"
-        assert retry_called[0]["errors"] == ("Type mismatch",)
+        # Errors are converted to list when passed to retry function
+        assert retry_called[0]["errors"] == ["Type mismatch"]
         assert result.confidence == 0.7  # Confidence from retry mock
 
 
