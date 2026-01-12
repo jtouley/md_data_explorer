@@ -1499,6 +1499,77 @@ class SemanticLayer:
             raise last_exception
         raise RuntimeError("Unexpected retry loop exit")
 
+    def _validate_filter_types(self, filters: list) -> list[str]:
+        """
+        Lightweight pre-execution sanity check for filter types.
+
+        This is NOT the primary validation - LLM validation layers should have
+        already caught type mismatches. This is a final safety check.
+
+        Args:
+            filters: List of FilterSpec objects to validate
+
+        Returns:
+            List of error messages (empty if all valid)
+        """
+        errors: list[str] = []
+
+        try:
+            base_view = self.get_base_view()
+            schema = base_view.schema()
+            available_columns = set(base_view.columns)
+
+            for filter_spec in filters:
+                column = filter_spec.column
+                value = filter_spec.value
+
+                # Check if column exists
+                if column not in available_columns:
+                    errors.append(
+                        f"Column '{column}' not found in schema. " "Pre-execution validation should have caught this."
+                    )
+                    continue
+
+                # Get column dtype
+                dtype = schema[column]
+                dtype_str = str(dtype).lower()
+
+                # Check type compatibility
+                numeric_types = ["int", "float", "decimal", "double", "numeric"]
+                is_numeric_column = any(t in dtype_str for t in numeric_types)
+
+                if is_numeric_column:
+                    # Numeric column should have numeric value (int/float)
+                    if isinstance(value, str) and not self._is_numeric_string(value):
+                        errors.append(
+                            f"Type mismatch for column '{column}': "
+                            f"expected numeric value, got string '{value}'. "
+                            "LLM validation should have caught this."
+                        )
+
+                logger.debug(
+                    "filter_type_validation_checked: column=%s, dtype=%s, value_type=%s, is_numeric=%s",
+                    column,
+                    dtype_str,
+                    type(value).__name__,
+                    is_numeric_column,
+                )
+
+        except Exception as e:
+            logger.warning("filter_type_validation_error: %s", str(e))
+            # Don't block on validation errors - just log
+            pass
+
+        return errors
+
+    def _is_numeric_string(self, value: str) -> bool:
+        """Check if a string can be converted to a number."""
+        try:
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
+
     def execute_query_plan(
         self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
     ) -> dict[str, Any]:

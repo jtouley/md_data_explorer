@@ -572,6 +572,64 @@ def test_metric_count_expression_without_column_succeeds(make_semantic_layer, tm
         raise
 
 
+class TestValidateFilterTypes:
+    """Test suite for _validate_filter_types method."""
+
+    def test_validate_filter_types_valid_filters_returns_empty_list(self, make_semantic_layer):
+        """Test that valid filters return empty error list."""
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        semantic = make_semantic_layer(
+            dataset_name="test_valid_filters",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        filters = [FilterSpec(column="age", operator=">", value=40.0)]
+
+        # Act
+        errors = semantic._validate_filter_types(filters)
+
+        # Assert
+        assert errors == []
+
+    def test_validate_filter_types_type_mismatch_returns_error(self, make_semantic_layer):
+        """Test that type mismatch returns error message."""
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        semantic = make_semantic_layer(
+            dataset_name="test_type_mismatch",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        # String value for numeric column = type mismatch
+        filters = [FilterSpec(column="age", operator="!=", value="n/a")]
+
+        # Act
+        errors = semantic._validate_filter_types(filters)
+
+        # Assert
+        assert len(errors) >= 1
+        assert "age" in errors[0] or "type" in errors[0].lower()
+
+    def test_validate_filter_types_missing_column_returns_error(self, make_semantic_layer):
+        """Test that missing column returns error message."""
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        semantic = make_semantic_layer(
+            dataset_name="test_missing_col",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        filters = [FilterSpec(column="nonexistent", operator="=", value=1)]
+
+        # Act
+        errors = semantic._validate_filter_types(filters)
+
+        # Assert
+        assert len(errors) >= 1
+        assert "nonexistent" in errors[0]
+
+
 class TestTypeValidationError:
     """Test suite for TypeValidationError exception class."""
 
