@@ -417,8 +417,12 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
     """
     # Check for error results first
     if "error" in result:
-        # ADR009 Phase 4: Show error with LLM translation
-        _render_error_with_translation(result["error"], prefix="❌ **Analysis Error**")
+        # ADR009 Phase 4: Show error with LLM translation (cached if available)
+        _render_error_with_translation(
+            result["error"],
+            prefix="❌ **Analysis Error**",
+            cached_translation=result.get("friendly_error_message"),
+        )
         if "available_columns" in result:
             cols_preview = result["available_columns"][:20]
             cols_str = ", ".join(cols_preview)
@@ -630,8 +634,11 @@ def render_count_analysis(result: dict) -> None:
 def render_comparison_analysis(result: dict) -> None:
     """Render comparison analysis from serializable dict inline."""
     if "error" in result:
-        # ADR009 Phase 4: Show error with LLM translation
-        _render_error_with_translation(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation (cached if available)
+        _render_error_with_translation(
+            result["error"],
+            cached_translation=result.get("friendly_error_message"),
+        )
         return
 
     st.markdown("#### 📈 Group Comparison")
@@ -724,8 +731,11 @@ def render_comparison_analysis(result: dict) -> None:
 def render_predictor_analysis(result: dict) -> None:
     """Render predictor analysis from serializable dict."""
     if "error" in result:
-        # ADR009 Phase 4: Show error with LLM translation
-        _render_error_with_translation(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation (cached if available)
+        _render_error_with_translation(
+            result["error"],
+            cached_translation=result.get("friendly_error_message"),
+        )
         return
 
     st.markdown("## 🎯 Finding Predictors")
@@ -796,8 +806,11 @@ def render_predictor_analysis(result: dict) -> None:
 def render_survival_analysis(result: dict) -> None:
     """Render survival analysis from serializable dict."""
     if "error" in result:
-        # ADR009 Phase 4: Show error with LLM translation
-        _render_error_with_translation(result["error"])
+        # ADR009 Phase 4: Show error with LLM translation (cached if available)
+        _render_error_with_translation(
+            result["error"],
+            cached_translation=result.get("friendly_error_message"),
+        )
         if "unique_values" in result:
             st.info(f"Event values found: {result['unique_values']}")
         return
@@ -832,8 +845,12 @@ def render_survival_analysis(result: dict) -> None:
 def render_relationship_analysis(result: dict) -> None:
     """Render relationship analysis from serializable dict with clean, user-friendly output."""
     if "error" in result:
-        # ADR009 Phase 4: Show error with LLM translation
-        _render_error_with_translation(result["error"], prefix="❌ **Analysis Error**")
+        # ADR009 Phase 4: Show error with LLM translation (cached if available)
+        _render_error_with_translation(
+            result["error"],
+            prefix="❌ **Analysis Error**",
+            cached_translation=result.get("friendly_error_message"),
+        )
         if "numeric_variables" in result:
             st.info(f"✅ **Numeric variables found**: {', '.join(result['numeric_variables'][:5])}")
         if "non_numeric_variables" in result:
@@ -935,7 +952,10 @@ def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: st
         # ADR009 Phase 4: Show error with LLM translation
         _render_error_with_translation(f"Unknown result type: {result_type}", prefix="❌ **Unknown Result Type**")
         if "error" in result:
-            _render_error_with_translation(result["error"])
+            _render_error_with_translation(
+                result["error"],
+                cached_translation=result.get("friendly_error_message"),
+            )
 
 
 def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
@@ -983,8 +1003,9 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                 if status == "pending":
                     st.info("💭 Thinking...")
                 elif status == "error":
-                    # ADR009 Phase 4: Show error with LLM translation
-                    _render_error_with_translation(content, prefix="❌ Error")
+                    # Static error display - no LLM translation for transcript errors
+                    # (LLM translation cached in result dict for execution path)
+                    st.error(f"❌ Error: {content}")
                 elif status == "completed" and run_key:
                     # Load result from ResultCache (Milestone A: State Extraction)
                     cache = st.session_state.get("result_cache")
@@ -1208,6 +1229,17 @@ def execute_analysis_with_idempotency(
             has_error="error" in result,
             dataset_version=dataset_version,
         )
+
+        # Cache error translation (follows same pattern as llm_interpretation caching)
+        if "error" in result and not result.get("friendly_error_message"):
+            friendly = translate_error_with_llm(result["error"])
+            if friendly:
+                result["friendly_error_message"] = friendly
+                logger.debug(
+                    "error_translation_cached",
+                    run_key=run_key,
+                    translation_length=len(friendly),
+                )
 
         # ADR009 Phase 3: Generate LLM result interpretation (if enabled)
         # Skip if interpretation already exists (cached from previous execution)
@@ -1467,7 +1499,11 @@ def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
 
 
 # ADR009 Phase 4: Error Translation
-def _render_error_with_translation(technical_error: str, prefix: str = "❌ **Error**") -> None:
+def _render_error_with_translation(
+    technical_error: str,
+    prefix: str = "❌ **Error**",
+    cached_translation: str | None = None,
+) -> None:
     """
     Render error with optional LLM translation (ADR009 Phase 4).
 
@@ -1477,12 +1513,13 @@ def _render_error_with_translation(technical_error: str, prefix: str = "❌ **Er
     Args:
         technical_error: Technical error message
         prefix: Prefix for error display (e.g., "❌ **Error**")
+        cached_translation: Pre-cached translation (skips LLM call if provided)
     """
     # Always show technical error first
     st.error(f"{prefix}: {technical_error}")
 
-    # Attempt LLM translation (graceful degradation if fails)
-    friendly_message = translate_error_with_llm(technical_error)
+    # Use cached translation if available, else call LLM
+    friendly_message = cached_translation or translate_error_with_llm(technical_error)
     if friendly_message:
         st.info(f"💡 **In plain language**: {friendly_message}")
 

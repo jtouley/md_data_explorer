@@ -30,6 +30,13 @@ class TestLLMFeature:
         assert LLMFeature.RESULT_INTERPRETATION
         assert LLMFeature.ERROR_TRANSLATION
         assert LLMFeature.FILTER_EXTRACTION
+        assert LLMFeature.QUESTION_GENERATION
+
+    def test_llmfeature_validation_values_exist(self):
+        """Test that validation layer LLMFeature values exist."""
+        # Arrange & Act & Assert
+        assert LLMFeature.DBA_VALIDATION
+        assert LLMFeature.VALIDATION_RETRY
 
     def test_llmfeature_values_are_strings(self):
         # Arrange & Act & Assert
@@ -39,6 +46,13 @@ class TestLLMFeature:
         assert LLMFeature.RESULT_INTERPRETATION.value == "result_interpretation"
         assert LLMFeature.ERROR_TRANSLATION.value == "error_translation"
         assert LLMFeature.FILTER_EXTRACTION.value == "filter_extraction"
+        assert LLMFeature.QUESTION_GENERATION.value == "question_generation"
+
+    def test_llmfeature_validation_values_are_strings(self):
+        """Test that validation layer LLMFeature values are correct strings."""
+        # Arrange & Act & Assert
+        assert LLMFeature.DBA_VALIDATION.value == "dba_validation"
+        assert LLMFeature.VALIDATION_RETRY.value == "validation_retry"
 
 
 class TestCallLLM:

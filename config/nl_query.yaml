@@ -72,3 +72,8 @@ enable_proactive_questions: false  # Deprecated: use adr004_enable_question_gene
 
 # ADR004 Phase 4: Proactive Question Generation Timeout
 llm_timeout_question_generation_s: 5.0  # Hard timeout (same as parsing tiers)
+
+# Multi-layer LLM validation (PR38)
+# When true, enables DBA validation layer after LLM parsing.
+# Default: false (disabled) - validation adds latency without clear benefit.
+enable_multi_layer_validation: false
