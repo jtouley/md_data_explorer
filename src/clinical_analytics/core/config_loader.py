@@ -200,6 +200,7 @@ class NLQueryConfigDefaults:
     enable_result_interpretation: bool = True
     enable_proactive_questions: bool = False
     llm_timeout_question_generation_s: float = 5.0
+    enable_multi_layer_validation: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert dataclass to dictionary."""
@@ -232,6 +233,7 @@ class NLQueryConfigDefaults:
             "enable_result_interpretation": self.enable_result_interpretation,
             "enable_proactive_questions": self.enable_proactive_questions,
             "llm_timeout_question_generation_s": self.llm_timeout_question_generation_s,
+            "enable_multi_layer_validation": self.enable_multi_layer_validation,
         }
 
 
