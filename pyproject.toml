@@ -54,7 +54,8 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+# ERA: commented-out code, TD: TODO formatting, FIX: FIXME/HACK/XXX detection
+select = ["E", "F", "I", "N", "W", "UP", "ERA", "TD", "FIX"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
