@@ -1526,7 +1526,7 @@ class SemanticLayer:
                 # Check if column exists
                 if column not in available_columns:
                     errors.append(
-                        f"Column '{column}' not found in schema. " "Pre-execution validation should have caught this."
+                        f"Column '{column}' not found in schema. Pre-execution validation should have caught this."
                     )
                     continue
 

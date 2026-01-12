@@ -582,9 +582,7 @@ class UploadedDataset(ClinicalDataset):
                         # Read from persistent DB, then create in in-memory DB
                         data = persistent_con.execute(f"SELECT * FROM {persistent_table_name}").fetchdf()
                         duckdb_con.register("_temp_table", data)
-                        duckdb_con.execute(
-                            f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS " "SELECT * FROM _temp_table"
-                        )
+                        duckdb_con.execute(f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS SELECT * FROM _temp_table")
                         duckdb_con.unregister("_temp_table")
                         logger.info(f"Registered table '{safe_table_name}' from persistent DuckDB")
                         continue  # Successfully loaded from DuckDB, skip CSV fallback
