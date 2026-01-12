@@ -356,6 +356,48 @@ class TestMultiLayerValidationIntegration:
         assert result.confidence == 0.7  # Confidence from retry mock
 
 
+class TestBuildTypeRulesSection:
+    """Test suite for _build_type_rules_section method."""
+
+    def test_build_type_rules_section_exists(self, make_semantic_layer):
+        """Test that _build_type_rules_section method exists."""
+        # Arrange
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(
+            dataset_name="test_type_rules",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        # Act & Assert
+        assert hasattr(engine, "_build_type_rules_section")
+        assert callable(engine._build_type_rules_section)
+
+    def test_build_type_rules_section_formats_numeric_columns(self, make_semantic_layer):
+        """Test that numeric columns are formatted correctly."""
+        # Arrange
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(
+            dataset_name="test_numeric_rules",
+            data={"patient_id": ["P1"], "age": [45.0]},
+        )
+        engine = NLQueryEngine(semantic)
+
+        column_types = {
+            "age": {"type": "numeric", "numeric": True, "dtype": "float64"},
+        }
+
+        # Act
+        result = engine._build_type_rules_section(column_types)
+
+        # Assert
+        assert "age" in result
+        assert "NUMERIC" in result
+        assert "numbers only" in result.lower()
+
+
 class TestValidationResult:
     """Test suite for ValidationResult dataclass."""
 

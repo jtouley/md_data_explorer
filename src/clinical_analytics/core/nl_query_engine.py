@@ -1322,6 +1322,35 @@ class NLQueryEngine:
             ]
         )
 
+    def _build_type_rules_section(self, column_types: dict[str, Any]) -> str:
+        """
+        Build type rules section for LLM prompt.
+
+        Args:
+            column_types: Dict of column names to type info
+
+        Returns:
+            Formatted string with type rules
+        """
+        if not column_types:
+            return "No type information available. Use caution with filter values."
+
+        rules = []
+        for col, info in list(column_types.items())[:10]:  # Limit to 10 columns
+            type_category = info.get("type", "unknown")
+            is_numeric = info.get("numeric", False)
+
+            if is_numeric:
+                rules.append(f"- {col}: NUMERIC - use numbers only (e.g., 42, 3.14)")
+            elif type_category == "datetime":
+                rules.append(f"- {col}: DATE/TIME - use date strings (e.g., '2024-01-01')")
+            elif type_category == "boolean":
+                rules.append(f"- {col}: BOOLEAN - use true/false")
+            else:
+                rules.append(f"- {col}: STRING - use text values")
+
+        return "\n".join(rules) if rules else "No columns available."
+
     def _build_llm_prompt(
         self,
         query: str,
@@ -1498,6 +1527,10 @@ Follow-up generation guidelines:
 IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by),
 not legacy names (intent_type, primary_variable, grouping_variable).
 
+=== TYPE SAFETY RULES (RAG Type Safety ADR) ===
+CRITICAL: Filter values MUST match column data types.
+{type_rules}
+
 Filter extraction (ADR009 Phase 5):
 - Extract filter conditions from queries like "get rid of the n/a", "exclude missing", "remove 0"
 - For exclusion patterns ("get rid of", "exclude", "remove"), use operator "!=" with value 0 (n/a code)
@@ -1513,6 +1546,7 @@ Filter extraction (ADR009 Phase 5):
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
             conversation_context=conversation_context,
             autocontext_section=autocontext_section,
+            type_rules=self._build_type_rules_section(context.get("column_types", {})),
         )
 
         user_prompt = f"Parse this query: {query}"
