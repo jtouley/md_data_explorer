@@ -32,6 +32,50 @@ from clinical_analytics.core.query_plan import generate_chart_spec
 logger = logging.getLogger(__name__)
 
 
+class TypeValidationError(Exception):
+    """
+    Exception raised when filter type validation fails.
+
+    This indicates a validation bug - LLM validation layers should have
+    caught the type mismatch before execution.
+
+    Attributes:
+        column: Column name where type mismatch occurred
+        expected_type: Expected column type (e.g., "float64", "int64")
+        actual_type: Actual type of the filter value (e.g., "str")
+        message: Optional custom message
+    """
+
+    def __init__(
+        self,
+        column: str,
+        expected_type: str,
+        actual_type: str,
+        message: str | None = None,
+    ) -> None:
+        """
+        Initialize TypeValidationError.
+
+        Args:
+            column: Column name where type mismatch occurred
+            expected_type: Expected column type
+            actual_type: Actual type of the filter value
+            message: Optional custom message (defaults to generated message)
+        """
+        self.column = column
+        self.expected_type = expected_type
+        self.actual_type = actual_type
+
+        if message is None:
+            message = (
+                f"Type validation failed for column '{column}': "
+                f"expected {expected_type}, got {actual_type}. "
+                "Pre-execution validation should have caught this - this is a validation bug."
+            )
+
+        super().__init__(message)
+
+
 def validate_query_against_schema(plan: "QueryPlan", active_version: dict[str, Any]) -> list[str]:
     """
     Validate QueryPlan column references against active version schema (Phase 8).
@@ -798,7 +842,7 @@ class SemanticLayer:
         expression = metric_def.get("expression", "")
 
         # Parse expression (simple cases for now)
-        # Format: "column.aggregation()" or "aggregation()"
+        # Format: column.aggregation() or aggregation()  # noqa: ERA001
         if "." in expression:
             col_name, agg_func = expression.rsplit(".", 1)
             if col_name in view.columns:
@@ -1455,6 +1499,77 @@ class SemanticLayer:
             raise last_exception
         raise RuntimeError("Unexpected retry loop exit")
 
+    def _validate_filter_types(self, filters: list) -> list[str]:
+        """
+        Lightweight pre-execution sanity check for filter types.
+
+        This is NOT the primary validation - LLM validation layers should have
+        already caught type mismatches. This is a final safety check.
+
+        Args:
+            filters: List of FilterSpec objects to validate
+
+        Returns:
+            List of error messages (empty if all valid)
+        """
+        errors: list[str] = []
+
+        try:
+            base_view = self.get_base_view()
+            schema = base_view.schema()
+            available_columns = set(base_view.columns)
+
+            for filter_spec in filters:
+                column = filter_spec.column
+                value = filter_spec.value
+
+                # Check if column exists
+                if column not in available_columns:
+                    errors.append(
+                        f"Column '{column}' not found in schema. " "Pre-execution validation should have caught this."
+                    )
+                    continue
+
+                # Get column dtype
+                dtype = schema[column]
+                dtype_str = str(dtype).lower()
+
+                # Check type compatibility
+                numeric_types = ["int", "float", "decimal", "double", "numeric"]
+                is_numeric_column = any(t in dtype_str for t in numeric_types)
+
+                if is_numeric_column:
+                    # Numeric column should have numeric value (int/float)
+                    if isinstance(value, str) and not self._is_numeric_string(value):
+                        errors.append(
+                            f"Type mismatch for column '{column}': "
+                            f"expected numeric value, got string '{value}'. "
+                            "LLM validation should have caught this."
+                        )
+
+                logger.debug(
+                    "filter_type_validation_checked: column=%s, dtype=%s, value_type=%s, is_numeric=%s",
+                    column,
+                    dtype_str,
+                    type(value).__name__,
+                    is_numeric_column,
+                )
+
+        except Exception as e:
+            logger.warning("filter_type_validation_error: %s", str(e))
+            # Don't block on validation errors - just log
+            pass
+
+        return errors
+
+    def _is_numeric_string(self, value: str) -> bool:
+        """Check if a string can be converted to a number."""
+        try:
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
+
     def execute_query_plan(
         self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
     ) -> dict[str, Any]:
@@ -1511,6 +1626,18 @@ class SemanticLayer:
                         # Validate query against active version schema
                         schema_warnings = validate_query_against_schema(plan, active_version)
                         warnings.extend(schema_warnings)
+
+        # RAG Type Safety: Validate filter types before execution
+        if plan.filters:
+            type_errors = self._validate_filter_types(plan.filters)
+            if type_errors:
+                # Add as warnings (non-blocking per plan)
+                for error in type_errors:
+                    warnings.append(f"Type validation: {error}")
+                logger.info(
+                    "execute_query_plan_type_warnings",
+                    extra={"warning_count": len(type_errors), "intent": plan.intent},
+                )
 
         # Step 1: Interpreting query (Phase 2.5.1)
         step_details = {

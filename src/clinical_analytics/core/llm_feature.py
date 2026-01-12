@@ -37,6 +37,8 @@ class LLMFeature(Enum):
     - ERROR_TRANSLATION: User-friendly error messages
     - FILTER_EXTRACTION: Complex filter pattern extraction
     - QUESTION_GENERATION: Proactive question generation (upload-time and query-time)
+    - DBA_VALIDATION: LLM-based DBA validation (type safety, schema checks)
+    - VALIDATION_RETRY: LLM-based retry with DBA feedback
     """
 
     PARSE = "parse"
@@ -46,6 +48,8 @@ class LLMFeature(Enum):
     ERROR_TRANSLATION = "error_translation"
     FILTER_EXTRACTION = "filter_extraction"
     QUESTION_GENERATION = "question_generation"
+    DBA_VALIDATION = "dba_validation"
+    VALIDATION_RETRY = "validation_retry"
 
 
 @dataclass

@@ -570,3 +570,153 @@ def test_metric_count_expression_without_column_succeeds(make_semantic_layer, tm
         # If bug is not fixed, ibis.count() error would be raised
         assert "ibis.count" not in str(e), f"Count metric failed due to ibis.count() bug: {e}"
         raise
+
+
+class TestValidateFilterTypes:
+    """Test suite for _validate_filter_types method."""
+
+    def test_validate_filter_types_valid_filters_returns_empty_list(self, make_semantic_layer):
+        """Test that valid filters return empty error list."""
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        semantic = make_semantic_layer(
+            dataset_name="test_valid_filters",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        filters = [FilterSpec(column="age", operator=">", value=40.0)]
+
+        # Act
+        errors = semantic._validate_filter_types(filters)
+
+        # Assert
+        assert errors == []
+
+    def test_validate_filter_types_type_mismatch_returns_error(self, make_semantic_layer):
+        """Test that type mismatch returns error message."""
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        semantic = make_semantic_layer(
+            dataset_name="test_type_mismatch",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        # String value for numeric column = type mismatch
+        filters = [FilterSpec(column="age", operator="!=", value="n/a")]
+
+        # Act
+        errors = semantic._validate_filter_types(filters)
+
+        # Assert
+        assert len(errors) >= 1
+        assert "age" in errors[0] or "type" in errors[0].lower()
+
+    def test_validate_filter_types_missing_column_returns_error(self, make_semantic_layer):
+        """Test that missing column returns error message."""
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec
+
+        semantic = make_semantic_layer(
+            dataset_name="test_missing_col",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+        filters = [FilterSpec(column="nonexistent", operator="=", value=1)]
+
+        # Act
+        errors = semantic._validate_filter_types(filters)
+
+        # Assert
+        assert len(errors) >= 1
+        assert "nonexistent" in errors[0]
+
+
+class TestExecuteQueryPlanWithTypeValidation:
+    """Test suite for execute_query_plan with type validation."""
+
+    def test_execute_query_plan_calls_validate_filter_types(self, make_semantic_layer):
+        """Test that execute_query_plan calls _validate_filter_types."""
+        # Arrange
+        from unittest.mock import patch
+
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        semantic = make_semantic_layer(
+            dataset_name="test_exec_validate",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+
+        # Track validation calls
+        validate_called = []
+        original_validate = semantic._validate_filter_types
+
+        def track_validate(filters):
+            validate_called.append(filters)
+            return original_validate(filters)
+
+        plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="age",
+            filters=[FilterSpec(column="age", operator=">", value=40.0)],
+        )
+
+        with patch.object(semantic, "_validate_filter_types", side_effect=track_validate):
+            # Act
+            result = semantic.execute_query_plan(plan)
+
+        # Assert - validation should be called
+        assert len(validate_called) == 1
+        assert result is not None
+
+
+class TestTypeValidationError:
+    """Test suite for TypeValidationError exception class."""
+
+    def test_type_validation_error_exists(self):
+        """Test that TypeValidationError exception class exists."""
+        # Arrange & Act & Assert
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        assert TypeValidationError is not None
+
+    def test_type_validation_error_is_exception(self):
+        """Test that TypeValidationError is an Exception subclass."""
+        # Arrange
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        # Act & Assert
+        assert issubclass(TypeValidationError, Exception)
+
+    def test_type_validation_error_has_column_and_type_info(self):
+        """Test that TypeValidationError stores column name and type info."""
+        # Arrange
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        # Act
+        error = TypeValidationError(
+            column="age",
+            expected_type="float64",
+            actual_type="str",
+            message="Type mismatch",
+        )
+
+        # Assert
+        assert error.column == "age"
+        assert error.expected_type == "float64"
+        assert error.actual_type == "str"
+        assert "Type mismatch" in str(error)
+
+    def test_type_validation_error_default_message(self):
+        """Test that TypeValidationError generates default message."""
+        # Arrange
+        from clinical_analytics.core.semantic import TypeValidationError
+
+        # Act
+        error = TypeValidationError(
+            column="score",
+            expected_type="int64",
+            actual_type="string",
+        )
+
+        # Assert: Default message includes column and type info
+        assert "score" in str(error)
+        assert "int64" in str(error) or "expected" in str(error).lower()

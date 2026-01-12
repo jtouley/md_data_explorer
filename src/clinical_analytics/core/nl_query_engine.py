@@ -53,6 +53,22 @@ def _stable_hash(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
 
 
+@dataclass(frozen=True)
+class ValidationResult:
+    """
+    Result from LLM-based validation layer (DBA validation).
+
+    Attributes:
+        is_valid: Whether the validation passed
+        errors: List of error messages (blocking issues)
+        warnings: List of warning messages (non-blocking concerns)
+    """
+
+    is_valid: bool
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
 @dataclass
 class QueryIntent:
     """
@@ -131,6 +147,9 @@ class NLQueryEngine:
         # Overlay cache (mtime-based hot reload)
         self._overlay_cache_text = ""
         self._overlay_cache_mtime_ns = 0
+
+        # Validation config cache (lazy loaded)
+        self._validation_config: dict | None = None
 
         # Build query templates from metadata
         self._build_query_templates()
@@ -744,7 +763,7 @@ class NLQueryEngine:
         """
         query_lower = query.lower()
 
-        # Pattern: "compare X by Y" or "compare X between Y"
+        # Pattern: "compare X by Y" or "compare X between Y"  # noqa: ERA001
         match = re.search(r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)", query_lower)
         if match:
             primary_var, _, _ = self._fuzzy_match_variable(match.group(1))
@@ -758,7 +777,7 @@ class NLQueryEngine:
                     confidence=0.95,
                 )
 
-        # Pattern: "what predicts X" or "predictors of X"
+        # Pattern: "what predicts X" or "predictors of X"  # noqa: ERA001
         match = re.search(r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)", query_lower)
         if match:
             outcome_var, _, _ = self._fuzzy_match_variable(match.group(1))
@@ -766,11 +785,11 @@ class NLQueryEngine:
             if outcome_var:
                 return QueryIntent(intent_type="FIND_PREDICTORS", primary_variable=outcome_var, confidence=0.95)
 
-        # Pattern: "survival" or "time to event"
+        # Pattern: "survival" or "time to event"  # noqa: ERA001
         if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
             return QueryIntent(intent_type="SURVIVAL", confidence=0.9)
 
-        # Pattern: "correlation" or "relationship" or "relate" or "association"
+        # Pattern: "correlation" or "relationship" etc
         # Matches: "correlate", "correlation", "relationship", "relate", "relates", "associated", "association"
         if re.search(r"\b(correlat|relationship|relate|associat)\b", query_lower):
             # Try to extract variables from query
@@ -936,7 +955,7 @@ class NLQueryEngine:
         if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
             return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
 
-        # Pattern: "compare X across/between Y" - COMPARE_GROUPS
+        # Pattern: "compare X across/between Y" - COMPARE_GROUPS  # noqa: ERA001
         # Examples: "compare age across different statuses", "compare LDL between treatment groups"
         compare_match = re.search(
             r"\bcompare\s+(\w+(?:\s+\w+)*?)\s+(?:across|between)\s+(?:different\s+)?(\w+(?:\s+\w+)*?)(?:\s+and|$)",
@@ -982,7 +1001,7 @@ class NLQueryEngine:
                     confidence=0.95,
                 )
 
-        # Pattern: "which X had the lowest/highest Y" or "what X had the lowest/highest Y"
+        # Pattern: "which X had lowest/highest Y"  # noqa: ERA001
         match = re.search(
             r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had\s+the\s+(lowest|highest)\s+(\w+(?:\s+\w+)*)", query_lower
         )
@@ -1109,6 +1128,71 @@ class NLQueryEngine:
 
         return self._ollama_client
 
+    def _infer_column_type_from_view(self, column_name: str) -> dict[str, Any] | None:
+        """
+        Infer column dtype from ibis view schema.
+
+        Fallback when metadata is unavailable. Uses ibis schema inspection
+        to determine column type.
+
+        Args:
+            column_name: Column name to infer type for
+
+        Returns:
+            Dict with 'type', 'numeric', 'dtype' keys, or None if column not found
+        """
+        try:
+            base_view = self.semantic_layer.get_base_view()
+
+            # Check if column exists
+            if column_name not in base_view.columns:
+                logger.debug(
+                    "column_type_inference_column_not_found",
+                    column=column_name,
+                )
+                return None
+
+            # Get dtype from ibis schema
+            schema = base_view.schema()
+            dtype = schema[column_name]
+            dtype_str = str(dtype)
+
+            # Determine if numeric based on dtype
+            numeric_types = ["int", "float", "decimal", "double", "numeric"]
+            is_numeric = any(t in dtype_str.lower() for t in numeric_types)
+
+            # Determine type category
+            if is_numeric:
+                type_category = "numeric"
+            elif "bool" in dtype_str.lower():
+                type_category = "boolean"
+            elif "date" in dtype_str.lower() or "time" in dtype_str.lower():
+                type_category = "datetime"
+            else:
+                type_category = "string"
+
+            logger.debug(
+                "column_type_inference_completed",
+                column=column_name,
+                dtype=dtype_str,
+                type_category=type_category,
+                is_numeric=is_numeric,
+            )
+
+            return {
+                "type": type_category,
+                "numeric": is_numeric,
+                "dtype": dtype_str,
+            }
+
+        except Exception as e:
+            logger.warning(
+                "column_type_inference_failed",
+                column=column_name,
+                error=str(e),
+            )
+            return None
+
     def _build_rag_context(self, query: str) -> dict[str, Any]:
         """
         Build RAG context from semantic layer metadata and golden questions.
@@ -1120,7 +1204,7 @@ class NLQueryEngine:
             query: User's question
 
         Returns:
-            Dict with columns, aliases, examples, and query
+            Dict with columns, aliases, examples, column_types, and query
         """
         # Extract columns from semantic layer base view
         base_view = self.semantic_layer.get_base_view()
@@ -1128,6 +1212,31 @@ class NLQueryEngine:
 
         # Get alias mappings
         alias_index = self.semantic_layer.get_column_alias_index()
+
+        # Build column types dict for type-aware RAG context
+        column_types: dict[str, Any] = {}
+        for col in columns:
+            # Try to get metadata from semantic layer first
+            metadata = self.semantic_layer.get_column_metadata(col)
+            if metadata:
+                column_types[col] = {
+                    "type": metadata.get("type", "string"),
+                    "numeric": metadata.get("numeric", False),
+                    "dtype": metadata.get("dtype", "string"),
+                    "coded": metadata.get("coded", False),
+                    "labels": metadata.get("labels", {}),
+                }
+            else:
+                # Fallback to dtype inference from view
+                inferred = self._infer_column_type_from_view(col)
+                if inferred:
+                    column_types[col] = inferred
+
+        logger.debug(
+            "rag_context_built",
+            column_count=len(columns),
+            type_info_count=len(column_types),
+        )
 
         # RAG: Load golden questions as corpus
         golden_examples = self._load_golden_questions_rag()
@@ -1138,6 +1247,7 @@ class NLQueryEngine:
         return {
             "columns": columns,
             "aliases": alias_index,
+            "column_types": column_types,
             "examples": relevant_examples,
             "query": query,
         }
@@ -1214,6 +1324,35 @@ class NLQueryEngine:
                 'Q: "Compare by treatment"\n   Intent: COMPARE_GROUPS, GroupBy: treatment',
             ]
         )
+
+    def _build_type_rules_section(self, column_types: dict[str, Any]) -> str:
+        """
+        Build type rules section for LLM prompt.
+
+        Args:
+            column_types: Dict of column names to type info
+
+        Returns:
+            Formatted string with type rules
+        """
+        if not column_types:
+            return "No type information available. Use caution with filter values."
+
+        rules = []
+        for col, info in list(column_types.items())[:10]:  # Limit to 10 columns
+            type_category = info.get("type", "unknown")
+            is_numeric = info.get("numeric", False)
+
+            if is_numeric:
+                rules.append(f"- {col}: NUMERIC - use numbers only (e.g., 42, 3.14)")
+            elif type_category == "datetime":
+                rules.append(f"- {col}: DATE/TIME - use date strings (e.g., '2024-01-01')")
+            elif type_category == "boolean":
+                rules.append(f"- {col}: BOOLEAN - use true/false")
+            else:
+                rules.append(f"- {col}: STRING - use text values")
+
+        return "\n".join(rules) if rules else "No columns available."
 
     def _build_llm_prompt(
         self,
@@ -1391,6 +1530,10 @@ Follow-up generation guidelines:
 IMPORTANT: Use exact field names from QueryPlan schema (intent, metric, group_by),
 not legacy names (intent_type, primary_variable, grouping_variable).
 
+=== TYPE SAFETY RULES (RAG Type Safety ADR) ===
+CRITICAL: Filter values MUST match column data types.
+{type_rules}
+
 Filter extraction (ADR009 Phase 5):
 - Extract filter conditions from queries like "get rid of the n/a", "exclude missing", "remove 0"
 - For exclusion patterns ("get rid of", "exclude", "remove"), use operator "!=" with value 0 (n/a code)
@@ -1406,6 +1549,7 @@ Filter extraction (ADR009 Phase 5):
             examples="\n".join(f"- {ex}" for ex in context["examples"]),
             conversation_context=conversation_context,
             autocontext_section=autocontext_section,
+            type_rules=self._build_type_rules_section(context.get("column_types", {})),
         )
 
         user_prompt = f"Parse this query: {query}"
@@ -1562,6 +1706,194 @@ Filter extraction (ADR009 Phase 5):
                 response_length=len(response),
             )
             return None
+
+    def _get_validation_config(self) -> dict:
+        """
+        Get validation config with lazy loading and caching.
+
+        Config is loaded once and cached in the instance for subsequent calls.
+
+        Returns:
+            Validation config dict from config/validation.yaml
+        """
+        if self._validation_config is None:
+            from clinical_analytics.core.config_loader import load_validation_config
+
+            self._validation_config = load_validation_config()
+        return self._validation_config
+
+    def _dba_validate_llm(self, intent: "QueryIntent", query: str) -> "ValidationResult":
+        """
+        DBA validation layer - checks type safety and schema correctness.
+
+        Uses config-driven prompts from config/validation.yaml.
+        Logs calls with structured observability (LLMFeature.DBA_VALIDATION).
+
+        Args:
+            intent: QueryIntent to validate
+            query: Original user query for context
+
+        Returns:
+            ValidationResult with is_valid, errors, and warnings
+        """
+        import json
+        import time
+
+        from clinical_analytics.core.llm_feature import LLMFeature
+
+        start_time = time.time()
+        feature = LLMFeature.DBA_VALIDATION
+
+        try:
+            # Load config-driven prompts (cached)
+            config = self._get_validation_config()
+            dba_config = config.get("validation_layers", {}).get("dba", {})
+            system_prompt = dba_config.get("system_prompt", "Validate query types.")
+
+            # Build user prompt with intent details
+            intent_json = json.dumps(
+                {
+                    "intent_type": intent.intent_type,
+                    "primary_variable": intent.primary_variable,
+                    "filters": [
+                        {"column": f.column, "operator": f.operator, "value": f.value} for f in (intent.filters or [])
+                    ],
+                    "confidence": intent.confidence,
+                }
+            )
+
+            # Build column types context
+            rag_context = self._build_rag_context(query)
+            column_types = rag_context.get("column_types", {})
+
+            user_prompt = f"""
+Query: {query}
+Intent: {intent_json}
+
+Column Types:
+{json.dumps(column_types, indent=2)}
+
+Validate this query intent for type safety. Return JSON:
+{{"is_valid": true/false, "errors": [...], "warnings": [...]}}
+"""
+
+            # Get LLM client
+            client = self._get_ollama_client()
+            if client is None or not client.is_available():
+                logger.info("dba_validation_llm_unavailable")
+                return ValidationResult(is_valid=True, errors=(), warnings=("LLM unavailable for validation",))
+
+            # Call LLM
+            timeout = config.get("validation_rules", {}).get("timeout_seconds", 20.0)
+            response = client.generate(system_prompt, user_prompt, timeout)
+
+            # Parse response
+            try:
+                result_data = json.loads(response)
+                result = ValidationResult(
+                    is_valid=result_data.get("is_valid", True),
+                    errors=tuple(result_data.get("errors", [])),
+                    warnings=tuple(result_data.get("warnings", [])),
+                )
+            except json.JSONDecodeError:
+                logger.warning("dba_validation_json_parse_failed", response=response[:200])
+                result = ValidationResult(is_valid=True, errors=(), warnings=("Validation response parse failed",))
+
+            # Log observability
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "dba_validation_completed",
+                extra={
+                    "feature": feature.value,
+                    "duration_ms": duration_ms,
+                    "is_valid": result.is_valid,
+                    "error_count": len(result.errors),
+                },
+            )
+
+            return result
+
+        except Exception as e:
+            logger.warning("dba_validation_error", extra={"error": str(e)})
+            # Fail closed: validation errors should return is_valid=False (PR38 fix)
+            return ValidationResult(is_valid=False, errors=(f"Validation error: {str(e)}",), warnings=())
+
+    def _retry_with_dba_feedback_llm(
+        self, query: str, errors: list[str], conversation_history: list[dict] | None = None
+    ) -> "QueryIntent":
+        """
+        Retry parsing with DBA feedback on previous errors.
+
+        Uses config-driven prompts from config/validation.yaml.
+        Logs calls with structured observability (LLMFeature.VALIDATION_RETRY).
+
+        Args:
+            query: Original user query
+            errors: List of errors from previous validation
+            conversation_history: Optional conversation history
+
+        Returns:
+            Corrected QueryIntent
+        """
+        import json
+        import time
+
+        from clinical_analytics.core.config_loader import load_validation_config
+        from clinical_analytics.core.llm_feature import LLMFeature
+
+        start_time = time.time()
+        feature = LLMFeature.VALIDATION_RETRY
+
+        try:
+            config = load_validation_config()
+            retry_config = config.get("validation_layers", {}).get("retry", {})
+            system_prompt = retry_config.get("system_prompt", "Fix the query based on errors.")
+
+            # Build RAG context
+            rag_context = self._build_rag_context(query)
+
+            user_prompt = f"""
+Original Query: {query}
+
+Previous Errors:
+{json.dumps(errors, indent=2)}
+
+Column Types:
+{json.dumps(rag_context.get("column_types", {}), indent=2)}
+
+Fix the errors and return a corrected query intent as JSON.
+"""
+
+            client = self._get_ollama_client()
+            if client is None or not client.is_available():
+                logger.info("retry_llm_unavailable")
+                return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="retry_fallback")
+
+            timeout = config.get("validation_rules", {}).get("timeout_seconds", 20.0)
+            response = client.generate(system_prompt, user_prompt, timeout)
+
+            # Parse response into QueryIntent
+            try:
+                result_data = json.loads(response)
+                intent = QueryIntent(
+                    intent_type=result_data.get("intent_type", "DESCRIBE"),
+                    primary_variable=result_data.get("primary_variable"),
+                    confidence=result_data.get("confidence", 0.6),
+                    parsing_tier="retry",
+                )
+            except json.JSONDecodeError:
+                intent = QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="retry_fallback")
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "retry_with_feedback_completed",
+                extra={"feature": feature.value, "duration_ms": duration_ms, "intent_type": intent.intent_type},
+            )
+            return intent
+
+        except Exception as e:
+            logger.warning("retry_with_feedback_error", extra={"error": str(e)})
+            return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="retry_error")
 
     def _llm_parse(self, query: str, conversation_history: list[dict] | None = None) -> QueryIntent:
         """
@@ -1769,6 +2101,36 @@ Filter extraction (ADR009 Phase 5):
                         intent.confidence_explanation = (
                             f"Filter validation issues: {len(validation_failures)} invalid filter(s)."
                         )
+
+            # Step 6.5: Multi-layer LLM validation (ADR: RAG Type Safety)
+            # Only run validation if feature flag is enabled (default: disabled)
+            from clinical_analytics.core.config_loader import load_nl_query_config, load_validation_config
+
+            nl_query_config = load_nl_query_config()
+            enable_validation = nl_query_config.get("enable_multi_layer_validation", False)
+
+            if enable_validation:
+                validation_config = load_validation_config()
+                max_retries = validation_config.get("validation_rules", {}).get("max_retries", 1)
+
+                dba_result = self._dba_validate_llm(intent, query)
+                if not dba_result.is_valid and max_retries > 0:
+                    # Retry with DBA feedback
+                    logger.info(
+                        "dba_validation_failed_retrying",
+                        errors=dba_result.errors,
+                        query=query,
+                    )
+                    corrected_intent = self._retry_with_dba_feedback_llm(
+                        query, list(dba_result.errors), conversation_history
+                    )
+                    intent = corrected_intent
+            else:
+                logger.debug(
+                    "multi_layer_validation_skipped",
+                    query=query,
+                    reason="enable_multi_layer_validation=False",
+                )
 
             # Step 7: Validate confidence meets minimum threshold
             if intent.confidence < TIER_3_MIN_CONFIDENCE:
