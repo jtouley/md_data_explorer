@@ -630,6 +630,44 @@ class TestValidateFilterTypes:
         assert "nonexistent" in errors[0]
 
 
+class TestExecuteQueryPlanWithTypeValidation:
+    """Test suite for execute_query_plan with type validation."""
+
+    def test_execute_query_plan_calls_validate_filter_types(self, make_semantic_layer):
+        """Test that execute_query_plan calls _validate_filter_types."""
+        # Arrange
+        from unittest.mock import patch
+
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        semantic = make_semantic_layer(
+            dataset_name="test_exec_validate",
+            data={"patient_id": ["P1", "P2"], "age": [45.0, 52.0]},
+        )
+
+        # Track validation calls
+        validate_called = []
+        original_validate = semantic._validate_filter_types
+
+        def track_validate(filters):
+            validate_called.append(filters)
+            return original_validate(filters)
+
+        plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="age",
+            filters=[FilterSpec(column="age", operator=">", value=40.0)],
+        )
+
+        with patch.object(semantic, "_validate_filter_types", side_effect=track_validate):
+            # Act
+            result = semantic.execute_query_plan(plan)
+
+        # Assert - validation should be called
+        assert len(validate_called) == 1
+        assert result is not None
+
+
 class TestTypeValidationError:
     """Test suite for TypeValidationError exception class."""
 

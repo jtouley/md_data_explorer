@@ -1627,6 +1627,18 @@ class SemanticLayer:
                         schema_warnings = validate_query_against_schema(plan, active_version)
                         warnings.extend(schema_warnings)
 
+        # RAG Type Safety: Validate filter types before execution
+        if plan.filters:
+            type_errors = self._validate_filter_types(plan.filters)
+            if type_errors:
+                # Add as warnings (non-blocking per plan)
+                for error in type_errors:
+                    warnings.append(f"Type validation: {error}")
+                logger.info(
+                    "execute_query_plan_type_warnings",
+                    extra={"warning_count": len(type_errors), "intent": plan.intent},
+                )
+
         # Step 1: Interpreting query (Phase 2.5.1)
         step_details = {
             "intent": plan.intent,
