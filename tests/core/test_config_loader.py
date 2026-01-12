@@ -20,6 +20,7 @@ from clinical_analytics.core.config_loader import (
     load_logging_config,
     load_nl_query_config,
     load_ui_config,
+    load_validation_config,
 )
 
 
@@ -379,3 +380,105 @@ class TestConfigLoaderProjectRoot:
         assert (project_root / "src").exists()
         # Should contain pyproject.toml
         assert (project_root / "pyproject.toml").exists()
+
+
+class TestConfigLoaderValidation:
+    """Test suite for validation configuration loading."""
+
+    def test_load_validation_config_loads_from_yaml_file(self, tmp_path):
+        """Test that load_validation_config loads values from YAML file."""
+        # Arrange: Create temporary YAML config file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "validation.yaml"
+        config_data = {
+            "validation_layers": {
+                "dba": {
+                    "system_prompt": "You are a DBA.",
+                    "response_schema": {"is_valid": "bool", "errors": "list[str]"},
+                },
+                "analyst": {
+                    "system_prompt": "You are an analyst.",
+                    "response_schema": {"is_valid": "bool", "warnings": "list[str]"},
+                },
+                "manager": {
+                    "system_prompt": "You are a manager.",
+                    "response_schema": {"approved": "bool", "reason": "str"},
+                },
+                "retry": {
+                    "system_prompt": "Fix the errors: {errors}",
+                    "response_schema": {"intent_type": "str"},
+                },
+            },
+            "validation_rules": {
+                "max_retries": 1,
+                "confidence_threshold": 0.6,
+                "timeout_seconds": 20.0,
+            },
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config
+        result = load_validation_config(config_path=config_file)
+
+        # Assert: Values match YAML file
+        assert "validation_layers" in result
+        assert "validation_rules" in result
+        assert result["validation_layers"]["dba"]["system_prompt"] == "You are a DBA."
+        assert result["validation_layers"]["analyst"]["system_prompt"] == "You are an analyst."
+        assert result["validation_layers"]["manager"]["system_prompt"] == "You are a manager."
+        assert result["validation_rules"]["max_retries"] == 1
+        assert result["validation_rules"]["confidence_threshold"] == 0.6
+        assert result["validation_rules"]["timeout_seconds"] == 20.0
+
+    def test_load_validation_config_missing_file_raises_filenotfounderror(self):
+        """Test that missing YAML file raises FileNotFoundError."""
+        # Arrange: Non-existent config file
+        config_file = Path("/nonexistent/config/validation.yaml")
+
+        # Act & Assert: Loading missing file should raise FileNotFoundError
+        with pytest.raises(FileNotFoundError):
+            load_validation_config(config_path=config_file)
+
+    def test_load_validation_config_invalid_yaml_raises_valueerror(self, tmp_path):
+        """Test that invalid YAML raises ValueError."""
+        # Arrange: Create invalid YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "validation.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+
+        # Act & Assert: Loading invalid YAML should raise ValueError
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_validation_config(config_path=config_file)
+
+    def test_load_validation_config_env_var_overrides_yaml(self, tmp_path):
+        """Test that environment variables override YAML values."""
+        # Arrange: Create YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "validation.yaml"
+        config_data = {
+            "validation_layers": {},
+            "validation_rules": {
+                "max_retries": 1,
+                "confidence_threshold": 0.6,
+                "timeout_seconds": 20.0,
+            },
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Set environment variable and load config
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDATION_MAX_RETRIES": "3",
+                "VALIDATION_CONFIDENCE_THRESHOLD": "0.8",
+            },
+            clear=False,
+        ):
+            result = load_validation_config(config_path=config_file)
+
+        # Assert: Environment variable overrides YAML
+        assert result["validation_rules"]["max_retries"] == 3
+        assert result["validation_rules"]["confidence_threshold"] == 0.8

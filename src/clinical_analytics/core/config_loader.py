@@ -514,3 +514,108 @@ def load_logging_config(config_path: Path | None = None) -> dict[str, Any]:
         logger.debug(f"Config file not found at {config_path}, using defaults")
 
     return config
+
+
+@dataclass
+class ValidationConfigDefaults:
+    """Default values for validation configuration."""
+
+    validation_layers: dict[str, Any] | None = None
+    validation_rules: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        """Initialize default dict values."""
+        if self.validation_layers is None:
+            self.validation_layers = {
+                "dba": {
+                    "system_prompt": "You are a DBA reviewing query plans for type safety.",
+                    "response_schema": {"is_valid": "bool", "errors": "list[str]", "warnings": "list[str]"},
+                },
+                "analyst": {
+                    "system_prompt": "You are an analyst reviewing query plans for business logic.",
+                    "response_schema": {"is_valid": "bool", "errors": "list[str]", "warnings": "list[str]"},
+                },
+                "manager": {
+                    "system_prompt": "You are a manager reviewing query plans for final approval.",
+                    "response_schema": {"approved": "bool", "reason": "str", "confidence_adjustment": "float"},
+                },
+                "retry": {
+                    "system_prompt": "Fix the errors and return corrected query plan.",
+                    "response_schema": {"intent_type": "str", "filters": "list[dict]"},
+                },
+            }
+        if self.validation_rules is None:
+            self.validation_rules = {
+                "max_retries": 1,
+                "confidence_threshold": 0.6,
+                "timeout_seconds": 20.0,
+            }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert dataclass to dictionary."""
+        return {
+            "validation_layers": self.validation_layers.copy() if self.validation_layers else {},
+            "validation_rules": self.validation_rules.copy() if self.validation_rules else {},
+        }
+
+
+def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
+    """
+    Load validation config from YAML with env var overrides.
+
+    Precedence: Environment variable → YAML value → Default value
+
+    Args:
+        config_path: Optional path to config file. If None, uses default location.
+
+    Returns:
+        dict with keys:
+        - validation_layers: dict (dba, analyst, manager, retry)
+        - validation_rules: dict (max_retries, confidence_threshold, timeout_seconds)
+
+    Raises:
+        FileNotFoundError: If config file missing
+        ValueError: If YAML is invalid
+    """
+    # Determine config file path
+    if config_path is None:
+        project_root = get_project_root()
+        config_path = project_root / "config" / "validation.yaml"
+
+    # Validation config is required - raise if missing
+    if not config_path.exists():
+        raise FileNotFoundError(f"Validation config file not found at {config_path}")
+
+    # Load YAML
+    try:
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+
+    # Merge with defaults for any missing keys
+    defaults = ValidationConfigDefaults().to_dict()
+    if "validation_layers" not in config:
+        config["validation_layers"] = defaults["validation_layers"]
+    if "validation_rules" not in config:
+        config["validation_rules"] = defaults["validation_rules"]
+
+    # Apply environment variable overrides for validation rules
+    env_mapping = {
+        "VALIDATION_MAX_RETRIES": "max_retries",
+        "VALIDATION_CONFIDENCE_THRESHOLD": "confidence_threshold",
+        "VALIDATION_TIMEOUT_SECONDS": "timeout_seconds",
+    }
+
+    rules = config.get("validation_rules", {})
+    for env_key, config_key in env_mapping.items():
+        env_value = _get_env_var(env_key)
+        if env_value is not None:
+            if config_key in rules:
+                target_type = type(rules[config_key])
+                try:
+                    rules[config_key] = _coerce_type(env_value, target_type)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to coerce env var {env_key}={env_value} to " f"{target_type.__name__}: {e}")
+
+    return config
