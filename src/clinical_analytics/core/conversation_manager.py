@@ -22,6 +22,7 @@ class Message:
     content: str
     timestamp: datetime
     run_key: str | None = None  # For result association
+    status: Literal["pending", "completed", "error"] = "completed"
 
 
 class ConversationManager:
@@ -39,7 +40,13 @@ class ConversationManager:
         self._active_query: str | None = None
         self._follow_ups: list[str] = []
 
-    def add_message(self, role: Literal["user", "assistant"], content: str, run_key: str | None = None) -> str:
+    def add_message(
+        self,
+        role: Literal["user", "assistant"],
+        content: str,
+        run_key: str | None = None,
+        status: Literal["pending", "completed", "error"] = "completed",
+    ) -> str:
         """
         Add a message to the conversation transcript.
 
@@ -47,6 +54,7 @@ class ConversationManager:
             role: Message role ("user" or "assistant")
             content: Message content
             run_key: Optional run key for result association
+            status: Message status ("pending", "completed", or "error")
 
         Returns:
             Message ID (unique identifier)
@@ -58,6 +66,7 @@ class ConversationManager:
             content=content,
             timestamp=datetime.now(),
             run_key=run_key,
+            status=status,
         )
         self._messages.append(message)
         return message_id
@@ -70,6 +79,25 @@ class ConversationManager:
             List of messages in chronological order
         """
         return self._messages.copy()
+
+    def update_message(self, message_id: str, **updates: Any) -> bool:
+        """
+        Update an existing message by ID.
+
+        Args:
+            message_id: The unique ID of the message to update
+            **updates: Fields to update (status, content, run_key)
+
+        Returns:
+            True if message was found and updated, False if not found
+        """
+        for msg in self._messages:
+            if msg.id == message_id:
+                for key, value in updates.items():
+                    if hasattr(msg, key):
+                        setattr(msg, key, value)
+                return True
+        return False
 
     def get_current_dataset(self) -> str | None:
         """
@@ -232,6 +260,7 @@ class ConversationManager:
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
                     "run_key": msg.run_key,
+                    "status": msg.status,
                 }
                 for msg in self._messages
             ],
@@ -264,6 +293,7 @@ class ConversationManager:
                 content=msg_data["content"],
                 timestamp=datetime.fromisoformat(msg_data["timestamp"]),
                 run_key=msg_data.get("run_key"),
+                status=msg_data.get("status", "completed"),  # Backward compat default
             )
             manager._messages.append(message)
 
