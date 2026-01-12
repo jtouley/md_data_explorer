@@ -29,7 +29,6 @@ from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRE
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.core.state_store import ConversationState, FileStateStore
 from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 from clinical_analytics.ui.components.question_engine import (
     AnalysisContext,
@@ -407,7 +406,7 @@ def clear_all_results(dataset_version: str) -> None:
 
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
-# TODO: Remove when Streamlit supports Polars natively
+# Remove when Streamlit supports Polars natively
 def render_descriptive_analysis(result: dict, query_text: str | None = None) -> None:
     """
     Render descriptive analysis from serializable dict.
@@ -472,13 +471,9 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
         summary_keywords = ["summary", "overview", "describe all", "show all", "data at a glance", "general statistics"]
         is_explicit_summary = any(keyword in query_lower for keyword in summary_keywords)
 
-    # If not explicitly requested, show a more focused message
+    # If not explicitly requested, skip without showing anything
     if not is_explicit_summary:
-        st.info(
-            "💡 **Tip**: Ask about a specific variable for more detailed analysis, "
-            "or say 'show summary' for an overview."
-        )
-        return
+        return  # Early exit - no tip message needed
 
     # User explicitly asked for summary - show full overview
     st.markdown("<h2>📊 Your Data at a Glance</h2>", unsafe_allow_html=True)
@@ -498,7 +493,7 @@ def render_descriptive_analysis(result: dict, query_text: str | None = None) -> 
     if result["summary_stats"]:
         st.markdown("**Numeric Variables:**")
         # Convert to pandas for display
-        # TODO: Future enhancement - use seaborn for styled tables/heatmaps
+        # Future enhancement - use seaborn for styled tables/heatmaps
         # e.g., sns.heatmap(summary_df, annot=True, fmt='.2f') for correlation matrices
         summary_df = pd.DataFrame(result["summary_stats"])
         st.dataframe(summary_df)
@@ -631,7 +626,7 @@ def render_count_analysis(result: dict) -> None:
 
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
-# TODO: Remove when Streamlit supports Polars natively
+# Remove when Streamlit supports Polars natively
 def render_comparison_analysis(result: dict) -> None:
     """Render comparison analysis from serializable dict inline."""
     if "error" in result:
@@ -725,7 +720,7 @@ def render_comparison_analysis(result: dict) -> None:
 
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
-# TODO: Remove when Streamlit supports Polars natively
+# Remove when Streamlit supports Polars natively
 def render_predictor_analysis(result: dict) -> None:
     """Render predictor analysis from serializable dict."""
     if "error" in result:
@@ -797,7 +792,7 @@ def render_predictor_analysis(result: dict) -> None:
 
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display and matplotlib
-# TODO: Remove when Streamlit supports Polars natively
+# Remove when Streamlit supports Polars natively
 def render_survival_analysis(result: dict) -> None:
     """Render survival analysis from serializable dict."""
     if "error" in result:
@@ -833,7 +828,7 @@ def render_survival_analysis(result: dict) -> None:
 
 
 # PANDAS EXCEPTION: Required for Streamlit st.dataframe display and seaborn
-# TODO: Remove when Streamlit supports Polars natively
+# Remove when Streamlit supports Polars natively
 def render_relationship_analysis(result: dict) -> None:
     """Render relationship analysis from serializable dict with clean, user-friendly output."""
     if "error" in result:
@@ -945,34 +940,51 @@ def render_analysis_by_type(result: dict, intent: AnalysisIntent, query_text: st
 
 def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
     """
-    Render entire chat transcript from session_state (no side effects).
+    Render entire chat transcript from ConversationManager (no side effects).
 
     This is the ONLY function that calls st.chat_message(). All chat rendering
     goes through this function to ensure transcript-driven rendering.
+
+    Phase 2 Migration: Now reads from ConversationManager instead of st.session_state["chat"].
 
     Args:
         dataset_version: Dataset version for retrieving results
         cohort: Cohort data (for Trust UI in render_result)
     """
-    chat: list[ChatMessage] = st.session_state.get("chat", [])
+    # Phase 5: Read from ConversationManager only (single source of truth)
+    manager = st.session_state.get("conversation_manager")
+    if manager is None:
+        return  # No manager yet, nothing to render
 
-    for message in chat:
+    # Use ConversationManager transcript
+    transcript = manager.get_transcript()
+    messages = [
+        {
+            "role": msg.role,
+            "content": msg.content,
+            "run_key": msg.run_key,
+            "status": msg.status,
+        }
+        for msg in transcript
+    ]
+
+    for message in messages:
         role = message["role"]
-        text = message["text"]
+        content = message.get("content") or ""  # Phase 2: Use "content" (unified naming)
         run_key = message.get("run_key")
         status = message.get("status", "completed")
 
         with st.chat_message(role):
             if role == "user":
-                # User message - just display text
-                st.write(text)
+                # User message - just display content
+                st.write(content)
             elif role == "assistant":
                 # Assistant message - render result
                 if status == "pending":
                     st.info("💭 Thinking...")
                 elif status == "error":
                     # ADR009 Phase 4: Show error with LLM translation
-                    _render_error_with_translation(text, prefix="❌ Error")
+                    _render_error_with_translation(content, prefix="❌ Error")
                 elif status == "completed" and run_key:
                     # Load result from ResultCache (Milestone A: State Extraction)
                     cache = st.session_state.get("result_cache")
@@ -1000,18 +1012,32 @@ def render_chat(dataset_version: str, cohort: pl.DataFrame) -> None:
                             result=result,
                             context=context,
                             run_key=run_key,
-                            query_text=text,
+                            query_text=content,
                             query_plan=None,  # Not available from transcript
                             cohort=None,  # Not available for cached results
                             dataset_version=dataset_version,
                             semantic_layer=None,  # Not available for cached results
                         )
                     else:
-                        # Fallback: result not in cache (shouldn't happen, but handle gracefully)
-                        st.warning(f"⚠️ Result not found in cache for run_key: {run_key}")
+                        # Result not in cache - log for debugging
+                        cache_keys = (
+                            list(cache._results.get(dataset_version, {}).keys())
+                            if hasattr(cache, "_results")
+                            else "unknown"
+                        )
+                        logger.warning(
+                            "result_not_in_cache",
+                            run_key=run_key,
+                            dataset_version=dataset_version,
+                            cache_keys=cache_keys,
+                        )
+                        # Show user-friendly message
+                        st.warning(f"⚠️ Result not found in cache. Run key: {run_key[:16]}...")
+                        # Still show assistant content as fallback
+                        st.write(content)
                 else:
-                    # Fallback: just display text
-                    st.write(text)
+                    # Fallback: just display content
+                    st.write(content)
 
 
 def render_result(
@@ -1061,8 +1087,7 @@ def render_result(
             dataset_version=dataset_version,
             query_text=query_text,
         )
-    elif query_plan:
-        st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
+    # Note: No message for cached results - Trust UI silently unavailable
 
     # ADR009 Phase 2: Render LLM-generated query interpretation
     if query_plan:
@@ -1141,11 +1166,7 @@ def execute_analysis_with_idempotency(
         if query_plan:
             _render_interpretation_inline_compact(query_plan)
 
-        # ADR003 Phase 1: Trust UI (verify source patients, patient-level export)
-        # Note: cohort not available in cached path, skip trust UI for cached results
-        # Trust UI will be shown for fresh computations only
-        if query_plan:
-            st.info("ℹ️ Trust UI only available for fresh computations (not cached results)")
+        # Note: Trust UI silently unavailable for cached results (cohort not available)
 
         # PR25: _suggest_follow_ups() removed (disabled partial feature)
         # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
@@ -1189,7 +1210,8 @@ def execute_analysis_with_idempotency(
         )
 
         # ADR009 Phase 3: Generate LLM result interpretation (if enabled)
-        if ENABLE_RESULT_INTERPRETATION and "error" not in result:
+        # Skip if interpretation already exists (cached from previous execution)
+        if ENABLE_RESULT_INTERPRETATION and "error" not in result and not result.get("llm_interpretation"):
             interpretation = interpret_result_with_llm(result)
             if interpretation:
                 result["llm_interpretation"] = interpretation
@@ -1198,6 +1220,12 @@ def execute_analysis_with_idempotency(
                     run_key=run_key,
                     interpretation_length=len(interpretation),
                 )
+        elif result.get("llm_interpretation"):
+            logger.debug(
+                "result_interpretation_cached",
+                run_key=run_key,
+                interpretation_length=len(result["llm_interpretation"]),
+            )
 
         # Store result using ResultCache (Milestone A: State Extraction)
         cached_result = CachedResult(
@@ -1209,11 +1237,23 @@ def execute_analysis_with_idempotency(
         )
         cache.put(cached_result)
 
-        # Save state to persistent storage (Milestone B: Persistence)
-        # Note: save_state() is defined in main() and captures manager, cache, store, etc.
-        # We need to access it via session_state or pass it as parameter
-        if "save_state_func" in st.session_state:
-            st.session_state["save_state_func"]()
+        # Verify result is in cache (for debugging, defensive check)
+        cached_verify = cache.get(run_key, dataset_version)
+        if cached_verify is None:
+            logger.error(
+                "result_not_in_cache_after_put",
+                run_key=run_key,
+                dataset_version=dataset_version,
+                cache_size=len(cache._results.get(dataset_version, {})) if hasattr(cache, "_results") else 0,
+            )
+            # Continue anyway - cache.put() should have worked, but don't crash
+            # The assistant message will show fallback text if cache miss occurs later
+        else:
+            logger.debug(
+                "result_verified_in_cache",
+                run_key=run_key,
+                dataset_version=dataset_version,
+            )
 
         # Add to conversation history (lightweight storage per ADR001)
         query_text = query_text or getattr(context, "research_question", "")
@@ -1258,60 +1298,23 @@ def execute_analysis_with_idempotency(
             dataset_version=dataset_version,
         )
 
-        # Render inline in chat message style (Phase 3.5)
-        logger.debug("analysis_rendering_start", run_key=run_key)
-
-        # Render main results inline (no expander, no extra headers)
-        render_analysis_by_type(result, context.inferred_intent, query_text=query_text)
-
-        # ADR009 Phase 3: Render LLM result interpretation
-        _render_result_interpretation(result)
-
-        # Show interpretation inline (compact, directly under results)
-        if query_plan:
-            _render_interpretation_inline_compact(query_plan)
-
-        # ADR003 Phase 1: Trust UI (verify source patients, patient-level export)
-        if query_plan:
-            from clinical_analytics.ui.components.trust_ui import TrustUI
-
-            TrustUI.render_verification(
-                query_plan=query_plan,
-                result=result,
-                cohort=cohort,
-                dataset_version=dataset_version,
-                query_text=query_text,
-            )
-
-        # PR25: _suggest_follow_ups() removed (disabled partial feature)
-        # Follow-ups will be added via LLM-generated QueryPlan.follow_ups in future
-
-        # ADR004 Phase 4: Render proactive follow-up questions (query-time)
-        if query_plan and semantic_layer and dataset_version:
-            _render_proactive_questions(
-                semantic_layer=semantic_layer,
-                query_plan=query_plan,
-                dataset_version=dataset_version,
-                run_key=run_key,
-                normalized_query=query_text,
-            )
-
-        logger.info("analysis_rendering_complete", run_key=run_key)
-
-        # Don't rerun - results are already rendered inline, conversation history will show on next query
+        # Phase 4: Inline rendering removed - all rendering now goes through render_chat()
+        # render_chat() reads from ConversationManager transcript and ResultCache
+        # This eliminates duplicate rendering and ensures transcript-driven UX
+        logger.debug(
+            "analysis_stored_for_transcript_rendering",
+            run_key=run_key,
+            headline=result.get("headline", "")[:50] if result else "",
+        )
 
 
 def _render_interpretation_inline_compact(query_plan) -> None:
     """Render compact interpretation inline directly under results."""
     confidence = query_plan.confidence
 
-    # Show compact confidence badge
-    if confidence >= 0.75:
-        st.caption(f"✓ High confidence ({confidence:.0%})")
-    elif confidence >= 0.5:
-        st.caption(f"⚠ Moderate confidence ({confidence:.0%})")
-    else:
-        st.caption(f"⚠ Low confidence ({confidence:.0%})")
+    # Only show confidence badge when not high (silent for high confidence)
+    if confidence < 0.75:
+        st.caption(f"⚠️ Confidence: {confidence:.0%}")
 
     # Show compact interpretation (only if low confidence or has filters)
     if confidence < 0.75 or query_plan.filters:
@@ -1675,7 +1678,7 @@ def get_dataset_version(dataset, dataset_choice: str) -> str:
     return dataset_choice  # This is the upload_id
 
 
-def _render_example_questions(dataset, chat: list[ChatMessage]) -> None:
+def _render_example_questions(dataset, transcript: list[Any]) -> None:
     """
     Render upload-time example questions on first load (ADR004 Phase 4).
 
@@ -1684,10 +1687,10 @@ def _render_example_questions(dataset, chat: list[ChatMessage]) -> None:
 
     Args:
         dataset: Dataset object (must have metadata attribute)
-        chat: Chat transcript (empty on first load)
+        transcript: Conversation transcript (empty on first load) - from ConversationManager
     """
-    # Only display on first load (chat is empty)
-    if len(chat) > 0:
+    # Only display on first load (transcript is empty)
+    if len(transcript) > 0:
         return  # User has already interacted, don't show examples
 
     # Get example_questions from metadata
@@ -1823,27 +1826,7 @@ def main():
 
     dataset, cohort_pd, dataset_choice, dataset_version = result
 
-    # Extract identifiers for persistence (Milestone B: Persistence)
-    upload_id = dataset_choice  # dataset_choice is the upload_id
-    dataset_id = getattr(dataset, "dataset_id", None) or dataset_choice  # Fallback to upload_id if no dataset_id
-
-    # Initialize StateStore (Milestone B: Persistence)
-    store = FileStateStore()
-
-    # Load persisted state if exists (Milestone B: Persistence)
-    saved_state = store.load(upload_id, dataset_version)
-    if saved_state:
-        st.session_state["conversation_manager"] = saved_state.conversation_manager
-        st.session_state["result_cache"] = saved_state.result_cache
-        logger.info(
-            "state_restored",
-            upload_id=upload_id,
-            dataset_version=dataset_version,
-            message_count=len(saved_state.conversation_manager.get_transcript()),
-            cached_results=len(saved_state.result_cache.get_history(dataset_version)),
-        )
-
-    # Initialize core classes (Milestone A: State Extraction)
+    # Initialize core classes
     if "conversation_manager" not in st.session_state:
         st.session_state["conversation_manager"] = ConversationManager()
     if "result_cache" not in st.session_state:
@@ -1852,45 +1835,46 @@ def main():
     manager = st.session_state["conversation_manager"]
     cache = st.session_state["result_cache"]
 
-    # Helper function to save state (Milestone B: Persistence)
-    def save_state() -> None:
-        """Save current conversation state to persistent storage."""
-        # Get current manager and cache from session_state (may have been updated)
-        current_manager = st.session_state.get("conversation_manager", manager)
-        current_cache = st.session_state.get("result_cache", cache)
-        state = ConversationState(
-            conversation_manager=current_manager,
-            result_cache=current_cache,
-            dataset_id=dataset_id,
-            upload_id=upload_id,
-            dataset_version=dataset_version,
-            last_updated=datetime.now(),
-        )
-        store.save(state)
-        logger.debug("state_saved", upload_id=upload_id, dataset_version=dataset_version)
-
-    # Store save_state function in session_state for access from other functions
-    st.session_state["save_state_func"] = save_state
-
     # Initialize chat transcript and pending state (Phase 2)
-    # Note: chat is now managed via ConversationManager, but we keep it for backward compatibility during transition
-    if "chat" not in st.session_state:
-        st.session_state["chat"] = []
+    # Phase 5: Legacy chat removed - ConversationManager is now the single source of truth
+    # Note: st.session_state["chat"] is no longer used; use manager.get_transcript() instead
     if "pending" not in st.session_state:
         st.session_state["pending"] = None
 
     # Detect dataset change and clear conversation history/context/chat
     last_dataset = manager.get_current_dataset()
+    intent_signal = st.session_state.get("intent_signal")
+
     if last_dataset != dataset_choice:
-        # Dataset changed - clear conversation history, analysis context, and chat
-        manager.set_dataset(dataset_choice)
-        manager.clear()  # Clear conversation history
-        cache.clear(dataset_version)  # Clear results for old dataset
-        if "analysis_context" in st.session_state:
-            del st.session_state["analysis_context"]
-        # Clear chat transcript on dataset change
-        st.session_state["chat"] = []
-        st.session_state["pending"] = None
+        logger.debug(
+            "dataset_change_detected",
+            last_dataset=last_dataset,
+            current_dataset=dataset_choice,
+            intent_signal=intent_signal,
+            has_analysis_context="analysis_context" in st.session_state,
+        )
+
+        # Guard: Don't clear context if we just parsed a query (prevents race condition)
+        if intent_signal == "nl_parsed":
+            logger.debug(
+                "dataset_change_skipped_due_to_pending_execution",
+                last_dataset=last_dataset,
+                current_dataset=dataset_choice,
+            )
+            # Just update the manager's dataset tracking, don't clear anything
+            manager.set_dataset(dataset_choice)
+        else:
+            # Dataset actually changed - clear conversation history, analysis context, and chat
+            manager.set_dataset(dataset_choice)
+            manager.clear()  # Clear conversation history
+            cache.clear(dataset_version)  # Clear results for old dataset
+            if "analysis_context" in st.session_state:
+                del st.session_state["analysis_context"]
+            # Phase 5: Clear transcript via ConversationManager
+            manager = st.session_state.get("conversation_manager")
+            if manager:
+                manager.clear()
+            st.session_state["pending"] = None
     else:
         # Update dataset if not set
         if last_dataset is None:
@@ -1907,6 +1891,13 @@ def main():
             st.session_state["conversation_history"] = []
             st.session_state["analysis_context"] = None
             st.session_state["intent_signal"] = None
+            st.session_state["pending_message_id"] = None
+            manager = st.session_state.get("conversation_manager")
+            if manager:
+                manager.clear()
+            cache = st.session_state.get("result_cache")
+            if cache and dataset_version:
+                cache.clear(dataset_version)
             st.rerun()
 
     st.divider()
@@ -1957,8 +1948,12 @@ def main():
 
     # Initialize session state for context
     # PR25: Initialize state machine state with validation
+    # IMPORTANT: Initialize each state variable independently!
+    # Don't reset intent_signal just because analysis_context isn't set.
+    # This allows intent_signal to persist across reruns.
     if "analysis_context" not in st.session_state:
         st.session_state["analysis_context"] = None
+    if "intent_signal" not in st.session_state:
         st.session_state["intent_signal"] = None
 
     # PR25: Proactive cleanup - enforce lifecycle invariants
@@ -1980,7 +1975,9 @@ def main():
     render_chat(dataset_version=dataset_version, cohort=cohort_pl)
 
     # Display upload-time example questions on first load (ADR004 Phase 4)
-    _render_example_questions(dataset, st.session_state.get("chat", []))
+    # Phase 5: Use ConversationManager transcript instead of legacy chat
+    example_chat = manager.get_transcript() if manager else []
+    _render_example_questions(dataset, example_chat)
 
     # Check for semantic layer availability (show message if not available)
     # Phase 3: Use cached semantic layer for performance
@@ -1995,10 +1992,15 @@ def main():
     # Handle analysis execution if we have a context ready
     # PR25: State machine validation - enforce documented transitions
     intent_signal = st.session_state.get("intent_signal")
+    has_context = "analysis_context" in st.session_state
+    context_value = st.session_state.get("analysis_context")
+
     logger.debug(
         "execution_block_check",
         intent_signal=intent_signal,
-        has_analysis_context="analysis_context" in st.session_state,
+        has_analysis_context=has_context,
+        context_type=type(context_value).__name__ if context_value else None,
+        will_execute=intent_signal is not None,
     )
     if intent_signal is not None:
         logger.debug(
@@ -2175,12 +2177,14 @@ def main():
                     # PR25: Evict old execution cache entries (unbounded growth prevention)
                     _evict_old_execution_cache(dataset_version)
 
-                # Phase 2.5.1: Render thinking indicator from core layer step data (UI only renders)
-                if execution_result.get("steps"):
+                # Phase 2.5.1: Check for failure first, then render thinking indicator
+                if execution_result.get("success") is False:
+                    error_msg = execution_result.get("error", "Query execution failed")
+                    _render_error_with_translation(error_msg, prefix="❌")
+                    # Don't show "Query complete!" for failures
+                elif execution_result.get("steps"):
                     _render_thinking_indicator(execution_result["steps"])
-                elif execution_result is not None:
-                    # Cached result - show brief indicator (no steps available for cached results)
-                    st.info("💡 Using cached result (click 'Re-run Query' below to refresh)")
+                # Note: Cached results render silently (no notice needed)
 
                 # Clear force_rerun flag after use
                 if force_rerun:
@@ -2189,36 +2193,19 @@ def main():
                 # Phase 2.3: Always execute, show warnings inline (no gating)
                 st.divider()
 
-                # Display warnings if present - group in expander to avoid cluttering UI
+                # Display errors only (skip info warnings - they're noise)
                 warnings = execution_result.get("warnings", [])
                 if warnings:
-                    # Categorize warnings by severity (info vs warning)
-                    info_warnings = []
-                    error_warnings = []
-                    for warning in warnings:
-                        warning_lower = warning.lower()
-                        if (
-                            "error" in warning_lower
-                            or "failed" in warning_lower
-                            or "validation failed" in warning_lower
-                        ):
-                            error_warnings.append(warning)
-                        else:
-                            info_warnings.append(warning)
+                    # Filter to error-level warnings only
+                    error_warnings = [
+                        w for w in warnings if any(kw in w.lower() for kw in ("error", "failed", "validation failed"))
+                    ]
 
-                    # Group warnings in expander (auto-collapsed if only info warnings)
-                    warning_count = len(warnings)
-                    warning_text = f"message{'s' if warning_count != 1 else ''}"
-                    with st.expander(
-                        f"ℹ️ Query Information ({warning_count} {warning_text})",
-                        expanded=len(error_warnings) > 0,
-                    ):
-                        # Show error-level warnings first
-                        for warning in error_warnings:
-                            st.error(f"❌ {warning}")
-                        # Then info-level warnings
-                        for warning in info_warnings:
-                            st.info(f"ℹ️ {warning}")
+                    # Only show expander for actual errors
+                    if error_warnings:
+                        with st.expander(f"❌ Errors ({len(error_warnings)})", expanded=True):
+                            for warning in error_warnings:
+                                st.error(f"❌ {warning}")
 
                 # Phase 1.1.5: Always use run_key from execution result (semantic layer generates it deterministically)
                 run_key = execution_result.get("run_key")
@@ -2239,12 +2226,17 @@ def main():
                     )
 
                     # Phase 3.1: Add assistant message to chat if query came from chat input
-                    # Check if last chat message is user message (indicates chat input was used)
-                    chat = st.session_state.get("chat", [])
+                    # Phase 5: Check if last message is user message via ConversationManager
+                    manager = st.session_state.get("conversation_manager")
                     added_assistant_msg = False
-                    if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
-                        # Query came from chat input - add assistant message with actual answer content
-                        # Get formatted result headline/summary from ResultCache (not legacy session_state key)
+                    last_msg_is_user = False
+                    if manager:
+                        transcript = manager.get_transcript()
+                        if transcript and transcript[-1].role == "user":
+                            last_msg_is_user = True
+                    if last_msg_is_user:
+                        # Query came from chat input - update pending message or add new one
+                        # Get formatted result headline/summary from ResultCache
                         cache = st.session_state.get("result_cache")
                         assistant_text = "Analysis completed"  # Default fallback
                         if cache is not None:
@@ -2255,22 +2247,45 @@ def main():
                                     result.get("headline") or result.get("headline_text") or "Analysis completed"
                                 )
 
-                        assistant_msg: ChatMessage = {
-                            "role": "assistant",
-                            "text": assistant_text,  # Store actual answer content, not query text
-                            "run_key": run_key,
-                            "status": "completed",
-                            "created_at": time.time(),
-                        }
-                        st.session_state["chat"].append(assistant_msg)
-                        added_assistant_msg = True
+                        # Phase 3: Update pending message in ConversationManager
+                        manager = st.session_state.get("conversation_manager")
+                        pending_id = st.session_state.get("pending_message_id")
+                        if manager is not None and pending_id is not None:
+                            # Update pending message to completed
+                            manager.update_message(
+                                pending_id,
+                                status="completed",
+                                content=assistant_text,
+                                run_key=run_key,
+                            )
+                            # Clear pending_message_id
+                            st.session_state.pop("pending_message_id", None)
+                            logger.debug(
+                                "pending_message_completed",
+                                pending_id=pending_id,
+                                run_key=run_key,
+                            )
+                            added_assistant_msg = True
+                        else:
+                            # Fallback: add new message if no pending message
+                            if manager is not None:
+                                manager.add_message(
+                                    "assistant",
+                                    assistant_text,
+                                    run_key=run_key,
+                                    status="completed",
+                                )
+                                added_assistant_msg = True
+
+                        # Phase 5: Legacy st.session_state["chat"] removed
+                        # ConversationManager is now the single source of truth
 
                     # Clear intent_signal after successful execution
                     # This allows chat input to be available again for follow-up questions
                     st.session_state["intent_signal"] = None
                     logger.debug("intent_signal_cleared_after_execution", success=True)
 
-                    # Rerun to display the assistant message in chat (after clearing intent_signal)
+                    # Single rerun to display the completed message in chat
                     if added_assistant_msg:
                         st.rerun()
 
@@ -2308,17 +2323,42 @@ def main():
                     intent_signal=intent_signal,
                 )
                 # Add error message to chat so user sees it
-                chat = st.session_state.get("chat", [])
-                if chat and chat[-1]["role"] == "user" and chat[-1].get("run_key") is None:
-                    # Query came from chat input - add error message to chat
-                    error_chat_msg: ChatMessage = {
-                        "role": "assistant",
-                        "text": error_msg,
-                        "run_key": None,
-                        "status": "error",
-                        "created_at": time.time(),
-                    }
-                    st.session_state["chat"].append(error_chat_msg)
+                # Phase 5: Check last message via ConversationManager
+                manager = st.session_state.get("conversation_manager")
+                last_msg_is_user = False
+                if manager:
+                    transcript = manager.get_transcript()
+                    if transcript and transcript[-1].role == "user":
+                        last_msg_is_user = True
+
+                if last_msg_is_user:
+                    # Phase 3: Update pending message to error in ConversationManager
+                    pending_id = st.session_state.get("pending_message_id")
+                    if manager is not None and pending_id is not None:
+                        # Update pending message to error
+                        manager.update_message(
+                            pending_id,
+                            status="error",
+                            content=error_msg,
+                        )
+                        # Clear pending_message_id
+                        st.session_state.pop("pending_message_id", None)
+                        logger.debug(
+                            "pending_message_error",
+                            pending_id=pending_id,
+                            error_msg=error_msg[:50],
+                        )
+                    else:
+                        # Fallback: add new error message if no pending message
+                        if manager is not None:
+                            manager.add_message(
+                                "assistant",
+                                error_msg,
+                                status="error",
+                            )
+
+                    # Phase 5: Legacy st.session_state["chat"] removed
+                    # ConversationManager is now the single source of truth
 
                     # Clear intent_signal after failed execution
                     st.session_state["intent_signal"] = None
@@ -2622,18 +2662,27 @@ def main():
                 # Phase 3.1: Chat handler should NOT execute - only parse and rerun
                 # Main flow (lines 1630-1720) will handle execution after rerun
                 if context.is_complete_for_intent():
-                    # Just set state and rerun - main flow will handle execution
-                    # Add user message to chat for display
-                    user_msg: ChatMessage = {
-                        "role": "user",
-                        "text": query,
-                        "run_key": None,
-                        "status": "completed",
-                        "created_at": time.time(),
-                    }
-                    st.session_state["chat"].append(user_msg)
+                    # Phase 3: Pending message pattern - add to ConversationManager
+                    # Get manager from session state
+                    manager = st.session_state.get("conversation_manager")
+                    if manager is not None:
+                        # Add user message to ConversationManager
+                        manager.add_message("user", query)
 
-                    # Rerun - main flow will execute query and render results
+                        # Add pending assistant message (shows "Thinking..." in render_chat)
+                        pending_id = manager.add_message("assistant", "", status="pending")
+                        st.session_state["pending_message_id"] = pending_id
+
+                        logger.debug(
+                            "pending_message_added",
+                            pending_id=pending_id,
+                            query=query[:50],
+                        )
+
+                    # Phase 5: Legacy st.session_state["chat"] removed
+                    # ConversationManager is now the single source of truth
+
+                    # Single rerun - render_chat will show "Thinking..." for pending message
                     st.rerun()
                 else:
                     # Context not complete - need variable selection, rerun to show UI
