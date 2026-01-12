@@ -1125,6 +1125,71 @@ class NLQueryEngine:
 
         return self._ollama_client
 
+    def _infer_column_type_from_view(self, column_name: str) -> dict[str, Any] | None:
+        """
+        Infer column dtype from ibis view schema.
+
+        Fallback when metadata is unavailable. Uses ibis schema inspection
+        to determine column type.
+
+        Args:
+            column_name: Column name to infer type for
+
+        Returns:
+            Dict with 'type', 'numeric', 'dtype' keys, or None if column not found
+        """
+        try:
+            base_view = self.semantic_layer.get_base_view()
+
+            # Check if column exists
+            if column_name not in base_view.columns:
+                logger.debug(
+                    "column_type_inference_column_not_found",
+                    column=column_name,
+                )
+                return None
+
+            # Get dtype from ibis schema
+            schema = base_view.schema()
+            dtype = schema[column_name]
+            dtype_str = str(dtype)
+
+            # Determine if numeric based on dtype
+            numeric_types = ["int", "float", "decimal", "double", "numeric"]
+            is_numeric = any(t in dtype_str.lower() for t in numeric_types)
+
+            # Determine type category
+            if is_numeric:
+                type_category = "numeric"
+            elif "bool" in dtype_str.lower():
+                type_category = "boolean"
+            elif "date" in dtype_str.lower() or "time" in dtype_str.lower():
+                type_category = "datetime"
+            else:
+                type_category = "string"
+
+            logger.debug(
+                "column_type_inference_completed",
+                column=column_name,
+                dtype=dtype_str,
+                type_category=type_category,
+                is_numeric=is_numeric,
+            )
+
+            return {
+                "type": type_category,
+                "numeric": is_numeric,
+                "dtype": dtype_str,
+            }
+
+        except Exception as e:
+            logger.warning(
+                "column_type_inference_failed",
+                column=column_name,
+                error=str(e),
+            )
+            return None
+
     def _build_rag_context(self, query: str) -> dict[str, Any]:
         """
         Build RAG context from semantic layer metadata and golden questions.
@@ -1136,7 +1201,7 @@ class NLQueryEngine:
             query: User's question
 
         Returns:
-            Dict with columns, aliases, examples, and query
+            Dict with columns, aliases, examples, column_types, and query
         """
         # Extract columns from semantic layer base view
         base_view = self.semantic_layer.get_base_view()
@@ -1144,6 +1209,31 @@ class NLQueryEngine:
 
         # Get alias mappings
         alias_index = self.semantic_layer.get_column_alias_index()
+
+        # Build column types dict for type-aware RAG context
+        column_types: dict[str, Any] = {}
+        for col in columns:
+            # Try to get metadata from semantic layer first
+            metadata = self.semantic_layer.get_column_metadata(col)
+            if metadata:
+                column_types[col] = {
+                    "type": metadata.get("type", "string"),
+                    "numeric": metadata.get("numeric", False),
+                    "dtype": metadata.get("dtype", "string"),
+                    "coded": metadata.get("coded", False),
+                    "labels": metadata.get("labels", {}),
+                }
+            else:
+                # Fallback to dtype inference from view
+                inferred = self._infer_column_type_from_view(col)
+                if inferred:
+                    column_types[col] = inferred
+
+        logger.debug(
+            "rag_context_built",
+            column_count=len(columns),
+            type_info_count=len(column_types),
+        )
 
         # RAG: Load golden questions as corpus
         golden_examples = self._load_golden_questions_rag()
@@ -1154,6 +1244,7 @@ class NLQueryEngine:
         return {
             "columns": columns,
             "aliases": alias_index,
+            "column_types": column_types,
             "examples": relevant_examples,
             "query": query,
         }
