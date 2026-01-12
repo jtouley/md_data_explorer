@@ -618,6 +618,6 @@ def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
                 try:
                     rules[config_key] = _coerce_type(env_value, target_type)
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"Failed to coerce env var {env_key}={env_value} to " f"{target_type.__name__}: {e}")
+                    logger.warning(f"Failed to coerce env var {env_key}={env_value} to {target_type.__name__}: {e}")
 
     return config

@@ -1859,7 +1859,7 @@ Previous Errors:
 {json.dumps(errors, indent=2)}
 
 Column Types:
-{json.dumps(rag_context.get('column_types', {}), indent=2)}
+{json.dumps(rag_context.get("column_types", {}), indent=2)}
 
 Fix the errors and return a corrected query intent as JSON.
 """
