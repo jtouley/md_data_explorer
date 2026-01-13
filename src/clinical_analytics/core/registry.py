@@ -35,7 +35,7 @@ def _filter_kwargs_for_ctor(cls: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     Filter kwargs to only include parameters accepted by the class constructor.
 
     Prevents "unexpected keyword argument" errors when configs contain params
-    that a dataset class doesn't accept (e.g., db_connection for Mimic3Dataset).
+    that a dataset class doesn't accept.
 
     Args:
         cls: Dataset class to instantiate
@@ -183,7 +183,7 @@ class DatasetRegistry:
         Factory method to instantiate a dataset by name.
 
         Args:
-            name: Dataset identifier (e.g., 'covid_ms', 'sepsis')
+            name: Dataset identifier (upload_id for uploaded datasets)
             **override_params: Parameters to override config values
 
         Returns:
