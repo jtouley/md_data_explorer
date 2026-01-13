@@ -472,7 +472,7 @@ class NLQueryEngine:
                     break  # First tier success, stop trying others
 
             elif tier_name == "semantic":
-                semantic_intent = self._semantic_match(query)
+                semantic_intent = self._semantic_match(query, conversation_history=conversation_history)
                 tier_results["semantic"] = semantic_intent
                 attempt = {
                     "tier": "semantic_match",
@@ -1161,7 +1161,7 @@ class NLQueryEngine:
 
         return None
 
-    def _semantic_match(self, query: str) -> QueryIntent | None:
+    def _semantic_match(self, query: str, conversation_history: list[dict] | None = None) -> QueryIntent | None:
         """
         Tier 2: Semantic embedding similarity matching.
 
@@ -1170,6 +1170,7 @@ class NLQueryEngine:
 
         Args:
             query: User's question
+            conversation_history: Optional conversation context for refinement queries
 
         Returns:
             QueryIntent if good match found, None otherwise
@@ -1198,6 +1199,25 @@ class NLQueryEngine:
 
                 # If high similarity with golden example, use its intent
                 if best_golden_score > 0.8:  # Higher threshold for golden examples
+                    golden_ex = self._golden_examples[best_golden_idx]
+
+                    # Check if golden example requires conversation context
+                    requires_context = "conversation_history" in golden_ex
+                    has_context = conversation_history is not None and len(conversation_history) > 0
+
+                    # If example requires context but we don't have it, penalize confidence
+                    if requires_context and not has_context:
+                        logger.debug(
+                            "semantic_match_golden_example_context_mismatch",
+                            query=query[:50],
+                            matched_example=golden_ex["query"],
+                            similarity=float(best_golden_score),
+                            reason="golden_example_requires_context_but_none_provided",
+                        )
+                        # Fall through to template matching instead
+                        best_golden_score = 0.0  # Skip this match
+
+                if best_golden_score > 0.8:
                     golden_ex = self._golden_examples[best_golden_idx]
                     logger.debug(
                         "semantic_match_golden_example",
