@@ -349,7 +349,6 @@ class TrustUI:
 
             st.write(f"Showing {export_df.height} rows (capped at 100)")
             # PANDAS EXCEPTION: Required for Streamlit st.dataframe display
-            # TODO: Remove when Streamlit supports Polars natively
             st.dataframe(export_df.to_pandas())
 
             # Download button for full export

@@ -304,7 +304,7 @@ def _build_column_contexts(
             name=col_name,
             normalized_name=_normalize_column_name(col_name),
             system_aliases=system_aliases,
-            user_aliases=[],  # TODO: Get from ADR003 persisted mappings
+            user_aliases=[],  # Future: Get from ADR003 persisted mappings
             dtype=dtype,
             units=units,
             codebook=codebook,

@@ -231,7 +231,7 @@ def test_unit_semanticLayer_nonPicklable_worksWithDepends(app_with_semantic_laye
     # Arrange - Verify semantic layer is NOT picklable
     semantic_layer = sample_dataset.get_semantic_layer()
 
-    # Assert - SemanticLayer is not picklable (expected)
+    # Verify SemanticLayer is not picklable (expected)
     with pytest.raises((TypeError, pickle.PicklingError)):
         pickle.dumps(semantic_layer)
 
