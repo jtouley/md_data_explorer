@@ -1127,6 +1127,9 @@ class NLQueryEngine:
         """
         Tier 2: Semantic embedding similarity matching.
 
+        Enhanced with golden examples - checks similarity with curated queries first,
+        then falls back to template matching.
+
         Args:
             query: User's question
 
@@ -1144,17 +1147,55 @@ class NLQueryEngine:
             if self.encoder is None:
                 return None
 
+            # Encode query once
+            query_embedding = self.encoder.encode([query])
+
+            from sklearn.metrics.pairwise import cosine_similarity
+
+            # First, check golden examples for high similarity
+            if self._golden_embeddings is not None and self._golden_examples is not None:
+                golden_similarities = cosine_similarity(query_embedding, self._golden_embeddings)[0]
+                best_golden_idx = golden_similarities.argmax()
+                best_golden_score = golden_similarities[best_golden_idx]
+
+                # If high similarity with golden example, use its intent
+                if best_golden_score > 0.8:  # Higher threshold for golden examples
+                    golden_ex = self._golden_examples[best_golden_idx]
+                    logger.debug(
+                        "semantic_match_golden_example",
+                        query=query[:50],
+                        matched_example=golden_ex["query"],
+                        similarity=float(best_golden_score),
+                        intent=golden_ex["expected_intent"],
+                    )
+
+                    intent = QueryIntent(
+                        intent_type=golden_ex["expected_intent"],
+                        confidence=float(best_golden_score),
+                    )
+
+                    # Use expected variables from golden example if available
+                    if golden_ex.get("expected_metric"):
+                        intent.primary_variable = golden_ex["expected_metric"]
+                    if golden_ex.get("expected_group_by"):
+                        intent.grouping_variable = golden_ex["expected_group_by"]
+
+                    # Extract actual variables from query for fallback
+                    variables = self._extract_variables_from_query(query)
+                    if not intent.primary_variable and variables:
+                        intent.primary_variable = str(variables[0]) if variables[0] is not None else None
+                    if not intent.grouping_variable and len(variables) > 1:
+                        intent.grouping_variable = str(variables[1]) if variables[1] is not None else None
+
+                    return intent
+
+            # Fallback: template matching (original behavior)
             # Lazy compute template embeddings
             if self.template_embeddings is None:
                 template_texts = [t["template"] for t in self.query_templates]
                 self.template_embeddings = self.encoder.encode(template_texts)
 
-            # Encode query
-            query_embedding = self.encoder.encode([query])
-
             # Compute similarity with all templates
-            from sklearn.metrics.pairwise import cosine_similarity
-
             similarities = cosine_similarity(query_embedding, self.template_embeddings)[0]
 
             # Get best match
