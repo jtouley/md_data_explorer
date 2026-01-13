@@ -1,0 +1,26 @@
+{
+  "description": "Claude Code guardrails for md_data_explorer - enforces quality gates without changing project behavior",
+  "hooks": {
+    "preToolUse": [
+      {
+        "pattern": "Edit|Write",
+        "command": "bash .claude/hooks/block-main-edits.sh"
+      }
+    ],
+    "postToolUse": [
+      {
+        "pattern": "Edit|Write",
+        "filePattern": "**/*.py",
+        "command": "bash .claude/hooks/auto-format-python.sh"
+      },
+      {
+        "pattern": "Edit|Write",
+        "filePattern": "src/clinical_analytics/**/*.py",
+        "command": "bash .claude/hooks/enforce-tests-updated.sh"
+      }
+    ]
+  },
+  "experimental": {
+    "blockOnHookFailure": true
+  }
+}
