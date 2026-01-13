@@ -335,6 +335,28 @@ class NLQueryEngine:
             {"template": "describe", "intent": "DESCRIBE", "slots": []},
         ]
 
+    def _get_tier_order(self) -> list[str]:
+        """
+        Get tier precedence order from config.
+
+        Returns:
+            List of tier names in order to try: ["pattern", "semantic", "llm"]
+        """
+        from clinical_analytics.core.config_loader import load_nl_query_config
+
+        config = load_nl_query_config()
+        tier_prec = config.get("tier_precedence", {})
+
+        # Get enabled tiers (default: pattern, semantic, llm)
+        tier_order: list[str] = tier_prec.get("enabled_tiers", ["pattern", "semantic", "llm"])
+
+        # Apply semantic-first preference if configured
+        if tier_prec.get("prefer_semantic_over_pattern", False):
+            # Swap pattern and semantic
+            tier_order = ["semantic" if t == "pattern" else "pattern" if t == "semantic" else t for t in tier_order]
+
+        return tier_order
+
     def parse_query(
         self,
         query: str,
@@ -348,6 +370,9 @@ class NLQueryEngine:
         Supports conversational refinements (ADR009 Phase 6): When conversation_history
         is provided, the LLM can detect refinement queries like "remove the n/a" that
         modify previous queries, and intelligently merge them.
+
+        Tier precedence (Phase 4): Parsing order can be configured via config/nl_query.yaml
+        to support A/B testing of semantic-first vs pattern-first approaches.
 
         Args:
             query: User's question (e.g., "compare survival by treatment arm")
@@ -399,127 +424,140 @@ class NLQueryEngine:
         }
         logger.info("query_parse_start", **log_context)
 
+        # Get tier precedence order from config (Phase 4)
+        tier_order = self._get_tier_order()
+        logger.debug("tier_precedence_configured", tier_order=tier_order)
+
         # Track parsing attempts for diagnostics
         parsing_attempts = []
         matched_vars = []  # Initialize to avoid UnboundLocalError in logging
 
-        # Tier 1: Pattern matching
-        pattern_intent = self._pattern_match(query)
-        attempt = {
-            "tier": "pattern_match",
-            "result": "success"
-            if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD
-            else "failed",
-            "confidence": pattern_intent.confidence if pattern_intent else 0.0,
-        }
-        parsing_attempts.append(attempt)
+        # Try tiers in configured order
+        intent: QueryIntent | None = None
+        tier_results = {}  # Store all tier results for smart fallback
 
-        if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
-            pattern_intent.parsing_tier = "pattern_match"
-            pattern_intent.parsing_attempts = parsing_attempts
-            matched_vars_initial = self._get_matched_variables(pattern_intent)
-            logger.info(
-                "query_parse_success",
-                intent=pattern_intent.intent_type,
-                confidence=pattern_intent.confidence,
-                matched_vars=matched_vars_initial,
-                tier="pattern_match",
-                **log_context,
-            )
-            # Granular instrumentation: tier1 parse_outcome
-            logger.info(
-                "parse_outcome",
-                tier="tier1",
-                success=True,
-                query_hash=_stable_hash(query),
-            )
-            intent: QueryIntent | None = pattern_intent  # Set for post-processing
-        else:
-            # Pattern match found something but below threshold - try semantic match
-            # but keep pattern match as fallback if semantic match is worse
-            # Tier 2: Semantic embeddings
-            semantic_intent = self._semantic_match(query)
-            attempt = {
-                "tier": "semantic_match",
-                "result": "success"
-                if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD
-                else "failed",
-                "confidence": semantic_intent.confidence if semantic_intent else 0.0,
-            }
-            parsing_attempts.append(attempt)
+        for tier_name in tier_order:
+            if tier_name == "pattern":
+                pattern_intent = self._pattern_match(query)
+                tier_results["pattern"] = pattern_intent
+                attempt = {
+                    "tier": "pattern_match",
+                    "result": "success"
+                    if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD
+                    else "failed",
+                    "confidence": pattern_intent.confidence if pattern_intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
 
-            # Choose best intent: prefer semantic if it meets threshold, otherwise use pattern if available
-            if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
-                intent = semantic_intent
-                intent.parsing_tier = "semantic_match"
-                intent.parsing_attempts = parsing_attempts
-                matched_vars = self._get_matched_variables(intent)
-                logger.info(
-                    "query_parse_success",
-                    intent=intent.intent_type,
-                    confidence=intent.confidence,
-                    matched_vars=matched_vars,
-                    tier="semantic_match",
-                    **log_context,
-                )
-                # Granular instrumentation: tier2 parse_outcome
-                logger.info(
-                    "parse_outcome",
-                    tier="tier2",
-                    success=True,
-                    query_hash=_stable_hash(query),
-                )
-            elif pattern_intent and pattern_intent.intent_type != "DESCRIBE":
-                # Use pattern match result even if below threshold, if it's more specific than DESCRIBE
-                # Also prefer pattern match if it's better than semantic match
-                if semantic_intent is None or (
-                    pattern_intent.confidence > semantic_intent.confidence and pattern_intent.intent_type != "DESCRIBE"
-                ):
-                    intent = pattern_intent
-                    intent.parsing_tier = "pattern_match"
-                    intent.parsing_attempts = parsing_attempts
+                if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
+                    pattern_intent.parsing_tier = "pattern_match"
+                    pattern_intent.parsing_attempts = parsing_attempts
+                    matched_vars_initial = self._get_matched_variables(pattern_intent)
                     logger.info(
-                        "query_parse_partial_pattern_match",
-                        intent=intent.intent_type,
-                        confidence=intent.confidence,
-                        reason="pattern_match_below_threshold_but_better_than_semantic",
+                        "query_parse_success",
+                        intent=pattern_intent.intent_type,
+                        confidence=pattern_intent.confidence,
+                        matched_vars=matched_vars_initial,
+                        tier="pattern_match",
+                        tier_order_position=tier_order.index("pattern") + 1,
                         **log_context,
                     )
-                else:
-                    intent = semantic_intent  # Use semantic if it's better
-            elif semantic_intent:
-                intent = semantic_intent  # Use semantic even if below threshold
-            else:
-                intent = pattern_intent  # Fallback to pattern match if available
+                    logger.info(
+                        "parse_outcome",
+                        tier="tier1",
+                        success=True,
+                        query_hash=_stable_hash(query),
+                    )
+                    intent = pattern_intent
+                    break  # First tier success, stop trying others
 
-        # Tier 3: LLM fallback (stub for now) - only if we don't have a good intent yet
-        if not intent or (intent.confidence < 0.5 and intent.intent_type == "DESCRIBE"):
-            # Granular instrumentation: tier3 llm_called
-            logger.info(
-                "parse_outcome",
-                tier="tier3",
-                llm_called=True,
-                query_hash=_stable_hash(query),
-            )
-            llm_intent = self._llm_parse(query, conversation_history=conversation_history)
-            attempt = {
-                "tier": "llm_fallback",
-                "result": "success" if llm_intent else "failed",
-                "confidence": llm_intent.confidence if llm_intent else 0.0,
-            }
-            parsing_attempts.append(attempt)
+            elif tier_name == "semantic":
+                semantic_intent = self._semantic_match(query)
+                tier_results["semantic"] = semantic_intent
+                attempt = {
+                    "tier": "semantic_match",
+                    "result": "success"
+                    if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD
+                    else "failed",
+                    "confidence": semantic_intent.confidence if semantic_intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
 
-            if llm_intent:
-                intent = llm_intent
-                intent.parsing_tier = "llm_fallback"
-                intent.parsing_attempts = parsing_attempts
-                matched_vars = self._get_matched_variables(intent)
+                if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
+                    semantic_intent.parsing_tier = "semantic_match"
+                    semantic_intent.parsing_attempts = parsing_attempts
+                    matched_vars = self._get_matched_variables(semantic_intent)
+                    logger.info(
+                        "query_parse_success",
+                        intent=semantic_intent.intent_type,
+                        confidence=semantic_intent.confidence,
+                        matched_vars=matched_vars,
+                        tier="semantic_match",
+                        tier_order_position=tier_order.index("semantic") + 1,
+                        **log_context,
+                    )
+                    logger.info(
+                        "parse_outcome",
+                        tier="tier2",
+                        success=True,
+                        query_hash=_stable_hash(query),
+                    )
+                    intent = semantic_intent
+                    break  # First tier success, stop trying others
+
+            elif tier_name == "llm":
+                # LLM tier - always as fallback
                 logger.info(
-                    "query_parse_success",
+                    "parse_outcome",
+                    tier="tier3",
+                    llm_called=True,
+                    query_hash=_stable_hash(query),
+                )
+                llm_intent = self._llm_parse(query, conversation_history=conversation_history)
+                tier_results["llm"] = llm_intent
+                attempt = {
+                    "tier": "llm_fallback",
+                    "result": "success" if llm_intent else "failed",
+                    "confidence": llm_intent.confidence if llm_intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
+
+                if llm_intent:
+                    llm_intent.parsing_tier = "llm_fallback"
+                    llm_intent.parsing_attempts = parsing_attempts
+                    matched_vars = self._get_matched_variables(llm_intent)
+                    logger.info(
+                        "query_parse_success",
+                        intent=llm_intent.intent_type,
+                        confidence=llm_intent.confidence,
+                        matched_vars=matched_vars,
+                        tier="llm_fallback",
+                        tier_order_position=tier_order.index("llm") + 1,
+                        **log_context,
+                    )
+                    intent = llm_intent
+                    break  # LLM success
+
+        # Smart fallback: if no tier met threshold, choose best available
+        if not intent:
+            # Find best result from all tiers tried
+            best_intent = None
+            best_confidence = 0.0
+
+            for tier_result in tier_results.values():
+                if tier_result and tier_result.confidence > best_confidence:
+                    best_intent = tier_result
+                    best_confidence = tier_result.confidence
+
+            if best_intent:
+                intent = best_intent
+                intent.parsing_tier = f"{intent.parsing_tier or 'fallback'}_below_threshold"
+                intent.parsing_attempts = parsing_attempts
+                logger.info(
+                    "query_parse_partial_match",
                     intent=intent.intent_type,
                     confidence=intent.confidence,
-                    matched_vars=matched_vars,
-                    tier="llm_fallback",
+                    reason="all_tiers_below_threshold_using_best",
                     **log_context,
                 )
 
