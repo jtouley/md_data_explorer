@@ -151,15 +151,85 @@ class NLQueryEngine:
         # Validation config cache (lazy loaded)
         self._validation_config: dict | None = None
 
+        # Golden examples embedding cache (in-memory)
+        self._golden_embeddings = None
+        self._golden_examples = None
+        self._golden_config_path = None
+
         # Build query templates from metadata
         self._build_query_templates()
 
+        # Load golden examples for Tier 2 semantic matching
+        self._load_golden_examples()
+
+    def _load_golden_examples(self) -> None:
+        """
+        Load and embed golden examples at startup.
+
+        Golden examples are curated queries with known-good intent mappings.
+        Embeddings are cached in memory for fast similarity search.
+
+        If called multiple times with same config, uses cached embeddings.
+        """
+        # Check if already loaded (cache hit)
+        if self._golden_embeddings is not None and self._golden_examples is not None:
+            return
+
+        try:
+            from clinical_analytics.core.config_loader import load_golden_examples_config
+
+            config = load_golden_examples_config(config_path=self._golden_config_path)
+            examples = config.get("questions", [])
+
+            if not examples:
+                logger.debug("golden_examples_empty", reason="no_questions_in_config")
+                self._golden_embeddings = None
+                self._golden_examples = None
+                return
+
+            # Embed all queries
+            queries = [ex["query"] for ex in examples]
+
+            # Lazy load encoder if needed
+            if self.encoder is None:
+                from sentence_transformers import SentenceTransformer
+
+                encoder_obj = SentenceTransformer(self.embedding_model_name)
+                self.encoder = encoder_obj  # type: ignore[assignment]
+
+            if self.encoder is None:
+                logger.warning("golden_examples_encoder_unavailable")
+                self._golden_embeddings = None
+                self._golden_examples = None
+                return
+
+            self._golden_embeddings = self.encoder.encode(queries)
+            self._golden_examples = examples
+
+            logger.info(
+                "golden_examples_loaded",
+                count=len(examples),
+                embedding_shape=self._golden_embeddings.shape,
+            )
+        except Exception as e:
+            import traceback
+
+            logger.warning(
+                "golden_examples_load_failed",
+                error=str(e),
+                traceback=traceback.format_exc(),
+            )
+            self._golden_embeddings = None
+            self._golden_examples = None
+
     def _prompt_overlay_path(self) -> Path:
         """
-        Get overlay file path (configurable via env var).
+        Get overlay file path (configurable via env var or config/paths.yaml).
 
-        Defaults to /tmp/nl_query_learning/prompt_overlay.txt to keep
-        learning artifacts out of source tree.
+        Precedence:
+        1. NL_PROMPT_OVERLAY_PATH env var (explicit override)
+        2. config/paths.yaml prompt_overlay_dir + prompt_overlay.txt
+        3. Hardcoded default: /tmp/nl_query_learning/prompt_overlay.txt
 
         Returns:
             Path to overlay file
@@ -169,9 +239,15 @@ class NLQueryEngine:
         if p:
             return Path(p)
 
-        # Default: same directory as self-improve logs
-        # (keeps artifacts out of source tree)
-        return Path("/tmp/nl_query_learning/prompt_overlay.txt")
+        # Use config-driven path from paths.yaml
+        try:
+            from clinical_analytics.core.config_loader import load_paths_config
+
+            paths = load_paths_config()
+            return paths["prompt_overlay_dir"] / "prompt_overlay.txt"
+        except Exception:
+            # Fallback to hardcoded default if config loading fails
+            return Path("/tmp/nl_query_learning/prompt_overlay.txt")
 
     def _load_prompt_overlay(self) -> str:
         """
@@ -259,6 +335,28 @@ class NLQueryEngine:
             {"template": "describe", "intent": "DESCRIBE", "slots": []},
         ]
 
+    def _get_tier_order(self) -> list[str]:
+        """
+        Get tier precedence order from config.
+
+        Returns:
+            List of tier names in order to try: ["pattern", "semantic", "llm"]
+        """
+        from clinical_analytics.core.config_loader import load_nl_query_config
+
+        config = load_nl_query_config()
+        tier_prec = config.get("tier_precedence", {})
+
+        # Get enabled tiers (default: pattern, semantic, llm)
+        tier_order: list[str] = tier_prec.get("enabled_tiers", ["pattern", "semantic", "llm"])
+
+        # Apply semantic-first preference if configured
+        if tier_prec.get("prefer_semantic_over_pattern", False):
+            # Swap pattern and semantic
+            tier_order = ["semantic" if t == "pattern" else "pattern" if t == "semantic" else t for t in tier_order]
+
+        return tier_order
+
     def parse_query(
         self,
         query: str,
@@ -272,6 +370,9 @@ class NLQueryEngine:
         Supports conversational refinements (ADR009 Phase 6): When conversation_history
         is provided, the LLM can detect refinement queries like "remove the n/a" that
         modify previous queries, and intelligently merge them.
+
+        Tier precedence (Phase 4): Parsing order can be configured via config/nl_query.yaml
+        to support A/B testing of semantic-first vs pattern-first approaches.
 
         Args:
             query: User's question (e.g., "compare survival by treatment arm")
@@ -323,127 +424,140 @@ class NLQueryEngine:
         }
         logger.info("query_parse_start", **log_context)
 
+        # Get tier precedence order from config (Phase 4)
+        tier_order = self._get_tier_order()
+        logger.debug("tier_precedence_configured", tier_order=tier_order)
+
         # Track parsing attempts for diagnostics
         parsing_attempts = []
         matched_vars = []  # Initialize to avoid UnboundLocalError in logging
 
-        # Tier 1: Pattern matching
-        pattern_intent = self._pattern_match(query)
-        attempt = {
-            "tier": "pattern_match",
-            "result": "success"
-            if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD
-            else "failed",
-            "confidence": pattern_intent.confidence if pattern_intent else 0.0,
-        }
-        parsing_attempts.append(attempt)
+        # Try tiers in configured order
+        intent: QueryIntent | None = None
+        tier_results = {}  # Store all tier results for smart fallback
 
-        if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
-            pattern_intent.parsing_tier = "pattern_match"
-            pattern_intent.parsing_attempts = parsing_attempts
-            matched_vars_initial = self._get_matched_variables(pattern_intent)
-            logger.info(
-                "query_parse_success",
-                intent=pattern_intent.intent_type,
-                confidence=pattern_intent.confidence,
-                matched_vars=matched_vars_initial,
-                tier="pattern_match",
-                **log_context,
-            )
-            # Granular instrumentation: tier1 parse_outcome
-            logger.info(
-                "parse_outcome",
-                tier="tier1",
-                success=True,
-                query_hash=_stable_hash(query),
-            )
-            intent: QueryIntent | None = pattern_intent  # Set for post-processing
-        else:
-            # Pattern match found something but below threshold - try semantic match
-            # but keep pattern match as fallback if semantic match is worse
-            # Tier 2: Semantic embeddings
-            semantic_intent = self._semantic_match(query)
-            attempt = {
-                "tier": "semantic_match",
-                "result": "success"
-                if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD
-                else "failed",
-                "confidence": semantic_intent.confidence if semantic_intent else 0.0,
-            }
-            parsing_attempts.append(attempt)
+        for tier_name in tier_order:
+            if tier_name == "pattern":
+                pattern_intent = self._pattern_match(query)
+                tier_results["pattern"] = pattern_intent
+                attempt = {
+                    "tier": "pattern_match",
+                    "result": "success"
+                    if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD
+                    else "failed",
+                    "confidence": pattern_intent.confidence if pattern_intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
 
-            # Choose best intent: prefer semantic if it meets threshold, otherwise use pattern if available
-            if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
-                intent = semantic_intent
-                intent.parsing_tier = "semantic_match"
-                intent.parsing_attempts = parsing_attempts
-                matched_vars = self._get_matched_variables(intent)
-                logger.info(
-                    "query_parse_success",
-                    intent=intent.intent_type,
-                    confidence=intent.confidence,
-                    matched_vars=matched_vars,
-                    tier="semantic_match",
-                    **log_context,
-                )
-                # Granular instrumentation: tier2 parse_outcome
-                logger.info(
-                    "parse_outcome",
-                    tier="tier2",
-                    success=True,
-                    query_hash=_stable_hash(query),
-                )
-            elif pattern_intent and pattern_intent.intent_type != "DESCRIBE":
-                # Use pattern match result even if below threshold, if it's more specific than DESCRIBE
-                # Also prefer pattern match if it's better than semantic match
-                if semantic_intent is None or (
-                    pattern_intent.confidence > semantic_intent.confidence and pattern_intent.intent_type != "DESCRIBE"
-                ):
-                    intent = pattern_intent
-                    intent.parsing_tier = "pattern_match"
-                    intent.parsing_attempts = parsing_attempts
+                if pattern_intent and pattern_intent.confidence >= TIER_1_PATTERN_MATCH_THRESHOLD:
+                    pattern_intent.parsing_tier = "pattern_match"
+                    pattern_intent.parsing_attempts = parsing_attempts
+                    matched_vars_initial = self._get_matched_variables(pattern_intent)
                     logger.info(
-                        "query_parse_partial_pattern_match",
-                        intent=intent.intent_type,
-                        confidence=intent.confidence,
-                        reason="pattern_match_below_threshold_but_better_than_semantic",
+                        "query_parse_success",
+                        intent=pattern_intent.intent_type,
+                        confidence=pattern_intent.confidence,
+                        matched_vars=matched_vars_initial,
+                        tier="pattern_match",
+                        tier_order_position=tier_order.index("pattern") + 1,
                         **log_context,
                     )
-                else:
-                    intent = semantic_intent  # Use semantic if it's better
-            elif semantic_intent:
-                intent = semantic_intent  # Use semantic even if below threshold
-            else:
-                intent = pattern_intent  # Fallback to pattern match if available
+                    logger.info(
+                        "parse_outcome",
+                        tier="tier1",
+                        success=True,
+                        query_hash=_stable_hash(query),
+                    )
+                    intent = pattern_intent
+                    break  # First tier success, stop trying others
 
-        # Tier 3: LLM fallback (stub for now) - only if we don't have a good intent yet
-        if not intent or (intent.confidence < 0.5 and intent.intent_type == "DESCRIBE"):
-            # Granular instrumentation: tier3 llm_called
-            logger.info(
-                "parse_outcome",
-                tier="tier3",
-                llm_called=True,
-                query_hash=_stable_hash(query),
-            )
-            llm_intent = self._llm_parse(query, conversation_history=conversation_history)
-            attempt = {
-                "tier": "llm_fallback",
-                "result": "success" if llm_intent else "failed",
-                "confidence": llm_intent.confidence if llm_intent else 0.0,
-            }
-            parsing_attempts.append(attempt)
+            elif tier_name == "semantic":
+                semantic_intent = self._semantic_match(query, conversation_history=conversation_history)
+                tier_results["semantic"] = semantic_intent
+                attempt = {
+                    "tier": "semantic_match",
+                    "result": "success"
+                    if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD
+                    else "failed",
+                    "confidence": semantic_intent.confidence if semantic_intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
 
-            if llm_intent:
-                intent = llm_intent
-                intent.parsing_tier = "llm_fallback"
-                intent.parsing_attempts = parsing_attempts
-                matched_vars = self._get_matched_variables(intent)
+                if semantic_intent and semantic_intent.confidence >= TIER_2_SEMANTIC_MATCH_THRESHOLD:
+                    semantic_intent.parsing_tier = "semantic_match"
+                    semantic_intent.parsing_attempts = parsing_attempts
+                    matched_vars = self._get_matched_variables(semantic_intent)
+                    logger.info(
+                        "query_parse_success",
+                        intent=semantic_intent.intent_type,
+                        confidence=semantic_intent.confidence,
+                        matched_vars=matched_vars,
+                        tier="semantic_match",
+                        tier_order_position=tier_order.index("semantic") + 1,
+                        **log_context,
+                    )
+                    logger.info(
+                        "parse_outcome",
+                        tier="tier2",
+                        success=True,
+                        query_hash=_stable_hash(query),
+                    )
+                    intent = semantic_intent
+                    break  # First tier success, stop trying others
+
+            elif tier_name == "llm":
+                # LLM tier - always as fallback
                 logger.info(
-                    "query_parse_success",
+                    "parse_outcome",
+                    tier="tier3",
+                    llm_called=True,
+                    query_hash=_stable_hash(query),
+                )
+                llm_intent = self._llm_parse(query, conversation_history=conversation_history)
+                tier_results["llm"] = llm_intent
+                attempt = {
+                    "tier": "llm_fallback",
+                    "result": "success" if llm_intent else "failed",
+                    "confidence": llm_intent.confidence if llm_intent else 0.0,
+                }
+                parsing_attempts.append(attempt)
+
+                if llm_intent:
+                    llm_intent.parsing_tier = "llm_fallback"
+                    llm_intent.parsing_attempts = parsing_attempts
+                    matched_vars = self._get_matched_variables(llm_intent)
+                    logger.info(
+                        "query_parse_success",
+                        intent=llm_intent.intent_type,
+                        confidence=llm_intent.confidence,
+                        matched_vars=matched_vars,
+                        tier="llm_fallback",
+                        tier_order_position=tier_order.index("llm") + 1,
+                        **log_context,
+                    )
+                    intent = llm_intent
+                    break  # LLM success
+
+        # Smart fallback: if no tier met threshold, choose best available
+        if not intent:
+            # Find best result from all tiers tried
+            best_intent = None
+            best_confidence = 0.0
+
+            for tier_result in tier_results.values():
+                if tier_result and tier_result.confidence > best_confidence:
+                    best_intent = tier_result
+                    best_confidence = tier_result.confidence
+
+            if best_intent:
+                intent = best_intent
+                intent.parsing_tier = f"{intent.parsing_tier or 'fallback'}_below_threshold"
+                intent.parsing_attempts = parsing_attempts
+                logger.info(
+                    "query_parse_partial_match",
                     intent=intent.intent_type,
                     confidence=intent.confidence,
-                    matched_vars=matched_vars,
-                    tier="llm_fallback",
+                    reason="all_tiers_below_threshold_using_best",
                     **log_context,
                 )
 
@@ -1047,12 +1161,16 @@ class NLQueryEngine:
 
         return None
 
-    def _semantic_match(self, query: str) -> QueryIntent | None:
+    def _semantic_match(self, query: str, conversation_history: list[dict] | None = None) -> QueryIntent | None:
         """
         Tier 2: Semantic embedding similarity matching.
 
+        Enhanced with golden examples - checks similarity with curated queries first,
+        then falls back to template matching.
+
         Args:
             query: User's question
+            conversation_history: Optional conversation context for refinement queries
 
         Returns:
             QueryIntent if good match found, None otherwise
@@ -1068,17 +1186,74 @@ class NLQueryEngine:
             if self.encoder is None:
                 return None
 
+            # Encode query once
+            query_embedding = self.encoder.encode([query])
+
+            from sklearn.metrics.pairwise import cosine_similarity
+
+            # First, check golden examples for high similarity
+            if self._golden_embeddings is not None and self._golden_examples is not None:
+                golden_similarities = cosine_similarity(query_embedding, self._golden_embeddings)[0]
+                best_golden_idx = golden_similarities.argmax()
+                best_golden_score = golden_similarities[best_golden_idx]
+
+                # If high similarity with golden example, use its intent
+                if best_golden_score > 0.8:  # Higher threshold for golden examples
+                    golden_ex = self._golden_examples[best_golden_idx]
+
+                    # Check if golden example requires conversation context
+                    requires_context = "conversation_history" in golden_ex
+                    has_context = conversation_history is not None and len(conversation_history) > 0
+
+                    # If example requires context but we don't have it, penalize confidence
+                    if requires_context and not has_context:
+                        logger.debug(
+                            "semantic_match_golden_example_context_mismatch",
+                            query=query[:50],
+                            matched_example=golden_ex["query"],
+                            similarity=float(best_golden_score),
+                            reason="golden_example_requires_context_but_none_provided",
+                        )
+                        # Fall through to template matching instead
+                        best_golden_score = 0.0  # Skip this match
+
+                if best_golden_score > 0.8:
+                    golden_ex = self._golden_examples[best_golden_idx]
+                    logger.debug(
+                        "semantic_match_golden_example",
+                        query=query[:50],
+                        matched_example=golden_ex["query"],
+                        similarity=float(best_golden_score),
+                        intent=golden_ex["expected_intent"],
+                    )
+
+                    intent = QueryIntent(
+                        intent_type=golden_ex["expected_intent"],
+                        confidence=float(best_golden_score),
+                    )
+
+                    # Use expected variables from golden example if available
+                    if golden_ex.get("expected_metric"):
+                        intent.primary_variable = golden_ex["expected_metric"]
+                    if golden_ex.get("expected_group_by"):
+                        intent.grouping_variable = golden_ex["expected_group_by"]
+
+                    # Extract actual variables from query for fallback
+                    variables = self._extract_variables_from_query(query)
+                    if not intent.primary_variable and variables:
+                        intent.primary_variable = str(variables[0]) if variables[0] is not None else None
+                    if not intent.grouping_variable and len(variables) > 1:
+                        intent.grouping_variable = str(variables[1]) if variables[1] is not None else None
+
+                    return intent
+
+            # Fallback: template matching (original behavior)
             # Lazy compute template embeddings
             if self.template_embeddings is None:
                 template_texts = [t["template"] for t in self.query_templates]
                 self.template_embeddings = self.encoder.encode(template_texts)
 
-            # Encode query
-            query_embedding = self.encoder.encode([query])
-
             # Compute similarity with all templates
-            from sklearn.metrics.pairwise import cosine_similarity
-
             similarities = cosine_similarity(query_embedding, self.template_embeddings)[0]
 
             # Get best match

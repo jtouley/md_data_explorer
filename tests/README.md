@@ -139,7 +139,7 @@ def get_available_datasets():
     DatasetRegistry.load_config()
     return [
         name for name in DatasetRegistry.list_datasets()
-        if name not in ["covid_ms", "mimic3", "sepsis", "uploaded"]  # Filter out built-in datasets
+        if name != "uploaded"  # Exclude uploaded class (not instances)
     ]
 
 @pytest.mark.parametrize("dataset_name", get_available_datasets())

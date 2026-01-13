@@ -4,6 +4,8 @@
 **Date:** 2025-12-24
 **Status:** 🎯 Current Architecture + Strategic Direction
 
+> **Note:** Built-in dataset examples (COVID-MS, Sepsis) mentioned in this document have been removed. The platform now supports **user-uploaded datasets only**. Architecture patterns and NL query capabilities remain applicable to uploaded datasets.
+
 ---
 
 ## 🏗️ System Architecture

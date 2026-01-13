@@ -26,6 +26,18 @@ fuzzy_match_cutoff: 0.7  # difflib cutoff for fuzzy variable matching
 enable_clarifying_questions: true
 enable_progressive_feedback: true
 
+# Tier precedence configuration (Phase 4)
+# Controls the order of parsing attempts and A/B testing capabilities
+tier_precedence:
+  # Order of tiers to try (first match wins if confidence >= threshold)
+  enabled_tiers: ["pattern", "semantic", "llm"]
+
+  # If true, try semantic before pattern (for A/B testing)
+  prefer_semantic_over_pattern: false
+
+  # If semantic confidence >= this, skip pattern tier entirely
+  pattern_fallback_threshold: 0.85
+
 # Ollama LLM Configuration (loaded from config/ollama.yaml, but values here for reference)
 # These values are loaded from config/ollama.yaml via _load_ollama_config()
 # Environment variables take precedence over YAML config

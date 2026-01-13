@@ -1521,7 +1521,7 @@ def discovered_datasets():
     DatasetRegistry.load_config()
 
     all_datasets = DatasetRegistry.list_datasets()
-    excluded = ["covid_ms", "mimic3", "sepsis", "uploaded"]
+    excluded = ["uploaded"]  # Exclude the class itself, not instances
     available = [d for d in all_datasets if d not in excluded]
 
     logger.info(

@@ -220,7 +220,7 @@ class SemanticLayer:
         Initialize semantic layer for a dataset.
 
         Args:
-            dataset_name: Name of dataset (e.g., 'covid_ms', 'sepsis')
+            dataset_name: Name of dataset (upload_id for uploaded datasets)
             config: Optional config dict (if None, loads from datasets.yaml)
             workspace_root: Optional workspace root path (if None, auto-detects)
             upload_id: Optional upload ID for user-uploaded datasets (Phase 2: alias persistence)
@@ -349,7 +349,6 @@ class SemanticLayer:
                 # For directory-based sources, we need to aggregate first
                 # This is handled by dataset-specific logic
                 # For now, we'll use DuckDB's ability to read multiple files
-                # But Sepsis needs special handling - see SepsisDataset
                 raise NotImplementedError(
                     f"Directory sources need dataset-specific handling. See {self.dataset_name} dataset implementation."
                 )

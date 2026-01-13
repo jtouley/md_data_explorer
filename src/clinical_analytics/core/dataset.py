@@ -33,7 +33,7 @@ class ClinicalDataset(ABC):
         Initialize the clinical dataset.
 
         Args:
-            name: Unique identifier for the dataset (e.g., 'covid_ms', 'mimic3')
+            name: Unique identifier for the dataset (e.g., upload_id for uploaded datasets)
             source_path: Path to raw files (for file-based datasets)
             db_connection: Database connection object (for SQL-based datasets)
         """

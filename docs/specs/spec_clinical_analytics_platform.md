@@ -1,9 +1,11 @@
 # Clinical Analytics Platform - Multi-Dataset Specification
 
 **Version:** 3.1 (Semantic Layer Enhanced)
-**Status:** In Progress
-**Scope:** COVID-19 MS, Sepsis (PhysioNet 2019), MIMIC-III (Future)
+**Status:** Historical (Scope Changed)
+**Scope:** User-Uploaded Datasets Only
 **Package Manager:** uv
+
+> **⚠️ Scope Change:** Built-in datasets (COVID-MS, Sepsis, MIMIC-III) referenced below have been **removed**. The platform now supports **user-uploaded datasets only** with automatic schema inference. See [dataset-registry.md](../architecture/dataset-registry.md) for current architecture.
 
 **Related Documentation:**
 - **[vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md)** - Strategic direction and semantic NL query vision

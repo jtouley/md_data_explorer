@@ -2,7 +2,9 @@
 
 **Last Updated:** 2025-12-07
 **Version:** 1.0 (Polars-Optimized)
-**Status:** ✅ COMPLETE
+**Status:** ✅ COMPLETE (Historical)
+
+> **⚠️ Historical Document:** This document describes the original implementation phases. Built-in datasets (COVID-MS, Sepsis, MIMIC-III) referenced here have been **removed** from the codebase. The platform now supports **user-uploaded datasets only**. See [dataset-registry.md](../architecture/dataset-registry.md) for current architecture.
 
 ---
 

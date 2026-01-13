@@ -1,5 +1,7 @@
 # Multi-Dataset Platform Scaffolding Plan
 
+> **⚠️ ARCHIVED:** This is a historical planning document. Built-in datasets (COVID-MS, Sepsis, MIMIC-III) have been removed. See [dataset-registry.md](../../architecture/dataset-registry.md) for current architecture.
+
 ## 1. Project Initialization
 
 - [ ] Create `pyproject.toml` with `uv` dependencies (`pandas`, `duckdb`, `streamlit`, `statsmodels`).
