@@ -1,0 +1,105 @@
+# NL Query Engine Tier 1 Regex Patterns
+# Patterns are data, not code - adjust without code changes
+# Order matters within each intent (first match wins)
+#
+# Each pattern has:
+# - pattern: regex string (case-insensitive matching)
+# - groups: mapping of capture group number to QueryIntent field
+# - confidence: confidence score (0-1) for matches
+#
+# NOTE: This config provides pattern infrastructure. The actual refactoring
+# of _pattern_match() to use these patterns is incremental - see Phase 4.
+
+patterns:
+  # COMPARE_GROUPS patterns
+  COMPARE_GROUPS:
+    - pattern: "compare\\s+(\\w+)\\s+(?:by|between|across)\\s+(\\w+)"
+      groups:
+        "1": "primary_variable"
+        "2": "grouping_variable"
+      confidence: 0.95
+
+    - pattern: "difference\\s+(?:in|of)\\s+(\\w+)\\s+(?:by|between)\\s+(\\w+)"
+      groups:
+        "1": "primary_variable"
+        "2": "grouping_variable"
+      confidence: 0.9
+
+    - pattern: "compare\\s+(\\w+(?:\\s+\\w+)*?)\\s+(?:across|between)\\s+(?:different\\s+)?(\\w+(?:\\s+\\w+)*?)"
+      groups:
+        "1": "primary_variable"
+        "2": "grouping_variable"
+      confidence: 0.95
+
+    - pattern: "(?:which|what)\\s+(\\w+(?:\\s+\\w+)*?)\\s+had\\s+the\\s+(lowest|highest)\\s+(\\w+(?:\\s+\\w+)*)"
+      groups:
+        "1": "grouping_variable"
+        "3": "primary_variable"
+      confidence: 0.95
+
+  # FIND_PREDICTORS patterns
+  FIND_PREDICTORS:
+    - pattern: "(?:what predicts|predictors of|predict|risk factors for)\\s+(\\w+)"
+      groups:
+        "1": "primary_variable"
+      confidence: 0.95
+
+  # SURVIVAL patterns
+  SURVIVAL:
+    - pattern: "\\b(survival|time to event|kaplan|cox)\\b"
+      groups: {}
+      confidence: 0.9
+
+  # CORRELATIONS patterns
+  CORRELATIONS:
+    - pattern: "\\b(correlat|relationship|relate|associat)\\b"
+      groups: {}
+      confidence: 0.9
+
+  # COUNT patterns
+  COUNT:
+    - pattern: "how many"
+      groups: {}
+      confidence: 0.9
+
+    - pattern: "\\bcount\\b"
+      groups: {}
+      confidence: 0.9
+
+    - pattern: "number of"
+      groups: {}
+      confidence: 0.9
+
+    - pattern: "what\\s+(\\w+(?:\\s+\\w+)?)\\s+(?:were|was)\\s+(?:\\w+\\s+)?on"
+      groups:
+        "1": "grouping_variable"
+      confidence: 0.9
+
+    - pattern: "which\\s+(?:\\w+\\s+)?(?:was|is)\\s+the?\\s+most\\s+\\w+"
+      groups: {}
+      confidence: 0.9
+
+    - pattern: "what\\s+was\\s+the\\s+most\\s+(?:common|prescribed|frequent)\\s+\\w+"
+      groups: {}
+      confidence: 0.9
+
+  # DESCRIBE patterns
+  DESCRIBE:
+    - pattern: "what\\s+is\\s+the\\s+(?:(?:average|mean|median)(?:\\s+and\\s+(?:average|mean|median))*\\s+)(\\w+(?:\\s+\\w+)*?)"
+      groups:
+        "1": "primary_variable"
+      confidence: 0.9
+
+    - pattern: "\\b(average|mean|avg)\\s+(?:of\\s+)?(\\w+(?:\\s+\\w+)*?)"
+      groups:
+        "2": "primary_variable"
+      confidence: 0.9
+
+    - pattern: "\\b(describe|summarize?|overview of)\\s+(\\w+(?:\\s+\\w+)*?)"
+      groups:
+        "2": "primary_variable"
+      confidence: 0.9
+
+    - pattern: "\\b(describe|summary|overview|statistics)\\b"
+      groups: {}
+      confidence: 0.9

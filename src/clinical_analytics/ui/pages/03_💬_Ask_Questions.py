@@ -2244,7 +2244,6 @@ def main():
                     # Phase 3.1: Add assistant message to chat if query came from chat input
                     # Phase 5: Check if last message is user message via ConversationManager
                     manager = st.session_state.get("conversation_manager")
-                    _added_assistant_msg = False  # Tracked for future logging/debugging
                     last_msg_is_user = False
                     if manager:
                         transcript = manager.get_transcript()
@@ -2281,7 +2280,6 @@ def main():
                                 pending_id=pending_id,
                                 run_key=run_key,
                             )
-                            _added_assistant_msg = True
                         else:
                             # Fallback: add new message if no pending message
                             if manager is not None:
@@ -2291,7 +2289,6 @@ def main():
                                     run_key=run_key,
                                     status="completed",
                                 )
-                                _added_assistant_msg = True
 
                         # Phase 5: Legacy st.session_state["chat"] removed
                         # ConversationManager is now the single source of truth

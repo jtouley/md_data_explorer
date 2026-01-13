@@ -9,7 +9,9 @@ This module provides functions to load configuration from YAML files with:
 
 import logging
 import os
+import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -651,6 +653,69 @@ def load_paths_config(config_path: Path | None = None) -> dict[str, Path]:
         result[key] = Path(value)
 
     return result
+
+
+@lru_cache(maxsize=1)
+def load_patterns_config(config_path: Path | None = None) -> dict[str, list[dict]]:
+    """
+    Load and compile regex patterns from config.
+
+    Uses LRU cache to avoid recompiling patterns on every call.
+
+    Args:
+        config_path: Optional path to config file. If None, uses default location.
+
+    Returns:
+        dict mapping intent type to list of compiled pattern dicts.
+        Each pattern dict has: regex (compiled), groups (dict), confidence (float)
+
+    Raises:
+        ValueError: If YAML is invalid
+    """
+    # Determine config file path
+    if config_path is None:
+        project_root = get_project_root()
+        config_path = project_root / "config" / "nl_query_patterns.yaml"
+
+    # Load YAML if file exists
+    if not config_path.exists():
+        logger.debug(f"Patterns config file not found at {config_path}, using empty patterns")
+        return {}
+
+    try:
+        with open(config_path) as f:
+            yaml_data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+    except Exception as e:
+        logger.warning(f"Failed to load patterns from {config_path}: {e}")
+        return {}
+
+    # Compile patterns
+    compiled: dict[str, list[dict]] = {}
+    patterns_data = yaml_data.get("patterns", {})
+
+    for intent, patterns in patterns_data.items():
+        compiled[intent] = []
+        for p in patterns:
+            try:
+                compiled_pattern = {
+                    "regex": re.compile(p["pattern"], re.IGNORECASE),
+                    "groups": p.get("groups", {}),
+                    "confidence": p.get("confidence", 0.9),
+                }
+                compiled[intent].append(compiled_pattern)
+            except re.error as e:
+                logger.warning(f"Failed to compile pattern '{p.get('pattern')}': {e}")
+                continue
+
+    logger.debug(
+        "patterns_loaded: intent_count=%d, total_patterns=%d",
+        len(compiled),
+        sum(len(p) for p in compiled.values()),
+    )
+
+    return compiled
 
 
 def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
