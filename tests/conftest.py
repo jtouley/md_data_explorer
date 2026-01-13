@@ -826,6 +826,7 @@ def mock_cohort():
     - outcome_label: ["alive", "dead"] alternating
     - Predictors: age, score, group
     """
+    # PANDAS EXCEPTION: Required for legacy cohort format compatibility
     import pandas as pd
     from clinical_analytics.core.schema import UnifiedCohort
 

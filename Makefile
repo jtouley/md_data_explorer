@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
 
 # Default target
 .DEFAULT_GOAL := help
@@ -204,6 +204,27 @@ test-cov-term: ensure-venv ## Run tests with terminal coverage only in parallel 
 test-cov-term-serial: ensure-venv ## Run tests with terminal coverage serially (for deterministic coverage)
 	@echo "$(GREEN)Running tests with terminal coverage serially...$(NC)"
 	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing
+
+# Coverage enforcement commands (NEW)
+test-cov-check: ensure-venv ## Run tests with coverage enforcement (67% minimum, target 95%)
+	@echo "$(GREEN)Running tests with coverage enforcement (67% minimum)...$(NC)"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing --cov-fail-under=67 -n auto -m "not serial"
+
+test-cov-diff: ensure-venv ## Check coverage diff against baseline
+	@echo "$(GREEN)Checking coverage against baseline...$(NC)"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=json:coverage.json -n auto -m "not serial"
+	@$(PYTHON_RUN) scripts/check_coverage_regression.py
+
+coverage-baseline: ensure-venv ## Generate coverage baseline
+	@echo "$(GREEN)Generating coverage baseline...$(NC)"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=json:coverage.json -n auto -m "not serial"
+	@cp coverage.json tests/.coverage_baseline.json
+	@echo "$(GREEN)✓ Baseline saved to tests/.coverage_baseline.json$(NC)"
+
+coverage-report: ensure-venv ## Generate detailed coverage HTML report
+	@echo "$(GREEN)Generating coverage report...$(NC)"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -n auto
+	@echo "$(GREEN)Coverage report generated in $(COV_DIR)/index.html$(NC)"
 
 lint: ensure-venv ## Run ruff linter
 	@echo "$(GREEN)Running ruff linter...$(NC)"

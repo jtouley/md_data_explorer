@@ -71,3 +71,13 @@ repos:
         files: ^tests/.*\.py$
         pass_filenames: true
         always_run: false
+
+      # Coverage check on push (too slow for every commit)
+      # MANDATORY: This hook MUST block pushes. Never make it warn-only.
+      - id: coverage-check
+        name: Test Coverage Check (67% minimum, target 95%)
+        entry: bash -c 'make test-cov-check'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true

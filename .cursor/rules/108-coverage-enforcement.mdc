@@ -1,0 +1,95 @@
+---
+description: Enforce test coverage on all changes
+globs: src/**/*.py
+alwaysApply: true
+---
+
+# Coverage Enforcement Rule
+
+## Mandatory Coverage Requirements
+
+**All code changes MUST maintain test coverage at current baseline or higher.**
+
+**Current threshold**: 67% (target: 95%)
+
+The threshold will be incrementally raised as coverage improves. See `.context/checkpoints/coverage_improvement.md` for the roadmap to 95%.
+
+## Before Any Implementation
+
+1. Check current coverage: `make coverage-report`
+2. Identify untested code paths in your target files
+3. Write tests FIRST (TDD)
+
+## After Implementation
+
+1. Run coverage check: `make test-cov-check`
+2. If coverage drops, add more tests before committing
+3. Generate baseline after adding tests: `make coverage-baseline`
+
+## New Files MUST Have Tests
+
+For every new source file, create a corresponding test file:
+- `src/clinical_analytics/core/foo.py` → `tests/core/test_foo.py`
+- `src/clinical_analytics/ui/bar.py` → `tests/ui/test_bar.py`
+- `src/clinical_analytics/analysis/baz.py` → `tests/analysis/test_baz.py`
+
+## Coverage Exclusions (Require Justification)
+
+Only these patterns may be excluded from coverage:
+
+| Pattern | Reason |
+|---------|--------|
+| `# pragma: no cover` | Requires comment explaining why |
+| `*/ui/pages/*` | Streamlit runtime required for testing |
+| `@abstractmethod` | Abstract methods are not executed directly |
+| `if TYPE_CHECKING:` | Type hint imports not executed at runtime |
+| `if __name__ == "__main__":` | Script entry points |
+
+**Using `# pragma: no cover`**: Always include a comment explaining why the code cannot be tested:
+
+```python
+# pragma: no cover - Streamlit runtime required
+def render_page():
+    st.title("Page")
+```
+
+## Pre-Push Hook
+
+Coverage is enforced on `git push` via pre-commit hook. The hook:
+- Runs `make test-cov-check`
+- Blocks push if coverage drops below 67%
+- Cannot be bypassed (no `--no-verify`)
+
+## Regression Protection
+
+Coverage regression is limited to 0.5% from baseline:
+- If baseline is 70%, coverage cannot drop below 69.5%
+- Run `make test-cov-diff` to check against baseline
+- Update baseline with `make coverage-baseline` after adding tests
+
+## Commands Reference
+
+| Command | Purpose |
+|---------|---------|
+| `make test-cov-check` | Verify coverage threshold (fails if below) |
+| `make test-cov-diff` | Check for regression against baseline |
+| `make coverage-baseline` | Update baseline after adding tests |
+| `make coverage-report` | Generate HTML report (htmlcov/index.html) |
+
+## Integration with TDD Workflow
+
+```
+1. Write failing test (Red)
+2. Run test to verify failure
+3. Implement minimum code (Green)
+4. Run test to verify pass
+5. Run `make test-cov-check` to verify coverage maintained
+6. Commit implementation + tests
+7. `git push` runs coverage hook automatically
+```
+
+## Related Rules
+
+- [001-core-tdd-protocol.mdc](.cursor/rules/001-core-tdd-protocol.mdc) - TDD workflow
+- [002-code-quality-standards.mdc](.cursor/rules/002-code-quality-standards.mdc) - Testing patterns
+- [104-plan-execution-hygiene.mdc](.cursor/rules/104-plan-execution-hygiene.mdc) - Quality gates

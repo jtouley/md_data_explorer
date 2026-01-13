@@ -190,8 +190,7 @@ def extract_codebooks_from_docs(doc_text: str) -> dict[str, dict[str, str]]:
             # Normalize column name (lowercase, replace spaces with underscores)
             col_name = re.sub(r"\s+", "_", col_name_raw.lower())
 
-            # Extract code:value pairs from codebook_text
-            # Pattern: "1: Biktarvy, 2: Symtuza" or "1: Yes 2: No"
+            # Extract code:value pairs from codebook_text with pattern "1: Biktarvy, 2: Symtuza"
             codebook: dict[str, str] = {}
 
             # Pattern for code:value pairs (handles comma-separated and space-separated)
@@ -549,7 +548,7 @@ class SchemaInferenceEngine:
             pl.Float64,
         ]:
             unique_count = df[col].n_unique()
-            return unique_count <= 20
+            return bool(unique_count <= 20)
 
         # Default to categorical for unknown types
         return True

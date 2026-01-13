@@ -1,71 +1,43 @@
 ---
-description: Active development session - ADR004 Phase 4: Proactive Question Generation
-alwaysApply: false
+description: Track active development session
+globs: []
+alwaysApply: true
 ---
-# Active Session: adr004_phase4
 
-**Session ID**: `adr004_phase4`
+# Active Session: coverage_enforcement_complete
 
-**Session File**: `.context/sessions/adr004_phase4.yaml`
+## Session File
+`.cursor/plans/95%_coverage_enforcement_ea14da1e.plan.md`
 
-**Status**: Completed
+## Status
+PR opened - awaiting review
 
-## Resume Prompt Template
+## Resume Prompt
+Continue work on PR #39 (95% Coverage Enforcement System).
 
-Resume work on ADR004 Phase 4: Proactive Question Generation.
+Status: PR opened at https://github.com/jtouley/md_data_explorer/pull/39
+Branch: feat/add-test-coverage
 
-Context: Phase 4 implementation completed. All tests passing (18/18). Commit dcaedce includes:
-- UI display for upload-time example questions on first load
-- Integration of generate_proactive_questions() for query-time follow-ups
-- Comprehensive test suite (4 tests for example questions display, 3 tests for upload integration)
-- Test fixture extraction (UserDatasetStorage to conftest.py)
-- Mypy configuration update (pass_filenames: true, --follow-imports=silent)
+Implementation complete with all 9 phases:
+- Phase 0: Measured current coverage (69.1%)
+- Phase 1: Created .coveragerc and updated pyproject.toml
+- Phase 2: Added Makefile commands (test-cov-check, test-cov-diff, etc.)
+- Phase 3: Created check_coverage_regression.py with TDD (5 tests)
+- Phase 4: Added pre-push coverage hook
+- Phase 5: Created 108-coverage-enforcement.mdc cursor rule
+- Phase 5b: Updated 104-plan-execution-hygiene.mdc
+- Phase 6: Created CI workflow (.github/workflows/ci.yml)
+- Phase 7: Generated initial baseline (69.1%)
+- Phase 8: Updated tests/AGENTS.md with coverage docs
+- Phase 9: Created coverage gap follow-up document
 
-Completed:
-- Implemented _render_example_questions() in Ask Questions page
-- Integrated generate_upload_questions() into save_table_list() to store example questions in metadata
-- Added StreamlitCacheBackend for UI-agnostic caching
-- Added observability logging for example_question_selected and proactive_question_selected events
-- Fixed type annotations in StreamlitCacheBackend
-- Configured mypy to only check staged files to avoid pre-existing errors blocking commits
+Tests: 5/5 passing for new coverage script
+Quality gates: All checks passing for new files
 
-Files modified:
-- src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py (UI display, proactive questions integration)
-- src/clinical_analytics/ui/storage/user_datasets.py (upload-time question generation integration)
-- .pre-commit-config.yaml (mypy configuration)
+Note: 33 pre-existing test failures in codebase block pre-push hook.
+These failures predate this PR and need separate attention.
 
-Files created:
-- tests/loader/conftest.py (UserDatasetStorage fixture)
-- tests/loader/test_question_generation_upload.py (upload integration tests)
-- tests/ui/pages/test_ask_questions_example_questions.py (UI display tests)
+Next: Await PR review or address feedback.
 
-Next steps (Phase 5):
-- Write integration test - end-to-end upload with docs, schema inference, AutoContext, questions
-- Write integration test - AutoContext consumed by Tier 3 LLM fallback
-- Write performance test - doc extraction latency (should be <5s for typical PDFs)
-- Run make test to verify all tests pass (no regressions)
-- Update ADR004.md with implementation status
-- Final commit - ADR004 Complete Implementation
-
-## Session Context
-
-- **Problem**: Implement proactive question generation for ADR004 - both upload-time example questions and query-time follow-up questions
-- **Solution**: Created question_generator.py with CacheBackend protocol, integrated into upload process and UI display, added comprehensive test coverage
-- **Status**: Phase 4 completed, all tests passing (18/18), committed as dcaedce
-
-## Key Files
-
-- `src/clinical_analytics/core/question_generator.py` - Core question generation logic
-- `src/clinical_analytics/ui/pages/03_💬_Ask_Questions.py` - UI display integration
-- `src/clinical_analytics/ui/storage/user_datasets.py` - Upload-time question generation integration
-- `tests/loader/test_question_generation_upload.py` - Upload integration tests
-- `tests/ui/pages/test_ask_questions_example_questions.py` - UI display tests
-
-## Notes
-
-- All Phase 4 tests passing: 18/18
-- Mypy configured with --follow-imports=silent to only check staged files
-- Test fixture violations fixed by extracting UserDatasetStorage to conftest.py
-- Question generation uses CacheBackend protocol for UI-agnostic caching
-- Upload-time questions stored in metadata["example_questions"]
-- Proactive questions generated after query execution with confidence gating
+## Note
+Code was generated during this session. Run `/deslop` before resuming work to remove AI-generated slop.

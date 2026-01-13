@@ -13,7 +13,6 @@ from clinical_analytics.ui.config import ASK_QUESTIONS_PAGE, V1_MVP_MODE
 
 if TYPE_CHECKING:
     # PANDAS EXCEPTION: ClinicalDataset.get_cohort() returns pd.DataFrame
-    # TODO: Remove when get_cohort() returns pl.DataFrame
     import pandas as pd
 
 

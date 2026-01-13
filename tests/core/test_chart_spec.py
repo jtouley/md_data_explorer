@@ -27,7 +27,7 @@ class TestChartSpecGeneration:
 
     def test_chart_spec_has_required_fields(self, make_semantic_layer):
         """chart_spec should have required fields (type, title)."""
-        # Arrange: QueryPlan
+        # Arrange
         plan = QueryPlan(intent="COUNT", entity_key="patient_id", group_by="status", confidence=0.9)
         semantic_layer = make_semantic_layer()
 
