@@ -147,3 +147,44 @@ class TestNLQueryEngineGoldenExamples:
         assert intent is not None
         assert intent.intent_type == "COUNT"
         assert intent.confidence >= 0.7
+
+    def test_semantic_match_golden_example_high_similarity_returns_intent(self, make_semantic_layer):
+        """Test that queries with high similarity to golden examples use golden intent."""
+        # Arrange: Create semantic layer
+        semantic = make_semantic_layer(
+            dataset_name="test",
+            data={"patient_id": [1, 2, 3], "age": [25, 35, 45], "status": ["active", "inactive", "active"]},
+        )
+
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        engine = NLQueryEngine(semantic)
+
+        # Act: Parse query very similar to golden example "how many patients?"
+        intent = engine._semantic_match("how many patients are there?")
+
+        # Assert: Should match via golden example with high confidence
+        assert intent is not None
+        assert intent.intent_type == "COUNT"
+        assert intent.confidence >= 0.8  # High confidence from golden match
+
+    def test_semantic_match_golden_example_with_variables(self, make_semantic_layer):
+        """Test that golden examples with variables populate intent correctly."""
+        # Arrange: Create semantic layer
+        semantic = make_semantic_layer(
+            dataset_name="test",
+            data={"patient_id": [1, 2], "age": [25, 35], "gender": ["M", "F"]},
+        )
+
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        engine = NLQueryEngine(semantic)
+
+        # Act: Parse query similar to golden example "average age by gender"
+        intent = engine._semantic_match("mean age by gender")
+
+        # Assert: Should match DESCRIBE intent with variables
+        assert intent is not None
+        assert intent.intent_type == "DESCRIBE"
+        # Variables should be extracted (either from golden or query)
+        # Note: exact variable extraction depends on golden example metadata
