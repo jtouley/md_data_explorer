@@ -646,3 +646,149 @@ class TestConfigLoaderPaths:
 
         with pytest.raises(ValueError, match="Invalid YAML"):
             load_paths_config(config_path=config_file)
+
+
+class TestConfigLoaderPatterns:
+    """Test suite for NL query pattern configuration loading."""
+
+    def test_load_patterns_config_loads_from_yaml_file(self, tmp_path):
+        """Test that load_patterns_config loads patterns from YAML file."""
+        # Arrange: Create temporary YAML config file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_data = {
+            "patterns": {
+                "COMPARE_GROUPS": [
+                    {
+                        "pattern": r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)",
+                        "groups": {"1": "primary_variable", "2": "grouping_variable"},
+                        "confidence": 0.95,
+                    },
+                    {
+                        "pattern": r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)",
+                        "groups": {"1": "primary_variable", "2": "grouping_variable"},
+                        "confidence": 0.9,
+                    },
+                ],
+                "COUNT": [
+                    {
+                        "pattern": r"how many",
+                        "groups": {},
+                        "confidence": 0.9,
+                    },
+                ],
+            }
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        result = load_patterns_config(config_path=config_file)
+
+        # Assert: Patterns are loaded and compiled
+        assert "COMPARE_GROUPS" in result
+        assert "COUNT" in result
+        assert len(result["COMPARE_GROUPS"]) == 2
+        assert len(result["COUNT"]) == 1
+
+        # Check that patterns are compiled regex objects
+        import re
+
+        first_pattern = result["COMPARE_GROUPS"][0]
+        assert "regex" in first_pattern
+        assert isinstance(first_pattern["regex"], re.Pattern)
+        assert first_pattern["confidence"] == 0.95
+        assert first_pattern["groups"] == {"1": "primary_variable", "2": "grouping_variable"}
+
+    def test_load_patterns_config_caches_compiled_patterns(self, tmp_path):
+        """Test that load_patterns_config caches compiled patterns."""
+        # Arrange: Create YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_data = {
+            "patterns": {
+                "COUNT": [
+                    {"pattern": r"how many", "groups": {}, "confidence": 0.9},
+                ],
+            }
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config twice
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first to ensure test isolation
+        load_patterns_config.cache_clear()
+
+        result1 = load_patterns_config(config_path=config_file)
+        result2 = load_patterns_config(config_path=config_file)
+
+        # Assert: Same object returned (cached)
+        assert result1 is result2
+
+    def test_load_patterns_config_missing_file_uses_empty_patterns(self):
+        """Test that missing YAML file returns empty patterns."""
+        # Arrange: Non-existent config file
+        config_file = Path("/nonexistent/config/nl_query_patterns.yaml")
+
+        # Act: Load config (should use defaults)
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first
+        load_patterns_config.cache_clear()
+
+        result = load_patterns_config(config_path=config_file)
+
+        # Assert: Empty patterns dict
+        assert result == {}
+
+    def test_load_patterns_config_invalid_yaml_raises_valueerror(self, tmp_path):
+        """Test that invalid YAML raises ValueError."""
+        # Arrange: Create invalid YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+
+        # Act & Assert: Loading invalid YAML should raise ValueError
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first
+        load_patterns_config.cache_clear()
+
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_patterns_config(config_path=config_file)
+
+    def test_load_patterns_config_compiles_case_insensitive(self, tmp_path):
+        """Test that patterns are compiled with IGNORECASE flag."""
+        # Arrange: Create YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_data = {
+            "patterns": {
+                "COUNT": [
+                    {"pattern": r"how many", "groups": {}, "confidence": 0.9},
+                ],
+            }
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first
+        load_patterns_config.cache_clear()
+
+        result = load_patterns_config(config_path=config_file)
+
+        # Assert: Pattern matches case-insensitively
+        import re
+
+        pattern = result["COUNT"][0]["regex"]
+        assert pattern.search("HOW MANY") is not None
+        assert pattern.search("How Many") is not None
+        assert pattern.flags & re.IGNORECASE
