@@ -543,7 +543,6 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
     elif file_ext in {".xlsx", ".xls"}:
         # PANDAS EXCEPTION: Use pandas as primary for Excel files
         # Polars read_excel() can miss columns or stop early on complex Excel files
-        # TODO: Revisit when Polars Excel support is more robust
         import pandas as pd
 
         try:
@@ -968,7 +967,6 @@ def apply_schema_drift_policy(
         message = f"Additive schema changes detected: {len(added_columns)} new column(s) added"
         return True, message, []
 
-    # drift_type == "breaking"
     if override:
         # Allowed with override, but warn
         warning_parts = []

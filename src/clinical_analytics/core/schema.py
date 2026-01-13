@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     # PANDAS EXCEPTION: ClinicalDataset.get_cohort() returns pd.DataFrame
     # This module validates that return type. Migration to Polars pending
     # refactor of all dataset implementations.
-    # TODO: Remove when get_cohort() returns pl.DataFrame
     import pandas as pd
 
 

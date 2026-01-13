@@ -285,6 +285,26 @@ git commit -m "feat: Phase N - [description]"
 
 > **Reference**: `.cursor/rules/106-test-quality-thresholds.mdc`
 
+### Coverage Gate (MANDATORY)
+
+**Before every push:**
+- `make test-cov-check` - Must pass with 67% coverage (target: 95%)
+- Coverage cannot drop more than 0.5% from baseline
+
+**Before every PR:**
+- Run `make coverage-baseline` to update baseline if tests added
+- Verify coverage hasn't regressed: `make test-cov-diff`
+
+**Commands:**
+| Command | Purpose |
+|---------|---------|
+| `make test-cov-check` | Verify coverage threshold (fails if below) |
+| `make test-cov-diff` | Check for regression against baseline |
+| `make coverage-baseline` | Update baseline after adding tests |
+| `make coverage-report` | Generate HTML report (htmlcov/index.html) |
+
+> **Reference**: `.cursor/rules/108-coverage-enforcement.mdc`
+
 ## Rule Cross-Reference Summary
 
 | Rule | Key Topics | When to Consult |
@@ -294,6 +314,7 @@ git commit -m "feat: Phase N - [description]"
 | [101-testing-hygiene.mdc](.cursor/rules/101-testing-hygiene.mdc) | AAA pattern, fixtures, test isolation | Writing tests |
 | [102-dry-principles.mdc](.cursor/rules/102-dry-principles.mdc) | Configuration, columns, expressions | Code organization |
 | [103-staff-engineer-standards.mdc](.cursor/rules/103-staff-engineer-standards.mdc) | Error handling, observability, idempotency | Production patterns |
+| [108-coverage-enforcement.mdc](.cursor/rules/108-coverage-enforcement.mdc) | Coverage threshold, regression, baseline | Coverage requirements |
 
 ## Enforcement
 

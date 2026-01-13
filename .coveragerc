@@ -1,0 +1,24 @@
+[run]
+source = src/clinical_analytics
+branch = True
+omit =
+    */__pycache__/*
+    */tests/*
+    */__init__.py
+    */ui/pages/*
+
+[report]
+# Starting at 67% (current baseline) - target is 95%
+# See .context/checkpoints/coverage_improvement.md for plan to reach 95%
+fail_under = 67
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    if __name__ == "__main__":
+    @abstractmethod
+
+[html]
+directory = htmlcov

@@ -856,7 +856,7 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         }
 
     # Convert to pandas for legacy function (PANDAS EXCEPTION)
-    # TODO: Refactor run_logistic_regression to use Polars
+    # Future: Refactor run_logistic_regression to use Polars
     analysis_df_pd = analysis_df.to_pandas()
 
     # Handle categorical predictors
@@ -931,7 +931,7 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
         }
 
     # Convert to pandas for legacy function (PANDAS EXCEPTION)
-    # TODO: Refactor run_kaplan_meier to use Polars
+    # Future: Refactor run_kaplan_meier to use Polars
     analysis_df_pd = analysis_df.to_pandas()
 
     # Run Kaplan-Meier (legacy function)

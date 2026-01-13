@@ -20,9 +20,6 @@ from clinical_analytics.api.db.database import create_tables
 # Import routes
 from clinical_analytics.api.routes import sessions
 
-# Will be added as we implement them:
-# from clinical_analytics.api.routes import conversations, datasets, queries
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -44,10 +41,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Create database tables (in production, use Alembic migrations)
     create_tables()
     print("✅ Database tables ready")
-
-    # Future: Pre-warm semantic layer cache for common datasets
-    # for dataset_id in get_common_dataset_ids():
-    #     get_semantic_layer(dataset_id)
 
     yield
 
@@ -101,11 +94,6 @@ async def health_check() -> dict[str, str]:
 
 # Register API routes
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
-
-# Will be added as we implement them:
-# app.include_router(datasets.router, prefix="/api", tags=["datasets"])
-# app.include_router(queries.router, prefix="/api", tags=["queries"])
-# app.include_router(conversations.router, prefix="/api", tags=["conversations"])
 
 
 # ============================================================================
