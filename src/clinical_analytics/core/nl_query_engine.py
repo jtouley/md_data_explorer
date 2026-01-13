@@ -1233,10 +1233,13 @@ class NLQueryEngine:
                     )
 
                     # Use expected variables from golden example if available
+                    # Resolve to canonical column names (fixes short alias issue)
                     if golden_ex.get("expected_metric"):
-                        intent.primary_variable = golden_ex["expected_metric"]
+                        resolved_metric, _, _ = self._fuzzy_match_variable(golden_ex["expected_metric"])
+                        intent.primary_variable = resolved_metric or golden_ex["expected_metric"]
                     if golden_ex.get("expected_group_by"):
-                        intent.grouping_variable = golden_ex["expected_group_by"]
+                        resolved_group_by, _, _ = self._fuzzy_match_variable(golden_ex["expected_group_by"])
+                        intent.grouping_variable = resolved_group_by or golden_ex["expected_group_by"]
 
                     # Extract actual variables from query for fallback
                     variables = self._extract_variables_from_query(query)
@@ -3422,9 +3425,39 @@ Fix the errors and return a corrected query intent as JSON.
 
         return None
 
+    def _resolve_variable_to_column(self, variable: str | None) -> str | None:
+        """
+        Resolve a variable name/alias to the canonical column name.
+
+        Uses the semantic layer's column alias index to map short names
+        (e.g., "statin") to their canonical column names.
+
+        Args:
+            variable: Variable name or alias to resolve
+
+        Returns:
+            Canonical column name, or original if no match found
+        """
+        if not variable:
+            return None
+
+        # Try fuzzy matching (handles aliases like "statin" -> full column name)
+        canonical, confidence, _ = self._fuzzy_match_variable(variable)
+        if canonical and confidence > 0.5:
+            logger.debug(
+                "variable_resolved",
+                original=variable,
+                canonical=canonical,
+                confidence=confidence,
+            )
+            return canonical
+
+        # If fuzzy match fails, return original (may be exact column name already)
+        return variable
+
     def _intent_to_plan(self, intent: QueryIntent, dataset_version: str) -> QueryPlan:
         """
-        Convert QueryIntent to QueryPlan.
+        Convert QueryIntent to QueryPlan with variable name resolution.
 
         Phase 1.1.5: run_key is NOT set here - semantic layer will generate it deterministically
         using _generate_run_key() which includes normalized query text. This ensures all execution
@@ -3437,12 +3470,28 @@ Fix the errors and return a corrected query intent as JSON.
         Returns:
             QueryPlan with run_key=None (semantic layer will generate it)
         """
-        # Create QueryPlan from intent
+        # Resolve variable names to canonical column names
+        resolved_group_by = self._resolve_variable_to_column(intent.grouping_variable)
+        resolved_metric = self._resolve_variable_to_column(intent.primary_variable)
+
+        # Resolve filter column names
+        resolved_filters = []
+        for f in intent.filters:
+            resolved_column = self._resolve_variable_to_column(f.column)
+            resolved_filters.append(
+                FilterSpec(
+                    column=resolved_column or f.column,
+                    operator=f.operator,
+                    value=f.value,
+                    exclude_nulls=f.exclude_nulls,
+                )
+            )
+
         plan = QueryPlan(
             intent=intent.intent_type,  # type: ignore[arg-type]  # QueryPlan expects Literal, but we validate in QueryIntent
-            metric=intent.primary_variable,
-            group_by=intent.grouping_variable,
-            filters=intent.filters,  # Already FilterSpec objects
+            metric=resolved_metric,
+            group_by=resolved_group_by,
+            filters=resolved_filters,
             confidence=intent.confidence,
             explanation="",  # Will be populated from intent if available
             run_key=None,  # Phase 1.1.5: Semantic layer will generate run_key deterministically
@@ -3452,6 +3501,8 @@ Fix the errors and return a corrected query intent as JSON.
             "intent_converted_to_plan",
             intent_type=intent.intent_type,
             filter_count=len(plan.filters),
+            group_by_resolved=resolved_group_by != intent.grouping_variable,
+            metric_resolved=resolved_metric != intent.primary_variable,
         )
 
         return plan
