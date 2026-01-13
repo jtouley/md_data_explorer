@@ -151,8 +151,76 @@ class NLQueryEngine:
         # Validation config cache (lazy loaded)
         self._validation_config: dict | None = None
 
+        # Golden examples embedding cache (in-memory)
+        self._golden_embeddings = None
+        self._golden_examples = None
+        self._golden_config_path = None
+
         # Build query templates from metadata
         self._build_query_templates()
+
+        # Load golden examples for Tier 2 semantic matching
+        self._load_golden_examples()
+
+    def _load_golden_examples(self) -> None:
+        """
+        Load and embed golden examples at startup.
+
+        Golden examples are curated queries with known-good intent mappings.
+        Embeddings are cached in memory for fast similarity search.
+
+        If called multiple times with same config, uses cached embeddings.
+        """
+        # Check if already loaded (cache hit)
+        if self._golden_embeddings is not None and self._golden_examples is not None:
+            return
+
+        try:
+            from clinical_analytics.core.config_loader import load_golden_examples_config
+
+            config = load_golden_examples_config(config_path=self._golden_config_path)
+            examples = config.get("questions", [])
+
+            if not examples:
+                logger.debug("golden_examples_empty", reason="no_questions_in_config")
+                self._golden_embeddings = None
+                self._golden_examples = None
+                return
+
+            # Embed all queries
+            queries = [ex["query"] for ex in examples]
+
+            # Lazy load encoder if needed
+            if self.encoder is None:
+                from sentence_transformers import SentenceTransformer
+
+                encoder_obj = SentenceTransformer(self.embedding_model_name)
+                self.encoder = encoder_obj  # type: ignore[assignment]
+
+            if self.encoder is None:
+                logger.warning("golden_examples_encoder_unavailable")
+                self._golden_embeddings = None
+                self._golden_examples = None
+                return
+
+            self._golden_embeddings = self.encoder.encode(queries)
+            self._golden_examples = examples
+
+            logger.info(
+                "golden_examples_loaded",
+                count=len(examples),
+                embedding_shape=self._golden_embeddings.shape,
+            )
+        except Exception as e:
+            import traceback
+
+            logger.warning(
+                "golden_examples_load_failed",
+                error=str(e),
+                traceback=traceback.format_exc(),
+            )
+            self._golden_embeddings = None
+            self._golden_examples = None
 
     def _prompt_overlay_path(self) -> Path:
         """
