@@ -718,6 +718,45 @@ def load_patterns_config(config_path: Path | None = None) -> dict[str, list[dict
     return compiled
 
 
+def load_golden_examples_config(config_path: Path | None = None) -> dict[str, Any]:
+    """
+    Load golden examples from config.
+
+    Args:
+        config_path: Optional path to config file. If None, uses default location.
+
+    Returns:
+        dict with 'questions' key containing list of golden example dicts
+
+    Raises:
+        ValueError: If YAML is invalid
+    """
+    # Determine config file path
+    if config_path is None:
+        project_root = get_project_root()
+        config_path = project_root / "config" / "golden_examples.yaml"
+
+    # Load YAML if file exists
+    if not config_path.exists():
+        logger.debug(f"Golden examples config not found at {config_path}, using empty list")
+        return {"questions": []}
+
+    try:
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+    except Exception as e:
+        logger.warning(f"Failed to load golden examples from {config_path}: {e}")
+        return {"questions": []}
+
+    # Ensure questions key exists
+    if "questions" not in config:
+        config["questions"] = []
+
+    return config
+
+
 def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     Load validation config from YAML with env var overrides.
