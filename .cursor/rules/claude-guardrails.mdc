@@ -1,0 +1,47 @@
+---
+description: Claude Code guardrails integration for quality gates
+globs:
+  - .claude/**
+  - src/**
+  - tests/**
+alwaysApply: false
+---
+
+# Claude Guardrails (Cursor Integration)
+
+Lightweight rules for Claude Code hooks in this repo.
+
+## Branch Protection
+
+- **NEVER edit files on `main` or `master`** — create a feature branch first
+- Hook: `.claude/hooks/block-main-edits.sh`
+
+## Test Enforcement
+
+- **If `src/clinical_analytics/` changes, update tests in `tests/`**
+- Hook: `.claude/hooks/enforce-tests-updated.sh`
+
+## Pre-Commit Workflow
+
+Before committing:
+
+```bash
+make check-fast   # format, lint, type-check, fast tests
+```
+
+Or manually:
+
+```bash
+uv run ruff format .
+uv run ruff check --fix .
+make test-fast
+```
+
+## Quick Reference
+
+| Action | Command |
+|--------|---------|
+| Format file | `uv run ruff format path/to/file.py` |
+| Fix lints | `uv run ruff check --fix path/to/file.py` |
+| Fast tests | `make test-fast` |
+| Full gate | `make check-fast` |
