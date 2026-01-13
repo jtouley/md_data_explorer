@@ -561,6 +561,98 @@ class ValidationConfigDefaults:
         }
 
 
+@dataclass
+class PathsConfigDefaults:
+    """Default values for path configuration."""
+
+    prompt_overlay_dir: str = "/tmp/nl_query_learning"
+    query_logs_dir: str = "data/query_logs"
+    analytics_db: str = "data/analytics.duckdb"
+    uploads_dir: str = "data/uploads"
+    config_dir: str = "config"
+    golden_questions: str = "tests/eval/golden_questions.yaml"
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert dataclass to dictionary."""
+        return {
+            "prompt_overlay_dir": self.prompt_overlay_dir,
+            "query_logs_dir": self.query_logs_dir,
+            "analytics_db": self.analytics_db,
+            "uploads_dir": self.uploads_dir,
+            "config_dir": self.config_dir,
+            "golden_questions": self.golden_questions,
+        }
+
+
+def load_paths_config(config_path: Path | None = None) -> dict[str, Path]:
+    """
+    Load paths from config/paths.yaml with env var resolution.
+
+    Environment variables in paths are resolved using os.path.expandvars().
+    If an env var is not set (path still contains $VAR), the default is used.
+
+    Precedence: Resolved env var → YAML value → Default value
+
+    Args:
+        config_path: Optional path to config file. If None, uses default location.
+
+    Returns:
+        dict with path keys mapped to Path objects
+
+    Raises:
+        ValueError: If YAML is invalid
+    """
+    defaults = PathsConfigDefaults().to_dict()
+
+    # Determine config file path
+    if config_path is None:
+        project_root = get_project_root()
+        config_path = project_root / "config" / "paths.yaml"
+
+    # Load YAML if file exists
+    paths_config: dict[str, str] = {}
+    yaml_defaults: dict[str, str] = {}
+
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                yaml_data = yaml.safe_load(f) or {}
+                paths_config = yaml_data.get("paths", {})
+                yaml_defaults = yaml_data.get("defaults", {})
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+        except Exception as e:
+            logger.warning(f"Failed to load config from {config_path}: {e}, using defaults")
+
+    # Build result with env var resolution
+    result: dict[str, Path] = {}
+
+    for key in defaults:
+        # Start with hardcoded default
+        value = defaults[key]
+
+        # Override with YAML default if present
+        if key in yaml_defaults:
+            value = yaml_defaults[key]
+
+        # Override with YAML path if present
+        if key in paths_config:
+            raw_value = paths_config[key]
+            # Resolve environment variables
+            resolved = os.path.expandvars(raw_value)
+            # If env var was not set, expandvars returns the original string with $VAR
+            # In that case, use the default
+            if resolved.startswith("$") or "${" in resolved:
+                # Env var not resolved, use default
+                logger.debug(f"Path config {key}: env var not set, using default {value}")
+            else:
+                value = resolved
+
+        result[key] = Path(value)
+
+    return result
+
+
 def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     Load validation config from YAML with env var overrides.
