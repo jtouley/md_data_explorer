@@ -60,7 +60,9 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 # Test files use camelCase naming per CLAUDE.md: test_unit_scenario_expectedBehavior
-"tests/**/*.py" = ["N802", "N806"]
+# ERA001: AAA pattern comments (# Arrange:, # Act:, # Assert:) are standard test structure
+# TD002, TD003, FIX002: TODOs in tests are acceptable as they indicate future improvements
+"tests/**/*.py" = ["N802", "N806", "ERA001", "TD002", "TD003", "FIX002"]
 # Scripts and UI pages need sys.path manipulation before imports
 "scripts/**/*.py" = ["E402"]
 "src/clinical_analytics/ui/**/*.py" = ["E402"]

@@ -565,8 +565,8 @@ def render_review_step(
     outcome_col = mapping["outcome"]
 
     # Get inferred granularity from variable detection (default to unknown for V1)
-    granularity = "unknown"  # Default for V1 MVP - duplicates are warnings unless explicitly patient-level
-    # TODO: Extract from variable_info or mapping if user explicitly selects granularity
+    # Default for V1 MVP - duplicates are warnings unless explicitly patient-level
+    granularity = "unknown"
 
     # Run final validation with mapping and granularity
     validation_result = DataQualityValidator.validate_complete(

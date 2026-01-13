@@ -9,7 +9,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 
 import polars as pl
 import pytest
-
 from clinical_analytics.analysis.compute import (
     compute_analysis_by_type,
     compute_comparison_analysis,
@@ -164,7 +163,7 @@ class TestComputeDescriptiveAnalysis:
             }
         )
 
-        # Filter: age >= 30
+        # Setup query plan with age >= 30 filter
         query_plan = QueryPlan(
             intent="DESCRIBE",
             metric="all",
