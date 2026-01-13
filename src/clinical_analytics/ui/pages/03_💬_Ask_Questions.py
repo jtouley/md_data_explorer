@@ -1389,46 +1389,25 @@ def _render_thinking_indicator(steps: list[dict[str, Any]]) -> None:
 
     # Determine final status from last step
     last_step = steps[-1]
-    status_label = "🤔 Processing your question..."
-    status_state: Literal["running", "complete", "error"] = "running"
-    expanded = True  # Default to expanded
 
-    if last_step["status"] == "completed":
-        status_label = "✅ Query complete!"
-        status_state = "complete"
-        expanded = False  # Auto-collapse when completed
+    # Only show while processing or error - never show completion UI
+    # Thinking is transient. Completion is invisible. Results speak for themselves.
+    if last_step["status"] == "processing":
+        with st.status("🤔 Thinking…", state="running"):
+            for step in steps:
+                st.write(f"**{step['text']}**")
+
     elif last_step["status"] == "error":
-        status_label = "❌ Query failed"
-        status_state = "error"
-        expanded = True  # Keep expanded for errors
+        with st.status("❌ Query failed", state="error", expanded=True):
+            for step in steps:
+                # Render step text
+                st.write(f"**{step['text']}**")
 
-    with st.status(status_label, expanded=expanded, state=status_state):
-        for step in steps:
-            # Render step text
-            st.write(f"**{step['text']}**")
-
-            # Render step details if available
-            if step.get("details"):
-                details = step["details"]
-                if step["text"] == "Interpreting query":
-                    # Show query plan interpretation
-                    if details.get("intent"):
-                        st.write(f"- Intent: `{details['intent']}`")
-                    if details.get("metric"):
-                        st.write(f"- Analyzing: `{details['metric']}`")
-                    if details.get("group_by"):
-                        st.write(f"- Grouped by: `{details['group_by']}`")
-                    if details.get("filter_count", 0) > 0:
-                        st.write(f"- Filters: {details['filter_count']} condition(s)")
-                elif step["text"] == "Validating plan":
-                    if details.get("has_warnings"):
-                        st.write(f"- ⚠️ {details.get('warning_count', 0)} warning(s) detected")
-                elif step["text"] == "Executing query":
-                    st.write(f"- Run key: `{details.get('run_key', 'N/A')[:16]}...`")
-                elif step["text"] == "Query complete":
-                    st.write(f"- Result: {details.get('result_rows', 0)} row(s)")
-                elif step["text"] == "Query failed":
-                    st.write(f"- Error: {details.get('error', 'Unknown error')}")
+                # Render step details if available
+                if step.get("details"):
+                    details = step["details"]
+                    if step["text"] == "Query failed":
+                        st.write(f"- Error: {details.get('error', 'Unknown error')}")
 
 
 def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
