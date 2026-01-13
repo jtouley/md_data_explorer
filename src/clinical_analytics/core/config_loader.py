@@ -311,6 +311,9 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
                                 f"{target_type.__name__}: {e}, using default"
                             )
                             # Keep default value
+                    else:
+                        # New config key not in defaults - include as-is (e.g., nested dicts)
+                        config[key] = value
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
         except ValueError:
