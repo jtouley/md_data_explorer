@@ -8,7 +8,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import pytest
-
 from clinical_analytics.core.registry import DatasetRegistry
 
 
@@ -36,9 +35,7 @@ class TestSelectiveDatasetLoading:
         This should load dataset config only when requested, not upfront.
         """
         # Arrange: Get available dataset name
-        available = [
-            d for d in dataset_registry.list_datasets() if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]
-        ]
+        available = [d for d in dataset_registry.list_datasets() if d != "uploaded"]
 
         if not available:
             pytest.skip("No datasets available for testing")
@@ -78,9 +75,7 @@ class TestSelectiveDatasetLoading:
         not when dataset_registry fixture is created.
         """
         # Arrange: Get available dataset name
-        available = [
-            d for d in dataset_registry.list_datasets() if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]
-        ]
+        available = [d for d in dataset_registry.list_datasets() if d != "uploaded"]
 
         if not available:
             pytest.skip("No datasets available for testing")

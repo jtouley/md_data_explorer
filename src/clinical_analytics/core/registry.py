@@ -82,8 +82,6 @@ class DatasetRegistry:
         """
         Auto-discover all ClinicalDataset implementations in the datasets package.
 
-        Excludes built-in datasets (covid_ms, mimic3, sepsis) - only user uploads are supported.
-
         Returns:
             Dict mapping dataset names to their classes
         """
@@ -91,13 +89,9 @@ class DatasetRegistry:
 
         datasets_path = Path(datasets_pkg.__file__).parent
 
-        # Built-in datasets to exclude (only user uploads are supported)
-        builtin_datasets = {"covid_ms", "mimic3", "sepsis"}
-
         logger.info(
             "dataset_discovery_started",
             datasets_path=str(datasets_path),
-            builtin_excluded=list(builtin_datasets),
         )
 
         discovered_modules = []
@@ -109,15 +103,6 @@ class DatasetRegistry:
             if module_info.ispkg:
                 module_name = module_info.name
                 discovered_modules.append(module_name)
-
-                # Skip built-in datasets
-                if module_name in builtin_datasets:
-                    logger.debug(
-                        "dataset_skipped_builtin",
-                        module_name=module_name,
-                        reason="built-in dataset excluded",
-                    )
-                    continue
 
                 try:
                     # Import the definition module
