@@ -156,10 +156,12 @@ class NLQueryEngine:
 
     def _prompt_overlay_path(self) -> Path:
         """
-        Get overlay file path (configurable via env var).
+        Get overlay file path (configurable via env var or config/paths.yaml).
 
-        Defaults to /tmp/nl_query_learning/prompt_overlay.txt to keep
-        learning artifacts out of source tree.
+        Precedence:
+        1. NL_PROMPT_OVERLAY_PATH env var (explicit override)
+        2. config/paths.yaml prompt_overlay_dir + prompt_overlay.txt
+        3. Hardcoded default: /tmp/nl_query_learning/prompt_overlay.txt
 
         Returns:
             Path to overlay file
@@ -169,9 +171,15 @@ class NLQueryEngine:
         if p:
             return Path(p)
 
-        # Default: same directory as self-improve logs
-        # (keeps artifacts out of source tree)
-        return Path("/tmp/nl_query_learning/prompt_overlay.txt")
+        # Use config-driven path from paths.yaml
+        try:
+            from clinical_analytics.core.config_loader import load_paths_config
+
+            paths = load_paths_config()
+            return paths["prompt_overlay_dir"] / "prompt_overlay.txt"
+        except Exception:
+            # Fallback to hardcoded default if config loading fails
+            return Path("/tmp/nl_query_learning/prompt_overlay.txt")
 
     def _load_prompt_overlay(self) -> str:
         """

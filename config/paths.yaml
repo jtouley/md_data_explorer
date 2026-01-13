@@ -1,0 +1,25 @@
+# Path configuration - all paths overridable via environment variables
+# Uses $VAR or ${VAR} syntax (resolved by os.path.expandvars)
+# If env var is not set or empty, defaults from 'defaults' section are used
+
+paths:
+  # Learning/output paths
+  prompt_overlay_dir: "${CLINICAL_ANALYTICS_PATH_OVERLAY_DIR}"
+  query_logs_dir: "${CLINICAL_ANALYTICS_PATH_LOGS_DIR}"
+
+  # Database paths
+  analytics_db: "${CLINICAL_ANALYTICS_PATH_DB}"
+  uploads_dir: "${CLINICAL_ANALYTICS_PATH_UPLOADS}"
+
+  # Config paths
+  config_dir: "${CLINICAL_ANALYTICS_PATH_CONFIG}"
+  golden_questions: "${CLINICAL_ANALYTICS_PATH_GOLDEN}"
+
+# Default values (used when env var is empty/unset)
+defaults:
+  prompt_overlay_dir: "/tmp/nl_query_learning"
+  query_logs_dir: "data/query_logs"
+  analytics_db: "data/analytics.duckdb"
+  uploads_dir: "data/uploads"
+  config_dir: "config"
+  golden_questions: "tests/eval/golden_questions.yaml"

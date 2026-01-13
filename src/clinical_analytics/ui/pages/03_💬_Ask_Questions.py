@@ -2244,7 +2244,7 @@ def main():
                     # Phase 3.1: Add assistant message to chat if query came from chat input
                     # Phase 5: Check if last message is user message via ConversationManager
                     manager = st.session_state.get("conversation_manager")
-                    added_assistant_msg = False
+                    _added_assistant_msg = False  # Tracked for future logging/debugging
                     last_msg_is_user = False
                     if manager:
                         transcript = manager.get_transcript()
@@ -2281,7 +2281,7 @@ def main():
                                 pending_id=pending_id,
                                 run_key=run_key,
                             )
-                            added_assistant_msg = True
+                            _added_assistant_msg = True
                         else:
                             # Fallback: add new message if no pending message
                             if manager is not None:
@@ -2291,7 +2291,7 @@ def main():
                                     run_key=run_key,
                                     status="completed",
                                 )
-                                added_assistant_msg = True
+                                _added_assistant_msg = True
 
                         # Phase 5: Legacy st.session_state["chat"] removed
                         # ConversationManager is now the single source of truth
@@ -2301,9 +2301,11 @@ def main():
                     st.session_state["intent_signal"] = None
                     logger.debug("intent_signal_cleared_after_execution", success=True)
 
-                    # Single rerun to display the completed message in chat
-                    if added_assistant_msg:
-                        st.rerun()
+                    # Always rerun after execution to display result
+                    # Result is in cache, render_chat() will display it
+                    # Fix: Rerun must be unconditional, not gated on message-add side effects
+                    # If message-add fails/skips, result still exists in cache and must render
+                    st.rerun()
 
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     # Use stable hash for button key (same normalization as cache key)
