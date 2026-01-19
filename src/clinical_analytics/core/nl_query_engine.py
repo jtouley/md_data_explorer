@@ -1241,6 +1241,25 @@ class NLQueryEngine:
                         resolved_group_by, _, _ = self._fuzzy_match_variable(golden_ex["expected_group_by"])
                         intent.grouping_variable = resolved_group_by or golden_ex["expected_group_by"]
 
+                    # Extract expected_filters from golden example (ADR009 regression fix)
+                    if golden_ex.get("expected_filters"):
+                        for filter_spec in golden_ex["expected_filters"]:
+                            column = filter_spec.get("column")
+                            operator = filter_spec.get("operator", "!=")
+                            value = filter_spec.get("value")
+                            exclude_nulls = filter_spec.get("exclude_nulls", True)
+                            if column:
+                                # Resolve column name to canonical form
+                                resolved_column, _, _ = self._fuzzy_match_variable(column)
+                                intent.filters.append(
+                                    FilterSpec(
+                                        column=resolved_column or column,
+                                        operator=operator,
+                                        value=value,
+                                        exclude_nulls=exclude_nulls,
+                                    )
+                                )
+
                     # Extract actual variables from query for fallback
                     variables = self._extract_variables_from_query(query)
                     if not intent.primary_variable and variables:
