@@ -6,7 +6,6 @@ Following AGENTS.md guidelines:
 - Test isolation (no shared mutable state)
 """
 
-
 import yaml
 
 
