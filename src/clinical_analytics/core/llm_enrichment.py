@@ -369,5 +369,6 @@ def generate_enrichment_suggestions(
             "enrichment_generation_failed",
             error=str(e),
             error_type=type(e).__name__,
+            exc_info=True,
         )
         return []

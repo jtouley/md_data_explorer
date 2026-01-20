@@ -143,24 +143,26 @@ class OverlayStore:
     def _deserialize_patch(
         self, data: dict[str, Any]
     ) -> MetadataPatch | ExclusionPatternPatch | RelationshipPatch | None:
-        """Deserialize patch from dictionary."""
-        patch_type = data.pop("_patch_type", None)
+        """Deserialize patch from dictionary without mutating input."""
+        patch_type = data.get("_patch_type")
+        # Create a copy without _patch_type for deserialization
+        patch_data = {k: v for k, v in data.items() if k != "_patch_type"}
 
         if patch_type == "ExclusionPatternPatch":
-            return ExclusionPatternPatch.from_dict(data)
+            return ExclusionPatternPatch.from_dict(patch_data)
         elif patch_type == "RelationshipPatch":
-            return RelationshipPatch.from_dict(data)
+            return RelationshipPatch.from_dict(patch_data)
         elif patch_type == "MetadataPatch":
-            return MetadataPatch.from_dict(data)
+            return MetadataPatch.from_dict(patch_data)
         else:
             # Try to infer from operation
-            op = data.get("operation")
+            op = patch_data.get("operation")
             if op == PatchOperation.SET_EXCLUSION_PATTERN.value:
-                return ExclusionPatternPatch.from_dict(data)
+                return ExclusionPatternPatch.from_dict(patch_data)
             elif op == PatchOperation.SET_RELATIONSHIP.value:
-                return RelationshipPatch.from_dict(data)
+                return RelationshipPatch.from_dict(patch_data)
             else:
-                return MetadataPatch.from_dict(data)
+                return MetadataPatch.from_dict(patch_data)
 
     # =========================================================================
     # Pending Suggestions Operations
