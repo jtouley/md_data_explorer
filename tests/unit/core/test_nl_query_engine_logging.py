@@ -8,7 +8,6 @@ Tests that all logs include standardized fields:
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 
 
@@ -33,6 +32,7 @@ def nl_engine(mock_semantic_layer):
     return NLQueryEngine(mock_semantic_layer)
 
 
+@pytest.mark.slow
 class TestStructuredLogging:
     """Test structured logging with standardized fields."""
 

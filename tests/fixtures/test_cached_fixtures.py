@@ -8,6 +8,7 @@ These tests are generic and work with any data structure.
 import pytest
 
 
+@pytest.mark.slow
 class TestCachedExcelFixtures:
     """Test that Excel fixtures use caching with any data structure."""
 

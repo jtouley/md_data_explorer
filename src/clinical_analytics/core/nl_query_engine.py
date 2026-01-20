@@ -610,21 +610,30 @@ class NLQueryEngine:
             previous_group_by = previous.get("group_by")
             previous_intent = previous.get("intent")
 
+            # Resolve the previous group_by to canonical column name
+            # (conversation history may contain short aliases like "statin")
+            if previous_group_by:
+                resolved_previous, _, _ = self._fuzzy_match_variable(previous_group_by)
+                resolved_previous_group_by = resolved_previous or previous_group_by
+            else:
+                resolved_previous_group_by = None
+
             # If previous query had a group_by and current one has a different one,
             # prefer the previous one (user is likely refining the same grouping)
             if (
-                previous_group_by
+                resolved_previous_group_by
                 and intent.grouping_variable
-                and intent.grouping_variable != previous_group_by
+                and intent.grouping_variable != resolved_previous_group_by
                 and previous_intent == intent.intent_type
             ):
                 logger.info(
                     "query_parse_refinement_correcting_mismatched_grouping",
                     previous_group_by=previous_group_by,
+                    resolved_previous_group_by=resolved_previous_group_by,
                     llm_group_by=intent.grouping_variable,
                     **log_context,
                 )
-                intent.grouping_variable = previous_group_by
+                intent.grouping_variable = resolved_previous_group_by
 
         # If we still don't have a good intent, set failure diagnostics
         if not intent or (intent.confidence < 0.3 and intent.intent_type == "DESCRIBE"):

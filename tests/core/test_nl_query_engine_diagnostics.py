@@ -1,7 +1,6 @@
 """Tests for NL Query Engine diagnostics and QueryIntent enhancements."""
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import VALID_INTENT_TYPES, NLQueryEngine, QueryIntent
 
 
@@ -127,6 +126,7 @@ def test_pattern_match_which_x_had_lowest_y(mock_semantic_layer):
     assert intent.confidence >= 0.9, "Should have high confidence for pattern match"
 
 
+@pytest.mark.slow
 def test_pattern_match_which_x_had_highest_y(mock_semantic_layer):
     """Pattern matching should handle 'which X had the highest Y' queries."""
     engine = NLQueryEngine(mock_semantic_layer)

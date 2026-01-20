@@ -8,6 +8,8 @@ Tests verify:
 - Results can be reconstructed from run_key in conversation history
 """
 
+import pytest
+
 
 class TestConversationHistoryDisplay:
     """Test conversation history display in UI."""
@@ -101,6 +103,7 @@ class TestConversationHistoryDisplay:
         # In UI: with st.expander("View detailed results"): render_analysis_by_type(...)
 
 
+@pytest.mark.slow
 class TestChatInputHandling:
     """Test chat input query handling."""
 
@@ -245,9 +248,9 @@ class TestChatInputHandling:
         if main_start != -1:
             main_body = page_content[main_start:]
             # Assert: QuestionEngine.ask_free_form_question should not be called in main()
-            assert "QuestionEngine.ask_free_form_question" not in main_body, (
-                "Old ask_free_form_question flow should be removed from main() function"
-            )
+            assert (
+                "QuestionEngine.ask_free_form_question" not in main_body
+            ), "Old ask_free_form_question flow should be removed from main() function"
 
         # Assert: st.chat_input should be used for query input
         assert "st.chat_input" in page_content, "st.chat_input should be used for queries"
@@ -325,9 +328,9 @@ class TestChatInputHandling:
         page_content = page_path.read_text()
 
         # Assert: Compact interpretation function should exist
-        assert "_render_interpretation_inline_compact" in page_content, (
-            "Compact inline interpretation function should exist"
-        )
+        assert (
+            "_render_interpretation_inline_compact" in page_content
+        ), "Compact inline interpretation function should exist"
         # Assert: Old expander-based interpretation should not be used for inline rendering
         # (It may still exist but should not be called in execute_analysis_with_idempotency)
         main_start = page_content.find("def execute_analysis_with_idempotency")
