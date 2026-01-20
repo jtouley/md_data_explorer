@@ -1389,46 +1389,25 @@ def _render_thinking_indicator(steps: list[dict[str, Any]]) -> None:
 
     # Determine final status from last step
     last_step = steps[-1]
-    status_label = "🤔 Processing your question..."
-    status_state: Literal["running", "complete", "error"] = "running"
-    expanded = True  # Default to expanded
 
-    if last_step["status"] == "completed":
-        status_label = "✅ Query complete!"
-        status_state = "complete"
-        expanded = False  # Auto-collapse when completed
+    # Only show while processing or error - never show completion UI
+    # Thinking is transient. Completion is invisible. Results speak for themselves.
+    if last_step["status"] == "processing":
+        with st.status("🤔 Thinking…", state="running"):
+            for step in steps:
+                st.write(f"**{step['text']}**")
+
     elif last_step["status"] == "error":
-        status_label = "❌ Query failed"
-        status_state = "error"
-        expanded = True  # Keep expanded for errors
+        with st.status("❌ Query failed", state="error", expanded=True):
+            for step in steps:
+                # Render step text
+                st.write(f"**{step['text']}**")
 
-    with st.status(status_label, expanded=expanded, state=status_state):
-        for step in steps:
-            # Render step text
-            st.write(f"**{step['text']}**")
-
-            # Render step details if available
-            if step.get("details"):
-                details = step["details"]
-                if step["text"] == "Interpreting query":
-                    # Show query plan interpretation
-                    if details.get("intent"):
-                        st.write(f"- Intent: `{details['intent']}`")
-                    if details.get("metric"):
-                        st.write(f"- Analyzing: `{details['metric']}`")
-                    if details.get("group_by"):
-                        st.write(f"- Grouped by: `{details['group_by']}`")
-                    if details.get("filter_count", 0) > 0:
-                        st.write(f"- Filters: {details['filter_count']} condition(s)")
-                elif step["text"] == "Validating plan":
-                    if details.get("has_warnings"):
-                        st.write(f"- ⚠️ {details.get('warning_count', 0)} warning(s) detected")
-                elif step["text"] == "Executing query":
-                    st.write(f"- Run key: `{details.get('run_key', 'N/A')[:16]}...`")
-                elif step["text"] == "Query complete":
-                    st.write(f"- Result: {details.get('result_rows', 0)} row(s)")
-                elif step["text"] == "Query failed":
-                    st.write(f"- Error: {details.get('error', 'Unknown error')}")
+                # Render step details if available
+                if step.get("details"):
+                    details = step["details"]
+                    if step["text"] == "Query failed":
+                        st.write(f"- Error: {details.get('error', 'Unknown error')}")
 
 
 def _render_interpretation_and_confidence(query_plan, result: dict) -> None:
@@ -2262,69 +2241,62 @@ def main():
                         semantic_layer,
                     )
 
-                    # Phase 3.1: Add assistant message to chat if query came from chat input
-                    # Phase 5: Check if last message is user message via ConversationManager
+                    # Phase 3.1: Update pending message or add new assistant message
+                    # BUG FIX: Use pending_message_id as the signal, NOT last_msg_is_user
+                    # After adding a pending assistant message, last message is assistant (not user),
+                    # so checking last_msg_is_user would incorrectly skip this block.
                     manager = st.session_state.get("conversation_manager")
-                    added_assistant_msg = False
-                    last_msg_is_user = False
-                    if manager:
-                        transcript = manager.get_transcript()
-                        if transcript and transcript[-1].role == "user":
-                            last_msg_is_user = True
-                    if last_msg_is_user:
-                        # Query came from chat input - update pending message or add new one
-                        # Get formatted result headline/summary from ResultCache
-                        cache = st.session_state.get("result_cache")
-                        assistant_text = "Analysis completed"  # Default fallback
-                        if cache is not None:
-                            cached_result = cache.get(run_key, dataset_version)
-                            if cached_result is not None:
-                                result = cached_result.result
-                                assistant_text = (
-                                    result.get("headline") or result.get("headline_text") or "Analysis completed"
-                                )
+                    pending_id = st.session_state.get("pending_message_id")
 
-                        # Phase 3: Update pending message in ConversationManager
-                        manager = st.session_state.get("conversation_manager")
-                        pending_id = st.session_state.get("pending_message_id")
-                        if manager is not None and pending_id is not None:
-                            # Update pending message to completed
-                            manager.update_message(
-                                pending_id,
-                                status="completed",
-                                content=assistant_text,
-                                run_key=run_key,
+                    # Build assistant_text from cached result
+                    cache = st.session_state.get("result_cache")
+                    assistant_text = "Analysis completed"  # Default fallback
+                    if cache is not None:
+                        cached_result = cache.get(run_key, dataset_version)
+                        if cached_result is not None:
+                            result = cached_result.result
+                            assistant_text = (
+                                result.get("headline") or result.get("headline_text") or "Analysis completed"
                             )
-                            # Clear pending_message_id
-                            st.session_state.pop("pending_message_id", None)
-                            logger.debug(
-                                "pending_message_completed",
-                                pending_id=pending_id,
-                                run_key=run_key,
-                            )
-                            added_assistant_msg = True
-                        else:
-                            # Fallback: add new message if no pending message
-                            if manager is not None:
-                                manager.add_message(
-                                    "assistant",
-                                    assistant_text,
-                                    run_key=run_key,
-                                    status="completed",
-                                )
-                                added_assistant_msg = True
 
-                        # Phase 5: Legacy st.session_state["chat"] removed
-                        # ConversationManager is now the single source of truth
+                    # Update pending message or add new one
+                    if manager is not None and pending_id is not None:
+                        # Update pending message to completed
+                        manager.update_message(
+                            pending_id,
+                            status="completed",
+                            content=assistant_text,
+                            run_key=run_key,
+                        )
+                        # Clear pending_message_id
+                        st.session_state.pop("pending_message_id", None)
+                        logger.debug(
+                            "pending_message_completed",
+                            pending_id=pending_id,
+                            run_key=run_key,
+                        )
+                    elif manager is not None:
+                        # Fallback: add new message if no pending message (e.g., from non-chat source)
+                        manager.add_message(
+                            "assistant",
+                            assistant_text,
+                            run_key=run_key,
+                            status="completed",
+                        )
+
+                    # Phase 5: Legacy st.session_state["chat"] removed
+                    # ConversationManager is now the single source of truth
 
                     # Clear intent_signal after successful execution
                     # This allows chat input to be available again for follow-up questions
                     st.session_state["intent_signal"] = None
                     logger.debug("intent_signal_cleared_after_execution", success=True)
 
-                    # Single rerun to display the completed message in chat
-                    if added_assistant_msg:
-                        st.rerun()
+                    # Always rerun after execution to display result
+                    # Result is in cache, render_chat() will display it
+                    # Fix: Rerun must be unconditional, not gated on message-add side effects
+                    # If message-add fails/skips, result still exists in cache and must render
+                    st.rerun()
 
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     # Use stable hash for button key (same normalization as cache key)
@@ -2360,47 +2332,36 @@ def main():
                     intent_signal=intent_signal,
                 )
                 # Add error message to chat so user sees it
-                # Phase 5: Check last message via ConversationManager
+                # BUG FIX: Use pending_message_id as the signal, NOT last_msg_is_user
                 manager = st.session_state.get("conversation_manager")
-                last_msg_is_user = False
-                if manager:
-                    transcript = manager.get_transcript()
-                    if transcript and transcript[-1].role == "user":
-                        last_msg_is_user = True
+                pending_id = st.session_state.get("pending_message_id")
 
-                if last_msg_is_user:
-                    # Phase 3: Update pending message to error in ConversationManager
-                    pending_id = st.session_state.get("pending_message_id")
-                    if manager is not None and pending_id is not None:
-                        # Update pending message to error
-                        manager.update_message(
-                            pending_id,
-                            status="error",
-                            content=error_msg,
-                        )
-                        # Clear pending_message_id
-                        st.session_state.pop("pending_message_id", None)
-                        logger.debug(
-                            "pending_message_error",
-                            pending_id=pending_id,
-                            error_msg=error_msg[:50],
-                        )
-                    else:
-                        # Fallback: add new error message if no pending message
-                        if manager is not None:
-                            manager.add_message(
-                                "assistant",
-                                error_msg,
-                                status="error",
-                            )
+                if manager is not None and pending_id is not None:
+                    # Update pending message to error
+                    manager.update_message(
+                        pending_id,
+                        status="error",
+                        content=error_msg,
+                    )
+                    # Clear pending_message_id
+                    st.session_state.pop("pending_message_id", None)
+                    logger.debug(
+                        "pending_message_error",
+                        pending_id=pending_id,
+                        error_msg=error_msg[:50],
+                    )
+                elif manager is not None:
+                    # Fallback: add new error message if no pending message
+                    manager.add_message(
+                        "assistant",
+                        error_msg,
+                        status="error",
+                    )
 
-                    # Phase 5: Legacy st.session_state["chat"] removed
-                    # ConversationManager is now the single source of truth
-
-                    # Clear intent_signal after failed execution
-                    st.session_state["intent_signal"] = None
-                    logger.debug("intent_signal_cleared_after_execution", success=False)
-                    st.rerun()
+                # Clear intent_signal after failed execution (always, not gated)
+                st.session_state["intent_signal"] = None
+                logger.debug("intent_signal_cleared_after_execution", success=False)
+                st.rerun()
 
         else:
             # Context not complete - show variable selection UI (for missing required variables)

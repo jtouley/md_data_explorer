@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from clinical_analytics.core.prompt_optimizer import (
     FailurePattern,
     LearningConfig,
@@ -21,7 +20,7 @@ from clinical_analytics.core.prompt_optimizer import (
 
 # Fixtures for test data
 @pytest.fixture
-def sample_learning_config():
+def sample_learning_config(tmp_path):
     """Sample learning configuration for testing."""
     return LearningConfig(
         intent_keywords={
@@ -46,7 +45,7 @@ def sample_learning_config():
             },
         ],
         prompt_template="Template: {dynamic_fixes}",
-        logging_config={"enabled": True, "log_dir": None},  # Tests should override with tmp_path
+        logging_config={"enabled": True, "log_dir": str(tmp_path / "nl_query_learning")},
     )
 
 

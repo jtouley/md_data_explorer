@@ -482,3 +482,313 @@ class TestConfigLoaderValidation:
         # Assert: Environment variable overrides YAML
         assert result["validation_rules"]["max_retries"] == 3
         assert result["validation_rules"]["confidence_threshold"] == 0.8
+
+
+class TestConfigLoaderPaths:
+    """Test suite for path configuration loading."""
+
+    def test_load_paths_config_loads_from_yaml_file(self, tmp_path):
+        """Test that load_paths_config loads values from YAML file."""
+        # Arrange: Create temporary YAML config file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "paths.yaml"
+        config_data = {
+            "paths": {
+                "prompt_overlay_dir": "/custom/overlay",
+                "query_logs_dir": "data/logs",
+                "analytics_db": "data/analytics.duckdb",
+                "uploads_dir": "data/uploads",
+                "config_dir": "config",
+                "golden_questions": "tests/eval/golden_questions.yaml",
+            },
+            "defaults": {
+                "prompt_overlay_dir": "/tmp/nl_query_learning",
+                "query_logs_dir": "data/query_logs",
+            },
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config
+        from clinical_analytics.core.config_loader import load_paths_config
+
+        result = load_paths_config(config_path=config_file)
+
+        # Assert: Values match YAML file and are Path objects
+        assert result["prompt_overlay_dir"] == Path("/custom/overlay")
+        assert result["query_logs_dir"] == Path("data/logs")
+        assert result["analytics_db"] == Path("data/analytics.duckdb")
+        assert result["uploads_dir"] == Path("data/uploads")
+        assert result["config_dir"] == Path("config")
+        assert result["golden_questions"] == Path("tests/eval/golden_questions.yaml")
+
+    def test_load_paths_config_resolves_env_vars(self, tmp_path):
+        """Test that load_paths_config resolves environment variables in paths."""
+        # Arrange: Create YAML file with env var placeholders
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "paths.yaml"
+        config_data = {
+            "paths": {
+                "prompt_overlay_dir": "$CLINICAL_ANALYTICS_OVERLAY_DIR",
+                "analytics_db": "${CLINICAL_ANALYTICS_DB_PATH}",
+            },
+            "defaults": {
+                "prompt_overlay_dir": "/tmp/nl_query_learning",
+                "analytics_db": "data/analytics.duckdb",
+            },
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Set environment variables and load config
+        from clinical_analytics.core.config_loader import load_paths_config
+
+        with patch.dict(
+            os.environ,
+            {
+                "CLINICAL_ANALYTICS_OVERLAY_DIR": "/resolved/overlay",
+                "CLINICAL_ANALYTICS_DB_PATH": "/resolved/db/analytics.duckdb",
+            },
+            clear=False,
+        ):
+            result = load_paths_config(config_path=config_file)
+
+        # Assert: Environment variables are resolved
+        assert result["prompt_overlay_dir"] == Path("/resolved/overlay")
+        assert result["analytics_db"] == Path("/resolved/db/analytics.duckdb")
+
+    def test_load_paths_config_uses_defaults_for_unset_env_vars(self, tmp_path):
+        """Test that unset environment variables use default values."""
+        # Arrange: Create YAML file with env var that won't be set
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "paths.yaml"
+        config_data = {
+            "paths": {
+                "prompt_overlay_dir": "$UNSET_ENV_VAR_12345",
+            },
+            "defaults": {
+                "prompt_overlay_dir": "/tmp/nl_query_learning",
+            },
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config (env var not set)
+        from clinical_analytics.core.config_loader import load_paths_config
+
+        # Ensure env var is not set
+        with patch.dict(os.environ, {}, clear=True):
+            # Restore PATH and other essential env vars
+            with patch.dict(
+                os.environ,
+                {k: v for k, v in os.environ.items() if k not in ["UNSET_ENV_VAR_12345"]},
+                clear=False,
+            ):
+                result = load_paths_config(config_path=config_file)
+
+        # Assert: Uses default value since env var contains unexpanded placeholder
+        # When env var is not set, os.path.expandvars returns the original string
+        # So we should check that defaults are applied for unresolved vars
+        assert result["prompt_overlay_dir"] == Path("/tmp/nl_query_learning")
+
+    def test_load_paths_config_missing_file_uses_hardcoded_defaults(self):
+        """Test that missing YAML file uses hardcoded default values."""
+        # Arrange: Non-existent config file
+        config_file = Path("/nonexistent/config/paths.yaml")
+
+        # Act: Load config (should use defaults)
+        from clinical_analytics.core.config_loader import load_paths_config
+
+        result = load_paths_config(config_path=config_file)
+
+        # Assert: Default values are used
+        assert result["prompt_overlay_dir"] == Path("/tmp/nl_query_learning")
+        assert result["query_logs_dir"] == Path("data/query_logs")
+        assert result["analytics_db"] == Path("data/analytics.duckdb")
+        assert result["uploads_dir"] == Path("data/uploads")
+        assert result["config_dir"] == Path("config")
+        assert result["golden_questions"] == Path("tests/eval/golden_questions.yaml")
+
+    def test_load_paths_config_returns_path_objects(self, tmp_path):
+        """Test that all values returned are Path objects."""
+        # Arrange: Create YAML file with string paths
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "paths.yaml"
+        config_data = {
+            "paths": {
+                "prompt_overlay_dir": "/tmp/overlay",
+                "query_logs_dir": "relative/path",
+            },
+            "defaults": {},
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config
+        from clinical_analytics.core.config_loader import load_paths_config
+
+        result = load_paths_config(config_path=config_file)
+
+        # Assert: All values are Path objects
+        for key, value in result.items():
+            assert isinstance(value, Path), f"{key} should be a Path, got {type(value)}"
+
+    def test_load_paths_config_invalid_yaml_raises_valueerror(self, tmp_path):
+        """Test that invalid YAML raises ValueError."""
+        # Arrange: Create invalid YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "paths.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+
+        # Act & Assert: Loading invalid YAML should raise ValueError
+        from clinical_analytics.core.config_loader import load_paths_config
+
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_paths_config(config_path=config_file)
+
+
+class TestConfigLoaderPatterns:
+    """Test suite for NL query pattern configuration loading."""
+
+    def test_load_patterns_config_loads_from_yaml_file(self, tmp_path):
+        """Test that load_patterns_config loads patterns from YAML file."""
+        # Arrange: Create temporary YAML config file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_data = {
+            "patterns": {
+                "COMPARE_GROUPS": [
+                    {
+                        "pattern": r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)",
+                        "groups": {"1": "primary_variable", "2": "grouping_variable"},
+                        "confidence": 0.95,
+                    },
+                    {
+                        "pattern": r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)",
+                        "groups": {"1": "primary_variable", "2": "grouping_variable"},
+                        "confidence": 0.9,
+                    },
+                ],
+                "COUNT": [
+                    {
+                        "pattern": r"how many",
+                        "groups": {},
+                        "confidence": 0.9,
+                    },
+                ],
+            }
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        result = load_patterns_config(config_path=config_file)
+
+        # Assert: Patterns are loaded and compiled
+        assert "COMPARE_GROUPS" in result
+        assert "COUNT" in result
+        assert len(result["COMPARE_GROUPS"]) == 2
+        assert len(result["COUNT"]) == 1
+
+        # Check that patterns are compiled regex objects
+        import re
+
+        first_pattern = result["COMPARE_GROUPS"][0]
+        assert "regex" in first_pattern
+        assert isinstance(first_pattern["regex"], re.Pattern)
+        assert first_pattern["confidence"] == 0.95
+        assert first_pattern["groups"] == {"1": "primary_variable", "2": "grouping_variable"}
+
+    def test_load_patterns_config_caches_compiled_patterns(self, tmp_path):
+        """Test that load_patterns_config caches compiled patterns."""
+        # Arrange: Create YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_data = {
+            "patterns": {
+                "COUNT": [
+                    {"pattern": r"how many", "groups": {}, "confidence": 0.9},
+                ],
+            }
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config twice
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first to ensure test isolation
+        load_patterns_config.cache_clear()
+
+        result1 = load_patterns_config(config_path=config_file)
+        result2 = load_patterns_config(config_path=config_file)
+
+        # Assert: Same object returned (cached)
+        assert result1 is result2
+
+    def test_load_patterns_config_missing_file_uses_empty_patterns(self):
+        """Test that missing YAML file returns empty patterns."""
+        # Arrange: Non-existent config file
+        config_file = Path("/nonexistent/config/nl_query_patterns.yaml")
+
+        # Act: Load config (should use defaults)
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first
+        load_patterns_config.cache_clear()
+
+        result = load_patterns_config(config_path=config_file)
+
+        # Assert: Empty patterns dict
+        assert result == {}
+
+    def test_load_patterns_config_invalid_yaml_raises_valueerror(self, tmp_path):
+        """Test that invalid YAML raises ValueError."""
+        # Arrange: Create invalid YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+
+        # Act & Assert: Loading invalid YAML should raise ValueError
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first
+        load_patterns_config.cache_clear()
+
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_patterns_config(config_path=config_file)
+
+    def test_load_patterns_config_compiles_case_insensitive(self, tmp_path):
+        """Test that patterns are compiled with IGNORECASE flag."""
+        # Arrange: Create YAML file
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "nl_query_patterns.yaml"
+        config_data = {
+            "patterns": {
+                "COUNT": [
+                    {"pattern": r"how many", "groups": {}, "confidence": 0.9},
+                ],
+            }
+        }
+        config_file.write_text(yaml.dump(config_data))
+
+        # Act: Load config
+        from clinical_analytics.core.config_loader import load_patterns_config
+
+        # Clear cache first
+        load_patterns_config.cache_clear()
+
+        result = load_patterns_config(config_path=config_file)
+
+        # Assert: Pattern matches case-insensitively
+        import re
+
+        pattern = result["COUNT"][0]["regex"]
+        assert pattern.search("HOW MANY") is not None
+        assert pattern.search("How Many") is not None
+        assert pattern.flags & re.IGNORECASE

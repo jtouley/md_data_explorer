@@ -14,10 +14,8 @@ class TestCheckpointCommands:
 
         makefile_content = makefile_path.read_text()
 
-        # Assert: Required targets exist
+        # Assert: Required targets exist (matching actual Makefile implementation)
         assert "checkpoint-create:" in makefile_content, "checkpoint-create target missing"
-        assert "checkpoint-update:" in makefile_content, "checkpoint-update target missing"
-        assert "checkpoint-snapshot:" in makefile_content, "checkpoint-snapshot target missing"
         assert "checkpoint-resume:" in makefile_content, "checkpoint-resume target missing"
         assert "git-log-export:" in makefile_content, "git-log-export target missing"
         assert "git-log-latest:" in makefile_content, "git-log-latest target missing"

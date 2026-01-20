@@ -28,9 +28,7 @@ class TestSelectiveLoadingPerformance:
         discovered_datasets loads all configs upfront.
         """
         # Arrange: Get first available dataset name
-        available = [
-            d for d in dataset_registry.list_datasets() if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]
-        ]
+        available = [d for d in dataset_registry.list_datasets() if d != "uploaded"]
 
         if not available:
             pytest.skip("No datasets available for testing")
@@ -91,9 +89,7 @@ class TestSelectiveLoadingPerformance:
         Selective loading only loads what's needed.
         """
         # Arrange: Get available datasets
-        available = [
-            d for d in dataset_registry.list_datasets() if d not in ["covid_ms", "mimic3", "sepsis", "uploaded"]
-        ]
+        available = [d for d in dataset_registry.list_datasets() if d != "uploaded"]
 
         if len(available) < 2:
             pytest.skip("Need at least 2 datasets to measure scaling benefit")

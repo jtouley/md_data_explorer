@@ -310,9 +310,10 @@ run-app-keep: ## Start application with bash script (keep Ollama running on exit
 	@echo "$(YELLOW)Press Ctrl+C to stop (Ollama will stay running)$(NC)"
 	@STOP_OLLAMA_ON_EXIT=false bash scripts/run_app.sh
 
-validate: ## Run platform validation script
-	@echo "$(GREEN)Running platform validation...$(NC)"
-	$(PYTHON_RUN) scripts/validate_platform.py
+validate: ## Run platform validation (tests serve as validation)
+	@echo "$(GREEN)Platform validation via test suite...$(NC)"
+	@echo "Built-in dataset validation script removed - use 'make test' or 'make check' for validation"
+	@$(MAKE) test-fast
 
 clean: ## Clean generated files and caches
 	@echo "$(GREEN)Cleaning generated files...$(NC)"
