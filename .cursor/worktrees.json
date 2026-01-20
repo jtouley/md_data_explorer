@@ -1,0 +1,6 @@
+{
+  "setup-worktree-unix": [
+    "uv sync --extra dev --group dev",
+    "uv run pre-commit install --install-hooks"
+  ]
+}

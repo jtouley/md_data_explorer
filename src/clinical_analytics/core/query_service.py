@@ -8,11 +8,11 @@ Manages query parsing, validation, and execution without Streamlit dependencies.
 from dataclasses import dataclass
 from typing import Any
 
+from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
 @dataclass
