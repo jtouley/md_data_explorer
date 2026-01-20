@@ -59,7 +59,6 @@ def build_enrichment_prompt(
     Note:
         This prompt contains ONLY schema metadata, never raw data values.
     """
-    # Collect all columns
     columns = []
     if schema.patient_id_column:
         columns.append(f"- {schema.patient_id_column} (identifier)")
@@ -76,7 +75,6 @@ def build_enrichment_prompt(
 
     columns_text = "\n".join(columns)
 
-    # Add codebook information if available
     codebook_text = ""
     if schema.dictionary_metadata and schema.dictionary_metadata.codebooks:
         codebook_lines = []
@@ -86,7 +84,6 @@ def build_enrichment_prompt(
         if codebook_lines:
             codebook_text = "\n\nExisting Codebooks:\n" + "\n".join(codebook_lines)
 
-    # Add doc context if provided
     doc_text = ""
     if doc_context:
         doc_text = f"\n\nDocumentation Context:\n{doc_context[:2000]}"  # Limit length
