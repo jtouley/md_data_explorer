@@ -25,6 +25,7 @@ from typing import Any
 
 import structlog
 
+from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 logger = structlog.get_logger()
@@ -869,6 +870,9 @@ class NLQueryEngine:
         """
         Tier 1: Regex pattern matching for common queries.
 
+        Uses config-driven patterns from config/nl_query_patterns.yaml.
+        Patterns are loaded once and cached via load_patterns_config().
+
         Args:
             query: User's question
 
@@ -877,108 +881,165 @@ class NLQueryEngine:
         """
         query_lower = query.lower()
 
-        # Pattern: "compare X by Y" or "compare X between Y"  # noqa: ERA001
-        match = re.search(r"compare\s+(\w+)\s+(?:by|between|across)\s+(\w+)", query_lower)
-        if match:
-            primary_var, _, _ = self._fuzzy_match_variable(match.group(1))
-            group_var, _, _ = self._fuzzy_match_variable(match.group(2))
+        # Load patterns from config (cached)
+        patterns = load_patterns_config()
 
-            if primary_var and group_var:
-                return QueryIntent(
-                    intent_type="COMPARE_GROUPS",
-                    primary_variable=primary_var,
-                    grouping_variable=group_var,
-                    confidence=0.95,
-                )
+        # Try config-driven patterns first
+        result = self._match_config_patterns(query_lower, patterns)
+        if result:
+            return result
 
-        # Pattern: "what predicts X" or "predictors of X"  # noqa: ERA001
-        match = re.search(r"(?:what predicts|predictors of|predict|risk factors for)\s+(\w+)", query_lower)
-        if match:
-            outcome_var, _, _ = self._fuzzy_match_variable(match.group(1))
+        # Fallback to complex patterns that need custom logic
+        return self._pattern_match_complex(query_lower)
 
-            if outcome_var:
-                return QueryIntent(intent_type="FIND_PREDICTORS", primary_variable=outcome_var, confidence=0.95)
+    def _match_config_patterns(self, query_lower: str, patterns: dict[str, list[dict]]) -> QueryIntent | None:
+        """
+        Match query against config-driven patterns.
 
-        # Pattern: "survival" or "time to event"  # noqa: ERA001
-        if re.search(r"\b(survival|time to event|kaplan|cox)\b", query_lower):
-            return QueryIntent(intent_type="SURVIVAL", confidence=0.9)
+        Patterns are tried in order defined in config. First match wins.
+        Captured groups are fuzzy-matched to resolve variable names.
 
-        # Pattern: "correlation" or "relationship" etc
-        # Matches: "correlate", "correlation", "relationship", "relate", "relates", "associated", "association"
-        if re.search(r"\b(correlat|relationship|relate|associat)\b", query_lower):
-            # Try to extract variables from query
-            variables, _ = self._extract_variables_from_query(query)
-            if len(variables) >= 2:
-                # For CORRELATIONS with multiple variables, put ALL in predictor_variables
-                return QueryIntent(
-                    intent_type="CORRELATIONS",
-                    primary_variable=variables[0],  # First variable for backward compatibility
-                    grouping_variable=variables[1],  # Second for backward compatibility
-                    predictor_variables=variables,  # ALL variables for correlation analysis
-                    confidence=0.9,
-                )
-            elif len(variables) == 1:
-                # Single variable found - still CORRELATIONS but with one variable
-                return QueryIntent(
-                    intent_type="CORRELATIONS",
-                    primary_variable=variables[0],
-                    predictor_variables=variables,  # Include in predictor_variables too
-                    confidence=0.85,
-                )
-            else:
-                # No variables extracted but relationship keyword found
-                return QueryIntent(intent_type="CORRELATIONS", confidence=0.85)
+        Args:
+            query_lower: Lowercased query string
+            patterns: Compiled patterns from load_patterns_config()
 
-        # Pattern: "how many" or "count" or "number of" (COUNT intent)
-        count_patterns = [
-            r"how many",
-            r"\bcount\b",
-            r"number of",
+        Returns:
+            QueryIntent if a pattern matches, None otherwise
+        """
+        # Define pattern order (matches legacy behavior)
+        intent_order = [
+            "COMPARE_GROUPS",
+            "FIND_PREDICTORS",
+            "SURVIVAL",
+            "CORRELATIONS",
+            "COUNT",
+            "DESCRIBE",
         ]
-        if any(re.search(pattern, query_lower) for pattern in count_patterns):
-            return QueryIntent(intent_type="COUNT", confidence=0.9)
 
-        # Pattern: "what X were/was Y on" - COUNT with grouping
-        # Examples: "what statins were patients on?", "what treatments were they on?"
-        # This asks for a breakdown/distribution, so it's a COUNT intent
-        what_were_on = re.search(r"what\s+(\w+(?:\s+\w+)?)\s+(?:were|was)\s+(?:\w+\s+)?on", query_lower)
-        if what_were_on:
-            variable_term = what_were_on.group(1).strip()
-            matched_var, _, _ = self._fuzzy_match_variable(variable_term)
-            if matched_var:
-                return QueryIntent(
-                    intent_type="COUNT",
-                    grouping_variable=matched_var,
-                    confidence=0.9,
+        for intent_type in intent_order:
+            if intent_type not in patterns:
+                continue
+
+            for pattern_def in patterns[intent_type]:
+                regex = pattern_def["regex"]
+                groups = pattern_def.get("groups", {})
+                confidence = pattern_def.get("confidence", 0.9)
+
+                match = regex.search(query_lower)
+                if not match:
+                    continue
+
+                # Handle special case: CORRELATIONS needs variable extraction
+                if intent_type == "CORRELATIONS":
+                    return self._handle_correlations_pattern(query_lower, confidence)
+
+                # Extract and fuzzy-match variables from groups
+                primary_var = None
+                grouping_var = None
+                has_primary_group = False
+                has_grouping_group = False
+
+                for group_num, field_name in groups.items():
+                    try:
+                        group_value = match.group(int(group_num))
+                        if group_value:
+                            matched_var, _, _ = self._fuzzy_match_variable(group_value.strip())
+                            if field_name == "primary_variable":
+                                has_primary_group = True
+                                primary_var = matched_var
+                            elif field_name == "grouping_variable":
+                                has_grouping_group = True
+                                grouping_var = matched_var
+                    except (IndexError, ValueError):
+                        continue
+
+                # For COMPARE_GROUPS, require BOTH variables to match
+                # This preserves original behavior where partial matches fall through
+                # to complex patterns that handle lower confidence
+                if intent_type == "COMPARE_GROUPS":
+                    if has_primary_group and has_grouping_group:
+                        if not (primary_var and grouping_var):
+                            # Both groups expected but fuzzy matching failed for one
+                            # Skip to allow complex pattern fallback with lower confidence
+                            continue
+                elif groups and not primary_var and not grouping_var:
+                    # For other intents, require at least one variable match
+                    continue
+
+                logger.debug(
+                    "pattern_match_config",
+                    intent_type=intent_type,
+                    confidence=confidence,
+                    primary_var=primary_var,
+                    grouping_var=grouping_var,
                 )
 
-        # Pattern: "which X was most Y" or "what was the most Y" - COUNT with grouping
-        # This pattern asks for the top result by count, so it's a COUNT intent with grouping
-        # More flexible pattern to handle "which was the most Y", "what was the most Y",
-        # "what was the most common X", and "excluding X, which was the most Y"
-        if (
-            re.search(r"which\s+(?:\w+\s+)?(?:was|is)\s+the?\s+most\s+\w+", query_lower)
-            or re.search(r"which\s+\w+(?:\s+\w+)*?\s+was\s+most\s+\w+", query_lower)
-            or re.search(
-                r"what\s+was\s+the\s+most\s+(?:common|prescribed|frequent)\s+\w+", query_lower
-            )  # "what was the most common X"
-            or re.search(r"what\s+was\s+the\s+most\s+\w+", query_lower)  # "what was the most X" (fallback)
-        ):
-            return QueryIntent(intent_type="COUNT", confidence=0.9)
+                return QueryIntent(
+                    intent_type=intent_type,
+                    primary_variable=primary_var,
+                    grouping_variable=grouping_var,
+                    confidence=confidence,
+                )
 
+        return None
+
+    def _handle_correlations_pattern(self, query_lower: str, confidence: float) -> QueryIntent:
+        """
+        Handle CORRELATIONS pattern with special variable extraction.
+
+        CORRELATIONS needs to extract ALL mentioned variables, not just
+        capture groups. This preserves legacy behavior.
+
+        Args:
+            query_lower: Lowercased query string
+            confidence: Confidence from pattern definition
+
+        Returns:
+            QueryIntent with extracted variables
+        """
+        variables, _ = self._extract_variables_from_query(query_lower)
+        if len(variables) >= 2:
+            return QueryIntent(
+                intent_type="CORRELATIONS",
+                primary_variable=variables[0],
+                grouping_variable=variables[1],
+                predictor_variables=variables,
+                confidence=confidence,
+            )
+        elif len(variables) == 1:
+            return QueryIntent(
+                intent_type="CORRELATIONS",
+                primary_variable=variables[0],
+                predictor_variables=variables,
+                confidence=confidence - 0.05,
+            )
+        else:
+            return QueryIntent(intent_type="CORRELATIONS", confidence=confidence - 0.05)
+
+    def _pattern_match_complex(self, query_lower: str) -> QueryIntent | None:
+        """
+        Fallback pattern matching for complex patterns not in config.
+
+        These patterns require custom post-processing logic that can't be
+        easily expressed in YAML (e.g., trailing word removal, grouping extraction).
+
+        Args:
+            query_lower: Lowercased query string
+
+        Returns:
+            QueryIntent if a pattern matches, None otherwise
+        """
         # Pattern: "what is the average/mean X" - DESCRIBE with variable extraction
-        # Examples: "what is the average age?", "what is the mean BMI?", "what is the mean and median age?"
         what_is_match = re.search(
-            r"what\s+is\s+the\s+(?:(?:average|mean|median)(?:\s+and\s+(?:average|mean|median))*\s+)(\w+(?:\s+\w+)*?)(?:\?|$)",
+            r"what\s+is\s+the\s+(?:(?:average|mean|median)(?:\s+and\s+(?:average|mean|median))*\s+)"
+            r"(\w+(?:\s+\w+)*?)(?:\?|$)",
             query_lower,
         )
         if what_is_match:
             variable_term = what_is_match.group(1).strip()
-            # Remove common trailing words
             variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases|all|the)$", "", variable_term)
             variable_term = variable_term.strip()
 
-            # Try to match the variable
             matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
             if matched_var:
                 logger.debug(
@@ -993,23 +1054,19 @@ class NLQueryEngine:
                     confidence=0.9,
                 )
 
-        # Pattern: "average X" or "mean X" or "avg X" - DESCRIBE with variable extraction
-        # Examples: "average BMI of patients", "mean age", "avg ldl", "average ldl of all patients"
-        # Match: "average/mean/avg" + optional "of" + variable + stop at grouping keywords like "by"
+        # Pattern: "average X by Y" - DESCRIBE with variable and grouping extraction
         avg_match = re.search(
-            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)(?:\s+of|\s+in|\s+for|\s+by|\s+across|\s+between|\s+all|\s+the|$)",
+            r"\b(average|mean|avg)\s+(?:of\s+)?(\w+(?:\s+\w+)*?)"
+            r"(?:\s+of|\s+in|\s+for|\s+by|\s+across|\s+between|\s+all|\s+the|$)",
             query_lower,
         )
         if avg_match:
             variable_term = avg_match.group(2).strip()
-            # Remove common trailing words that might be captured
             variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases|all|the)$", "", variable_term)
             variable_term = variable_term.strip()
 
-            # Try to match the variable
             matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
             if matched_var:
-                # Check for grouping pattern "by X" or "across X"
                 grouping_match = re.search(r"(?:by|across)\s+(\w+(?:\s+\w+)?)", query_lower)
                 group_var = None
                 if grouping_match:
@@ -1030,7 +1087,6 @@ class NLQueryEngine:
                     confidence=0.9,
                 )
             else:
-                # Still return DESCRIBE intent, variable will be extracted later
                 logger.debug(
                     "pattern_match_average_no_variable_match",
                     variable_term=variable_term,
@@ -1038,7 +1094,7 @@ class NLQueryEngine:
                 )
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.85)
 
-        # Pattern: "describe X" or "summary of X" - DESCRIBE with variable extraction
+        # Pattern: "describe X" or "summary of X" with variable extraction
         describe_match = re.search(
             r"\b(describe|summarize?|overview of)\s+(\w+(?:\s+\w+)*?)"
             r"(?:\s+statistics|\s+levels|\s+values|\s+distribution|\s+for|\s+by|\s+across|$)",
@@ -1046,11 +1102,9 @@ class NLQueryEngine:
         )
         if describe_match:
             variable_term = describe_match.group(2).strip()
-            # Remove common trailing words
             variable_term = re.sub(r"\s+(patients|subjects|individuals|people|cases)$", "", variable_term)
             variable_term = variable_term.strip()
 
-            # Try to match the variable
             matched_var, var_conf, _ = self._fuzzy_match_variable(variable_term)
             if matched_var:
                 logger.debug(
@@ -1065,12 +1119,7 @@ class NLQueryEngine:
                     confidence=0.9,
                 )
 
-        # Pattern: "describe" or "summary" (no variable extracted)
-        if re.search(r"\b(describe|summary|overview|statistics)\b", query_lower):
-            return QueryIntent(intent_type="DESCRIBE", confidence=0.9)
-
-        # Pattern: "compare X across/between Y" - COMPARE_GROUPS  # noqa: ERA001
-        # Examples: "compare age across different statuses", "compare LDL between treatment groups"
+        # Pattern: "compare X across/between Y" with trailing word cleanup
         compare_match = re.search(
             r"\bcompare\s+(\w+(?:\s+\w+)*?)\s+(?:across|between)\s+(?:different\s+)?(\w+(?:\s+\w+)*?)(?:\s+and|$)",
             query_lower,
@@ -1078,8 +1127,6 @@ class NLQueryEngine:
         if compare_match:
             primary_term = compare_match.group(1).strip()
             group_term = compare_match.group(2).strip()
-
-            # Remove common trailing words
             group_term = re.sub(r"\s+(groups?|categories|types?)$", "", group_term)
             group_term = group_term.strip()
 
@@ -1101,23 +1148,10 @@ class NLQueryEngine:
                     confidence=0.95,
                 )
 
-        # Pattern: "difference" implies comparison
-        match = re.search(r"difference\s+(?:in|of)\s+(\w+)\s+(?:by|between)\s+(\w+)", query_lower)
-        if match:
-            primary_var, _, _ = self._fuzzy_match_variable(match.group(1))
-            group_var, _, _ = self._fuzzy_match_variable(match.group(2))
-
-            if primary_var and group_var:
-                return QueryIntent(
-                    intent_type="COMPARE_GROUPS",
-                    primary_variable=primary_var,
-                    grouping_variable=group_var,
-                    confidence=0.95,
-                )
-
-        # Pattern: "which X had lowest/highest Y"  # noqa: ERA001
+        # Pattern: "which X had lowest/highest Y" with partial match fallback
         match = re.search(
-            r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had\s+the\s+(lowest|highest)\s+(\w+(?:\s+\w+)*)", query_lower
+            r"(?:which|what)\s+(\w+(?:\s+\w+)*?)\s+had\s+the\s+(lowest|highest)\s+(\w+(?:\s+\w+)*)",
+            query_lower,
         )
         if match:
             group_term = match.group(1).strip()
@@ -1126,7 +1160,6 @@ class NLQueryEngine:
             group_var, group_conf, _ = self._fuzzy_match_variable(group_term)
             primary_var, primary_conf, _ = self._fuzzy_match_variable(primary_term)
 
-            # Log for debugging
             logger.debug(
                 "pattern_match_which_x_had_y",
                 group_term=group_term,
@@ -1144,8 +1177,6 @@ class NLQueryEngine:
                     grouping_variable=group_var,
                     confidence=0.95,
                 )
-            # If fuzzy matching failed, still return COMPARE_GROUPS but with lower confidence
-            # Variables will be extracted later via _extract_variables_from_query
             elif group_term or primary_term:
                 logger.info(
                     "pattern_match_partial",
@@ -1153,10 +1184,9 @@ class NLQueryEngine:
                     primary_term=primary_term,
                     reason="fuzzy_match_failed_but_terms_extracted",
                 )
-                # Return COMPARE_GROUPS intent - variables will be filled by semantic extraction
                 return QueryIntent(
                     intent_type="COMPARE_GROUPS",
-                    confidence=0.85,  # Lower confidence since variables not matched yet
+                    confidence=0.85,
                 )
 
         return None
