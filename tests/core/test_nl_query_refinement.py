@@ -352,7 +352,7 @@ def test_llm_refinement_with_coded_categorical_column(
 
     # Assert
     assert result.intent_type == "COUNT"
-    assert result.grouping_variable == "treatment_group"
+    assert result.grouping_variable == "treatment"  # Resolved from "treatment_group" alias
     # LLM should extract filter for control (code 1)
     assert len(result.filters) >= 1
 

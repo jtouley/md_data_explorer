@@ -9,6 +9,7 @@ These tests verify that:
 
 import time
 
+import pytest
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 
@@ -39,6 +40,7 @@ class TestLLMMockPerformance:
         assert is_available is True, "Mock should make is_available() return True"
         assert duration < 0.1, f"is_available() should be instant (<0.1s), took {duration:.3f}s"
 
+    @pytest.mark.slow
     def test_mock_llm_calls_prevents_http_requests(
         self,
         make_semantic_layer,
@@ -78,6 +80,7 @@ class TestLLMMockPerformance:
         assert result is not None, "Should return QueryIntent"
         assert result.intent_type == "COUNT", "Should parse as COUNT intent"
 
+    @pytest.mark.slow
     def test_sentence_transformer_cached_across_tests(
         self,
         make_semantic_layer,
