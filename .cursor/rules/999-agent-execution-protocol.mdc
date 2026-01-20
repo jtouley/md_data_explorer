@@ -98,18 +98,27 @@ make lint          # Check linting (no changes)
 
 **NEVER proceed with unresolved quality issues in YOUR changes.**
 
-### Step 6: Run Full Test Suite
+### Step 6: Run Module Tests (Development)
 
 ```bash
-# Module-specific (fast feedback)
-make test-ui
-# OR full suite
-make test-fast
+# Module-specific (fast feedback during TDD)
+make test-ui  # or test-core, test-analysis, etc.
+```
+
+**Confirm:**
+- Module tests pass
+- No regressions in the module you're working on
+
+### Step 6b: Run Full Suite (Before PR)
+
+```bash
+# Before opening PR, run full suite to catch cross-module regressions
+make test-fast  # or make check
 ```
 
 **Confirm:**
 - All existing tests still pass
-- No regressions introduced
+- No cross-module regressions introduced
 - New tests pass in full context
 
 ### Step 7: Commit with Tests
@@ -353,20 +362,24 @@ class TestFeatureGroup:
 
 ### Pre-Commit Checklist
 
-**Before EVERY commit:**
+**During Development (TDD cycles):**
 
 ```bash
-# 1. Run tests for module you changed
+# 1. Run tests for module you changed (fast feedback)
 make test-ui  # or test-core, test-analysis, etc.
 
-# 2. (Optional but recommended) Full quality gate
-make check
-
-# 3. Commit - pre-commit hooks automatically enforce:
+# 2. Commit - pre-commit hooks automatically enforce:
 #    - Formatting (ruff format)
 #    - Linting (ruff check --fix)
 #    - Type checking (mypy)
 #    - Test fixture rules (custom hook)
+```
+
+**Before PR (Full Quality Gate):**
+
+```bash
+# Run full suite to catch cross-module regressions
+make test-fast  # or make check
 ```
 
 ### Commit Message Format

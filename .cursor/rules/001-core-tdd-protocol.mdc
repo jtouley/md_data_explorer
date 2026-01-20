@@ -46,9 +46,10 @@ make validate       # Verify platform setup
    - Extract duplicate test setup to fixtures (Rule of Two)
    - Run `/deslop` to remove AI-generated slop
 
-5. **Full Suite** (Regression Check)
-   - Run module tests: `make test-[module]`
-   - All tests must pass before commit
+5. **Module Tests** (Development Feedback)
+   - Run module tests: `make test-[module]` (for fast TDD feedback)
+   - All module tests must pass before commit
+   - **Before PR**: Run `make test-fast` to catch cross-module regressions
 
 6. **Commit** (with Tests)
    - Commit implementation + tests together
