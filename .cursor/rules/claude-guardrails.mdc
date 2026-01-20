@@ -26,7 +26,7 @@ Lightweight rules for Claude Code hooks in this repo.
 Before committing:
 
 ```bash
-make check-fast   # format, lint, type-check, fast tests
+make check-fast   # Fast code quality: format-check, lint (no tests)
 ```
 
 Or manually:
@@ -44,4 +44,5 @@ make test-fast
 | Format file | `uv run ruff format path/to/file.py` |
 | Fix lints | `uv run ruff check --fix path/to/file.py` |
 | Fast tests | `make test-fast` |
-| Full gate | `make check-fast` |
+| Fast quality | `make check-fast` (no tests) |
+| Full gate | `make check` (includes tests) |
