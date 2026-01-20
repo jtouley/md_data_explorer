@@ -24,10 +24,9 @@ class ColumnContext:
     units: str | None = None
     codebook: dict[str, str] | None = None
     stats: dict[str, Any] | None = None
-    # Phase 4: Enriched fields from ResolvedMetadata
     description: str | None = None
     is_phi: bool = False
-    exclusion_patterns: list[Any] | None = None  # List of ResolvedExclusionPattern
+    exclusion_patterns: list[Any] | None = None
     semantic_type: str | None = None
 
 
@@ -40,8 +39,7 @@ class AutoContext:
     columns: list[ColumnContext]
     glossary: dict[str, Any]  # Extracted terms, abbreviations, notes
     constraints: dict[str, Any] = field(default_factory=lambda: {"no_row_level_data": True, "max_tokens": 4000})
-    # Phase 4: Cross-column relationships from ResolvedMetadata
-    relationships: list[Any] | None = None  # List of ResolvedRelationship
+    relationships: list[Any] | None = None
 
 
 def _extract_entity_keys(inferred_schema: Any) -> list[str]:
@@ -204,7 +202,7 @@ def _build_column_contexts(
     semantic_layer: Any,
     inferred_schema: Any,
     query_terms: list[str] | None = None,
-    resolved_metadata: Any = None,  # Phase 4: ResolvedDatasetMetadata
+    resolved_metadata: Any = None,
 ) -> list[ColumnContext]:
     """
     Build column contexts from semantic layer and schema.
@@ -308,7 +306,7 @@ def _build_column_contexts(
             if stats_dict:
                 stats = stats_dict
 
-        # Phase 4: Enrich with resolved metadata if available
+        # Enrich with resolved metadata if available
         user_aliases: list[str] = []
         description: str | None = None
         is_phi: bool = False
@@ -514,7 +512,7 @@ def build_autocontext(
     doc_context: str | None = None,
     query_terms: list[str] | None = None,
     max_tokens: int = 4000,
-    resolved_metadata: Any = None,  # Phase 4: ResolvedDatasetMetadata
+    resolved_metadata: Any = None,
 ) -> AutoContext:
     """
     Build AutoContext pack from schema inference, documentation, and aliases.
