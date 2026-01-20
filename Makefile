@@ -289,11 +289,10 @@ check-serial: ## Run all checks serially (for deterministic results)
 	@echo ""
 	@echo "$(GREEN)✅ All checks passed!$(NC)"
 
-check-fast: ## Run fast checks (lint, format-check, fast tests)
-	@echo "$(GREEN)Running fast checks...$(NC)"
+check-fast: ## Run fast code quality checks (lint, format-check) - no tests
+	@echo "$(GREEN)Running fast code quality checks...$(NC)"
 	@$(MAKE) lint || exit 1
 	@$(MAKE) format-check || exit 1
-	@$(MAKE) test-fast || exit 1
 	@echo "$(GREEN)✅ All fast checks passed!$(NC)"
 
 run: ensure-venv ## Start the Streamlit application (direct, no Ollama management)

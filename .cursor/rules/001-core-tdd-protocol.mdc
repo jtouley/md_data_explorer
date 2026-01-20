@@ -71,7 +71,7 @@ make test-e2e         # End-to-end tests
 
 # Full suite
 make test             # All tests
-make test-fast        # Skip slow tests (recommended during dev)
+make test-fast        # Skip slow tests (before PR)
 make test-unit        # Unit tests only
 make test-integration # Integration tests only
 make test-cov         # Tests with HTML coverage report
@@ -91,7 +91,7 @@ make type-check       # Run mypy type checker
 
 ```bash
 make check            # Full gate: lint, format-check, type-check, test
-make check-fast       # Fast gate: lint, format-check, test-fast
+make check-fast       # Fast code quality: lint, format-check (no tests)
 make ci               # CI checks (for GitHub Actions)
 ```
 
