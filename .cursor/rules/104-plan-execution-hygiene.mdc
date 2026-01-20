@@ -42,7 +42,8 @@ make install-pre-commit  # After make install-dev
 - `make format-check` - Verify formatting without committing
 - `make lint` - Verify linting without committing
 - `make type-check` - Verify types without committing
-- `make test-fast` - Run fast tests before committing
+- Module-specific tests: `make test-ui`, `make test-core`, etc. (for fast TDD feedback)
+- `make test-fast` - Run full fast test suite (recommended before PR, not every commit)
 
 ### CI/CD Integration
 
@@ -81,11 +82,11 @@ make install-pre-commit  # After make install-dev
 **Workflow Steps:**
 
 1. **Write failing test** (Red) - Use AAA pattern (Arrange-Act-Assert)
-2. **Run test immediately** - Use module-specific test command (e.g., `make test-core`) or `make test-fast` to verify it fails as expected
+2. **Run test immediately** - Use module-specific test command (e.g., `make test-core`) to verify it fails as expected
 3. **Implement minimum code to pass** (Green)
-4. **Run test again** - Use module-specific test command or `make test-fast` to verify it passes
+4. **Run test again** - Use module-specific test command to verify it passes
 5. **Refactor** (Refactor)
-6. **Run full test suite** - `make test-fast` before commit
+6. **Before PR** - Run `make test-fast` to catch cross-module regressions
 7. **Commit** - Pre-commit hooks automatically enforce formatting, linting, type checking, and test fixture rules
 
 ### Test Structure Standards
@@ -152,9 +153,9 @@ plt.assert_frame_equal(result, expected)
 **Before starting the next phase, you MUST:**
 
 1. **Write tests for the phase** - Create test files covering all new functionality
-2. **Run tests immediately** - Execute module-specific test command (e.g., `make test-core`) or `make test-fast` to verify all tests pass
+2. **Run tests immediately** - Execute module-specific test command (e.g., `make test-core`) to verify all tests pass
 3. **Fix any test failures** - Do not proceed until all tests pass
-4. **Run `make check`** - Ensure all quality gates pass (format, lint, type-check, test)
+4. **Before PR** - Run `make test-fast` or `make check` to catch cross-module regressions
 5. **Commit all changes** - Include both implementation AND tests in the commit
 6. **Verify commit includes** - All relevant files for that phase (source code + test files)
 
@@ -243,13 +244,22 @@ import pandas as pd
 
 ## Quality Gate Summary
 
-### Before Every Commit
+### During Development (TDD Cycles)
+
+```bash
+# Fast feedback - module-specific tests only
+make test-ui       # When working on UI
+make test-core    # When working on core
+# etc.
+```
+
+### Before PR (Full Quality Gate)
 
 ```bash
 make format        # Auto-format code
 make lint-fix      # Auto-fix linting issues
 make type-check    # Verify type hints
-make test-fast     # Run fast tests (or use module-specific: test-core, test-analysis, test-ui, etc.)
+make test-fast     # Run full fast test suite (catches cross-module regressions)
 make check         # Full quality gate (recommended)
 ```
 
