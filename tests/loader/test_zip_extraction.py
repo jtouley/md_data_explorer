@@ -20,10 +20,7 @@ def enable_multi_table(monkeypatch):
 
 @pytest.mark.slow
 class TestZipExtraction:
-    """Test suite for ZIP file extraction and processing.
-
-    These tests use large fixtures (1M records) and are marked slow.
-    """
+    """Tests for ZIP file extraction and processing."""
 
     def test_extract_zip_with_csv_files(
         self, upload_storage, large_patients_csv, large_admissions_with_discharge_csv, large_diagnoses_csv
