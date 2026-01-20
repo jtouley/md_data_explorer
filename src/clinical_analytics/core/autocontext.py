@@ -316,35 +316,19 @@ def _build_column_contexts(
         if resolved_metadata and col_name in resolved_metadata.columns:
             resolved_col = resolved_metadata.columns[col_name]
 
-            # User/LLM aliases from resolved metadata
             if resolved_col.aliases:
                 user_aliases = list(resolved_col.aliases)
-
-            # Description from resolved metadata
             if resolved_col.description:
                 description = resolved_col.description
-
-            # PHI marking from resolved metadata
             is_phi = resolved_col.is_phi
-
-            # Exclusion patterns from resolved metadata
             if resolved_col.exclusion_patterns:
                 exclusion_patterns = list(resolved_col.exclusion_patterns)
-
-            # Semantic type from resolved metadata
             if resolved_col.semantic_type:
                 semantic_type = resolved_col.semantic_type.value
-
-            # Override units from resolved metadata if provided
             if resolved_col.unit:
                 units = resolved_col.unit
-
-            # Merge codebook from resolved metadata
             if resolved_col.codebook:
-                if codebook:
-                    codebook = {**codebook, **resolved_col.codebook}
-                else:
-                    codebook = resolved_col.codebook
+                codebook = {**codebook, **resolved_col.codebook} if codebook else resolved_col.codebook
 
         # Create ColumnContext with enriched fields
         column_context = ColumnContext(
