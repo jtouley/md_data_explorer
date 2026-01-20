@@ -254,6 +254,7 @@ class TestCodedColumnDetection:
         assert is_coded is True, "Should detect coded column by looking up alias and parsing it"
 
 
+@pytest.mark.slow
 class TestFilterExtractionTypeSafety:
     """Test that filter extraction produces type-safe filters for coded columns."""
 
@@ -596,8 +597,9 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
                     ), f"Filter value should be int code, got: {statin_filter.value}"
 
 
+@pytest.mark.slow
 class TestExclusionFilters:
-    """Test exclusion filter patterns like 'excluding those not on X'."""
+    """Tests for exclusion filter patterns like 'excluding those not on X'."""
 
     def test_exclude_variant_creates_exclusion_filter(
         self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model

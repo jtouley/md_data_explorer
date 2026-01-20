@@ -14,7 +14,6 @@ Regression test: If accuracy drops below 80%, the test fails.
 """
 
 import pytest
-
 from clinical_analytics.core.eval_harness import EvalHarness, load_golden_questions
 
 
@@ -58,16 +57,19 @@ def test_golden_questions_evaluation(make_semantic_layer):
     failures = [r for r in results if not r.get("correct", False)]
     if failures:
         print("\n" + "=" * 80)
-        print("FAILURES")
+        print("FAILURES (detailed)")
         print("=" * 80)
         for result in failures:
             print(f"\n✗ {result['id']}")
             print(f"  Query: {result['query']}")
-            print(f"  Expected: {result.get('expected_intent', 'N/A')}")
-            print(f"  Actual: {result.get('actual_intent', 'N/A')}")
+            exp = result.get("expected_intent")
+            act = result.get("actual_intent")
+            match = result.get("intent_match")
+            print(f"  Intent:   expected={exp}, actual={act}, match={match}")
+            print(f"  Metric:   match={result.get('metric_match')}")
+            print(f"  GroupBy:  match={result.get('group_by_match')}")
+            print(f"  Filters:  match={result.get('filters_match')}")
             print(f"  Confidence: {result.get('confidence', 0.0):.2f}")
-            if not result.get("intent_match"):
-                print(f"  ❌ Intent: expected {result.get('expected_intent')}, got {result.get('actual_intent')}")
 
     # Print summary
     print("\n" + "=" * 80)
@@ -87,9 +89,9 @@ def test_golden_questions_evaluation(make_semantic_layer):
     )
 
     # Assert: Intent accuracy must be above 85%
-    assert summary["intent_accuracy"] >= 0.85, (
-        f"Intent accuracy ({summary['intent_accuracy']:.1%}) is below 85% threshold."
-    )
+    assert (
+        summary["intent_accuracy"] >= 0.85
+    ), f"Intent accuracy ({summary['intent_accuracy']:.1%}) is below 85% threshold."
 
 
 def test_load_golden_questions_yaml():

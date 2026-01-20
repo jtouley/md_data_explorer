@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 
@@ -21,6 +20,7 @@ def mock_semantic_layer():
     return mock
 
 
+@pytest.mark.slow
 def test_error_message_shows_parsing_attempts(mock_semantic_layer):
     """Error message should show what tiers were tried."""
     engine = NLQueryEngine(mock_semantic_layer)

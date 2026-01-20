@@ -17,6 +17,7 @@ and context awareness."
 import pytest
 
 
+@pytest.mark.slow
 def test_parse_query_with_refinement_context_adds_filter(
     make_semantic_layer,
     mock_llm_calls,
@@ -352,7 +353,7 @@ def test_llm_refinement_with_coded_categorical_column(
 
     # Assert
     assert result.intent_type == "COUNT"
-    assert result.grouping_variable == "treatment_group"
+    assert result.grouping_variable == "treatment"  # Resolved from "treatment_group" alias
     # LLM should extract filter for control (code 1)
     assert len(result.filters) >= 1
 
