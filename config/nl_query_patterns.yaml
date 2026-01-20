@@ -75,7 +75,11 @@ patterns:
         "1": "grouping_variable"
       confidence: 0.9
 
-    - pattern: "which\\s+(?:\\w+\\s+)?(?:was|is)\\s+the?\\s+most\\s+\\w+"
+    - pattern: "which\\s+(?:\\w+\\s+)?(?:was|is)\\s+(?:the\\s+)?most\\s+\\w+"
+      groups: {}
+      confidence: 0.9
+
+    - pattern: "what\\s+was\\s+(?:the\\s+)?most\\s+\\w+"
       groups: {}
       confidence: 0.9
 
