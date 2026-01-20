@@ -24,6 +24,11 @@ class ColumnContext:
     units: str | None = None
     codebook: dict[str, str] | None = None
     stats: dict[str, Any] | None = None
+    # Phase 4: Enriched fields from ResolvedMetadata
+    description: str | None = None
+    is_phi: bool = False
+    exclusion_patterns: list[Any] | None = None  # List of ResolvedExclusionPattern
+    semantic_type: str | None = None
 
 
 @dataclass
@@ -35,6 +40,8 @@ class AutoContext:
     columns: list[ColumnContext]
     glossary: dict[str, Any]  # Extracted terms, abbreviations, notes
     constraints: dict[str, Any] = field(default_factory=lambda: {"no_row_level_data": True, "max_tokens": 4000})
+    # Phase 4: Cross-column relationships from ResolvedMetadata
+    relationships: list[Any] | None = None  # List of ResolvedRelationship
 
 
 def _extract_entity_keys(inferred_schema: Any) -> list[str]:
@@ -197,6 +204,7 @@ def _build_column_contexts(
     semantic_layer: Any,
     inferred_schema: Any,
     query_terms: list[str] | None = None,
+    resolved_metadata: Any = None,  # Phase 4: ResolvedDatasetMetadata
 ) -> list[ColumnContext]:
     """
     Build column contexts from semantic layer and schema.
@@ -205,9 +213,10 @@ def _build_column_contexts(
         semantic_layer: SemanticLayer instance
         inferred_schema: InferredSchema instance
         query_terms: Optional query terms for relevance filtering
+        resolved_metadata: Optional ResolvedDatasetMetadata with enriched column metadata
 
     Returns:
-        List of ColumnContext objects
+        List of ColumnContext objects (enriched if resolved_metadata provided)
     """
     # Get all columns from semantic layer
     alias_index = semantic_layer.get_column_alias_index()
@@ -299,16 +308,60 @@ def _build_column_contexts(
             if stats_dict:
                 stats = stats_dict
 
-        # Create ColumnContext
+        # Phase 4: Enrich with resolved metadata if available
+        user_aliases: list[str] = []
+        description: str | None = None
+        is_phi: bool = False
+        exclusion_patterns: list[Any] | None = None
+        semantic_type: str | None = None
+
+        if resolved_metadata and col_name in resolved_metadata.columns:
+            resolved_col = resolved_metadata.columns[col_name]
+
+            # User/LLM aliases from resolved metadata
+            if resolved_col.aliases:
+                user_aliases = list(resolved_col.aliases)
+
+            # Description from resolved metadata
+            if resolved_col.description:
+                description = resolved_col.description
+
+            # PHI marking from resolved metadata
+            is_phi = resolved_col.is_phi
+
+            # Exclusion patterns from resolved metadata
+            if resolved_col.exclusion_patterns:
+                exclusion_patterns = list(resolved_col.exclusion_patterns)
+
+            # Semantic type from resolved metadata
+            if resolved_col.semantic_type:
+                semantic_type = resolved_col.semantic_type.value
+
+            # Override units from resolved metadata if provided
+            if resolved_col.unit:
+                units = resolved_col.unit
+
+            # Merge codebook from resolved metadata
+            if resolved_col.codebook:
+                if codebook:
+                    codebook = {**codebook, **resolved_col.codebook}
+                else:
+                    codebook = resolved_col.codebook
+
+        # Create ColumnContext with enriched fields
         column_context = ColumnContext(
             name=col_name,
             normalized_name=_normalize_column_name(col_name),
             system_aliases=system_aliases,
-            user_aliases=[],  # Future: Get from ADR003 persisted mappings
+            user_aliases=user_aliases,
             dtype=dtype,
             units=units,
             codebook=codebook,
             stats=stats,
+            description=description,
+            is_phi=is_phi,
+            exclusion_patterns=exclusion_patterns,
+            semantic_type=semantic_type,
         )
 
         column_contexts.append(column_context)
@@ -461,6 +514,7 @@ def build_autocontext(
     doc_context: str | None = None,
     query_terms: list[str] | None = None,
     max_tokens: int = 4000,
+    resolved_metadata: Any = None,  # Phase 4: ResolvedDatasetMetadata
 ) -> AutoContext:
     """
     Build AutoContext pack from schema inference, documentation, and aliases.
@@ -474,9 +528,10 @@ def build_autocontext(
         doc_context: Extracted documentation text from Phase 1
         query_terms: Optional query terms for relevance filtering
         max_tokens: Maximum token budget (default: 4000)
+        resolved_metadata: Optional ResolvedDatasetMetadata with enriched column metadata
 
     Returns:
-        AutoContext pack with schema context
+        AutoContext pack with schema context (enriched if resolved_metadata provided)
     """
     # Reconstruct inferred_schema if not provided
     if inferred_schema is None:
@@ -485,8 +540,8 @@ def build_autocontext(
     # Step 1: Extract entity keys (deterministic ranking)
     entity_keys = _extract_entity_keys(inferred_schema)
 
-    # Step 2: Build column catalog
-    column_contexts = _build_column_contexts(semantic_layer, inferred_schema, query_terms)
+    # Step 2: Build column catalog (with resolved metadata enrichment if available)
+    column_contexts = _build_column_contexts(semantic_layer, inferred_schema, query_terms, resolved_metadata)
 
     # Step 3: Filter columns by relevance if query_terms provided
     if query_terms:
@@ -502,6 +557,11 @@ def build_autocontext(
         "display_name": semantic_layer.config.get("display_name", semantic_layer.dataset_name),
     }
 
+    # Step 5b: Extract relationships from resolved metadata
+    relationships: list[Any] | None = None
+    if resolved_metadata and resolved_metadata.relationships:
+        relationships = list(resolved_metadata.relationships)
+
     # Step 6: Create AutoContext
     autocontext = AutoContext(
         dataset=dataset_info,
@@ -509,6 +569,7 @@ def build_autocontext(
         columns=column_contexts,
         glossary=glossary,
         constraints={"no_row_level_data": True, "max_tokens": max_tokens},
+        relationships=relationships,
     )
 
     # Step 7: Enforce token budget
