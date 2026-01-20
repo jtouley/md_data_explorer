@@ -599,10 +599,7 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
 
 @pytest.mark.slow
 class TestExclusionFilters:
-    """Test exclusion filter patterns like 'excluding those not on X'.
-
-    These tests use NL query engine with real parsing and are marked slow.
-    """
+    """Tests for exclusion filter patterns like 'excluding those not on X'."""
 
     def test_exclude_variant_creates_exclusion_filter(
         self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model

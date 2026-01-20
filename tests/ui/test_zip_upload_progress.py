@@ -26,10 +26,7 @@ def upload_storage(tmp_path):
 
 @pytest.mark.slow
 class TestZipUploadProgress:
-    """Test suite for progress callback in ZIP upload processing.
-
-    These tests use large fixtures and are marked slow.
-    """
+    """Tests for progress callback in ZIP upload processing."""
 
     def test_save_zip_upload_calls_progress_callback(self, upload_storage, large_zip_with_csvs):
         """Test that progress callback is called during ZIP upload."""

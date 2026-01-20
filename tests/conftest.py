@@ -349,41 +349,19 @@ def cached_sentence_transformer():
 
 @pytest.fixture
 def mock_encoder():
-    """
-    Mock SentenceTransformer encoder to eliminate encoding overhead in unit tests.
-
-    Returns fake embeddings instantly (<1ms) instead of real encoding (~100-500ms).
-    This provides 10-50x speedup for tests that use semantic matching.
-
-    The mock returns consistent numpy arrays with the same dimensions as the
-    real all-MiniLM-L6-v2 model (384 dimensions).
-
-    Usage:
-        def test_fast_parsing(mock_encoder, make_semantic_layer, mock_llm_calls):
-            # mock_encoder automatically patches SentenceTransformer
-            semantic = make_semantic_layer(...)
-            engine = NLQueryEngine(semantic_layer=semantic)
-            result = engine.parse_query("describe outcome")  # Uses mock, instant
-    """
+    """Mock SentenceTransformer encoder for fast unit tests (10-50x speedup)."""
     from unittest.mock import MagicMock, patch
 
     import numpy as np
 
-    # Create mock encoder with realistic behavior
     mock = MagicMock()
-
-    # Model dimension for all-MiniLM-L6-v2 is 384
-    embedding_dim = 384
+    embedding_dim = 384  # all-MiniLM-L6-v2 dimension
 
     def mock_encode(texts, *args, **kwargs):
-        """Return fake embeddings with consistent dimensions."""
         if isinstance(texts, str):
             texts = [texts]
-        # Generate deterministic fake embeddings based on text hash
-        # This ensures same text gets same embedding (for similarity matching)
         embeddings = []
         for text in texts:
-            # Use hash to get consistent "random" values per text
             seed = hash(text) % (2**32)
             rng = np.random.RandomState(seed)
             embeddings.append(rng.randn(embedding_dim).astype(np.float32))
@@ -391,10 +369,7 @@ def mock_encoder():
 
     mock.encode = MagicMock(side_effect=mock_encode)
 
-    # Patch SentenceTransformer in the nl_query_engine module where it's imported
-    # The import happens inside _semantic_match(): from sentence_transformers import SentenceTransformer
     with patch("clinical_analytics.core.nl_query_engine.SentenceTransformer", mock, create=True):
-        # Also patch at the package level for any direct imports
         with patch("sentence_transformers.SentenceTransformer", return_value=mock):
             yield mock
 
@@ -502,17 +477,7 @@ def ask_questions_page():
 
 @pytest.fixture(scope="module")
 def large_test_data_csv(num_records: int = 1000000) -> str:
-    """
-    Generate large CSV data string for testing (meets 1KB minimum requirement).
-
-    Scope: module - expensive fixture (1M records), only created once per test module.
-
-    Args:
-        num_records: Number of records to generate (default: 1,000,000)
-
-    Returns:
-        CSV string with patient_id and age columns
-    """
+    """Generate large CSV data string (1M records) with patient_id and age columns."""
     import sys
     from pathlib import Path
 
@@ -531,10 +496,7 @@ def large_test_data_csv(num_records: int = 1000000) -> str:
 
 @pytest.fixture(scope="module")
 def large_patients_csv(num_records: int = 1000000) -> str:
-    """Generate large patients CSV with patient_id, age, sex columns.
-
-    Scope: module - expensive fixture (1M records), only created once per test module.
-    """
+    """Generate large patients CSV (1M records) with patient_id, age, sex columns."""
     import sys
     from pathlib import Path
 
@@ -554,10 +516,7 @@ def large_patients_csv(num_records: int = 1000000) -> str:
 
 @pytest.fixture(scope="module")
 def large_admissions_csv(num_records: int = 1000000) -> str:
-    """Generate large admissions CSV with patient_id and date columns.
-
-    Scope: module - expensive fixture (1M records), only created once per test module.
-    """
+    """Generate large admissions CSV (1M records) with patient_id and date columns."""
     import sys
     from pathlib import Path
 
@@ -576,10 +535,7 @@ def large_admissions_csv(num_records: int = 1000000) -> str:
 
 @pytest.fixture(scope="module")
 def large_admissions_with_admission_date_csv(num_records: int = 1000000) -> str:
-    """Generate large admissions CSV with patient_id and admission_date columns.
-
-    Scope: module - expensive fixture (1M records), only created once per test module.
-    """
+    """Generate large admissions CSV (1M records) with patient_id and admission_date."""
     import sys
     from pathlib import Path
 
@@ -598,10 +554,7 @@ def large_admissions_with_admission_date_csv(num_records: int = 1000000) -> str:
 
 @pytest.fixture(scope="module")
 def large_admissions_with_discharge_csv(num_records: int = 1000000) -> str:
-    """Generate large admissions CSV with patient_id, admission_date, discharge_date columns.
-
-    Scope: module - expensive fixture (1M records), only created once per test module.
-    """
+    """Generate large admissions CSV (1M records) with admission/discharge dates."""
     import sys
     from pathlib import Path
 
@@ -621,10 +574,7 @@ def large_admissions_with_discharge_csv(num_records: int = 1000000) -> str:
 
 @pytest.fixture(scope="module")
 def large_diagnoses_csv(num_records: int = 1000000) -> str:
-    """Generate large diagnoses CSV with patient_id, icd_code, diagnosis columns.
-
-    Scope: module - expensive fixture (1M records), only created once per test module.
-    """
+    """Generate large diagnoses CSV (1M records) with patient_id, icd_code, diagnosis."""
     import sys
     from pathlib import Path
 
@@ -644,14 +594,7 @@ def large_diagnoses_csv(num_records: int = 1000000) -> str:
 
 @pytest.fixture(scope="module")
 def large_zip_with_csvs(large_patients_csv, large_admissions_csv) -> bytes:
-    """
-    Create a ZIP file containing large CSV files for testing.
-
-    Scope: module - expensive fixture, only created once per test module.
-
-    Returns:
-        ZIP file bytes with patients.csv and admissions.csv
-    """
+    """Create ZIP with patients.csv and admissions.csv (large test data)."""
     import sys
     from pathlib import Path
 
@@ -669,14 +612,7 @@ def large_zip_with_csvs(large_patients_csv, large_admissions_csv) -> bytes:
 
 @pytest.fixture(scope="module")
 def large_zip_with_three_tables(large_patients_csv, large_admissions_csv, large_diagnoses_csv) -> bytes:
-    """
-    Create a ZIP file containing three large CSV files for testing.
-
-    Scope: module - expensive fixture, only created once per test module.
-
-    Returns:
-        ZIP file bytes with patients.csv, admissions.csv, and diagnoses.csv
-    """
+    """Create ZIP with patients, admissions, diagnoses CSVs (large test data)."""
     import sys
     from pathlib import Path
 
