@@ -122,6 +122,14 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "exclude_nulls": bool,
         },
     },
+    "metadata_patch": {
+        "required_fields": ["suggestions"],
+        "optional_fields": [],
+        "field_types": {
+            "suggestions": list,
+        },
+        # Note: Individual suggestions are validated by llm_enrichment.validate_llm_suggestions
+    },
 }
 
 
