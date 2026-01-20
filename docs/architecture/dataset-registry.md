@@ -5,7 +5,7 @@
 The Dataset Registry is the central component for managing clinical datasets. It provides:
 
 1. **Automatic schema inference** from uploaded files
-2. **Unified interface** for both built-in and user-uploaded datasets
+2. **Unified interface** for user-uploaded datasets
 3. **Multi-table support** with automatic relationship detection
 4. **Config-driven semantic layer** integration
 
@@ -19,7 +19,7 @@ graph TD
     D --> E[DatasetRegistry]
     E --> F[SemanticLayer]
 
-    G[Built-in Datasets] --> D
+    G[Uploaded Datasets] --> D
     H[Multi-Table Handler] --> C
 ```
 
@@ -209,15 +209,11 @@ config = {
 DatasetRegistry.update_config('my_dataset', config)
 ```
 
-## Built-in Datasets
+## Dataset Support
 
-Pre-configured datasets for testing and examples:
+The platform supports **user-uploaded datasets only**. Built-in datasets (COVID-MS, Sepsis, MIMIC-III) have been removed in favor of a self-service upload model with automatic schema inference.
 
-- **COVID-MS**: Multiple sclerosis patients with COVID-19
-- **Sepsis Challenge**: PhysioNet sepsis prediction data
-- **MIMIC-III Demo**: Subset of MIMIC-III database
-
-These are loaded from `src/clinical_analytics/datasets/` with handwritten configs (being phased out in favor of auto-inference).
+All datasets are now registered dynamically through the upload workflow with auto-inferred configurations.
 
 ## Next Steps
 

@@ -1,8 +1,10 @@
 # Architecture Refactoring: From Hardcoded to Config-Driven
 
 **Date:** 2025-12-07
-**Status:** ✅ Complete
+**Status:** ✅ Complete (Historical)
 **Impact:** Critical - Foundation for true extensibility
+
+> **⚠️ Historical Document:** This document describes the architectural refactoring that moved from hardcoded datasets to a registry pattern. The built-in datasets (COVID-MS, Sepsis, MIMIC-III) used as examples have been **removed**. The registry pattern now supports **user-uploaded datasets only**.
 
 ---
 

@@ -9,7 +9,9 @@ This module provides functions to load configuration from YAML files with:
 
 import logging
 import os
+import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -309,6 +311,9 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
                                 f"{target_type.__name__}: {e}, using default"
                             )
                             # Keep default value
+                    else:
+                        # New config key not in defaults - include as-is (e.g., nested dicts)
+                        config[key] = value
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
         except ValueError:
@@ -559,6 +564,200 @@ class ValidationConfigDefaults:
             "validation_layers": self.validation_layers.copy() if self.validation_layers else {},
             "validation_rules": self.validation_rules.copy() if self.validation_rules else {},
         }
+
+
+@dataclass
+class PathsConfigDefaults:
+    """Default values for path configuration."""
+
+    prompt_overlay_dir: str = "/tmp/nl_query_learning"
+    query_logs_dir: str = "data/query_logs"
+    analytics_db: str = "data/analytics.duckdb"
+    uploads_dir: str = "data/uploads"
+    config_dir: str = "config"
+    golden_questions: str = "tests/eval/golden_questions.yaml"
+
+    def to_dict(self) -> dict[str, str]:
+        """Convert dataclass to dictionary."""
+        return {
+            "prompt_overlay_dir": self.prompt_overlay_dir,
+            "query_logs_dir": self.query_logs_dir,
+            "analytics_db": self.analytics_db,
+            "uploads_dir": self.uploads_dir,
+            "config_dir": self.config_dir,
+            "golden_questions": self.golden_questions,
+        }
+
+
+def load_paths_config(config_path: Path | None = None) -> dict[str, Path]:
+    """
+    Load paths from config/paths.yaml with env var resolution.
+
+    Environment variables in paths are resolved using os.path.expandvars().
+    If an env var is not set (path still contains $VAR), the default is used.
+
+    Precedence: Resolved env var → YAML value → Default value
+
+    Args:
+        config_path: Optional path to config file. If None, uses default location.
+
+    Returns:
+        dict with path keys mapped to Path objects
+
+    Raises:
+        ValueError: If YAML is invalid
+    """
+    defaults = PathsConfigDefaults().to_dict()
+
+    # Determine config file path
+    if config_path is None:
+        project_root = get_project_root()
+        config_path = project_root / "config" / "paths.yaml"
+
+    # Load YAML if file exists
+    paths_config: dict[str, str] = {}
+    yaml_defaults: dict[str, str] = {}
+
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                yaml_data = yaml.safe_load(f) or {}
+                paths_config = yaml_data.get("paths", {})
+                yaml_defaults = yaml_data.get("defaults", {})
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+        except Exception as e:
+            logger.warning(f"Failed to load config from {config_path}: {e}, using defaults")
+
+    # Build result with env var resolution
+    result: dict[str, Path] = {}
+
+    for key in defaults:
+        # Start with hardcoded default
+        value = defaults[key]
+
+        # Override with YAML default if present
+        if key in yaml_defaults:
+            value = yaml_defaults[key]
+
+        # Override with YAML path if present
+        if key in paths_config:
+            raw_value = paths_config[key]
+            # Resolve environment variables
+            resolved = os.path.expandvars(raw_value)
+            # If env var was not set, expandvars returns the original string with $VAR
+            # In that case, use the default
+            if resolved.startswith("$") or "${" in resolved:
+                # Env var not resolved, use default
+                logger.debug(f"Path config {key}: env var not set, using default {value}")
+            else:
+                value = resolved
+
+        result[key] = Path(value)
+
+    return result
+
+
+@lru_cache(maxsize=1)
+def load_patterns_config(config_path: Path | None = None) -> dict[str, list[dict]]:
+    """
+    Load and compile regex patterns from config.
+
+    Uses LRU cache to avoid recompiling patterns on every call.
+
+    Args:
+        config_path: Optional path to config file. If None, uses default location.
+
+    Returns:
+        dict mapping intent type to list of compiled pattern dicts.
+        Each pattern dict has: regex (compiled), groups (dict), confidence (float)
+
+    Raises:
+        ValueError: If YAML is invalid
+    """
+    # Determine config file path
+    if config_path is None:
+        project_root = get_project_root()
+        config_path = project_root / "config" / "nl_query_patterns.yaml"
+
+    # Load YAML if file exists
+    if not config_path.exists():
+        logger.debug(f"Patterns config file not found at {config_path}, using empty patterns")
+        return {}
+
+    try:
+        with open(config_path) as f:
+            yaml_data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+    except Exception as e:
+        logger.warning(f"Failed to load patterns from {config_path}: {e}")
+        return {}
+
+    # Compile patterns
+    compiled: dict[str, list[dict]] = {}
+    patterns_data = yaml_data.get("patterns", {})
+
+    for intent, patterns in patterns_data.items():
+        compiled[intent] = []
+        for p in patterns:
+            try:
+                compiled_pattern = {
+                    "regex": re.compile(p["pattern"], re.IGNORECASE),
+                    "groups": p.get("groups", {}),
+                    "confidence": p.get("confidence", 0.9),
+                }
+                compiled[intent].append(compiled_pattern)
+            except re.error as e:
+                logger.warning(f"Failed to compile pattern '{p.get('pattern')}': {e}")
+                continue
+
+    logger.debug(
+        "patterns_loaded: intent_count=%d, total_patterns=%d",
+        len(compiled),
+        sum(len(p) for p in compiled.values()),
+    )
+
+    return compiled
+
+
+def load_golden_examples_config(config_path: Path | None = None) -> dict[str, Any]:
+    """
+    Load golden examples from config.
+
+    Args:
+        config_path: Optional path to config file. If None, uses default location.
+
+    Returns:
+        dict with 'questions' key containing list of golden example dicts
+
+    Raises:
+        ValueError: If YAML is invalid
+    """
+    # Determine config file path
+    if config_path is None:
+        project_root = get_project_root()
+        config_path = project_root / "config" / "golden_examples.yaml"
+
+    # Load YAML if file exists
+    if not config_path.exists():
+        logger.debug(f"Golden examples config not found at {config_path}, using empty list")
+        return {"questions": []}
+
+    try:
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}") from e
+    except Exception as e:
+        logger.warning(f"Failed to load golden examples from {config_path}: {e}")
+        return {"questions": []}
+
+    # Ensure questions key exists
+    if "questions" not in config:
+        config["questions"] = []
+
+    return config
 
 
 def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:

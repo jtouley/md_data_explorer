@@ -3,6 +3,8 @@
 **Date:** 2025-12-24
 **Purpose:** Document the consistent file structure patterns across datasets
 
+> **Note:** This document describes file structure patterns using historical examples from PhysioNet datasets (COVID-MS, Sepsis, MIMIC). These built-in datasets have been removed from the platform code. The patterns documented here serve as **reference examples** for how user-uploaded datasets should be structured for optimal NL query support.
+
 ---
 
 ## 📁 Standard Dataset Structure
@@ -200,24 +202,15 @@ Users working with different datasets see:
 
 ### Current Implementation
 
-**COVID-MS:**
-- ✅ Data file loaded from `data/raw/covid_ms/GDSI_OpenDataset_Final.csv`
-- ✅ README.txt available in `data/raw/covid_ms/README.txt`
-- ✅ PDF dictionary available in `data/dictionaries/`
-- ✅ Semantic layer config manually created from README
+**User Uploaded Datasets:**
+- ✅ Data files uploaded via Streamlit UI (CSV, Excel, ZIP)
+- ✅ Automatic schema inference detects patient ID, outcomes, time columns
+- ✅ Semantic layer config auto-generated from inferred schema
+- ✅ Data dictionaries can be included in ZIP uploads for RAG context
 
-**Sepsis:**
-- ✅ Data files loaded from PSV files in `data/raw/sepsis/.../training/` directory
-- ✅ PDF manuscript available in `data/dictionaries/` (centralized)
-- ✅ Original PDF also in `data/raw/sepsis/.../physionet_challenge_2019_ccm_manuscript.pdf`
-- ✅ Semantic layer config manually created from PDF documentation
-- ✅ Time-series aggregation to patient-level
-
-**MIMIC (Planned):**
-- ⏳ Data files loaded from relational CSVs
-- ⏳ README.md available for reference
-- ⏳ PDF dictionary can be added to `data/dictionaries/`
-- ⏳ Semantic layer config to be created from data dictionary
+**Reference Data Dictionaries:**
+- PDF dictionaries in `data/dictionaries/` provide examples of comprehensive documentation
+- These serve as templates for user-provided documentation
 
 ### Future Enhancement: Auto-Parsing
 

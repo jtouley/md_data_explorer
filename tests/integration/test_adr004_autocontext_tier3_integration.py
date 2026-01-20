@@ -25,7 +25,7 @@ except ImportError:
 class TestAutoContextTier3Integration:
     """Integration tests for AutoContext with Tier 3 LLM fallback."""
 
-    def test_autocontext_built_and_consumed_by_tier3(self, mock_semantic_layer):
+    def test_autocontext_built_and_consumed_by_tier3(self, make_semantic_layer):
         """
         Test that AutoContext is built and consumed by Tier 3 LLM fallback.
 
@@ -37,7 +37,6 @@ class TestAutoContextTier3Integration:
         """
         # Create sample schema
         import polars as pl
-
         from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
         df = pl.DataFrame(
@@ -52,9 +51,19 @@ class TestAutoContextTier3Integration:
         engine = SchemaInferenceEngine()
         inferred_schema = engine.infer_schema(df, doc_context=None)
 
+        # Create semantic layer from factory fixture
+        semantic_layer = make_semantic_layer(
+            dataset_name="test_autocontext",
+            data={
+                "patient_id": list(range(1, 11)),
+                "age": [25 + i for i in range(10)],
+                "current_regimen": [1 + (i % 3) for i in range(10)],
+            },
+        )
+
         # Build AutoContext
         autocontext = build_autocontext(
-            semantic_layer=mock_semantic_layer,
+            semantic_layer=semantic_layer,
             inferred_schema=inferred_schema,
             doc_context=None,
             max_tokens=4000,

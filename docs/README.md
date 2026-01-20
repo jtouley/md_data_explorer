@@ -55,10 +55,8 @@
    - How to add new datasets
 
 6. **[architecture/DATASET_STRUCTURE_PATTERNS.md](./architecture/DATASET_STRUCTURE_PATTERNS.md)**
-   - Standard dataset file structure patterns across all datasets
-   - COVID-MS, Sepsis, and MIMIC structure comparison
-   - Data dictionary formats (README.txt, PDF, README.md)
-   - How documentation structure enables NL query understanding
+   - Standard dataset file structure patterns for uploaded datasets
+   - Data dictionary formats and how they enable NL query understanding
    - RAG context from data dictionaries
    - Entity extraction from documentation
    - Checklist for adding new datasets
@@ -161,7 +159,7 @@
 
 **...dataset file structure patterns**
 → Read [architecture/DATASET_STRUCTURE_PATTERNS.md](./architecture/DATASET_STRUCTURE_PATTERNS.md)
-   - Understand COVID-MS, Sepsis, and MIMIC structure
+   - Understand standard file structure patterns for uploads
    - See how documentation formats vary (txt, PDF, md)
    - Learn how data dictionaries enable NL queries
 
@@ -234,7 +232,7 @@ vision/UNIFIED_VISION.md (Master Document)
     │
     ├─→ architecture/DATASET_STRUCTURE_PATTERNS.md (Dataset patterns)
     │       └─→ How data dictionaries enable NL queries
-    │       └─→ COVID-MS, Sepsis, MIMIC structure comparison
+    │       └─→ Standard file structure for uploaded datasets
     │
     └─→ user-experience/PHASE_0_CLINICIAN_WORKFLOWS.md (User needs)
             └─→ user-experience/UI_FRICTION_ANALYSIS.md (UX details)
@@ -273,7 +271,7 @@ All docs now align around:
 
 ### Dataset Structure Documentation
 
-5. **Created architecture/DATASET_STRUCTURE_PATTERNS.md** - Documents consistent file structure patterns across COVID-MS, Sepsis, and MIMIC datasets, showing how data dictionaries (README.txt, PDF, README.md) enable NL query understanding and RAG context.
+5. **Created architecture/DATASET_STRUCTURE_PATTERNS.md** - Documents consistent file structure patterns for uploaded datasets, showing how data dictionaries enable NL query understanding and RAG context.
 
 ### Comprehensive Implementation Plan
 

@@ -59,6 +59,13 @@ def mock_llm_calls(request):
         patch("clinical_analytics.core.llm_client.OllamaClient.generate"),
         # CRITICAL: Patch is_available() to avoid real HTTP requests (30s timeout when Ollama isn't running)
         patch("clinical_analytics.core.llm_client.OllamaClient.is_available", return_value=True),
+        # CRITICAL: Patch OllamaManager methods to ensure client is returned (not None)
+        patch("clinical_analytics.core.ollama_manager.OllamaManager.is_service_running", return_value=True),
+        # Return default and fallback models so get_client() won't return None
+        patch(
+            "clinical_analytics.core.ollama_manager.OllamaManager.get_available_models",
+            return_value=["llama3.1:8b", "llama3.2:3b"],
+        ),
     ]
 
     # Start all patches
@@ -116,6 +123,26 @@ def mock_llm_calls(request):
                 if prev_group_by_match:
                     group_by = prev_group_by_match.group(1)
 
+            # Extract existing filters from conversation history (for merging)
+            existing_filters = []
+            if system_prompt:
+                # Look for Previous Filters in conversation context
+                # Format is Python dict repr: Previous Filters: [{'column': 'age', ...}]
+                import ast
+
+                filters_match = re.search(
+                    r"Previous Filters:\s*(\[[^\]]*\])",
+                    system_prompt,
+                    re.DOTALL,
+                )
+                if filters_match:
+                    try:
+                        # Parse Python dict repr to actual dict
+                        filter_str = filters_match.group(1)
+                        existing_filters = ast.literal_eval(filter_str)
+                    except (ValueError, SyntaxError):
+                        pass
+
             # Determine filter column and value based on context
             filter_column = "status"  # default
             filter_operator = "!="
@@ -131,7 +158,8 @@ def mock_llm_calls(request):
                 or "50" in prompt_lower
             )
 
-            if has_age_context and ("over" in prompt_lower or ">" in prompt_lower):
+            # Case 1: Age filter update (e.g., "actually make it over 65")
+            if has_age_context and ("over" in prompt_lower or ">" in prompt_lower or "make it" in prompt_lower):
                 filter_column = "age"
                 filter_operator = ">"
                 # Extract age value from prompt (e.g., "over 65", "> 50")
@@ -144,6 +172,7 @@ def mock_llm_calls(request):
                     filter_value = 50
                 else:
                     filter_value = 65  # default
+                # For age updates, replace existing age filter (not merge)
                 response = {
                     "intent": "COUNT",
                     "metric": None,
@@ -160,6 +189,8 @@ def mock_llm_calls(request):
                     "explanation": "Refining previous query with updated age filter",
                 }
                 return json.dumps(response)
+
+            # Case 2: Adding new filter (merge with existing)
             elif "statin" in combined_text:
                 filter_column = "statin_used"
             elif "treatment" in combined_text:
@@ -167,13 +198,23 @@ def mock_llm_calls(request):
             elif "status" in combined_text:
                 filter_column = "status"
 
+            # Build new filter
+            new_filter = {
+                "column": filter_column,
+                "operator": filter_operator,
+                "value": filter_value,
+                "exclude_nulls": True,
+            }
+
+            # Merge: keep existing filters that aren't on the same column
+            merged_filters = [f for f in existing_filters if f.get("column") != filter_column]
+            merged_filters.append(new_filter)
+
             response = {
                 "intent": "COUNT",
                 "metric": None,
                 "group_by": group_by,
-                "filters": [
-                    {"column": filter_column, "operator": filter_operator, "value": filter_value, "exclude_nulls": True}
-                ],
+                "filters": merged_filters,
                 "confidence": 0.8,
                 "explanation": "Refining previous query by excluding n/a values",
             }
@@ -1521,7 +1562,7 @@ def discovered_datasets():
     DatasetRegistry.load_config()
 
     all_datasets = DatasetRegistry.list_datasets()
-    excluded = ["covid_ms", "mimic3", "sepsis", "uploaded"]
+    excluded = ["uploaded"]  # Exclude the class itself, not instances
     available = [d for d in all_datasets if d not in excluded]
 
     logger.info(
