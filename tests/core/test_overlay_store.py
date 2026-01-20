@@ -415,3 +415,31 @@ class TestPatchAcceptReject:
         assert len(patches) == 1
         assert patches[0].status == PatchStatus.REJECTED
         assert patches[0].rejected_reason == "Not accurate"
+
+
+class TestDeserializePatchImmutability:
+    """Tests for _deserialize_patch not mutating input."""
+
+    def test_deserialize_patch_does_not_mutate_input_dict(self, overlay_store):
+        """Test that _deserialize_patch does not modify the input dictionary."""
+
+        original_data = {
+            "_patch_type": "MetadataPatch",
+            "patch_id": "test_123",
+            "operation": "set_description",
+            "column": "age",
+            "value": "Patient age",
+            "status": "accepted",
+            "created_at": datetime.now(UTC).isoformat(),
+            "provenance": "user",
+        }
+
+        # Make a copy to compare
+        original_copy = dict(original_data)
+
+        # Call _deserialize_patch
+        overlay_store._deserialize_patch(original_data)
+
+        # Original dict should not be modified
+        assert original_data == original_copy
+        assert "_patch_type" in original_data

@@ -365,3 +365,33 @@ class TestMetadataPatchSchema:
         result = validate_shape(payload, "metadata_patch")
 
         assert result.valid
+
+
+class TestErrorHandling:
+    """Tests for error handling and logging."""
+
+    def test_generate_enrichment_suggestions_logs_exc_info_on_error(self):
+        """Test that exception handler includes exc_info for debugging."""
+
+        from clinical_analytics.core.llm_enrichment import generate_enrichment_suggestions
+        from clinical_analytics.core.schema_inference import InferredSchema
+
+        schema = InferredSchema(
+            patient_id_column="patient_id",
+            continuous_columns=["age"],
+        )
+
+        with (
+            patch("clinical_analytics.core.llm_enrichment.OllamaClient") as mock_client_class,
+            patch("clinical_analytics.core.llm_enrichment.logger") as mock_logger,
+        ):
+            mock_client = MagicMock()
+            mock_client.generate.side_effect = RuntimeError("LLM connection failed")
+            mock_client_class.return_value = mock_client
+
+            result = generate_enrichment_suggestions(schema)
+
+            assert result == []
+            mock_logger.error.assert_called_once()
+            call_kwargs = mock_logger.error.call_args.kwargs
+            assert call_kwargs.get("exc_info") is True
