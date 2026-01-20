@@ -8,7 +8,6 @@ Ensures:
 """
 
 import pytest
-
 from clinical_analytics.core.eval_harness import EvalHarness, load_golden_questions
 
 
@@ -133,6 +132,7 @@ class TestEvalHarness:
         assert result["intent_match"] is False
         assert result["correct"] is False
 
+    @pytest.mark.slow
     def test_eval_harness_batch_evaluation(self, eval_harness):
         """EvalHarness should support batch evaluation of multiple questions."""
         # Arrange: Multiple questions

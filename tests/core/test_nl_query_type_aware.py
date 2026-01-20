@@ -8,9 +8,11 @@ Ensures:
 - Grouping variables are validated as categorical
 """
 
+import pytest
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 
+@pytest.mark.slow
 class TestTypeAwareIntentSelection:
     """Test that intent is selected based on variable types."""
 
