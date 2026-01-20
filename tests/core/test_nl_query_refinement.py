@@ -17,6 +17,7 @@ and context awareness."
 import pytest
 
 
+@pytest.mark.slow
 def test_parse_query_with_refinement_context_adds_filter(
     make_semantic_layer,
     mock_llm_calls,

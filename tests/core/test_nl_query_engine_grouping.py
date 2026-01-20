@@ -9,9 +9,11 @@ Tests verify:
 - Partial matching works when exact match fails
 """
 
+import pytest
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 
+@pytest.mark.slow
 class TestGroupingExtractionFromCompoundQueries:
     """Test grouping variable extraction from compound queries."""
 

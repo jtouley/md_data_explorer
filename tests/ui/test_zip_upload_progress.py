@@ -6,7 +6,6 @@ import io
 import zipfile
 
 import pytest
-
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 
@@ -19,10 +18,20 @@ def enable_multi_table(monkeypatch):
     monkeypatch.setattr(user_datasets_module, "MULTI_TABLE_ENABLED", True)
 
 
-class TestZipUploadProgress:
-    """Test suite for progress callback in ZIP upload processing."""
+@pytest.fixture
+def upload_storage(tmp_path):
+    """Create UserDatasetStorage with temp directory."""
+    return UserDatasetStorage(upload_dir=tmp_path)
 
-    def test_save_zip_upload_calls_progress_callback(self, tmp_path, large_zip_with_csvs):
+
+@pytest.mark.slow
+class TestZipUploadProgress:
+    """Test suite for progress callback in ZIP upload processing.
+
+    These tests use large fixtures and are marked slow.
+    """
+
+    def test_save_zip_upload_calls_progress_callback(self, upload_storage, large_zip_with_csvs):
         """Test that progress callback is called during ZIP upload."""
         zip_bytes = large_zip_with_csvs
 
@@ -32,7 +41,7 @@ class TestZipUploadProgress:
         def progress_callback(step: int, total_steps: int, message: str, details: dict):
             progress_calls.append({"step": step, "total_steps": total_steps, "message": message, "details": details})
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",
@@ -48,7 +57,7 @@ class TestZipUploadProgress:
         # Verify initial progress call
         assert any("Initializing" in call["message"] for call in progress_calls)
 
-    def test_progress_callback_receives_table_loading_updates(self, tmp_path, large_zip_with_three_tables):
+    def test_progress_callback_receives_table_loading_updates(self, upload_storage, large_zip_with_three_tables):
         """Test that progress callback receives updates for each table being loaded."""
         zip_bytes = large_zip_with_three_tables
 
@@ -65,7 +74,7 @@ class TestZipUploadProgress:
                     }
                 )
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, _, _ = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",
@@ -83,7 +92,7 @@ class TestZipUploadProgress:
         assert "admissions" in table_names
         assert "diagnoses" in table_names
 
-    def test_progress_callback_receives_relationship_detection_update(self, tmp_path):
+    def test_progress_callback_receives_relationship_detection_update(self, upload_storage):
         """Test that progress callback receives relationship detection updates."""
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -102,7 +111,7 @@ class TestZipUploadProgress:
             if "relationships" in details:
                 relationship_calls.append({"relationships": details["relationships"], "message": message})
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, _, _ = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",
@@ -115,7 +124,7 @@ class TestZipUploadProgress:
         assert len(relationship_calls) > 0
         assert any("relationships" in call for call in relationship_calls)
 
-    def test_progress_callback_without_callback_works(self, tmp_path):
+    def test_progress_callback_without_callback_works(self, upload_storage):
         """Test that save_zip_upload works without progress callback."""
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -126,7 +135,7 @@ class TestZipUploadProgress:
         zip_buffer.seek(0)
         zip_bytes = zip_buffer.getvalue()
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, message, upload_id = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",
@@ -139,7 +148,7 @@ class TestZipUploadProgress:
         assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
 
-    def test_progress_callback_receives_correct_step_counts(self, tmp_path, large_zip_with_csvs):
+    def test_progress_callback_receives_correct_step_counts(self, upload_storage, large_zip_with_csvs):
         """Test that progress callback receives correct step and total_steps values."""
         zip_bytes = large_zip_with_csvs
 
@@ -150,7 +159,7 @@ class TestZipUploadProgress:
             # Verify step is always <= total_steps
             assert step <= total_steps, f"Step {step} exceeds total_steps {total_steps}"
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, _, _ = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",
@@ -169,7 +178,7 @@ class TestZipUploadProgress:
         total_steps_values = {s[1] for s in step_values}
         assert len(total_steps_values) == 1, "All calls should use same total_steps"
 
-    def test_progress_callback_receives_table_details(self, tmp_path, large_patients_csv):
+    def test_progress_callback_receives_table_details(self, upload_storage, large_patients_csv):
         """Test that progress callback receives detailed table information."""
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zip_file:
@@ -183,7 +192,7 @@ class TestZipUploadProgress:
             if "table_name" in details and "rows" in details:
                 table_details.append(details)
 
-        storage = UserDatasetStorage(upload_dir=tmp_path)
+        storage = upload_storage
         success, _, _ = storage.save_zip_upload(
             file_bytes=zip_bytes,
             original_filename="test.zip",

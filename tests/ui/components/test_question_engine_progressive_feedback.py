@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 
 
@@ -79,6 +78,7 @@ def test_progressive_feedback_tracks_all_attempts(mock_nl_engine):
         assert intent.parsing_tier in tier_names
 
 
+@pytest.mark.slow
 def test_progressive_feedback_handles_timeout(mock_nl_engine):
     """Progressive feedback should handle tier timeout gracefully."""
 
