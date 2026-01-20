@@ -710,6 +710,28 @@ def render_review_step(
         """
         )
 
+        # Offer metadata enrichment (ADR011)
+        upload_id = result.get("upload_id")
+        if upload_id and not st.session_state.get("enrichment_offered"):
+            st.divider()
+            st.markdown("### 🧠 Enhance Metadata with AI")
+            st.markdown(
+                "Want to improve your dataset's metadata? "
+                "Our AI can suggest descriptions, labels, and codebook entries."
+            )
+
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button("🚀 Enrich Metadata", type="secondary", key="enrich_after_upload"):
+                    st.session_state["enrichment_offered"] = True
+                    st.session_state["enrich_upload_id"] = upload_id
+                    st.info(
+                        "Navigate to the **Your Dataset** page to review AI suggestions. "
+                        "Click the 'Enrich Metadata with AI' button there."
+                    )
+            with col2:
+                st.caption("This is optional - you can do it later from the Dataset page.")
+
         # Option to upload another dataset
         if st.button("📤 Upload Another Dataset", key="success_upload_another"):
             # Clear all upload-related session state
