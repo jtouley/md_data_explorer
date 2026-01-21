@@ -77,12 +77,46 @@ const clinicalAPI = {
   },
 
   /**
-   * Create SSE connection for query streaming.
+   * Subscribe to SSE stream for query results.
+   * Handles EventSource internally and calls callbacks for events.
    * @param {string} queryId - Query identifier
-   * @returns {EventSource}
+   * @param {Object} callbacks - Event callbacks
+   * @param {Function} callbacks.onEvent - Called for each event with {event, data}
+   * @param {Function} callbacks.onError - Called on error
+   * @param {Function} callbacks.onClose - Called when stream closes
+   * @returns {Function} Cleanup function to close the stream
    */
-  createQueryStream(queryId) {
-    return new EventSource(`${API_BASE_URL}/api/queries/${queryId}/stream`);
+  subscribeToQueryStream(queryId, callbacks) {
+    const eventSource = new EventSource(`${API_BASE_URL}/api/queries/${queryId}/stream`);
+
+    eventSource.onopen = () => {
+      console.log('[Preload] SSE stream opened for:', queryId);
+    };
+
+    eventSource.onmessage = (event) => {
+      console.log('[Preload] SSE message received:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        if (callbacks.onEvent) {
+          callbacks.onEvent({ event: data.event, data });
+        }
+      } catch (err) {
+        console.error('[Preload] Failed to parse SSE data:', err);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('[Preload] SSE error:', error);
+      if (callbacks.onError) {
+        callbacks.onError(error);
+      }
+    };
+
+    // Return cleanup function
+    return () => {
+      console.log('[Preload] Closing SSE stream for:', queryId);
+      eventSource.close();
+    };
   },
 
   /**
