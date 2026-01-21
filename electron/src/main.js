@@ -2,12 +2,6 @@
  * Electron main process.
  *
  * Handles window creation, lifecycle events, and backend communication.
- *
- * Security best practices:
- * - nodeIntegration: false
- * - contextIsolation: true
- * - sandbox: true
- * - preload script for IPC bridge
  */
 import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
@@ -30,9 +24,9 @@ const createWindow = () => {
     minHeight: 600,
     title: 'Clinical Analytics',
     webPreferences: {
-      nodeIntegration: false, // Security: Disable Node in renderer
-      contextIsolation: true, // Security: Enable context isolation
-      sandbox: true, // Security: Enable sandbox
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false, // Required for preload contextBridge
       preload: path.join(__dirname, 'preload.js'),
     },
   });
@@ -46,10 +40,9 @@ const createWindow = () => {
     );
   }
 
-  // Open DevTools in development mode
-  if (process.env.NODE_ENV === 'development' || MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.webContents.openDevTools();
-  }
+  // Open DevTools only when explicitly requested (Cmd+Option+I / Ctrl+Shift+I)
+  // Uncomment below line to auto-open DevTools in development:
+  // mainWindow.webContents.openDevTools();
 
   return mainWindow;
 };

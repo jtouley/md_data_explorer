@@ -1,11 +1,4 @@
-"""Tests for CORS configuration.
-
-Phase 4 of Electron UI Migration: Verify CORS allows Electron origins.
-
-Tests cover:
-- CORS headers allow Electron dev ports (localhost:5173, localhost:8000)
-- Health endpoint accessible from Electron origins
-"""
+"""Tests for CORS configuration."""
 
 import pytest
 from fastapi.testclient import TestClient
