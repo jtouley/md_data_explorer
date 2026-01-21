@@ -1,7 +1,5 @@
 /**
  * E2E tests for Electron app launch.
- *
- * Phase 4 of Electron UI Migration: Verify app skeleton launches correctly.
  */
 const { test, expect } = require('./fixtures');
 

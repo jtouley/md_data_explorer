@@ -3,8 +3,6 @@
  *
  * Provides secure bridge between renderer (browser) and main process.
  * Exposes clinicalAPI object via contextBridge for API communication.
- *
- * Security: Only expose specific, controlled methods - never expose Node.js directly.
  */
 import { contextBridge } from 'electron';
 

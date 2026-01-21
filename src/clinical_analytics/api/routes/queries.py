@@ -10,40 +10,75 @@ import json
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 
 from clinical_analytics.api.models.schemas import QueryRequest, QueryResponse, QueryResult
 from clinical_analytics.api.services.query_service import AsyncQueryService
 from clinical_analytics.core.semantic import SemanticLayer
+from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
 router = APIRouter()
 logger = structlog.get_logger()
 
-# Global service instance (lazy initialized)
-_query_service: AsyncQueryService | None = None
+# Cache for dataset semantic layers (keyed by dataset_id)
+_semantic_layers: dict[str, SemanticLayer] = {}
+_query_services: dict[str, AsyncQueryService] = {}
 
 
-def get_semantic_layer() -> SemanticLayer:
-    """Get or create SemanticLayer instance.
+def get_semantic_layer_for_dataset(dataset_id: str) -> SemanticLayer:
+    """Get or create SemanticLayer for a specific dataset.
 
-    This is a placeholder - in production, this would be properly configured
-    based on the dataset being queried.
+    Uses the same pattern as the Streamlit UI:
+    1. UploadedDatasetFactory.create_dataset(upload_id)
+    2. dataset.load()
+    3. dataset.get_semantic_layer()
+
+    Args:
+        dataset_id: Dataset identifier (upload_id for uploaded datasets)
+
+    Returns:
+        SemanticLayer configured for the dataset
+
+    Raises:
+        ValueError: If dataset not found
     """
-    # For now, return a minimal semantic layer with a default dataset name
-    # This will be enhanced when integrated with dataset management
-    from clinical_analytics.core.semantic import SemanticLayer
+    if dataset_id in _semantic_layers:
+        logger.debug("semantic_layer_cache_hit", dataset_id=dataset_id)
+        return _semantic_layers[dataset_id]
 
-    return SemanticLayer(dataset_name="default")
+    logger.info("semantic_layer_loading", dataset_id=dataset_id)
+
+    try:
+        dataset = UploadedDatasetFactory.create_dataset(dataset_id)
+        dataset.load()
+        semantic_layer: SemanticLayer = dataset.get_semantic_layer()
+
+        _semantic_layers[dataset_id] = semantic_layer
+        logger.info("semantic_layer_loaded", dataset_id=dataset_id, dataset_name=dataset.name)
+        return semantic_layer
+
+    except ValueError as e:
+        logger.error("dataset_not_found", dataset_id=dataset_id, error=str(e))
+        raise
+    except FileNotFoundError as e:
+        logger.error("dataset_file_not_found", dataset_id=dataset_id, error=str(e))
+        raise ValueError(f"Dataset file not found: {e}") from e
+    except Exception as e:
+        logger.error("semantic_layer_init_failed", dataset_id=dataset_id, error=str(e))
+        raise ValueError(f"Failed to load dataset '{dataset_id}': {e}") from e
 
 
-def get_query_service() -> AsyncQueryService:
-    """Get or create AsyncQueryService instance."""
-    global _query_service
-    if _query_service is None:
-        semantic_layer = get_semantic_layer()
-        _query_service = AsyncQueryService(semantic_layer)
-    return _query_service
+def get_query_service_for_dataset(dataset_id: str) -> AsyncQueryService:
+    """Get or create AsyncQueryService for a specific dataset."""
+    if dataset_id in _query_services:
+        return _query_services[dataset_id]
+
+    semantic_layer = get_semantic_layer_for_dataset(dataset_id)
+    service = AsyncQueryService(semantic_layer)
+    _query_services[dataset_id] = service
+    logger.info("query_service_created", dataset_id=dataset_id)
+    return service
 
 
 # ============================================================================
@@ -54,7 +89,6 @@ def get_query_service() -> AsyncQueryService:
 @router.post("/queries", response_model=QueryResponse, status_code=status.HTTP_202_ACCEPTED)
 async def submit_query(
     request: QueryRequest,
-    query_service: Annotated[AsyncQueryService, Depends(get_query_service)],
 ) -> QueryResponse:
     """Submit a natural language query for async execution.
 
@@ -62,7 +96,6 @@ async def submit_query(
 
     Args:
         request: Query request with session_id, dataset_id, query_text
-        query_service: Query service (injected)
 
     Returns:
         QueryResponse: Query ID and stream URL
@@ -93,6 +126,8 @@ async def submit_query(
     )
 
     try:
+        query_service = get_query_service_for_dataset(request.dataset_id)
+
         query_id = await query_service.submit_query(
             query=request.query_text,
             dataset_id=request.dataset_id,
@@ -123,16 +158,26 @@ async def submit_query(
 # ============================================================================
 
 
+async def find_query_result(query_id: str) -> tuple[AsyncQueryService, Any] | None:
+    """Find a query result across all services.
+
+    Returns tuple of (service, result) if found, None otherwise.
+    """
+    for service in _query_services.values():
+        result = await service.get_result(query_id)
+        if result is not None:
+            return (service, result)
+    return None
+
+
 @router.get("/queries/{query_id}", response_model=QueryResult)
 async def get_query_result(
     query_id: Annotated[str, Path(..., description="Query ID to retrieve")],
-    query_service: Annotated[AsyncQueryService, Depends(get_query_service)],
 ) -> QueryResult:
     """Get query status and result.
 
     Args:
         query_id: Query identifier
-        query_service: Query service (injected)
 
     Returns:
         QueryResult: Query status and result data
@@ -152,13 +197,15 @@ async def get_query_result(
             "confidence": 0.95
         }
     """
-    result = await query_service.get_result(query_id)
+    found = await find_query_result(query_id)
 
-    if result is None:
+    if found is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Query '{query_id}' not found",
         )
+
+    _service, result = found
 
     # Map AsyncQueryResult to QueryResult schema
     return QueryResult(
@@ -203,13 +250,11 @@ async def generate_sse_events(
 @router.get("/queries/{query_id}/stream")
 async def stream_query_events(
     query_id: Annotated[str, Path(..., description="Query ID to stream")],
-    query_service: Annotated[AsyncQueryService, Depends(get_query_service)],
 ) -> StreamingResponse:
     """Stream query progress via Server-Sent Events.
 
     Args:
         query_id: Query identifier
-        query_service: Query service (injected)
 
     Returns:
         StreamingResponse: SSE stream with progress events
@@ -230,14 +275,15 @@ async def stream_query_events(
         event: query_completed
         data: {"query_id": "qry_a1b2c3d4", "intent_type": "DESCRIBE"}
     """
-    # Check if query exists
-    result = await query_service.get_result(query_id)
-    if result is None:
+    # Check if query exists and find the service
+    found = await find_query_result(query_id)
+    if found is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Query '{query_id}' not found",
         )
 
+    query_service, _result = found
     logger.info("sse_stream_started", query_id=query_id)
 
     return StreamingResponse(

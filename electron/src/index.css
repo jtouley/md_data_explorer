@@ -12,13 +12,13 @@
    CSS Variables - Theme Configuration
    ============================================================================ */
 :root {
-  /* Color Palette - Warm Cream & Sage */
-  --color-bg-primary: #faf8f5;
-  --color-bg-secondary: #f2efe9;
-  --color-bg-tertiary: #e8e4dc;
+  /* Color Palette - Warm Cream & Sage (softened) */
+  --color-bg-primary: #f5f3ef;
+  --color-bg-secondary: #ebe8e2;
+  --color-bg-tertiary: #ddd9d1;
 
-  --color-surface: #ffffff;
-  --color-surface-elevated: #ffffff;
+  --color-surface: #faf8f5;
+  --color-surface-elevated: #faf8f5;
 
   --color-accent-primary: #4a7c59;
   --color-accent-secondary: #6b9080;
@@ -427,24 +427,151 @@ body {
 }
 
 /* ============================================================================
-   Chat Messages (for Phase 5)
+   Chat Messages (Phase 5)
    ============================================================================ */
+.messages-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 800px;
+  margin: 0 auto;
+}
+
 .message {
   max-width: 800px;
   margin: 0 auto var(--space-4);
   padding: var(--space-4);
   border-radius: var(--radius-md);
+  animation: message-fade-in 0.3s ease;
+}
+
+@keyframes message-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message-user {
   background: var(--color-accent-subtle);
   margin-left: auto;
+  margin-right: 0;
   max-width: 70%;
+  border-bottom-right-radius: var(--radius-sm);
 }
 
 .message-assistant {
   background: var(--color-surface);
   box-shadow: var(--shadow-sm);
+  margin-left: 0;
+  margin-right: auto;
+  max-width: 85%;
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.message-content {
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* ============================================================================
+   Thinking Indicator (Phase 5)
+   ============================================================================ */
+.thinking-dots {
+  display: flex;
+  gap: 4px;
+  padding: var(--space-2) 0;
+}
+
+.thinking-dots span {
+  width: 8px;
+  height: 8px;
+  background: var(--color-accent-secondary);
+  border-radius: 50%;
+  animation: thinking-bounce 1.4s infinite ease-in-out both;
+}
+
+.thinking-dots span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.thinking-dots span:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0s;
+}
+
+@keyframes thinking-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ============================================================================
+   Result Cards (Phase 5)
+   ============================================================================ */
+.result-card {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.result-summary {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-3);
+}
+
+.result-table-wrapper {
+  overflow-x: auto;
+  margin-top: var(--space-3);
+}
+
+.result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.result-table th,
+.result-table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.result-table th {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+
+.result-table tbody tr:hover {
+  background: var(--color-surface);
+}
+
+.result-table td {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+}
+
+.result-error {
+  color: var(--color-error);
+  font-style: italic;
 }
 
 /* ============================================================================

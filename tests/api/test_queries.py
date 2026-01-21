@@ -4,7 +4,7 @@ Tests for Query API routes with SSE streaming.
 Following TDD: Red phase - tests written before implementation.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from clinical_analytics.api.main import app
@@ -26,23 +26,30 @@ def mock_query_service():
 @pytest.fixture
 def test_client(mock_query_service):
     """Create test client with mocked query service."""
-    from clinical_analytics.api.routes.queries import get_query_service
 
-    app.dependency_overrides[get_query_service] = lambda: mock_query_service
-    yield TestClient(app)
-    app.dependency_overrides.clear()
+    async def mock_find_query_result(query_id: str):
+        result = await mock_query_service.get_result(query_id)
+        if result is not None:
+            return (mock_query_service, result)
+        return None
+
+    with (
+        patch(
+            "clinical_analytics.api.routes.queries.get_query_service_for_dataset",
+            return_value=mock_query_service,
+        ),
+        patch(
+            "clinical_analytics.api.routes.queries.find_query_result",
+            side_effect=mock_find_query_result,
+        ),
+    ):
+        yield TestClient(app)
 
 
 @pytest.fixture
 def mock_async_query_service(mock_query_service):
     """Return the mock query service for tests to configure."""
     return mock_query_service
-
-
-@pytest.fixture
-def mock_semantic_layer():
-    """Mock SemanticLayer for query execution (not used with dependency override)."""
-    return MagicMock()
 
 
 # ============================================================================
@@ -53,7 +60,7 @@ def mock_semantic_layer():
 class TestQuerySubmitEndpoint:
     """Tests for POST /api/queries endpoint."""
 
-    def test_queries_post_valid_returns_query_id(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_post_valid_returns_query_id(self, test_client, mock_async_query_service):
         """Valid query submission returns query_id and stream URL."""
         # Arrange
         mock_async_query_service.submit_query = AsyncMock(return_value="qry_abc123")
@@ -77,7 +84,7 @@ class TestQuerySubmitEndpoint:
         assert "stream_url" in data
         assert "/api/queries/qry_abc123/stream" in data["stream_url"]
 
-    def test_queries_post_invalid_dataset_returns_404(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_post_invalid_dataset_returns_404(self, test_client, mock_async_query_service):
         """Invalid dataset ID returns 404 error."""
         # Arrange
         mock_async_query_service.submit_query = AsyncMock(side_effect=ValueError("Dataset 'nonexistent' not found"))
@@ -95,7 +102,7 @@ class TestQuerySubmitEndpoint:
         # Assert
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_queries_post_empty_query_returns_400(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_post_empty_query_returns_400(self, test_client, mock_async_query_service):
         """Empty query text returns 400 validation error."""
         # Act
         response = test_client.post(
@@ -114,7 +121,7 @@ class TestQuerySubmitEndpoint:
 class TestQueryStatusEndpoint:
     """Tests for GET /api/queries/{query_id} endpoint."""
 
-    def test_queries_get_pending_returns_status(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_get_pending_returns_status(self, test_client, mock_async_query_service):
         """Pending query returns processing status."""
         # Arrange
         from clinical_analytics.api.services.query_service import AsyncQueryResult
@@ -135,7 +142,7 @@ class TestQueryStatusEndpoint:
         assert data["query_id"] == "qry_abc123"
         assert data["status"] == "processing"
 
-    def test_queries_get_completed_returns_result(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_get_completed_returns_result(self, test_client, mock_async_query_service):
         """Completed query returns full result."""
         # Arrange
         from clinical_analytics.api.services.query_service import AsyncQueryResult
@@ -162,7 +169,7 @@ class TestQueryStatusEndpoint:
         assert data["result_data"] == {"mean_age": 45.5, "std_age": 12.3}
         assert data["confidence"] == 0.95
 
-    def test_queries_get_missing_returns_404(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_get_missing_returns_404(self, test_client, mock_async_query_service):
         """Missing query ID returns 404."""
         # Arrange
         mock_async_query_service.get_result = AsyncMock(return_value=None)
@@ -177,7 +184,7 @@ class TestQueryStatusEndpoint:
 class TestQueryStreamEndpoint:
     """Tests for GET /api/queries/{query_id}/stream SSE endpoint."""
 
-    def test_queries_stream_emits_events(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_stream_emits_events(self, test_client, mock_async_query_service):
         """SSE stream emits progress events."""
         # Arrange
         from datetime import UTC, datetime
@@ -223,7 +230,7 @@ class TestQueryStreamEndpoint:
         assert "query_started" in content
         assert "query_completed" in content
 
-    def test_queries_stream_missing_returns_404(self, test_client, mock_async_query_service, mock_semantic_layer):
+    def test_queries_stream_missing_returns_404(self, test_client, mock_async_query_service):
         """SSE stream for missing query returns 404."""
         # Arrange - query doesn't exist
         mock_async_query_service.get_result = AsyncMock(return_value=None)
