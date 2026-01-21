@@ -160,10 +160,10 @@ class AsyncQueryService:
                     logger.warning("query_failed", query_id=query_id, error=errors[0])
                     return
 
-            # Success - update query result
+            # Success - update query result (serialize DataFrames)
             self._queries[query_id].status = "completed"
             self._queries[query_id].intent_type = intent_type
-            self._queries[query_id].result = result.result
+            self._queries[query_id].result = self._serialize_result(result.result)
             self._queries[query_id].confidence = result.confidence
             self._queries[query_id].completed_at = datetime.now(UTC)
 
@@ -203,13 +203,84 @@ class AsyncQueryService:
         )
         self._events.setdefault(query_id, []).append(event)
 
-    def _get_result_preview(self, result: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Get preview of result for SSE event."""
+    def _serialize_result(self, result: Any | None) -> dict[str, Any] | None:
+        """Convert result to JSON-serializable dict, handling DataFrames."""
         if result is None:
             return None
-        # Return first 3 items or summary
+
+        try:
+            import polars as pl
+
+            # Handle Polars DataFrame directly
+            if isinstance(result, pl.DataFrame):
+                return {
+                    "table": {
+                        "columns": result.columns,
+                        "rows": result.to_dicts(),
+                    },
+                    "row_count": len(result),
+                }
+
+            # Handle dict with potential DataFrame values
+            if isinstance(result, dict):
+                serialized: dict[str, Any] = {}
+                for k, v in result.items():
+                    if isinstance(v, pl.DataFrame):
+                        serialized[k] = {
+                            "table": {
+                                "columns": v.columns,
+                                "rows": v.to_dicts(),
+                            },
+                            "row_count": len(v),
+                        }
+                    elif isinstance(v, list | dict | str | int | float | bool | type(None)):
+                        serialized[k] = v
+                    else:
+                        # Convert other types to string
+                        serialized[k] = str(v)
+                return serialized
+        except ImportError:
+            pass
+
+        # Fallback: return as-is if already serializable
         if isinstance(result, dict):
-            return {k: v for i, (k, v) in enumerate(result.items()) if i < 3}
+            return result
+        return {"value": str(result)}
+
+    def _get_result_preview(self, result: Any | None) -> dict[str, Any] | None:
+        """Get preview of result for SSE event, converting DataFrames to dicts."""
+        if result is None:
+            return None
+
+        # Handle Polars DataFrame
+        try:
+            import polars as pl
+
+            if isinstance(result, pl.DataFrame):
+                # Convert to list of dicts, limit to 10 rows
+                rows = result.head(10).to_dicts()
+                return {"rows": rows, "total_rows": len(result), "columns": result.columns}
+        except ImportError:
+            pass
+
+        # Handle dict with potential DataFrame values
+        if isinstance(result, dict):
+            preview: dict[str, Any] = {}
+            for i, (k, v) in enumerate(result.items()):
+                if i >= 3:
+                    break
+                # Recursively serialize DataFrame values
+                try:
+                    import polars as pl
+
+                    if isinstance(v, pl.DataFrame):
+                        preview[k] = {"rows": v.head(5).to_dicts(), "total_rows": len(v)}
+                    else:
+                        preview[k] = v
+                except ImportError:
+                    preview[k] = v
+            return preview
+
         return None
 
     async def execute_query(
@@ -268,7 +339,7 @@ class AsyncQueryService:
             query_id=query_id,
             status="completed",
             intent_type=intent_type,
-            result=result.result,
+            result=self._serialize_result(result.result),
             confidence=result.confidence,
             completed_at=datetime.now(UTC),
         )
