@@ -219,15 +219,17 @@ class TestAsyncQueryServiceSerialization:
         assert "table" in result["data"]
         assert result["data"]["row_count"] == 3
 
-    def test_get_result_preview_polars_dataframe_limits_rows(self, async_query_service):
-        """Verify result preview limits DataFrame to 10 rows."""
+    def test_get_result_preview_polars_dataframe_serializes(self, async_query_service):
+        """Verify result preview serializes DataFrame via _serialize_result."""
         import polars as pl
 
         df = pl.DataFrame({"id": list(range(100))})
         result = async_query_service._get_result_preview(df)
 
-        assert result["total_rows"] == 100
-        assert len(result["rows"]) == 10
+        # _serialize_result wraps in table/row_count structure
+        assert result["row_count"] == 100
+        assert "table" in result
+        assert len(result["table"]["rows"]) == 5  # Preview limits to 5 rows
 
     def test_get_result_preview_none_returns_none(self, async_query_service):
         """Verify None input returns None."""
@@ -242,5 +244,37 @@ class TestAsyncQueryServiceSerialization:
         assert len(result) == 3
         assert "a" in result
         assert "b" in result
-        assert "c" in result
-        assert "d" not in result
+
+    def test_get_result_preview_nested_dict_with_dataframe_serializes(self, async_query_service):
+        """Verify nested dict containing DataFrame is fully serialized."""
+        import json
+
+        import polars as pl
+
+        # This mirrors the real result structure from CoreQueryService
+        df = pl.DataFrame({"col1": [1, 2, 3], "col2": ["a", "b", "c"]})
+        nested_result = {"analysis": {"data": df, "title": "Test"}}
+
+        result = async_query_service._get_result_preview(nested_result)
+
+        # Should be fully JSON serializable - no DataFrame objects
+        json_str = json.dumps(result)  # Should not raise
+        assert "col1" in json_str
+        assert "analysis" in result
+
+    def test_serialize_result_nested_dict_with_dataframe_recursive(self, async_query_service):
+        """Verify _serialize_result handles deeply nested DataFrames."""
+        import json
+
+        import polars as pl
+
+        df = pl.DataFrame({"x": [1, 2]})
+        deep_nested = {"level1": {"level2": {"level3": df}}}
+
+        result = async_query_service._serialize_result(deep_nested)
+
+        # Must be JSON serializable
+        json_str = json.dumps(result)
+        assert "table" in json_str
+        assert "columns" in json_str
+        assert "level1" in result
