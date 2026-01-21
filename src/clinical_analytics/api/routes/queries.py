@@ -9,6 +9,7 @@ Endpoints:
 import json
 from typing import Annotated, Any
 
+import polars as pl
 import structlog
 from fastapi import APIRouter, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
@@ -20,6 +21,16 @@ from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFacto
 
 router = APIRouter()
 logger = structlog.get_logger()
+
+
+class DataFrameEncoder(json.JSONEncoder):
+    """JSON encoder that handles Polars DataFrames."""
+
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, pl.DataFrame):
+            return {"columns": obj.columns, "rows": obj.to_dicts()}
+        return super().default(obj)
+
 
 # Cache for dataset semantic layers (keyed by dataset_id)
 _semantic_layers: dict[str, SemanticLayer] = {}
@@ -236,9 +247,9 @@ async def generate_sse_events(
     """
     try:
         async for event in query_service.stream_events(query_id):
-            # Format as SSE
+            # Format as SSE (use custom encoder for DataFrames)
             event_line = f"event: {event.event}\n"
-            data_line = f"data: {json.dumps(event.data)}\n"
+            data_line = f"data: {json.dumps(event.data, cls=DataFrameEncoder)}\n"
             yield f"{event_line}{data_line}\n"
 
     except Exception as e:
