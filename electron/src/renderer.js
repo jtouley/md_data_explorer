@@ -469,6 +469,14 @@ async function handleQuerySubmit(event) {
 async function subscribeToQueryStream(queryId, assistantMessageId) {
   return new Promise((resolve, reject) => {
     let contentBuffer = '';
+    let resolved = false;
+
+    const cleanup = () => {
+      if (state.activeStream) {
+        state.activeStream.close();
+        state.activeStream = null;
+      }
+    };
 
     try {
       const eventSource = window.clinicalAPI.createQueryStream(queryId);
@@ -478,80 +486,102 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
         console.log('📡 SSE stream opened for query:', queryId);
       };
 
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('📨 SSE event:', data);
+      // Handle named SSE events (backend sends event: type\ndata: json)
+      const handleEvent = (eventType, data) => {
+        console.log('📨 SSE event:', eventType, data);
 
-          switch (data.event) {
-            case 'query_started':
-              // Keep streaming indicator
-              break;
+        switch (eventType) {
+          case 'query_started':
+            // Keep streaming indicator
+            break;
 
-            case 'progress':
-              // Update with progress message
-              if (data.message) {
-                updateMessage(assistantMessageId, {
-                  content: data.message,
-                  isStreaming: true,
-                });
-              }
-              break;
-
-            case 'chunk':
-              // Append content chunk
-              contentBuffer += data.content || '';
+          case 'query_progress':
+            // Update with progress message
+            if (data.message || data.stage) {
               updateMessage(assistantMessageId, {
-                content: contentBuffer,
+                content: data.message || `Stage: ${data.stage}`,
                 isStreaming: true,
               });
-              break;
+            }
+            break;
 
-            case 'result':
-              // Final result received
-              updateMessage(assistantMessageId, {
-                content: data.summary || contentBuffer || 'Analysis complete.',
-                result: data.result || null,
-                isStreaming: false,
-              });
-              break;
+          case 'query_completed': {
+            // Final result - extract result_preview for display
+            const resultPreview = data.result_preview || {};
+            const intentType = data.intent_type || 'analysis';
 
-            case 'query_completed':
-            case 'complete':
-              // Stream complete
-              updateMessage(assistantMessageId, {
-                isStreaming: false,
-              });
-              eventSource.close();
-              state.activeStream = null;
-              resolve();
-              break;
+            // Build response message
+            let responseContent = `Analysis complete (${intentType})`;
 
-            case 'error':
-              throw new Error(data.message || 'Unknown error');
+            // Extract table data if present
+            let tableResult = null;
+            for (const value of Object.values(resultPreview)) {
+              if (value && value.table) {
+                tableResult = value.table;
+                responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
+                break;
+              }
+            }
 
-            default:
-              console.log('Unknown SSE event:', data.event);
+            updateMessage(assistantMessageId, {
+              content: responseContent,
+              result: tableResult ? { table: tableResult } : null,
+              isStreaming: false,
+            });
+
+            cleanup();
+            resolved = true;
+            resolve();
+            break;
           }
-        } catch (parseError) {
-          console.error('Failed to parse SSE data:', parseError);
+
+          case 'query_failed':
+            updateMessage(assistantMessageId, {
+              content: `Error: ${data.error || 'Unknown error'}`,
+              isStreaming: false,
+            });
+            cleanup();
+            resolved = true;
+            reject(new Error(data.error || 'Query failed'));
+            break;
+
+          default:
+            console.log('Unhandled SSE event:', eventType);
         }
+      };
+
+      // Register listeners for each named event type
+      ['query_started', 'query_progress', 'query_completed', 'query_failed'].forEach((eventType) => {
+        eventSource.addEventListener(eventType, (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handleEvent(eventType, data);
+          } catch (parseError) {
+            console.error('Failed to parse SSE data:', parseError, event.data);
+          }
+        });
+      });
+
+      // Fallback for unnamed events
+      eventSource.onmessage = (event) => {
+        console.log('📨 Unnamed SSE message:', event.data);
       };
 
       eventSource.onerror = (error) => {
         console.error('❌ SSE stream error:', error);
-        eventSource.close();
-        state.activeStream = null;
+        cleanup();
 
-        // Only update if still streaming (wasn't closed normally)
-        const msg = state.messages.find((m) => m.id === assistantMessageId);
-        if (msg && msg.isStreaming) {
-          updateMessage(assistantMessageId, {
-            content: contentBuffer || 'Connection lost. Please try again.',
-            isStreaming: false,
-          });
+        // Only update if not already resolved
+        if (!resolved) {
+          const msg = state.messages.find((m) => m.id === assistantMessageId);
+          if (msg && msg.isStreaming) {
+            updateMessage(assistantMessageId, {
+              content: contentBuffer || 'Connection lost. Please try again.',
+              isStreaming: false,
+            });
+          }
+          reject(error);
         }
-        reject(error);
       };
     } catch (error) {
       console.error('Failed to create SSE stream:', error);
