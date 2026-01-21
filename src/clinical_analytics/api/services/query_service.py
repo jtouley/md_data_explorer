@@ -204,84 +204,93 @@ class AsyncQueryService:
         self._events.setdefault(query_id, []).append(event)
 
     def _serialize_result(self, result: Any | None) -> dict[str, Any] | None:
-        """Convert result to JSON-serializable dict, handling DataFrames."""
+        """Convert result to JSON-serializable dict, handling DataFrames recursively."""
         if result is None:
             return None
 
-        try:
-            import polars as pl
+        import polars as pl
 
-            # Handle Polars DataFrame directly
-            if isinstance(result, pl.DataFrame):
-                return {
-                    "table": {
-                        "columns": result.columns,
-                        "rows": result.to_dicts(),
-                    },
-                    "row_count": len(result),
-                }
+        # Handle Polars DataFrame directly
+        if isinstance(result, pl.DataFrame):
+            return {
+                "table": {
+                    "columns": result.columns,
+                    "rows": result.to_dicts(),
+                },
+                "row_count": len(result),
+            }
 
-            # Handle dict with potential DataFrame values
-            if isinstance(result, dict):
-                serialized: dict[str, Any] = {}
-                for k, v in result.items():
-                    if isinstance(v, pl.DataFrame):
-                        serialized[k] = {
-                            "table": {
-                                "columns": v.columns,
-                                "rows": v.to_dicts(),
-                            },
-                            "row_count": len(v),
-                        }
-                    elif isinstance(v, list | dict | str | int | float | bool | type(None)):
-                        serialized[k] = v
-                    else:
-                        # Convert other types to string
-                        serialized[k] = str(v)
-                return serialized
-        except ImportError:
-            pass
-
-        # Fallback: return as-is if already serializable
+        # Handle dict with potential DataFrame values (recursive)
         if isinstance(result, dict):
-            return result
+            serialized: dict[str, Any] = {}
+            for k, v in result.items():
+                if isinstance(v, pl.DataFrame):
+                    serialized[k] = {
+                        "table": {
+                            "columns": v.columns,
+                            "rows": v.to_dicts(),
+                        },
+                        "row_count": len(v),
+                    }
+                elif isinstance(v, dict):
+                    # Recursively serialize nested dicts
+                    serialized[k] = self._serialize_result(v)
+                elif isinstance(v, list):
+                    # Handle lists (may contain dicts with DataFrames)
+                    serialized[k] = [
+                        self._serialize_result(item) if isinstance(item, dict | pl.DataFrame) else item for item in v
+                    ]
+                elif isinstance(v, str | int | float | bool | type(None)):
+                    serialized[k] = v
+                else:
+                    # Convert other types to string
+                    serialized[k] = str(v)
+            return serialized
+
+        # Fallback for other types
         return {"value": str(result)}
 
     def _get_result_preview(self, result: Any | None) -> dict[str, Any] | None:
-        """Get preview of result for SSE event, converting DataFrames to dicts."""
+        """Get preview of result for SSE event, converting DataFrames to dicts.
+
+        Uses _serialize_result to ensure all DataFrames are converted, then limits
+        to first 3 keys and 5 rows per table for preview.
+        """
         if result is None:
             return None
 
-        # Handle Polars DataFrame
-        try:
-            import polars as pl
+        # First fully serialize (handles nested DataFrames)
+        serialized = self._serialize_result(result)
+        if serialized is None:
+            return None
 
-            if isinstance(result, pl.DataFrame):
-                # Convert to list of dicts, limit to 10 rows
-                rows = result.head(10).to_dicts()
-                return {"rows": rows, "total_rows": len(result), "columns": result.columns}
-        except ImportError:
-            pass
+        # Check if this is a direct table result (from _serialize_result of a DataFrame)
+        if "table" in serialized and "rows" in serialized.get("table", {}):
+            return {
+                "table": {
+                    "columns": serialized["table"]["columns"],
+                    "rows": serialized["table"]["rows"][:5],
+                },
+                "row_count": serialized.get("row_count", len(serialized["table"]["rows"])),
+            }
 
-        # Handle dict with potential DataFrame values
-        if isinstance(result, dict):
-            preview: dict[str, Any] = {}
-            for i, (k, v) in enumerate(result.items()):
-                if i >= 3:
-                    break
-                # Recursively serialize DataFrame values
-                try:
-                    import polars as pl
-
-                    if isinstance(v, pl.DataFrame):
-                        preview[k] = {"rows": v.head(5).to_dicts(), "total_rows": len(v)}
-                    else:
-                        preview[k] = v
-                except ImportError:
-                    preview[k] = v
-            return preview
-
-        return None
+        # Limit to first 3 keys and truncate row counts for preview
+        preview: dict[str, Any] = {}
+        for i, (k, v) in enumerate(serialized.items()):
+            if i >= 3:
+                break
+            # Truncate tables to 5 rows for preview
+            if isinstance(v, dict) and "table" in v and "rows" in v.get("table", {}):
+                preview[k] = {
+                    "table": {
+                        "columns": v["table"]["columns"],
+                        "rows": v["table"]["rows"][:5],
+                    },
+                    "row_count": v.get("row_count", len(v["table"]["rows"])),
+                }
+            else:
+                preview[k] = v
+        return preview
 
     async def execute_query(
         self,
