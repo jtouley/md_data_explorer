@@ -244,18 +244,20 @@ async def generate_sse_events(
     """Generate SSE events for query progress.
 
     Yields events in SSE format until query completes.
+    Uses anonymous events (no event: line) with event type in data for
+    compatibility with Electron contextBridge proxy.
     """
     try:
         async for event in query_service.stream_events(query_id):
-            # Format as SSE (use custom encoder for DataFrames)
-            event_line = f"event: {event.event}\n"
-            data_line = f"data: {json.dumps(event.data, cls=DataFrameEncoder)}\n"
-            yield f"{event_line}{data_line}\n"
+            # Include event type in data for onmessage handler
+            data_with_event = {"event": event.event, **event.data}
+            data_line = f"data: {json.dumps(data_with_event, cls=DataFrameEncoder)}\n\n"
+            yield data_line
 
     except Exception as e:
         logger.error("sse_stream_error", query_id=query_id, error=str(e))
-        error_event = f"event: query_failed\ndata: {json.dumps({'error': str(e)})}\n\n"
-        yield error_event
+        error_data = {"event": "query_failed", "error": str(e)}
+        yield f"data: {json.dumps(error_data)}\n\n"
 
 
 @router.get("/queries/{query_id}/stream")

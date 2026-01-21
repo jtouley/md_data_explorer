@@ -486,85 +486,74 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
         console.log('📡 SSE stream opened for query:', queryId);
       };
 
-      // Handle named SSE events (backend sends event: type\ndata: json)
-      const handleEvent = (eventType, data) => {
-        console.log('📨 SSE event:', eventType, data);
-
-        switch (eventType) {
-          case 'query_started':
-            // Keep streaming indicator
-            break;
-
-          case 'query_progress':
-            // Update with progress message
-            if (data.message || data.stage) {
-              updateMessage(assistantMessageId, {
-                content: data.message || `Stage: ${data.stage}`,
-                isStreaming: true,
-              });
-            }
-            break;
-
-          case 'query_completed': {
-            // Final result - extract result_preview for display
-            const resultPreview = data.result_preview || {};
-            const intentType = data.intent_type || 'analysis';
-
-            // Build response message
-            let responseContent = `Analysis complete (${intentType})`;
-
-            // Extract table data if present
-            let tableResult = null;
-            for (const value of Object.values(resultPreview)) {
-              if (value && value.table) {
-                tableResult = value.table;
-                responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
-                break;
-              }
-            }
-
-            updateMessage(assistantMessageId, {
-              content: responseContent,
-              result: tableResult ? { table: tableResult } : null,
-              isStreaming: false,
-            });
-
-            cleanup();
-            resolved = true;
-            resolve();
-            break;
-          }
-
-          case 'query_failed':
-            updateMessage(assistantMessageId, {
-              content: `Error: ${data.error || 'Unknown error'}`,
-              isStreaming: false,
-            });
-            cleanup();
-            resolved = true;
-            reject(new Error(data.error || 'Query failed'));
-            break;
-
-          default:
-            console.log('Unhandled SSE event:', eventType);
-        }
-      };
-
-      // Register listeners for each named event type
-      ['query_started', 'query_progress', 'query_completed', 'query_failed'].forEach((eventType) => {
-        eventSource.addEventListener(eventType, (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            handleEvent(eventType, data);
-          } catch (parseError) {
-            console.error('Failed to parse SSE data:', parseError, event.data);
-          }
-        });
-      });
-
-      // Fallback for unnamed events
+      // Handle all events via onmessage (backend includes event type in data)
       eventSource.onmessage = (event) => {
-        console.log('📨 Unnamed SSE message:', event.data);
+        try {
+          const data = JSON.parse(event.data);
+          const eventType = data.event;
+          console.log('📨 SSE event:', eventType, data);
+
+          switch (eventType) {
+            case 'query_started':
+              // Keep streaming indicator
+              break;
+
+            case 'query_progress':
+              // Update with progress message
+              if (data.message || data.stage) {
+                updateMessage(assistantMessageId, {
+                  content: data.message || `Stage: ${data.stage}`,
+                  isStreaming: true,
+                });
+              }
+              break;
+
+            case 'query_completed': {
+              // Final result - extract result_preview for display
+              const resultPreview = data.result_preview || {};
+              const intentType = data.intent_type || 'analysis';
+
+              // Build response message
+              let responseContent = `Analysis complete (${intentType})`;
+
+              // Extract table data if present
+              let tableResult = null;
+              for (const value of Object.values(resultPreview)) {
+                if (value && value.table) {
+                  tableResult = value.table;
+                  responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
+                  break;
+                }
+              }
+
+              updateMessage(assistantMessageId, {
+                content: responseContent,
+                result: tableResult ? { table: tableResult } : null,
+                isStreaming: false,
+              });
+
+              cleanup();
+              resolved = true;
+              resolve();
+              break;
+            }
+
+            case 'query_failed':
+              updateMessage(assistantMessageId, {
+                content: `Error: ${data.error || 'Unknown error'}`,
+                isStreaming: false,
+              });
+              cleanup();
+              resolved = true;
+              reject(new Error(data.error || 'Query failed'));
+              break;
+
+            default:
+              console.log('Unhandled SSE event:', eventType);
+          }
+        } catch (parseError) {
+          console.error('Failed to parse SSE data:', parseError, event.data);
+        }
       };
 
       eventSource.onerror = (error) => {
