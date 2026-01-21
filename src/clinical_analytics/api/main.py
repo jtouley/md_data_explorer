@@ -66,10 +66,20 @@ app = FastAPI(
 # CORS Middleware
 # ============================================================================
 
-# Allow frontend origins (Next.js dev server + production)
+# Allow frontend origins (Next.js + Electron dev servers)
+# Note: Electron in dev mode uses localhost, not file://
 ALLOWED_ORIGINS = os.getenv(
     "CORS_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",  # Next.js default dev ports
+    ",".join(
+        [
+            "http://localhost:3000",  # Next.js dev
+            "http://127.0.0.1:3000",  # Next.js dev (IP)
+            "http://localhost:8000",  # FastAPI (for SSE same-origin)
+            "http://127.0.0.1:8000",  # FastAPI (IP)
+            "http://localhost:5173",  # Electron/Vite dev server
+            "http://127.0.0.1:5173",  # Electron/Vite dev (IP)
+        ]
+    ),
 ).split(",")
 
 app.add_middleware(
