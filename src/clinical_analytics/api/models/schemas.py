@@ -223,6 +223,7 @@ class SSEEvent(BaseModel):
         "query_completed",
         "query_failed",
         "interpretation_ready",
+        "stream_end",
     ] = Field(..., description="Event type")
     data: dict[str, Any] = Field(..., description="Event-specific data payload")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp (UTC)")
