@@ -470,125 +470,110 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
   return new Promise((resolve, reject) => {
     let contentBuffer = '';
     let resolved = false;
-    let queryCompleted = false;
+    let cleanupFn = null;
 
-    const cleanup = () => {
-      if (state.activeStream) {
-        state.activeStream.close();
-        state.activeStream = null;
+    const handleEvent = ({ event: eventType, data }) => {
+      console.log('📨 SSE event:', eventType, data);
+
+      switch (eventType) {
+        case 'query_started':
+          // Keep streaming indicator
+          break;
+
+        case 'query_progress':
+          // Update with progress message
+          if (data.message || data.stage) {
+            updateMessage(assistantMessageId, {
+              content: data.message || `Stage: ${data.stage}`,
+              isStreaming: true,
+            });
+          }
+          break;
+
+        case 'query_completed': {
+          // Final result - extract result_preview for display
+          const resultPreview = data.result_preview || {};
+          const intentType = data.intent_type || 'analysis';
+
+          // Build response message
+          let responseContent = `Analysis complete (${intentType})`;
+
+          // Extract table data if present
+          let tableResult = null;
+          for (const value of Object.values(resultPreview)) {
+            if (value && value.table) {
+              tableResult = value.table;
+              responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
+              break;
+            }
+          }
+
+          updateMessage(assistantMessageId, {
+            content: responseContent,
+            result: tableResult ? { table: tableResult } : null,
+            isStreaming: false,
+          });
+
+          // Close stream
+          if (cleanupFn) cleanupFn();
+          resolved = true;
+          resolve();
+          break;
+        }
+
+        case 'query_failed':
+          updateMessage(assistantMessageId, {
+            content: `Error: ${data.error || 'Unknown error'}`,
+            isStreaming: false,
+          });
+          if (cleanupFn) cleanupFn();
+          resolved = true;
+          reject(new Error(data.error || 'Query failed'));
+          break;
+
+        case 'stream_end':
+          console.log('📡 Stream ended');
+          if (cleanupFn) cleanupFn();
+          if (!resolved) {
+            resolved = true;
+            resolve();
+          }
+          break;
+
+        default:
+          console.log('Unhandled SSE event:', eventType);
       }
     };
 
+    const handleError = (error) => {
+      if (resolved) {
+        console.log('📡 SSE connection closed after completion');
+        return;
+      }
+
+      console.error('❌ SSE stream error:', error);
+      if (cleanupFn) cleanupFn();
+
+      const msg = state.messages.find((m) => m.id === assistantMessageId);
+      if (msg && msg.isStreaming) {
+        updateMessage(assistantMessageId, {
+          content: contentBuffer || 'Connection lost. Please try again.',
+          isStreaming: false,
+        });
+      }
+      reject(error);
+    };
+
     try {
-      const eventSource = window.clinicalAPI.createQueryStream(queryId);
-      state.activeStream = eventSource;
-
-      eventSource.onopen = () => {
-        console.log('📡 SSE stream opened for query:', queryId);
-      };
-
-      // Handle all events via onmessage (backend includes event type in data)
-      eventSource.onmessage = (event) => {
-        console.log('📨 RAW SSE data received:', event.data);
-        try {
-          const data = JSON.parse(event.data);
-          const eventType = data.event;
-          console.log('📨 Parsed SSE event:', eventType);
-
-          switch (eventType) {
-            case 'query_started':
-              // Keep streaming indicator
-              break;
-
-            case 'query_progress':
-              // Update with progress message
-              if (data.message || data.stage) {
-                updateMessage(assistantMessageId, {
-                  content: data.message || `Stage: ${data.stage}`,
-                  isStreaming: true,
-                });
-              }
-              break;
-
-          case 'query_completed': {
-            queryCompleted = true;
-
-            // Final result - extract result_preview for display
-            const resultPreview = data.result_preview || {};
-            const intentType = data.intent_type || 'analysis';
-
-            // Build response message
-            let responseContent = `Analysis complete (${intentType})`;
-
-            // Extract table data if present
-            let tableResult = null;
-            for (const value of Object.values(resultPreview)) {
-              if (value && value.table) {
-                tableResult = value.table;
-                responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
-                break;
-              }
-            }
-
-            updateMessage(assistantMessageId, {
-              content: responseContent,
-              result: tableResult ? { table: tableResult } : null,
-              isStreaming: false,
-            });
-
-            // Close stream immediately on query_completed
-            cleanup();
-            resolved = true;
-            resolve();
-            break;
-          }
-
-          case 'query_failed':
-            updateMessage(assistantMessageId, {
-              content: `Error: ${data.error || 'Unknown error'}`,
-              isStreaming: false,
-            });
-            cleanup();
-            resolved = true;
-            reject(new Error(data.error || 'Query failed'));
-            break;
-
-          case 'stream_end':
-            // Explicit end signal - close connection
-            console.log('📡 Stream ended:', data);
-            cleanup();
-            resolved = true;
-            resolve();
-            break;
-
-          default:
-            console.log('Unhandled SSE event:', eventType);
-          }
-        } catch (parseError) {
-          console.error('Failed to parse SSE data:', parseError, event.data);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        // If query already completed, this is expected connection close
-        if (queryCompleted || resolved) {
-          console.log('📡 SSE connection closed after completion');
-          cleanup();
-          return;
-        }
-
-        console.error('❌ SSE stream error:', error);
-        cleanup();
-
-        const msg = state.messages.find((m) => m.id === assistantMessageId);
-        if (msg && msg.isStreaming) {
-          updateMessage(assistantMessageId, {
-            content: contentBuffer || 'Connection lost. Please try again.',
-            isStreaming: false,
-          });
-        }
-        reject(error);
-      };
+      // Use callback-based API that works with contextBridge
+      cleanupFn = window.clinicalAPI.subscribeToQueryStream(queryId, {
+        onEvent: handleEvent,
+        onError: handleError,
+        onClose: () => {
+          console.log('📡 SSE stream closed');
+        },
+      });
+      state.activeStream = { close: cleanupFn };
     } catch (error) {
       console.error('Failed to create SSE stream:', error);
       reject(error);
