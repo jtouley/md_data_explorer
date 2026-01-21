@@ -470,6 +470,7 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
   return new Promise((resolve, reject) => {
     let contentBuffer = '';
     let resolved = false;
+    let queryCompleted = false;
 
     const cleanup = () => {
       if (state.activeStream) {
@@ -488,10 +489,11 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
 
       // Handle all events via onmessage (backend includes event type in data)
       eventSource.onmessage = (event) => {
+        console.log('📨 RAW SSE data received:', event.data);
         try {
           const data = JSON.parse(event.data);
           const eventType = data.event;
-          console.log('📨 SSE event:', eventType, data);
+          console.log('📨 Parsed SSE event:', eventType);
 
           switch (eventType) {
             case 'query_started':
@@ -508,35 +510,38 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
               }
               break;
 
-            case 'query_completed': {
-              // Final result - extract result_preview for display
-              const resultPreview = data.result_preview || {};
-              const intentType = data.intent_type || 'analysis';
+          case 'query_completed': {
+            queryCompleted = true;
 
-              // Build response message
-              let responseContent = `Analysis complete (${intentType})`;
+            // Final result - extract result_preview for display
+            const resultPreview = data.result_preview || {};
+            const intentType = data.intent_type || 'analysis';
 
-              // Extract table data if present
-              let tableResult = null;
-              for (const value of Object.values(resultPreview)) {
-                if (value && value.table) {
-                  tableResult = value.table;
-                  responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
-                  break;
-                }
+            // Build response message
+            let responseContent = `Analysis complete (${intentType})`;
+
+            // Extract table data if present
+            let tableResult = null;
+            for (const value of Object.values(resultPreview)) {
+              if (value && value.table) {
+                tableResult = value.table;
+                responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
+                break;
               }
-
-              updateMessage(assistantMessageId, {
-                content: responseContent,
-                result: tableResult ? { table: tableResult } : null,
-                isStreaming: false,
-              });
-
-              cleanup();
-              resolved = true;
-              resolve();
-              break;
             }
+
+            updateMessage(assistantMessageId, {
+              content: responseContent,
+              result: tableResult ? { table: tableResult } : null,
+              isStreaming: false,
+            });
+
+            // Close stream immediately on query_completed
+            cleanup();
+            resolved = true;
+            resolve();
+            break;
+          }
 
           case 'query_failed':
             updateMessage(assistantMessageId, {
@@ -565,20 +570,24 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
       };
 
       eventSource.onerror = (error) => {
+        // If query already completed, this is expected connection close
+        if (queryCompleted || resolved) {
+          console.log('📡 SSE connection closed after completion');
+          cleanup();
+          return;
+        }
+
         console.error('❌ SSE stream error:', error);
         cleanup();
 
-        // Only update if not already resolved
-        if (!resolved) {
-          const msg = state.messages.find((m) => m.id === assistantMessageId);
-          if (msg && msg.isStreaming) {
-            updateMessage(assistantMessageId, {
-              content: contentBuffer || 'Connection lost. Please try again.',
-              isStreaming: false,
-            });
-          }
-          reject(error);
+        const msg = state.messages.find((m) => m.id === assistantMessageId);
+        if (msg && msg.isStreaming) {
+          updateMessage(assistantMessageId, {
+            content: contentBuffer || 'Connection lost. Please try again.',
+            isStreaming: false,
+          });
         }
+        reject(error);
       };
     } catch (error) {
       console.error('Failed to create SSE stream:', error);
