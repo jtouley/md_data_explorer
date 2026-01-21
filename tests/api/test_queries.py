@@ -1,13 +1,14 @@
 """
 Tests for Query API routes with SSE streaming.
-
-Following TDD: Red phase - tests written before implementation.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import polars as pl
 import pytest
 from clinical_analytics.api.main import app
+from clinical_analytics.api.routes.queries import DataFrameEncoder
 from fastapi import status
 from fastapi.testclient import TestClient
 
@@ -240,3 +241,49 @@ class TestQueryStreamEndpoint:
 
         # Assert
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+class TestDataFrameEncoder:
+    """Tests for DataFrameEncoder JSON serialization."""
+
+    def test_dataframe_encoder_serializes_polars_dataframe(self):
+        """DataFrameEncoder converts Polars DataFrame to dict."""
+        # Arrange
+        df = pl.DataFrame({"name": ["Alice", "Bob"], "age": [30, 25]})
+
+        # Act
+        result = json.dumps({"data": df}, cls=DataFrameEncoder)
+        parsed = json.loads(result)
+
+        # Assert
+        assert "data" in parsed
+        assert parsed["data"]["columns"] == ["name", "age"]
+        assert len(parsed["data"]["rows"]) == 2
+        assert parsed["data"]["rows"][0] == {"name": "Alice", "age": 30}
+
+    def test_dataframe_encoder_handles_nested_dataframe(self):
+        """DataFrameEncoder handles DataFrame nested in dict."""
+        # Arrange
+        df = pl.DataFrame({"value": [1, 2, 3]})
+        data = {"summary": "test", "results": df}
+
+        # Act
+        result = json.dumps(data, cls=DataFrameEncoder)
+        parsed = json.loads(result)
+
+        # Assert
+        assert parsed["summary"] == "test"
+        assert parsed["results"]["columns"] == ["value"]
+        assert len(parsed["results"]["rows"]) == 3
+
+    def test_dataframe_encoder_passes_through_simple_types(self):
+        """DataFrameEncoder passes through simple JSON types unchanged."""
+        # Arrange
+        data = {"string": "test", "number": 42, "list": [1, 2, 3]}
+
+        # Act
+        result = json.dumps(data, cls=DataFrameEncoder)
+        parsed = json.loads(result)
+
+        # Assert
+        assert parsed == data
