@@ -370,6 +370,7 @@ class AsyncQueryService:
         Stream SSE events for query progress.
 
         Yields events as they become available, completing when query finishes.
+        Sends a stream_end event to signal client should close connection.
 
         Args:
             query_id: Query identifier to stream
@@ -389,6 +390,12 @@ class AsyncQueryService:
             # Check if query is complete
             query_result = self._queries.get(query_id)
             if query_result and query_result.status in ("completed", "failed"):
+                # Send explicit stream_end signal for client to close connection
+                yield SSEEvent(
+                    event="stream_end",
+                    data={"query_id": query_id, "status": query_result.status},
+                    timestamp=datetime.now(UTC),
+                )
                 break
 
             # Wait for more events
