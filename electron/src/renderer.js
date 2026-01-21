@@ -538,18 +538,26 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
               break;
             }
 
-            case 'query_failed':
-              updateMessage(assistantMessageId, {
-                content: `Error: ${data.error || 'Unknown error'}`,
-                isStreaming: false,
-              });
-              cleanup();
-              resolved = true;
-              reject(new Error(data.error || 'Query failed'));
-              break;
+          case 'query_failed':
+            updateMessage(assistantMessageId, {
+              content: `Error: ${data.error || 'Unknown error'}`,
+              isStreaming: false,
+            });
+            cleanup();
+            resolved = true;
+            reject(new Error(data.error || 'Query failed'));
+            break;
 
-            default:
-              console.log('Unhandled SSE event:', eventType);
+          case 'stream_end':
+            // Explicit end signal - close connection
+            console.log('📡 Stream ended:', data);
+            cleanup();
+            resolved = true;
+            resolve();
+            break;
+
+          default:
+            console.log('Unhandled SSE event:', eventType);
           }
         } catch (parseError) {
           console.error('Failed to parse SSE data:', parseError, event.data);
