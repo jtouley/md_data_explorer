@@ -177,3 +177,70 @@ class TestAsyncQueryServiceValidation:
                 query="   ",
                 dataset_id="test_dataset",
             )
+
+
+class TestAsyncQueryServiceSerialization:
+    """Tests for result serialization (DataFrame to JSON-serializable dict)."""
+
+    def test_serialize_result_none_returns_none(self, async_query_service):
+        """Verify None result returns None."""
+        result = async_query_service._serialize_result(None)
+        assert result is None
+
+    def test_serialize_result_dict_returns_dict(self, async_query_service):
+        """Verify simple dict is returned as-is."""
+        input_dict = {"mean": 45.5, "count": 100}
+        result = async_query_service._serialize_result(input_dict)
+        assert result == {"mean": 45.5, "count": 100}
+
+    def test_serialize_result_polars_dataframe_converts_to_dict(self, async_query_service):
+        """Verify Polars DataFrame is converted to dict with table structure."""
+        import polars as pl
+
+        df = pl.DataFrame({"name": ["Alice", "Bob"], "age": [30, 25]})
+        result = async_query_service._serialize_result(df)
+
+        assert "table" in result
+        assert "row_count" in result
+        assert result["row_count"] == 2
+        assert result["table"]["columns"] == ["name", "age"]
+        assert len(result["table"]["rows"]) == 2
+        assert result["table"]["rows"][0] == {"name": "Alice", "age": 30}
+
+    def test_serialize_result_dict_with_dataframe_value(self, async_query_service):
+        """Verify dict containing DataFrame value is serialized correctly."""
+        import polars as pl
+
+        df = pl.DataFrame({"value": [1, 2, 3]})
+        input_dict = {"summary": "test", "data": df}
+        result = async_query_service._serialize_result(input_dict)
+
+        assert result["summary"] == "test"
+        assert "table" in result["data"]
+        assert result["data"]["row_count"] == 3
+
+    def test_get_result_preview_polars_dataframe_limits_rows(self, async_query_service):
+        """Verify result preview limits DataFrame to 10 rows."""
+        import polars as pl
+
+        df = pl.DataFrame({"id": list(range(100))})
+        result = async_query_service._get_result_preview(df)
+
+        assert result["total_rows"] == 100
+        assert len(result["rows"]) == 10
+
+    def test_get_result_preview_none_returns_none(self, async_query_service):
+        """Verify None input returns None."""
+        result = async_query_service._get_result_preview(None)
+        assert result is None
+
+    def test_get_result_preview_dict_returns_first_3_keys(self, async_query_service):
+        """Verify dict preview returns first 3 keys."""
+        input_dict = {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}
+        result = async_query_service._get_result_preview(input_dict)
+
+        assert len(result) == 3
+        assert "a" in result
+        assert "b" in result
+        assert "c" in result
+        assert "d" not in result
