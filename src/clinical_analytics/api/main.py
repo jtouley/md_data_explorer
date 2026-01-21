@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from clinical_analytics.api.db.database import create_tables
 
 # Import routes
-from clinical_analytics.api.routes import datasets, sessions
+from clinical_analytics.api.routes import datasets, queries, sessions
 
 
 @asynccontextmanager
@@ -95,6 +95,7 @@ async def health_check() -> dict[str, str]:
 # Register API routes
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
+app.include_router(queries.router, prefix="/api", tags=["queries"])
 
 
 # ============================================================================

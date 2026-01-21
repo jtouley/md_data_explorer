@@ -85,7 +85,7 @@ class QueryResult(BaseModel):
         ...,
         description="Detected intent (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, etc.)",
     )
-    status: Literal["completed", "failed"] = Field(..., description="Query status")
+    status: Literal["pending", "processing", "completed", "failed"] = Field(..., description="Query status")
     confidence: float | None = Field(None, ge=0.0, le=1.0, description="Confidence score for intent detection")
     result_data: dict[str, Any] | None = Field(None, description="Query result data (structure varies by intent)")
     interpretation: str | None = Field(None, description="LLM-generated interpretation of results")
