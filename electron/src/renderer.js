@@ -304,8 +304,38 @@ function renderResultCard(result) {
 }
 
 /**
+ * Normalize rows to arrays of scalars (API may send Polars to_dicts() row objects).
+ * @param {string[]} columns
+ * @param {unknown[]} rows
+ * @returns {unknown[][]}
+ */
+function normalizeTableRows(columns, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return [];
+  }
+  return rows.map((row) => {
+    if (Array.isArray(row)) {
+      return row;
+    }
+    if (row && typeof row === 'object' && Array.isArray(columns)) {
+      return columns.map((col) => {
+        const v = /** @type {Record<string, unknown>} */ (row)[col];
+        if (v === null || v === undefined) {
+          return '';
+        }
+        if (typeof v === 'object') {
+          return JSON.stringify(v);
+        }
+        return v;
+      });
+    }
+    return [];
+  });
+}
+
+/**
  * Render a simple table from data.
- * @param {Object} tableData - {columns: string[], rows: any[][]}
+ * @param {Object} tableData - {columns: string[], rows: any[][] | Record<string, unknown>[]}
  * @returns {string} HTML string
  */
 function renderTable(tableData) {
@@ -313,8 +343,10 @@ function renderTable(tableData) {
     return '<p class="result-error">No data available</p>';
   }
 
-  const headerCells = tableData.columns.map((col) => `<th>${escapeHtml(col)}</th>`).join('');
-  const rows = tableData.rows
+  const cols = tableData.columns;
+  const rowArrays = normalizeTableRows(cols, tableData.rows);
+  const headerCells = cols.map((col) => `<th>${escapeHtml(col)}</th>`).join('');
+  const rows = rowArrays
     .map(
       (row) =>
         '<tr>' + row.map((cell) => `<td>${escapeHtml(String(cell ?? ''))}</td>`).join('') + '</tr>'

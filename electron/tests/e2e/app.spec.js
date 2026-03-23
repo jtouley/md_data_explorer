@@ -1,29 +1,29 @@
 /**
- * E2E tests for Electron app launch.
+ * Renderer smoke tests (Chromium + Vite — same entry as Electron dev shell).
  */
-const { test, expect } = require('./fixtures');
+const { test, expect } = require('@playwright/test');
 
-test.describe('Electron App Launch', () => {
-  test('app launches with correct title', async ({ window }) => {
-    // Assert: Window has correct title
-    await expect(window).toHaveTitle(/Clinical Analytics/);
+test.describe('Clinical Analytics renderer', () => {
+  test('page has correct title', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).toHaveTitle(/Clinical Analytics/);
   });
 
-  test('app shows main content area', async ({ window }) => {
-    // Assert: Main content area is visible
-    const main = window.locator('main');
+  test('main content area is visible', async ({ page }) => {
+    await page.goto('/');
+    const main = page.locator('main');
     await expect(main).toBeVisible();
   });
 
-  test('app shows dataset selector', async ({ window }) => {
-    // Assert: Dataset selector is visible
-    const datasetSelect = window.locator('#dataset-select');
+  test('dataset selector is visible', async ({ page }) => {
+    await page.goto('/');
+    const datasetSelect = page.locator('#dataset-select');
     await expect(datasetSelect).toBeVisible();
   });
 
-  test('app shows connection status', async ({ window }) => {
-    // Assert: Connection status indicator is visible
-    const statusIndicator = window.locator('#connection-status');
+  test('connection status is visible', async ({ page }) => {
+    await page.goto('/');
+    const statusIndicator = page.locator('#connection-status');
     await expect(statusIndicator).toBeVisible();
   });
 });
