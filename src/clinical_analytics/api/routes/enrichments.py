@@ -4,6 +4,7 @@ Endpoints:
 - GET /api/datasets/{dataset_id}/enrichments/pending - Get pending suggestions
 - POST /api/datasets/{dataset_id}/enrichments/{patch_id}/accept - Accept suggestion
 - POST /api/datasets/{dataset_id}/enrichments/{patch_id}/reject - Reject suggestion
+- POST /api/datasets/{dataset_id}/enrichments/{patch_id}/revert - Revert accepted patch
 - GET /api/datasets/{dataset_id}/enrichments/history - Get patch history
 - POST /api/datasets/{dataset_id}/enrichments/generate - Generate suggestions
 """
@@ -57,6 +58,12 @@ class RejectRequest(BaseModel):
     reason: str = Field("Rejected via API", description="Rejection reason")
 
 
+class RevertRequest(BaseModel):
+    """Request to revert an accepted patch (append-only audit)."""
+
+    reverted_by: str = Field("api_user", description="Actor reverting the patch")
+
+
 class PatchHistoryItem(BaseModel):
     """Single patch in history."""
 
@@ -68,6 +75,8 @@ class PatchHistoryItem(BaseModel):
     created_at: str
     resolved_at: str | None = None
     resolved_by: str | None = None
+    reverted_at: str | None = None
+    reverted_by: str | None = None
     model_id: str
 
 
@@ -125,6 +134,7 @@ def _patch_to_pending_suggestion(patch: MetadataPatch) -> PendingSuggestion:
 
 def _patch_to_history_item(patch: MetadataPatch) -> PatchHistoryItem:
     """Convert MetadataPatch to PatchHistoryItem API model."""
+    reverted_at = patch.reverted_at.isoformat() if patch.reverted_at else None
     return PatchHistoryItem(
         patch_id=patch.patch_id,
         operation=patch.operation.name,
@@ -134,6 +144,8 @@ def _patch_to_history_item(patch: MetadataPatch) -> PatchHistoryItem:
         created_at=patch.created_at.isoformat(),
         resolved_at=patch.accepted_at.isoformat() if patch.accepted_at else None,
         resolved_by=patch.accepted_by,
+        reverted_at=reverted_at,
+        reverted_by=patch.reverted_by,
         model_id=patch.model_id or "unknown",
     )
 
@@ -233,6 +245,43 @@ async def reject_suggestion(
         return AcceptRejectResponse(
             success=False,
             message=f"Failed to reject suggestion: {e}",
+        )
+
+
+@router.post(
+    "/datasets/{dataset_id}/enrichments/{patch_id}/revert",
+    response_model=AcceptRejectResponse,
+)
+async def revert_accepted_suggestion(
+    dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
+    patch_id: Annotated[str, FastAPIPath(..., description="Patch ID")],
+    request: RevertRequest,
+    enrichment_service: Annotated[EnrichmentService, Depends(get_enrichment_service)],
+) -> AcceptRejectResponse:
+    """Revert a previously accepted enrichment patch (append-only log)."""
+    logger.info(
+        "enrichments_revert",
+        dataset_id=dataset_id,
+        patch_id=patch_id,
+        reverted_by=request.reverted_by,
+    )
+
+    try:
+        enrichment_service.revert_accepted_patch(
+            upload_id=dataset_id,
+            version="v1",
+            patch_id=patch_id,
+            reverted_by=request.reverted_by,
+        )
+        return AcceptRejectResponse(
+            success=True,
+            message="Patch reverted",
+        )
+    except ValueError as e:
+        logger.warning("enrichments_revert_failed", error=str(e))
+        return AcceptRejectResponse(
+            success=False,
+            message=f"Failed to revert patch: {e}",
         )
 
 

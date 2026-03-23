@@ -138,6 +138,31 @@ class TestEnrichmentsReject:
         assert call_args.kwargs.get("reason") == "Incorrect label for this column"
 
 
+class TestEnrichmentsRevert:
+    """Tests for POST /api/datasets/{dataset_id}/enrichments/{patch_id}/revert."""
+
+    def test_enrichments_post_revert_calls_service(self, test_client, mock_enrichment_service):
+        """Revert endpoint delegates to EnrichmentService.revert_accepted_patch."""
+        response = test_client.post(
+            "/api/datasets/upload_test/enrichments/patch_001/revert",
+            json={},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_enrichment_service.revert_accepted_patch.assert_called_once()
+
+    def test_enrichments_post_revert_with_custom_actor(self, test_client, mock_enrichment_service):
+        """Revert endpoint passes reverted_by."""
+        response = test_client.post(
+            "/api/datasets/upload_test/enrichments/patch_001/revert",
+            json={"reverted_by": "auditor_1"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        call_args = mock_enrichment_service.revert_accepted_patch.call_args
+        assert call_args.kwargs.get("reverted_by") == "auditor_1"
+
+
 class TestEnrichmentsHistory:
     """Tests for GET /api/datasets/{dataset_id}/enrichments/history endpoint."""
 

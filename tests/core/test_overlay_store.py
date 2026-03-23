@@ -417,6 +417,35 @@ class TestPatchAcceptReject:
         assert patches[0].rejected_reason == "Not accurate"
 
 
+class TestOverlayStoreRevert:
+    """Tests for reverting accepted patches (append-only REVERTED row)."""
+
+    def test_revert_accepted_patch_appends_reverted(self, overlay_store, sample_patch):
+        """Revert appends a REVERTED row; latest state for patch_id is REVERTED."""
+        from clinical_analytics.core.metadata_patch import PatchStatus
+
+        upload_id = "upload_rev"
+        version = "v1"
+        overlay_store.append_patch(upload_id, version, sample_patch)
+
+        overlay_store.revert_accepted_patch(upload_id, version, sample_patch.patch_id, reverted_by="admin")
+
+        patches = overlay_store.load_patches(upload_id, version)
+        assert len(patches) == 2
+        assert patches[-1].status == PatchStatus.REVERTED
+        assert patches[-1].patch_id == sample_patch.patch_id
+
+    def test_revert_accepted_patch_raises_when_not_accepted(self, overlay_store, sample_patch):
+        """Cannot revert if latest row for patch_id is not ACCEPTED."""
+        upload_id = "upload_rev2"
+        version = "v1"
+        overlay_store.append_patch(upload_id, version, sample_patch)
+        overlay_store.revert_accepted_patch(upload_id, version, sample_patch.patch_id, reverted_by="a")
+
+        with pytest.raises(ValueError, match="not accepted"):
+            overlay_store.revert_accepted_patch(upload_id, version, sample_patch.patch_id, reverted_by="b")
+
+
 class TestDeserializePatchImmutability:
     """Tests for _deserialize_patch not mutating input."""
 
