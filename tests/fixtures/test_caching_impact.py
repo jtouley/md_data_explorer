@@ -32,14 +32,10 @@ class TestCachingImpact:
 
     def test_dataframe_caching_reduces_loading_time(self, tmp_path):
         """
-        Measure that cached DataFrame loading is faster than regeneration.
+        Verify parquet cache round-trip matches source and log write vs read timings.
 
-        This test measures the time difference between:
-        - Writing DataFrame to parquet (baseline - simulates expensive I/O)
-        - Reading cached parquet file (cached - fast I/O)
-
-        Note: The real improvement comes from avoiding expensive operations
-        like Excel file generation, not just DataFrame creation.
+        Assertions are deterministic (frame equality). Timing lines are informational only:
+        wall-clock ordering of write vs read is not reliable on fast disks.
         """
         # Arrange: Create test DataFrame (simulating expensive fixture generation)
         cache_dir = tmp_path / "test_cache"
@@ -89,11 +85,9 @@ class TestCachingImpact:
 
     def test_excel_caching_reduces_file_generation_time(self, tmp_path_factory):
         """
-        Measure that cached Excel file loading is faster than regeneration.
+        Verify second synthetic Excel generation yields byte-identical content via cache.
 
-        This test measures the time difference between:
-        - Generating Excel file from scratch (baseline)
-        - Loading cached Excel file (cached)
+        Timing lines are informational; the contract is same-bytes for both paths.
         """
 
         from fixtures.factories import _create_synthetic_excel_file
