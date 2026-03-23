@@ -14,17 +14,18 @@ The Clinical Analytics Platform enables clinicians and researchers to analyze cl
 - **Multi-Table Support**: Handle complex datasets like MIMIC-IV with automatic relationship detection
 - **Statistical Analysis**: Descriptive statistics, group comparisons, survival analysis, risk prediction, and correlations
 
-## Quick Start
+## Quick Start (from source)
 
 ```bash
-# Install
-pip install clinical-analytics
-
-# Run
-clinical-analytics serve
-
-# Upload your data and start asking questions!
+git clone <repo-url> && cd md_data_explorer
+make install-dev
+make run              # Streamlit UI (http://localhost:8501)
+# Optional: make run-api in another terminal for FastAPI; Electron shell lives under electron/
 ```
+
+PyPI install (`pip install clinical-analytics` / `clinical-analytics serve`) is not documented as the primary workflow for this repository; contributors should use **uv** and **make** targets. See [Getting started: Installation](getting-started/installation.md).
+
+**Roadmap (all plans):** [Master plan](implementation/MASTER_PLAN.md) · **Architecture (as-built):** [As-built architecture (2025-03)](architecture/AS_BUILT_ARCHITECTURE.md) · **Electron migration:** [Omnibus spec](specs/omnibus_electron_streamlit_cutover.md) · **Security backlog:** [Threat model](security/THREAT_MODEL.md)
 
 ### Example Queries
 
@@ -47,6 +48,8 @@ The platform combines:
 - **[Getting Started](getting-started/installation.md)**: Installation and initial setup
 - **[User Guide](user-guide/question-driven-analysis.md)**: How to use the platform
 - **[Architecture](architecture/overview.md)**: System design and components
+- **[As-built architecture](architecture/AS_BUILT_ARCHITECTURE.md)**: Streamlit, FastAPI, Electron, and verification commands
+- **[Threat model](security/THREAT_MODEL.md)**: Security assumptions and `docs/todos/` index
 - **[API Reference](api-reference/core.md)**: Developer documentation
 - **[Development](development/contributing.md)**: Contributing guidelines
 - **[Omnibus: Electron cutover & Streamlit removal](specs/omnibus_electron_streamlit_cutover.md)**: Single spec for FastAPI + Electron parity, deletion order, and verification commands

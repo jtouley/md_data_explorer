@@ -14,12 +14,13 @@ last_updated: 2026-03-23
 
 # Omnibus specification: Electron desktop UI and full Streamlit removal
 
-This document is the **single entry point** for the migration from **Streamlit** to **Electron + FastAPI** as the only supported interactive UI path. It consolidates intent, parity requirements, cutover order, and verification commands. **Executable phase detail** remains in the Cursor plan file cited below; this spec does not duplicate every task line-by-line.
+This document is the **single entry point** for the **Electron + FastAPI** migration (Streamlit removal). **All other product/engineering plans** are indexed in [`docs/implementation/MASTER_PLAN.md`](../implementation/MASTER_PLAN.md) so contributors know what is **in scope vs parallel vs deferred**. This spec holds **parity matrix, cutover order, and verification**; **executable phase detail** remains in the Cursor plan file cited below.
 
 ## Authoritative references (read these first)
 
 | Document | Role |
 |----------|------|
+| [`docs/implementation/MASTER_PLAN.md`](../implementation/MASTER_PLAN.md) | **Consolidated roadmap** — registry of every major plan; primary track vs parallel/deferred |
 | [`.cursor/plans/electron_ui_migration_b421909d.plan.md`](../../.cursor/plans/electron_ui_migration_b421909d.plan.md) | Phases, YAML todos, TDD gates, API sketches, Phase 10 deletion order |
 | [`docs/architecture/SEMANTIC_LAYER_FASTAPI_ADAPTER.md`](../architecture/SEMANTIC_LAYER_FASTAPI_ADAPTER.md) | Semantic layer ↔ API boundary |
 | [`docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md`](../architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md) | Earlier “lightweight UI” design (Next.js); **desktop target in this repo is Electron** — use for component naming ideas, not as stack-of-record |
