@@ -155,6 +155,13 @@ class TestPatchStatus:
         assert PatchStatus.REJECTED is not None
         assert PatchStatus.REJECTED.value == "rejected"
 
+    def test_patch_status_reverted_exists(self):
+        """Verify REVERTED status exists."""
+        from clinical_analytics.core.metadata_patch import PatchStatus
+
+        assert PatchStatus.REVERTED is not None
+        assert PatchStatus.REVERTED.value == "reverted"
+
 
 class TestMetadataPatch:
     """Tests for MetadataPatch frozen dataclass."""
