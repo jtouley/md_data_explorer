@@ -140,8 +140,9 @@ Remove modules that **`import streamlit`** or exist solely to support Streamlit 
 Verify the **target** stack:
 
 ```bash
-# Backend (see also src/clinical_analytics/api/main.py module docstring)
-uv run uvicorn clinical_analytics.api.main:app --reload --port 8000
+# Backend
+make run-api
+# equivalent: uv run uvicorn clinical_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
 
 make test-api
 make test-fast

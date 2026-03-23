@@ -13,7 +13,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import ibis
 import pandas as pd
@@ -134,15 +134,29 @@ def validate_query_against_schema(plan: "QueryPlan", active_version: dict[str, A
     return warnings
 
 
-def _mdde_sql_debug_level() -> str:
-    """Return normalized MDDE_SQL_DEBUG env value (default off)."""
-    return os.environ.get("MDDE_SQL_DEBUG", "0").strip().lower()
+def _mdde_sql_debug_mode() -> Literal["1", "analyze"] | None:
+    """
+    Parse MDDE_SQL_DEBUG allowlist. Unknown values are ignored (off) with a warning.
+
+    Allowed: unset/0/false/off/no → off; 1 → compile + metrics; analyze|analyse → + EXPLAIN ANALYZE.
+    """
+    raw = os.environ.get("MDDE_SQL_DEBUG", "0").strip().lower()
+    if raw in ("", "0", "false", "off", "no"):
+        return None
+    if raw == "1":
+        return "1"
+    if raw in ("analyze", "analyse"):
+        return "analyze"
+    logger.warning(
+        "mdde_sql_debug unknown MDDE_SQL_DEBUG=%r; ignoring (use 0, 1, or analyze)",
+        os.environ.get("MDDE_SQL_DEBUG", ""),
+    )
+    return None
 
 
 def _log_ibis_sql_dtype_probe(column: str) -> None:
     """Log when a dtype probe query runs (IN / NOT_IN path); only if MDDE_SQL_DEBUG is on."""
-    level = _mdde_sql_debug_level()
-    if level in ("", "0", "false", "off", "no"):
+    if _mdde_sql_debug_mode() is None:
         return
     logger.debug("mdde_sql_dtype_probe column=%s", column)
 
@@ -152,11 +166,12 @@ def _log_ibis_sql_and_optional_explain(ibis_table: Any, duckdb_con: Any) -> None
     Compile Ibis table to SQL, log structured metrics, optionally EXPLAIN ANALYZE via DuckDB.
 
     Env:
-        MDDE_SQL_DEBUG: 0 (default), 1 (log compile metrics + debug preview), analyze (+ EXPLAIN ANALYZE).
+        MDDE_SQL_DEBUG: allowlisted only — 0/false/off/no (default off), 1 (metrics + debug preview),
+        analyze or analyse (+ EXPLAIN ANALYZE, which executes the plan; the following Ibis execute runs it again).
         MDDE_SQL_LOG_MAX_CHARS: max chars for debug SQL preview (default 8000).
     """
-    level = _mdde_sql_debug_level()
-    if level in ("", "0", "false", "off", "no"):
+    mode = _mdde_sql_debug_mode()
+    if mode is None:
         return
 
     try:
@@ -179,7 +194,7 @@ def _log_ibis_sql_and_optional_explain(ibis_table: Any, duckdb_con: Any) -> None
     sql_chars = len(sql)
 
     explain_ms: float | None = None
-    if level == "analyze":
+    if mode == "analyze":
         t0 = time.perf_counter()
         try:
             duckdb_con.execute(f"EXPLAIN ANALYZE {sql}")
@@ -2226,7 +2241,7 @@ class SemanticLayer:
                                         ]
                                     else:
                                         cast_values_not_int = [int(filter_spec.value)]
-                                    view = view.filter(~col_expr.isin(cast_values_not_int))
+                                    view = view.filter(~col_expr.cast("int64").isin(cast_values_not_int))
                                 elif col_dtype in ["float32", "float64", "Float32", "Float64"]:
                                     if isinstance(filter_spec.value, list):
                                         cast_values_not_float: list[float] = [
@@ -2234,7 +2249,7 @@ class SemanticLayer:
                                         ]
                                     else:
                                         cast_values_not_float = [float(filter_spec.value)]
-                                    view = view.filter(~col_expr.isin(cast_values_not_float))
+                                    view = view.filter(~col_expr.cast("float64").isin(cast_values_not_float))
                                 else:
                                     view = view.filter(~col_expr.isin(filter_spec.value))
                             else:
