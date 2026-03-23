@@ -113,6 +113,14 @@ test.describe('Chat Interface', () => {
   });
 });
 
+test.describe('LLM status banner', () => {
+  test('llm banner element exists and starts hidden', async ({ window }) => {
+    const banner = window.locator('#llm-banner');
+    await expect(banner).toBeAttached();
+    await expect(banner).toHaveClass(/hidden/);
+  });
+});
+
 test.describe('Dataset Selector Integration', () => {
   test('dataset selector shows placeholder by default', async ({ window }) => {
     const datasetSelect = window.locator('#dataset-select');

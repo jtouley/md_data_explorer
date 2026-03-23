@@ -80,7 +80,7 @@ Legend: **S** = Streamlit today | **A** = FastAPI | **E** = Electron renderer
 | P23 | `pages/23_⏱️_Survival_Analysis.py` | Same | Result renderer — survival | **Gap** |
 | P24 | `pages/24_🔗_Correlations.py` | Same | Result renderer — correlations | **Gap** |
 | ENR | Enrichment panel / patch history (ADR011 components) | `routes/enrichments.py` | Electron panels (plan Phases 6b–6c) | **Partial** |
-| OLL | Ollama / LLM availability feedback | Health or config endpoint + UI banner | Status in renderer | **Gap** |
+| OLL | Ollama / LLM availability feedback | `GET /health` includes `ollama_*` fields (fast probe) | Banner in Electron renderer | **Implemented** |
 
 **Rule:** Do not execute **Phase 10** (delete Streamlit) until every row marked **Required for v1** is **Implemented** or **Won’t do** (explicit).
 

@@ -11,10 +11,12 @@ Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from clinical_analytics.api import health_llm
 from clinical_analytics.api.db.database import create_tables
 
 # Import routes
@@ -97,9 +99,14 @@ app.add_middleware(
 
 # Health check endpoint
 @app.get("/health", tags=["health"])
-async def health_check() -> dict[str, str]:
-    """Health check endpoint for monitoring."""
-    return {"status": "healthy", "service": "clinical-analytics-api"}
+async def health_check() -> dict[str, Any]:
+    """Health check endpoint for monitoring and desktop LLM status."""
+    body: dict[str, Any] = {
+        "status": "healthy",
+        "service": "clinical-analytics-api",
+    }
+    body.update(health_llm.get_ollama_health_snapshot())
+    return body
 
 
 # Register API routes

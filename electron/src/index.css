@@ -183,6 +183,32 @@ body {
 }
 
 /* ============================================================================
+   LLM / Ollama status (from GET /health)
+   ============================================================================ */
+.llm-banner {
+  padding: var(--space-2) var(--space-6);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.llm-banner--error {
+  background: #fdf2f2;
+  color: #6b2a2a;
+  border-bottom-color: #e8c5c5;
+}
+
+.llm-banner--warn {
+  background: #fdf8ee;
+  color: #6a4a1a;
+  border-bottom-color: #e8d9b8;
+}
+
+.llm-banner.hidden {
+  display: none;
+}
+
+/* ============================================================================
    Main Content Area
    ============================================================================ */
 .app-main {
