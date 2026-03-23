@@ -9,6 +9,7 @@ mapping logic - just define your logic in YAML and let Ibis compile to SQL.
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -131,6 +132,68 @@ def validate_query_against_schema(plan: "QueryPlan", active_version: dict[str, A
             )
 
     return warnings
+
+
+def _mdde_sql_debug_level() -> str:
+    """Return normalized MDDE_SQL_DEBUG env value (default off)."""
+    return os.environ.get("MDDE_SQL_DEBUG", "0").strip().lower()
+
+
+def _log_ibis_sql_dtype_probe(column: str) -> None:
+    """Log when a dtype probe query runs (IN / NOT_IN path); only if MDDE_SQL_DEBUG is on."""
+    level = _mdde_sql_debug_level()
+    if level in ("", "0", "false", "off", "no"):
+        return
+    logger.debug("mdde_sql_dtype_probe column=%s", column)
+
+
+def _log_ibis_sql_and_optional_explain(ibis_table: Any, duckdb_con: Any) -> None:
+    """
+    Compile Ibis table to SQL, log structured metrics, optionally EXPLAIN ANALYZE via DuckDB.
+
+    Env:
+        MDDE_SQL_DEBUG: 0 (default), 1 (log compile metrics + debug preview), analyze (+ EXPLAIN ANALYZE).
+        MDDE_SQL_LOG_MAX_CHARS: max chars for debug SQL preview (default 8000).
+    """
+    level = _mdde_sql_debug_level()
+    if level in ("", "0", "false", "off", "no"):
+        return
+
+    try:
+        compiled = ibis_table.compile()
+    except Exception as e:
+        logger.warning("mdde_sql_debug compile_failed error=%s", e)
+        return
+
+    sql = compiled if isinstance(compiled, str) else str(compiled)
+    sql = sql.strip().rstrip(";")
+
+    raw_max = os.environ.get("MDDE_SQL_LOG_MAX_CHARS", "8000")
+    try:
+        max_chars = max(64, int(raw_max))
+    except ValueError:
+        max_chars = 8000
+
+    truncated = len(sql) > max_chars
+    preview = sql[:max_chars] if truncated else sql
+    sql_chars = len(sql)
+
+    explain_ms: float | None = None
+    if level == "analyze":
+        t0 = time.perf_counter()
+        try:
+            duckdb_con.execute(f"EXPLAIN ANALYZE {sql}")
+        except Exception as e:
+            logger.warning("mdde_sql_debug explain_analyze_failed error=%s", e)
+        explain_ms = (time.perf_counter() - t0) * 1000.0
+
+    logger.info(
+        "mdde_sql_debug sql_chars=%s truncated=%s explain_ms=%s",
+        sql_chars,
+        int(truncated),
+        "" if explain_ms is None else int(explain_ms),
+    )
+    logger.debug("mdde_sql_debug sql_preview=%s", preview)
 
 
 def _safe_identifier(name: str, max_len: int = 50) -> str:
@@ -2102,6 +2165,7 @@ class SemanticLayer:
                         # Type mismatch - need to cast values to match column type
                         try:
                             # Get a sample row to determine column dtype
+                            _log_ibis_sql_dtype_probe(column)
                             sample_df = view.select(column).limit(1).execute()
                             if len(sample_df) > 0:
                                 col_dtype = str(sample_df[column].dtype)
@@ -2151,6 +2215,7 @@ class SemanticLayer:
                     except Exception:
                         # If that fails, try with type casting
                         try:
+                            _log_ibis_sql_dtype_probe(column)
                             sample = view.select(column).limit(1).execute()
                             if len(sample) > 0:
                                 col_dtype = sample[column].dtype
@@ -2232,6 +2297,7 @@ class SemanticLayer:
             # Other intents: return base view for now
             result = view
 
+        _log_ibis_sql_and_optional_explain(result, self.con.con)
         return result.execute()
 
     def _detect_categorical_encoding(self, column: Any) -> bool:
