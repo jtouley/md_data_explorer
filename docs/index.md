@@ -49,6 +49,7 @@ The platform combines:
 - **[Architecture](architecture/overview.md)**: System design and components
 - **[API Reference](api-reference/core.md)**: Developer documentation
 - **[Development](development/contributing.md)**: Contributing guidelines
+- **[Omnibus: Electron cutover & Streamlit removal](specs/omnibus_electron_streamlit_cutover.md)**: Single spec for FastAPI + Electron parity, deletion order, and verification commands
 
 ## Vision
 
