@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
 
 # Default target
 .DEFAULT_GOAL := help
@@ -308,6 +308,10 @@ run-app-keep: ## Start application with bash script (keep Ollama running on exit
 	@echo "$(GREEN)Starting application (Ollama will keep running)...$(NC)"
 	@echo "$(YELLOW)Press Ctrl+C to stop (Ollama will stay running)$(NC)"
 	@STOP_OLLAMA_ON_EXIT=false bash scripts/run_app.sh
+
+run-api: ensure-venv ## Start FastAPI backend (for Electron desktop dev)
+	@echo "$(GREEN)Starting FastAPI on http://127.0.0.1:8000 ...$(NC)"
+	$(UV) run uvicorn clinical_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
 
 validate: ## Run platform validation (tests serve as validation)
 	@echo "$(GREEN)Platform validation via test suite...$(NC)"

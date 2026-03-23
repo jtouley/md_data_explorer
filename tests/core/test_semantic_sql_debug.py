@@ -70,3 +70,28 @@ class TestMddeSqlDebugHelper:
 
         assert "truncated=1" in caplog.text
         assert "sql_chars=100" in caplog.text
+
+    def test_mdde_sql_debug_unknown_value_is_off(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Non-allowlisted MDDE_SQL_DEBUG (e.g. true) does not compile or call DuckDB."""
+        mock_expr = MagicMock()
+        mock_con = MagicMock()
+
+        with patch.dict(os.environ, {"MDDE_SQL_DEBUG": "true"}):
+            with caplog.at_level(logging.WARNING):
+                semantic_mod._log_ibis_sql_and_optional_explain(mock_expr, mock_con)
+
+        mock_expr.compile.assert_not_called()
+        mock_con.execute.assert_not_called()
+        assert "unknown MDDE_SQL_DEBUG" in caplog.text
+
+    def test_mdde_sql_debug_analyse_alias_runs_explain(self) -> None:
+        """British spelling analyse is accepted as analyze."""
+        mock_expr = MagicMock()
+        mock_expr.compile.return_value = "SELECT 1"
+        mock_con = MagicMock()
+
+        with patch.dict(os.environ, {"MDDE_SQL_DEBUG": "analyse"}):
+            semantic_mod._log_ibis_sql_and_optional_explain(mock_expr, mock_con)
+
+        mock_con.execute.assert_called_once()
+        assert "EXPLAIN ANALYZE" in mock_con.execute.call_args[0][0]
