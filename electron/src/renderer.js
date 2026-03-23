@@ -13,6 +13,8 @@ import './index.css';
 const elements = {
   connectionStatus: document.getElementById('connection-status'),
   statusText: document.querySelector('.status-text'),
+  llmBanner: document.getElementById('llm-banner'),
+  llmBannerText: document.getElementById('llm-banner-text'),
   datasetSelect: document.getElementById('dataset-select'),
   refreshDatasetsBtn: document.getElementById('refresh-datasets'),
   chatContainer: document.getElementById('chat-container'),
@@ -64,6 +66,50 @@ function generateSessionId() {
  * @param {'checking' | 'connected' | 'error'} status
  * @param {string} [message]
  */
+/**
+ * Show or hide Ollama / local LLM guidance from GET /health payload.
+ * @param {Record<string, unknown>} health
+ */
+function updateLlmBanner(health) {
+  const { llmBanner, llmBannerText } = elements;
+  if (!llmBanner || !llmBannerText) return;
+
+  llmBanner.classList.remove('llm-banner--error', 'llm-banner--warn');
+  llmBanner.classList.add('hidden');
+
+  if (!health || health.status !== 'healthy') {
+    return;
+  }
+
+  // Older API responses without Ollama probe fields — do not show a banner.
+  if (health.ollama_reachable === undefined) {
+    return;
+  }
+
+  const reachable = health.ollama_reachable === true;
+  const defaultOk = health.ollama_default_model_available === true;
+  const model = typeof health.ollama_default_model === 'string' ? health.ollama_default_model : 'the configured model';
+
+  if (reachable && defaultOk) {
+    return;
+  }
+
+  llmBanner.classList.remove('hidden');
+
+  if (!reachable) {
+    llmBanner.classList.add('llm-banner--error');
+    llmBannerText.textContent =
+      `Local LLM (Ollama) is not reachable at ${health.ollama_base_url || 'localhost'}. ` +
+      `Tier-3 NL fallback and some enrichments require Ollama running with ${model}.`;
+    return;
+  }
+
+  llmBanner.classList.add('llm-banner--warn');
+  llmBannerText.textContent =
+    `Ollama is running but the default model "${model}" was not found. ` +
+    'Run `ollama pull` for that model or update config/nl_query.yaml.';
+}
+
 function updateConnectionStatus(status, message) {
   const { connectionStatus, statusText } = elements;
 
@@ -303,12 +349,15 @@ async function checkHealth() {
 
     if (health.status === 'healthy') {
       updateConnectionStatus('connected', 'Backend connected');
+      updateLlmBanner(health);
       console.log('✅ Backend health check passed:', health);
     } else {
+      updateLlmBanner({});
       updateConnectionStatus('error', `Backend: ${health.status}`);
       console.warn('⚠️ Backend health check returned:', health);
     }
   } catch (error) {
+    updateLlmBanner({});
     updateConnectionStatus('error', 'Backend unavailable');
     console.error('❌ Health check failed:', error);
   }
