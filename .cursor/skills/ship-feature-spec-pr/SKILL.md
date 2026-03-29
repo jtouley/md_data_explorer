@@ -1,6 +1,6 @@
 ---
 name: ship-feature-spec-pr
-description: "Turns a chat-defined feature into a reviewed PR by chaining plan authoring, /plan-review, /plan-update, /spec-driven implementation, and /pr-review. Use when the user asks to ship from a conversation, run the full spec-driven pipeline globally, or chain plan review with PR review after implementation."
+description: "Turns a chat-defined feature or multi-phase plan into a reviewed PR by chaining plan authoring, /plan-review, /plan-update, /spec-driven implementation, and /pr-review—repeating per plan slice until done or blocked. Use when the user asks to ship from a conversation, run the full pipeline, ship all phases, or chain plan review with PR review after implementation."
 ---
 
 # Ship feature: conversation → plan → spec-driven → PR review
@@ -15,7 +15,15 @@ Provide a single procedural workflow so another agent (or human) can move from *
 
 - User wants to **ship a feature** from the current or recent thread.
 - User asks to **chain** `/plan-review`, `/spec-driven`, and `/pr-review`.
-- User says **"run the full pipeline"**, **"global setup"**, or **"from this chat to PR"**.
+- User says **"run the full pipeline"**, **"global setup"**, **"from this chat to PR"**, **"all phases"**, or **"ship the whole plan"**.
+
+## Multi-phase plans (entire migrations, YAML phases, omnibus tracks)
+
+- This skill applies to **large plans** (many phases, e.g. Electron 6–10e) as well as single features. **Do not** refuse those requests by saying the work cannot be done **in one model turn** and stopping with only a scope essay.
+- **Turn limits ≠ process limits.** The correct response is to **decompose** the authoritative plan (todos in `.cursor/plans/*.plan.md`, or **tracked** `MASTER_PLAN.md` / omnibus when plans are gitignored), then **execute ordered vertical slices**: implement → verify with the repo’s **Makefile / CI** commands → commit/push when appropriate → **PR review** as needed.
+- **Verify–fix loop:** After substantive changes, run **`staff-data-driven-test-engineer`** (or the repo’s agreed test targets) on the **same bar** (`make test-fast`, `make test-electron-e2e`, etc.); fix failures; repeat until green or surface **DECISIONS NEEDED** with a concrete blocker.
+- **Handoff (mandatory when context ends before the plan ends):** Write a short **continuation block**: next slice(s), owning files, exact verify commands, open PR `#`, and blockers. The **next conversation** continues the **same** pipeline—no restart from zero.
+- **Parallelism:** Use **Task/subagents** for readonly review or exploration while implementing when it speeds verification; reconcile findings before merge.
 
 ## Prerequisites
 
@@ -75,6 +83,9 @@ When **serena**, **duckdb**, or **playwright** MCP servers are enabled, follow `
 ```text
 Conversation → Plan file → /plan-review → [ /plan-update → /plan-review ]*
   → /spec-driven → (push + existing or new PR #N) → gh pr diff → /pr-review PRN
+  → verify (Makefile / CI; optional staff-data-driven-test-engineer) → fix → re-verify
+  → [ next plan slice: repeat from /spec-driven or from plan review if scope shifted ]
+  → … until plan complete, user stops, or DECISIONS NEEDED
 ```
 
 ## Repository-specific rules

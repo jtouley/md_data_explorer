@@ -38,6 +38,12 @@ Conventions match Cursor projects that use **`.cursor/plans/`**, **`.context/rev
 - **Red phase:** Project may allow focused `pytest` / `uv run pytest` for one test; confirm in repo rules.
 - **Green / PR:** Prefer repo’s standard interface (**Makefile**, **npm**, **cargo test**, etc.)—do not assume `make test-fast` unless the project has it.
 
+## Multi-phase plans (same skill, many slices)
+
+- **“All phases”** means **repeat the workflow** per unchecked phase (or per omnibus checkpoint), not “finish everything in one assistant message.”
+- After each slice: run the repo’s **verify** commands; optionally **`staff-data-driven-test-engineer`** on the same target bar; fix; re-run.
+- If the model runs out of context: emit a **handoff** (next slice, commands, PR `#`, blockers) so the user or the next turn continues **without re-deriving the plan**.
+
 ## md_data_explorer
 
 When the workspace is **md_data_explorer**, use **Makefile** (`make test-core`, `make test-fast`, `make check`), **volt-mdde-context**, and `.cursor/rules/` as referenced in that repo’s CLAUDE / AGENTS docs. Ensure dev dependencies are installed before `git push` if pre-push runs `pre_commit` (`make install-dev`).
