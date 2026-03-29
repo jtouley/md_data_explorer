@@ -62,8 +62,8 @@ todos:
     dependencies:
       - phase6-result-rendering
   - id: phase9-e2e-testing
-    content: "Testing: E2E — Playwright Chromium+Vite + CI shipped; extend after upload (phase 8); true Electron binary harness deferred (macOS rejects Playwright's --remote-debugging-port=0)"
-    status: in_progress
+    content: "Testing: E2E — v1 gate satisfied with Playwright Chromium+Vite + CI and make test-electron-e2e; native Electron binary harness deferred on macOS post-v1"
+    status: done
     dependencies:
       - phase8-dataset-upload
   - id: phase10a-delete-pages
