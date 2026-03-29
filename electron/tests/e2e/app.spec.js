@@ -33,4 +33,10 @@ test.describe('Clinical Analytics renderer', () => {
     await expect(section).toBeAttached();
     await expect(section).toHaveClass(/hidden/);
   });
+
+  test('patch history container is present in DOM', async ({ page }) => {
+    await page.goto('/');
+    const body = page.getByTestId('patch-history-body');
+    await expect(body).toBeAttached();
+  });
 });

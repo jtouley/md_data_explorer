@@ -80,7 +80,7 @@ Legend: **S** = Streamlit today | **A** = FastAPI | **E** = Electron renderer
 | P22 | `pages/22_🎯_Risk_Factors.py` | Same | Result renderer — risk | **Gap** |
 | P23 | `pages/23_⏱️_Survival_Analysis.py` | Same | Result renderer — survival | **Gap** |
 | P24 | `pages/24_🔗_Correlations.py` | Same | Result renderer — correlations | **Gap** |
-| ENR | Enrichment panel / patch history (ADR011 components) | `routes/enrichments.py` | Electron panels (plan Phases 6b–6c) | **Partial** |
+| ENR | Enrichment panel / patch history (ADR011 components) | `routes/enrichments.py` | Electron panels (plan Phases 6b–6c) | **Implemented** |
 | OLL | Ollama / LLM availability feedback | `GET /health` includes `ollama_*` fields (fast probe) | Banner in Electron renderer | **Implemented** |
 
 **Rule:** Do not execute **Phase 10** (delete Streamlit) until every row marked **Required for v1** is **Implemented** or **Won’t do** (explicit).
@@ -95,7 +95,7 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 | 5 | Chat interface + dataset selector | **Implemented** (Vite renderer; matches Electron dev URL) |
 | 6 | Inline result rendering in chat | **Partial** (tables + SSE path; rich intent renderers still gap per parity matrix) |
 | 6b | Enrichment panel in Electron (pending + accept/reject) | **Implemented** |
-| 6c | Patch history viewer in Electron | **Pending** |
+| 6c | Patch history viewer in Electron | **Implemented** |
 | 7 | Session sidebar | **Pending** |
 | 8 | Dataset upload in Electron | **Pending** |
 | 9 | Playwright E2E (Chromium + Vite; CI `electron-playwright`; `make test-electron-e2e`; Electron **binary** harness deferred) | **Partial** |
