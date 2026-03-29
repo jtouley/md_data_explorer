@@ -5,6 +5,7 @@
  * and chat message management.
  */
 import './index.css';
+import { buildQueryCompletedPresentation } from './resultPresentation.js';
 
 // ============================================================================
 // DOM Elements
@@ -88,7 +89,10 @@ function updateLlmBanner(health) {
 
   const reachable = health.ollama_reachable === true;
   const defaultOk = health.ollama_default_model_available === true;
-  const model = typeof health.ollama_default_model === 'string' ? health.ollama_default_model : 'the configured model';
+  const model =
+    typeof health.ollama_default_model === 'string'
+      ? health.ollama_default_model
+      : 'the configured model';
 
   if (reachable && defaultOk) {
     return;
@@ -252,9 +256,7 @@ function renderMessage(message) {
  * @param {ChatMessage} message
  */
 function rerenderMessage(message) {
-  const existingDiv = elements.chatContainer.querySelector(
-    `[data-message-id="${message.id}"]`
-  );
+  const existingDiv = elements.chatContainer.querySelector(`[data-message-id="${message.id}"]`);
   if (!existingDiv) return;
 
   const contentDiv = existingDiv.querySelector('.message-content');
@@ -285,6 +287,18 @@ function rerenderMessage(message) {
 function renderResultCard(result) {
   const card = document.createElement('div');
   card.className = 'result-card';
+  card.setAttribute('data-testid', 'result-card');
+  if (result.intentType) {
+    card.setAttribute('data-intent', result.intentType);
+  }
+
+  if (result.title) {
+    const titleEl = document.createElement('div');
+    titleEl.className = 'result-card-title';
+    titleEl.setAttribute('data-testid', 'result-card-title');
+    titleEl.textContent = result.title;
+    card.appendChild(titleEl);
+  }
 
   if (result.summary) {
     const summary = document.createElement('p');
@@ -572,26 +586,11 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
           break;
 
         case 'query_completed': {
-          // Final result - extract result_preview for display
-          const resultPreview = data.result_preview || {};
-          const intentType = data.intent_type || 'analysis';
-
-          // Build response message
-          let responseContent = `Analysis complete (${intentType})`;
-
-          // Extract table data if present
-          let tableResult = null;
-          for (const value of Object.values(resultPreview)) {
-            if (value && value.table) {
-              tableResult = value.table;
-              responseContent = `Found ${value.row_count || tableResult.rows?.length || 0} results`;
-              break;
-            }
-          }
+          const pres = buildQueryCompletedPresentation(data.intent_type, data.result_preview || {});
 
           updateMessage(assistantMessageId, {
-            content: responseContent,
-            result: tableResult ? { table: tableResult } : null,
+            content: pres.content,
+            result: pres.result,
             isStreaming: false,
           });
 
