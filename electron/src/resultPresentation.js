@@ -102,9 +102,112 @@ export function buildCompletionMessage(normalizedIntent, rowCount, hasTable) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {Record<string, unknown>}
+ */
+function asRecord(value) {
+  return value && typeof value === 'object' ? /** @type {Record<string, unknown>} */ (value) : {};
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function formatNumeric(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '';
+  }
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+  return value.toFixed(2).replace(/\.00$/, '');
+}
+
+/**
+ * Intent-aware summary for typed result payload blocks.
+ * @param {string} normalizedIntent
+ * @param {Record<string, unknown> | null | undefined} resultPreview
+ * @param {number} rowCount
+ * @returns {string | null}
+ */
+export function buildIntentSummary(normalizedIntent, resultPreview, rowCount) {
+  const preview = asRecord(resultPreview);
+
+  if (normalizedIntent === 'describe') {
+    const summary = asRecord(preview.summary);
+    const sampleSize = summary.sample_size;
+    const numericColumns = Array.isArray(summary.numeric_columns)
+      ? summary.numeric_columns.filter((v) => typeof v === 'string').slice(0, 2)
+      : [];
+    const parts = [];
+    if (typeof sampleSize === 'number') {
+      parts.push(`N=${sampleSize}`);
+    } else if (rowCount > 0) {
+      parts.push(`N=${rowCount}`);
+    }
+    if (numericColumns.length > 0) {
+      parts.push(`Columns: ${numericColumns.join(', ')}`);
+    }
+    return parts.length > 0 ? parts.join(' | ') : null;
+  }
+
+  if (normalizedIntent === 'compare_groups') {
+    const comparison = asRecord(preview.comparison);
+    const groupBy = typeof comparison.group_by === 'string' ? comparison.group_by : null;
+    const metric = typeof comparison.metric === 'string' ? comparison.metric : null;
+    const pValue = formatNumeric(comparison.p_value);
+    const parts = [];
+    if (groupBy) parts.push(`Grouped by ${groupBy}`);
+    if (metric) parts.push(`Metric: ${metric}`);
+    if (pValue) parts.push(`p=${pValue}`);
+    return parts.length > 0 ? parts.join(' | ') : null;
+  }
+
+  if (normalizedIntent === 'find_predictors') {
+    const model = asRecord(preview.model);
+    const target = typeof model.target === 'string' ? model.target : null;
+    const predictors = Array.isArray(model.top_predictors)
+      ? model.top_predictors.filter((v) => typeof v === 'string').slice(0, 2)
+      : [];
+    const parts = [];
+    if (target) parts.push(`Target: ${target}`);
+    if (predictors.length > 0) parts.push(`Top: ${predictors.join(', ')}`);
+    return parts.length > 0 ? parts.join(' | ') : null;
+  }
+
+  if (normalizedIntent === 'examine_survival') {
+    const survival = asRecord(preview.survival);
+    const timeCol = typeof survival.time_column === 'string' ? survival.time_column : null;
+    const eventCol = typeof survival.event_column === 'string' ? survival.event_column : null;
+    const median = formatNumeric(survival.median_survival_days);
+    const parts = [];
+    if (timeCol) parts.push(`Time: ${timeCol}`);
+    if (eventCol) parts.push(`Event: ${eventCol}`);
+    if (median) parts.push(`Median: ${median} days`);
+    return parts.length > 0 ? parts.join(' | ') : null;
+  }
+
+  if (normalizedIntent === 'explore_relationships') {
+    const correlations = asRecord(preview.correlations);
+    const method = typeof correlations.method === 'string' ? correlations.method : null;
+    const strongestPair = Array.isArray(correlations.strongest_pair)
+      ? correlations.strongest_pair.filter((v) => typeof v === 'string').slice(0, 2)
+      : [];
+    const strongestR = formatNumeric(correlations.strongest_r);
+    const parts = [];
+    if (method) parts.push(`Method: ${method}`);
+    if (strongestPair.length === 2) parts.push(`Strongest: ${strongestPair[0]} ~ ${strongestPair[1]}`);
+    if (strongestR) parts.push(`r=${strongestR}`);
+    return parts.length > 0 ? parts.join(' | ') : null;
+  }
+
+  return null;
+}
+
+/**
  * @param {string | null | undefined} intentRaw
  * @param {Record<string, unknown> | null | undefined} resultPreview
- * @returns {{ content: string, result: { intentType: string, title: string | null, table: TablePayload } | null }}
+ * @returns {{ content: string, result: { intentType: string, title: string | null, summary: string | null, table?: TablePayload } | null }}
  */
 export function buildQueryCompletedPresentation(intentRaw, resultPreview) {
   const intentType = normalizeIntentType(intentRaw);
@@ -113,17 +216,30 @@ export function buildQueryCompletedPresentation(intentRaw, resultPreview) {
   const rowCount = extracted ? extracted.rowCount : 0;
   const content = buildCompletionMessage(intentType, rowCount, hasTable);
   const title = resultTitleForIntent(intentType);
+  const summary = buildIntentSummary(intentType, resultPreview, rowCount);
 
-  if (!extracted) {
+  if (!extracted && !title && !summary) {
     return { content, result: null };
+  }
+
+  const result = {
+    intentType,
+    title,
+    summary,
+  };
+
+  if (extracted) {
+    return {
+      content,
+      result: {
+        ...result,
+        table: extracted.table,
+      },
+    };
   }
 
   return {
     content,
-    result: {
-      intentType,
-      title,
-      table: extracted.table,
-    },
+    result,
   };
 }
