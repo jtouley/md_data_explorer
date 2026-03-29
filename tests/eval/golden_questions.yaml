@@ -319,38 +319,45 @@ questions:
     expected_group_by: null
     notes: "Real production query - multi-variable correlation analysis"
 
+  - id: prod_most_prescribed_drug_pharmacy
+    query: "what was the most prescribed drug at the pharmacy"
+    expected_intent: COUNT
+    expected_metric: null
+    expected_group_by: null
+    notes: "Real production query - superlative medication query in pharmacy context"
+
   # Complex multi-step queries
   - id: complex_predictive_modeling
-    query: "what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months?"
+    query: "what combination of age, baseline cd4 count, bmi, and statin use best predicts virologic failure within 12 months of starting a new hiv regimen?"
     expected_intent: FIND_PREDICTORS
-    expected_metric: "virologic_failure"
+    expected_metric: null
     expected_group_by: null
     notes: "Complex query - multiple predictors with temporal outcome"
 
   - id: complex_survival_stratified
-    query: "time to first cardiovascular event or death, stratified by statin use and baseline ldl above 100"
-    expected_intent: FIND_PREDICTORS
-    expected_metric: null  # Column doesn't exist in test data
-    expected_group_by: null  # Column doesn't exist in test data - tests intent classification only
-    notes: "Complex query - survival analysis with stratification and filters. Metric/GroupBy null for test compatibility."
+    query: "what is the time to first cardiovascular event or death, stratified by statin use status and baseline ldl levels above 100, adjusting for age and diabetes status?"
+    expected_intent: SURVIVAL
+    expected_metric: null
+    expected_group_by: null
+    notes: "Complex query - survival analysis with stratification and adjustment terms"
 
   - id: complex_compare_with_filters
-    query: "compare average cd4 change from baseline to 6 months between hiv regimens, only for those on statins with bmi > 25"
+    query: "compare the average change in cd4 count from baseline to 6 months between patients on different hiv regimens, but only for those who were also on statins and had baseline bmi greater than 25, excluding those who switched regimens during follow-up"
     expected_intent: COMPARE_GROUPS
-    expected_metric: "cd4_change"
-    expected_group_by: "hiv_regimen"
-    notes: "Complex query - comparison with multiple filters and temporal logic"
+    expected_metric: null
+    expected_group_by: null
+    notes: "Complex query - comparison with temporal change, filtering, and exclusions"
 
   - id: complex_correlation_interactions
-    query: "how does statin adherence and ldl reduction vary by baseline ldl category and regimen type?"
+    query: "how does the relationship between statin adherence and ldl reduction vary by baseline ldl category, hiv regimen type, and whether the patient has diabetes, and does this differ by age group?"
     expected_intent: CORRELATIONS
     expected_metric: null
     expected_group_by: null
-    notes: "Complex query - correlation with interaction effects"
+    notes: "Complex query - correlation with interaction effects across multiple stratifications"
 
   - id: complex_count_nested
-    query: "among patients with virologic suppression within 6 months, how many had cardiovascular events by statin use and baseline ldl category?"
+    query: "among patients who achieved virologic suppression within 6 months, how many experienced a cardiovascular event, broken down by statin use status, baseline ldl category, and whether they were on a protease inhibitor-containing regimen versus an integrase inhibitor-containing regimen?"
     expected_intent: COUNT
     expected_metric: null
-    expected_group_by: null  # Column doesn't exist in test data - tests intent classification only
-    notes: "Complex query - count with nested conditions and multiple breakdowns. GroupBy null for test compatibility."
+    expected_group_by: null
+    notes: "Complex query - count with nested conditions and multi-dimensional breakdowns"

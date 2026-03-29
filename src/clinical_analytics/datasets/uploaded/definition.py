@@ -194,6 +194,7 @@ class UploadedDataset(ClinicalDataset):
                 inferred_schema = convert_schema(
                     variable_mapping_val,
                     data_for_schema,
+                    self._validated_synthetic_id_metadata,
                 )
 
             supported = (
@@ -499,13 +500,13 @@ class UploadedDataset(ClinicalDataset):
         inferred_schema = safe_get(self.metadata, "inferred_schema")
         if inferred_schema:
             config = self._build_config_from_inferred_schema(inferred_schema)
-            upload_type = "multi-table"
+            schema_source = "inferred_schema"
         else:
             # Check for variable_mapping (single-table path)
             variable_mapping = self.metadata.get("variable_mapping")
             if variable_mapping:
                 config = self._build_config_from_variable_mapping(variable_mapping)
-                upload_type = "single-table"
+                schema_source = "variable_mapping"
             else:
                 # Explicit error: raise instead of silent return
                 raise ValueError(
@@ -521,8 +522,8 @@ class UploadedDataset(ClinicalDataset):
         try:
             from clinical_analytics.core.semantic import SemanticLayer, _safe_identifier
 
-            logger.info(f"Initializing semantic layer for {upload_type} upload: {self.upload_id}")
-            logger.info(f"Built semantic layer config from {upload_type} schema")
+            logger.info(f"Initializing semantic layer for upload: {self.upload_id}")
+            logger.info(f"Built semantic layer config from {schema_source}")
 
             workspace_root = self.storage.upload_dir.parent.parent
 

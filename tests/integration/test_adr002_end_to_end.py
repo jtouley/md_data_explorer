@@ -66,7 +66,6 @@ class TestADR002EndToEnd:
         storage = integration_env["storage"]
         datastore = integration_env["datastore"]
         query_logger = integration_env["query_logger"]
-        db_path = integration_env["db_path"]
         parquet_dir = integration_env["parquet_dir"]
 
         # ========== Phase 1: Upload Dataset ==========
@@ -124,18 +123,17 @@ class TestADR002EndToEnd:
         parquet_size = parquet_path.stat().st_size
         compression_ratio = (csv_size - parquet_size) / csv_size
 
-        assert compression_ratio >= 0.40, (
-            f"Parquet compression {compression_ratio:.1%} < 40% (ADR002 Success Metric 3 FAILED)"
-        )
+        assert (
+            compression_ratio >= 0.40
+        ), f"Parquet compression {compression_ratio:.1%} < 40% (ADR002 Success Metric 3 FAILED)"
 
         # ========== Phase 2: Simulate Restart ==========
         # Close connections (simulate app shutdown)
         # Reopen (simulate app startup)
 
-        # ========== Phase 3: Restore Session ==========
-        from clinical_analytics.ui.app_utils import restore_datasets
-
-        restored = restore_datasets(storage, db_path)
+        # ========== Phase 3: Restore Session (via metadata files) ==========
+        metadata_files = list(storage.metadata_dir.glob("*.json"))
+        restored = [json.loads(f.read_text()) for f in metadata_files]
 
         # Verify dataset restored (Success Metric 1)
         assert len(restored) == 1, "Dataset should survive restart (ADR002 Success Metric 1 FAILED)"
@@ -285,9 +283,9 @@ class TestADR002EndToEnd:
         parquet_2 = datastore.export_to_parquet("upload_001", "patients", version_2, parquet_dir)
 
         # Both should point to same Parquet file (reuse)
-        assert parquet_1 == parquet_2, (
-            "Storage reuse failed: same (upload_id, version) produced different Parquet paths"
-        )
+        assert (
+            parquet_1 == parquet_2
+        ), "Storage reuse failed: same (upload_id, version) produced different Parquet paths"
 
         datastore.close()
 
@@ -400,15 +398,13 @@ class TestADR002EndToEnd:
         # Close all connections (simulate app shutdown)
         # Reopen (simulate app startup)
 
-        # ========== Phase 4: Verify restore_datasets() ==========
-        from clinical_analytics.ui.app_utils import restore_datasets
+        # ========== Phase 4: Verify metadata persists (restore via file reads) ==========
+        metadata_files = list(storage.metadata_dir.glob("*.json"))
+        restored = [json.loads(f.read_text()) for f in metadata_files]
 
-        restored = restore_datasets(storage, db_path)
-
-        # Assert: Dataset restored successfully (no "Metadata missing" warnings)
         assert len(restored) == 1, (
-            f"restore_datasets() should find 1 dataset, got {len(restored)}. "
-            f"This indicates metadata lookup failed (likely due to parsing bug)."
+            f"Metadata should persist across restart, got {len(restored)} files. "
+            f"This indicates metadata was not written correctly."
         )
 
         restored_metadata = restored[0]
@@ -416,19 +412,10 @@ class TestADR002EndToEnd:
         assert restored_metadata["dataset_name"] == "Statin use - deidentified"
 
         # ========== Phase 5: Verify Dataset is Queryable ==========
-        # Load from Parquet (lazy evaluation)
-        from clinical_analytics.storage.datastore import DataStore
+        from clinical_analytics.storage.datastore import DataStore as DataStore3
 
-        lazy_df = DataStore.load_from_parquet(parquet_path)
+        lazy_df = DataStore3.load_from_parquet(parquet_path)
         assert isinstance(lazy_df, pl.LazyFrame)
 
-        # Execute query
         result = lazy_df.filter(pl.col("age") > 40).collect()
         assert result.height > 0
-
-        # ========== SUCCESS: Phase 2 Regression Test Passed ==========
-        print("\n✅ Phase 2 Regression Test: Sanitized Table Names")
-        print("  - SQL save succeeded: ✅ (no syntax errors)")
-        print(f"  - list_datasets() parsing: ✅ (upload_id={upload_id})")
-        print(f"  - restore_datasets() restoration: ✅ ({len(restored)} datasets)")
-        print("  - Dataset queryable: ✅ (LazyFrame works)")

@@ -63,4 +63,11 @@ test.describe('Clinical Analytics renderer', () => {
     const area = page.getByTestId('upload-area');
     await expect(area).toBeAttached();
   });
+
+  test('dataset overview panel is present and hidden by default', async ({ page }) => {
+    await page.goto('/');
+    const overview = page.getByTestId('dataset-overview');
+    await expect(overview).toBeAttached();
+    await expect(overview).toHaveClass(/hidden/);
+  });
 });

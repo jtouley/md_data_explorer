@@ -1,0 +1,215 @@
+{
+  "benchmark": "skill-packaging-validate",
+  "timestamp": "2026-03-29T03:25:00.822044+00:00",
+  "global_skills_root": "/Users/jasontouleyrou/.cursor/skills",
+  "passed": 41,
+  "total": 41,
+  "pass_rate": 1.0,
+  "rows": [
+    {
+      "skill": "anthropic-skill-template",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "claude-api",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "doc-coauthoring",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "frontend-design",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mcp-builder",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-context",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-data",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-debug",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-docs",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-electron",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-frontend",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-fullstack",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-llm",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-performance",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-python",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-qa",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-sql",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-testing",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "mdde-typescript",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "plan-to-pr",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "read-memories",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "repo-context",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "ship-feature-spec-pr",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "skill-creator",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "test-quality-loop",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-data-engineer",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-debugger",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-documentation-engineer",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-electron-pro",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-frontend-developer",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-fullstack-developer",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-llm-architect",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-mdde-context",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-performance-engineer",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-python-pro",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-qa-expert",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-sql-duckdb",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-test-automator",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "volt-typescript-pro",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "web-artifacts-builder",
+      "ok": true,
+      "message": "ok"
+    },
+    {
+      "skill": "webapp-testing",
+      "ok": true,
+      "message": "ok"
+    }
+  ]
+}

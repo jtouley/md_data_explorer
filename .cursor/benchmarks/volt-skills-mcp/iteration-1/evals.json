@@ -1,0 +1,30 @@
+{
+  "benchmark_id": "mdde-skills-mcp-iteration-1",
+  "description": "Structural rubric: MCP guidance is present in shared context, reference doc, and generated mdde skills.",
+  "expectations": [
+    {
+      "id": "ref-doc",
+      "text": "`.cursor/skills/references/mcp-workbench.md` exists and names official playwright, duckdb (MotherDuck), and serena servers."
+    },
+    {
+      "id": "repo-context",
+      "text": "`.claude/agents/_mdde-repo-context.md` links the MCP workbench and the three server families."
+    },
+    {
+      "id": "mdde-context",
+      "text": "Generated `mdde-context/SKILL.md` embeds `.claude/agents/_mdde-repo-context.md`, including the MCP workbench section."
+    },
+    {
+      "id": "mdde-specialists",
+      "text": "Each generated `mdde-*/SKILL.md` (except `mdde-context`) points agents at **mdde-context** for stack rules, so MCP guidance is reachable without duplicating the reference in every file."
+    },
+    {
+      "id": "manual-skills",
+      "text": "`read-memories` and `plan-to-pr` SKILL.md files reference `mcp-workbench.md` and state when to use DuckDB or Serena MCP."
+    },
+    {
+      "id": "sync-script",
+      "text": "`scripts/sync_volt_cursor_skills.py` copies `mcp-workbench.md` into `~/.cursor/skills/references/` when syncing."
+    }
+  ]
+}

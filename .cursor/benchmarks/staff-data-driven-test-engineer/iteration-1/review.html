@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "test-quality-loop", "runs": [{"id": "playwright-e2e-streamlit-with_skill", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "plan.md", "type": "text", "content": "# Plan: First Playwright E2E checks for Streamlit (`make run` on localhost)\n\n**Context:** This repo already has `make run` \u2192 `uv run streamlit run src/clinical_analytics/ui/app.py` and `make test-e2e` \u2192 pytest on `tests/e2e/`. That folder today holds **Python integration-style** \u201cE2E\u201d (e.g. `NLQueryEngine` flows), **not** a real browser. Electron has separate Playwright under `electron/` (desktop shell), which is out of scope for this Streamlit-localhost slice.\n\n**Skill alignment:** Follow the staff data-driven test engineer loop (orient \u2192 small vertical slice \u2192 verify) and [e2e-and-playwright-methodology.md](file:///Users/jasontouleyrou/.cursor/skills/test-quality-loop/references/e2e-and-playwright-methodology.md): Pareto E2E, determinism, user-visible assertions, no assertion weakening. For scripting and lifecycle patterns, align with the **webapp-testing** skill: prefer a **black-box server wrapper** and `sync_playwright`, explicit readiness waits\u2014not fixed sleeps.\n\n---\n\n## 0. Orient (current surfaces)\n\n| Surface | Command / path | Role |\n|--------|----------------|------|\n| Streamlit app | `make run` (port **8501** by default) | SUT for browser E2E |\n| \u201cE2E\u201d pytest today | `make test-e2e` \u2192 `tests/e2e/` | **Not** browser; keep naming honest in docs |\n| Fast gate | `make test-fast` | Excludes `@pytest.mark.slow` |\n| Parallel pytest | `make test-e2e` uses `-n auto` | **Unsafe** for multiple browsers on one port unless isolated |\n\n**Streamlit + Playwright caveat:** Streamlit serves the UI inside nested frames. Many automation tools only see the top document until you **target the app frame** (e.g. `frame_locator` for the Streamlit iframe). The first implementation task after \u201chello world\u201d is to **record/locate the stable frame** and scope locators there; avoid assuming `page.getByRole` works on the root `page` without frame scoping.\n\n---\n\n## 1. Layering: what stays in pytest vs the browser\n\n| Concern | Pytest / Python layer | Playwright (browser) layer |\n|--------|------------------------|----------------------------|\n| Business logic, NL parsing, QueryPlan, Polars | Unit + existing `tests/e2e` Python tests | **No** duplication |\n| Streamlit session state, component render contracts | `tests/ui/` with mocks where possible | Only **critical** user-visible journeys |\n| \u201cApp boots and primary chrome is reachable\u201d | Fixture: server health (HTTP/TCP) | `goto` + frame + one stable heading/button |\n| Data setup (cohorts, uploads, API) | Prefer **HTTP/API or filesystem fixtures** before `goto` | Use UI only for the **last mile** |\n| Assertions | `pl.testing.assert_frame_equal`, etc. | `getByRole` / `getByLabel` / stable text; URL if meaningful |\n| Flake diagnostics | pytest hooks, logs | Optional trace/screenshot **on failure** only (CI lean) |\n\n**Rule:** One **vertical slice** first\u2014for example: \u201cStreamlit responds on localhost; main navigation or home title visible in app frame\u201d\u2014before adding NL-query-in-browser flows that need Ollama/LLM.\n\n---\n\n## 2. Dependencies and layout\n\n1. Add **Playwright for Python** to dev dependencies (`pyproject.toml` optional group): `playwright` + run `playwright install chromium` in CI/docs (pin browser version in CI when possible).\n2. **Directory choice** (avoid conflating with today\u2019s `tests/e2e/`):\n   - **Recommended:** `tests/e2e_streamlit/` or `tests/browser/` with module docstring explaining \u201cbrowser E2E; not `tests/e2e`\u201d.\n   - **Alternative:** Keep `tests/e2e/` for Python-only and add `tests/e2e/playwright/` with a `conftest.py` that registers browser fixtures only under that subtree.\n3. **Makefile:** Add a dedicated target (e.g. `make test-e2e-streamlit`) that runs **only** browser tests **serially** and does **not** use `-n auto`, **or** keep `make test-e2e` for legacy Python E2E and wire browser suite separately until renamed.\n\n---\n\n## 3. Server lifecycle (align with webapp-testing)\n\nThe webapp-testing skill documents `scripts/with_server.py --server ... --port ... -- python script.py`. **This repository does not currently ship that script.** Pick one pattern and standardize:\n\n**Option A \u2014 Ported helper (closest to webapp-testing):** Add `scripts/with_server.py` (or a minimal `scripts/with_streamlit_e2e.py`) that:\n\n- Spawns the **same command as `make run`**: `uv run streamlit run src/clinical_analytics/ui/app.py` (or invoke `make run` is awkward in subprocess\u2014prefer explicit `uv run` to match venv).\n- Accepts `--port` (default 8501) and optional `--bind 127.0.0.1`.\n- Polls until `GET http://127.0.0.1:<port>/_stcore/health` (Streamlit\u2019s health path) or TCP connect succeeds, with timeout and clear logs on failure.\n- On exit, terminates the process tree (SIGTERM then kill).\n\n**Option B \u2014 pytest fixture (no separate script):** Session-scoped fixture starts subprocess, yields `base_url`, tears down. Same health check. Good for `make test-e2e-streamlit`; slightly less reusable for ad-hoc scripts.\n\n**Option C \u2014 pytest-playwright `web_server` config:** If using `pytest-playwright`, configure `web_server.command` and `web_server.url` to match Streamlit startup; ensure timeout accommodates cold start.\n\n**Environment isolation for determinism:**\n\n- Set `STREAMLIT_*` / cwd / `HOME` or `XDG_*` under `tmp_path` or a dedicated test workspace so runs do not read the developer\u2019s real `~/.streamlit` or clash on uploads DB paths.\n- Use a **random free port** if parallel browser workers are ever introduced (future); for iteration 1, **serial + fixed port** is simpler.\n\n---\n\n## 4. Flake guardrails (project rules\u2013compatible)\n\n1. **No weakened assertions** (see `.cursor/rules/106-test-quality-thresholds.mdc`): do not add \u201c70% of steps passed\u201d or CI retries to hide races\u2014fix waits or skip with a concrete TODO.\n2. **Markers:** `@pytest.mark.slow` + `@pytest.mark.integration` (and optionally a custom `@pytest.mark.browser`) so `make test-fast` stays fast; browser suite runs on demand / nightly / optional PR job.\n3. **Serial execution:** `@pytest.mark.serial` (already respected by `make test-*` parallel modes) so xdist does not spawn multiple Streamlit instances on one port.\n4. **Waits:** After navigation, prefer **app-stable** conditions: health OK, then `wait_for_load_state` as appropriate, then **frame** attached, then locator visible. Document any unavoidable `sleep` with reason (Streamlit websocket churn).\n5. **External services:** If a journey needs Ollama, use `skip_if_ollama_unavailable` (pattern from `tests/AGENTS.md`) or a dedicated marker; do not block the **smoke** browser test on LLM.\n6. **Artifacts:** Enable Playwright trace/video only in CI `on-first-retry` or local `--headed` debugging; default CI stays lean (methodology reference).\n7. **Port conflicts:** Fail fast with a clear message if 8501 is in use; or use dynamic port + pass `base_url` into tests.\n\n---\n\n## 5. First tests (ordered backlog)\n\n1. **Smoke:** Server up; HTTP health; browser opens `base_url`; **Streamlit iframe** found; visible text or landmark matches expected home state.\n2. **Navigation (optional second):** Sidebar link to a known page title (use role/label; add `data-testid` only if Streamlit churn makes roles unstable\u2014sparingly).\n3. **Defer:** Full NL query in browser until smoke is stable and LLM/Ollama policy is explicit.\n\n---\n\n## 6. CI and `make check`\n\n- **Do not** add browser E2E to `make check` on day one if it requires Playwright browsers and lengthens every PR; add a **workflow job** or optional target first.\n- Document in `tests/AGENTS.md` (small section): how to run `make test-e2e-streamlit`, prerequisite `playwright install`, and difference vs `tests/e2e/` Python tests.\n\n---\n\n## 7. Verification checklist (exit criteria for iteration 1)\n\n- [ ] `make test-e2e-streamlit` (or equivalent) passes locally headless with **no** manual `make run` in another terminal.\n- [ ] `make test-fast` unchanged or still excludes browser tests via markers.\n- [ ] One written **journey name** and user-visible assertions; no duplicate coverage of `NLQueryEngine` in Playwright.\n- [ ] Failure mode is observable: server logs + optional trace on failure.\n\n---\n\n## 8. Relation to Electron Playwright\n\n`electron/` uses Node `@playwright/test` for the desktop shell. **Reuse concepts** (trace, selectors discipline), **not** the same config or test folder. If the product later replaces Streamlit, browser E2E may move to the new renderer; keep **server lifecycle and health-check patterns** portable.\n"}], "grading": null}, {"id": "playwright-e2e-streamlit-without_skill", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "plan.md", "type": "text", "content": "# Plan: First Playwright E2E checks for Streamlit (`make run`, localhost)\n\n## Context in this repo\n\n- **`make run`** starts Streamlit with: `uv run streamlit run src/clinical_analytics/ui/app.py` (see `Makefile` `run` target). Default port is **8501** unless overridden by env/config.\n- **`tests/e2e/`** today means **Python integration E2E** (e.g. NL query flow across components), invoked by **`make test-e2e`**. It is **not** browser automation. New browser checks should live under a **different path** (e.g. `tests/browser_e2e/` or `tests/e2e_browser/`) and optionally a **different Makefile target** (e.g. `make test-browser-e2e`) so naming stays honest and `make test-e2e` does not suddenly require Chromium.\n- **Electron** already uses `@playwright/test` under `electron/`; Streamlit browser E2E is a separate surface (Python app + Playwright **Python** API is the natural fit for pytest alignment).\n- The **webapp-testing** skill describes a **`scripts/with_server.py`** lifecycle helper; that script is **not present** in this repository. Either add a small repo-local equivalent or implement **pytest session-scoped server fixtures** with the same contract: start process \u2192 wait for TCP/HTTP ready \u2192 yield \u2192 teardown.\n\n---\n\n## 1. Layering: pytest vs browser\n\n### Keep in **pytest** (orchestration and gates)\n\n- **Process lifecycle**: spawn Streamlit subprocess with explicit `BASE_URL`, `STREAMLIT_SERVER_PORT`, `STREAMLIT_SERVER_HEADLESS=true` (or documented env), and working directory = repo root so imports match `make run`.\n- **Readiness**: poll `http://127.0.0.1:<port>/_stcore/health` (Streamlit health) or TCP connect + first successful GET; **timeout with clear error** (not silent hang).\n- **Markers and selection**: e.g. `@pytest.mark.browser_e2e` plus **`@pytest.mark.slow`** and **`@pytest.mark.integration`** so `make test-fast` stays fast. Register the marker in `pyproject.toml`.\n- **Skipping**: `pytest.importorskip(\"playwright\")`; skip if `PLAYWRIGHT_SKIP=1` or CI matrix leg without browsers; optional skip if port in use (with message to pick another port).\n- **Artifacts on failure**: screenshot + HTML dump + trace path in `tmp_path` or `pytest` `request.node.name`-derived dir (configure in fixture finalizer).\n- **Data/setup**: if a test needs a dataset, prefer **API/fixture-driven seeding** or a **dedicated test config** over manual UI upload in the first slice\u2014unless the goal is explicitly upload UX.\n\n### Keep in **Playwright** (browser-only)\n\n- **Navigation and waits**: `page.goto(base_url)`, then waits tied to **app-specific signals** (e.g. role/text/locator for sidebar or main title), not arbitrary long `sleep`.\n- **Assertions on user-visible behavior**: headings, buttons, navigation between pages, presence of key widgets\u2014**minimal** first slice (e.g. app loads, sidebar renders, one page transition).\n- **Selectors**: prefer **stable** attributes (roles, test ids if you add them in Streamlit components, or documented text). Avoid brittle CSS tied to Streamlit internals that change across versions.\n\n### Boundary rule\n\n- **Do not** re-assert business logic in the browser that is already covered by unit tests; browser tests should prove **wiring + rendering + critical paths** that pytest alone cannot see.\n\n---\n\n## 2. Flake guardrails\n\n- **Serial execution**: run browser E2E **serially** (`-n 0` / no xdist for this folder, or dedicated `make test-browser-e2e-serial`) so two tests do not fight for the same port or global Streamlit state.\n- **Dedicated port**: random free port or env `E2E_STREAMLIT_PORT` to avoid clashing with a developer\u2019s manual `make run`.\n- **Deterministic timeouts**: use Playwright `expect(...).to_be_visible()` with a **single** project-level timeout; avoid scattered magic numbers; **do not** \u201cfix\u201d flakes by loosening assertions (align with project test-quality rules\u2014fix root cause or skip with TODO).\n- **Streamlit specifics**:\n  - The app may use **iframes** for embedded UIs; Playwright may not see inside iframes from the parent frame\u2014first tests should target **top-level** UI only, or use `frame_locator` once a stable iframe selector exists.\n  - **WebSocket/long-polling**: `networkidle` is often wrong for Streamlit; prefer **locator- or response-based** waits.\n- **Cold start**: first test or session fixture may pay Streamlit import cost; either accept one slower test or warm up once in session setup.\n- **Cleanup**: terminate the whole process group on teardown so orphan Streamlit processes do not leak between runs.\n\n---\n\n## 3. Alignment with webapp-testing / server lifecycle patterns\n\n- **Mirror the skill\u2019s intent** even without `with_server.py`:\n  - **Outer**: one command that guarantees \u201cserver up before child, dead after\u201d (Makefile target or pytest plugin-style fixture).\n  - **Inner**: Playwright script/tests that assume **only** `BASE_URL` (no subprocess code duplicated per test file).\n- **Makefile** (suggested):\n  - `make test-browser-e2e`: `uv run pytest tests/browser_e2e -m browser_e2e -v` (serial).\n  - Document **`E2E_BASE_URL`** override: if set, fixtures **skip starting** Streamlit and use the URL (matches \u201cserver already running\u201d flow from webapp-testing).\n- **Dependencies**: add `playwright` to dev deps and document **`uv run playwright install chromium`** (or CI step) once; fail fast in fixture if browser missing.\n- **CI** (when ready): install browsers, run browser E2E on a **single** job, not on every parallel shard; cache Playwright browsers.\n\n---\n\n## 4. Suggested first slice (minimal vertical)\n\n1. Session-scoped fixture: start Streamlit \u2192 health check \u2192 yield `base_url`.\n2. One test: **home loads**\u2014assert title or main heading text present.\n3. One test: **navigate**\u2014open sidebar page link or `st.navigation` equivalent and assert destination content stub.\n\nExpand only after the slice is stable locally and in CI.\n\n---\n\n## 5. Naming and documentation\n\n- Update **`tests/AGENTS.md`** (short subsection): distinction between `tests/e2e` (Python integration) and `tests/browser_e2e` (Playwright).\n- Optionally cross-link **`docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md`** if it still mentions Playwright E2E\u2014keep terminology consistent (Streamlit vs Electron).\n\n---\n\n## Summary\n\nIntroduce **Playwright-for-Streamlit** under a **new** test directory with **pytest-owned lifecycle**, **slow/integration markers**, **serial runs**, **health-based readiness**, and **Makefile + optional pre-started URL** aligned with the webapp-testing server pattern\u2014without overloading existing **`tests/e2e`** or **`make test-e2e`**.\n"}], "grading": null}, {"id": "quality-loop-plan-monorepo-with_skill", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "plan.md", "type": "text", "content": "# Staff plan: 12 failing UI tests (Python monorepo, Makefile + pytest + Streamlit)\n\nThis plan follows the **test-quality-loop** workflow: orient \u2192 collect signals \u2192 parallel expert review \u2192 one consolidated report \u2192 targeted tests/fixtures \u2192 verify \u2192 loop or stop. Commands are referenced by **name only** (for example the UI module target); no invocation lines are included here.\n\n---\n\n## Agreed scope, stop criteria, and iteration cap\n\n| Item | Agreement |\n|------|-----------|\n| **Scope** | All failures attributed to the **UI test target** (canonical: `make test-ui` or project-equivalent). Out of scope unless a failure is proven to be environment-only: unrelated suites, optional Electron work, and production data paths. |\n| **Target bar (stop when met)** | UI target is **green** on CI (same configuration as the failing pipeline job): zero failures, zero errors; no new skips without an owner and a dated TODO. |\n| **Secondary bar (if primary blocked)** | If after **two** full cycles a subset remains blocked by external dependency, **stop** with a written exception list (each item: blocker, owner, ETA, interim mitigation such as quarantine policy\u2014**not** weakened assertions). |\n| **Iteration cap** | **Maximum 3** improvement cycles (discover \u2192 report \u2192 implement \u2192 verify each). After cycle 3, produce a **remaining-risk** section and require explicit re-scoping before further work. |\n| **Default if user gave no limit** | Per skill: complete **one** full cycle, then confirm whether to continue; this plan **raises** that default to the cap above for backlog closure. |\n\n---\n\n## Phase 0 \u2014 Orient on entrypoints\n\n**Goal:** Map authoritative surfaces so every later step points at the same bars.\n\n1. **Test entrypoints (read-only reconnaissance)**  \n   - `Makefile`: locate the UI target, how `PYTEST_ARGS` / markers are threaded, and any `test-fast` / `check` interactions.  \n   - CI workflow(s): identify the job that runs the UI suite, Python version, working directory, env vars, and artifact uploads (logs, junit).  \n   - `tests/AGENTS.md` (or equivalent): markers, fixture rules, slow/integration policy, Streamlit testing notes.  \n   - `pyproject.toml` / `pytest.ini`: default paths, filterwarnings, asyncio mode.\n\n2. **Application surfaces**  \n   - Streamlit: how pages and session state are structured; where UI logic lives vs pure Python (test the latter first when possible).  \n   - Optional Electron later: note IPC and packaging paths only if failures reference them; do not expand scope preemptively.\n\n3. **Data boundaries**  \n   - Uploads, temp dirs, DuckDB or file-backed state: list where tests must use `tmp_path` / isolated storage so parallel review does not confuse \u201cproduct bug\u201d with \u201cshared cwd pollution.\u201d\n\n**Exit checklist for Phase 0:** One short **service and test surface** table (surface \u2192 how it is run in CI \u2192 notes) suitable for the consolidated report\u2019s \u201cService and test surface map\u201d section.\n\n---\n\n## Phase 1 \u2014 Collect failure fingerprints\n\n**Goal:** Replace \u201c12 failures\u201d with a **deduplicated, ordered** inventory that enables parallel ownership.\n\n1. **Pull canonical failing output**  \n   - From the failing CI run: job log, and any uploaded junit/xml or summary. Prefer the **same** job definition the team treats as source of truth.\n\n2. **Build a failure fingerprint per failing test**  \n   For each failure, record at minimum:  \n   - **Test node id** (file, class, parametrized instance).  \n   - **Exception type and message** (first meaningful frame).  \n   - **Stable location**: file path and line from the test or from production code if the assertion is there.  \n   - **Owning suite / marker** (e.g. UI-only vs shared util).  \n   - **Flake hypothesis** (yes/no + one line: time, order, network, global state).\n\n3. **Cluster**  \n   - Group fingerprints into **failure classes** (same root symptom, e.g. \u201cmock of Streamlit API drift\u201d, \u201csemantic layer column rename\u201d, \u201cpath assumes repo root\u201d).  \n   - Order classes by **impact \u00d7 fix confidence** (fix many tests with one change vs one-off).\n\n4. **Optional signals** (if repo enforces them)  \n   - Coverage delta, recent commits touching UI modules, open issues tagged `ui` or `test`.\n\n**Exit checklist for Phase 1:** A **failure inventory** table (IDs F1\u2026F12 or fewer after dedupe) ready to drop into the consolidated report; raw artifact references (CI run URL, log path) listed under \u201cSignals.\u201d\n\n---\n\n## Phase 2 \u2014 Parallelize expert review\n\n**Goal:** Reduce wall-clock and blind spots by splitting work with **non-overlapping briefs**; merge conflicts with reproduction.\n\nUse **parallel** reviewers (human or agent), each **readonly** until a hypothesis is validated:\n\n| Track | Focus | Deliverable |\n|-------|--------|---------------|\n| **A \u2014 Layout & fixtures** | `tests/ui` (and shared `conftest.py`): markers, duplicate setup, session-scoped state, Rule-of-two violations | Bullet list: risky fixtures, ordering assumptions |\n| **B \u2014 Root cause** | Map each failure class to owning module(s) under `src/\u2026/ui` and dependencies | Per-class: likely cause, minimal repro path |\n| **C \u2014 Strategy / gates** | Alignment with `make test-fast`, skip/slow policy, Polars assertions, coverage hooks | Prioritized fix order; what must not be weakened |\n| **D \u2014 Frontend / Streamlit** | Streamlit runtime boundaries, st.session_state, mocking strategy | Stable testing seams; avoid brittle full-layout assertions |\n\n**Brief contents (each track):** goal, paths/modules, **fingerprints already collected**, and \u201creturn bullets only.\u201d\n\n**Merge rule:** If two tracks disagree, **reproduce** with a single agreed command (the UI target) or a **minimal** pytest node list; update the failure table with \u201cconfirmed cause.\u201d\n\n---\n\n## Phase 3 \u2014 Consolidate one report\n\n**Goal:** One Markdown document is the **system of record** for the cycle.\n\nUse the repo\u2019s standard template (aligned with **health-and-quality-report-template**):\n\n- **Metadata:** branch/commit, scope, iteration number (1 of 3).  \n- **Facts vs recommendations:** CI outcome, fingerprint table, merged subagent bullets = facts; prioritized next actions = recommendations.  \n- **Failure inventory:** clustered IDs, status column (`open` / `in progress` / `fixed`).  \n- **Conflicts resolved:** how each was reproduced.  \n- **Work done this cycle:** leave empty until Phase 4; fill in Phase 5.\n\n**Audience:** Staff + implementers; scannable in under five minutes via executive summary and failure table.\n\n---\n\n## Phase 4 \u2014 Add targeted tests and fixes\n\n**Goal:** One **vertical slice** per cluster where possible: fix + regression guard.\n\n1. **TDD discipline**  \n   - For behavior gaps: failing test \u2192 minimal production change \u2192 green.  \n   - For broken tests after intentional product change: update test to match **documented** behavior; if behavior wrong, fix product and keep assertion strict.\n\n2. **Streamlit / UI specifics**  \n   - Prefer testing **pure functions** and presenters extracted from widgets; use session/mocking boundaries consistent with existing patterns.  \n   - Do not weaken assertions or accept partial pass rates; use **skip** only with concrete TODO and owner if truly blocked.\n\n3. **Fixtures**  \n   - Small, deterministic data; shared setup extracted per project rules; no large production dumps.\n\n4. **E2E (only if warranted)**  \n   - Keep count small; user-visible assertions; documented seeds/flags. Defer Playwright expansion unless failure class requires it.\n\n**Exit checklist for Phase 4:** Each failure class has either a **merged PR-ready** fix or an explicit **blocked** row in the report (with external dependency called out).\n\n---\n\n## Phase 5 \u2014 Verify\n\n**Goal:** Prove the bar against the **same** signals as Phase 1.\n\n1. Re-run the **UI target** locally and confirm CI parity (Python version, env).  \n2. If the repo gates on **`make test-fast`** or **`make check`**, run those after UI is green to catch cross-module regressions.  \n3. Capture outcomes in the report: command names, pass/fail, link to CI run.  \n4. If **new** failures appear, append rows to the failure inventory; do not delete history\u2014mark superseded rows `obsolete` with reason.\n\n**Stop if:** UI target green + no new regressions on agreed secondary commands.\n\n---\n\n## Phase 6 \u2014 Loop or stop\n\n| After cycle | Action |\n|-------------|--------|\n| **Target met** | Close loop; archive report path in PR description; optional coverage baseline update per project policy. |\n| **Target not met, cycles < 3** | Narrow to **highest-risk** remaining classes; repeat Phases 1\u20135 only for those IDs. |\n| **Cycles = 3** | **Stop** per iteration cap: deliver \u201cremaining risk\u201d (severity, likelihood, mitigation, suggested scope for cycle 4 if approved). |\n\n---\n\n## Anti-patterns to avoid (explicit)\n\n- Unbounded \u201cfix everything\u201d without the scope and cap above.  \n- Lowering assertion strength or accepting fractional pass rates.  \n- Duplicating production datasets or adding flaky sleeps without a readiness contract.  \n- Splitting findings across chat threads without merging into the **single** report.\n\n---\n\n## Summary checklist (skill ticks)\n\n- [ ] Phase 0: Entrypoints and surface map captured.  \n- [ ] Phase 1: Fingerprints clustered and ordered.  \n- [ ] Phase 2: Parallel reviews merged with reproduction.  \n- [ ] Phase 3: One consolidated report drafted/updated.  \n- [ ] Phase 4: Targeted tests/fixes per cluster.  \n- [ ] Phase 5: Verified against agreed commands.  \n- [ ] Phase 6: Stopped per criteria or began next cycle within cap.\n"}], "grading": null}, {"id": "quality-loop-plan-monorepo-without_skill", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "plan.md", "type": "text", "content": "# Staff plan: triage and clear 12 failing UI tests (Python monorepo)\n\n**Context:** Python monorepo with `Makefile`, `pytest`, Streamlit UI (optional Electron later). CI reports **12 failures** in the **UI test target** (e.g. `make test-ui`). This document is a written playbook only\u2014no shell snippets.\n\n---\n\n## 1. Orient on entrypoints (first 30\u201360 minutes)\n\n**Goal:** Know *where* UI tests live, *how* CI invokes them, and *what* \u201cUI\u201d means in this repo.\n\n1. **Makefile contract**\n   - Locate the `test-ui` (or equivalent) target and note: pytest path roots, `PYTEST_ARGS` passthrough, markers (`-m`), env vars, and whether coverage or xdist changes behavior vs CI.\n\n2. **Pytest configuration**\n   - Read `pyproject.toml` / `pytest.ini` for: `testpaths`, `python_files`, `addopts`, markers, asyncio/streamlit plugins, and any `conftest.py` hierarchy under `tests/ui` (or the path wired by `test-ui`).\n\n3. **CI wiring**\n   - Open the workflow job that runs the UI target. Record: Python version, dependency install path, working directory, exact `make` invocation, artifact retention (logs, junit), and whether failures are flaky-reported.\n\n4. **Streamlit boundary**\n   - Skim `tests/ui` layout: unit vs integration, use of `AppTest` / mocks vs full app, and shared fixtures in `tests/conftest.py`. Note anything that requires display, ports, or timing.\n\n**Stop criterion for this phase:** You can answer, without guessing: (a) which directories and markers define \u201cUI tests,\u201d (b) how CI differs from local `make test-ui` if at all, and (c) whether failures are likely import/config vs behavioral.\n\n---\n\n## 2. Collect failure fingerprints (single structured pass)\n\n**Goal:** Replace 12 opaque failures with a **deduplicated failure taxonomy** you can assign and parallelize.\n\nFor each failing test (from CI log or local `make test-ui` output when available), capture a **fingerprint record**:\n\n| Field | Purpose |\n|--------|--------|\n| `nodeid` | Stable pytest identity |\n| `error_class` | e.g. `AssertionError`, `FixtureLookupError`, `StreamlitAPIException` |\n| `top_frame` | First project frame (file + function) |\n| `one_line_signature` | Normalized message (strip paths, ids, timestamps) |\n| `layer` | `fixture` / `mock` / `streamlit_runtime` / `data` / `async` / `unknown` |\n| `suspected_owner` | Subsystem (e.g. NL query widget, session state, file upload) |\n\n**Clustering rule:** Same `error_class` + same `top_frame` + same normalized signature \u21d2 one **cluster**. Aim for **K clusters \u2264 12** (often much smaller).\n\n**Artifacts to produce (conceptual):**\n\n- A table: cluster id \u2192 member nodeids \u2192 hypothesized root cause in one sentence.\n- A **priority order**: clusters blocking others (import/fixture/config) before assertion drift.\n\n**Stop criterion:** Every failing nodeid maps to exactly one cluster; no orphan \u201cmisc\u201d bucket without a named next investigative step.\n\n---\n\n## 3. Parallelize expert review (workstreams)\n\n**Goal:** Minimize serial context-switching; maximize independent deep dives.\n\n**Sizing:** With **12 failures**, use **2\u20133 parallel workstreams** (not 12).\n\n**Assignment heuristic:**\n\n| Workstream | Typical clusters |\n|------------|------------------|\n| **A \u2014 Harness & fixtures** | Missing fixtures, bad `conftest` scope, env, markers, import errors |\n| **B \u2014 Streamlit / UI behavior** | `AppTest`, session state, widget keys, reruns, timing |\n| **C \u2014 Data & backends** | DuckDB, semantic layer mocks, Polars schema drift in UI paths |\n\nEach owner:\n\n1. Owns 2\u20134 clusters end-to-end (repro \u2192 root cause \u2192 fix or test change).\n2. Posts **one short update per cluster**: root cause, fix strategy, risk to other modules.\n3. Escalates **cross-cutting** issues (e.g. shared fixture wrong for all UI tests) to a single **integrator** role.\n\n**Stop criterion per workstream:** For every assigned cluster, either (a) merged fix + test adjustment with rationale, or (b) explicit \u201cblocked on X\u201d with owner and ETA.\n\n---\n\n## 4. Consolidate one report (integration gate)\n\n**Goal:** One readable artifact for leads/CI\u2014not 12 chat threads.\n\n**Report sections (fixed outline):**\n\n1. **Executive summary** \u2014 K clusters, 1\u20132 sentences each, green/red for CI UI target.\n2. **Root causes** \u2014 Bullet per cluster; link to PR/commits by hash when applicable.\n3. **Test changes** \u2014 New tests vs tightened assertions vs rewrites; call out any skip/xfail **only** with ticket + removal criteria (avoid silent weakening).\n4. **Risks & follow-ups** \u2014 Flake sources, Streamlit upgrade sensitivity, Electron prep notes.\n5. **Verification summary** \u2014 See \u00a76; paste pass/fail matrix (UI target + spot checks).\n\n**Owner:** Integrator (not parallelized). **Deadline:** Same sprint slice as fixes, before declaring \u201cdone.\u201d\n\n**Stop criterion:** Report is complete, internally consistent (nodeids match pytest), and lists no cluster as \u201cfixed\u201d without verification evidence.\n\n---\n\n## 5. Add targeted tests (surgical, not a rewrite)\n\n**Goal:** Each fix is **defended by a test** that would fail if the regression returns.\n\n**Rules:**\n\n- Prefer **one focused test per distinct bug class**; avoid duplicating the same assertion across files (respect project fixture discipline).\n- If the failure was **missing coverage** on a branch, add the smallest test that hits that branch without booting full Streamlit unless the Makefile already allows it.\n- If the failure was **brittle UI coupling** (selector/key churn), stabilize via stable `key=` / helper, then assert behavior not layout trivia.\n- Align with project norms: Polars assertions where DataFrames are compared; no broad exception swallowing.\n\n**Stop criterion:** For each cluster, at least one of: (a) existing test updated with clear intent, or (b) new test with name following `test_<unit>_<scenario>_<expectedBehavior>`; no cluster closed on \u201cfix only\u201d without test delta unless explicitly documented as infra-only with alternate guard (e.g. CI config)\u2014those should be rare.\n\n---\n\n## 6. Verify (definition of done)\n\n**Minimum bar:**\n\n1. **UI target green:** `make test-ui` (or CI-equivalent args) passes **10/10** consecutive runs locally or on CI for the merge candidate branch\u2014or document **one** allowed flake with reproduction ticket (not multiple).\n2. **Regression slice:** If changes touched shared fixtures or `conftest`, run the **next broader** target defined in the Makefile (e.g. `make test-fast` or full `make test`) per team policy\u2014record result in the consolidated report.\n3. **Lint/type gates:** Whatever the repo requires before merge (stated in report as pass/skip-with-reason).\n\n**Stop criteria (\u201cdone\u201d):**\n\n- CI UI job green on the PR.\n- Consolidated report merged or attached to the PR description.\n- No open cluster without owner or without a tracked follow-up ticket.\n\n---\n\n## 7. Iteration cap and when to stop spinning\n\n**Iteration cap:** **3 full triage cycles** per release slice.\n\n- **Cycle 1:** Fingerprints + parallel fix + verify.\n- **Cycle 2:** Only **new** failures or **same cluster recurring** (flake)\u2014add instrumentation or stabilization; merge only with flake budget = **zero** or **one** documented issue.\n- **Cycle 3:** Escalation: time-boxed **staff review** (architecture/session-state boundaries, split tests, or quarantine **with** explicit removal plan\u2014**not** permanent silent skips).\n\n**Hard stops (do not exceed without explicit leadership decision):**\n\n- **More than 3 cycles** on the same PR for the same 12 tests \u2192 stop feature work; run a **blameless postmortem** on test design and CI parity.\n- **Widening scope** (e.g. \u201crewrite all UI tests\u201d) \u2192 out of scope for this plan; spawn a separate initiative.\n\n---\n\n## 8. Timeboxing (order-of-magnitude)\n\n| Phase | Budget |\n|--------|--------|\n| Entrypoint orientation | 0.5\u20131 h |\n| Fingerprints + clustering | 1\u20132 h |\n| Parallel fix (2\u20133 streams) | 0.5\u20132 d wall-clock (depends on depth) |\n| Consolidated report + verify | 2\u20134 h |\n\nAdjust for monorepo size; Streamlit integration tests dominate the upper bound.\n\n---\n\n## Summary\n\nTreat **12 UI failures** as **K small clusters**, assign **2\u20133 parallel owners**, merge fixes with **targeted tests**, integrate into **one report**, and verify with **`make test-ui` green + agreed broader slice**. **Stop** when CI is green, the report is complete, and you have not exceeded **three triage cycles** without escalation.\n"}], "grading": null}, {"id": "resist-partial-success-threshold-with_skill", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "response.md", "type": "text", "content": "# Recommendation: partial-success threshold for concurrent integration test\n\n## Stakeholder ask\n\nChange the assertion so the test passes if **at least 5 of 10** concurrent requests succeed, given that **only ~6 succeed reliably** under CI load.\n\n## Recommendation\n\n**Do not adopt a lowered success threshold.** A fractional pass bar turns intermittent infrastructure or concurrency defects into \u201cgreen\u201d CI and hides regressions: tomorrow you may get 4/10 and still pass, while production or heavier load still breaks. This conflicts with staff-level test discipline: **do not weaken assertions or accept partial pass rates to finish**\u2014either **fix the root cause** or **skip with a concrete TODO** until it is fixable.\n\nIf the product truly only guarantees \u201cbest effort\u201d under overload, that belongs in **explicit SLO documentation and separate load/soak tests**, not in a gate that pretends full success is optional.\n\n## Next engineering steps (brief)\n\n1. **Quantify and reproduce** \u2014 Capture failure mode (timeouts, 429s, connection errors, DB locks) and variance across CI runs; record counts and fingerprints so you are fixing a known class, not guessing.\n2. **Isolate the bottleneck** \u2014 Typical causes: shared mutable state, connection pool limits, single-threaded server, rate limits, or non\u2013thread-safe client usage. Narrow with minimal repro (e.g. sequential vs concurrent, local vs CI).\n3. **Fix or redesign the test surface** \u2014 Prefer bounded concurrency, dedicated test doubles, pool sizing appropriate for CI, or **serializing** the critical section under test while still asserting **100% success** for the defined contract.\n4. **If a fix is not feasible immediately** \u2014 Use `@pytest.mark.skip` (or equivalent) with a **specific TODO** and owner, and keep the strict assertion in the skipped body for when the issue is resolved. Do not merge a permanent \u201c\u22655/10\u201d assertion as the quality bar.\n\n## Summary\n\nTreat \u201c6/10 under CI\u201d as a **signal to fix isolation or resources**, not as a reason to lower the bar. Align the gate with the actual contract: **all defined concurrent operations must succeed** in this test, or the test is skipped until that is true.\n"}], "grading": null}, {"id": "resist-partial-success-threshold-without_skill", "prompt": "(No prompt found)", "eval_id": null, "outputs": [{"name": "response.md", "type": "text", "content": "# Recommendation: partial-success threshold (10 concurrent requests, ~6 pass in CI)\n\n## Recommendation\n\n**Do not** change the assertion to \u201cat least 5 of 10 succeed.\u201d Treat the current behavior (4 requests failing under CI load) as a **defect in the test or the system under test**, not as tolerable variance.\n\n## Why\n\n- **Four failing requests is not noise**\u2014it means something is wrong (contention, timeouts, resource limits, threading, or unstable environment assumptions).\n- **Lowering the bar to 5/10** hides that failure mode, makes regressions invisible, and signals that flaky or load-dependent behavior is acceptable. That erodes trust in CI and encourages more weakened assertions later.\n- **Stakeholder intent** (\u201cmake CI green\u201d) should be met by **reliability or honest deferral**, not by redefining success.\n\n## Next engineering steps (brief)\n\n1. **Characterize failures** \u2014 For failed requests, capture status, error type, and timing (timeout vs. 5xx vs. connection refused). Confirm whether failures correlate with CI parallelism or shared resources.\n2. **Reproduce and bisect** \u2014 Run the same test locally under stress (parallel jobs, reduced CPU) to see if it\u2019s environmental or inherent to the implementation.\n3. **Fix root cause** \u2014 Typical levers: dedicated test doubles, connection pooling, serialization where the SUT is not safe for concurrent use, longer-lived fixtures, or CI resource/parallelism tuning **with** a documented reason\u2014not arbitrary threshold tweaks.\n4. **If a fix cannot land soon** \u2014 Use an **explicit skip** (or quarantine marker) with a **specific TODO** and owner, **not** a partial-success assertion. Stakeholders get transparency; the suite does not lie about correctness.\n5. **Agree on product/quality policy** \u2014 Align with stakeholders that **either** the feature is concurrently safe and tests must prove it **or** concurrency is out of scope and tests should reflect that scope without pretending 50% is enough.\n\n---\n\n**Summary:** Reject the \u201cat least 5 pass\u201d assertion; investigate and fix the failure mode, adjust CI or test design, or skip with a clear TODO until concurrency is properly supported.\n"}], "grading": null}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "<skill-name>", "skill_path": "<path/to/skill>", "executor_model": "<model-name>", "analyzer_model": "<model-name>", "timestamp": "2026-03-23T20:18:24Z", "evals_run": [0, 1, 2], "runs_per_configuration": 3}, "runs": [{"eval_id": 0, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "The plan names concrete discovery steps for test entrypoints (e.g. Makefile, CI, tests docs) before deep debugging", "passed": true, "evidence": "Phase 0 lists Makefile, CI workflow(s), tests/AGENTS.md, pyproject.toml/pytest.ini before later phases (plan.md \u00a7Phase 0)."}, {"text": "The plan includes explicit stop criteria or iteration cap (scope, target bar, or max cycles)", "passed": true, "evidence": "Opening table: scope, target bar, iteration cap max 3, secondary bar (plan.md \u00a7Agreed scope)."}, {"text": "The plan describes delegating parallel reviews or workstreams (not only serial reading)", "passed": true, "evidence": "Phase 2 table tracks A\u2013D with parallel readonly reviewers and merge rule (plan.md \u00a7Phase 2)."}, {"text": "The plan requires one consolidated quality report artifact (not only ad-hoc chat)", "passed": true, "evidence": "Phase 3: 'One Markdown document is the system of record'; references health-and-quality-report template (plan.md \u00a7Phase 3)."}, {"text": "The plan rejects lowering pass thresholds or weakening flaky assertions as the fix; prefers root-cause or skip with TODO", "passed": true, "evidence": "Phase 4 and Anti-patterns: 'Do not weaken assertions or accept partial pass rates'; skip with TODO (plan.md \u00a7Phase 4, \u00a7Anti-patterns)."}], "notes": []}, {"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "The plan distinguishes faster tests (unit/integration) from browser E2E responsibilities", "passed": true, "evidence": "\u00a71 Layering table splits pytest vs Playwright concerns (with_skill playwright plan.md)."}, {"text": "The plan mentions explicit readiness waits or stable selectors rather than arbitrary sleeps as the default", "passed": true, "evidence": "\u00a74 Flake guardrails: health, frame, locator visibility; avoid arbitrary sleep (with_skill plan.md)."}, {"text": "The plan references loading or following a Playwright / webapp-testing style workflow (by name or equivalent: server lifecycle, headless CI)", "passed": true, "evidence": "Explicit webapp-testing skill and with_server.py pattern; sync_playwright (with_skill plan.md \u00a7Context, \u00a73)."}, {"text": "The plan keeps E2E count intentionally small and high-value", "passed": true, "evidence": "Vertical slice rule and 'One vertical slice first' before NL-query browser flows (with_skill plan.md \u00a71, \u00a7Suggested first slice)."}, {"text": "The plan mentions deterministic test data or fixtures rather than manual-only setup", "passed": true, "evidence": "Data setup via API/filesystem fixtures before goto; env isolation under tmp_path (with_skill plan.md \u00a71 table, \u00a73)."}], "notes": []}, {"eval_id": 2, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "The response rejects accepting a fixed fraction of successes as the production-quality fix", "passed": true, "evidence": "'Do not adopt a lowered success threshold' and explains CI would hide regressions (with_skill response.md)."}, {"text": "The response proposes investigating root cause (concurrency, pooling, timing, resource limits) or proper isolation", "passed": true, "evidence": "Steps: quantify, isolate bottleneck, fix pool/serialization (with_skill response.md \u00a7Next engineering steps)."}, {"text": "The response allows explicit skip with concrete TODO only as an interim measure\u2014not weakening the assertion in place", "passed": true, "evidence": "pytest.mark.skip with TODO; 'Do not merge a permanent \u22655/10 assertion' (with_skill response.md)."}], "notes": []}, {"eval_id": 0, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "The plan names concrete discovery steps for test entrypoints (e.g. Makefile, CI, tests docs) before deep debugging", "passed": true, "evidence": "\u00a71 Orient lists Makefile, pytest config, CI wiring, Streamlit boundary (without_skill plan.md)."}, {"text": "The plan includes explicit stop criteria or iteration cap (scope, target bar, or max cycles)", "passed": true, "evidence": "\u00a76\u20137 define done criteria and 'Iteration cap: 3 full triage cycles' (without_skill plan.md)."}, {"text": "The plan describes delegating parallel reviews or workstreams (not only serial reading)", "passed": true, "evidence": "\u00a73 Parallelize expert review with workstreams A\u2013C (without_skill plan.md)."}, {"text": "The plan requires one consolidated quality report artifact (not only ad-hoc chat)", "passed": true, "evidence": "\u00a74 Consolidate one report with fixed outline and integrator owner (without_skill plan.md)."}, {"text": "The plan rejects lowering pass thresholds or weakening flaky assertions as the fix; prefers root-cause or skip with TODO", "passed": true, "evidence": "\u00a74 and \u00a75 reference avoiding silent weakening; \u00a75 Polars/assertion norms (without_skill plan.md)."}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 5, "failed": 0, "total": 5, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "The plan distinguishes faster tests (unit/integration) from browser E2E responsibilities", "passed": true, "evidence": "\u00a71 Layering: Keep in pytest vs Keep in Playwright (without_skill playwright plan.md)."}, {"text": "The plan mentions explicit readiness waits or stable selectors rather than arbitrary sleeps as the default", "passed": true, "evidence": "\u00a72 Flake guardrails: expect().to_be_visible(), avoid networkidle for Streamlit (without_skill plan.md)."}, {"text": "The plan references loading or following a Playwright / webapp-testing style workflow (by name or equivalent: server lifecycle, headless CI)", "passed": true, "evidence": "\u00a73 'webapp-testing skill' and Makefile/URL override pattern (without_skill plan.md)."}, {"text": "The plan keeps E2E count intentionally small and high-value", "passed": true, "evidence": "\u00a74 minimal vertical slice: home loads + navigate (without_skill plan.md)."}, {"text": "The plan mentions deterministic test data or fixtures rather than manual-only setup", "passed": true, "evidence": "pytest fixtures, seeding via API/fixture-driven (without_skill plan.md \u00a71)."}], "notes": []}, {"eval_id": 2, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 3, "failed": 0, "total": 3, "time_seconds": 0.0, "tokens": 0, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "The response rejects accepting a fixed fraction of successes as the production-quality fix", "passed": true, "evidence": "'Do not change the assertion to at least 5 of 10 succeed' (without_skill response.md)."}, {"text": "The response proposes investigating root cause (concurrency, pooling, timing, resource limits) or proper isolation", "passed": true, "evidence": "Characterize failures, bisect, fix root cause with pooling/serialization (without_skill response.md \u00a7steps)."}, {"text": "The response allows explicit skip with concrete TODO only as an interim measure\u2014not weakening the assertion in place", "passed": true, "evidence": "Explicit skip/quarantine with TODO vs partial-success assertion (without_skill response.md step 4)."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 0.0, "stddev": 0.0, "min": 0.0, "max": 0.0}, "tokens": {"mean": 0.0, "stddev": 0.0, "min": 0, "max": 0}}, "without_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 0.0, "stddev": 0.0, "min": 0.0, "max": 0.0}, "tokens": {"mean": 0.0, "stddev": 0.0, "min": 0, "max": 0}}, "delta": {"pass_rate": "+0.00", "time_seconds": "+0.0", "tokens": "+0"}}, "notes": []}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>

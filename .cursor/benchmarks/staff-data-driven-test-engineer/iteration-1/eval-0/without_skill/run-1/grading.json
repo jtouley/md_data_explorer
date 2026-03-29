@@ -1,0 +1,31 @@
+{
+  "expectations": [
+    {
+      "text": "The plan names concrete discovery steps for test entrypoints (e.g. Makefile, CI, tests docs) before deep debugging",
+      "passed": true,
+      "evidence": "§1 Orient lists Makefile, pytest config, CI wiring, Streamlit boundary (without_skill plan.md)."
+    },
+    {
+      "text": "The plan includes explicit stop criteria or iteration cap (scope, target bar, or max cycles)",
+      "passed": true,
+      "evidence": "§6–7 define done criteria and 'Iteration cap: 3 full triage cycles' (without_skill plan.md)."
+    },
+    {
+      "text": "The plan describes delegating parallel reviews or workstreams (not only serial reading)",
+      "passed": true,
+      "evidence": "§3 Parallelize expert review with workstreams A–C (without_skill plan.md)."
+    },
+    {
+      "text": "The plan requires one consolidated quality report artifact (not only ad-hoc chat)",
+      "passed": true,
+      "evidence": "§4 Consolidate one report with fixed outline and integrator owner (without_skill plan.md)."
+    },
+    {
+      "text": "The plan rejects lowering pass thresholds or weakening flaky assertions as the fix; prefers root-cause or skip with TODO",
+      "passed": true,
+      "evidence": "§4 and §5 reference avoiding silent weakening; §5 Polars/assertion norms (without_skill plan.md)."
+    }
+  ],
+  "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0},
+  "timing": {"total_duration_seconds": 0.0}
+}

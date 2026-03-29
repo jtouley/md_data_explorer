@@ -211,20 +211,18 @@ async def preview_dataset(
         if not metadata:
             raise ValueError(f"Upload {dataset_id} not found")
 
-        # Get unified cohort CSV
-        csv_path = storage.upload_dir / f"{dataset_id}_unified_cohort.csv"
-        if not csv_path.exists():
-            raise ValueError(f"Unified cohort not found for {dataset_id}")
-
-        # Load with Polars and get preview
         import polars as pl
 
-        df = pl.read_csv(csv_path)
-        total_rows = df.height
-        preview_df = df.head(limit)
+        data = storage.get_upload_data(dataset_id, lazy=True)
+        if data is None:
+            raise ValueError(f"Dataset data not found for {dataset_id}")
+
+        lf = data.lazy() if isinstance(data, pl.DataFrame) else data
+        total_rows = lf.select(pl.len().alias("n")).collect()["n"][0]
+        preview_df = lf.limit(limit).collect()
 
         rows = preview_df.to_dicts()
-        columns = df.columns
+        columns = preview_df.columns
 
         log.info("dataset_preview_completed", row_count=len(rows), total=total_rows)
         return DatasetPreview(

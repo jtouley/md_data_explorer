@@ -902,7 +902,7 @@ def sample_context():
     Returns AnalysisContext with DESCRIBE intent and confidence=0.9.
     This is a simple, ready-to-use fixture.
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext(
         inferred_intent=AnalysisIntent.DESCRIBE,
@@ -924,7 +924,7 @@ def low_confidence_context():
     - confidence: 0.4 (below auto-execute threshold)
     - match_suggestions: Dictionary with collision suggestions
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext(
         inferred_intent=AnalysisIntent.COMPARE_GROUPS,
@@ -948,7 +948,7 @@ def high_confidence_context():
     - grouping_variable: "treatment_arm"
     - confidence: 0.9 (above auto-execute threshold)
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext(
         inferred_intent=AnalysisIntent.COMPARE_GROUPS,
@@ -1251,7 +1251,7 @@ def sample_mixed_df():
 @pytest.fixture
 def sample_context_describe():
     """Create AnalysisContext for descriptive analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.DESCRIBE
@@ -1262,7 +1262,7 @@ def sample_context_describe():
 @pytest.fixture
 def sample_context_compare():
     """Create AnalysisContext for comparison analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
@@ -1274,7 +1274,7 @@ def sample_context_compare():
 @pytest.fixture
 def sample_context_predictor():
     """Create AnalysisContext for predictor analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.FIND_PREDICTORS
@@ -1286,7 +1286,7 @@ def sample_context_predictor():
 @pytest.fixture
 def sample_context_survival():
     """Create AnalysisContext for survival analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.EXAMINE_SURVIVAL
@@ -1298,7 +1298,7 @@ def sample_context_survival():
 @pytest.fixture
 def sample_context_relationship():
     """Create AnalysisContext for relationship analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
@@ -1309,7 +1309,7 @@ def sample_context_relationship():
 @pytest.fixture
 def sample_context_count():
     """Create AnalysisContext for count analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.COUNT

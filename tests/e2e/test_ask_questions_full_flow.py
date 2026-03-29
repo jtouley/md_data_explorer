@@ -17,8 +17,8 @@ Run key determinism tests are in tests/core/test_semantic_run_key_determinism.py
 All tests use generic fixtures (mock_semantic_layer) to test patterns, not specific datasets.
 """
 
+from clinical_analytics.core.analysis_types import AnalysisIntent
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
-from clinical_analytics.ui.components.question_engine import AnalysisIntent
 
 
 class TestE2EFullQueryFlow:

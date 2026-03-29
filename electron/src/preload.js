@@ -39,6 +39,35 @@ const clinicalAPI = {
   },
 
   /**
+   * Fetch dataset metadata/details.
+   * @param {string} datasetId
+   * @returns {Promise<Object>}
+   */
+  async getDataset(datasetId) {
+    const enc = encodeURIComponent(datasetId);
+    const response = await fetch(`${API_BASE_URL}/api/datasets/${enc}`);
+    if (!response.ok) {
+      throw new Error(`Failed to load dataset details: ${response.statusText}`);
+    }
+    return await response.json();
+  },
+
+  /**
+   * Fetch dataset preview rows.
+   * @param {string} datasetId
+   * @param {number} [limit]
+   * @returns {Promise<{dataset_id: string, rows: object[], columns: string[], total_rows: number}>}
+   */
+  async previewDataset(datasetId, limit = 10) {
+    const enc = encodeURIComponent(datasetId);
+    const response = await fetch(`${API_BASE_URL}/api/datasets/${enc}/preview?limit=${limit}`);
+    if (!response.ok) {
+      throw new Error(`Failed to load dataset preview: ${response.statusText}`);
+    }
+    return await response.json();
+  },
+
+  /**
    * Submit a natural language query.
    * @param {string} sessionId - Session identifier
    * @param {string} datasetId - Dataset to query

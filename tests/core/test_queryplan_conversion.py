@@ -8,7 +8,6 @@ Tests verify:
 """
 
 import pytest
-
 from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
@@ -50,12 +49,12 @@ class TestQueryPlanConversion:
 
         # Assert: Phase 1.1.5 - nl_query_engine should NOT set run_key (semantic layer will generate it)
         assert isinstance(plan1, QueryPlan)
-        assert plan1.run_key is None, (
-            "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
-        )
-        assert plan2.run_key is None, (
-            "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
-        )
+        assert (
+            plan1.run_key is None
+        ), "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
+        assert (
+            plan2.run_key is None
+        ), "Phase 1.1.5: nl_query_engine should not set run_key - semantic layer will generate it"
         assert plan1.intent == "COUNT"
         assert plan1.confidence == 0.9
         assert len(plan1.filters) == 1
@@ -134,7 +133,7 @@ class TestAnalysisContextQueryPlan:
     def test_analysiscontext_has_query_plan_field(self):
         """Test that AnalysisContext has query_plan field."""
         # Arrange
-        from clinical_analytics.ui.components.question_engine import AnalysisContext
+        from clinical_analytics.core.analysis_types import AnalysisContext
 
         # Act
         context = AnalysisContext()
@@ -146,7 +145,7 @@ class TestAnalysisContextQueryPlan:
     def test_queryplan_can_be_assigned_to_analysiscontext(self, mock_semantic_layer):
         """Test that QueryPlan can be assigned to AnalysisContext."""
         # Arrange
-        from clinical_analytics.ui.components.question_engine import AnalysisContext
+        from clinical_analytics.core.analysis_types import AnalysisContext
 
         engine = NLQueryEngine(mock_semantic_layer)
         intent = QueryIntent(intent_type="COUNT", confidence=0.9)

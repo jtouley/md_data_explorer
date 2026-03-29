@@ -6,7 +6,6 @@ Tests convert_schema() function that transforms variable_mapping to inferred_sch
 
 import polars as pl
 import pytest
-
 from clinical_analytics.datasets.uploaded.schema_conversion import (
     convert_schema,
     infer_granularities,
@@ -315,6 +314,39 @@ class TestConvertSchema:
 
         assert "Patient ID column 'patient_id' not found" in str(exc_info.value)
         assert "Available columns" in str(exc_info.value)
+
+    def test_convert_schema_missing_patient_id_with_regeneration_metadata_succeeds(self):
+        """Missing patient_id mapping should be allowed when regeneration metadata is valid."""
+        # Arrange
+        df = pl.DataFrame(
+            {
+                "race": ["White", "Black"],
+                "gender": ["M", "F"],
+                "outcome": [0, 1],
+            }
+        )
+        variable_mapping = {
+            "patient_id": "patient_id",  # Not present in incoming DataFrame
+            "outcome": "outcome",
+        }
+        synthetic_id_metadata = {
+            "patient_id": {
+                "patient_id_source": "composite",
+                "patient_id_columns": ["race", "gender"],
+            }
+        }
+
+        # Act
+        inferred = convert_schema(
+            variable_mapping=variable_mapping,
+            df=df,
+            synthetic_id_metadata=synthetic_id_metadata,
+        )
+
+        # Assert
+        assert "column_mapping" in inferred
+        assert "patient_id" not in inferred["column_mapping"]  # Regenerated later in cohort path
+        assert inferred["outcomes"]["outcome"]["type"] == "binary"
 
     def test_convert_schema_missing_time_zero_column_raises_valueerror(self):
         """Test that missing time_zero column raises ValueError with clear message."""

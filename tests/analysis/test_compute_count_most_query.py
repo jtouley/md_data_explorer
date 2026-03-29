@@ -8,9 +8,8 @@ Tests verify:
 """
 
 import polars as pl
-
 from clinical_analytics.analysis.compute import compute_count_analysis
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
 
 class TestMostQueryDetection:

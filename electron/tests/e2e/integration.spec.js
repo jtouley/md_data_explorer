@@ -74,15 +74,36 @@ const MOCK_HISTORY = {
   total: 2,
 };
 
+const MOCK_DATASET_DETAIL = {
+  dataset_id: 'ds_abc',
+  name: 'Patient Records',
+  source: 'uploaded',
+  tables: [{ name: 'unified', row_count: 1200, columns: ['age', 'sex', 'mortality'] }],
+  column_schema: { age: 'numeric', sex: 'categorical', mortality: 'binary' },
+  metadata: {},
+};
+
+const MOCK_DATASET_PREVIEW = {
+  dataset_id: 'ds_abc',
+  columns: ['age', 'sex', 'mortality'],
+  rows: [
+    { age: 61, sex: 'F', mortality: 0 },
+    { age: 72, sex: 'M', mortality: 1 },
+  ],
+  total_rows: 1200,
+};
+
 /**
  * Set up page with mocked clinicalAPI injected before renderer loads.
  */
 async function setupWithMockAPI(page) {
   await page.addInitScript(
-    ({ mockDatasets, mockSessions, mockPending, mockHistory, keys }) => {
+    ({ mockDatasets, mockSessions, mockPending, mockHistory, mockDetail, mockPreview }) => {
       const api = {
         healthCheck: async () => ({ status: 'healthy' }),
         listDatasets: async () => mockDatasets,
+        getDataset: async () => mockDetail,
+        previewDataset: async () => mockPreview,
         listSessions: async () => mockSessions,
         createSession: async (datasetId) => ({
           session_id: 'sess_new',
@@ -115,6 +136,8 @@ async function setupWithMockAPI(page) {
       mockSessions: MOCK_SESSIONS,
       mockPending: MOCK_PENDING,
       mockHistory: MOCK_HISTORY,
+      mockDetail: MOCK_DATASET_DETAIL,
+      mockPreview: MOCK_DATASET_PREVIEW,
     }
   );
   await page.goto('/');
@@ -204,6 +227,23 @@ test.describe('Integration: dataset selection triggers enrichment + history', ()
 
     const revertBtns = page.locator('[data-testid="patch-revert"]');
     await expect(revertBtns).toHaveCount(1);
+  });
+});
+
+test.describe('Integration: dataset overview panel (P02)', () => {
+  test('selecting a dataset renders summary stats and preview rows', async ({ page }) => {
+    await setupWithMockAPI(page);
+
+    await page.locator('#dataset-select').selectOption('ds_abc');
+
+    const panel = page.locator('#dataset-overview');
+    await expect(panel).not.toHaveClass(/hidden/);
+    await expect(page.locator('[data-testid="dataset-overview-summary"]')).toContainText(
+      '1200 rows'
+    );
+
+    const previewRows = page.locator('[data-testid="dataset-preview-table"] tbody tr');
+    await expect(previewRows).toHaveCount(2);
   });
 });
 
