@@ -101,6 +101,12 @@ async function setupWithMockAPI(page) {
           summary: 'Mock result.',
         }),
         subscribeToQueryStream: () => () => {},
+        uploadDataset: async (file) => ({
+          upload_id: 'ds_mock_upload',
+          dataset_name: file.name.replace(/\.[^.]+$/, ''),
+          status: 'ready',
+          message: 'ok',
+        }),
       };
       window.clinicalAPI = api;
     },
@@ -292,6 +298,74 @@ test.describe('Integration: error resilience', () => {
 
     const hint = page.getByTestId('enrichment-hint');
     await expect(hint).toContainText('Could not load enrichments');
+  });
+});
+
+test.describe('Integration: dataset upload flow', () => {
+  test('upload button is rendered in dataset bar', async ({ page }) => {
+    await setupWithMockAPI(page);
+
+    const uploadBtn = page.locator('[data-testid="upload-btn"]');
+    await expect(uploadBtn).toBeVisible();
+    await expect(uploadBtn).toContainText('Upload dataset');
+  });
+
+  test('upload triggers API call and refreshes dataset list', async ({ page }) => {
+    await page.addInitScript(
+      ({ mockDatasets, mockSessions }) => {
+        let uploadCalled = false;
+        const extendedDatasets = { ...mockDatasets };
+        window.clinicalAPI = {
+          healthCheck: async () => ({ status: 'healthy' }),
+          listDatasets: async () => {
+            if (uploadCalled) {
+              return {
+                datasets: [
+                  ...extendedDatasets.datasets,
+                  { dataset_id: 'ds_new', name: 'Uploaded File', row_count: 100 },
+                ],
+                total: extendedDatasets.total + 1,
+              };
+            }
+            return extendedDatasets;
+          },
+          listSessions: async () => mockSessions,
+          uploadDataset: async (file) => {
+            uploadCalled = true;
+            return {
+              upload_id: 'ds_new',
+              dataset_name: file.name.replace(/\.[^.]+$/, ''),
+              status: 'ready',
+              message: 'ok',
+            };
+          },
+          getPendingEnrichments: async () => ({ suggestions: [], total: 0 }),
+          getEnrichmentHistory: async () => ({ patches: [], total: 0 }),
+          subscribeToQueryStream: () => () => {},
+        };
+      },
+      { mockDatasets: MOCK_DATASETS, mockSessions: MOCK_SESSIONS }
+    );
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    const selectBefore = page.locator('#dataset-select option');
+    await expect(selectBefore).toHaveCount(3);
+
+    const fileInput = page.locator('[data-testid="upload-file-input"]');
+    await fileInput.setInputFiles({
+      name: 'new_data.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('id,val\n1,a\n2,b\n'),
+    });
+
+    await page.waitForTimeout(500);
+
+    const uploadStatus = page.locator('[data-testid="upload-status"]');
+    await expect(uploadStatus).toContainText('uploaded');
+
+    const selectAfter = page.locator('#dataset-select option');
+    await expect(selectAfter).toHaveCount(4);
   });
 });
 

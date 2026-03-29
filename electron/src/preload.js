@@ -290,6 +290,27 @@ const clinicalAPI = {
       throw new Error(`Failed to delete session: ${response.statusText}`);
     }
   },
+
+  /**
+   * Upload a dataset file (CSV, Excel, SPSS).
+   * @param {File} file
+   * @param {string} [datasetName]
+   * @returns {Promise<{ upload_id: string, dataset_name: string, status: string, message: string }>}
+   */
+  async uploadDataset(file, datasetName) {
+    const form = new FormData();
+    form.append('file', file);
+    if (datasetName) form.append('dataset_name', datasetName);
+    const response = await fetch(`${API_BASE_URL}/api/datasets/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.detail || `Upload failed: ${response.statusText}`);
+    }
+    return data;
+  },
 };
 
 // Expose clinicalAPI to renderer process via contextBridge

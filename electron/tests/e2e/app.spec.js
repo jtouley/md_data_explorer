@@ -57,4 +57,10 @@ test.describe('Clinical Analytics renderer', () => {
     const list = page.getByTestId('session-list');
     await expect(list).toBeAttached();
   });
+
+  test('upload area is present in dataset bar', async ({ page }) => {
+    await page.goto('/');
+    const area = page.getByTestId('upload-area');
+    await expect(area).toBeAttached();
+  });
 });

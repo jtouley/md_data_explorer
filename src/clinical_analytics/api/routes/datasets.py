@@ -1,21 +1,24 @@
 """Dataset API routes for Electron UI.
 
-Phase 1 of Electron UI Migration: Expose dataset listing and metadata via API.
-
 Endpoints:
-- GET /api/datasets - List available datasets
-- GET /api/datasets/{dataset_id} - Get dataset metadata
-- GET /api/datasets/{dataset_id}/preview - Get sample rows
+- GET  /api/datasets                      - List available datasets
+- GET  /api/datasets/{dataset_id}         - Get dataset metadata
+- GET  /api/datasets/{dataset_id}/preview - Get sample rows
+- POST /api/datasets/upload               - Upload a dataset file
 """
 
+from pathlib import Path
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
-from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+from clinical_analytics.ui.storage.user_datasets import (
+    UploadSecurityValidator,
+    UserDatasetStorage,
+)
 
 logger = structlog.get_logger()
 
@@ -238,3 +241,80 @@ async def preview_dataset(
     except Exception as e:
         log.error("dataset_preview_failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to preview dataset: {str(e)}") from e
+
+
+# ============================================================================
+# Upload (Phase 8)
+# ============================================================================
+
+
+class DatasetUploadResponse(BaseModel):
+    """Response after a successful dataset upload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    upload_id: str = Field(..., description="Created upload identifier")
+    dataset_name: str = Field(..., description="Display name for the dataset")
+    status: Literal["ready", "failed"] = Field(..., description="Upload processing status")
+    message: str = Field("", description="Human-readable status message")
+
+
+ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav"}
+
+
+@router.post("/datasets/upload", response_model=DatasetUploadResponse)
+async def upload_dataset(
+    file: UploadFile = File(..., description="CSV or Excel file to upload"),
+    dataset_name: str | None = Form(None, description="Optional display name"),
+) -> DatasetUploadResponse:
+    """Upload a dataset file (CSV, Excel, or SPSS).
+
+    Validates the file extension and size, then delegates to UserDatasetStorage.
+
+    Args:
+        file: Multipart file upload
+        dataset_name: Optional human-readable name (defaults to filename stem)
+    """
+    log = logger.bind(filename=file.filename)
+    log.info("dataset_upload_requested")
+
+    filename = file.filename or "upload"
+    ext = Path(filename).suffix.lower()
+
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File extension '{ext}' not allowed. Accepted: {', '.join(sorted(ALLOWED_UPLOAD_EXTENSIONS))}",
+        )
+
+    file_bytes = await file.read()
+
+    valid, msg = UploadSecurityValidator.validate_file_size(file_bytes)
+    if not valid:
+        raise HTTPException(status_code=400, detail=msg)
+
+    display_name = dataset_name or Path(filename).stem
+
+    metadata: dict[str, Any] = {
+        "dataset_name": display_name,
+        "original_filename": filename,
+    }
+
+    storage = UserDatasetStorage()
+    success, message, upload_id = storage.save_upload(
+        file_bytes=file_bytes,
+        original_filename=filename,
+        metadata=metadata,
+    )
+
+    if not success or upload_id is None:
+        log.error("dataset_upload_failed", message=message)
+        raise HTTPException(status_code=500, detail=message)
+
+    log.info("dataset_upload_completed", upload_id=upload_id)
+    return DatasetUploadResponse(
+        upload_id=upload_id,
+        dataset_name=display_name,
+        status="ready",
+        message=message,
+    )
