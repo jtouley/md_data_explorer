@@ -75,6 +75,7 @@ Output requirements:
 1. Execution Readiness Decision
    • One of: READY TO EXECUTE, READY WITH CHANGES, or NOT READY
    • Decision must be explicit and justified
+   • READY TO EXECUTE is forbidden when required scope is deferred without explicit user sign-off
 
 2. Plan Summary (2–3 bullets max)
    • What the plan is trying to accomplish
@@ -92,8 +93,11 @@ Output requirements:
    • **Misaligned claims** - plan title/scope doesn't match deliverables
    • **Compromised quality** - weakened test criteria without root cause fixes
    • **Skeleton implementations** - placeholder code without implementation path
+   • **Unapproved deferrals** - in-scope work pushed to later release without explicit user sign-off
+   • **Misleading completion labels** - "Implemented (v1)" while required rows remain Partial/Gap/Pending
 
    If there are no blockers, state that clearly.
+   If user requested full implementation, unresolved required rows or unapproved deferrals are blockers.
 
 4. Non-Blocking Feedback (Concise)
    • Improvements that increase clarity, safety, or execution confidence
@@ -113,6 +117,7 @@ Output requirements:
    • **Dependency validation**: Are all APIs/methods verified to exist?
    • **Value delivery**: Do deliverables match title/overview claims?
    • **Quality standards**: Are assertions strict (no partial pass thresholds)?
+   • **Deferral discipline**: Is any scope reduction explicitly user-approved with item/reason/owner/date?
 
    Flag any ambiguity that would force ad-hoc decisions during implementation.
 
@@ -122,6 +127,7 @@ Output requirements:
    • Be concrete and minimal
    • Reference specific sections or phases
    • Assume the plan will be revised and re-reviewed before execution
+   • Include explicit deferral metadata (item, reason, owner, date) for any approved scope reduction
 
 Constraints:
    • Be direct, terse, and technical
@@ -200,6 +206,7 @@ Detailed Markdown File (`.context/reviews/plan_{plan-name}.md`):
 **READY TO EXECUTE** / **READY WITH CHANGES** / **NOT READY**
 
 [Justification]
+If required scope is deferred without explicit user sign-off, decision cannot be READY TO EXECUTE.
 
 ## Plan Summary
 
@@ -278,6 +285,7 @@ If this plan involves code generation, recommend invoking `/deslop` after execut
 - [ ] Deliverables align with plan title/overview
 - [ ] Quality bars maintained (no weakened assertions)
 - [ ] Bug fixes include regression tests
+- [ ] Any deferral is explicitly approved (item/reason/owner/date)
 
 ## Update Instructions
 

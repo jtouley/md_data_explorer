@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -7,6 +7,7 @@
 PYTHON := python3
 UV := uv
 PYTEST := $(UV) run pytest
+PYTEST_ARGS ?=
 RUFF := $(UV) run ruff
 MYPY := $(UV) run mypy
 STREAMLIT := $(UV) run streamlit
@@ -42,6 +43,10 @@ help: ## Show this help message
 	@echo "  make test-cov       # Run tests with coverage report"
 	@echo "  make test-core      # Run tests for core module only"
 	@echo "  make run            # Start the Streamlit application"
+	@echo "  make test-ui PYTEST_ARGS='-k mytest -x'  # Extra pytest flags (optional)"
+	@echo "  make test-electron-e2e  # Playwright (electron/); needs: cd electron && npm ci"
+	@echo "  make test-electron-e2e-native  # Native Electron-binary E2E harness"
+	@echo "  make test-electron-quality  # Electron unit coverage + Playwright E2E"
 
 install: ## Install production dependencies
 	@echo "$(GREEN)Installing production dependencies...$(NC)"
@@ -64,108 +69,130 @@ install-pre-commit: ensure-venv ## Install pre-commit hooks (run after install-d
 
 test: ensure-venv ## Run all tests in parallel (default)
 	@echo "$(GREEN)Running all tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR) -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-serial: ensure-venv ## Run all tests serially (for debugging or deterministic results)
 	@echo "$(GREEN)Running all tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v
+	$(PYTEST) $(TEST_DIR) -v $(PYTEST_ARGS)
 
 test-unit: ## Run unit tests only in parallel (default)
 	@echo "$(GREEN)Running unit tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not integration and not serial" -n auto
+	$(PYTEST) $(TEST_DIR) -v -m "not integration and not serial" -n auto $(PYTEST_ARGS)
 
 test-unit-serial: ## Run unit tests serially (for debugging)
 	@echo "$(GREEN)Running unit tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not integration"
+	$(PYTEST) $(TEST_DIR) -v -m "not integration" $(PYTEST_ARGS)
 
 test-integration: ## Run integration tests in parallel (default)
 	@echo "$(GREEN)Running integration tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "integration and not serial" -n auto
+	$(PYTEST) $(TEST_DIR) -v -m "integration and not serial" -n auto $(PYTEST_ARGS)
 
 test-integration-serial: ## Run integration tests serially (for debugging)
 	@echo "$(GREEN)Running integration tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "integration"
+	$(PYTEST) $(TEST_DIR) -v -m "integration" $(PYTEST_ARGS)
 
 test-fast: ## Run fast tests (skip slow tests) in parallel (default)
 	@echo "$(GREEN)Running fast tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow and not serial" -n auto
+	$(PYTEST) $(TEST_DIR) -v -m "not slow and not serial" -n auto $(PYTEST_ARGS)
 
 test-fast-serial: ## Run fast tests serially (for debugging)
 	@echo "$(GREEN)Running fast tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v -m "not slow"
+	$(PYTEST) $(TEST_DIR) -v -m "not slow" $(PYTEST_ARGS)
 
 # Module-specific test commands (parallel by default)
 test-analysis: ensure-venv ## Run analysis module tests in parallel (default)
 	@echo "$(GREEN)Running analysis module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/analysis -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR)/analysis -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-analysis-serial: ensure-venv ## Run analysis module tests serially (for debugging)
 	@echo "$(GREEN)Running analysis module tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR)/analysis -v
+	$(PYTEST) $(TEST_DIR)/analysis -v $(PYTEST_ARGS)
 
 test-core: ensure-venv ## Run core module tests in parallel (default)
 	@echo "$(GREEN)Running core module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/core -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR)/core -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-core-serial: ensure-venv ## Run core module tests serially (for debugging)
 	@echo "$(GREEN)Running core module tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR)/core -v
+	$(PYTEST) $(TEST_DIR)/core -v $(PYTEST_ARGS)
 
 test-datasets: ensure-venv ## Run datasets module tests in parallel (default)
 	@echo "$(GREEN)Running datasets module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/datasets -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR)/datasets -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-datasets-serial: ensure-venv ## Run datasets module tests serially (for debugging)
 	@echo "$(GREEN)Running datasets module tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR)/datasets -v
+	$(PYTEST) $(TEST_DIR)/datasets -v $(PYTEST_ARGS)
 
 test-e2e: ensure-venv ## Run end-to-end tests in parallel (default)
 	@echo "$(GREEN)Running end-to-end tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/e2e -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR)/e2e -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-e2e-serial: ensure-venv ## Run end-to-end tests serially (for debugging)
 	@echo "$(GREEN)Running end-to-end tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR)/e2e -v
+	$(PYTEST) $(TEST_DIR)/e2e -v $(PYTEST_ARGS)
+
+electron-npm-ready:
+	@if [ ! -f electron/package.json ]; then \
+		echo "$(RED)electron/package.json not found$(NC)"; \
+		exit 1; \
+	fi
+	@if [ ! -d electron/node_modules ]; then \
+		echo "$(YELLOW)electron/node_modules missing. Run: cd electron && npm ci$(NC)"; \
+		exit 1; \
+	fi
+
+test-electron-e2e: electron-npm-ready ## Playwright against Electron Vite renderer (Chromium); not the full Electron binary
+	@echo "$(GREEN)Running Electron renderer Playwright suite...$(NC)"
+	cd electron && npm run test:e2e
+
+test-electron-e2e-native: electron-npm-ready ## Playwright against native Electron binary via CDP harness
+	@echo "$(GREEN)Running native Electron-binary Playwright suite...$(NC)"
+	cd electron && npm run test:e2e:native
+
+test-electron-quality: electron-npm-ready ## Electron quality gate: Vitest coverage threshold + Playwright E2E
+	@echo "$(GREEN)Running Electron JS quality gate (coverage + Chromium + native Electron E2E)...$(NC)"
+	cd electron && npm run test:quality
 
 test-loader: ensure-venv ## Run loader module tests in parallel (default)
 	@echo "$(GREEN)Running loader module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/loader -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR)/loader -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-loader-serial: ensure-venv ## Run loader module tests serially (for debugging)
 	@echo "$(GREEN)Running loader module tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR)/loader -v
+	$(PYTEST) $(TEST_DIR)/loader -v $(PYTEST_ARGS)
 
 test-storage: ensure-venv ## Run storage module tests in parallel (default)
 	@echo "$(GREEN)Running storage module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/storage -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR)/storage -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-storage-serial: ensure-venv ## Run storage module tests serially (for debugging)
 	@echo "$(GREEN)Running storage module tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR)/storage -v
+	$(PYTEST) $(TEST_DIR)/storage -v $(PYTEST_ARGS)
 
 test-ui: ensure-venv ## Run UI module tests in parallel (default)
 	@echo "$(GREEN)Running UI module tests in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR)/ui -v -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR)/ui -v -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-ui-serial: ensure-venv ## Run UI module tests serially (for debugging)
 	@echo "$(GREEN)Running UI module tests serially...$(NC)"
-	$(PYTEST) $(TEST_DIR)/ui -v
+	$(PYTEST) $(TEST_DIR)/ui -v $(PYTEST_ARGS)
 
 test-api: ensure-venv ## Run all API tests (unit + integration)
 	@echo "$(GREEN)Running all API tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/api -v --tb=short
+	$(PYTEST) $(TEST_DIR)/api -v --tb=short $(PYTEST_ARGS)
 
 test-api-integration: ensure-venv ## Run API integration tests (with real server)
 	@echo "$(GREEN)Running API integration tests...$(NC)"
-	$(PYTEST) $(TEST_DIR)/api/integration -v --tb=short -m integration
+	$(PYTEST) $(TEST_DIR)/api/integration -v --tb=short -m integration $(PYTEST_ARGS)
 
 test-performance: ensure-venv ## Run tests with performance tracking in parallel (default)
 	@echo "$(GREEN)Running tests with performance tracking in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v --track-performance -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR) -v --track-performance -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-performance-serial: ensure-venv ## Run tests with performance tracking serially (for baseline/deterministic results)
 	@echo "$(GREEN)Running tests with performance tracking serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) -v --track-performance
+	$(PYTEST) $(TEST_DIR) -v --track-performance $(PYTEST_ARGS)
 
 performance-report: ## Generate performance report
 	@echo "$(GREEN)Generating performance report...$(NC)"
@@ -185,62 +212,62 @@ performance-baseline: ## Create or update performance baseline
 
 performance-regression: ensure-venv ## Run performance regression tests
 	@echo "$(GREEN)Running performance regression tests...$(NC)"
-	$(PYTEST) tests/test_performance_regression.py -v
+	$(PYTEST) tests/test_performance_regression.py -v $(PYTEST_ARGS)
 
 test-cov: ## Run tests with coverage report in parallel (default)
 	@echo "$(GREEN)Running tests with coverage in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -n auto -m "not serial" $(PYTEST_ARGS)
 	@echo "$(GREEN)Coverage report generated in $(COV_DIR)/index.html$(NC)"
 
 test-cov-serial: ## Run tests with coverage report serially (for deterministic coverage)
 	@echo "$(GREEN)Running tests with coverage serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing $(PYTEST_ARGS)
 	@echo "$(GREEN)Coverage report generated in $(COV_DIR)/index.html$(NC)"
 
 test-cov-term: ensure-venv ## Run tests with terminal coverage only in parallel (default)
 	@echo "$(GREEN)Running tests with terminal coverage in parallel...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-cov-term-serial: ensure-venv ## Run tests with terminal coverage serially (for deterministic coverage)
 	@echo "$(GREEN)Running tests with terminal coverage serially...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing $(PYTEST_ARGS)
 
 # Coverage enforcement commands (NEW)
 test-cov-check: ensure-venv ## Run tests with coverage enforcement (67% minimum, target 95%)
 	@echo "$(GREEN)Running tests with coverage enforcement (67% minimum)...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing --cov-fail-under=67 -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=term-missing --cov-fail-under=67 -n auto -m "not serial" $(PYTEST_ARGS)
 
 test-cov-diff: ensure-venv ## Check coverage diff against baseline
 	@echo "$(GREEN)Checking coverage against baseline...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=json:coverage.json -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=json:coverage.json -n auto -m "not serial" $(PYTEST_ARGS)
 	@$(PYTHON_RUN) scripts/check_coverage_regression.py
 
 coverage-baseline: ensure-venv ## Generate coverage baseline
 	@echo "$(GREEN)Generating coverage baseline...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=json:coverage.json -n auto -m "not serial"
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=json:coverage.json -n auto -m "not serial" $(PYTEST_ARGS)
 	@cp coverage.json tests/.coverage_baseline.json
 	@echo "$(GREEN)✓ Baseline saved to tests/.coverage_baseline.json$(NC)"
 
 coverage-report: ensure-venv ## Generate detailed coverage HTML report
 	@echo "$(GREEN)Generating coverage report...$(NC)"
-	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -n auto
+	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -n auto $(PYTEST_ARGS)
 	@echo "$(GREEN)Coverage report generated in $(COV_DIR)/index.html$(NC)"
 
 lint: ensure-venv ## Run ruff linter
 	@echo "$(GREEN)Running ruff linter...$(NC)"
-	$(RUFF) check $(SRC_DIR) $(TEST_DIR)
+	$(RUFF) check $(SRC_DIR) $(TEST_DIR) repo_context_mcp
 
 lint-fix: ## Run ruff linter and auto-fix issues
 	@echo "$(GREEN)Running ruff linter with auto-fix...$(NC)"
-	$(RUFF) check --fix $(SRC_DIR) $(TEST_DIR)
+	$(RUFF) check --fix $(SRC_DIR) $(TEST_DIR) repo_context_mcp
 
 format: ensure-venv ## Format code with ruff
 	@echo "$(GREEN)Formatting code with ruff...$(NC)"
-	$(RUFF) format $(SRC_DIR) $(TEST_DIR)
+	$(RUFF) format $(SRC_DIR) $(TEST_DIR) repo_context_mcp
 
 format-check: ## Check code formatting without making changes
 	@echo "$(GREEN)Checking code formatting...$(NC)"
-	$(RUFF) format --check $(SRC_DIR) $(TEST_DIR)
+	$(RUFF) format --check $(SRC_DIR) $(TEST_DIR) repo_context_mcp
 
 pre-commit-check: ensure-venv ## Run pre-commit checks (test fixture enforcement)
 	@echo "$(GREEN)Running pre-commit checks...$(NC)"
@@ -308,6 +335,10 @@ run-app-keep: ## Start application with bash script (keep Ollama running on exit
 	@echo "$(GREEN)Starting application (Ollama will keep running)...$(NC)"
 	@echo "$(YELLOW)Press Ctrl+C to stop (Ollama will stay running)$(NC)"
 	@STOP_OLLAMA_ON_EXIT=false bash scripts/run_app.sh
+
+run-api: ensure-venv ## Start FastAPI backend (for Electron desktop dev)
+	@echo "$(GREEN)Starting FastAPI on http://127.0.0.1:8000 ...$(NC)"
+	$(UV) run uvicorn clinical_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
 
 validate: ## Run platform validation (tests serve as validation)
 	@echo "$(GREEN)Platform validation via test suite...$(NC)"
@@ -427,3 +458,23 @@ checkpoint-resume: ## Show checkpoint for resuming work (requires TASK_ID)
 		exit 1; \
 	fi; \
 	cat "$$FILE"
+
+sync-cursor-skills: ## Write mdde-* + mdde-context + mcp-workbench to ~/.cursor/skills/ (does not sync packaged subfolders)
+	@echo "$(GREEN)Syncing Cursor skills to ~/.cursor/skills/ ...$(NC)"
+	$(PYTHON_RUN) scripts/sync_volt_cursor_skills.py
+
+sync-cursor-skills-force: ## Same as sync-cursor-skills but overwrites global even when global copy is newer
+	@echo "$(GREEN)Syncing Cursor skills (force) to ~/.cursor/skills/ ...$(NC)"
+	$(PYTHON_RUN) scripts/sync_volt_cursor_skills.py --force
+
+# Default: diff repo .cursor/skills/<pkg>/ vs ~/.cursor/skills/. Override, e.g.:
+#   make cursor-packaged-skills CURSOR_PACKAGED_ARGS="--pull-packaged-from-global"
+#   make cursor-packaged-skills CURSOR_PACKAGED_ARGS="--push-packaged-to-global"
+#   make cursor-packaged-skills CURSOR_PACKAGED_ARGS="--promote-packaged-to-global"
+CURSOR_PACKAGED_ARGS ?= --diff-packaged
+cursor-packaged-skills: ## Packaged skills vs global (~/.cursor/skills/); see CURSOR_PACKAGED_ARGS above
+	$(PYTHON_RUN) scripts/sync_volt_cursor_skills.py $(CURSOR_PACKAGED_ARGS)
+
+benchmark-cursor-skills: ## Validate every global Cursor skill (skill-creator-style YAML gate)
+	@echo "$(GREEN)Benchmarking ~/.cursor/skills/ (validation only)...$(NC)"
+	$(PYTHON_RUN) scripts/benchmark_cursor_skills_packaging.py

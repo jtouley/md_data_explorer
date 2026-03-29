@@ -11,14 +11,16 @@ Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from clinical_analytics.api import health_llm
 from clinical_analytics.api.db.database import create_tables
 
 # Import routes
-from clinical_analytics.api.routes import sessions
+from clinical_analytics.api.routes import datasets, enrichments, queries, sessions
 
 
 @asynccontextmanager
@@ -66,10 +68,20 @@ app = FastAPI(
 # CORS Middleware
 # ============================================================================
 
-# Allow frontend origins (Next.js dev server + production)
+# Allow frontend origins (Next.js + Electron dev servers)
+# Note: Electron in dev mode uses localhost, not file://
 ALLOWED_ORIGINS = os.getenv(
     "CORS_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",  # Next.js default dev ports
+    ",".join(
+        [
+            "http://localhost:3000",  # Next.js dev
+            "http://127.0.0.1:3000",  # Next.js dev (IP)
+            "http://localhost:8000",  # FastAPI (for SSE same-origin)
+            "http://127.0.0.1:8000",  # FastAPI (IP)
+            "http://localhost:5173",  # Electron/Vite dev server
+            "http://127.0.0.1:5173",  # Electron/Vite dev (IP)
+        ]
+    ),
 ).split(",")
 
 app.add_middleware(
@@ -87,13 +99,21 @@ app.add_middleware(
 
 # Health check endpoint
 @app.get("/health", tags=["health"])
-async def health_check() -> dict[str, str]:
-    """Health check endpoint for monitoring."""
-    return {"status": "healthy", "service": "clinical-analytics-api"}
+async def health_check() -> dict[str, Any]:
+    """Health check endpoint for monitoring and desktop LLM status."""
+    body: dict[str, Any] = {
+        "status": "healthy",
+        "service": "clinical-analytics-api",
+    }
+    body.update(health_llm.get_ollama_health_snapshot())
+    return body
 
 
 # Register API routes
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
+app.include_router(datasets.router, prefix="/api", tags=["datasets"])
+app.include_router(queries.router, prefix="/api", tags=["queries"])
+app.include_router(enrichments.router, prefix="/api", tags=["enrichments"])
 
 
 # ============================================================================

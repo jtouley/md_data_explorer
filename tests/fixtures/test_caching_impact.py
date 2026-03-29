@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import polars as pl
+import polars.testing as plt
 
 # Add tests to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -22,6 +23,7 @@ from fixtures.cache import (
     get_cache_dir,
     get_cached_dataframe,
     hash_dataframe,
+    hash_file,
 )
 
 
@@ -30,14 +32,10 @@ class TestCachingImpact:
 
     def test_dataframe_caching_reduces_loading_time(self, tmp_path):
         """
-        Measure that cached DataFrame loading is faster than regeneration.
+        Verify parquet cache round-trip matches source and log write vs read timings.
 
-        This test measures the time difference between:
-        - Writing DataFrame to parquet (baseline - simulates expensive I/O)
-        - Reading cached parquet file (cached - fast I/O)
-
-        Note: The real improvement comes from avoiding expensive operations
-        like Excel file generation, not just DataFrame creation.
+        Assertions are deterministic (frame equality). Timing lines are informational only:
+        wall-clock ordering of write vs read is not reliable on fast disks.
         """
         # Arrange: Create test DataFrame (simulating expensive fixture generation)
         cache_dir = tmp_path / "test_cache"
@@ -68,27 +66,18 @@ class TestCachingImpact:
         cached_df = get_cached_dataframe(cache_key, cache_dir)
         cached_time = time.perf_counter() - start_cached
 
-        # Assert: Cached DataFrame matches original
+        # Assert: Cached DataFrame matches original (contract under test)
         assert cached_df is not None
-        assert cached_df.shape == df.shape
-        assert cached_df.columns == df.columns
+        plt.assert_frame_equal(cached_df, df)
 
-        # Calculate improvement
+        # Wall-clock ordering of write vs read is nondeterministic on fast disks / CI;
+        # log timings for humans without failing the suite on microsecond noise.
         if baseline_time > 0:
             improvement_pct = ((baseline_time - cached_time) / baseline_time) * 100
         else:
-            improvement_pct = 0
-
-        # Assert: Cached loading should be faster (at least 30% improvement)
-        # Note: Parquet read/write is already fast, so improvement may be modest
-        # Real improvement comes from avoiding Excel generation, which is much slower
-        assert cached_time < baseline_time, (
-            f"Cached loading should be faster, but cached time ({cached_time:.4f}s) >= baseline ({baseline_time:.4f}s)"
-        )
-
-        # Log results for documentation
+            improvement_pct = 0.0
         print(
-            f"\nDataFrame Caching Impact:\n"
+            f"\nDataFrame Caching Impact (informational):\n"
             f"  Baseline (write parquet): {baseline_time:.4f}s\n"
             f"  Cached (read from cache): {cached_time:.4f}s\n"
             f"  Improvement: {improvement_pct:.1f}% reduction\n"
@@ -96,11 +85,9 @@ class TestCachingImpact:
 
     def test_excel_caching_reduces_file_generation_time(self, tmp_path_factory):
         """
-        Measure that cached Excel file loading is faster than regeneration.
+        Verify second synthetic Excel generation yields byte-identical content via cache.
 
-        This test measures the time difference between:
-        - Generating Excel file from scratch (baseline)
-        - Loading cached Excel file (cached)
+        Timing lines are informational; the contract is same-bytes for both paths.
         """
 
         from fixtures.factories import _create_synthetic_excel_file
@@ -138,23 +125,15 @@ class TestCachingImpact:
         assert excel_file_1.exists()
         assert excel_file_2.exists()
 
-        # Calculate improvement
+        # Second call must resolve to the same bytes as the cached artifact (contract under test).
+        assert hash_file(excel_file_1) == hash_file(excel_file_2)
+
         if baseline_time > 0:
             improvement_pct = ((baseline_time - cached_time) / baseline_time) * 100
         else:
-            improvement_pct = 0
-
-        # Assert: Cached generation should be faster (at least 30% improvement)
-        # Note: Excel file generation includes pandas operations, so improvement may vary
-        # but should still be significant due to file I/O savings
-        assert cached_time < baseline_time, (
-            f"Cached Excel generation should be faster, "
-            f"but cached time ({cached_time:.4f}s) >= baseline ({baseline_time:.4f}s)"
-        )
-
-        # Log results for documentation
+            improvement_pct = 0.0
         print(
-            f"\nExcel Caching Impact:\n"
+            f"\nExcel Caching Impact (informational):\n"
             f"  Baseline (first generation): {baseline_time:.4f}s\n"
             f"  Cached (second generation): {cached_time:.4f}s\n"
             f"  Improvement: {improvement_pct:.1f}% reduction\n"

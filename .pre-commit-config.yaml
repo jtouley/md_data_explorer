@@ -49,6 +49,8 @@ repos:
       - id: check-yaml
         name: Check YAML syntax
         description: Validate YAML files
+        # mkdocs.yml uses !!python/name tags (Material/superfences); pyyaml-safe cannot parse them
+        exclude: ^mkdocs\.yml$
       - id: check-json
         name: Check JSON syntax
         description: Validate JSON files
