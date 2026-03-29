@@ -447,7 +447,7 @@ checkpoint-resume: ## Show checkpoint for resuming work (requires TASK_ID)
 	fi; \
 	cat "$$FILE"
 
-sync-cursor-skills: ## Regenerate volt-* Cursor skills and MCP reference under ~/.cursor/skills/
+sync-cursor-skills: ## Sync all Cursor skills: volt-* from .claude/agents + packaged under .cursor/skills/
 	@echo "$(GREEN)Syncing Cursor skills to ~/.cursor/skills/ ...$(NC)"
 	$(PYTHON_RUN) scripts/sync_volt_cursor_skills.py
 
