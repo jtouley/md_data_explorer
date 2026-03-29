@@ -40,6 +40,21 @@
         </button>
       </div>
 
+      <section
+        id="enrichment-section"
+        class="enrichment-section hidden"
+        aria-label="Metadata enrichments"
+      >
+        <div class="enrichment-toolbar">
+          <h2 class="enrichment-heading">Metadata enrichments</h2>
+          <button type="button" id="refresh-enrichments" class="btn-enrichment-refresh">
+            Refresh
+          </button>
+        </div>
+        <p id="enrichment-hint" class="enrichment-hint" data-testid="enrichment-hint"></p>
+        <div id="enrichment-list" class="enrichment-list" data-testid="enrichment-list"></div>
+      </section>
+
       <!-- Chat Messages Container -->
       <div id="chat-container" class="chat-container">
         <div class="welcome-message">

@@ -5,6 +5,10 @@
  * and chat message management.
  */
 import './index.css';
+import {
+  normalizePendingResponse,
+  renderEnrichmentCards,
+} from './enrichmentPanel.js';
 import { buildQueryCompletedPresentation } from './resultPresentation.js';
 
 // ============================================================================
@@ -23,6 +27,10 @@ const elements = {
   queryInput: document.getElementById('query-input'),
   submitBtn: document.getElementById('submit-btn'),
   inputHintText: document.getElementById('input-hint-text'),
+  enrichmentSection: document.getElementById('enrichment-section'),
+  enrichmentHint: document.getElementById('enrichment-hint'),
+  enrichmentList: document.getElementById('enrichment-list'),
+  refreshEnrichmentsBtn: document.getElementById('refresh-enrichments'),
 };
 
 // ============================================================================
@@ -441,6 +449,100 @@ async function loadDatasets() {
   }
 }
 
+const noopEnrichment = () => {};
+
+/**
+ * Load pending metadata enrichments for the current dataset into the panel.
+ */
+async function loadEnrichmentPanel() {
+  const { enrichmentSection, enrichmentHint, enrichmentList } = elements;
+
+  if (!enrichmentSection || !enrichmentHint || !enrichmentList) return;
+
+  if (!state.currentDatasetId) {
+    enrichmentSection.classList.add('hidden');
+    enrichmentHint.textContent = '';
+    enrichmentList.replaceChildren();
+    return;
+  }
+
+  enrichmentSection.classList.remove('hidden');
+  enrichmentHint.textContent = 'Loading enrichments…';
+
+  if (typeof window.clinicalAPI?.getPendingEnrichments !== 'function') {
+    enrichmentHint.textContent = 'Enrichment API not available.';
+    renderEnrichmentCards(enrichmentList, [], {
+      onAccept: noopEnrichment,
+      onReject: noopEnrichment,
+    });
+    return;
+  }
+
+  try {
+    const raw = await window.clinicalAPI.getPendingEnrichments(state.currentDatasetId);
+    const { suggestions, total } = normalizePendingResponse(raw);
+    enrichmentHint.textContent =
+      total === 0 ? 'No pending suggestions.' : `${total} pending suggestion${total === 1 ? '' : 's'}.`;
+    renderEnrichmentCards(enrichmentList, suggestions, {
+      onAccept: (patchId) => handleEnrichmentAccept(patchId),
+      onReject: (patchId) => handleEnrichmentReject(patchId),
+    });
+  } catch (error) {
+    console.error('❌ Failed to load enrichments:', error);
+    enrichmentHint.textContent = `Could not load enrichments: ${error.message}`;
+    renderEnrichmentCards(enrichmentList, [], {
+      onAccept: noopEnrichment,
+      onReject: noopEnrichment,
+    });
+  }
+}
+
+/**
+ * @param {string} patchId
+ */
+async function handleEnrichmentAccept(patchId) {
+  const { enrichmentHint } = elements;
+  if (!state.currentDatasetId) return;
+  try {
+    const res = await window.clinicalAPI.acceptEnrichment(
+      state.currentDatasetId,
+      patchId
+    );
+    if (res && res.success === false) {
+      throw new Error(res.message || 'Accept failed');
+    }
+    await loadEnrichmentPanel();
+  } catch (error) {
+    console.error('Accept enrichment failed:', error);
+    if (enrichmentHint) {
+      enrichmentHint.textContent = error.message || 'Accept failed';
+    }
+  }
+}
+
+/**
+ * @param {string} patchId
+ */
+async function handleEnrichmentReject(patchId) {
+  const { enrichmentHint } = elements;
+  if (!state.currentDatasetId) return;
+  try {
+    const res = await window.clinicalAPI.rejectEnrichment(
+      state.currentDatasetId,
+      patchId
+    );
+    if (res && res.success === false) {
+      throw new Error(res.message || 'Reject failed');
+    }
+    await loadEnrichmentPanel();
+  } catch (error) {
+    console.error('Reject enrichment failed:', error);
+    if (enrichmentHint) {
+      enrichmentHint.textContent = error.message || 'Reject failed';
+    }
+  }
+}
+
 // ============================================================================
 // Event Handlers
 // ============================================================================
@@ -455,8 +557,10 @@ function handleDatasetChange(event) {
   if (datasetId) {
     setQueryInputEnabled(true);
     console.log(`📊 Selected dataset: ${datasetId}`);
+    void loadEnrichmentPanel();
   } else {
     setQueryInputEnabled(false);
+    void loadEnrichmentPanel();
   }
 }
 
@@ -683,6 +787,11 @@ async function init() {
   // Set up event listeners
   elements.datasetSelect.addEventListener('change', handleDatasetChange);
   elements.refreshDatasetsBtn.addEventListener('click', handleRefreshDatasets);
+  if (elements.refreshEnrichmentsBtn) {
+    elements.refreshEnrichmentsBtn.addEventListener('click', () => {
+      void loadEnrichmentPanel();
+    });
+  }
   elements.queryForm.addEventListener('submit', handleQuerySubmit);
   elements.queryInput.addEventListener('input', handleQueryInputChange);
 

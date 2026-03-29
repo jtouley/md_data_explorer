@@ -126,6 +126,78 @@ const clinicalAPI = {
   getApiBaseUrl() {
     return API_BASE_URL;
   },
+
+  /**
+   * List pending metadata enrichment suggestions for a dataset.
+   * @param {string} datasetId
+   * @returns {Promise<{ suggestions: object[], total: number }>}
+   */
+  async getPendingEnrichments(datasetId) {
+    const enc = encodeURIComponent(datasetId);
+    const response = await fetch(
+      `${API_BASE_URL}/api/datasets/${enc}/enrichments/pending`
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to load enrichments: ${response.status} ${response.statusText}`);
+    }
+    return await response.json();
+  },
+
+  /**
+   * Accept a pending enrichment patch.
+   * @param {string} datasetId
+   * @param {string} patchId
+   * @param {string} [acceptedBy]
+   * @returns {Promise<{ success: boolean, message: string }>}
+   */
+  async acceptEnrichment(datasetId, patchId, acceptedBy = 'electron_user') {
+    const encD = encodeURIComponent(datasetId);
+    const encP = encodeURIComponent(patchId);
+    const response = await fetch(
+      `${API_BASE_URL}/api/datasets/${encD}/enrichments/${encP}/accept`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accepted_by: acceptedBy }),
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.message || `Accept failed: ${response.statusText}`);
+    }
+    if (data.success === false) {
+      throw new Error(data.message || 'Accept failed');
+    }
+    return data;
+  },
+
+  /**
+   * Reject a pending enrichment patch.
+   * @param {string} datasetId
+   * @param {string} patchId
+   * @param {string} [reason]
+   * @returns {Promise<{ success: boolean, message: string }>}
+   */
+  async rejectEnrichment(datasetId, patchId, reason = 'Rejected in Electron') {
+    const encD = encodeURIComponent(datasetId);
+    const encP = encodeURIComponent(patchId);
+    const response = await fetch(
+      `${API_BASE_URL}/api/datasets/${encD}/enrichments/${encP}/reject`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.message || `Reject failed: ${response.statusText}`);
+    }
+    if (data.success === false) {
+      throw new Error(data.message || 'Reject failed');
+    }
+    return data;
+  },
 };
 
 // Expose clinicalAPI to renderer process via contextBridge
