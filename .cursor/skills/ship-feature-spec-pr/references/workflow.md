@@ -18,7 +18,7 @@ Conventions match Cursor projects that use **`.cursor/plans/`**, **`.context/rev
 ## Cursor slash commands (run in order)
 
 1. **Capture spec** — Write or point to a plan under `.cursor/plans/` (or a tracked doc if plans are gitignored).
-2. **`/plan-review <plan-identifier>`** — Chat summary + `.context/reviews/plan_<name>.md`.
+2. **`/plan-review <plan-identifier>`** — **Full** plan review per the repo’s command (all required sections/criteria). Produces **`.context/reviews/plan_<name>.md`** as the complete written artifact; read that file in full. Chat-side notes are additive, not a substitute for the full review.
 3. **`/plan-update <plan-identifier>`** — Apply review feedback to the plan; re-`/plan-review` until execution-ready.
 4. **`/spec-driven <task or plan path>`** — TDD implementation per that repo’s rules (tests, lint, commit, push, PR). Before assuming a new PR number, run `gh pr list --head "$(git branch --show-current)"` and reuse an open PR when present.
 5. **Prepare PR diff** — If `.context/diffs/prN.diff` is missing:

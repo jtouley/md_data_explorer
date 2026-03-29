@@ -1,6 +1,6 @@
 ---
 name: ship-feature-spec-pr
-description: "Turns a chat-defined feature or multi-phase plan into a reviewed PR by chaining plan authoring, /plan-review, /plan-update, /spec-driven implementation, and /pr-review—repeating per plan slice until done or blocked. Use when the user asks to ship from a conversation, run the full pipeline, ship all phases, or chain plan review with PR review after implementation."
+description: "Turns a chat-defined feature or multi-phase plan into a reviewed PR by chaining plan authoring, full /plan-review (written artifact, not a chat-only summary), /plan-update, /spec-driven implementation, and /pr-review—repeating per plan slice until done or blocked. Use when the user asks to ship from a conversation, run the full pipeline, ship all phases, or chain plan review with PR review after implementation."
 ---
 
 # Ship feature: conversation → plan → spec-driven → PR review
@@ -9,7 +9,7 @@ description: "Turns a chat-defined feature or multi-phase plan into a reviewed P
 
 ## Purpose
 
-Provide a single procedural workflow so another agent (or human) can move from **conversation** to **reviewed PR** without skipping gates: written plan, plan review, plan updates if needed, spec-driven implementation, and PR diff review.
+Provide a single procedural workflow so another agent (or human) can move from **conversation** to **reviewed PR** without skipping gates: written plan, **full** plan review (command + artifact, not a condensed chat substitute), plan updates if needed, spec-driven implementation, and PR diff review.
 
 ## When to use this skill
 
@@ -53,10 +53,10 @@ When **serena**, **duckdb**, or **playwright** MCP servers are enabled, follow `
 - If no plan exists, create **`.cursor/plans/<name>.plan.md`** with phases, todos, success criteria, and TDD notes aligned to **this repo’s** plan-execution rules (if any).
 - If a plan exists, record its identifier for `/plan-review`.
 
-### 2. Plan review gate
+### 2. Plan review gate (full review, not condensed)
 
-- Run **`/plan-review <plan-identifier>`**.
-- Read **`.context/reviews/plan_<name>.md`** and the chat verdict.
+- Run **`/plan-review <plan-identifier>`** using the repository’s **complete** plan-review command (checklists, risk, test strategy, quality gates—whatever that command defines). **Do not** replace this step with a short in-chat paraphrase or “executive summary” and call it done.
+- Treat **`.context/reviews/plan_<name>.md`** (or the path the repo’s `/plan-review` writes) as the **authoritative full review artifact**; read it end-to-end before implementation. Chat output is **supplementary** unless the project explicitly says otherwise.
 - If **NOT READY** or **READY WITH CHANGES**: run **`/plan-update <plan-identifier>`**, then **`/plan-review`** again until the team’s execution threshold is met (e.g. **READY TO EXECUTE**).
 
 ### 3. Implementation (spec-driven)
