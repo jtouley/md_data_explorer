@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -45,6 +45,7 @@ help: ## Show this help message
 	@echo "  make run            # Start the Streamlit application"
 	@echo "  make test-ui PYTEST_ARGS='-k mytest -x'  # Extra pytest flags (optional)"
 	@echo "  make test-electron-e2e  # Playwright (electron/); needs: cd electron && npm ci"
+	@echo "  make test-electron-e2e-native  # Native Electron-binary E2E harness"
 	@echo "  make test-electron-quality  # Electron unit coverage + Playwright E2E"
 
 install: ## Install production dependencies
@@ -145,8 +146,12 @@ test-electron-e2e: electron-npm-ready ## Playwright against Electron Vite render
 	@echo "$(GREEN)Running Electron renderer Playwright suite...$(NC)"
 	cd electron && npm run test:e2e
 
+test-electron-e2e-native: electron-npm-ready ## Playwright against native Electron binary via CDP harness
+	@echo "$(GREEN)Running native Electron-binary Playwright suite...$(NC)"
+	cd electron && npm run test:e2e:native
+
 test-electron-quality: electron-npm-ready ## Electron quality gate: Vitest coverage threshold + Playwright E2E
-	@echo "$(GREEN)Running Electron JS quality gate (coverage + E2E)...$(NC)"
+	@echo "$(GREEN)Running Electron JS quality gate (coverage + Chromium + native Electron E2E)...$(NC)"
 	cd electron && npm run test:quality
 
 test-loader: ensure-venv ## Run loader module tests in parallel (default)

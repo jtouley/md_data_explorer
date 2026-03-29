@@ -75,11 +75,11 @@ jobs:
         working-directory: electron
         run: npx playwright install --with-deps chromium
 
-      - name: Electron renderer Playwright
+      - name: Electron quality gate (renderer + native harness)
         working-directory: electron
         env:
           CI: true
-        run: npm run test:quality
+        run: xvfb-run -a npm run test:quality
 
   coverage:
     runs-on: ubuntu-latest

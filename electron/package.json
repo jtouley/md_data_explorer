@@ -18,7 +18,8 @@
     "test:cov": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:quality": "npm run test:cov && npm run test:e2e"
+    "test:e2e:native": "playwright test -c playwright.native.config.js",
+    "test:quality": "npm run test:cov && npm run test:e2e && npm run test:e2e:native"
   },
   "keywords": [],
   "author": {

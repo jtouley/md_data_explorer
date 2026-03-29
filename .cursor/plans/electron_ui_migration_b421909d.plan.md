@@ -62,7 +62,7 @@ todos:
     dependencies:
       - phase6-result-rendering
   - id: phase9-e2e-testing
-    content: "Testing: E2E — v1 gate satisfied with Playwright Chromium+Vite + CI and make test-electron-e2e; native Electron binary harness deferred on macOS post-v1"
+    content: "Testing: E2E — Playwright Chromium renderer suite + native Electron-binary harness enforced in quality gate"
     status: done
     dependencies:
       - phase8-dataset-upload

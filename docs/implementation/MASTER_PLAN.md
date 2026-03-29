@@ -34,10 +34,10 @@ Statuses below mirror the **omnibus phased table** (authoritative for release ga
 | 6c | Patch history viewer in Electron | **Implemented** |
 | 7 | Session sidebar | **Implemented** |
 | 8 | Dataset upload in Electron | **Implemented** (parity **P01**) |
-| 9 | Automated E2E | **Implemented (v1)** — Playwright **Chromium + Vite** in CI (`electron-playwright`) and `make test-electron-e2e` are passing; native Electron-binary harness on macOS is deferred post-v1 |
-| 10a–e | Delete Streamlit pages → components → `pyproject` → UI tests → docs | **Blocked pending parity v1-required rows** (Phase 9 v1 gate is satisfied) |
+| 9 | Automated E2E | **Implemented** — Playwright Chromium renderer suite + native Electron-binary harness are in the Electron quality gate |
+| 10a–e | Delete Streamlit pages → components → `pyproject` → UI tests → docs | **Blocked pending parity v1-required rows** |
 
-**Cutover rule (non-negotiable):** Phase 10 may begin only when (1) Phase 9 is **Implemented (v1)** and (2) omnibus parity rows marked **Required for v1** are **Implemented** or **Won’t do** with explicit sign-off.
+**Cutover rule (non-negotiable):** Phase 10 may begin only when (1) Phase 9 is **Implemented** and (2) omnibus parity rows marked **Required for v1** are **Implemented** or **Won’t do** with explicit sign-off.
 
 ---
 

@@ -6,11 +6,9 @@ const electronRoot = path.resolve(__dirname);
 const repoRoot = path.resolve(__dirname, '..');
 
 /**
- * E2E against the Vite renderer (same UI Electron loads in dev).
- *
- * Playwright's Electron harness passes --remote-debugging-port=0, which current
- * Electron macOS binaries reject before the preload loader runs; use Chromium
- * for CI and local gates until upstream aligns (or add test:e2e:electron).
+ * E2E against the renderer surface loaded by Electron in development.
+ * Native Electron-binary E2E lives in playwright.native.config.js and is
+ * enforced separately in the strict quality gate.
  *
  * @see https://playwright.dev/docs/test-configuration
  */
