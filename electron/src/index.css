@@ -427,6 +427,66 @@ body {
 }
 
 /* ============================================================================
+   Dataset overview (P02)
+   ============================================================================ */
+.dataset-overview {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-6);
+  background: var(--color-surface-elevated);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.dataset-overview.hidden {
+  display: none;
+}
+
+.dataset-overview-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.dataset-overview-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.dataset-overview-summary {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.dataset-preview-wrapper {
+  overflow-x: auto;
+}
+
+.dataset-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.dataset-preview-table th,
+.dataset-preview-table td {
+  padding: var(--space-2);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-subtle);
+  white-space: nowrap;
+}
+
+.dataset-preview-table thead th {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+}
+
+/* ============================================================================
    Metadata enrichments (Phase 6b)
    ============================================================================ */
 .enrichment-section {

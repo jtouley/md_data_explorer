@@ -41,6 +41,18 @@ test.describe('Live FastAPI integration', () => {
           if (!res.ok) throw new Error(`Failed to list datasets: ${res.statusText}`);
           return res.json();
         },
+        async getDataset(datasetId) {
+          const res = await fetch(`${apiBaseUrl}/api/datasets/${encodeURIComponent(datasetId)}`);
+          if (!res.ok) throw new Error(`Failed to load dataset details: ${res.statusText}`);
+          return res.json();
+        },
+        async previewDataset(datasetId, limit = 10) {
+          const res = await fetch(
+            `${apiBaseUrl}/api/datasets/${encodeURIComponent(datasetId)}/preview?limit=${limit}`
+          );
+          if (!res.ok) throw new Error(`Failed to load dataset preview: ${res.statusText}`);
+          return res.json();
+        },
         async listSessions() {
           const res = await fetch(`${apiBaseUrl}/api/sessions`);
           if (!res.ok) throw new Error(`Failed to list sessions: ${res.statusText}`);
@@ -118,6 +130,24 @@ test.describe('Live FastAPI integration', () => {
 
     const selectedValue = await page.locator('#dataset-select').evaluate((el) => el.value);
     expect(selectedValue).not.toBe('');
+  });
+
+  test('uploading CSV shows dataset overview summary and preview table', async ({ page }) => {
+    await page.goto('/');
+
+    const filename = `phase10_overview_${Date.now()}.csv`;
+    await page.locator('[data-testid="upload-file-input"]').setInputFiles({
+      name: filename,
+      mimeType: 'text/csv',
+      buffer: makeCsvBytes(),
+    });
+
+    await expect(page.locator('[data-testid="upload-status"]')).toContainText('uploaded');
+    await expect(page.locator('[data-testid="dataset-overview"]')).not.toHaveClass(/hidden/);
+    await expect(page.locator('[data-testid="dataset-overview-summary"]')).toContainText('rows');
+
+    const previewRows = page.locator('[data-testid="dataset-preview-table"] tbody tr');
+    await expect(previewRows).toHaveCount(10);
   });
 
   test('new chat creates a session item for selected dataset', async ({ page }) => {

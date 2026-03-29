@@ -18,7 +18,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import polars as pl
 
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
@@ -1116,6 +1115,7 @@ def save_table_list(
             metadata["inferred_schema"] = convert_schema(
                 metadata["variable_mapping"],
                 tables[0]["data"],  # Access normalized DataFrame
+                metadata.get("synthetic_id_metadata"),
             )
 
         # 3. Compute dataset version and table fingerprints (MVP - Phase 1)
@@ -2180,7 +2180,7 @@ class UserDatasetStorage:
             result = json.load(f)
             return dict(result) if isinstance(result, dict) else None
 
-    def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | pd.DataFrame | None:
+    def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | None:
         """
         Load uploaded dataset with automatic legacy migration.
 
@@ -2195,16 +2195,15 @@ class UserDatasetStorage:
         - SPSS files: Eagerly loaded via pyreadstat, then converted to LazyFrame.
 
         Internal Representation:
-        - lazy=True: Returns pl.LazyFrame (recommended for internal use)
-        - lazy=False: Returns pd.DataFrame (for backward compatibility/UI boundaries)
+        - Returns pl.LazyFrame for all code paths.
+        - The lazy flag is retained for API compatibility but no longer changes return type.
 
         Args:
             upload_id: Upload identifier (immutable storage key)
-            lazy: If True, return Polars LazyFrame (default). If False, return pandas DataFrame
-                  for backward compatibility.
+            lazy: Backward-compatibility flag (ignored). Result is always LazyFrame.
 
         Returns:
-            LazyFrame (if lazy=True), pandas DataFrame (if lazy=False), or None if not found
+            LazyFrame, or None if not found
 
         Note:
             Excel eager read is due to Polars read_excel() limitations with complex files
@@ -2246,102 +2245,95 @@ class UserDatasetStorage:
         if not csv_path.exists():
             return None
 
-        if lazy:
-            # Phase 3: Prefer Parquet for lazy loading (columnar, compressed, lazy IO)
-            # Check if Parquet paths available in metadata (Phase 3+)
-            from clinical_analytics.core.type_guards import safe_get
+        # Phase 3: Prefer Parquet for lazy loading (columnar, compressed, lazy IO)
+        # Check if Parquet paths available in metadata (Phase 3+)
+        from clinical_analytics.core.type_guards import safe_get
 
-            parquet_paths = safe_get(metadata, "parquet_paths", {})
-            if parquet_paths:
-                # Try to load from Parquet first (single-table upload = first table)
-                # For multi-table, this loads the unified cohort's first table
-                tables = safe_get(metadata, "tables", [])
-                first_table_name = tables[0] if tables else None
-                if first_table_name and first_table_name in parquet_paths:
-                    from pathlib import Path
+        parquet_paths = safe_get(metadata, "parquet_paths", {})
+        if parquet_paths:
+            # Try to load from Parquet first (single-table upload = first table)
+            # For multi-table, this loads the unified cohort's first table
+            tables = safe_get(metadata, "tables", [])
+            first_table_name = tables[0] if tables else None
+            if first_table_name and first_table_name in parquet_paths:
+                from pathlib import Path
 
-                    from clinical_analytics.storage.datastore import DataStore
+                from clinical_analytics.storage.datastore import DataStore
 
-                    parquet_path = Path(parquet_paths[first_table_name])
-                    if parquet_path.exists():
-                        logger.info(f"Loading from Parquet (lazy): {parquet_path}")
-                        return DataStore.load_from_parquet(parquet_path)
-                    else:
-                        logger.warning(f"Parquet file missing: {parquet_path}. Falling back to CSV.")
+                parquet_path = Path(parquet_paths[first_table_name])
+                if parquet_path.exists():
+                    logger.info(f"Loading from Parquet (lazy): {parquet_path}")
+                    return DataStore.load_from_parquet(parquet_path)
+                else:
+                    logger.warning(f"Parquet file missing: {parquet_path}. Falling back to CSV.")
 
-            # Fallback to CSV if Parquet not available (backward compatibility)
-            logger.debug(f"Loading from CSV (lazy): {csv_path}")
+        # Fallback to CSV if Parquet not available (backward compatibility)
+        logger.debug(f"Loading from CSV (lazy): {csv_path}")
 
-            # Build schema overrides for ID columns to prevent integer overflow
-            # Common ID column names that should always be strings
-            id_column_names = {
-                "patient_id",
-                "patientid",
-                "subject_id",
-                "subjectid",
-                "id",
-                "mrn",
-                "study_id",
-            }
+        # Build schema overrides for ID columns to prevent integer overflow
+        # Common ID column names that should always be strings
+        id_column_names = {
+            "patient_id",
+            "patientid",
+            "subject_id",
+            "subjectid",
+            "id",
+            "mrn",
+            "study_id",
+        }
 
-            # Check metadata for synthetic ID info to identify ID columns
-            from clinical_analytics.core.type_guards import safe_get
+        # Check metadata for synthetic ID info to identify ID columns
+        synthetic_id_metadata = safe_get(metadata, "synthetic_id_metadata", {})
+        if "patient_id" in synthetic_id_metadata:
+            # If patient_id was created synthetically, it's definitely an ID column
+            id_column_names.add("patient_id")
 
-            synthetic_id_metadata = safe_get(metadata, "synthetic_id_metadata", {})
-            if "patient_id" in synthetic_id_metadata:
-                # If patient_id was created synthetically, it's definitely an ID column
-                id_column_names.add("patient_id")
-
-            # Try to read CSV with schema overrides for ID columns
+        # Try to read CSV with schema overrides for ID columns
+        try:
+            # First, scan CSV to get column names without materializing
+            # We need to peek at the schema to know which columns exist
+            sample_lf = pl.scan_csv(csv_path, n_rows=0)
             try:
-                # First, scan CSV to get column names without materializing
-                # We need to peek at the schema to know which columns exist
+                schema = sample_lf.collect_schema()  # Preferred method (Polars 0.19+)
+            except AttributeError:
+                schema = sample_lf.schema  # Fallback for older Polars versions
+
+            # Build schema_overrides dict: force ID columns to Utf8
+            schema_overrides = {}
+            for col_name in schema.keys():
+                if col_name.lower() in {name.lower() for name in id_column_names}:
+                    schema_overrides[col_name] = pl.Utf8
+                    logger.debug(f"Overriding {col_name} to Utf8 to prevent integer overflow")
+
+            # If we have overrides, use them; otherwise use default inference
+            if schema_overrides:
+                return pl.scan_csv(csv_path, schema_overrides=schema_overrides)
+            return pl.scan_csv(csv_path)
+
+        except Exception as e:
+            # If schema inference fails (e.g., integer overflow), retry with patient_id as string
+            logger.warning(f"CSV schema inference failed for {upload_id}: {e}. Retrying with patient_id as string.")
+            # Fallback: force common ID columns to strings
+            fallback_overrides = {
+                "patient_id": pl.Utf8,
+                "patientid": pl.Utf8,
+                "subject_id": pl.Utf8,
+                "subjectid": pl.Utf8,
+                "id": pl.Utf8,
+            }
+            try:
+                return pl.scan_csv(csv_path, schema_overrides=fallback_overrides)
+            except Exception as e2:
+                # Last resort: read all as strings
+                logger.warning(f"Retry with ID overrides failed: {e2}. Falling back to all-string schema.")
+                # Get column names first
                 sample_lf = pl.scan_csv(csv_path, n_rows=0)
                 try:
-                    schema = sample_lf.collect_schema()  # Preferred method (Polars 0.19+)
+                    schema = sample_lf.collect_schema()
                 except AttributeError:
-                    schema = sample_lf.schema  # Fallback for older Polars versions
-
-                # Build schema_overrides dict: force ID columns to Utf8
-                schema_overrides = {}
-                for col_name in schema.keys():
-                    if col_name.lower() in {name.lower() for name in id_column_names}:
-                        schema_overrides[col_name] = pl.Utf8
-                        logger.debug(f"Overriding {col_name} to Utf8 to prevent integer overflow")
-
-                # If we have overrides, use them; otherwise use default inference
-                if schema_overrides:
-                    return pl.scan_csv(csv_path, schema_overrides=schema_overrides)
-                else:
-                    return pl.scan_csv(csv_path)
-
-            except Exception as e:
-                # If schema inference fails (e.g., integer overflow), retry with patient_id as string
-                logger.warning(f"CSV schema inference failed for {upload_id}: {e}. Retrying with patient_id as string.")
-                # Fallback: force common ID columns to strings
-                fallback_overrides = {
-                    "patient_id": pl.Utf8,
-                    "patientid": pl.Utf8,
-                    "subject_id": pl.Utf8,
-                    "subjectid": pl.Utf8,
-                    "id": pl.Utf8,
-                }
-                try:
-                    return pl.scan_csv(csv_path, schema_overrides=fallback_overrides)
-                except Exception as e2:
-                    # Last resort: read all as strings
-                    logger.warning(f"Retry with ID overrides failed: {e2}. Falling back to all-string schema.")
-                    # Get column names first
-                    sample_lf = pl.scan_csv(csv_path, n_rows=0)
-                    try:
-                        schema = sample_lf.collect_schema()
-                    except AttributeError:
-                        schema = sample_lf.schema
-                    all_string_overrides = {col: pl.Utf8 for col in schema.keys()}
-                    return pl.scan_csv(csv_path, schema_overrides=all_string_overrides)
-        else:
-            # For pandas, read as string to avoid integer overflow
-            return pd.read_csv(csv_path, dtype={"patient_id": str})
+                    schema = sample_lf.schema
+                all_string_overrides = {col: pl.Utf8 for col in schema.keys()}
+                return pl.scan_csv(csv_path, schema_overrides=all_string_overrides)
 
     def list_uploads(self) -> list[dict[str, Any]]:
         """

@@ -1,0 +1,31 @@
+{
+  "expectations": [
+    {
+      "text": "The plan distinguishes faster tests (unit/integration) from browser E2E responsibilities",
+      "passed": true,
+      "evidence": "§1 Layering: Keep in pytest vs Keep in Playwright (without_skill playwright plan.md)."
+    },
+    {
+      "text": "The plan mentions explicit readiness waits or stable selectors rather than arbitrary sleeps as the default",
+      "passed": true,
+      "evidence": "§2 Flake guardrails: expect().to_be_visible(), avoid networkidle for Streamlit (without_skill plan.md)."
+    },
+    {
+      "text": "The plan references loading or following a Playwright / webapp-testing style workflow (by name or equivalent: server lifecycle, headless CI)",
+      "passed": true,
+      "evidence": "§3 'webapp-testing skill' and Makefile/URL override pattern (without_skill plan.md)."
+    },
+    {
+      "text": "The plan keeps E2E count intentionally small and high-value",
+      "passed": true,
+      "evidence": "§4 minimal vertical slice: home loads + navigate (without_skill plan.md)."
+    },
+    {
+      "text": "The plan mentions deterministic test data or fixtures rather than manual-only setup",
+      "passed": true,
+      "evidence": "pytest fixtures, seeding via API/fixture-driven (without_skill plan.md §1)."
+    }
+  ],
+  "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0},
+  "timing": {"total_duration_seconds": 0.0}
+}

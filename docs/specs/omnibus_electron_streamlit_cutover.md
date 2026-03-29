@@ -73,7 +73,7 @@ Legend: **S** = Streamlit today | **A** = FastAPI | **E** = Electron renderer
 | ID | Streamlit surface (path or feature) | A: endpoint / contract | E: UI | Required for v1 | Status |
 |----|-------------------------------------|-------------------------|-------|-----------------|--------|
 | P01 | `pages/01_📤_Add_Your_Data.py` — upload, preview, mapping | Extend `datasets` (or dedicated upload routes) per plan Phase 8 | Upload wizard (plan Phase 8) | Yes | **Implemented** |
-| P02 | `pages/02_📊_Your_Dataset.py` — cohort / dataset view | `GET /api/datasets`, preview, detail | Dataset summary + preview | Yes | **Partial** |
+| P02 | `pages/02_📊_Your_Dataset.py` — cohort / dataset view | `GET /api/datasets`, preview, detail | Dataset summary + preview | Yes | **Implemented** |
 | P03 | `pages/03_💬_Ask_Questions.py` — NL chat, trust, clarifying | `POST /api/queries`, SSE stream, sessions | Chat + dataset selector + session sidebar (plan Phases 5–7) | Yes | **Implemented** |
 | P20 | `pages/20_📊_Descriptive_Stats.py` | Same query pipeline; typed result payload | Result renderer — descriptive | Yes | **Implemented** |
 | P21 | `pages/21_📈_Compare_Groups.py` | Same | Result renderer — comparison | Yes | **Implemented** |

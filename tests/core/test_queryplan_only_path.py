@@ -7,7 +7,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import pytest
-
 from clinical_analytics.core.query_plan import QueryPlan
 
 
@@ -35,121 +34,6 @@ class TestQueryPlanOnlyPath:
         assert result is not None
         assert "success" in result
         assert "run_key" in result
-
-    def test_no_direct_compute_analysis_by_type_calls_in_ui(self):
-        """UI pages should not call compute_analysis_by_type() directly."""
-        # This is a static code analysis test
-        import ast
-        from pathlib import Path
-
-        ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
-
-        # Read and parse the file
-        with open(ask_questions_file) as f:
-            tree = ast.parse(f.read())
-
-        # Find all function calls
-        calls = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    calls.append(node.func.id)
-                elif isinstance(node.func, ast.Attribute):
-                    calls.append(node.func.attr)
-
-        # Assert: compute_analysis_by_type should not be called
-        assert "compute_analysis_by_type" not in calls, (
-            "Found legacy compute_analysis_by_type() call in Ask_Questions.py"
-        )
-
-    def test_no_direct_get_or_compute_result_calls_in_ui(self):
-        """UI pages should not call get_or_compute_result() legacy path."""
-        import ast
-        from pathlib import Path
-
-        ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
-
-        with open(ask_questions_file) as f:
-            tree = ast.parse(f.read())
-
-        calls = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name):
-                    calls.append(node.func.id)
-                elif isinstance(node.func, ast.Attribute):
-                    calls.append(node.func.attr)
-
-        # Assert: get_or_compute_result should not be called
-        assert "get_or_compute_result" not in calls, "Found legacy get_or_compute_result() call in Ask_Questions.py"
-
-    def test_all_execution_paths_use_semantic_layer_execute_query_plan(self):
-        """All query execution should go through semantic_layer.execute_query_plan()."""
-        import ast
-        from pathlib import Path
-
-        ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
-
-        with open(ask_questions_file) as f:
-            source = f.read()
-
-        # Check that execute_query_plan is called
-        assert "execute_query_plan" in source, "execute_query_plan() should be present in Ask_Questions.py"
-
-        # Parse AST to verify calls
-        tree = ast.parse(source)
-
-        # Find execute_query_plan calls
-        execute_query_plan_calls = 0
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Attribute) and node.func.attr == "execute_query_plan":
-                    execute_query_plan_calls += 1
-
-        # Assert: Should have at least one execute_query_plan call
-        assert execute_query_plan_calls > 0, "No execute_query_plan() calls found in Ask_Questions.py"
-
-    def test_chat_handler_should_not_execute_query(self):
-        """Chat input handler should not execute query - only parse and rerun."""
-        # This is a static code analysis test
-        from pathlib import Path
-
-        ui_pages_dir = Path("src/clinical_analytics/ui/pages")
-        ask_questions_file = ui_pages_dir / "03_💬_Ask_Questions.py"
-
-        with open(ask_questions_file) as f:
-            source = f.read()
-
-        # Parse AST to find chat handler execution
-        # Find the chat input handler section (look for chat_input_analysis_execution_triggered log)
-        # If chat handler executes query, it will call execute_query_plan() before st.rerun()
-        # We want to verify that chat handler does NOT execute - it should only parse and rerun
-
-        # Find all st.rerun() calls in chat handler context
-        # Chat handler should rerun immediately after parsing, not after execution
-        # Look for pattern: execute_query_plan() followed by st.rerun() in chat handler context
-
-        # Check: chat_input_analysis_execution_triggered should NOT be followed by execute_query_plan
-        # The execution should happen in main flow, not chat handler
-        lines = source.split("\n")
-        chat_handler_executes = False
-        for i, line in enumerate(lines):
-            if "chat_input_analysis_execution_triggered" in line:
-                # Check if execute_query_plan is called in chat handler (within next 50 lines)
-                for j in range(i + 1, min(i + 50, len(lines))):
-                    if "execute_query_plan" in lines[j] and "semantic_layer" in lines[j]:
-                        chat_handler_executes = True
-                        break
-                break
-
-        # Assert: Chat handler should NOT execute query
-        assert not chat_handler_executes, (
-            "Chat handler should not execute query - it should only parse and rerun. "
-            "Execution should happen in main flow after rerun."
-        )
 
     def test_format_execution_result_should_not_reanalyze_result_dataframe(self):
         """format_execution_result() should format result DataFrame, not call compute_analysis_by_type on it."""
@@ -201,9 +85,8 @@ class TestQueryPlanOnlyPath:
         """format_execution_result() should format COUNT result DataFrame correctly."""
         # Arrange: COUNT query result (already aggregated)
         import pandas as pd
-
+        from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
         from clinical_analytics.core.query_plan import QueryPlan
-        from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
         # Simulate result from execute_query_plan() for COUNT with group_by
         # Result DataFrame has: [group_by_column, "count"]

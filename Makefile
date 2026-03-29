@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -10,7 +10,6 @@ PYTEST := $(UV) run pytest
 PYTEST_ARGS ?=
 RUFF := $(UV) run ruff
 MYPY := $(UV) run mypy
-STREAMLIT := $(UV) run streamlit
 PYTHON_RUN := $(UV) run python
 
 # Check if virtual environment exists
@@ -42,7 +41,7 @@ help: ## Show this help message
 	@echo "  make check          # Run all checks (lint, type-check, test)"
 	@echo "  make test-cov       # Run tests with coverage report"
 	@echo "  make test-core      # Run tests for core module only"
-	@echo "  make run            # Start the Streamlit application"
+	@echo "  make run            # Start the FastAPI backend"
 	@echo "  make test-ui PYTEST_ARGS='-k mytest -x'  # Extra pytest flags (optional)"
 	@echo "  make test-electron-e2e  # Playwright (electron/); needs: cd electron && npm ci"
 	@echo "  make test-electron-e2e-native  # Native Electron-binary E2E harness"
@@ -322,21 +321,9 @@ check-fast: ## Run fast code quality checks (lint, format-check) - no tests
 	@$(MAKE) format-check || exit 1
 	@echo "$(GREEN)✅ All fast checks passed!$(NC)"
 
-run: ensure-venv ## Start the Streamlit application (direct, no Ollama management)
-	@echo "$(GREEN)Starting Streamlit application...$(NC)"
-	$(STREAMLIT) run src/clinical_analytics/ui/app.py
+run: run-api ## Start the application (FastAPI backend)
 
-run-app: ## Start application with bash script (stops Ollama on exit)
-	@echo "$(GREEN)Starting application with Ollama lifecycle management...$(NC)"
-	@echo "$(YELLOW)Press Ctrl+C to stop (will stop Ollama)$(NC)"
-	@STOP_OLLAMA_ON_EXIT=true bash scripts/run_app.sh
-
-run-app-keep: ## Start application with bash script (keep Ollama running on exit)
-	@echo "$(GREEN)Starting application (Ollama will keep running)...$(NC)"
-	@echo "$(YELLOW)Press Ctrl+C to stop (Ollama will stay running)$(NC)"
-	@STOP_OLLAMA_ON_EXIT=false bash scripts/run_app.sh
-
-run-api: ensure-venv ## Start FastAPI backend (for Electron desktop dev)
+run-api: ensure-venv ## Start FastAPI backend
 	@echo "$(GREEN)Starting FastAPI on http://127.0.0.1:8000 ...$(NC)"
 	$(UV) run uvicorn clinical_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
 

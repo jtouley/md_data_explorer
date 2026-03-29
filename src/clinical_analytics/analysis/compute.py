@@ -10,8 +10,8 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
-from clinical_analytics.ui.components.question_engine import AnalysisContext
 
 
 def _normalize_column_name(name: str) -> str:
@@ -806,7 +806,7 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
     Returns:
         Serializable dict with analysis results
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisIntent
 
     if context.inferred_intent == AnalysisIntent.DESCRIBE:
         return compute_descriptive_analysis(df, context)

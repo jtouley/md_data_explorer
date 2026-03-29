@@ -1,0 +1,21 @@
+{
+  "expectations": [
+    {
+      "text": "The response rejects accepting a fixed fraction of successes as the production-quality fix",
+      "passed": true,
+      "evidence": "'Do not change the assertion to at least 5 of 10 succeed' (without_skill response.md)."
+    },
+    {
+      "text": "The response proposes investigating root cause (concurrency, pooling, timing, resource limits) or proper isolation",
+      "passed": true,
+      "evidence": "Characterize failures, bisect, fix root cause with pooling/serialization (without_skill response.md §steps)."
+    },
+    {
+      "text": "The response allows explicit skip with concrete TODO only as an interim measure—not weakening the assertion in place",
+      "passed": true,
+      "evidence": "Explicit skip/quarantine with TODO vs partial-success assertion (without_skill response.md step 4)."
+    }
+  ],
+  "summary": {"passed": 3, "failed": 0, "total": 3, "pass_rate": 1.0},
+  "timing": {"total_duration_seconds": 0.0}
+}

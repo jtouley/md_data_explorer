@@ -212,6 +212,8 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .cursor/plans/
+# DuckDB spillover cache for .cursor/skills/read-memories
+.cursor/read-memories/
 
 # Marimo
 marimo/_static/

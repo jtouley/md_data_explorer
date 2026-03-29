@@ -18,7 +18,7 @@ from clinical_analytics.analysis.compute import (
     compute_relationship_analysis,
     compute_survival_analysis,
 )
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
 # All fixtures moved to conftest.py - use shared fixtures
 # sample_numeric_df, sample_categorical_df, sample_mixed_df

@@ -68,7 +68,7 @@ def test_integration_e2e_upload_query_analyze_fullPipeline(real_storage, sample_
         result_pl = pl.from_pandas(result_pd)
 
         from clinical_analytics.analysis.compute import compute_descriptive_analysis
-        from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+        from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
         context = AnalysisContext(
             inferred_intent=AnalysisIntent.DESCRIBE,

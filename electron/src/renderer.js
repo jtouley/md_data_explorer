@@ -22,6 +22,10 @@ const elements = {
   llmBannerText: document.getElementById('llm-banner-text'),
   datasetSelect: document.getElementById('dataset-select'),
   refreshDatasetsBtn: document.getElementById('refresh-datasets'),
+  datasetOverview: document.getElementById('dataset-overview'),
+  datasetOverviewSummary: document.getElementById('dataset-overview-summary'),
+  datasetPreviewHead: document.getElementById('dataset-preview-head'),
+  datasetPreviewBody: document.getElementById('dataset-preview-body'),
   chatContainer: document.getElementById('chat-container'),
   queryForm: document.getElementById('query-form'),
   queryInput: document.getElementById('query-input'),
@@ -186,6 +190,81 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+/**
+ * Render dataset preview table.
+ * @param {string[]} columns
+ * @param {Record<string, unknown>[]} rows
+ */
+function renderDatasetPreview(columns, rows) {
+  const { datasetPreviewHead, datasetPreviewBody } = elements;
+  if (!datasetPreviewHead || !datasetPreviewBody) return;
+
+  datasetPreviewHead.innerHTML = '';
+  datasetPreviewBody.innerHTML = '';
+
+  const headerRow = document.createElement('tr');
+  columns.forEach((column) => {
+    const th = document.createElement('th');
+    th.textContent = column;
+    headerRow.appendChild(th);
+  });
+  datasetPreviewHead.appendChild(headerRow);
+
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    columns.forEach((column) => {
+      const td = document.createElement('td');
+      const value = row?.[column];
+      td.textContent = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      tr.appendChild(td);
+    });
+    datasetPreviewBody.appendChild(tr);
+  });
+}
+
+/**
+ * Load dataset summary + preview panel (P02 parity).
+ */
+async function loadDatasetOverview() {
+  const { datasetOverview, datasetOverviewSummary } = elements;
+  if (!datasetOverview || !datasetOverviewSummary) return;
+
+  if (!state.currentDatasetId) {
+    datasetOverview.classList.add('hidden');
+    datasetOverviewSummary.textContent = '';
+    renderDatasetPreview([], []);
+    return;
+  }
+
+  if (
+    typeof window.clinicalAPI?.getDataset !== 'function' ||
+    typeof window.clinicalAPI?.previewDataset !== 'function'
+  ) {
+    datasetOverview.classList.add('hidden');
+    return;
+  }
+
+  datasetOverview.classList.remove('hidden');
+  datasetOverviewSummary.textContent = 'Loading dataset overview...';
+
+  try {
+    const [detail, preview] = await Promise.all([
+      window.clinicalAPI.getDataset(state.currentDatasetId),
+      window.clinicalAPI.previewDataset(state.currentDatasetId, 10),
+    ]);
+
+    const table = Array.isArray(detail?.tables) && detail.tables.length > 0 ? detail.tables[0] : null;
+    const rowCount = table?.row_count ?? preview?.total_rows ?? 0;
+    const columnCount = Array.isArray(preview?.columns) ? preview.columns.length : 0;
+
+    datasetOverviewSummary.textContent = `${rowCount} rows • ${columnCount} columns`;
+    renderDatasetPreview(preview?.columns || [], preview?.rows || []);
+  } catch (error) {
+    datasetOverviewSummary.textContent = `Could not load dataset overview: ${error.message}`;
+    renderDatasetPreview([], []);
+  }
 }
 
 /**
@@ -742,10 +821,12 @@ function handleDatasetChange(event) {
   if (datasetId) {
     setQueryInputEnabled(true);
     console.log(`📊 Selected dataset: ${datasetId}`);
+    void loadDatasetOverview();
     void loadEnrichmentPanel();
     void loadSessionList();
   } else {
     setQueryInputEnabled(false);
+    void loadDatasetOverview();
     void loadEnrichmentPanel();
   }
 }
@@ -997,6 +1078,7 @@ async function handleFileUpload(file) {
       if (result.upload_id) {
         elements.datasetSelect.value = result.upload_id;
         elements.datasetSelect.dispatchEvent(new Event('change'));
+        void loadDatasetOverview();
       }
     } else {
       renderUploadArea(uploadArea, {

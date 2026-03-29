@@ -9,9 +9,9 @@ Tests verify:
 - Interpretation details are available for display
 """
 
+from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
 class TestTransparentConfidenceDisplay:

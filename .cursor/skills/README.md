@@ -1,30 +1,22 @@
 # Cursor skills (project folder)
 
-## Sync to `~/.cursor/skills/`
+**Packaged** subfolders (`SKILL.md` under `.cursor/skills/<name>/`) are an optional git mirror. **`~/.cursor/skills/<name>/` is canonical** — `make sync-cursor-skills` does not copy them.
 
 ```bash
-make sync-cursor-skills
+make sync-cursor-skills          # mdde-* + mdde-context + mcp-workbench → ~/.cursor/skills/
+make cursor-packaged-skills      # diff repo packaged vs global (+ validate_cursor_skill)
 ```
 
-This runs `scripts/sync_volt_cursor_skills.py`, which:
+Other packaged actions (same script; set `CURSOR_PACKAGED_ARGS`):
 
-1. **Generates** **volt-*** skills (and **volt-mdde-context**) from `.claude/agents/volt-*.md` into `~/.cursor/skills/`.
-2. **Copies** every **packaged** skill under **this directory** whose folder contains **`SKILL.md`** (e.g. **ship-feature-spec-pr/**, including `references/`).
-3. Copies **mcp-workbench.md** into `~/.cursor/skills/references/`.
+```bash
+make cursor-packaged-skills CURSOR_PACKAGED_ARGS=--pull-packaged-from-global
+make cursor-packaged-skills CURSOR_PACKAGED_ARGS=--push-packaged-to-global
+make cursor-packaged-skills CURSOR_PACKAGED_ARGS=--promote-packaged-to-global
+```
 
-Generated volt bodies are **not** committed under `.cursor/skills/`; only repo-authored packaged skills live here.
+`--force` on the script still applies to generated skills, mcp ref, and push. See `uv run python scripts/sync_volt_cursor_skills.py --help`.
 
-## Global-only skills (not in this repo)
+**Elsewhere in `~/.cursor/skills/`** (repo-context, test-quality-loop, read-memories, plan-to-pr, …): attach in Cursor as needed; sync does not delete them.
 
-These stay under **`~/.cursor/skills/`** from other installs; **`make sync-cursor-skills` does not remove them**. Attach in Cursor when needed:
-
-| Skill | Typical path |
-|-------|----------------|
-| **staff-repo-context-mcp** | `~/.cursor/skills/staff-repo-context-mcp/` |
-| **staff-data-driven-test-engineer** | `~/.cursor/skills/staff-data-driven-test-engineer/` |
-| **read-memories** | `~/.cursor/skills/read-memories/` |
-| **`/staff-consult`** | `.cursor/commands/staff-consult.md` |
-
-## Diagnostics (gitignored)
-
-Handoffs for shipping may live under **`.context/diagnostics/`** (default `.gitignore` includes `.context/`). Example: `electron_ui_migration_context.md` for the Electron track.
+**Diagnostics:** `.context/diagnostics/` (often gitignored).

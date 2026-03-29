@@ -32,6 +32,8 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 - AAA pattern: Arrange → Act → Assert
 - Name: `test_unit_scenario_expectedBehavior`
 - Use fixtures from `conftest.py`
+- Enforce meaningful assertions (behavior and invariants, not only existence/type checks)
+- Cover at least one happy path and one failure/edge path for the changed unit
 
 **3. Run Test to Verify Failure (Red)**
 - Command: `uv run pytest tests/.../test_file.py::test_name -xvs`
@@ -58,6 +60,13 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 - Alternative for speed: `make check-fast` (skips slow tests)
 - Catches issues BEFORE commit fails
 - Update TODO
+
+**7b. Integration Test Gate (MANDATORY WHEN CHANGE CROSSES BOUNDARIES)**
+- Trigger this gate when a change touches any boundary: UI↔API, module↔module, persistence, filesystem, network, SQL/DuckDB, IPC, or serialization.
+- Add or update at least one integration test that exercises the real boundary behavior (not a unit-level mock-only substitute).
+- Run integration verification with Makefile commands (for example `make test-integration` or the closest module integration target).
+- If boundary coverage is not applicable, state explicit rationale in output evidence.
+- If pre-existing integration failures block full pass, isolate and run targeted integration tests for changed behavior and report unrelated failures separately.
 
 **8. Commit Changes**
 - All quality gates passed in Step 7
@@ -126,6 +135,8 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 - Skip TODO updates
 - Weaken pre-commit hooks (make warn-only, less strict, or disabled)
 - Add bypasses to hooks (`|| true`, `pass_filenames: false`, etc.)
+- Ship "tests" that only assert non-behavioral trivia (e.g., import succeeds, function exists, constant equals itself)
+- Treat mocked unit tests as a replacement for required boundary integration coverage
 
 ### ✅ ALWAYS
 
@@ -139,6 +150,8 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 - Update TODOs
 - Fix pre-commit violations before committing
 - Keep hooks strict (must block commits unless passing)
+- Assert user-visible or domain-relevant behavior in tests (outputs, state transitions, side effects, invariants, error handling)
+- Add/update integration tests whenever the change crosses system boundaries
 
 ## Output Format
 
@@ -169,6 +182,7 @@ Implement feature/fix following Test-Driven Development (TDD) with full quality 
 - ✅ **Linting**: All checks passed (ruff)
 - ✅ **Types**: Type checking passed (mypy)
 - ✅ **Tests**: X/Y passing
+- ✅ **Integration**: [targeted integration test command + result, or explicit N/A rationale]
 
 ## OPTIONAL CONTEXT
 **Next Steps:**

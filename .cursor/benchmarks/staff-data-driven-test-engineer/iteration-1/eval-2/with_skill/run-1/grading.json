@@ -1,0 +1,21 @@
+{
+  "expectations": [
+    {
+      "text": "The response rejects accepting a fixed fraction of successes as the production-quality fix",
+      "passed": true,
+      "evidence": "'Do not adopt a lowered success threshold' and explains CI would hide regressions (with_skill response.md)."
+    },
+    {
+      "text": "The response proposes investigating root cause (concurrency, pooling, timing, resource limits) or proper isolation",
+      "passed": true,
+      "evidence": "Steps: quantify, isolate bottleneck, fix pool/serialization (with_skill response.md §Next engineering steps)."
+    },
+    {
+      "text": "The response allows explicit skip with concrete TODO only as an interim measure—not weakening the assertion in place",
+      "passed": true,
+      "evidence": "pytest.mark.skip with TODO; 'Do not merge a permanent ≥5/10 assertion' (with_skill response.md)."
+    }
+  ],
+  "summary": {"passed": 3, "failed": 0, "total": 3, "pass_rate": 1.0},
+  "timing": {"total_duration_seconds": 0.0}
+}
