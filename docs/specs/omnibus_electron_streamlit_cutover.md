@@ -98,14 +98,12 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 | 6c | Patch history viewer in Electron | **Implemented** |
 | 7 | Session sidebar | **Implemented** |
 | 8 | Dataset upload in Electron | **Implemented** |
-| 9 | Playwright E2E (v1 gate = Chromium + Vite in CI + `make test-electron-e2e`; Electron **binary** harness on macOS explicitly deferred post-v1) | **Implemented (v1)** |
+| 9 | Playwright E2E (Chromium renderer suite + native Electron-binary harness) | **Implemented** |
 | 10a–e | **Cutover**: delete Streamlit pages → components → `pyproject` → UI tests → final commit | **Pending** (hard gate) |
-
-**Phase 9 gating definition (v1):** Phase 9 is complete when Chromium Playwright E2E passes in CI (`electron-playwright`) and `make test-electron-e2e` is green against Vite + FastAPI. Native Electron-binary Playwright harness on macOS is deferred and is **not** a v1 blocker.
 
 ## Cutover: removing “all traces of Streamlit”
 
-Execute **only after** parity matrix rows with **Required for v1 = Yes** are satisfied and Phase 9 is **Implemented (v1)** per the definition above.
+Execute **only after** parity matrix rows with **Required for v1 = Yes** are satisfied and Phase 9 is **Implemented**.
 
 ### 10a — Pages and app entry
 
