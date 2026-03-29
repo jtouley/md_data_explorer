@@ -97,7 +97,7 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 | 6b–6c | Enrichment + patch history in Electron | **Pending** |
 | 7 | Session sidebar | **Pending** |
 | 8 | Dataset upload in Electron | **Pending** |
-| 9 | Playwright E2E (Chromium + Vite renderer; Electron shell harness deferred) | **Partial** |
+| 9 | Playwright E2E (Chromium + Vite; CI `electron-playwright`; `make test-electron-e2e`; Electron **binary** harness deferred) | **Partial** |
 | 10a–e | **Cutover**: delete Streamlit pages → components → `pyproject` → UI tests → final commit | **Pending** (hard gate) |
 
 ## Cutover: removing “all traces of Streamlit”

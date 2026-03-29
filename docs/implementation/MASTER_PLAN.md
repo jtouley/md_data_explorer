@@ -33,7 +33,7 @@ Statuses below mirror the **omnibus phased table** (authoritative for release ga
 | 6b–6c | Enrichment + patch history in Electron | **Pending** |
 | 7 | Session sidebar | **Pending** |
 | 8 | Dataset upload in Electron | **Pending** (parity **P01**) |
-| 9 | Automated E2E | **Partial** (Playwright **Chromium + Vite**; **Electron harness** blocked by CLI `--remote-debugging-port` issue on macOS — document in omnibus / `electron/playwright.config.js`) |
+| 9 | Automated E2E | **Partial** — Playwright **Chromium + Vite** in CI (`electron-playwright` job) and `make test-electron-e2e`; **Electron binary harness** still blocked by CLI `--remote-debugging-port` on macOS (see `electron/playwright.config.js`) |
 | 10a–e | Delete Streamlit pages → components → `pyproject` → UI tests → docs | **Pending** — **hard gate** until parity + E2E criteria met |
 
 **Cutover rule (non-negotiable):** Do **not** run Phase 10 until the omnibus **parity matrix** rows required for v1 are **Implemented** or **Won’t do** with sign-off.
