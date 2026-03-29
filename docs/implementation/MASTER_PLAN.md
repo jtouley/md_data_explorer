@@ -30,7 +30,8 @@ Statuses below mirror the **omnibus phased table** (authoritative for release ga
 | 0–4 | Core free of UI imports; `/api/datasets`, `/api/queries` + SSE; enrichment API; Electron skeleton | **Done** (subject to `make test-api` / `make test-fast`) |
 | 5 | Chat + dataset selector | **Implemented** (Vite renderer; same URL Electron loads in dev) |
 | 6 | Inline results in chat | **Partial** (generic table + SSE; parity rows P20–P24 still **gap**) |
-| 6b–6c | Enrichment + patch history in Electron | **Pending** |
+| 6b | Enrichment panel (pending suggestions, accept/reject via API) | **Implemented** |
+| 6c | Patch history viewer in Electron | **Pending** |
 | 7 | Session sidebar | **Pending** |
 | 8 | Dataset upload in Electron | **Pending** (parity **P01**) |
 | 9 | Automated E2E | **Partial** — Playwright **Chromium + Vite** in CI (`electron-playwright` job) and `make test-electron-e2e`; **Electron binary harness** still blocked by CLI `--remote-debugging-port` on macOS (see `electron/playwright.config.js`) |

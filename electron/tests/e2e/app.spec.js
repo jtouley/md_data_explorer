@@ -26,4 +26,11 @@ test.describe('Clinical Analytics renderer', () => {
     const statusIndicator = page.locator('#connection-status');
     await expect(statusIndicator).toBeVisible();
   });
+
+  test('enrichment panel is hidden until a dataset is selected', async ({ page }) => {
+    await page.goto('/');
+    const section = page.locator('#enrichment-section');
+    await expect(section).toBeAttached();
+    await expect(section).toHaveClass(/hidden/);
+  });
 });

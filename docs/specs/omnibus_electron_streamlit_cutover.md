@@ -94,7 +94,8 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 | 0–4 | Core cleanup, API datasets/queries/SSE, Electron skeleton | Largely **done** per plan |
 | 5 | Chat interface + dataset selector | **Implemented** (Vite renderer; matches Electron dev URL) |
 | 6 | Inline result rendering in chat | **Partial** (tables + SSE path; rich intent renderers still gap per parity matrix) |
-| 6b–6c | Enrichment + patch history in Electron | **Pending** |
+| 6b | Enrichment panel in Electron (pending + accept/reject) | **Implemented** |
+| 6c | Patch history viewer in Electron | **Pending** |
 | 7 | Session sidebar | **Pending** |
 | 8 | Dataset upload in Electron | **Pending** |
 | 9 | Playwright E2E (Chromium + Vite; CI `electron-playwright`; `make test-electron-e2e`; Electron **binary** harness deferred) | **Partial** |
