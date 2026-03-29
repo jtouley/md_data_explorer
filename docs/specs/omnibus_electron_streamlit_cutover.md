@@ -75,11 +75,11 @@ Legend: **S** = Streamlit today | **A** = FastAPI | **E** = Electron renderer
 | P01 | `pages/01_📤_Add_Your_Data.py` — upload, preview, mapping | Extend `datasets` (or dedicated upload routes) per plan Phase 8 | Upload wizard (plan Phase 8) | **Implemented** |
 | P02 | `pages/02_📊_Your_Dataset.py` — cohort / dataset view | `GET /api/datasets`, preview, detail | Dataset summary + preview | **Partial** |
 | P03 | `pages/03_💬_Ask_Questions.py` — NL chat, trust, clarifying | `POST /api/queries`, SSE stream, sessions | Chat + dataset selector + session sidebar (plan Phases 5–7) | **Implemented** |
-| P20 | `pages/20_📊_Descriptive_Stats.py` | Same query pipeline; typed result payload | Result renderer — descriptive | **Gap** |
-| P21 | `pages/21_📈_Compare_Groups.py` | Same | Result renderer — comparison | **Gap** |
-| P22 | `pages/22_🎯_Risk_Factors.py` | Same | Result renderer — risk | **Gap** |
-| P23 | `pages/23_⏱️_Survival_Analysis.py` | Same | Result renderer — survival | **Gap** |
-| P24 | `pages/24_🔗_Correlations.py` | Same | Result renderer — correlations | **Gap** |
+| P20 | `pages/20_📊_Descriptive_Stats.py` | Same query pipeline; typed result payload | Result renderer — descriptive | **Implemented** |
+| P21 | `pages/21_📈_Compare_Groups.py` | Same | Result renderer — comparison | **Implemented** |
+| P22 | `pages/22_🎯_Risk_Factors.py` | Same | Result renderer — risk | **Implemented** |
+| P23 | `pages/23_⏱️_Survival_Analysis.py` | Same | Result renderer — survival | **Implemented** |
+| P24 | `pages/24_🔗_Correlations.py` | Same | Result renderer — correlations | **Implemented** |
 | ENR | Enrichment panel / patch history (ADR011 components) | `routes/enrichments.py` | Electron panels (plan Phases 6b–6c) | **Implemented** |
 | OLL | Ollama / LLM availability feedback | `GET /health` includes `ollama_*` fields (fast probe) | Banner in Electron renderer | **Implemented** |
 
@@ -93,7 +93,7 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 |-------|------|---------|
 | 0–4 | Core cleanup, API datasets/queries/SSE, Electron skeleton | Largely **done** per plan |
 | 5 | Chat interface + dataset selector | **Implemented** (Vite renderer; matches Electron dev URL) |
-| 6 | Inline result rendering in chat | **Partial** (tables + SSE path; rich intent renderers still gap per parity matrix) |
+| 6 | Inline result rendering in chat | **Implemented** (typed intent summaries + table previews for P20–P24 paths) |
 | 6b | Enrichment panel in Electron (pending + accept/reject) | **Implemented** |
 | 6c | Patch history viewer in Electron | **Implemented** |
 | 7 | Session sidebar | **Implemented** |
