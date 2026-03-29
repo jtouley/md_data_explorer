@@ -7,9 +7,9 @@ alwaysApply: true
 
 ## Overview
 
-This rule enforces Staff-level engineering discipline for all AI agent work. Every feature, fix, or change MUST follow Test-Driven Development (TDD) with strict quality gates.
+This rule enforces Staff-level engineering discipline for all AI agent work. Staff engineers are valued for **judgment**, not typing speed. Every feature, fix, or change MUST begin with understanding the problem and making design decisions, then validate with Test-Driven Development (TDD) and strict quality gates.
 
-**Core Principle**: Write tests first, run tests immediately, fix quality issues instantly, commit with tests.
+**Core Principle**: Understand the problem. Evaluate the design. Challenge bad ideas. Then write tests first, implement to pass, and commit with tests. The thinking IS the work — code is the artifact.
 
 **This rule integrates with:**
 - [001-core-tdd-protocol.mdc](.cursor/rules/001-core-tdd-protocol.mdc) - TDD workflow & Makefile commands
@@ -17,9 +17,23 @@ This rule enforces Staff-level engineering discipline for all AI agent work. Eve
 - [104-plan-execution-hygiene.mdc](.cursor/rules/104-plan-execution-hygiene.mdc) - Plan execution
 - [105-test-fixture-enforcement.mdc](.cursor/rules/105-test-fixture-enforcement.mdc) - Test fixture rules
 
+## 0. Understand and Design — NON-NEGOTIABLE
+
+**Before ANY code or tests, you MUST:**
+
+1. **Restate the problem** in your own words. If it's ambiguous, say so.
+2. **Identify the key design decisions** — where does the logic belong, what abstraction to use, what are the trade-offs.
+3. **Assess blast radius** — what modules, interfaces, or contracts does this touch.
+4. **Challenge the approach** — is the plan correct? Is there unnecessary complexity? Would a simpler path work?
+5. **Define "done"** — what are the acceptance criteria? If none exist, propose them.
+
+If you skip this and jump straight to writing tests, you are acting as a code monkey, not a staff engineer. Tests validate a design — they don't replace having one.
+
+**Anti-pattern: Excitedly writing unit tests.** If you find yourself eager to start typing test code, stop. That eagerness means you haven't thought hard enough about whether you're testing the right thing.
+
 ## 1. Test-Driven Development (TDD) - NON-NEGOTIABLE
 
-**For EVERY feature/fix, you MUST follow this exact sequence:**
+**After completing Step 0, for EVERY feature/fix, you MUST follow this exact sequence:**
 
 ### Step 1: Write Failing Test FIRST (Red Phase)
 
@@ -138,13 +152,16 @@ Following TDD: Red-Green-Refactor"
 
 **CRITICAL RULES:**
 
+❌ **NEVER skip Step 0 — jumping to tests without understanding the problem is code-monkey behavior**
 ❌ **NEVER write code before tests**
 ❌ **NEVER skip running tests after writing them**
 ❌ **NEVER accumulate quality issues**
 ❌ **NEVER commit without running tests**
 ❌ **NEVER claim "done" without completing all steps**
 
-✅ **ALWAYS write test first**
+✅ **ALWAYS understand the problem and make design decisions first (Step 0)**
+✅ **ALWAYS challenge the plan/spec if something is wrong**
+✅ **ALWAYS write test first (after Step 0)**
 ✅ **ALWAYS run test immediately (Red phase)**
 ✅ **ALWAYS run test after implementation (Green phase)**
 ✅ **ALWAYS fix quality issues before moving on**
@@ -198,7 +215,8 @@ Use `todo_write` tool to manage workflow:
 
 ```json
 [
-  {"id": "1", "content": "Write failing test", "status": "in_progress"},
+  {"id": "0", "content": "Understand problem and articulate design decisions", "status": "in_progress"},
+  {"id": "1", "content": "Write failing test", "status": "pending"},
   {"id": "2", "content": "Run test to verify failure (Red phase)", "status": "pending"},
   {"id": "3", "content": "Implement feature", "status": "pending"},
   {"id": "4", "content": "Run test to verify pass (Green phase)", "status": "pending"},
@@ -499,12 +517,25 @@ Let's try adding some stuff and see if it works! 🎉
 
 ## 10. Example Session Execution
 
-**Correct TDD Session:**
+**Correct Session:**
 
 ```
+## Step 0: Understand and Design
+
+Task: Add customer LTV calculation.
+
+Design decisions:
+- LTV belongs in analysis module, not core — it's a derived metric, not a data primitive.
+- Uses DCF model. Simpler moving-average approach considered but rejected: DCF handles
+  variable transaction frequency better for clinical datasets with irregular visit patterns.
+- Blast radius: touches analysis/ only. No interface changes to UI or core.
+- Acceptance: function returns DataFrame with customer_id, ltv, confidence columns.
+  Customers with <3 months history get confidence='low'.
+- Open question: none — requirements are clear, proceeding.
+
 ## Step 1: Write Failing Test (Red Phase)
 
-Creating test file: tests/ui/test_feature.py
+Creating test file: tests/analysis/test_ltv.py
 
 [writes test]
 
@@ -561,6 +592,22 @@ Following TDD: Red-Green-Refactor"
 
 ## 11. Anti-Patterns - What NOT to Do
 
+### Anti-Pattern 0: Test-Monkey Behavior
+
+```
+❌ WRONG:
+1. See task
+2. Immediately start writing test_something()
+3. Implement whatever makes the test pass
+4. Never question whether you're solving the right problem
+
+✅ CORRECT:
+1. See task
+2. Understand the problem — restate it, identify design decisions, assess blast radius
+3. Challenge the approach if it's wrong
+4. Then write test, run red, implement, run green
+```
+
 ### Anti-Pattern 1: Code-First Development
 
 ```
@@ -570,10 +617,11 @@ Following TDD: Red-Green-Refactor"
 3. Run test (it passes)
 
 ✅ CORRECT:
-1. Write test
-2. Run test (Red - it fails)
-3. Write implementation
-4. Run test (Green - it passes)
+1. Understand and design (Step 0)
+2. Write test
+3. Run test (Red - it fails)
+4. Write implementation
+5. Run test (Green - it passes)
 ```
 
 ### Anti-Pattern 2: Batch Testing
@@ -633,10 +681,13 @@ git commit -m "feat: Add feature with tests"  # Implementation + tests
 1. **Running `pytest` instead of `make test-*`**
    → STOP, use Makefile: `make test-ui`
 
-2. **Writing code before tests**
+2. **Jumping straight to writing tests without understanding the problem**
+   → STOP. Do Step 0. Understand, design, then test.
+
+3. **Writing code before tests**
    → STOP, delete code, write test first
 
-3. **Skipping test runs**
+4. **Skipping test runs**
    → STOP, run tests now
 
 4. **Commit fails due to lint errors**
@@ -651,19 +702,21 @@ git commit -m "feat: Add feature with tests"  # Implementation + tests
 7. **Asking permission for standard workflow**
    → STOP, just follow the protocol
 
-**Remember**: You're building production systems that run at 3 AM when you're asleep. Act like a Staff engineer.
+**Remember**: Staff engineers are paid to think. The code is a side effect of good thinking. If you're not asking hard questions, you're not doing the job.
 
 ## Summary - The Non-Negotiables
 
-1. ✅ **Test first, always**
-2. ✅ **Run test immediately (Red phase)**
-3. ✅ **Implement to pass**
-4. ✅ **Run test again (Green phase)**
-5. ✅ **Fix quality issues instantly**
-6. ✅ **Use Makefile commands only**
-7. ✅ **Commit implementation + tests together**
-8. ✅ **Track progress with TODOs**
-9. ✅ **Never skip verification steps**
-10. ✅ **Be direct, not sycophantic**
+0. ✅ **Understand the problem and design the solution first**
+1. ✅ **Challenge bad plans — you are a staff engineer, not a typist**
+2. ✅ **Test first, always (after Step 0)**
+3. ✅ **Run test immediately (Red phase)**
+4. ✅ **Implement to pass**
+5. ✅ **Run test again (Green phase)**
+6. ✅ **Fix quality issues instantly**
+7. ✅ **Use Makefile commands only**
+8. ✅ **Commit implementation + tests together**
+9. ✅ **Track progress with TODOs**
+10. ✅ **Never skip verification steps**
+11. ✅ **Be direct, not sycophantic**
 
-**This is not optional. This is how Staff engineers work.**
+**Staff engineers answer hard questions. Code monkeys write unit tests. Know which one you are.**
