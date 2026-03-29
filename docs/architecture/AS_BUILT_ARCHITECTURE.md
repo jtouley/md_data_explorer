@@ -56,4 +56,4 @@ make run-api   # API (another terminal)
 make run       # Streamlit
 ```
 
-Electron verification is not run in GitHub Actions today; use the `electron/` package scripts when working on the desktop shell.
+GitHub Actions runs the **Electron renderer** Playwright job (`electron-playwright` in `.github/workflows/ci.yml`). Locally use `make test-electron-e2e` (after `cd electron && npm ci`) or `cd electron && npm run test:e2e`. This is Chromium + Vite, not the packaged Electron binary.

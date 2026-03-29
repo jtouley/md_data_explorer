@@ -12,39 +12,49 @@
 
 ```
 tests/
-├── fixtures/                  # Test data
-│   ├── test_data.csv
-│   └── mimic_demo/
-├── test_core/                 # Core module tests
-│   ├── test_semantic.py
-│   ├── test_registry.py
-│   └── test_nl_query_engine.py
-├── test_datasets/             # Dataset tests
-├── test_ui/                   # UI component tests
-└── conftest.py                # Shared fixtures
+├── conftest.py           # Shared fixtures (check here first)
+├── core/                 # Core module tests
+├── api/                  # FastAPI tests
+├── ui/                   # Streamlit-oriented tests
+├── datasets/, analysis/, e2e/, ...
+└── fixtures/             # Static files
 ```
 
-## Running Tests
+Authoritative conventions: **`tests/AGENTS.md`** at the **repository root** (fixtures, Polars asserts, naming).
+
+## Running tests (Makefile first)
+
+Use **`make`** targets so markers, parallelism, and the project `uv` environment stay aligned with CI.
 
 ```bash
-# Run all tests
-pytest tests/
-
-# Run specific test file
-pytest tests/test_core/test_nl_query_engine.py
-
-# Run specific test function
-pytest tests/test_core/test_nl_query_engine.py::test_pattern_matching
-
-# Run with coverage
-pytest tests/ --cov=src/clinical_analytics --cov-report=html
-
-# Run with verbose output
-pytest tests/ -v -s
-
-# Run fast tests only (skip slow integration tests)
-pytest tests/ -m "not slow"
+make install-dev
+make test-fast           # Default pre-PR feedback (skips slow)
+make test                # Full suite (parallel)
+make test-core           # tests/core only
+make test-ui             # tests/ui only
+make test-api            # tests/api
+make test-e2e            # Python e2e under tests/e2e
+make test-electron-e2e   # Playwright in electron/ (after cd electron && npm ci)
+make test-cov-check      # Coverage gate (67% minimum)
 ```
+
+### Optional: `PYTEST_ARGS`
+
+Append **extra pytest flags** (for example `-k`, `-x`, `-vv`). Recipe lines already pin the test directory or `tests/` root, so use this for **filters and verbosity**, not as a substitute for choosing the right `make test-*` target.
+
+```bash
+make test-ui-serial PYTEST_ARGS='-k my_test_name -xvs'
+```
+
+For **single-file** debugging, red-phase **`uv run pytest path/to/test.py`** is acceptable per project rules; green phase should still go through **`make test-*`** where possible.
+
+## Automation matrix: CI, Makefile, Electron
+
+| Layer | What runs it | What it covers |
+|-------|----------------|----------------|
+| **GitHub Actions** `.github/workflows/ci.yml` | Push / PR to `main` or `develop` | `make lint`, `make format-check`, `make type-check`, `make test-fast`, job **electron-playwright** (`npm ci` + Playwright Chromium in `electron/`), `make test-cov-check`, `make test-cov-diff` |
+| **Local** | Developer | Same as CI plus `make test`, `make test-e2e`, `make test-electron-e2e` (requires `electron/node_modules`), module targets |
+| **Electron** | `make test-electron-e2e` or `cd electron && npm run test:e2e` | Playwright against the **Vite renderer** (Chromium), same as CI — not the full packaged Electron binary (see `electron/playwright.config.js`) |
 
 ## Writing Tests
 

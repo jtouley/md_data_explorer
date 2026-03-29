@@ -1145,7 +1145,18 @@ make test-fast         # Fast tests only (skip slow)
 make test-cov          # Tests with coverage report
 make test-unit         # Unit tests only
 make test-integration  # Integration tests only
+make test-electron-e2e # Playwright in electron/ (Node; after cd electron && npm ci)
 ```
+
+### Optional: `PYTEST_ARGS`
+
+The root `Makefile` defines `PYTEST_ARGS` (default empty). Append **extra pytest flags** after the recipe’s fixed paths—for example `-k`, `-x`, `-vv`. Prefer **serial** targets when debugging (`make test-core-serial`, `make test-ui-serial`).
+
+```bash
+make test-ui-serial PYTEST_ARGS='-k my_test -xvs'
+```
+
+Narrow **single-file** red-phase runs may still use `uv run pytest path/to/test.py` per project TDD rules; use `make test-*` for green phase and CI parity.
 
 ### Quality Gates (Run Before Commit)
 
