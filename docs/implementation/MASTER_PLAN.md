@@ -32,7 +32,7 @@ Statuses below mirror the **omnibus phased table** (authoritative for release ga
 | 6 | Inline results in chat | **Partial** (generic table + SSE; parity rows P20–P24 still **gap**) |
 | 6b | Enrichment panel (pending suggestions, accept/reject via API) | **Implemented** |
 | 6c | Patch history viewer in Electron | **Implemented** |
-| 7 | Session sidebar | **Pending** |
+| 7 | Session sidebar | **Implemented** |
 | 8 | Dataset upload in Electron | **Pending** (parity **P01**) |
 | 9 | Automated E2E | **Partial** — Playwright **Chromium + Vite** in CI (`electron-playwright` job) and `make test-electron-e2e`; **Electron binary harness** still blocked by CLI `--remote-debugging-port` on macOS (see `electron/playwright.config.js`) |
 | 10a–e | Delete Streamlit pages → components → `pyproject` → UI tests → docs | **Pending** — **hard gate** until parity + E2E criteria met |

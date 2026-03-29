@@ -27,8 +27,21 @@
       <span id="llm-banner-text" class="llm-banner-text"></span>
     </div>
 
-    <!-- Main Content Area -->
-    <main class="app-main">
+    <!-- Body (sidebar + main) -->
+    <div class="app-body">
+      <!-- Session Sidebar -->
+      <aside id="session-sidebar" class="session-sidebar" data-testid="session-sidebar">
+        <div class="sidebar-header">
+          <h2 class="sidebar-title">Sessions</h2>
+          <button type="button" id="new-chat-btn" class="btn-new-chat" data-testid="new-chat-btn" title="New chat">
+            + New
+          </button>
+        </div>
+        <ul id="session-list" class="session-list" data-testid="session-list"></ul>
+      </aside>
+
+      <!-- Main Content Area -->
+      <main class="app-main">
       <!-- Dataset Selector Bar -->
       <div class="dataset-bar">
         <label for="dataset-select" class="dataset-label">Dataset:</label>
@@ -97,6 +110,7 @@
         </div>
       </div>
     </main>
+    </div><!-- /.app-body -->
   </div>
 
   <script type="module" src="/src/renderer.js"></script>
