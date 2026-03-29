@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-electron-e2e test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills benchmark-cursor-skills
+.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -45,6 +45,7 @@ help: ## Show this help message
 	@echo "  make run            # Start the Streamlit application"
 	@echo "  make test-ui PYTEST_ARGS='-k mytest -x'  # Extra pytest flags (optional)"
 	@echo "  make test-electron-e2e  # Playwright (electron/); needs: cd electron && npm ci"
+	@echo "  make test-electron-quality  # Electron unit coverage + Playwright E2E"
 
 install: ## Install production dependencies
 	@echo "$(GREEN)Installing production dependencies...$(NC)"
@@ -130,8 +131,7 @@ test-e2e-serial: ensure-venv ## Run end-to-end tests serially (for debugging)
 	@echo "$(GREEN)Running end-to-end tests serially...$(NC)"
 	$(PYTEST) $(TEST_DIR)/e2e -v $(PYTEST_ARGS)
 
-test-electron-e2e: ## Playwright against Electron Vite renderer (Chromium); not the full Electron binary
-	@echo "$(GREEN)Running Electron renderer Playwright suite...$(NC)"
+electron-npm-ready:
 	@if [ ! -f electron/package.json ]; then \
 		echo "$(RED)electron/package.json not found$(NC)"; \
 		exit 1; \
@@ -140,7 +140,14 @@ test-electron-e2e: ## Playwright against Electron Vite renderer (Chromium); not 
 		echo "$(YELLOW)electron/node_modules missing. Run: cd electron && npm ci$(NC)"; \
 		exit 1; \
 	fi
+
+test-electron-e2e: electron-npm-ready ## Playwright against Electron Vite renderer (Chromium); not the full Electron binary
+	@echo "$(GREEN)Running Electron renderer Playwright suite...$(NC)"
 	cd electron && npm run test:e2e
+
+test-electron-quality: electron-npm-ready ## Electron quality gate: Vitest coverage threshold + Playwright E2E
+	@echo "$(GREEN)Running Electron JS quality gate (coverage + E2E)...$(NC)"
+	cd electron && npm run test:quality
 
 test-loader: ensure-venv ## Run loader module tests in parallel (default)
 	@echo "$(GREEN)Running loader module tests in parallel...$(NC)"
@@ -447,9 +454,21 @@ checkpoint-resume: ## Show checkpoint for resuming work (requires TASK_ID)
 	fi; \
 	cat "$$FILE"
 
-sync-cursor-skills: ## Sync all Cursor skills: volt-* from .claude/agents + packaged under .cursor/skills/
+sync-cursor-skills: ## Write mdde-* + mdde-context + mcp-workbench to ~/.cursor/skills/ (does not sync packaged subfolders)
 	@echo "$(GREEN)Syncing Cursor skills to ~/.cursor/skills/ ...$(NC)"
 	$(PYTHON_RUN) scripts/sync_volt_cursor_skills.py
+
+sync-cursor-skills-force: ## Same as sync-cursor-skills but overwrites global even when global copy is newer
+	@echo "$(GREEN)Syncing Cursor skills (force) to ~/.cursor/skills/ ...$(NC)"
+	$(PYTHON_RUN) scripts/sync_volt_cursor_skills.py --force
+
+# Default: diff repo .cursor/skills/<pkg>/ vs ~/.cursor/skills/. Override, e.g.:
+#   make cursor-packaged-skills CURSOR_PACKAGED_ARGS="--pull-packaged-from-global"
+#   make cursor-packaged-skills CURSOR_PACKAGED_ARGS="--push-packaged-to-global"
+#   make cursor-packaged-skills CURSOR_PACKAGED_ARGS="--promote-packaged-to-global"
+CURSOR_PACKAGED_ARGS ?= --diff-packaged
+cursor-packaged-skills: ## Packaged skills vs global (~/.cursor/skills/); see CURSOR_PACKAGED_ARGS above
+	$(PYTHON_RUN) scripts/sync_volt_cursor_skills.py $(CURSOR_PACKAGED_ARGS)
 
 benchmark-cursor-skills: ## Validate every global Cursor skill (skill-creator-style YAML gate)
 	@echo "$(GREEN)Benchmarking ~/.cursor/skills/ (validation only)...$(NC)"

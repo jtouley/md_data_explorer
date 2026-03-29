@@ -3,6 +3,7 @@ const path = require('path');
 const { defineConfig, devices } = require('@playwright/test');
 
 const electronRoot = path.resolve(__dirname);
+const repoRoot = path.resolve(__dirname, '..');
 
 /**
  * E2E against the Vite renderer (same UI Electron loads in dev).
@@ -34,11 +35,20 @@ module.exports = defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'npx vite --config vite.renderer.config.mjs --host 127.0.0.1 --port 5173 --strictPort',
-    cwd: electronRoot,
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000,
-  },
+  webServer: [
+    {
+      command: 'npx vite --config vite.renderer.config.mjs --host 127.0.0.1 --port 5173 --strictPort',
+      cwd: electronRoot,
+      url: 'http://127.0.0.1:5173',
+      reuseExistingServer: true,
+      timeout: 120000,
+    },
+    {
+      command: 'uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8000',
+      cwd: repoRoot,
+      url: 'http://127.0.0.1:8000/health',
+      reuseExistingServer: true,
+      timeout: 120000,
+    },
+  ],
 });
