@@ -8,6 +8,7 @@ import './index.css';
 import { normalizePendingResponse, renderEnrichmentCards } from './enrichmentPanel.js';
 import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
 import { buildQueryCompletedPresentation } from './resultPresentation.js';
+import { normalizeSessionListResponse, renderSessionList } from './sessionSidebar.js';
 
 // ============================================================================
 // DOM Elements
@@ -31,6 +32,9 @@ const elements = {
   refreshEnrichmentsBtn: document.getElementById('refresh-enrichments'),
   patchHistoryHint: document.getElementById('patch-history-hint'),
   patchHistoryBody: document.getElementById('patch-history-body'),
+  sessionSidebar: document.getElementById('session-sidebar'),
+  sessionList: document.getElementById('session-list'),
+  newChatBtn: document.getElementById('new-chat-btn'),
 };
 
 // ============================================================================
@@ -600,6 +604,129 @@ async function handlePatchRevert(patchId) {
 }
 
 // ============================================================================
+// Session Sidebar
+// ============================================================================
+
+async function loadSessionList() {
+  const { sessionList } = elements;
+  if (!sessionList) return;
+  if (typeof window.clinicalAPI?.listSessions !== 'function') return;
+
+  try {
+    const raw = await window.clinicalAPI.listSessions();
+    const { sessions } = normalizeSessionListResponse(raw);
+    renderSessionList(sessionList, sessions, state.sessionId, {
+      onSelect: (id) => handleSessionSelect(id, sessions),
+      onDelete: (id) => handleSessionDelete(id),
+    });
+  } catch (error) {
+    console.error('Failed to load sessions:', error);
+  }
+}
+
+/**
+ * @param {string} sessionId
+ * @param {object[]} sessions
+ */
+function handleSessionSelect(sessionId, sessions) {
+  if (sessionId === state.sessionId) return;
+  const session = sessions.find((s) => s.session_id === sessionId);
+
+  state.sessionId = sessionId;
+  state.messages = [];
+  state.isProcessing = false;
+  if (state.activeStream) {
+    state.activeStream.close();
+    state.activeStream = null;
+  }
+
+  const { chatContainer } = elements;
+  chatContainer.innerHTML = '';
+  const welcome = document.createElement('div');
+  welcome.className = 'welcome-message';
+  welcome.innerHTML = `
+    <div class="welcome-icon">📊</div>
+    <h2>Session restored</h2>
+    <p>Switched to session <code>${escapeHtml(sessionId)}</code>. New queries will be associated with this session.</p>
+  `;
+  chatContainer.appendChild(welcome);
+
+  if (session?.dataset_id && session.dataset_id !== state.currentDatasetId) {
+    const { datasetSelect } = elements;
+    if (datasetSelect) {
+      datasetSelect.value = session.dataset_id;
+      state.currentDatasetId = session.dataset_id;
+      setQueryInputEnabled(true);
+      void loadEnrichmentPanel();
+    }
+  }
+
+  void loadSessionList();
+  console.log('Switched to session:', sessionId);
+}
+
+async function handleSessionDelete(sessionId) {
+  if (typeof window.clinicalAPI?.deleteSession !== 'function') return;
+  try {
+    await window.clinicalAPI.deleteSession(sessionId);
+    if (sessionId === state.sessionId) {
+      await handleNewChat();
+    } else {
+      await loadSessionList();
+    }
+  } catch (error) {
+    console.error('Delete session failed:', error);
+  }
+}
+
+async function handleNewChat() {
+  if (!state.currentDatasetId) return;
+  if (typeof window.clinicalAPI?.createSession !== 'function') {
+    state.sessionId = generateSessionId();
+    resetChatUI();
+    return;
+  }
+  try {
+    const res = await window.clinicalAPI.createSession(state.currentDatasetId);
+    state.sessionId = res.session_id;
+    resetChatUI();
+    await loadSessionList();
+  } catch (error) {
+    console.error('Create session failed:', error);
+    state.sessionId = generateSessionId();
+    resetChatUI();
+  }
+}
+
+function resetChatUI() {
+  state.messages = [];
+  state.isProcessing = false;
+  if (state.activeStream) {
+    state.activeStream.close();
+    state.activeStream = null;
+  }
+  const { chatContainer } = elements;
+  chatContainer.innerHTML = '';
+  const welcome = document.createElement('div');
+  welcome.className = 'welcome-message';
+  welcome.innerHTML = `
+    <div class="welcome-icon">📊</div>
+    <h2>Welcome to Clinical Analytics</h2>
+    <p>Select a dataset above and ask questions in natural language.</p>
+    <div class="example-queries">
+      <p class="examples-title">Try asking:</p>
+      <ul>
+        <li>"What is the average age of patients?"</li>
+        <li>"Compare outcomes between treatment groups"</li>
+        <li>"Show me the distribution of diagnoses"</li>
+      </ul>
+    </div>
+  `;
+  chatContainer.appendChild(welcome);
+  setQueryInputEnabled(!!state.currentDatasetId);
+}
+
+// ============================================================================
 // Event Handlers
 // ============================================================================
 
@@ -614,6 +741,7 @@ function handleDatasetChange(event) {
     setQueryInputEnabled(true);
     console.log(`📊 Selected dataset: ${datasetId}`);
     void loadEnrichmentPanel();
+    void loadSessionList();
   } else {
     setQueryInputEnabled(false);
     void loadEnrichmentPanel();
@@ -851,12 +979,17 @@ async function init() {
   elements.queryForm.addEventListener('submit', handleQuerySubmit);
   elements.queryInput.addEventListener('input', handleQueryInputChange);
 
+  if (elements.newChatBtn) {
+    elements.newChatBtn.addEventListener('click', () => void handleNewChat());
+  }
+
   // Check backend connection
   await checkHealth();
 
-  // Load datasets if connected
+  // Load datasets and sessions if connected
   if (state.connected) {
     await loadDatasets();
+    await loadSessionList();
   }
 
   console.log('✅ Initialization complete');

@@ -74,7 +74,7 @@ Legend: **S** = Streamlit today | **A** = FastAPI | **E** = Electron renderer
 |----|-------------------------------------|-------------------------|-------|--------|
 | P01 | `pages/01_📤_Add_Your_Data.py` — upload, preview, mapping | Extend `datasets` (or dedicated upload routes) per plan Phase 8 | Upload wizard (plan Phase 8) | **Gap** |
 | P02 | `pages/02_📊_Your_Dataset.py` — cohort / dataset view | `GET /api/datasets`, preview, detail | Dataset summary + preview | **Partial** |
-| P03 | `pages/03_💬_Ask_Questions.py` — NL chat, trust, clarifying | `POST /api/queries`, SSE stream, sessions | Chat + dataset selector (plan Phases 5–7) | **Partial** |
+| P03 | `pages/03_💬_Ask_Questions.py` — NL chat, trust, clarifying | `POST /api/queries`, SSE stream, sessions | Chat + dataset selector + session sidebar (plan Phases 5–7) | **Implemented** |
 | P20 | `pages/20_📊_Descriptive_Stats.py` | Same query pipeline; typed result payload | Result renderer — descriptive | **Gap** |
 | P21 | `pages/21_📈_Compare_Groups.py` | Same | Result renderer — comparison | **Gap** |
 | P22 | `pages/22_🎯_Risk_Factors.py` | Same | Result renderer — risk | **Gap** |
@@ -96,7 +96,7 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 | 6 | Inline result rendering in chat | **Partial** (tables + SSE path; rich intent renderers still gap per parity matrix) |
 | 6b | Enrichment panel in Electron (pending + accept/reject) | **Implemented** |
 | 6c | Patch history viewer in Electron | **Implemented** |
-| 7 | Session sidebar | **Pending** |
+| 7 | Session sidebar | **Implemented** |
 | 8 | Dataset upload in Electron | **Pending** |
 | 9 | Playwright E2E (Chromium + Vite; CI `electron-playwright`; `make test-electron-e2e`; Electron **binary** harness deferred) | **Partial** |
 | 10a–e | **Cutover**: delete Streamlit pages → components → `pyproject` → UI tests → final commit | **Pending** (hard gate) |

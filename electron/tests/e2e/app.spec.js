@@ -39,4 +39,22 @@ test.describe('Clinical Analytics renderer', () => {
     const body = page.getByTestId('patch-history-body');
     await expect(body).toBeAttached();
   });
+
+  test('session sidebar is visible', async ({ page }) => {
+    await page.goto('/');
+    const sidebar = page.getByTestId('session-sidebar');
+    await expect(sidebar).toBeVisible();
+  });
+
+  test('new chat button exists in sidebar', async ({ page }) => {
+    await page.goto('/');
+    const btn = page.getByTestId('new-chat-btn');
+    await expect(btn).toBeVisible();
+  });
+
+  test('session list container is present', async ({ page }) => {
+    await page.goto('/');
+    const list = page.getByTestId('session-list');
+    await expect(list).toBeAttached();
+  });
 });

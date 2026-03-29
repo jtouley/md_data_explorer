@@ -238,6 +238,58 @@ const clinicalAPI = {
     }
     return data;
   },
+
+  /**
+   * List sessions, optionally filtered by dataset.
+   * @param {{ datasetId?: string, limit?: number, offset?: number }} [opts]
+   * @returns {Promise<{ sessions: object[], total: number }>}
+   */
+  async listSessions(opts = {}) {
+    const params = new URLSearchParams();
+    if (opts.datasetId) params.set('dataset_id', opts.datasetId);
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    if (opts.offset != null) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    const url = `${API_BASE_URL}/api/sessions${qs ? `?${qs}` : ''}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to list sessions: ${response.statusText}`);
+    }
+    return await response.json();
+  },
+
+  /**
+   * Create a new session.
+   * @param {string} datasetId
+   * @returns {Promise<{ session_id: string, dataset_id: string, created_at: string }>}
+   */
+  async createSession(datasetId) {
+    const response = await fetch(`${API_BASE_URL}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: datasetId }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data?.detail || `Failed to create session: ${response.statusText}`);
+    }
+    return await response.json();
+  },
+
+  /**
+   * Delete a session.
+   * @param {string} sessionId
+   * @returns {Promise<void>}
+   */
+  async deleteSession(sessionId) {
+    const enc = encodeURIComponent(sessionId);
+    const response = await fetch(`${API_BASE_URL}/api/sessions/${enc}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok && response.status !== 204) {
+      throw new Error(`Failed to delete session: ${response.statusText}`);
+    }
+  },
 };
 
 // Expose clinicalAPI to renderer process via contextBridge
