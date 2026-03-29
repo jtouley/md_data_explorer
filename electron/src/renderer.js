@@ -5,10 +5,8 @@
  * and chat message management.
  */
 import './index.css';
-import {
-  normalizePendingResponse,
-  renderEnrichmentCards,
-} from './enrichmentPanel.js';
+import { normalizePendingResponse, renderEnrichmentCards } from './enrichmentPanel.js';
+import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
 import { buildQueryCompletedPresentation } from './resultPresentation.js';
 
 // ============================================================================
@@ -31,6 +29,8 @@ const elements = {
   enrichmentHint: document.getElementById('enrichment-hint'),
   enrichmentList: document.getElementById('enrichment-list'),
   refreshEnrichmentsBtn: document.getElementById('refresh-enrichments'),
+  patchHistoryHint: document.getElementById('patch-history-hint'),
+  patchHistoryBody: document.getElementById('patch-history-body'),
 };
 
 // ============================================================================
@@ -455,7 +455,8 @@ const noopEnrichment = () => {};
  * Load pending metadata enrichments for the current dataset into the panel.
  */
 async function loadEnrichmentPanel() {
-  const { enrichmentSection, enrichmentHint, enrichmentList } = elements;
+  const { enrichmentSection, enrichmentHint, enrichmentList, patchHistoryHint, patchHistoryBody } =
+    elements;
 
   if (!enrichmentSection || !enrichmentHint || !enrichmentList) return;
 
@@ -463,37 +464,74 @@ async function loadEnrichmentPanel() {
     enrichmentSection.classList.add('hidden');
     enrichmentHint.textContent = '';
     enrichmentList.replaceChildren();
+    if (patchHistoryHint) patchHistoryHint.textContent = '';
+    if (patchHistoryBody) patchHistoryBody.replaceChildren();
     return;
   }
 
   enrichmentSection.classList.remove('hidden');
-  enrichmentHint.textContent = 'Loading enrichments…';
+  enrichmentHint.textContent = 'Loading pending…';
+  if (patchHistoryHint) patchHistoryHint.textContent = 'Loading history…';
+  if (patchHistoryBody) patchHistoryBody.replaceChildren();
 
-  if (typeof window.clinicalAPI?.getPendingEnrichments !== 'function') {
+  const hasPending = typeof window.clinicalAPI?.getPendingEnrichments === 'function';
+  const hasHistory = typeof window.clinicalAPI?.getEnrichmentHistory === 'function';
+
+  if (!hasPending && !hasHistory) {
     enrichmentHint.textContent = 'Enrichment API not available.';
     renderEnrichmentCards(enrichmentList, [], {
       onAccept: noopEnrichment,
       onReject: noopEnrichment,
     });
+    if (patchHistoryHint) patchHistoryHint.textContent = '';
     return;
   }
 
   try {
-    const raw = await window.clinicalAPI.getPendingEnrichments(state.currentDatasetId);
-    const { suggestions, total } = normalizePendingResponse(raw);
+    const pendingP = hasPending
+      ? window.clinicalAPI.getPendingEnrichments(state.currentDatasetId)
+      : Promise.resolve({ suggestions: [], total: 0 });
+    const historyP = hasHistory
+      ? window.clinicalAPI.getEnrichmentHistory(state.currentDatasetId)
+      : Promise.resolve({ patches: [], total: 0 });
+
+    const [pendingRaw, historyRaw] = await Promise.all([pendingP, historyP]);
+
+    const { suggestions, total } = normalizePendingResponse(pendingRaw);
     enrichmentHint.textContent =
-      total === 0 ? 'No pending suggestions.' : `${total} pending suggestion${total === 1 ? '' : 's'}.`;
+      total === 0
+        ? 'No pending suggestions.'
+        : `${total} pending suggestion${total === 1 ? '' : 's'}.`;
     renderEnrichmentCards(enrichmentList, suggestions, {
       onAccept: (patchId) => handleEnrichmentAccept(patchId),
       onReject: (patchId) => handleEnrichmentReject(patchId),
     });
+
+    const { patches, total: histTotal } = normalizeHistoryResponse(historyRaw);
+    if (patchHistoryHint) {
+      patchHistoryHint.textContent =
+        histTotal === 0
+          ? 'No history entries.'
+          : `${histTotal} patch${histTotal === 1 ? '' : 'es'} in log (newest first).`;
+    }
+    if (patchHistoryBody) {
+      renderPatchHistoryTable(patchHistoryBody, patches, {
+        onRevert: (patchId) => handlePatchRevert(patchId),
+      });
+    }
   } catch (error) {
-    console.error('❌ Failed to load enrichments:', error);
+    console.error('❌ Failed to load enrichments / history:', error);
     enrichmentHint.textContent = `Could not load enrichments: ${error.message}`;
     renderEnrichmentCards(enrichmentList, [], {
       onAccept: noopEnrichment,
       onReject: noopEnrichment,
     });
+    if (patchHistoryHint) {
+      patchHistoryHint.textContent = `History: ${error.message}`;
+    }
+    if (patchHistoryBody) {
+      renderPatchHistoryTable(patchHistoryBody, [], { onRevert: noopEnrichment });
+    }
   }
 }
 
@@ -504,10 +542,7 @@ async function handleEnrichmentAccept(patchId) {
   const { enrichmentHint } = elements;
   if (!state.currentDatasetId) return;
   try {
-    const res = await window.clinicalAPI.acceptEnrichment(
-      state.currentDatasetId,
-      patchId
-    );
+    const res = await window.clinicalAPI.acceptEnrichment(state.currentDatasetId, patchId);
     if (res && res.success === false) {
       throw new Error(res.message || 'Accept failed');
     }
@@ -527,10 +562,7 @@ async function handleEnrichmentReject(patchId) {
   const { enrichmentHint } = elements;
   if (!state.currentDatasetId) return;
   try {
-    const res = await window.clinicalAPI.rejectEnrichment(
-      state.currentDatasetId,
-      patchId
-    );
+    const res = await window.clinicalAPI.rejectEnrichment(state.currentDatasetId, patchId);
     if (res && res.success === false) {
       throw new Error(res.message || 'Reject failed');
     }
@@ -539,6 +571,30 @@ async function handleEnrichmentReject(patchId) {
     console.error('Reject enrichment failed:', error);
     if (enrichmentHint) {
       enrichmentHint.textContent = error.message || 'Reject failed';
+    }
+  }
+}
+
+/**
+ * @param {string} patchId
+ */
+async function handlePatchRevert(patchId) {
+  const { patchHistoryHint } = elements;
+  if (!state.currentDatasetId) return;
+  if (typeof window.clinicalAPI?.revertEnrichmentPatch !== 'function') {
+    if (patchHistoryHint) patchHistoryHint.textContent = 'Revert API not available.';
+    return;
+  }
+  try {
+    const res = await window.clinicalAPI.revertEnrichmentPatch(state.currentDatasetId, patchId);
+    if (res && res.success === false) {
+      throw new Error(res.message || 'Revert failed');
+    }
+    await loadEnrichmentPanel();
+  } catch (error) {
+    console.error('Revert patch failed:', error);
+    if (patchHistoryHint) {
+      patchHistoryHint.textContent = error.message || 'Revert failed';
     }
   }
 }

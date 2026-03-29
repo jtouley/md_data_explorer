@@ -134,9 +134,7 @@ const clinicalAPI = {
    */
   async getPendingEnrichments(datasetId) {
     const enc = encodeURIComponent(datasetId);
-    const response = await fetch(
-      `${API_BASE_URL}/api/datasets/${enc}/enrichments/pending`
-    );
+    const response = await fetch(`${API_BASE_URL}/api/datasets/${enc}/enrichments/pending`);
     if (!response.ok) {
       throw new Error(`Failed to load enrichments: ${response.status} ${response.statusText}`);
     }
@@ -195,6 +193,48 @@ const clinicalAPI = {
     }
     if (data.success === false) {
       throw new Error(data.message || 'Reject failed');
+    }
+    return data;
+  },
+
+  /**
+   * Patch history for a dataset (all patches from overlay log).
+   * @param {string} datasetId
+   * @returns {Promise<{ patches: object[], total: number }>}
+   */
+  async getEnrichmentHistory(datasetId) {
+    const enc = encodeURIComponent(datasetId);
+    const response = await fetch(`${API_BASE_URL}/api/datasets/${enc}/enrichments/history`);
+    if (!response.ok) {
+      throw new Error(`Failed to load patch history: ${response.status} ${response.statusText}`);
+    }
+    return await response.json();
+  },
+
+  /**
+   * Revert an accepted enrichment patch.
+   * @param {string} datasetId
+   * @param {string} patchId
+   * @param {string} [revertedBy]
+   * @returns {Promise<{ success: boolean, message: string }>}
+   */
+  async revertEnrichmentPatch(datasetId, patchId, revertedBy = 'electron_user') {
+    const encD = encodeURIComponent(datasetId);
+    const encP = encodeURIComponent(patchId);
+    const response = await fetch(
+      `${API_BASE_URL}/api/datasets/${encD}/enrichments/${encP}/revert`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reverted_by: revertedBy }),
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.message || `Revert failed: ${response.statusText}`);
+    }
+    if (data.success === false) {
+      throw new Error(data.message || 'Revert failed');
     }
     return data;
   },
