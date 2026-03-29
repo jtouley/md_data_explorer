@@ -1,11 +1,8 @@
 """Tests for Dataset API routes.
 
-Phase 1 of Electron UI Migration: Expose dataset listing and metadata via API.
-
-Tests cover:
-- GET /api/datasets - List available datasets
-- GET /api/datasets/{dataset_id} - Get dataset metadata
-- GET /api/datasets/{dataset_id}/preview - Get sample rows
+Electron UI Migration:
+- Phase 1: GET /api/datasets, GET /api/datasets/{id}, GET /api/datasets/{id}/preview
+- Phase 8: POST /api/datasets/upload — multipart file upload
 """
 
 from unittest.mock import patch
@@ -218,3 +215,123 @@ class TestDatasetPreviewEndpoint:
 
             # Assert
             assert response.status_code == 404
+
+
+# ============================================================================
+# Phase 8: POST /api/datasets/upload
+# ============================================================================
+
+
+class TestDatasetUploadEndpoint:
+    """Tests for POST /api/datasets/upload endpoint."""
+
+    @staticmethod
+    def _make_csv(rows: int = 50) -> bytes:
+        """Build a CSV payload above the 1 KB minimum size threshold."""
+        header = "patient_id,age,sex,outcome,treatment\n"
+        lines = []
+        for i in range(rows):
+            sex = "M" if i % 2 else "F"
+            outcome = "alive" if i % 3 else "dead"
+            drug = "drug" if i % 2 else "placebo"
+            lines.append(f"P{i:04d},{20 + i},{sex},{outcome},{drug}\n")
+        return (header + "".join(lines)).encode()
+
+    def test_datasets_upload_csv_creates_dataset(self, test_client):
+        """Uploading a valid CSV creates a dataset and returns upload metadata."""
+        # Arrange
+        csv_content = self._make_csv()
+
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
+            mock_storage = mock_cls.return_value
+            mock_storage.save_upload.return_value = (True, "Upload successful", "upload_abc123")
+
+            # Act
+            response = test_client.post(
+                "/api/datasets/upload",
+                files={"file": ("patients.csv", csv_content, "text/csv")},
+                data={"dataset_name": "Patient Data"},
+            )
+
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert data["upload_id"] == "upload_abc123"
+        assert data["status"] == "ready"
+        assert data["dataset_name"] == "Patient Data"
+        mock_storage.save_upload.assert_called_once()
+
+    def test_datasets_upload_xlsx_creates_dataset(self, test_client):
+        """Uploading a valid Excel file creates a dataset."""
+        # Arrange — fake xlsx payload above 1 KB
+        xlsx_content = b"\x50\x4b\x03\x04" + b"\x00" * 2000
+
+        with (
+            patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls,
+            patch("clinical_analytics.api.routes.datasets.UploadSecurityValidator") as mock_val,
+        ):
+            mock_val.validate_file_size.return_value = (True, "")
+            mock_storage = mock_cls.return_value
+            mock_storage.save_upload.return_value = (True, "Upload successful", "upload_xlsx_001")
+
+            # Act
+            response = test_client.post(
+                "/api/datasets/upload",
+                files={
+                    "file": (
+                        "lab_results.xlsx",
+                        xlsx_content,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+                },
+            )
+
+        # Assert
+        assert response.status_code == 200
+        data = response.json()
+        assert data["upload_id"] == "upload_xlsx_001"
+        assert data["status"] == "ready"
+
+    def test_datasets_upload_no_file_returns_422(self, test_client):
+        """Uploading without a file returns 422."""
+        # Act
+        response = test_client.post("/api/datasets/upload")
+
+        # Assert
+        assert response.status_code == 422
+
+    def test_datasets_upload_unsupported_type_returns_400(self, test_client):
+        """Uploading an unsupported file type returns 400."""
+        # Arrange
+        exe_content = b"\x00" * 2000
+
+        # Act — extension check happens before size check, so no validator mock needed
+        response = test_client.post(
+            "/api/datasets/upload",
+            files={"file": ("malware.exe", exe_content, "application/octet-stream")},
+        )
+
+        # Assert
+        assert response.status_code == 400
+        data = response.json()
+        assert "not allowed" in data["detail"].lower()
+
+    def test_datasets_upload_storage_failure_returns_500(self, test_client):
+        """When storage save_upload fails, return 500."""
+        # Arrange
+        csv_content = self._make_csv()
+
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
+            mock_storage = mock_cls.return_value
+            mock_storage.save_upload.return_value = (False, "Disk full", None)
+
+            # Act
+            response = test_client.post(
+                "/api/datasets/upload",
+                files={"file": ("data.csv", csv_content, "text/csv")},
+            )
+
+        # Assert
+        assert response.status_code == 500
+        data = response.json()
+        assert "disk full" in data["detail"].lower()

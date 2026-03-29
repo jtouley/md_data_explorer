@@ -9,7 +9,7 @@ tags:
   - fastapi
   - streamlit-removal
   - parity-matrix
-last_updated: 2026-03-23
+last_updated: 2026-03-28
 ---
 
 # Omnibus specification: Electron desktop UI and full Streamlit removal
@@ -72,7 +72,7 @@ Legend: **S** = Streamlit today | **A** = FastAPI | **E** = Electron renderer
 
 | ID | Streamlit surface (path or feature) | A: endpoint / contract | E: UI | Status |
 |----|-------------------------------------|-------------------------|-------|--------|
-| P01 | `pages/01_📤_Add_Your_Data.py` — upload, preview, mapping | Extend `datasets` (or dedicated upload routes) per plan Phase 8 | Upload wizard (plan Phase 8) | **Gap** |
+| P01 | `pages/01_📤_Add_Your_Data.py` — upload, preview, mapping | Extend `datasets` (or dedicated upload routes) per plan Phase 8 | Upload wizard (plan Phase 8) | **Implemented** |
 | P02 | `pages/02_📊_Your_Dataset.py` — cohort / dataset view | `GET /api/datasets`, preview, detail | Dataset summary + preview | **Partial** |
 | P03 | `pages/03_💬_Ask_Questions.py` — NL chat, trust, clarifying | `POST /api/queries`, SSE stream, sessions | Chat + dataset selector + session sidebar (plan Phases 5–7) | **Implemented** |
 | P20 | `pages/20_📊_Descriptive_Stats.py` | Same query pipeline; typed result payload | Result renderer — descriptive | **Gap** |
@@ -97,7 +97,7 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 | 6b | Enrichment panel in Electron (pending + accept/reject) | **Implemented** |
 | 6c | Patch history viewer in Electron | **Implemented** |
 | 7 | Session sidebar | **Implemented** |
-| 8 | Dataset upload in Electron | **Pending** |
+| 8 | Dataset upload in Electron | **Implemented** |
 | 9 | Playwright E2E (Chromium + Vite; CI `electron-playwright`; `make test-electron-e2e`; Electron **binary** harness deferred) | **Partial** |
 | 10a–e | **Cutover**: delete Streamlit pages → components → `pyproject` → UI tests → final commit | **Pending** (hard gate) |
 

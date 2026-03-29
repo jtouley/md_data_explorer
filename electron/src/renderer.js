@@ -9,6 +9,7 @@ import { normalizePendingResponse, renderEnrichmentCards } from './enrichmentPan
 import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
 import { buildQueryCompletedPresentation } from './resultPresentation.js';
 import { normalizeSessionListResponse, renderSessionList } from './sessionSidebar.js';
+import { normalizeUploadResponse, renderUploadArea } from './uploadPanel.js';
 
 // ============================================================================
 // DOM Elements
@@ -35,6 +36,7 @@ const elements = {
   sessionSidebar: document.getElementById('session-sidebar'),
   sessionList: document.getElementById('session-list'),
   newChatBtn: document.getElementById('new-chat-btn'),
+  uploadArea: document.getElementById('upload-area'),
 };
 
 // ============================================================================
@@ -959,6 +961,59 @@ function handleQueryInputChange() {
 }
 
 // ============================================================================
+// Dataset Upload (Phase 8)
+// ============================================================================
+
+function initUploadArea() {
+  const { uploadArea } = elements;
+  if (!uploadArea) return;
+  if (typeof window.clinicalAPI?.uploadDataset !== 'function') return;
+
+  renderUploadArea(uploadArea, {
+    onFileSelect: (file) => handleFileUpload(file),
+  });
+}
+
+async function handleFileUpload(file) {
+  const { uploadArea } = elements;
+  if (!uploadArea) return;
+  if (typeof window.clinicalAPI?.uploadDataset !== 'function') return;
+
+  renderUploadArea(uploadArea, {
+    onFileSelect: (f) => handleFileUpload(f),
+    statusText: `Uploading ${file.name}…`,
+  });
+
+  try {
+    const raw = await window.clinicalAPI.uploadDataset(file);
+    const result = normalizeUploadResponse(raw);
+
+    if (result.status === 'ready') {
+      renderUploadArea(uploadArea, {
+        onFileSelect: (f) => handleFileUpload(f),
+        statusText: `✓ ${result.dataset_name || file.name} uploaded`,
+      });
+      await loadDatasets();
+      if (result.upload_id) {
+        elements.datasetSelect.value = result.upload_id;
+        elements.datasetSelect.dispatchEvent(new Event('change'));
+      }
+    } else {
+      renderUploadArea(uploadArea, {
+        onFileSelect: (f) => handleFileUpload(f),
+        statusText: `✗ Upload failed: ${result.message}`,
+      });
+    }
+  } catch (error) {
+    console.error('Upload failed:', error);
+    renderUploadArea(uploadArea, {
+      onFileSelect: (f) => handleFileUpload(f),
+      statusText: `✗ ${error.message}`,
+    });
+  }
+}
+
+// ============================================================================
 // Initialization
 // ============================================================================
 
@@ -991,6 +1046,8 @@ async function init() {
     await loadDatasets();
     await loadSessionList();
   }
+
+  initUploadArea();
 
   console.log('✅ Initialization complete');
 }
