@@ -70,20 +70,20 @@ Use this table to **block Streamlit deletion** until each row needed for release
 
 Legend: **S** = Streamlit today | **A** = FastAPI | **E** = Electron renderer
 
-| ID | Streamlit surface (path or feature) | A: endpoint / contract | E: UI | Status |
-|----|-------------------------------------|-------------------------|-------|--------|
-| P01 | `pages/01_📤_Add_Your_Data.py` — upload, preview, mapping | Extend `datasets` (or dedicated upload routes) per plan Phase 8 | Upload wizard (plan Phase 8) | **Implemented** |
-| P02 | `pages/02_📊_Your_Dataset.py` — cohort / dataset view | `GET /api/datasets`, preview, detail | Dataset summary + preview | **Partial** |
-| P03 | `pages/03_💬_Ask_Questions.py` — NL chat, trust, clarifying | `POST /api/queries`, SSE stream, sessions | Chat + dataset selector + session sidebar (plan Phases 5–7) | **Implemented** |
-| P20 | `pages/20_📊_Descriptive_Stats.py` | Same query pipeline; typed result payload | Result renderer — descriptive | **Implemented** |
-| P21 | `pages/21_📈_Compare_Groups.py` | Same | Result renderer — comparison | **Implemented** |
-| P22 | `pages/22_🎯_Risk_Factors.py` | Same | Result renderer — risk | **Implemented** |
-| P23 | `pages/23_⏱️_Survival_Analysis.py` | Same | Result renderer — survival | **Implemented** |
-| P24 | `pages/24_🔗_Correlations.py` | Same | Result renderer — correlations | **Implemented** |
-| ENR | Enrichment panel / patch history (ADR011 components) | `routes/enrichments.py` | Electron panels (plan Phases 6b–6c) | **Implemented** |
-| OLL | Ollama / LLM availability feedback | `GET /health` includes `ollama_*` fields (fast probe) | Banner in Electron renderer | **Implemented** |
+| ID | Streamlit surface (path or feature) | A: endpoint / contract | E: UI | Required for v1 | Status |
+|----|-------------------------------------|-------------------------|-------|-----------------|--------|
+| P01 | `pages/01_📤_Add_Your_Data.py` — upload, preview, mapping | Extend `datasets` (or dedicated upload routes) per plan Phase 8 | Upload wizard (plan Phase 8) | Yes | **Implemented** |
+| P02 | `pages/02_📊_Your_Dataset.py` — cohort / dataset view | `GET /api/datasets`, preview, detail | Dataset summary + preview | Yes | **Partial** |
+| P03 | `pages/03_💬_Ask_Questions.py` — NL chat, trust, clarifying | `POST /api/queries`, SSE stream, sessions | Chat + dataset selector + session sidebar (plan Phases 5–7) | Yes | **Implemented** |
+| P20 | `pages/20_📊_Descriptive_Stats.py` | Same query pipeline; typed result payload | Result renderer — descriptive | Yes | **Implemented** |
+| P21 | `pages/21_📈_Compare_Groups.py` | Same | Result renderer — comparison | Yes | **Implemented** |
+| P22 | `pages/22_🎯_Risk_Factors.py` | Same | Result renderer — risk | Yes | **Implemented** |
+| P23 | `pages/23_⏱️_Survival_Analysis.py` | Same | Result renderer — survival | Yes | **Implemented** |
+| P24 | `pages/24_🔗_Correlations.py` | Same | Result renderer — correlations | Yes | **Implemented** |
+| ENR | Enrichment panel / patch history (ADR011 components) | `routes/enrichments.py` | Electron panels (plan Phases 6b–6c) | Yes | **Implemented** |
+| OLL | Ollama / LLM availability feedback | `GET /health` includes `ollama_*` fields (fast probe) | Banner in Electron renderer | Yes | **Implemented** |
 
-**Rule:** Do not execute **Phase 10** (delete Streamlit) until every row marked **Required for v1** is **Implemented** or **Won’t do** (explicit).
+**Rule:** Do not execute **Phase 10** (delete Streamlit) until every row with **Required for v1 = Yes** is **Implemented** or **Won’t do** (explicit owner and dated sign-off).
 
 ## Phased delivery (aligned with Cursor plan)
 
@@ -98,12 +98,14 @@ The numeric phases below match **[`electron_ui_migration_b421909d.plan.md`](../.
 | 6c | Patch history viewer in Electron | **Implemented** |
 | 7 | Session sidebar | **Implemented** |
 | 8 | Dataset upload in Electron | **Implemented** |
-| 9 | Playwright E2E (Chromium + Vite; CI `electron-playwright`; `make test-electron-e2e`; Electron **binary** harness deferred) | **Partial** |
+| 9 | Playwright E2E (v1 gate = Chromium + Vite in CI + `make test-electron-e2e`; Electron **binary** harness on macOS explicitly deferred post-v1) | **Implemented (v1)** |
 | 10a–e | **Cutover**: delete Streamlit pages → components → `pyproject` → UI tests → final commit | **Pending** (hard gate) |
+
+**Phase 9 gating definition (v1):** Phase 9 is complete when Chromium Playwright E2E passes in CI (`electron-playwright`) and `make test-electron-e2e` is green against Vite + FastAPI. Native Electron-binary Playwright harness on macOS is deferred and is **not** a v1 blocker.
 
 ## Cutover: removing “all traces of Streamlit”
 
-Execute **only after** parity matrix + Phase 9 E2E are satisfied.
+Execute **only after** parity matrix rows with **Required for v1 = Yes** are satisfied and Phase 9 is **Implemented (v1)** per the definition above.
 
 ### 10a — Pages and app entry
 
