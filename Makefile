@@ -292,14 +292,17 @@ check-serial: ## Run all checks serially (for deterministic results)
 # Mutation testing (mutmut). Resumable: re-running continues where the last run stopped.
 # Full run mutates all of src/clinical_analytics (~29k mutants); expect hours. Use mutation-module to scope.
 MUTATION_JOBS ?= $(shell nproc 2>/dev/null || echo 4)
+# mutmut forks workers after polars/numpy/torch start thread pools; multi-threaded native libs deadlock
+# after fork(), so pin them to one thread. HF offline: tests needing model downloads skip instead of retrying.
+MUTATION_ENV := POLARS_MAX_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false HF_HUB_OFFLINE=1
 
 mutation: ensure-venv ## Run mutation testing over all of src (long-running, resumable)
 	@echo "$(GREEN)Running mutation testing ($(MUTATION_JOBS) workers)...$(NC)"
-	HF_HUB_OFFLINE=1 $(UV) run mutmut run --max-children $(MUTATION_JOBS)
+	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS)
 
 mutation-module: ensure-venv ## Mutation test one module: make mutation-module MODULE=clinical_analytics.core.schema
 	@if [ -z "$(MODULE)" ]; then echo "$(RED)MODULE is required$(NC)"; exit 1; fi
-	HF_HUB_OFFLINE=1 $(UV) run mutmut run --max-children $(MUTATION_JOBS) "$(MODULE).*"
+	$(MUTATION_ENV) $(UV) run mutmut run --max-children $(MUTATION_JOBS) "$(MODULE).*"
 
 mutation-results: ensure-venv ## Summarise surviving mutants from the last mutation run
 	$(UV) run mutmut results
