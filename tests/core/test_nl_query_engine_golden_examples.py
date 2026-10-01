@@ -8,6 +8,7 @@ Following AGENTS.md guidelines:
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -82,6 +83,7 @@ class TestNLQueryEngineGoldenExamples:
         assert hasattr(engine, "_golden_embeddings")
         assert hasattr(engine, "_golden_examples")
 
+    @pytest.mark.usefixtures("cached_sentence_transformer")  # needs the real embedding model
     def test_nl_query_engine_golden_embeddings_cached(self, make_semantic_layer, tmp_path):
         """Test that golden embeddings are cached in memory."""
         # Arrange: Create golden examples config
@@ -148,6 +150,7 @@ class TestNLQueryEngineGoldenExamples:
         assert intent.intent_type == "COUNT"
         assert intent.confidence >= 0.7
 
+    @pytest.mark.usefixtures("cached_sentence_transformer")  # needs the real embedding model
     def test_semantic_match_golden_example_high_similarity_returns_intent(self, make_semantic_layer):
         """Test that queries with high similarity to golden examples use golden intent."""
         # Arrange: Create semantic layer
@@ -168,6 +171,7 @@ class TestNLQueryEngineGoldenExamples:
         assert intent.intent_type == "COUNT"
         assert intent.confidence >= 0.8  # High confidence from golden match
 
+    @pytest.mark.usefixtures("cached_sentence_transformer")  # needs the real embedding model
     def test_semantic_match_golden_example_with_variables(self, make_semantic_layer):
         """Test that golden examples with variables populate intent correctly."""
         # Arrange: Create semantic layer

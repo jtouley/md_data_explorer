@@ -9,6 +9,7 @@ Provides extensible factories for:
 All factories support caching via tests.fixtures.cache.
 """
 
+import hashlib
 import io
 import sys
 import zipfile
@@ -68,7 +69,9 @@ def _create_synthetic_excel_file(
     cache_dir = get_cache_dir()
     if use_dataframe_hash:
         df_polars = pl.from_pandas(df)
-        cache_key = hash_dataframe(df_polars)
+        # Layout is part of the key: same data with different header/metadata rows is a different file
+        layout = f"{header_row}:{metadata_rows!r}"
+        cache_key = hashlib.sha256(f"{hash_dataframe(df_polars)}:{layout}".encode()).hexdigest()
     else:
         # For complex layouts, we need to hash the final file
         # Create temp file first to compute hash

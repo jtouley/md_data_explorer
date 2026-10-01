@@ -339,7 +339,12 @@ def cached_sentence_transformer():
 
     # Use same model name as NLQueryEngine default
     model_name = "all-MiniLM-L6-v2"
-    encoder = SentenceTransformer(model_name)
+    try:
+        encoder = SentenceTransformer(model_name)
+    except OSError as e:
+        # Model is downloaded from huggingface.co on first use; offline/sandboxed runs cannot fetch it.
+        # Skipping (session-scoped, so evaluated once) keeps the rest of the suite runnable offline.
+        pytest.skip(f"SentenceTransformer model '{model_name}' unavailable (not cached, no network): {e}")
 
     yield encoder
 
@@ -878,6 +883,7 @@ def mock_cohort():
     """
     # PANDAS EXCEPTION: Required for legacy cohort format compatibility
     import pandas as pd
+
     from clinical_analytics.core.schema import UnifiedCohort
 
     return pd.DataFrame(
