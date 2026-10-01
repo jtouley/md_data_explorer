@@ -6,6 +6,7 @@ import json
 
 import pandas as pd
 import polars as pl
+import pytest
 
 from clinical_analytics.ui.storage.user_datasets import (
     UploadSecurityValidator,
@@ -109,6 +110,43 @@ class TestUserDatasetStorage:
         assert upload_id is not None
         # Check that CSV file exists with upload_id as filename
         assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()
+
+    @pytest.mark.parametrize("mapped_outcome", ["outcome", "mortality"])
+    def test_save_upload_outcome_mapped_to_other_column_with_existing_outcome_succeeds(
+        self, upload_storage, mapped_outcome
+    ):
+        """
+        Regression: mapping outcome to a column other than an existing 'outcome' column
+        renamed onto it, producing duplicate column names and failing every save.
+        """
+        # Arrange
+        df = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(150)],
+                "age": [20 + (i % 60) for i in range(150)],
+                "mortality": [i % 2 for i in range(150)],
+                "outcome": [(i // 2) % 2 for i in range(150)],
+            }
+        )
+        csv_bytes = df.write_csv().encode("utf-8")
+        metadata = {
+            "dataset_name": "collision_test",
+            "variable_mapping": {
+                "patient_id": "patient_id",
+                "outcome": mapped_outcome,
+                "time_variables": {"time_zero": None},
+                "predictors": ["age"],
+            },
+        }
+
+        # Act
+        success, message, upload_id = upload_storage.save_upload(
+            file_bytes=csv_bytes, original_filename="collision.csv", metadata=metadata
+        )
+
+        # Assert
+        assert success is True, message
+        assert upload_id is not None
 
     def test_get_upload_data(self, upload_storage):
         """Test loading an upload."""
