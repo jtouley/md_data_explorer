@@ -229,11 +229,13 @@ class VariableTypeDetector:
                         "patient_id_columns": composite_cols,
                     }
 
-        # Find best outcome candidate: binary type
-        for col, info in variable_info.items():
-            if info["type"] == "binary":
-                suggestions["outcome"] = col
-                break  # Take first binary column
+        # Find best outcome candidate: a binary column already named with the canonical
+        # schema name wins (mirrors the patient_id check above); otherwise first binary column
+        binary_cols = [col for col, info in variable_info.items() if info["type"] == "binary"]
+        if "outcome" in binary_cols:
+            suggestions["outcome"] = "outcome"
+        elif binary_cols:
+            suggestions["outcome"] = binary_cols[0]
 
         # Find best time_zero candidate: datetime type
         for col, info in variable_info.items():

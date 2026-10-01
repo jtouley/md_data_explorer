@@ -140,6 +140,23 @@ class TestSuggestSchemaMapping:
         # hospitalized is binary, should be suggested as outcome
         assert suggestions["outcome"] == "hospitalized"
 
+    def test_suggest_outcome_prefers_binary_column_named_outcome(self):
+        """Regression: first binary column (e.g. sex) was suggested even when 'outcome' exists."""
+        # Arrange
+        df = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(10)],
+                "sex": ["M", "F"] * 5,
+                "outcome": [0, 1, 1, 0, 0, 1, 0, 1, 1, 0],
+            }
+        )
+
+        # Act
+        suggestions = VariableTypeDetector.suggest_schema_mapping(df)
+
+        # Assert
+        assert suggestions["outcome"] == "outcome"
+
     def test_suggest_time_zero_by_datetime_type(self):
         """Test that datetime column is suggested as time_zero."""
         df = pl.DataFrame(

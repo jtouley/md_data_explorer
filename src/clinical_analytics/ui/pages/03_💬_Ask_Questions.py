@@ -1205,8 +1205,9 @@ def execute_analysis_with_idempotency(
                 intent_type=context.inferred_intent.value,
             )
 
-            # Format result via semantic layer (no re-execution, just formatting)
-            result = semantic_layer.format_execution_result(execution_result, context)
+            # Format result via semantic layer. Non-COUNT intents are computed from the raw cohort
+            # (the aggregated execution result is not renderer-compatible for them).
+            result = semantic_layer.format_execution_result(execution_result, context, cohort=cohort)
         else:
             # Phase 3.1: No legacy path - execution_result is required
             # All queries must go through execute_query_plan() first

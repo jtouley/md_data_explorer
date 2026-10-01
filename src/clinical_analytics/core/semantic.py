@@ -1761,7 +1761,9 @@ class SemanticLayer:
                 "chart_spec": chart_spec,  # Phase 3.3: Chart specification (still included on error)
             }
 
-    def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:
+    def format_execution_result(
+        self, execution_result: dict[str, Any], context: Any, cohort: pl.DataFrame | None = None
+    ) -> dict[str, Any]:
         """
         Format execution result from execute_query_plan() for UI consumption (Phase 3.1).
 
@@ -1771,6 +1773,8 @@ class SemanticLayer:
         Args:
             execution_result: Result dict from execute_query_plan()
             context: AnalysisContext with intent and variables (for legacy compatibility)
+            cohort: Raw cohort DataFrame. Required for non-COUNT intents, whose results are
+                computed from the cohort because the aggregated result_df is not renderer-compatible.
 
         Returns:
             Formatted result dict compatible with render_analysis_by_type()
@@ -1815,13 +1819,16 @@ class SemanticLayer:
         # Phase 3.3: Pass chart_spec to formatting methods
         if query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
-        elif query_plan.intent == "DESCRIBE":
-            formatted = self._format_describe_result(result_df_pl, query_plan, context)
+        elif cohort is not None:
+            # DESCRIBE / COMPARE_GROUPS / FIND_PREDICTORS / SURVIVAL / RELATIONSHIPS: the plan has been
+            # validated by execute_query_plan(); compute the renderer-compatible result from the raw cohort.
+            from clinical_analytics.analysis.compute import compute_analysis_by_type
+
+            formatted = compute_analysis_by_type(cohort, context)
         else:
-            # For other intents, return basic format (will be enhanced in Phase 3.3)
             formatted = {
-                "type": "unknown",
-                "error": f"Formatting not yet implemented for intent: {query_plan.intent}",
+                "type": "error",
+                "error": f"Raw cohort required to format {query_plan.intent} results",
             }
 
         # Phase 3.3: Add chart_spec to formatted result
@@ -1882,21 +1889,6 @@ class SemanticLayer:
                 "total_count": total_count,
                 "headline": f"Total count: **{total_count}**",
             }
-
-    def _format_describe_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
-        """Format DESCRIBE result DataFrame to result dict format."""
-        # Phase 3.1: Basic formatting for DESCRIBE (will be enhanced in Phase 3.3)
-        if result_df.height == 0:
-            return {"type": "error", "error": "No data to describe"}
-
-        # Convert to dict format
-        result_dict = result_df.to_dicts()[0] if result_df.height == 1 else result_df.to_dicts()
-
-        return {
-            "type": "descriptive",
-            "summary": result_dict,
-            "headline": f"Descriptive statistics for {query_plan.metric or 'data'}",
-        }
 
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
