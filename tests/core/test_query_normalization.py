@@ -7,6 +7,7 @@ per test) and tests/unit/ui/pages/test_ask_questions_run_key.py (tested the page
 Test name follows: test_unit_scenario_expectedBehavior
 """
 
+import json
 from enum import Enum
 
 import pytest
@@ -87,3 +88,23 @@ def test_conversation_manager_methods_delegateToModuleFunctions() -> None:
     # Act / Assert
     assert manager.normalize_query("  A  B ") == normalize_query("  A  B ")
     assert manager.canonicalize_scope(scope) == canonicalize_scope(scope)
+
+
+@pytest.mark.parametrize(
+    ("scope_a", "scope_b"),
+    [
+        (
+            {"filters": {"status": "active", "age": {"min": 18, "max": 65}}, "cohort": "all"},
+            {"cohort": "all", "filters": {"age": {"max": 65, "min": 18}, "status": "active"}},
+        ),
+        ({"filters": {"ids": [3, 1, 2]}}, {"filters": {"ids": [1, 2, 3]}}),
+    ],
+    ids=["nested_key_order", "nested_list_order"],
+)
+def test_canonicalize_scope_orderOnlyDifferences_produceIdenticalJson(scope_a: dict, scope_b: dict) -> None:
+    # Act: the canonical form feeds run_key hashing, so serialized output must match byte-for-byte
+    serialized_a = json.dumps(canonicalize_scope(scope_a))
+    serialized_b = json.dumps(canonicalize_scope(scope_b))
+
+    # Assert
+    assert serialized_a == serialized_b
