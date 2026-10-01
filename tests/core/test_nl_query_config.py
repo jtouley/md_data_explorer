@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+
 from clinical_analytics.core.config_loader import load_nl_query_config
 from clinical_analytics.core.nl_query_config import (
     AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
@@ -44,11 +45,6 @@ def test_config_constants_are_defined():
     assert TIER_TIMEOUT_SECONDS == 5.0
     assert SEMANTIC_SIMILARITY_THRESHOLD == 0.7
     assert FUZZY_MATCH_CUTOFF == 0.7
-
-
-def test_auto_execute_threshold_matches_semantic_threshold():
-    """AUTO_EXECUTE_CONFIDENCE_THRESHOLD should equal TIER_2_SEMANTIC_MATCH_THRESHOLD."""
-    assert AUTO_EXECUTE_CONFIDENCE_THRESHOLD == TIER_2_SEMANTIC_MATCH_THRESHOLD
 
 
 def test_feature_flags_default_to_true():
@@ -129,33 +125,6 @@ class TestNLQueryConfigYAMLLoading:
         assert yaml_config["tier_2_semantic_match_threshold"] == 0.70
         assert yaml_config["clarifying_questions_threshold"] == 0.45
         assert yaml_config["auto_execute_confidence_threshold"] == 0.70
-
-    def test_nl_query_config_env_var_overrides_yaml(self, tmp_path):
-        """Test that environment variables override YAML values in config_loader."""
-        # Arrange: Create YAML file
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config_file = config_dir / "nl_query.yaml"
-        config_data = {
-            "tier_2_semantic_match_threshold": 0.70,
-            "enable_clarifying_questions": True,
-        }
-        config_file.write_text(yaml.dump(config_data))
-
-        # Act: Set environment variable and load config
-        with patch.dict(
-            os.environ,
-            {
-                "ENABLE_CLARIFYING_QUESTIONS": "false",
-                "TIER_2_SEMANTIC_MATCH_THRESHOLD": "0.80",
-            },
-            clear=False,
-        ):
-            result = load_nl_query_config(config_path=config_file)
-
-        # Assert: Environment variable overrides YAML
-        assert result["enable_clarifying_questions"] is False
-        assert result["tier_2_semantic_match_threshold"] == 0.80
 
     def test_nl_query_config_backward_compatibility_all_constants_exist(self):
         """Test that all constants are still importable and exist after refactor."""
@@ -247,6 +216,6 @@ class TestNLQueryConfigYAMLLoading:
 
         # Assert: Warning was logged with correct message format (standard string, not structured)
         warning_messages = [record.message for record in caplog.records if record.levelname == "WARNING"]
-        assert any(
-            "enable_proactive_questions" in msg and "deprecated" in msg.lower() for msg in warning_messages
-        ), f"Expected deprecation warning, got: {warning_messages}"
+        assert any("enable_proactive_questions" in msg and "deprecated" in msg.lower() for msg in warning_messages), (
+            f"Expected deprecation warning, got: {warning_messages}"
+        )

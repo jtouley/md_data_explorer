@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
+.PHONY: help mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume
 
 # Default target
 .DEFAULT_GOAL := help
@@ -288,6 +288,22 @@ check-serial: ## Run all checks serially (for deterministic results)
 	@$(MAKE) test-serial || (echo "$(RED)❌ Tests failed$(NC)" && exit 1)
 	@echo ""
 	@echo "$(GREEN)✅ All checks passed!$(NC)"
+
+# Mutation testing (mutmut). Resumable: re-running continues where the last run stopped.
+# Full run mutates all of src/clinical_analytics (~29k mutants); expect hours. Use mutation-module to scope.
+MUTATION_JOBS ?= $(shell nproc 2>/dev/null || echo 4)
+
+mutation: ensure-venv ## Run mutation testing over all of src (long-running, resumable)
+	@echo "$(GREEN)Running mutation testing ($(MUTATION_JOBS) workers)...$(NC)"
+	HF_HUB_OFFLINE=1 $(UV) run mutmut run --max-children $(MUTATION_JOBS)
+
+mutation-module: ensure-venv ## Mutation test one module: make mutation-module MODULE=clinical_analytics.core.schema
+	@if [ -z "$(MODULE)" ]; then echo "$(RED)MODULE is required$(NC)"; exit 1; fi
+	HF_HUB_OFFLINE=1 $(UV) run mutmut run --max-children $(MUTATION_JOBS) "$(MODULE).*"
+
+mutation-results: ensure-venv ## Summarise surviving mutants from the last mutation run
+	$(UV) run mutmut results
+
 
 check-fast: ## Run fast code quality checks (lint, format-check) - no tests
 	@echo "$(GREEN)Running fast code quality checks...$(NC)"

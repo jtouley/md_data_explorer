@@ -982,7 +982,7 @@ def mock_semantic_layer():
     """
     from unittest.mock import MagicMock
 
-    def _make(columns=None, collision_suggestions=None):
+    def _make(columns=None, collision_suggestions=None, dimensions=None, quality_warnings=None):
         mock = MagicMock()
         default_columns = {
             "mortality": "mortality",
@@ -1000,6 +1000,12 @@ def mock_semantic_layer():
         base_view_mock = MagicMock()
         base_view_mock.columns = list(column_map.values())  # Use actual column names
         mock.get_base_view.return_value = base_view_mock
+
+        # Optional: only set when a test needs them (otherwise MagicMock defaults apply)
+        if dimensions is not None:
+            mock.get_available_dimensions.return_value = dimensions
+        if quality_warnings is not None:
+            mock.get_data_quality_warnings.return_value = quality_warnings
 
         return mock
 

@@ -1,25 +1,16 @@
 """Tests for NL Query Engine diagnostics and QueryIntent enhancements."""
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import VALID_INTENT_TYPES, NLQueryEngine, QueryIntent
 
 
 @pytest.fixture
-def mock_semantic_layer():
-    """Create a mock semantic layer for testing."""
-    from unittest.mock import MagicMock
-
-    mock = MagicMock()
-    mock.get_column_alias_index.return_value = {
-        "mortality": "mortality",
-        "treatment": "treatment_arm",
-        "age": "age",
-        "outcome": "outcome",
-    }
-    mock.get_collision_suggestions.return_value = None
-    mock.get_collision_warnings.return_value = set()
-    mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
-    return mock
+def mock_semantic_layer(mock_semantic_layer):
+    """File-specific columns on top of the shared conftest mock_semantic_layer factory."""
+    return mock_semantic_layer(
+        columns={"mortality": "mortality", "treatment": "treatment_arm", "age": "age", "outcome": "outcome"}
+    )
 
 
 def test_query_intent_tracks_successful_tier():
