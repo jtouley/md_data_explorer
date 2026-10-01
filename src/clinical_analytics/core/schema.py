@@ -131,13 +131,7 @@ def validate_unified_cohort_schema(
         if null_count > 0:
             errors.append(f"{UnifiedCohort.PATIENT_ID} contains {null_count} NULL value(s) - patient ID cannot be NULL")
 
-        # Check uniqueness (one row per patient in patient-level cohort)
-        # Note: This is a warning, not an error, as some datasets may have
-        # admission-level or event-level granularity
-        dup_count = patient_id_col.duplicated().sum()
-        if dup_count > 0:
-            # Just a warning - not an error for non-patient-level data
-            pass  # Could add warning log here
+        # Duplicate patient IDs are allowed: admission/event-level datasets repeat them.
 
     # Check OUTCOME column
     if UnifiedCohort.OUTCOME in df.columns:

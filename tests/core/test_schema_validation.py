@@ -190,3 +190,62 @@ class TestValidateUnifiedCohortSchema:
         # Assert
         assert is_valid is True
         assert errors == []
+
+
+def _valid_cohort(**overrides: list) -> pd.DataFrame:
+    """Valid 3-row UnifiedCohort frame; keyword overrides replace a column."""
+    columns = {
+        UnifiedCohort.PATIENT_ID: ["P001", "P002", "P003"],
+        UnifiedCohort.TIME_ZERO: [datetime(2024, 1, 1)] * 3,
+        UnifiedCohort.OUTCOME: [0, 1, 0],
+        UnifiedCohort.OUTCOME_LABEL: ["mortality"] * 3,
+    }
+    columns.update(overrides)
+    return pd.DataFrame(columns)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param(
+            {UnifiedCohort.TIME_ZERO: ["2024-01-01", "2024-02-01", "2024-03-01"]}, id="time_zero_parseable_strings"
+        ),
+        pytest.param({UnifiedCohort.OUTCOME: [0, 1, 2]}, id="outcome_non_binary_numeric"),
+        pytest.param({UnifiedCohort.OUTCOME: [0.0, 1.0, None]}, id="outcome_binary_float_with_null"),
+        pytest.param({UnifiedCohort.PATIENT_ID: ["P001", "P001", "P002"]}, id="duplicate_patient_ids_event_level"),
+    ],
+)
+def test_schema_validation_acceptable_variants_valid(overrides: dict) -> None:
+    # Arrange
+    df = _valid_cohort(**overrides)
+
+    # Act
+    is_valid, errors = validate_unified_cohort_schema(df)
+
+    # Assert
+    assert (is_valid, errors) == (True, [])
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_fragment"),
+    [
+        pytest.param(
+            {UnifiedCohort.TIME_ZERO: ["not a date", "x", "y"]}, UnifiedCohort.TIME_ZERO, id="time_zero_unparseable"
+        ),
+        pytest.param(
+            {UnifiedCohort.OUTCOME_LABEL: [1, 2, 3]}, UnifiedCohort.OUTCOME_LABEL, id="outcome_label_not_string"
+        ),
+        pytest.param({UnifiedCohort.OUTCOME: [1, 2, 1]}, "invalid binary values", id="binary_outcome_not_zero_one"),
+    ],
+)
+def test_schema_validation_invalid_column_reportsColumnError(overrides: dict, expected_fragment: str) -> None:
+    # Arrange
+    df = _valid_cohort(**overrides)
+
+    # Act
+    is_valid, errors = validate_unified_cohort_schema(df)
+
+    # Assert
+    assert is_valid is False
+    assert len(errors) == 1
+    assert expected_fragment in errors[0]
