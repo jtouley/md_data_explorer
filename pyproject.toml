@@ -43,6 +43,7 @@ dev = [
     "pre-commit>=3.5.0",
     "types-requests>=2.31.0",
     "types-PyYAML>=6.0.0",
+    "mutmut>=3.3",
 ]
 
 [build-system]
@@ -129,3 +130,12 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
 ]
+
+[tool.mutmut]
+# Mutation testing (see `make mutation` / `make mutation-module`). Streamlit page scripts
+# are excluded for the same reason they are excluded from coverage: they run at import time.
+paths_to_mutate = ["src/clinical_analytics/"]
+do_not_mutate = ["src/clinical_analytics/ui/pages/*", "*/__init__.py"]
+tests_dir = ["tests/"]
+also_copy = ["config/", "scripts/", "data/dicitonaries/", "docs/"]
+pytest_add_cli_args = ["-m", "not slow and not integration", "-p", "no:randomly", "-q"]

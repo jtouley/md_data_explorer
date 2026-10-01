@@ -7,6 +7,7 @@ Tests ensure that:
 3. App blocks until models are ready
 """
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 
@@ -113,8 +114,14 @@ class TestOllamaInitializationStatus:
 
     def test_initialize_ollama_shows_download_in_progress_message(self):
         """Test that initialization shows helpful message during download."""
-        # Arrange
-        with patch("clinical_analytics.ui.ollama_init.get_ollama_manager") as mock_manager_fn:
+        # Arrange: subprocess is patched so the test never runs a real `ollama pull` (multi-GB download)
+        with (
+            patch("clinical_analytics.ui.ollama_init.get_ollama_manager") as mock_manager_fn,
+            patch(
+                "clinical_analytics.ui.ollama_init.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, ["ollama", "pull"]),
+            ),
+        ):
             mock_manager = MagicMock()
             mock_manager_fn.return_value = mock_manager
 
