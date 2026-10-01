@@ -14,21 +14,16 @@ from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 
 @pytest.fixture
-def mock_semantic_layer():
-    """Create mock semantic layer for testing."""
-    from unittest.mock import MagicMock
-
-    mock = MagicMock()
-    mock.get_column_alias_index.return_value = {
-        "mortality": "mortality",
-        "treatment": "treatment_arm",
-        "age": "age",
-        "statin_prescribed": "Statin Prescribed? 1: Yes 2: No",
-    }
-    mock.get_collision_suggestions.return_value = None
-    mock.get_collision_warnings.return_value = set()
-    mock._normalize_alias = lambda x: x.lower().replace(" ", "_")
-    return mock
+def mock_semantic_layer(mock_semantic_layer):
+    """File-specific columns on top of the shared conftest mock_semantic_layer factory."""
+    return mock_semantic_layer(
+        columns={
+            "mortality": "mortality",
+            "treatment": "treatment_arm",
+            "age": "age",
+            "statin_prescribed": "Statin Prescribed? 1: Yes 2: No",
+        }
+    )
 
 
 class TestQueryPlanConversion:

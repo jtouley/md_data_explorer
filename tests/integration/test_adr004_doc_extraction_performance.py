@@ -84,22 +84,3 @@ class TestDocExtractionPerformance:
 
         # Success: Truncation efficient
         print(f"\n✅ Doc Truncation Performance: {elapsed_time:.2f}s (< 1s budget)")
-
-    @pytest.mark.skip(reason="Requires pymupdf and valid PDF generation - test with real PDFs in CI")
-    def test_pdf_extraction_performance_real_pdf(self, tmp_path):
-        """
-        Test PDF extraction performance with real PDF files.
-
-        **Note**: This test is skipped by default because it requires:
-        1. pymupdf installed
-        2. Ability to create valid PDF files for testing
-        3. Real PDF files (10-20 pages typical)
-
-        To run this test:
-        1. Ensure pymupdf is installed
-        2. Create test PDF files in fixtures/
-        3. Remove @pytest.mark.skip decorator
-        """
-        # This would test with real PDF files
-        # For now, we rely on the text/markdown performance test above
-        pass

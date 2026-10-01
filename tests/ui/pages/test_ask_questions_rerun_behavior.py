@@ -111,23 +111,3 @@ class TestAskQuestionsRerunBehavior:
         retrieved = cache.get(run_key, dataset_version)
         assert retrieved is not None
         assert retrieved.result["headline"] == "test result"
-
-    def test_unconditional_rerun_requirement_documented(self):
-        """Document the requirement: rerun must be unconditional after execution.
-
-        This test serves as documentation of the fix:
-        - Before: if added_assistant_msg: st.rerun()
-        - After: st.rerun() (unconditional)
-
-        The actual behavior is verified by manual testing and logs showing:
-        - analysis_result_stored
-        - analysis_stored_for_transcript_rendering
-        - intent_signal_cleared_after_execution
-        - UI renders result on next rerun
-        """
-        # This test documents the requirement
-        # The fix is verified by:
-        # 1. Removing conditional at line 2304-2306
-        # 2. Manual testing shows results render
-        # 3. Logs show result in cache + rerun triggers render
-        assert True  # Requirement documented

@@ -134,8 +134,8 @@ dev = [
 [tool.mutmut]
 # Mutation testing (see `make mutation` / `make mutation-module`). Streamlit page scripts
 # are excluded for the same reason they are excluded from coverage: they run at import time.
-paths_to_mutate = ["src/clinical_analytics/"]
+source_paths = ["src/clinical_analytics/"]
 do_not_mutate = ["src/clinical_analytics/ui/pages/*", "*/__init__.py"]
-tests_dir = ["tests/"]
-also_copy = ["config/", "scripts/", "data/dicitonaries/", "docs/"]
+also_copy = ["config/", "scripts/", "docs/", "data/dicitonaries/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
+pytest_add_cli_args_test_selection = ["tests/"]
 pytest_add_cli_args = ["-m", "not slow and not integration", "-p", "no:randomly", "-q"]
