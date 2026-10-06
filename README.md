@@ -185,4 +185,7 @@ pytest
 
 ## License
 
-TBD
+This software is licensed under the [MIT License](LICENSE).
+
+Dataset files and user-uploaded content remain under their own licenses and
+terms; the application license does not relicense those materials.
