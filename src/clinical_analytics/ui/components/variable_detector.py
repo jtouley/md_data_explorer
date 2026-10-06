@@ -229,11 +229,16 @@ class VariableTypeDetector:
                         "patient_id_columns": composite_cols,
                     }
 
-        # Find best outcome candidate: a binary column already named with the canonical
-        # schema name wins (mirrors the patient_id check above); otherwise first binary column
+        # Find best outcome candidate among binary columns: the canonical name wins (mirrors the
+        # patient_id check above), then numeric columns (the schema requires a numeric 0/1 outcome,
+        # so a string binary like M/F is a last resort), then the first binary column.
         binary_cols = [col for col, info in variable_info.items() if info["type"] == "binary"]
+        df_polars = _ensure_polars_df(df)
+        numeric_binary = [col for col in binary_cols if df_polars[col].dtype.is_numeric()]
         if "outcome" in binary_cols:
             suggestions["outcome"] = "outcome"
+        elif numeric_binary:
+            suggestions["outcome"] = numeric_binary[0]
         elif binary_cols:
             suggestions["outcome"] = binary_cols[0]
 

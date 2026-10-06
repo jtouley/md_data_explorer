@@ -372,6 +372,16 @@ class UploadedDataset(ClinicalDataset):
             if pred in schema_names:
                 select_exprs.append(pl.col(pred))
 
+        # Keep the mapped outcome under its own name too, so questions that name it ("mortality")
+        # resolve; `outcome` stays the canonical alias.
+        if (
+            outcome_col
+            and outcome_col in schema_names
+            and outcome_col != UnifiedCohort.OUTCOME
+            and outcome_col not in predictors
+        ):
+            select_exprs.append(pl.col(outcome_col))
+
         # For descriptive analysis, include ALL columns from original data
         # (not just predictors) so users can analyze any variable
         excluded_from_all = {

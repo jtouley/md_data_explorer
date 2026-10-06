@@ -157,6 +157,23 @@ class TestSuggestSchemaMapping:
         # Assert
         assert suggestions["outcome"] == "outcome"
 
+    def test_suggest_outcome_prefers_numeric_zero_one_over_string_binary(self):
+        """Regression: M/F `sex` was suggested as outcome; the schema validator rejects non-numeric outcomes."""
+        # Arrange
+        df = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(10)],
+                "sex": ["M", "F"] * 5,
+                "mortality": [0, 1, 1, 0, 0, 1, 0, 1, 1, 0],
+            }
+        )
+
+        # Act
+        suggestions = VariableTypeDetector.suggest_schema_mapping(df)
+
+        # Assert
+        assert suggestions["outcome"] == "mortality"
+
     def test_suggest_time_zero_by_datetime_type(self):
         """Test that datetime column is suggested as time_zero."""
         df = pl.DataFrame(
