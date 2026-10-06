@@ -203,15 +203,8 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
     # Store original count before applying filters
     original_count = df.height
 
-    # Apply filters from QueryPlan if present
-    filters_applied = []
-    if context.query_plan and context.query_plan.filters:
-        df = _apply_filters(df, context.query_plan.filters)
-        filters_applied = [f.__dict__ for f in context.query_plan.filters]
-    elif context.filters:
-        # Fallback to context.filters for backward compatibility
-        df = _apply_filters(df, context.filters)
-        filters_applied = [f.__dict__ for f in context.filters]
+    df, applied = _apply_context_filters(df, context)
+    filters_applied = [f.__dict__ for f in applied]
 
     filtered_count = df.height
 
@@ -449,6 +442,8 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
 
     Returns serializable dict (no Polars objects) including headline_answer.
     """
+    df, _ = _apply_context_filters(df, context)
+
     outcome_col = context.primary_variable
     group_col = context.grouping_variable
 
@@ -481,7 +476,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     # Determine appropriate test
     outcome_numeric = outcome_is_numeric
 
-    groups = analysis_df[group_col].unique().to_list()
+    groups = analysis_df[group_col].unique().sort().to_list()  # deterministic group order
     n_groups = len(groups)
 
     if n_groups < 2:
@@ -730,6 +725,23 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
     return filtered_df
 
 
+def _apply_context_filters(df: pl.DataFrame, context: AnalysisContext) -> tuple[pl.DataFrame, list[FilterSpec]]:
+    """
+    Apply the question's filters (QueryPlan first, legacy context.filters as fallback).
+
+    Every compute_* analysis must call this so filtered questions are answered on the filtered rows.
+
+    Returns:
+        (filtered DataFrame, filters that were applied)
+    """
+    filters = (context.query_plan.filters if context.query_plan and context.query_plan.filters else None) or (
+        context.filters or []
+    )
+    if not filters:
+        return df, []
+    return _apply_filters(df, filters), list(filters)
+
+
 def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compute count analysis - returns total count, optionally grouped.
@@ -741,11 +753,7 @@ def compute_count_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[s
     Returns:
         Serializable dict with count results
     """
-    # Apply filters from QueryPlan if present
-    if context.query_plan and context.query_plan.filters:
-        df = _apply_filters(df, context.query_plan.filters)
-    elif context.filters:
-        df = _apply_filters(df, context.filters)
+    df, _ = _apply_context_filters(df, context)
 
     row_count = df.height
 
@@ -808,6 +816,30 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
     """
     from clinical_analytics.ui.components.question_engine import AnalysisIntent
 
+    # DESCRIBE / COUNT resolve fuzzy column names themselves; the others select columns directly,
+    # so an unknown name must become a renderable error instead of a ColumnNotFoundError.
+    result_types = {
+        AnalysisIntent.COMPARE_GROUPS: "comparison",
+        AnalysisIntent.FIND_PREDICTORS: "predictor",
+        AnalysisIntent.EXAMINE_SURVIVAL: "survival",
+        AnalysisIntent.EXPLORE_RELATIONSHIPS: "relationship",
+    }
+    if context.inferred_intent in result_types:
+        referenced = [
+            context.primary_variable,
+            context.grouping_variable,
+            context.time_variable,
+            context.event_variable,
+            *(context.predictor_variables or []),
+        ]
+        missing = [col for col in referenced if col is not None and col not in df.columns]
+        if missing:
+            return {
+                "type": result_types[context.inferred_intent],
+                "error": f"Column(s) not found in dataset: {missing}",
+                "available_columns": df.columns,
+            }
+
     if context.inferred_intent == AnalysisIntent.DESCRIBE:
         return compute_descriptive_analysis(df, context)
     elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
@@ -830,6 +862,8 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
 
     Returns serializable dict (no Polars objects).
     """
+    df, _ = _apply_context_filters(df, context)
+
     import pandas as pd  # Only for legacy run_logistic_regression
 
     outcome_col = context.primary_variable
@@ -907,6 +941,7 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
 
     Returns serializable dict (no Polars objects).
     """
+    df, _ = _apply_context_filters(df, context)
 
     time_col = context.time_variable
     event_col = context.event_variable
@@ -966,6 +1001,8 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
 
     Returns serializable dict (no Polars objects).
     """
+    df, _ = _apply_context_filters(df, context)
+
     variables = context.predictor_variables
 
     if len(variables) < 2:

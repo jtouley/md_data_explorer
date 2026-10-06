@@ -164,6 +164,27 @@ class TestGetCohortLazyEvaluation:
         assert "patient_id" in cohort.columns
         assert "outcome" in cohort.columns
 
+    def test_get_cohort_outcomeMappedFromNamedColumn_keepsOriginalColumnName(self, upload_storage, create_upload):
+        """
+        Regression: the mapped outcome column was only exposed as `outcome`, so asking about it by its
+        own name ("compare mortality by treatment") raised ColumnNotFoundError and crashed the page.
+        """
+        # Arrange
+        df = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "mortality": [0, 1, 0], "age": [40, 50, 60]})
+        upload_id = create_upload(
+            "test_cohort_named_outcome",
+            df=df,
+            metadata_overrides={"variable_mapping": {"patient_id": "patient_id", "outcome": "mortality"}},
+        )
+        dataset = UploadedDataset(upload_id=upload_id, storage=upload_storage)
+        dataset.load()
+
+        # Act
+        cohort = dataset.get_cohort()
+
+        # Assert: canonical alias and original name carry the same values
+        assert cohort["outcome"].tolist() == cohort["mortality"].tolist() == [0, 1, 0]
+
     def test_get_cohort_applies_filters_before_materialization(self, tmp_path, sample_variable_mapping):
         """
         Test that get_cohort() applies filters in Polars LazyFrame before materialization.
