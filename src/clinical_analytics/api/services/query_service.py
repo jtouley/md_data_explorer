@@ -203,6 +203,24 @@ class AsyncQueryService:
         )
         self._events.setdefault(query_id, []).append(event)
 
+    def _table_payload(self, frame: Any) -> dict[str, Any] | None:
+        """JSON table for a Polars or pandas frame. Ibis execute() returns pandas."""
+        import pandas as pd
+        import polars as pl
+
+        if isinstance(frame, pl.DataFrame):
+            rows = frame.to_dicts()
+            columns = list(frame.columns)
+        elif isinstance(frame, pd.DataFrame):
+            rows = frame.to_dict(orient="records")
+            columns = [str(column) for column in frame.columns]
+        else:
+            return None
+        return {
+            "table": {"columns": columns, "rows": rows},
+            "row_count": len(rows),
+        }
+
     def _serialize_result(self, result: Any | None) -> dict[str, Any] | None:
         """Convert result to JSON-serializable dict, handling DataFrames recursively."""
         if result is None:
@@ -210,40 +228,26 @@ class AsyncQueryService:
 
         import polars as pl
 
-        # Handle Polars DataFrame directly
-        if isinstance(result, pl.DataFrame):
-            return {
-                "table": {
-                    "columns": result.columns,
-                    "rows": result.to_dicts(),
-                },
-                "row_count": len(result),
-            }
+        table = self._table_payload(result)
+        if table is not None:
+            return table
 
         # Handle dict with potential DataFrame values (recursive)
         if isinstance(result, dict):
             serialized: dict[str, Any] = {}
             for k, v in result.items():
-                if isinstance(v, pl.DataFrame):
-                    serialized[k] = {
-                        "table": {
-                            "columns": v.columns,
-                            "rows": v.to_dicts(),
-                        },
-                        "row_count": len(v),
-                    }
+                nested = self._table_payload(v)
+                if nested is not None:
+                    serialized[k] = nested
                 elif isinstance(v, dict):
-                    # Recursively serialize nested dicts
                     serialized[k] = self._serialize_result(v)
                 elif isinstance(v, list):
-                    # Handle lists (may contain dicts with DataFrames)
                     serialized[k] = [
                         self._serialize_result(item) if isinstance(item, dict | pl.DataFrame) else item for item in v
                     ]
                 elif isinstance(v, str | int | float | bool | type(None)):
                     serialized[k] = v
                 else:
-                    # Convert other types to string
                     serialized[k] = str(v)
             return serialized
 

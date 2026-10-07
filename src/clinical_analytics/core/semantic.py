@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -319,8 +320,10 @@ class SemanticLayer:
             extra={"workspace_root": str(self.workspace_root)},
         )
 
-        # Connect to DuckDB (in-memory for now, can be file-based later)
+        # Connect to DuckDB (in-memory for now, can be file-based later).
+        # One connection is not safe for overlapping threads.
         self.con = ibis.duckdb.connect()
+        self._con_lock = threading.Lock()
 
         # Register data source
         self._register_source()
