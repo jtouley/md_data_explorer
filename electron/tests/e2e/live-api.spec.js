@@ -89,8 +89,22 @@ test.describe('Live FastAPI integration', () => {
           if (!res.ok) throw new Error(data.detail || `Upload failed: ${res.statusText}`);
           return data;
         },
-        subscribeToQueryStream() {
-          return () => {};
+        subscribeToQueryStream(queryId, callbacks) {
+          const eventSource = new EventSource(`${apiBaseUrl}/api/queries/${queryId}/stream`);
+          eventSource.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              if (callbacks && callbacks.onEvent) {
+                callbacks.onEvent({ event: data.event, data });
+              }
+            } catch (err) {
+              if (callbacks && callbacks.onError) callbacks.onError(err);
+            }
+          };
+          eventSource.onerror = (error) => {
+            if (callbacks && callbacks.onError) callbacks.onError(error);
+          };
+          return () => eventSource.close();
         },
       };
     }, { apiBaseUrl: API_BASE_URL });
