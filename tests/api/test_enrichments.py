@@ -31,12 +31,14 @@ def mock_overlay_store():
 def test_client(mock_enrichment_service, mock_overlay_store):
     """Create test client with mocked services."""
     from clinical_analytics.api.routes.enrichments import (
+        get_dataset_version,
         get_enrichment_service,
         get_overlay_store,
     )
 
     app.dependency_overrides[get_enrichment_service] = lambda: mock_enrichment_service
     app.dependency_overrides[get_overlay_store] = lambda: mock_overlay_store
+    app.dependency_overrides[get_dataset_version] = lambda: "v1"
     yield TestClient(app)
     app.dependency_overrides.clear()
 
