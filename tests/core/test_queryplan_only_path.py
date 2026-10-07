@@ -7,7 +7,6 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import pytest
-
 from clinical_analytics.core.query_plan import QueryPlan
 
 
@@ -59,9 +58,9 @@ class TestQueryPlanOnlyPath:
                     calls.append(node.func.attr)
 
         # Assert: compute_analysis_by_type should not be called
-        assert "compute_analysis_by_type" not in calls, (
-            "Found legacy compute_analysis_by_type() call in Ask_Questions.py"
-        )
+        assert (
+            "compute_analysis_by_type" not in calls
+        ), "Found legacy compute_analysis_by_type() call in Ask_Questions.py"
 
     def test_no_direct_get_or_compute_result_calls_in_ui(self):
         """UI pages should not call get_or_compute_result() legacy path."""
@@ -201,7 +200,6 @@ class TestQueryPlanOnlyPath:
         """format_execution_result() should format COUNT result DataFrame correctly."""
         # Arrange: COUNT query result (already aggregated)
         import pandas as pd
-
         from clinical_analytics.core.query_plan import QueryPlan
         from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
@@ -278,8 +276,8 @@ class TestQueryPlanOnlyPath:
         assert formatted["type"] == expected_type
         assert "error" not in formatted
 
-    def test_format_execution_result_non_count_without_cohort_returns_error(self, make_semantic_layer, sample_cohort):
-        """Without the raw cohort, non-COUNT intents fail loudly instead of rendering blank."""
+    def test_format_execution_result_non_count_without_cohort_uses_base_view(self, make_semantic_layer, sample_cohort):
+        """Non-COUNT formatting uses the filtered base view when the UI has no cohort."""
         from clinical_analytics.core.query_plan import QueryPlan
         from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
@@ -295,8 +293,8 @@ class TestQueryPlanOnlyPath:
         formatted = layer.format_execution_result(execution_result, context)
 
         # Assert
-        assert formatted["type"] == "error"
-        assert "cohort" in formatted["error"]
+        assert formatted["type"] == "descriptive"
+        assert "error" not in formatted
 
 
 @pytest.fixture

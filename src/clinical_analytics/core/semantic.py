@@ -1773,8 +1773,8 @@ class SemanticLayer:
         Args:
             execution_result: Result dict from execute_query_plan()
             context: AnalysisContext with intent and variables (for legacy compatibility)
-            cohort: Raw cohort DataFrame. Required for non-COUNT intents, whose results are
-                computed from the cohort because the aggregated result_df is not renderer-compatible.
+            cohort: Optional frame from get_cohort(). Ignored for the numbers.
+                Non-COUNT stats are computed from the filtered base view.
 
         Returns:
             Formatted result dict compatible with render_analysis_by_type()
@@ -1819,17 +1819,21 @@ class SemanticLayer:
         # Phase 3.3: Pass chart_spec to formatting methods
         if query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
-        elif cohort is not None:
-            # DESCRIBE / COMPARE_GROUPS / FIND_PREDICTORS / SURVIVAL / RELATIONSHIPS: the plan has been
-            # validated by execute_query_plan(); compute the renderer-compatible result from the raw cohort.
+        else:
+            # The aggregated SQL frame is not renderer-shaped. Recompute from the
+            # filtered base view the plan validated, not from get_cohort().
             from clinical_analytics.analysis.compute import compute_analysis_by_type
 
-            formatted = compute_analysis_by_type(cohort, context)
-        else:
-            formatted = {
-                "type": "error",
-                "error": f"Raw cohort required to format {query_plan.intent} results",
-            }
+            base_rows = self._filtered_view(query_plan).execute()
+            if isinstance(base_rows, pd.DataFrame):
+                base_rows = pl.from_pandas(base_rows)
+            if cohort is not None:
+                logger.debug(
+                    "non_count_format_uses_base_view cohort_passed=%s intent=%s",
+                    True,
+                    query_plan.intent,
+                )
+            formatted = compute_analysis_by_type(base_rows, context)
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
@@ -2055,8 +2059,12 @@ class SemanticLayer:
 
         return run_key
 
-    def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame:
-        """Execute QueryPlan and return results DataFrame."""
+    def _filtered_view(self, plan: "QueryPlan") -> Any:
+        """Row-level base view with the plan filters applied.
+
+        This is the frame execute_query_plan validates. Non-COUNT rendering
+        must use it so a cohort alias cannot rename outcome.
+        """
         view = self.get_base_view()
 
         # Filter deduplication: remove redundant filters (filtering and grouping on same field)
@@ -2185,6 +2193,12 @@ class SemanticLayer:
             # Handle exclude_nulls
             if filter_spec.exclude_nulls:
                 view = view.filter(~col_expr.isnull())
+
+        return view
+
+    def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame:
+        """Execute QueryPlan and return results DataFrame."""
+        view = self._filtered_view(plan)
 
         # Execute based on intent
         if plan.intent == "COUNT":
