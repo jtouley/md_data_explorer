@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # Enforce that tests are updated when src/clinical_analytics changes
-# Blocks edits if source code changes without corresponding test updates
-
+# PostToolUse hook: the edit already happened, so exit 2 can't undo it —
+# it surfaces the message to Claude as feedback to act on.
 set -euo pipefail
+
+INPUT=$(cat)
+FILE_PATH=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_input', {}).get('file_path', ''))" <<<"$INPUT" 2>/dev/null || echo "")
+
+case "$FILE_PATH" in
+    *src/clinical_analytics/*.py) ;;
+    *) exit 0 ;;
+esac
 
 # Check if we have uncommitted changes in src/clinical_analytics
 SRC_CHANGES=$(git diff --name-only HEAD 2>/dev/null | grep -c "^src/clinical_analytics/" || echo "0")
@@ -16,45 +24,42 @@ ALLOWLISTED_ONLY=$(git diff --name-only HEAD 2>/dev/null | grep -vE "$ALLOWLIST_
 
 # If no changes at all, allow
 if [[ "$SRC_CHANGES" -eq 0 ]]; then
-    echo '{"block": false}'
     exit 0
 fi
 
 # If only allowlisted files changed, allow
 if [[ "$ALLOWLISTED_ONLY" -eq 0 ]]; then
-    echo '{"block": false, "message": "ℹ️  Only docs/config changed, skipping test enforcement"}'
     exit 0
 fi
 
-# If src changed but no test changes, block
+# If src changed but no test changes, warn (feedback, not a hard block)
 if [[ "$SRC_CHANGES" -gt 0 ]] && [[ "$TEST_CHANGES" -eq 0 ]]; then
-    cat <<EOF
-{
-  "block": true,
-  "message": "🚫 Source code changed without test updates!\n\n📂 Files changed in src/clinical_analytics/: $SRC_CHANGES\n📝 Files changed in tests/: $TEST_CHANGES\n\n✅ To proceed:\n  1. Add/update tests for the behavior change\n  2. Run: make test-fast\n  3. Or justify in commit message if tests aren't needed\n\n💡 Use factory fixtures from tests/conftest.py:\n   - make_semantic_layer\n   - make_cohort_with_categorical\n   - make_multi_table_setup"
-}
+    cat >&2 <<EOF
+🚫 Source code changed without test updates!
+
+📂 Files changed in src/clinical_analytics/: $SRC_CHANGES
+📝 Files changed in tests/: $TEST_CHANGES
+
+✅ To proceed:
+  1. Add/update tests for the behavior change
+  2. Run: make test-fast
+  3. Or justify in commit message if tests aren't needed
+
+💡 Use factory fixtures from tests/conftest.py:
+   - make_semantic_layer
+   - make_cohort_with_categorical
+   - make_multi_table_setup
 EOF
-    exit 0
+    exit 2
 fi
 
-# If tests were updated, run fast tests to verify
-echo '{"block": false, "message": "✅ Tests updated - running fast test suite..."}'
-
-# Run fast tests (non-blocking, just informative)
+# Tests were updated - run fast tests to verify, feed failures back as feedback
 if command -v make &> /dev/null && grep -q "test-fast:" Makefile; then
-    TEST_OUTPUT=$(make test-fast 2>&1 || echo "FAILED")
-    if echo "$TEST_OUTPUT" | grep -q "FAILED"; then
-        # Extract last 30 lines of output
-        LAST_LINES=$(echo "$TEST_OUTPUT" | tail -30)
-        cat <<EOF
-{
-  "block": true,
-  "message": "❌ Fast tests failed!\n\nLast 30 lines:\n$LAST_LINES\n\nFix tests before proceeding."
-}
-EOF
-    else
-        echo '{"block": false, "message": "✅ Fast tests passed"}'
+    if ! TEST_OUTPUT=$(make test-fast 2>&1); then
+        echo "❌ Fast tests failed!" >&2
+        echo "$TEST_OUTPUT" | tail -30 >&2
+        exit 2
     fi
-else
-    echo '{"block": false, "message": "⚠️  Could not run tests (make test-fast not found)"}'
 fi
+
+exit 0
