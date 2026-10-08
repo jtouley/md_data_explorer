@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
+from fastapi.testclient import TestClient
+
 from clinical_analytics.api.main import app
 from clinical_analytics.api.routes import enrichments as enrichment_routes
 from clinical_analytics.api.routes.enrichments import (
@@ -15,7 +17,6 @@ from clinical_analytics.api.routes.enrichments import (
 )
 from clinical_analytics.api.services.query_service import AsyncQueryService
 from clinical_analytics.core.overlay_store import OverlayStore
-from fastapi.testclient import TestClient
 
 
 def test_preview_pandas_execute_frame_is_a_table() -> None:

@@ -144,9 +144,9 @@ class TestQueryServiceUsesCorrectTypes:
 
         # Assert: No UI imports, has core.analysis_types import
         assert len(ui_imports) == 0, f"query_service.py imports from UI layer: {ui_imports}"
-        assert (
-            len(core_analysis_types_imports) > 0
-        ), "query_service.py should import from clinical_analytics.core.analysis_types"
+        assert len(core_analysis_types_imports) > 0, (
+            "query_service.py should import from clinical_analytics.core.analysis_types"
+        )
 
     def test_analysis_types_module_exists(self) -> None:
         """core/analysis_types.py should exist with AnalysisIntent and AnalysisContext."""

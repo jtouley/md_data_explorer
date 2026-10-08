@@ -8,9 +8,10 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
-from clinical_analytics.api.main import app
 from fastapi import status
 from fastapi.testclient import TestClient
+
+from clinical_analytics.api.main import app
 
 
 @pytest.fixture

@@ -7,10 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import polars as pl
 import pytest
-from clinical_analytics.api.main import app
-from clinical_analytics.api.routes.queries import DataFrameEncoder
 from fastapi import status
 from fastapi.testclient import TestClient
+
+from clinical_analytics.api.main import app
+from clinical_analytics.api.routes.queries import DataFrameEncoder
 
 # ============================================================================
 # Fixtures
