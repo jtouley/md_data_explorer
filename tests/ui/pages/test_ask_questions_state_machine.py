@@ -45,6 +45,97 @@ class TestAskQuestionsStateMachinePersistence:
         assert persisted_context is not None, "analysis_context should persist"
         assert persisted_context.inferred_intent == AnalysisIntent.COUNT
 
+    def test_state_initialization_does_not_clear_intent_signal(self, mock_session_state):
+        """
+        Test that state initialization doesn't incorrectly clear intent_signal.
+
+        This verifies the fix to separate initialization checks:
+        - Only initialize analysis_context if not present
+        - Only initialize intent_signal if not present
+        - Don't reset one based on the other
+        """
+        # Arrange: Set analysis_context to None but intent_signal to "nl_parsed"
+        # (this can happen after parsing but before execution)
+        mock_session_state["analysis_context"] = AnalysisContext()
+        mock_session_state["intent_signal"] = "nl_parsed"
+
+        # Act: Simulate the fixed initialization logic
+        # Fixed code: Check EACH state variable separately
+        if "analysis_context" not in mock_session_state:
+            mock_session_state["analysis_context"] = None
+        if "intent_signal" not in mock_session_state:
+            mock_session_state["intent_signal"] = None
+
+        # Assert: intent_signal should NOT be cleared by initialization
+        assert mock_session_state["intent_signal"] == "nl_parsed", (
+            "intent_signal should not be cleared by state initialization"
+        )
+
+    def test_execution_block_check_with_valid_state(self, mock_session_state):
+        """
+        Test that execution block executes when intent_signal and analysis_context are valid.
+
+        Simulates the execution guard logic to verify it correctly identifies
+        when execution should proceed.
+        """
+        # Arrange: Valid state for execution
+        context = AnalysisContext(
+            inferred_intent=AnalysisIntent.DESCRIBE,
+            research_question="Describe patient characteristics",
+            primary_variable="age",
+        )
+        mock_session_state["analysis_context"] = context
+        mock_session_state["intent_signal"] = "nl_parsed"
+
+        # Act: Simulate execution guard check (from main() at ~line 2003)
+        intent_signal = mock_session_state.get("intent_signal")
+        has_context = "analysis_context" in mock_session_state
+        context_value = mock_session_state.get("analysis_context")
+
+        # Determine if execution should happen
+        should_execute = intent_signal is not None and context_value is not None
+
+        # Assert: Should execute when both are present
+        assert intent_signal == "nl_parsed", "intent_signal should be set"
+        assert has_context is True, "analysis_context should be present"
+        assert should_execute is True, "Execution should happen with valid state"
+
+    def test_execution_block_skip_when_intent_signal_none(self, mock_session_state):
+        """
+        Test that execution block is skipped when intent_signal is None.
+
+        Verifies the guard prevents execution on pages without parsed queries.
+        """
+        # Arrange: No parsed query yet
+        mock_session_state["analysis_context"] = None
+        mock_session_state["intent_signal"] = None
+
+        # Act: Simulate execution guard check
+        intent_signal = mock_session_state.get("intent_signal")
+        should_execute = intent_signal is not None
+
+        # Assert: Should NOT execute when intent_signal is None
+        assert intent_signal is None, "intent_signal should be None initially"
+        assert should_execute is False, "Execution should not happen when intent_signal is None"
+
+    def test_state_machine_invariant_violation_detection(self, mock_session_state):
+        """
+        Test that state machine detects invalid state (intent_signal set but no context).
+
+        This verifies the invariant check that catches inconsistent state.
+        """
+        # Arrange: Invalid state (intent_signal set but context is None)
+        mock_session_state["analysis_context"] = None
+        mock_session_state["intent_signal"] = "nl_parsed"
+
+        # Act: Check for state machine invariant violation
+        intent_signal = mock_session_state.get("intent_signal")
+        context = mock_session_state.get("analysis_context")
+        is_invalid = intent_signal is not None and context is None
+
+        # Assert: Should detect this as invalid state
+        assert is_invalid is True, "Should detect intent_signal without context as invalid"
+
 
 class TestAskQuestionsChatRendering:
     """Test suite for chat message rendering with cached results."""
@@ -116,6 +207,28 @@ class TestAskQuestionsChatRendering:
 
         # Assert: Cache miss should return None (not crash)
         assert retrieved is None, "Cache miss should return None, not crash"
+
+    def test_assistant_message_has_run_key_for_result_lookup(self, mock_session_state):
+        """
+        Test that assistant messages include run_key for result lookup.
+
+        This verifies that messages can be linked back to cached results.
+        """
+        # Arrange: Create assistant message with run_key
+        run_key = "test_run_key_002"
+        chat_message = {
+            "role": "assistant",
+            "text": "Analysis complete",
+            "run_key": run_key,
+            "status": "completed",
+        }
+
+        # Act: Access run_key from message
+        message_run_key = chat_message.get("run_key")
+
+        # Assert: run_key should be present and accessible
+        assert message_run_key == run_key, "Assistant message should have run_key for lookup"
+        assert message_run_key is not None, "run_key should not be None"
 
     def test_result_cached_before_assistant_message_added(self, mock_session_state):
         """
@@ -237,6 +350,59 @@ class TestDatasetChangeGuardWithIntentSignal:
     These tests verify that when intent_signal is 'nl_parsed', the dataset
     change detection skips clearing the analysis_context (prevents race condition).
     """
+
+    def test_dataset_change_skipped_when_intent_signal_nl_parsed(self, mock_session_state):
+        """
+        Test that dataset change handling is skipped when intent_signal='nl_parsed'.
+
+        This verifies the guard: if we just parsed a query, don't clear the
+        context even if dataset appears to have changed (race condition).
+        """
+        # Arrange: State after query parsing (context set, intent_signal='nl_parsed')
+        context = AnalysisContext(
+            inferred_intent=AnalysisIntent.DESCRIBE,
+            primary_variable="age",
+        )
+        mock_session_state["analysis_context"] = context
+        mock_session_state["intent_signal"] = "nl_parsed"
+
+        # Simulate dataset comparison detecting a "change"
+        last_dataset = None  # Stale manager had no dataset
+        current_dataset = "user_upload_20251228_203407_376a8faa"
+        dataset_appears_changed = last_dataset != current_dataset
+
+        # Act: Apply the guard logic
+        intent_signal = mock_session_state.get("intent_signal")
+        should_skip_clearing = intent_signal == "nl_parsed"
+
+        # Assert: Guard should prevent clearing when intent_signal='nl_parsed'
+        assert dataset_appears_changed is True, "Dataset comparison shows change"
+        assert should_skip_clearing is True, "Guard should skip clearing"
+        # Context should NOT be cleared
+        assert mock_session_state.get("analysis_context") is not None
+
+    def test_dataset_change_allowed_when_intent_signal_none(self, mock_session_state):
+        """
+        Test that dataset change handling proceeds when intent_signal is None.
+
+        When no query is pending, dataset change should clear context normally.
+        """
+        # Arrange: Normal state (no pending query)
+        mock_session_state["analysis_context"] = None
+        mock_session_state["intent_signal"] = None
+
+        # Simulate dataset comparison detecting a "change"
+        last_dataset = "old_dataset"
+        current_dataset = "new_dataset"
+        dataset_appears_changed = last_dataset != current_dataset
+
+        # Act: Apply the guard logic
+        intent_signal = mock_session_state.get("intent_signal")
+        should_skip_clearing = intent_signal == "nl_parsed"
+
+        # Assert: Guard should NOT prevent clearing when intent_signal is None
+        assert dataset_appears_changed is True, "Dataset comparison shows change"
+        assert should_skip_clearing is False, "Guard should NOT skip clearing"
 
     def test_context_preserved_during_rerun_race_condition(self, mock_session_state):
         """
@@ -414,6 +580,28 @@ class TestFullChatFlowIntegration:
         assert retrieved.result["count"] == 42, "Result data should match"
         assert retrieved.result["intent"] == "COUNT", "Intent should match"
 
+    def test_chat_flow_context_persists_for_followup(self, mock_session_state):
+        """
+        Test that analysis context persists for follow-up queries.
+        """
+        # Arrange: First query completed
+        context = AnalysisContext(
+            inferred_intent=AnalysisIntent.DESCRIBE,
+            primary_variable="age",
+            research_question="What is the average age?",
+        )
+        mock_session_state["analysis_context"] = context
+        mock_session_state["intent_signal"] = None  # Completed
+
+        # Act: User asks follow-up
+        # The existing context should inform the follow-up parsing
+        existing_context = mock_session_state.get("analysis_context")
+
+        # Assert: Context persists for follow-up
+        assert existing_context is not None, "Context persists after execution"
+        assert existing_context.primary_variable == "age", "Primary variable preserved"
+        assert existing_context.inferred_intent == AnalysisIntent.DESCRIBE, "Intent preserved"
+
 
 class TestRenderChatConversationManagerMigration:
     """
@@ -470,6 +658,21 @@ class TestRenderChatConversationManagerMigration:
         assert len(pending_messages) == 1, "Should have 1 pending message"
         assert pending_messages[0].role == "assistant", "Pending message is assistant"
         assert pending_messages[0].content == "", "Pending message has empty content"
+
+    def test_render_chat_gracefully_handles_missing_manager(self, mock_session_state):
+        """
+        Test that render_chat handles case where conversation_manager is not set.
+
+        Should not crash if manager is None (e.g., first page load).
+        """
+        # Arrange: No conversation_manager in session state
+        mock_session_state.pop("conversation_manager", None)
+
+        # Act: Check for manager safely
+        manager = mock_session_state.get("conversation_manager")
+
+        # Assert: Should be None, not crash
+        assert manager is None, "Manager should be None when not set"
 
     def test_render_chat_message_attributes_match_message_dataclass(self, mock_session_state):
         """

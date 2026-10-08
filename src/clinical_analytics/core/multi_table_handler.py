@@ -8,8 +8,10 @@ This module enables handling of multi-table datasets (like MIMIC-IV) by automati
 - Executing joins to create unified cohort views
 
 Key Principles:
-- Use Polars for all DataFrame operations
-- Use DuckDB for SQL-based joins
+- Use Polars for all DataFrame operations and for the unified cohort pipeline
+  (`build_unified_cohort`: `_build_dimension_mart`, `_aggregate_fact_tables`, lazy joins, `collect()`).
+- DuckDB (`conn.register`) holds registered tables for compatibility and optional paths;
+  the hot join path for the unified cohort is Polars, not DuckDB SQL.
 - Privacy-preserving (all local computation)
 - Fail gracefully with user override options
 """
@@ -560,13 +562,13 @@ class MultiTableHandler:
         patient_patterns = ["patient_id", "subject_id", "patientid", "subjectid"]
         for col in df.columns:
             if col.lower() in patient_patterns:
-                return col
+                return str(col)
 
         # 2. Check explicit admission grain patterns
         admission_patterns = ["hadm_id", "encounter_id", "visit_id", "admissionid", "encounterid"]
         for col in df.columns:
             if col.lower() in admission_patterns:
-                return col
+                return str(col)
 
         # 3. Fallback: score ID columns using sampled data
         id_cols = [col for col in df.columns if self._is_probably_id_col(col)]
@@ -610,7 +612,7 @@ class MultiTableHandler:
         if scores:
             best_col = max(scores.keys(), key=lambda k: scores[k])
             logger.debug(f"Selected grain key: '{best_col}' (score={scores[best_col]:.2f})")
-            return best_col
+            return str(best_col)
 
         return None
 
@@ -671,7 +673,7 @@ class MultiTableHandler:
             elif dtype == pl.Utf8:
                 # Estimate string column bytes
                 avg_str_len = sample[col].drop_nulls().str.len_chars().mean()
-                if avg_str_len is not None and isinstance(avg_str_len, (int, float)):
+                if avg_str_len is not None and isinstance(avg_str_len, int | float):
                     bytes_per_row += int(avg_str_len)
             elif dtype == pl.Boolean:
                 bytes_per_row += 1
@@ -680,7 +682,7 @@ class MultiTableHandler:
                 bytes_per_row += 8
 
         # Total estimate
-        return bytes_per_row * df.height
+        return int(bytes_per_row * int(df.height))
 
     def _detect_time_column(self, df: pl.DataFrame) -> tuple[str | None, bool]:
         """
@@ -1695,12 +1697,12 @@ class MultiTableHandler:
         # Check ID pattern columns first
         for col in id_pattern_cols:
             if df[col].n_unique() == df.height and df[col].null_count() == 0:
-                return col
+                return str(col)
 
         # Fallback: check all columns
         for col in df.columns:
             if df[col].n_unique() == df.height and df[col].null_count() == 0:
-                return col
+                return str(col)
 
         return None
 

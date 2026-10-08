@@ -349,6 +349,96 @@ class OverlayStore:
             patch_id=patch_id,
         )
 
+    def revert_accepted_patch(
+        self,
+        upload_id: str,
+        version: str,
+        patch_id: str,
+        reverted_by: str,
+    ) -> None:
+        """
+        Append a REVERTED row for an accepted patch (same patch_id, append-only log).
+
+        Raises:
+            ValueError: If patch_id is missing or latest state is not ACCEPTED.
+        """
+        patches = self.load_patches(upload_id, version)
+        latest_by_id: dict[str, MetadataPatch | ExclusionPatternPatch | RelationshipPatch] = {}
+        for p in patches:
+            latest_by_id[p.patch_id] = p
+
+        current = latest_by_id.get(patch_id)
+        if current is None:
+            raise ValueError(f"No patch found for patch_id={patch_id!r}")
+        if current.status != PatchStatus.ACCEPTED:
+            raise ValueError(f"Patch {patch_id!r} is not accepted (latest status={current.status.name})")
+
+        reverted = self._create_reverted_patch(current, reverted_by)
+        self.append_patch(upload_id, version, reverted)
+        self.invalidate_cache(upload_id, version)
+
+        logger.info(
+            "patch_reverted",
+            upload_id=upload_id,
+            version=version,
+            patch_id=patch_id,
+            reverted_by=reverted_by,
+        )
+
+    def _create_reverted_patch(
+        self,
+        patch: MetadataPatch | ExclusionPatternPatch | RelationshipPatch,
+        reverted_by: str,
+    ) -> MetadataPatch | ExclusionPatternPatch | RelationshipPatch:
+        """Create REVERTED version of an accepted patch (append-only audit)."""
+        now = datetime.now(UTC)
+
+        if isinstance(patch, MetadataPatch):
+            return MetadataPatch(
+                patch_id=patch.patch_id,
+                operation=patch.operation,
+                column=patch.column,
+                value=patch.value,
+                status=PatchStatus.REVERTED,
+                created_at=patch.created_at,
+                provenance=patch.provenance,
+                model_id=patch.model_id,
+                confidence=patch.confidence,
+                accepted_by=patch.accepted_by,
+                accepted_at=patch.accepted_at,
+                rejected_reason=None,
+                reverted_by=reverted_by,
+                reverted_at=now,
+            )
+        if isinstance(patch, ExclusionPatternPatch):
+            return ExclusionPatternPatch(
+                patch_id=patch.patch_id,
+                column=patch.column,
+                pattern=patch.pattern,
+                coded_value=patch.coded_value,
+                context=patch.context,
+                auto_apply=patch.auto_apply,
+                status=PatchStatus.REVERTED,
+                created_at=patch.created_at,
+                provenance=patch.provenance,
+                model_id=patch.model_id,
+                confidence=patch.confidence,
+            )
+        if isinstance(patch, RelationshipPatch):
+            return RelationshipPatch(
+                patch_id=patch.patch_id,
+                columns=patch.columns,
+                relationship_type=patch.relationship_type,
+                rule=patch.rule,
+                inference=patch.inference,
+                confidence=patch.confidence,
+                status=PatchStatus.REVERTED,
+                created_at=patch.created_at,
+                provenance=patch.provenance,
+                model_id=patch.model_id,
+            )
+        return patch
+
     def _create_accepted_patch(
         self,
         patch: MetadataPatch | ExclusionPatternPatch | RelationshipPatch,

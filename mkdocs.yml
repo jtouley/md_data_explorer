@@ -63,7 +63,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Installation: getting-started/installation.md
-      - Quick Start: getting-started/quick-start.md
+      - Quick start: getting-started/quick-start.md
       - Uploading Data: getting-started/uploading-data.md
   - User Guide:
       - Question-Driven Analysis: user-guide/question-driven-analysis.md
@@ -71,9 +71,13 @@ nav:
       - Interpreting Results: user-guide/interpreting-results.md
   - Architecture:
       - Overview: architecture/overview.md
+      - As-built (2025-03): architecture/AS_BUILT_ARCHITECTURE.md
+      - Module boundaries: architecture/ARCHITECTURE_BOUNDARIES.md
       - Semantic Layer: architecture/semantic-layer.md
       - Dataset Registry: architecture/dataset-registry.md
       - NL Query Engine: architecture/nl-query-engine.md
+  - Security:
+      - Threat model & backlog: security/THREAT_MODEL.md
   - API Reference:
       - Core: api-reference/core.md
       - Datasets: api-reference/datasets.md
@@ -83,5 +87,7 @@ nav:
       - Development Setup: development/setup.md
       - Testing: development/testing.md
   - Specifications:
+      - Master plan (roadmap): implementation/MASTER_PLAN.md
+      - Electron cutover (omnibus): specs/omnibus_electron_streamlit_cutover.md
       - Question-Driven Analysis: specs/question-driven-analysis.md
       - Multi-Table Support: specs/multi-table-support.md
