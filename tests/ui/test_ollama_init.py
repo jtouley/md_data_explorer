@@ -125,11 +125,16 @@ class TestOllamaInitializationStatus:
                 "available_models": [],
                 "default_model": "llama3.1:8b",
             }
+            mock_manager.default_model = "llama3.1:8b"
+            mock_manager.fallback_model = "llama3.2:3b"
 
-            # Act
-            from clinical_analytics.ui.ollama_init import initialize_ollama
+            # Missing CLI must not crash startup; the status message still explains the gap.
+            with patch("clinical_analytics.ui.ollama_init.subprocess.run") as mock_run:
+                mock_run.side_effect = FileNotFoundError(2, "No such file or directory", "ollama")
 
-            result = initialize_ollama()
+                from clinical_analytics.ui.ollama_init import initialize_ollama
+
+                result = initialize_ollama()
 
             # Assert: Should indicate models need to be downloaded
             assert not result["ready"]
