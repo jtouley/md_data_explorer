@@ -1,25 +1,17 @@
 #!/usr/bin/env bash
 # Auto-format Python files after Edit/Write operations
 # Uses ruff for fast formatting and linting (matches pre-commit config)
-
+# PostToolUse hook: reads the tool call payload from stdin; settings.json has
+# no native file-glob filter, so the .py check happens here.
 set -euo pipefail
 
-# Get the file path from environment variable
-FILE_PATH="${CLAUDE_TOOL_INPUT_FILE_PATH:-}"
+INPUT=$(cat)
+FILE_PATH=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_input', {}).get('file_path', ''))" <<<"$INPUT" 2>/dev/null || echo "")
 
-# Exit gracefully if no file path (shouldn't happen, but be safe)
-if [[ -z "$FILE_PATH" ]]; then
-    echo '{"block": false, "message": "⚠️  No file path provided to auto-format hook"}'
+if [[ -z "$FILE_PATH" ]] || [[ "$FILE_PATH" != *.py ]] || [[ ! -f "$FILE_PATH" ]]; then
     exit 0
 fi
 
-# Only process if file exists
-if [[ ! -f "$FILE_PATH" ]]; then
-    echo '{"block": false}'
-    exit 0
-fi
-
-# Run ruff format (auto-fix formatting)
 if command -v uv &> /dev/null; then
     uv run ruff format "$FILE_PATH" &> /dev/null || true
     uv run ruff check --fix --quiet "$FILE_PATH" &> /dev/null || true
@@ -28,5 +20,4 @@ else
     ruff check --fix --quiet "$FILE_PATH" &> /dev/null || true
 fi
 
-# Non-blocking: just inform the user
-echo '{"block": false, "message": "✅ Auto-formatted with ruff"}'
+exit 0
