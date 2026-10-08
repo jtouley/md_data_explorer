@@ -7,6 +7,7 @@ Tests verify registry operations and individual renderer behavior.
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from clinical_analytics.core.analysis_result import AnalysisResult
 from clinical_analytics.ui.components.renderers import (
     RendererRegistry,
