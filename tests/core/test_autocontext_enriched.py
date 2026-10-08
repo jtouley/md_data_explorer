@@ -13,6 +13,7 @@ Tests cover:
 from unittest.mock import MagicMock
 
 import pytest
+
 from clinical_analytics.core.autocontext import (
     AutoContext,
     ColumnContext,
