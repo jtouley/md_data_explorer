@@ -1,6 +1,7 @@
 """Tests for NL Query Engine diagnostics and QueryIntent enhancements."""
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import VALID_INTENT_TYPES, NLQueryEngine, QueryIntent
 
 

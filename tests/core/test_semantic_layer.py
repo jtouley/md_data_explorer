@@ -6,6 +6,7 @@ import logging
 
 import pandas as pd
 import pytest
+
 from clinical_analytics.core.semantic import SemanticLayer
 
 

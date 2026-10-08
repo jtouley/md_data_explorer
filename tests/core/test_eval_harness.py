@@ -8,6 +8,7 @@ Ensures:
 """
 
 import pytest
+
 from clinical_analytics.core.eval_harness import EvalHarness, load_golden_questions
 
 

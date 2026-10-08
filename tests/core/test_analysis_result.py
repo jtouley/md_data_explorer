@@ -7,6 +7,7 @@ Tests verify immutability, error handling, and factory construction.
 from typing import Any
 
 import pytest
+
 from clinical_analytics.core.analysis_result import AnalysisResult
 
 

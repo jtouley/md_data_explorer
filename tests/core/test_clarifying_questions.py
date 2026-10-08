@@ -7,6 +7,7 @@ rendering Streamlit UI. Tests verify pure Python logic, not UI interactions.
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from clinical_analytics.core.clarifying_questions import (
     ClarificationRequest,
     ClarifyingQuestionsEngine,

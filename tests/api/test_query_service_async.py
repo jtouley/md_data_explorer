@@ -7,6 +7,7 @@ Following TDD: Red phase - tests written before implementation.
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from clinical_analytics.api.services.query_service import AsyncQueryService
 
 # ============================================================================

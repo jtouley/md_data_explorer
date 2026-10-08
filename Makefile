@@ -252,21 +252,27 @@ coverage-report: ensure-venv ## Generate detailed coverage HTML report
 	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing -n auto $(PYTEST_ARGS)
 	@echo "$(GREEN)Coverage report generated in $(COV_DIR)/index.html$(NC)"
 
+# repo_context_mcp is not in this branch. Lint it only when the directory is present.
+RUFF_PATHS := $(SRC_DIR) $(TEST_DIR)
+ifneq ($(wildcard repo_context_mcp/.),)
+RUFF_PATHS += repo_context_mcp
+endif
+
 lint: ensure-venv ## Run ruff linter
 	@echo "$(GREEN)Running ruff linter...$(NC)"
-	$(RUFF) check $(SRC_DIR) $(TEST_DIR) repo_context_mcp
+	$(RUFF) check $(RUFF_PATHS)
 
 lint-fix: ## Run ruff linter and auto-fix issues
 	@echo "$(GREEN)Running ruff linter with auto-fix...$(NC)"
-	$(RUFF) check --fix $(SRC_DIR) $(TEST_DIR) repo_context_mcp
+	$(RUFF) check --fix $(RUFF_PATHS)
 
 format: ensure-venv ## Format code with ruff
 	@echo "$(GREEN)Formatting code with ruff...$(NC)"
-	$(RUFF) format $(SRC_DIR) $(TEST_DIR) repo_context_mcp
+	$(RUFF) format $(RUFF_PATHS)
 
 format-check: ## Check code formatting without making changes
 	@echo "$(GREEN)Checking code formatting...$(NC)"
-	$(RUFF) format --check $(SRC_DIR) $(TEST_DIR) repo_context_mcp
+	$(RUFF) format --check $(RUFF_PATHS)
 
 pre-commit-check: ensure-venv ## Run pre-commit checks (test fixture enforcement)
 	@echo "$(GREEN)Running pre-commit checks...$(NC)"

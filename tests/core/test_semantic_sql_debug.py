@@ -5,6 +5,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from clinical_analytics.core import semantic as semantic_mod
 
 

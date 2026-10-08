@@ -125,6 +125,8 @@ class TestOllamaInitializationStatus:
                 "available_models": [],
                 "default_model": "llama3.1:8b",
             }
+            mock_manager.default_model = "llama3.1:8b"
+            mock_manager.fallback_model = "llama3.2:3b"
 
             # Act
             from clinical_analytics.core.ollama_init import initialize_ollama
@@ -132,6 +134,35 @@ class TestOllamaInitializationStatus:
             result = initialize_ollama()
 
             # Assert: Should indicate models need to be downloaded
+            assert not result["ready"]
+            assert "download" in result["message"].lower() or "model" in result["message"].lower()
+
+    def test_initialize_ollama_missing_cli_does_not_crash_startup(self):
+        """Missing CLI must not crash startup; the status message still explains the gap."""
+        # Arrange
+        with patch("clinical_analytics.core.ollama_init.get_ollama_manager") as mock_manager_fn:
+            mock_manager = MagicMock()
+            mock_manager_fn.return_value = mock_manager
+
+            mock_manager.get_status.return_value = {
+                "installed": True,
+                "running": True,
+                "ready": False,
+                "available_models": [],
+                "default_model": "llama3.1:8b",
+            }
+            mock_manager.default_model = "llama3.1:8b"
+            mock_manager.fallback_model = "llama3.2:3b"
+
+            with patch("clinical_analytics.core.ollama_init.subprocess.run") as mock_run:
+                mock_run.side_effect = FileNotFoundError(2, "No such file or directory", "ollama")
+
+                # Act
+                from clinical_analytics.core.ollama_init import initialize_ollama
+
+                result = initialize_ollama()
+
+            # Assert: Should indicate models need to be downloaded, not crash
             assert not result["ready"]
             assert "download" in result["message"].lower() or "model" in result["message"].lower()
 

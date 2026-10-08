@@ -47,9 +47,9 @@ class TestAnalyzeParseOutcomes:
 
             # Assert: Should print warning about no parse_outcome events
             print_calls = [str(call) for call in mock_print.call_args_list]
-            assert any(
-                "No 'parse_outcome' events found" in str(call) for call in print_calls
-            ), "Should warn about missing parse_outcome events"
+            assert any("No 'parse_outcome' events found" in str(call) for call in print_calls), (
+                "Should warn about missing parse_outcome events"
+            )
 
     def test_script_validates_parse_outcome_events_exist(self, tmp_path):
         """Test that script validates parse_outcome events exist before processing."""
@@ -65,9 +65,9 @@ class TestAnalyzeParseOutcomes:
 
             # Assert: Should warn about missing parse_outcome events
             print_calls = [str(call) for call in mock_print.call_args_list]
-            assert any(
-                "No 'parse_outcome' events found" in str(call) for call in print_calls
-            ), "Should warn when parse_outcome events are missing"
+            assert any("No 'parse_outcome' events found" in str(call) for call in print_calls), (
+                "Should warn when parse_outcome events are missing"
+            )
 
     def test_script_parses_structlog_json_correctly(self, tmp_path):
         """Test that script parses structlog JSON lines correctly."""
@@ -166,9 +166,9 @@ class TestAnalyzeParseOutcomes:
 
             assert "LLM called:" in output or "llm_called" in output.lower(), "Should show llm_called"
             assert "LLM HTTP success:" in output or "llm_http_success" in output.lower(), "Should show llm_http_success"
-            assert (
-                "JSON parse success:" in output or "json_parse_success" in output.lower()
-            ), "Should show json_parse_success"
-            assert (
-                "Schema validate success:" in output or "schema_validate_success" in output.lower()
-            ), "Should show schema_validate_success"
+            assert "JSON parse success:" in output or "json_parse_success" in output.lower(), (
+                "Should show json_parse_success"
+            )
+            assert "Schema validate success:" in output or "schema_validate_success" in output.lower(), (
+                "Should show schema_validate_success"
+            )

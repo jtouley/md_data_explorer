@@ -64,7 +64,7 @@ def ensure_models_downloaded(show_progress: bool = False) -> dict[str, bool | st
                 manager._available_models = None  # noqa: SLF001
                 return manager.get_status()
 
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
             logger.warning(
                 "ollama_default_model_download_failed",
                 model=manager.default_model,
@@ -85,7 +85,7 @@ def ensure_models_downloaded(show_progress: bool = False) -> dict[str, bool | st
                     manager._available_models = None  # noqa: SLF001
                     return manager.get_status()
 
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e2:
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e2:
                 logger.error(
                     "ollama_fallback_model_download_failed",
                     model=manager.fallback_model,
