@@ -15,21 +15,24 @@ const MOCK_DATASETS = {
   total: 2,
 };
 
+const recentSessionAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+const olderSessionAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
 const MOCK_SESSIONS = {
   sessions: [
     {
       session_id: 'sess_001',
       dataset_id: 'ds_abc',
       message_count: 5,
-      created_at: '2026-03-27T10:00:00Z',
-      updated_at: '2026-03-27T12:00:00Z',
+      created_at: olderSessionAt,
+      updated_at: olderSessionAt,
     },
     {
       session_id: 'sess_002',
       dataset_id: 'ds_abc',
       message_count: 0,
-      created_at: '2026-03-28T08:00:00Z',
-      updated_at: '2026-03-28T08:00:00Z',
+      created_at: recentSessionAt,
+      updated_at: recentSessionAt,
     },
   ],
   total: 2,
