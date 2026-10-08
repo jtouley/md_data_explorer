@@ -664,9 +664,9 @@ class TestExecuteQueryPlanWithTypeValidation:
             # Act
             result = semantic.execute_query_plan(plan)
 
-        # Assert - validation should be called
         assert len(validate_called) == 1
-        assert result is not None
+        assert result["success"] is False
+        assert "run_key" not in result
 
 
 class TestTypeValidationError:
