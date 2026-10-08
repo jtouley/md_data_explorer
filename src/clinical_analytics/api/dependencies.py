@@ -12,8 +12,8 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Path, status
 
-from clinical_analytics.core.semantic_layer import SemanticLayer
-from clinical_analytics.datasets.uploaded_dataset_factory import UploadedDatasetFactory
+from clinical_analytics.core.semantic import SemanticLayer
+from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
 # ============================================================================
 # Semantic Layer Dependency (Singleton Pattern)
@@ -59,7 +59,10 @@ def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset
             # Get semantic layer (DuckDB + Ibis)
             _semantic_layer_cache[dataset_id] = dataset.get_semantic_layer()
 
-        except FileNotFoundError as e:
+        except (FileNotFoundError, ValueError) as e:
+            # UploadedDataset.__init__ raises ValueError when no metadata exists for
+            # dataset_id at all; UploadedDataset.load() raises FileNotFoundError when
+            # metadata exists but the backing file is missing. Both mean "not found".
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Dataset '{dataset_id}' not found: {e}",

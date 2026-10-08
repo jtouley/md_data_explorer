@@ -1,16 +1,5 @@
 """Tests for CORS configuration."""
 
-import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def test_client():
-    """Create FastAPI test client."""
-    from clinical_analytics.api.main import app
-
-    return TestClient(app)
-
 
 class TestCORSConfiguration:
     """Tests for CORS middleware configuration."""

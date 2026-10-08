@@ -13,8 +13,23 @@ import polars as pl
 import pytest
 import requests
 import uvicorn
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
+
+
+@pytest.fixture
+def test_client():
+    """Plain FastAPI test client with no service mocking.
+
+    Shared across tests that don't need to patch any route dependency
+    (e.g. CORS, health, dataset listing). Tests that need mocked services
+    (e.g. query/enrichment routes) define their own specialized `test_client`
+    in their own file, which takes precedence for that file.
+    """
+    from clinical_analytics.api.main import app
+
+    return TestClient(app)
 
 
 @pytest.fixture(scope="module")
