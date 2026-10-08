@@ -8,6 +8,7 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import pytest
+
 from clinical_analytics.core.registry import DatasetRegistry
 
 

@@ -154,7 +154,7 @@ def render_diff_item(diff_item: dict[str, Any]) -> str:
     confidence_html = render_confidence_indicator(confidence)
 
     html = f"""
-    <div class="diff-item" data-patch-id="{diff_item['patch_id']}">
+    <div class="diff-item" data-patch-id="{diff_item["patch_id"]}">
         <div class="diff-header">
             <span class="column-name">{column}</span>
             <span class="operation">{operation}</span>

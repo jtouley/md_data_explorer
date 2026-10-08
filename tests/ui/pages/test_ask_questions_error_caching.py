@@ -45,9 +45,9 @@ class TestErrorTranslationCaching:
         should_call_llm = not has_cached_translation
 
         # Assert: Should NOT call LLM when friendly_error_message already exists
-        assert (
-            should_call_llm is False
-        ), "Should NOT call translate_error_with_llm when result already has friendly_error_message"
+        assert should_call_llm is False, (
+            "Should NOT call translate_error_with_llm when result already has friendly_error_message"
+        )
 
     def test_error_translation_caching_call_llm_when_no_friendly_error(self, mock_session_state):
         """
@@ -107,9 +107,9 @@ class TestErrorTranslationCaching:
         should_call_llm = not has_cached_translation
 
         # Assert: Should call LLM because empty string is falsy
-        assert (
-            should_call_llm is True
-        ), "Should call translate_error_with_llm when friendly_error_message is empty string"
+        assert should_call_llm is True, (
+            "Should call translate_error_with_llm when friendly_error_message is empty string"
+        )
 
 
 class TestErrorTranslationCachingIntegration:
@@ -142,9 +142,9 @@ class TestErrorTranslationCachingIntegration:
 
         # Assert: friendly_error_message should be preserved in cache
         assert retrieved is not None, "Should find result in cache"
-        assert (
-            retrieved.result.get("friendly_error_message") is not None
-        ), "friendly_error_message should be preserved in cached result"
+        assert retrieved.result.get("friendly_error_message") is not None, (
+            "friendly_error_message should be preserved in cached result"
+        )
         assert (
             retrieved.result["friendly_error_message"]
             == "I couldn't find a column called 'ldl'. Try 'LDL mg/dL' instead."
@@ -267,9 +267,9 @@ class TestExecuteAnalysisErrorCaching:
                 execution_result_with_error["friendly_error_message"] = friendly
 
         # Assert: friendly_error_message should now be in result
-        assert (
-            execution_result_with_error.get("friendly_error_message") == mock_llm_translation
-        ), "Error translation should be cached in result dict"
+        assert execution_result_with_error.get("friendly_error_message") == mock_llm_translation, (
+            "Error translation should be cached in result dict"
+        )
 
     def test_execute_analysis_skips_caching_when_already_cached(self, mock_session_state):
         """

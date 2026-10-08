@@ -172,6 +172,33 @@ class EnrichmentService:
             reason=reason,
         )
 
+    def revert_accepted_patch(
+        self,
+        upload_id: str,
+        version: str,
+        patch_id: str,
+        reverted_by: str,
+    ) -> None:
+        """
+        Revert a previously accepted patch (append-only REVERTED row in patch log).
+
+        Args:
+            upload_id: Upload identifier
+            version: Dataset version
+            patch_id: ID of accepted patch to revert
+            reverted_by: Actor performing the revert
+
+        Raises:
+            ValueError: If patch is missing or not in ACCEPTED state.
+        """
+        self.overlay_store.revert_accepted_patch(upload_id, version, patch_id, reverted_by)
+        logger.info(
+            "accepted_patch_reverted",
+            upload_id=upload_id,
+            patch_id=patch_id,
+            reverted_by=reverted_by,
+        )
+
     def accept_all_suggestions(
         self,
         upload_id: str,

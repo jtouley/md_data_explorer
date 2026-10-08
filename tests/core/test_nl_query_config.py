@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+
 from clinical_analytics.core.config_loader import load_nl_query_config
 from clinical_analytics.core.nl_query_config import (
     AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
@@ -247,6 +248,6 @@ class TestNLQueryConfigYAMLLoading:
 
         # Assert: Warning was logged with correct message format (standard string, not structured)
         warning_messages = [record.message for record in caplog.records if record.levelname == "WARNING"]
-        assert any(
-            "enable_proactive_questions" in msg and "deprecated" in msg.lower() for msg in warning_messages
-        ), f"Expected deprecation warning, got: {warning_messages}"
+        assert any("enable_proactive_questions" in msg and "deprecated" in msg.lower() for msg in warning_messages), (
+            f"Expected deprecation warning, got: {warning_messages}"
+        )

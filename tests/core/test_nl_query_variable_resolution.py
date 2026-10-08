@@ -9,6 +9,7 @@ Fixes: Column 'statin' not found error on semantic match tier.
 from unittest.mock import MagicMock
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 from clinical_analytics.core.query_plan import FilterSpec
 
@@ -129,9 +130,9 @@ class TestGoldenExampleVariableResolution:
         intent = nl_engine_with_statin_column.parse_query(query, conversation_history=conversation_history)
 
         if intent and intent.grouping_variable:
-            assert intent.grouping_variable == STATIN_COLUMN or "Statin Used" in str(
-                intent.grouping_variable
-            ), f"Expected resolved column, got: {intent.grouping_variable}"
+            assert intent.grouping_variable == STATIN_COLUMN or "Statin Used" in str(intent.grouping_variable), (
+                f"Expected resolved column, got: {intent.grouping_variable}"
+            )
 
     def test_semantic_match_golden_example_resolves_filter_columns(self, nl_engine_with_statin_column):
         """Golden example expected_filters should have resolved column names."""
@@ -142,6 +143,6 @@ class TestGoldenExampleVariableResolution:
 
         if intent and intent.filters:
             for f in intent.filters:
-                assert f.column == STATIN_COLUMN or "Statin Used" in str(
-                    f.column
-                ), f"Expected resolved filter column, got: {f.column}"
+                assert f.column == STATIN_COLUMN or "Statin Used" in str(f.column), (
+                    f"Expected resolved filter column, got: {f.column}"
+                )

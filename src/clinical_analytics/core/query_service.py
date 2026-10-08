@@ -5,14 +5,15 @@ Extracted from Streamlit UI to enable UI-agnostic execution.
 Manages query parsing, validation, and execution without Streamlit dependencies.
 """
 
+import threading
 from dataclasses import dataclass
 from typing import Any
 
+from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
 @dataclass
@@ -47,6 +48,31 @@ class QueryService:
         self.conversation_manager = ConversationManager()
 
     def ask(
+        self,
+        question: str,
+        dataset_id: str | None = None,
+        upload_id: str | None = None,
+        dataset_version: str | None = None,
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> QueryResult:
+        """Parse and execute a query on this layer's single DuckDB connection."""
+        lock = getattr(self.semantic_layer, "_con_lock", None)
+        if lock is None or not hasattr(lock, "acquire"):
+            lock = threading.Lock()
+            try:
+                self.semantic_layer._con_lock = lock
+            except (AttributeError, TypeError):
+                pass
+        with lock:
+            return self._ask_unlocked(
+                question,
+                dataset_id=dataset_id,
+                upload_id=upload_id,
+                dataset_version=dataset_version,
+                conversation_history=conversation_history,
+            )
+
+    def _ask_unlocked(
         self,
         question: str,
         dataset_id: str | None = None,
@@ -107,9 +133,16 @@ class QueryService:
         # Generate run_key using semantic layer (canonical implementation)
         run_key = self._generate_run_key(query_plan, normalized_query)
 
-        # Validate query plan
+        # Validate query plan. The semantic layer returns {valid, error}, not issues.
         validation_result = self.semantic_layer._validate_query_plan(query_plan)
-        issues = validation_result.get("issues", [])
+        issues = list(validation_result.get("issues") or [])
+        if not validation_result.get("valid", False) and not any(item.get("severity") == "error" for item in issues):
+            issues.append(
+                {
+                    "message": validation_result.get("error") or "Query plan is invalid",
+                    "severity": "error",
+                }
+            )
 
         # Convert AnalysisContext for compatibility (if needed)
         context = self._intent_to_context(query_intent, query_plan)
@@ -120,6 +153,9 @@ class QueryService:
             try:
                 execution_result = self.semantic_layer.execute_query_plan(query_plan)
                 result = execution_result
+                if isinstance(execution_result, dict) and execution_result.get("success") is False:
+                    warnings = execution_result.get("warnings") or ["Execution failed"]
+                    issues.append({"message": str(warnings[0]), "severity": "error"})
             except Exception as e:
                 issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
 
