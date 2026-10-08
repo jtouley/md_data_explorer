@@ -44,9 +44,9 @@ class TestInterpretationCaching:
         should_call_llm = enable_interpretation and not has_error and not has_existing_interpretation
 
         # Assert: Should NOT call LLM when interpretation already exists
-        assert (
-            should_call_llm is False
-        ), "Should NOT call interpret_result_with_llm when result already has llm_interpretation"
+        assert should_call_llm is False, (
+            "Should NOT call interpret_result_with_llm when result already has llm_interpretation"
+        )
 
     def test_interpretation_caching_call_llm_when_no_interpretation(self, mock_session_state):
         """
@@ -146,9 +146,9 @@ class TestInterpretationCachingIntegration:
 
         # Assert: Interpretation should be preserved in cache
         assert retrieved is not None, "Should find result in cache"
-        assert (
-            retrieved.result.get("llm_interpretation") is not None
-        ), "Interpretation should be preserved in cached result"
+        assert retrieved.result.get("llm_interpretation") is not None, (
+            "Interpretation should be preserved in cached result"
+        )
         assert retrieved.result["llm_interpretation"] == "There are 100 patients in the dataset."
 
     def test_multiple_cache_retrievals_same_interpretation(self, mock_session_state):

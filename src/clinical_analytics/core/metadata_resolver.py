@@ -60,9 +60,12 @@ def resolve_metadata(
         3. Accepted patches: Applied in chronological order
 
     Notes:
-        - Rejected patches are excluded
-        - Pending patches are excluded
-        - Later patches override earlier patches for same operation+column
+        - Rejected and pending patches are excluded from merge
+        - Reverted patches: only the latest JSONL row per patch_id counts; if it is
+          REVERTED, that patch_id no longer contributes (even if an earlier ACCEPTED
+          exists for the same id).
+        - Among effective accepted patches, later patches override earlier for same
+          operation+column
         - Resolution is deterministic (same inputs = same output)
     """
     # Collect all column names from schema
@@ -99,8 +102,14 @@ def resolve_metadata(
                     codebook=dict_meta.codebooks[col],
                 )
 
-    # Filter to only accepted patches
-    accepted_patches = [p for p in patches if hasattr(p, "status") and p.status == PatchStatus.ACCEPTED]
+    # Latest row per patch_id wins (append-only log); then keep only ACCEPTED
+    latest_by_patch_id: dict[str, MetadataPatch | ExclusionPatternPatch | RelationshipPatch] = {}
+    for p in patches:
+        latest_by_patch_id[p.patch_id] = p
+
+    accepted_patches = [
+        p for p in latest_by_patch_id.values() if hasattr(p, "status") and p.status == PatchStatus.ACCEPTED
+    ]
 
     # Sort patches chronologically (deterministic)
     accepted_patches.sort(key=lambda p: p.created_at)

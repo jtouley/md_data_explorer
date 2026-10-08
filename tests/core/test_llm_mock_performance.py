@@ -10,6 +10,7 @@ These tests verify that:
 import time
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
 

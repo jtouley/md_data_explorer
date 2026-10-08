@@ -67,9 +67,9 @@ class TestAskQuestionsStateMachinePersistence:
             mock_session_state["intent_signal"] = None
 
         # Assert: intent_signal should NOT be cleared by initialization
-        assert (
-            mock_session_state["intent_signal"] == "nl_parsed"
-        ), "intent_signal should not be cleared by state initialization"
+        assert mock_session_state["intent_signal"] == "nl_parsed", (
+            "intent_signal should not be cleared by state initialization"
+        )
 
     def test_execution_block_check_with_valid_state(self, mock_session_state):
         """

@@ -14,6 +14,7 @@ interpret_result_with_llm when result already has llm_interpretation.
 from datetime import datetime
 
 import pytest
+
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 

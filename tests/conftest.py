@@ -878,6 +878,7 @@ def mock_cohort():
     """
     # PANDAS EXCEPTION: Required for legacy cohort format compatibility
     import pandas as pd
+
     from clinical_analytics.core.schema import UnifiedCohort
 
     return pd.DataFrame(
