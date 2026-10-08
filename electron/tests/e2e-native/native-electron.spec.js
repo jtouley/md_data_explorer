@@ -72,14 +72,13 @@ function buildForgeMainBundle() {
         root,
         define,
         build: {
+          ssr: path.join(root, entry),
           outDir: path.join(root, '.vite/build'),
           emptyOutDir: false,
-          lib: {
-            entry: path.join(root, entry),
-            formats: ['cjs'],
-            fileName: () => fileName,
+          rollupOptions: {
+            external,
+            output: { format: 'cjs', entryFileNames: fileName },
           },
-          rollupOptions: { external },
         },
       });
     }
