@@ -66,6 +66,7 @@ class PatchStatus(Enum):
     PENDING = "pending"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
+    REVERTED = "reverted"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,8 @@ class MetadataPatch:
         accepted_by: User who accepted the patch (if accepted)
         accepted_at: Timestamp when patch was accepted
         rejected_reason: Reason for rejection (if rejected)
+        reverted_by: User or actor who reverted an accepted patch (if reverted)
+        reverted_at: Timestamp of revert (if reverted)
     """
 
     patch_id: str
@@ -103,6 +106,8 @@ class MetadataPatch:
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     rejected_reason: str | None = None
+    reverted_by: str | None = None
+    reverted_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize patch to dictionary for JSON storage."""
@@ -126,6 +131,10 @@ class MetadataPatch:
             result["accepted_at"] = self.accepted_at.isoformat()
         if self.rejected_reason is not None:
             result["rejected_reason"] = self.rejected_reason
+        if self.reverted_by is not None:
+            result["reverted_by"] = self.reverted_by
+        if self.reverted_at is not None:
+            result["reverted_at"] = self.reverted_at.isoformat()
 
         return result
 
@@ -136,6 +145,9 @@ class MetadataPatch:
         accepted_at = None
         if data.get("accepted_at"):
             accepted_at = datetime.fromisoformat(data["accepted_at"])
+        reverted_at = None
+        if data.get("reverted_at"):
+            reverted_at = datetime.fromisoformat(data["reverted_at"])
 
         return cls(
             patch_id=data["patch_id"],
@@ -150,6 +162,8 @@ class MetadataPatch:
             accepted_by=data.get("accepted_by"),
             accepted_at=accepted_at,
             rejected_reason=data.get("rejected_reason"),
+            reverted_by=data.get("reverted_by"),
+            reverted_at=reverted_at,
         )
 
 

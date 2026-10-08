@@ -59,6 +59,7 @@ STATUS_COLORS: dict[PatchStatus, str] = {
     PatchStatus.PENDING: "yellow",
     PatchStatus.ACCEPTED: "green",
     PatchStatus.REJECTED: "red",
+    PatchStatus.REVERTED: "gray",
 }
 
 
@@ -338,6 +339,7 @@ def get_patch_stats(patches: list[PatchType]) -> dict[str, Any]:
     accepted = sum(1 for p in patches if p.status == PatchStatus.ACCEPTED)
     rejected = sum(1 for p in patches if p.status == PatchStatus.REJECTED)
     pending = sum(1 for p in patches if p.status == PatchStatus.PENDING)
+    reverted = sum(1 for p in patches if p.status == PatchStatus.REVERTED)
 
     # Count by provenance
     by_provenance: dict[str, int] = {}
@@ -350,5 +352,6 @@ def get_patch_stats(patches: list[PatchType]) -> dict[str, Any]:
         "accepted": accepted,
         "rejected": rejected,
         "pending": pending,
+        "reverted": reverted,
         "by_provenance": by_provenance,
     }

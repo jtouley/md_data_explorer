@@ -85,7 +85,7 @@ class QueryResult(BaseModel):
         ...,
         description="Detected intent (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, etc.)",
     )
-    status: Literal["completed", "failed"] = Field(..., description="Query status")
+    status: Literal["pending", "processing", "completed", "failed"] = Field(..., description="Query status")
     confidence: float | None = Field(None, ge=0.0, le=1.0, description="Confidence score for intent detection")
     result_data: dict[str, Any] | None = Field(None, description="Query result data (structure varies by intent)")
     interpretation: str | None = Field(None, description="LLM-generated interpretation of results")
@@ -223,6 +223,7 @@ class SSEEvent(BaseModel):
         "query_completed",
         "query_failed",
         "interpretation_ready",
+        "stream_end",
     ] = Field(..., description="Event type")
     data: dict[str, Any] = Field(..., description="Event-specific data payload")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp (UTC)")

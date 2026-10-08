@@ -121,6 +121,56 @@ class TestMergePrecedence:
         # Assert: Patch description overrides dictionary
         assert "validated against medical records" in resolved.columns["age"].description
 
+    def test_reverted_patch_does_not_apply_after_accepted(self):
+        """Latest log row per patch_id REVERTED drops that patch from resolution."""
+        from clinical_analytics.core.metadata_patch import (
+            MetadataPatch,
+            PatchOperation,
+            PatchStatus,
+        )
+        from clinical_analytics.core.metadata_resolver import resolve_metadata
+        from clinical_analytics.core.schema_inference import (
+            DictionaryMetadata,
+            InferredSchema,
+        )
+
+        dict_metadata = DictionaryMetadata(
+            column_descriptions={"age": "From dictionary"},
+        )
+        schema = InferredSchema(
+            continuous_columns=["age"],
+            dictionary_metadata=dict_metadata,
+        )
+        t1 = datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC)
+        t2 = datetime(2024, 1, 1, 11, 0, 0, tzinfo=UTC)
+        accepted = MetadataPatch(
+            patch_id="same-id",
+            operation=PatchOperation.SET_DESCRIPTION,
+            column="age",
+            value="From accepted patch",
+            status=PatchStatus.ACCEPTED,
+            created_at=t1,
+            provenance="user",
+            accepted_by="u1",
+            accepted_at=t1,
+        )
+        reverted = MetadataPatch(
+            patch_id="same-id",
+            operation=PatchOperation.SET_DESCRIPTION,
+            column="age",
+            value="From accepted patch",
+            status=PatchStatus.REVERTED,
+            created_at=t1,
+            provenance="user",
+            accepted_by="u1",
+            accepted_at=t1,
+            reverted_by="u2",
+            reverted_at=t2,
+        )
+        resolved = resolve_metadata(schema, [accepted, reverted])
+
+        assert resolved.columns["age"].description == "From dictionary"
+
     def test_later_patches_override_earlier(self):
         """
         Test that later patches in chronological order override earlier patches.
