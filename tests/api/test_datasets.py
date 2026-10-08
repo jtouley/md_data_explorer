@@ -9,15 +9,6 @@ from unittest.mock import patch
 
 import polars as pl
 import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def test_client():
-    """Create FastAPI test client."""
-    from clinical_analytics.api.main import app
-
-    return TestClient(app)
 
 
 @pytest.fixture

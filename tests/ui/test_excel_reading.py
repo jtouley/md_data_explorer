@@ -10,7 +10,6 @@ import io
 import pandas as pd
 import polars as pl
 import pytest
-
 from clinical_analytics.ui.components.data_validator import _ensure_polars
 from clinical_analytics.ui.storage.user_datasets import _detect_excel_header_row
 
@@ -86,26 +85,13 @@ class TestPolarsExcelReading:
 
 
 class TestEnsurePolarsErrorHandling:
-    """Tests for _ensure_polars error handling with mixed types."""
+    """Tests for _ensure_polars error handling with mixed types.
 
-    def test_ensure_polars_with_polars_dataframe(self):
-        """Test that Polars DataFrames pass through unchanged."""
-        df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
-
-        result = _ensure_polars(df)
-
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 3
-
-    def test_ensure_polars_with_normal_pandas(self):
-        """Test that normal pandas DataFrames convert successfully."""
-        df_pandas = pd.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
-
-        result = _ensure_polars(df_pandas)
-
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 3
-        assert result.width == 2
+    Basic pass-through/conversion cases (polars passthrough, normal pandas
+    conversion) are covered once, canonically, in
+    tests/ui/test_data_validator.py::TestEnsurePolars — this class covers
+    only the error-handling/fallback branches that file doesn't.
+    """
 
     def test_ensure_polars_with_mixed_types_fallback(self):
         """Test that mixed types trigger fallback to string conversion."""
@@ -247,9 +233,9 @@ class TestExcelHeaderDetection:
         assert len(df_read.columns) > 0, "DataFrame should have at least one column"
         assert len(df_read) >= min_rows, f"DataFrame should have at least {min_rows} rows, got {len(df_read)}"
         # Assert no "Unnamed:" columns (common failure mode)
-        assert not any("Unnamed" in str(col) for col in df_read.columns), (
-            "Header detection failed: found 'Unnamed' columns"
-        )
+        assert not any(
+            "Unnamed" in str(col) for col in df_read.columns
+        ), "Header detection failed: found 'Unnamed' columns"
         # Assert all column names are non-empty strings
         assert all(col and str(col).strip() for col in df_read.columns), "All column names should be non-empty"
 

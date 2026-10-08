@@ -14,10 +14,10 @@ import structlog
 from fastapi import APIRouter, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 
+from clinical_analytics.api.dependencies import get_semantic_layer
 from clinical_analytics.api.models.schemas import QueryRequest, QueryResponse, QueryResult
 from clinical_analytics.api.services.query_service import AsyncQueryService
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -32,60 +32,24 @@ class DataFrameEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-# Cache for dataset semantic layers (keyed by dataset_id)
-_semantic_layers: dict[str, SemanticLayer] = {}
+# Cache for dataset query services (keyed by dataset_id). Semantic layer
+# caching itself lives in api.dependencies.get_semantic_layer — shared with
+# any other route that needs a per-dataset SemanticLayer, rather than each
+# route keeping its own divergent cache.
 _query_services: dict[str, AsyncQueryService] = {}
 
 
-def get_semantic_layer_for_dataset(dataset_id: str) -> SemanticLayer:
-    """Get or create SemanticLayer for a specific dataset.
-
-    Uses the same pattern as the Streamlit UI:
-    1. UploadedDatasetFactory.create_dataset(upload_id)
-    2. dataset.load()
-    3. dataset.get_semantic_layer()
-
-    Args:
-        dataset_id: Dataset identifier (upload_id for uploaded datasets)
-
-    Returns:
-        SemanticLayer configured for the dataset
+def get_query_service_for_dataset(dataset_id: str) -> AsyncQueryService:
+    """Get or create AsyncQueryService for a specific dataset.
 
     Raises:
-        ValueError: If dataset not found
+        HTTPException: 404 if the dataset doesn't exist, 500 on other load failures
+            (raised by get_semantic_layer).
     """
-    if dataset_id in _semantic_layers:
-        logger.debug("semantic_layer_cache_hit", dataset_id=dataset_id)
-        return _semantic_layers[dataset_id]
-
-    logger.info("semantic_layer_loading", dataset_id=dataset_id)
-
-    try:
-        dataset = UploadedDatasetFactory.create_dataset(dataset_id)
-        dataset.load()
-        semantic_layer: SemanticLayer = dataset.get_semantic_layer()
-
-        _semantic_layers[dataset_id] = semantic_layer
-        logger.info("semantic_layer_loaded", dataset_id=dataset_id, dataset_name=dataset.name)
-        return semantic_layer
-
-    except ValueError as e:
-        logger.error("dataset_not_found", dataset_id=dataset_id, error=str(e))
-        raise
-    except FileNotFoundError as e:
-        logger.error("dataset_file_not_found", dataset_id=dataset_id, error=str(e))
-        raise ValueError(f"Dataset file not found: {e}") from e
-    except Exception as e:
-        logger.error("semantic_layer_init_failed", dataset_id=dataset_id, error=str(e))
-        raise ValueError(f"Failed to load dataset '{dataset_id}': {e}") from e
-
-
-def get_query_service_for_dataset(dataset_id: str) -> AsyncQueryService:
-    """Get or create AsyncQueryService for a specific dataset."""
     if dataset_id in _query_services:
         return _query_services[dataset_id]
 
-    semantic_layer = get_semantic_layer_for_dataset(dataset_id)
+    semantic_layer: SemanticLayer = get_semantic_layer(dataset_id)
     service = AsyncQueryService(semantic_layer)
     _query_services[dataset_id] = service
     logger.info("query_service_created", dataset_id=dataset_id)

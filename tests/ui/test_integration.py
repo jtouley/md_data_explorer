@@ -144,23 +144,9 @@ class TestUIDatasetIntegration:
         # Assert: At least one dataset was tested
         assert tested_count > 0, "No datasets available for testing"
 
-    @pytest.mark.parametrize("dataset_name", get_sample_datasets())
-    @pytest.mark.slow
-    @pytest.mark.integration
-    def test_patient_level_granularity_supported(self, dataset_name):
-        """Test that patient_level granularity works (M8 integration)."""
-        # Arrange
-        dataset = DatasetRegistry.get_dataset(dataset_name)
-        if not dataset.validate():
-            pytest.skip(f"{dataset_name} data not available")
-
-        # Act
-        cohort = dataset.get_cohort(granularity="patient_level")
-
-        # Assert: Returns valid cohort
-        assert isinstance(cohort, pd.DataFrame)
-        for col in UnifiedCohort.REQUIRED_COLUMNS:
-            assert col in cohort.columns
+    # test_patient_level_granularity_supported moved to its canonical home:
+    # tests/core/test_dataset_interface.py (dataset-interface contract tests,
+    # not UI-pattern tests — this was an exact duplicate).
 
     @pytest.mark.parametrize("dataset_name", get_sample_datasets())
     @pytest.mark.slow

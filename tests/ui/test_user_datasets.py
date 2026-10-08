@@ -6,77 +6,11 @@ import json
 
 import pandas as pd
 import polars as pl
+from clinical_analytics.ui.storage.user_datasets import save_table_list
 
-from clinical_analytics.ui.storage.user_datasets import (
-    UploadSecurityValidator,
-    save_table_list,
-)
-
-
-class TestUploadSecurityValidator:
-    """Test suite for UploadSecurityValidator."""
-
-    def test_validate_file_type_csv(self):
-        """Test validating CSV file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.csv")
-        assert is_valid is True
-        assert error == ""
-
-    def test_validate_file_type_xlsx(self):
-        """Test validating XLSX file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.xlsx")
-        assert is_valid is True
-
-    def test_validate_file_type_invalid(self):
-        """Test validating invalid file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.exe")
-        assert is_valid is False
-        assert "not allowed" in error
-
-    def test_validate_file_type_no_extension(self):
-        """Test validating file with no extension."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test")
-        assert is_valid is False
-        assert "no extension" in error
-
-    def test_validate_file_size_valid(self):
-        """Test validating file size within limits."""
-        file_bytes = b"x" * (10 * 1024)  # 10KB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is True
-        assert error == ""
-
-    def test_validate_file_size_too_small(self):
-        """Test validating file that's too small."""
-        file_bytes = b"x" * 100  # Less than 1KB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is False
-        assert "too small" in error
-
-    def test_validate_file_size_too_large(self):
-        """Test validating file that's too large."""
-        file_bytes = b"x" * (101 * 1024 * 1024)  # 101MB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is False
-        assert "too large" in error
-
-    def test_sanitize_filename(self):
-        """Test filename sanitization."""
-        safe = UploadSecurityValidator.sanitize_filename("test_file.csv")
-        assert safe == "test_file.csv"
-
-    def test_sanitize_filename_path_traversal(self):
-        """Test sanitizing filename with path traversal."""
-        safe = UploadSecurityValidator.sanitize_filename("../../../etc/passwd")
-        assert ".." not in safe
-        assert "/" not in safe
-
-    def test_sanitize_filename_special_chars(self):
-        """Test sanitizing filename with special characters."""
-        safe = UploadSecurityValidator.sanitize_filename("test@file#name$.csv")
-        assert "@" not in safe
-        assert "#" not in safe
-        assert "$" not in safe
+# UploadSecurityValidator (file type/size validation, filename sanitization) is
+# covered canonically in tests/ui/test_upload_security.py — a full duplicate
+# class previously lived here and has been removed.
 
 
 class TestUserDatasetStorage:
@@ -121,9 +55,10 @@ class TestUserDatasetStorage:
         success, message, upload_id = storage.save_upload(
             file_bytes=csv_bytes, original_filename="test.csv", metadata={"dataset_name": "test"}
         )
-        loaded_df = storage.get_upload_data(upload_id, lazy=False)
+        loaded_lf = storage.get_upload_data(upload_id, lazy=False)
 
-        assert isinstance(loaded_df, pd.DataFrame)
+        assert isinstance(loaded_lf, pl.LazyFrame)
+        loaded_df = loaded_lf.collect()
         assert len(loaded_df) == 150
         assert "patient_id" in loaded_df.columns
 
@@ -175,13 +110,14 @@ class TestUserDatasetStorage:
         unique_expected_ids = set(large_ids)
         assert unique_loaded_ids == unique_expected_ids, "All large ID values should be preserved"
 
-        # Test eager loading (pandas DataFrame)
-        loaded_df_eager = storage.get_upload_data(upload_id, lazy=False)
-        assert isinstance(loaded_df_eager, pd.DataFrame)
-        assert len(loaded_df_eager) == 200
-        assert loaded_df_eager["patient_id"].dtype == "object", "patient_id should be string type in pandas"
+        # Test lazy=False compatibility path (still returns LazyFrame)
+        loaded_lf_compat = storage.get_upload_data(upload_id, lazy=False)
+        assert isinstance(loaded_lf_compat, pl.LazyFrame)
+        loaded_df_compat = loaded_lf_compat.collect()
+        assert len(loaded_df_compat) == 200
+        assert loaded_df_compat.schema["patient_id"] == pl.Utf8, "patient_id should be Utf8 in Polars"
         # Verify all unique large IDs are present
-        unique_loaded_ids = set(loaded_df_eager["patient_id"].tolist())
+        unique_loaded_ids = set(loaded_df_compat["patient_id"].to_list())
         unique_expected_ids = set(large_ids)
         assert unique_loaded_ids == unique_expected_ids, "All large ID values should be preserved"
 
@@ -1118,9 +1054,9 @@ class TestSeparateEventsList:
 
         # Assert: Events are append-only (counts increase)
         assert event_counts[0] < event_counts[1], "Events should be append-only"
-        assert all(event_counts[i] <= event_counts[i + 1] for i in range(len(event_counts) - 1)), (
-            "Event counts should never decrease"
-        )
+        assert all(
+            event_counts[i] <= event_counts[i + 1] for i in range(len(event_counts) - 1)
+        ), "Event counts should never decrease"
 
     def test_events_have_required_fields(self, upload_storage):
         """Events should have event_id, timestamp, and event_type."""
