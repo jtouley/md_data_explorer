@@ -6,6 +6,7 @@ Tests convert_schema() function that transforms variable_mapping to inferred_sch
 
 import polars as pl
 import pytest
+
 from clinical_analytics.datasets.uploaded.schema_conversion import (
     convert_schema,
     infer_granularities,

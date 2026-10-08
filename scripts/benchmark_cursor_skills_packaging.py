@@ -74,7 +74,7 @@ def main() -> int:
         lines.append(f"| {r['skill']} | {ok} | {msg} |")
     lines.append("")
     lines.append(
-        "Run again: `make benchmark-cursor-skills` " "or `uv run python scripts/benchmark_cursor_skills_packaging.py`"
+        "Run again: `make benchmark-cursor-skills` or `uv run python scripts/benchmark_cursor_skills_packaging.py`"
     )
     (OUT_DIR / "benchmark.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
