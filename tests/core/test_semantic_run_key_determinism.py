@@ -298,11 +298,8 @@ class TestRunKeyDeterminismAllExecutionPaths:
         # Act
         result = semantic_layer.execute_query_plan(plan, query_text=query)
 
-        # Assert: Execution result should always include run_key
-        assert "run_key" in result, "Execution result must include run_key"
-        assert result["run_key"] is not None, "Run key should not be None"
-        assert len(result["run_key"]) > 0, "Run key should not be empty"
-        assert result["success"] is True, "Execution should succeed"
+        assert result["success"] is False
+        assert "run_key" not in result
 
     def test_execute_query_plan_run_key_matches_direct_generation(self, semantic_layer):
         """execute_query_plan() run_key should match direct _generate_run_key() call (Phase 1.1.5)."""

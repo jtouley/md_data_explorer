@@ -129,12 +129,10 @@ def test_execute_query_plan_validates_operators(mock_semantic_layer_for_executio
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert (Phase 2.2: No blocking, just warnings)
-    assert "warnings" in result
-    warnings_text = " ".join(result["warnings"])
-    assert "operator" in warnings_text.lower() or "unsupported" in warnings_text.lower()
-    # Execution may succeed (invalid filter is skipped with warning)
-    assert result["success"] is True
+    # Invalid operator refuses before execution. Confirm is not offered.
+    assert result["success"] is False
+    assert result["requires_confirmation"] is False
+    assert "run_key" not in result
 
 
 def test_execute_query_plan_validates_type_compatibility(mock_semantic_layer_for_execution):
@@ -197,10 +195,9 @@ def test_execute_query_plan_count_entity_key_validation(mock_semantic_layer_for_
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
     # Assert
-    # COUNT should either require entity_key or default to primary key
-    # If neither available, should return requires_confirmation=True
-    assert result is not None
-    # Note: Implementation may default to "patient_id" if available
+    assert result["success"] is False
+    assert result["requires_confirmation"] is False
+    assert "run_key" not in result
 
 
 def test_execute_query_plan_confidence_gating(mock_semantic_layer_for_execution):
@@ -215,13 +212,10 @@ def test_execute_query_plan_confidence_gating(mock_semantic_layer_for_execution)
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan, confidence_threshold=0.75)
 
-    # Assert (Phase 2.2: No blocking, just warnings)
-    assert "warnings" in result
-    assert len(result["warnings"]) > 0
-    warnings_text = " ".join(result["warnings"])
-    assert "confidence" in warnings_text.lower() or "0.50" in warnings_text
-    # Phase 2.2: Still attempts execution (may succeed or fail depending on actual execution)
-    assert result["success"] is not None
+    assert result["success"] is False
+    assert result["requires_confirmation"] is True
+    assert result["failure_reason"] == "Confirmation required before execution."
+    assert "run_key" not in result
 
 
 def test_execute_query_plan_completeness_gating(mock_semantic_layer_for_execution):
@@ -239,16 +233,10 @@ def test_execute_query_plan_completeness_gating(mock_semantic_layer_for_executio
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert (Phase 2.2: No blocking, just warnings)
-    assert "warnings" in result
-    assert len(result["warnings"]) > 0
-    warnings_text = " ".join(result["warnings"])
-    assert (
-        "incomplete" in warnings_text.lower()
-        or "entity_key" in warnings_text.lower()
-        or "grouping" in warnings_text.lower()
-    )
-    # Phase 2.2: Still attempts execution (may succeed or fail depending on implementation)
+    assert result["success"] is False
+    assert result["requires_confirmation"] is False
+    assert "run_key" not in result
+    assert "entity_key" in result["failure_reason"] or "grouping" in result["failure_reason"]
 
 
 def test_execute_query_plan_type_aware_categorical(mock_semantic_layer_for_execution, sample_cohort_with_categorical):
@@ -406,16 +394,10 @@ def test_execute_query_plan_refuses_invalid_plans(mock_semantic_layer_for_execut
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert (Phase 2.2: No blocking, just warnings)
-    assert "warnings" in result
-    assert len(result["warnings"]) > 0
-    # Error message should be clear about what's missing
-    warnings_text = " ".join(result["warnings"])
-    assert (
-        "incomplete" in warnings_text.lower()
-        or "missing" in warnings_text.lower()
-        or "validation" in warnings_text.lower()
-    )
+    assert result["success"] is False
+    assert result["requires_confirmation"] is False
+    assert "run_key" not in result
+    assert "metric" in result["failure_reason"] or "group_by" in result["failure_reason"]
 
 
 # ============================================================================
