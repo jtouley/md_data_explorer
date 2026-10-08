@@ -49,9 +49,26 @@ def find_inline_storage_creation(content: str, filepath: Path) -> list[tuple[int
 
 
 def find_duplicate_dataframe_creation(content: str, filepath: Path) -> list[tuple[int, str]]:
-    """Find duplicate pl.DataFrame creation patterns in same file."""
+    """Find duplicate pl.DataFrame creation patterns copy-pasted across different tests.
+
+    Only flags a column-set repeated across 2+ *different* test functions -- that's
+    copy-pasted setup that belongs in a fixture. Multiple DataFrames with the same
+    columns inside a single test (e.g. comparing two differently-ordered or
+    differently-typed inputs to test an invariant) are not duplication; they're the
+    test's actual input data, so are intentionally not flagged.
+    """
     violations = []
     lines = content.split("\n")
+
+    # Map each line to its enclosing test function (last `def test_...` at/before it).
+    test_def_re = re.compile(r"^\s*def (test_\w+)")
+    line_to_test_fn: list[str | None] = [None] * len(lines)
+    current_fn: str | None = None
+    for idx, line in enumerate(lines):
+        match = test_def_re.match(line)
+        if match:
+            current_fn = match.group(1)
+        line_to_test_fn[idx] = current_fn
 
     # Find all pl.DataFrame( calls with their column definitions
     dataframe_creations = []
@@ -72,28 +89,44 @@ def find_duplicate_dataframe_creation(content: str, filepath: Path) -> list[tupl
             # Extract column names from DataFrame
             cols = re.findall(r'"([^"]+)":', context)
             if cols:
-                dataframe_creations.append((i + 1, tuple(sorted(cols))))
+                dataframe_creations.append((i + 1, tuple(sorted(cols)), line_to_test_fn[i]))
         i += 1
 
-    # If same DataFrame pattern appears 2+ times, flag it
+    # If same DataFrame pattern appears in 2+ *different* test functions, flag it
     if len(dataframe_creations) >= 2:
-        patterns = {}
-        for line_num, cols in dataframe_creations:
-            if cols not in patterns:
-                patterns[cols] = []
-            patterns[cols].append(line_num)
+        patterns: dict[tuple[str, ...], list[tuple[int, str | None]]] = {}
+        for line_num, cols, owning_fn in dataframe_creations:
+            patterns.setdefault(cols, []).append((line_num, owning_fn))
 
-        # Flag if same pattern appears 2+ times
-        for cols, line_nums in patterns.items():
-            if len(line_nums) >= 2:
+        for cols, occurrences in patterns.items():
+            distinct_fns = {fn for _, fn in occurrences}
+            if len(distinct_fns) >= 2:
+                line_nums = [line_num for line_num, _ in occurrences]
                 violations.append(
                     (
                         line_nums[0],
-                        f"Lines {line_nums}: Duplicate DataFrame creation pattern - extract to fixture",
+                        f"Lines {line_nums}: Duplicate DataFrame creation pattern across "
+                        f"{sorted(f for f in distinct_fns if f)} - extract to fixture",
                     )
                 )
 
     return violations
+
+
+def _blank_triple_quoted_strings(content: str) -> str:
+    """Replace the interior of triple-quoted string literals with spaces.
+
+    Preserves newlines (and thus line numbers) so violation line numbers stay
+    accurate. Needed because some files -- notably this checker's own test
+    suite -- embed example "bad code" as string literals to test the checker
+    itself; without this, those examples are mistaken for real production
+    code in the file being linted.
+    """
+
+    def _blank(match: re.Match) -> str:
+        return "".join(c if c == "\n" else " " for c in match.group(0))
+
+    return re.sub(r'""".*?"""|\'\'\'.*?\'\'\'', _blank, content, flags=re.DOTALL)
 
 
 def check_file(filepath: Path) -> list[tuple[int, str]]:
@@ -107,11 +140,13 @@ def check_file(filepath: Path) -> list[tuple[int, str]]:
         if "def test_" not in content:
             return violations
 
+        scan_content = _blank_triple_quoted_strings(content)
+
         # Check for inline storage creation
-        violations.extend(find_inline_storage_creation(content, filepath))
+        violations.extend(find_inline_storage_creation(scan_content, filepath))
 
         # Check for duplicate DataFrame creation
-        violations.extend(find_duplicate_dataframe_creation(content, filepath))
+        violations.extend(find_duplicate_dataframe_creation(scan_content, filepath))
 
     except Exception as e:
         print(f"Error checking {filepath}: {e}", file=sys.stderr)

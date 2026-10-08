@@ -79,6 +79,28 @@ def test_two():
         # Assert: Violation detected
         assert len(violations) > 0, "Should detect duplicate DataFrame creation"
 
+    def test_find_duplicate_dataframe_creation_allows_same_test_comparison(self):
+        """Two DataFrames with matching columns *within one test* aren't duplication.
+
+        Regression test: a test that deliberately builds two inputs with the same
+        columns to assert an invariant (e.g. column-order independence) was being
+        flagged as "duplicate setup" even though there's nothing to extract to a
+        fixture -- the differing literal values are the test's actual input data.
+        """
+        content = """
+def test_order_independence():
+    df1 = pl.DataFrame({"zebra": [1], "alpha": [2], "beta": [3]})
+    df2 = pl.DataFrame({"alpha": [2], "beta": [3], "zebra": [1]})
+    assert compute_fingerprint(df1) == compute_fingerprint(df2)
+"""
+        filepath = Path("test_file.py")
+
+        # Act
+        violations = find_duplicate_dataframe_creation(content, filepath)
+
+        # Assert: No violation -- same function, not copy-pasted setup
+        assert violations == [], "DataFrames compared within one test should not be flagged"
+
     def test_check_file_returns_violations_for_bad_file(self, tmp_path):
         """Test that check_file returns violations for file with duplicate setup."""
         # Arrange: Create test file with violations
@@ -137,6 +159,35 @@ def test_two(upload_storage, sample_df):
 
         # Assert: No violations (fixtures are used)
         assert len(violations) == 0, "File with fixtures should pass"
+
+    def test_check_file_ignores_example_code_in_string_literals(self, tmp_path):
+        """A file that embeds "bad code" examples as string literals (e.g. this
+        checker's own test suite) must not be flagged for code that only exists
+        inside a string, never actually executes, and has nothing to extract."""
+        test_file = tmp_path / "test_meta.py"
+        test_file.write_text(
+            '''
+def test_documents_a_violation():
+    """Docstring example of what NOT to do:
+
+    storage = UserDatasetStorage(tmp_path / "uploads")
+    """
+    example_bad_code = """
+    def test_one():
+        df = pl.DataFrame({"id": [1, 2], "value": [10, 20]})
+
+    def test_two():
+        df = pl.DataFrame({"id": [1, 2], "value": [10, 20]})
+    """
+    assert example_bad_code  # just checking it's a non-empty string
+'''
+        )
+
+        # Act
+        violations = check_file(test_file)
+
+        # Assert: No violations -- it's all inside string literals
+        assert violations == [], "Example code inside string literals should not be flagged"
 
     def test_check_file_skips_non_test_files(self, tmp_path):
         """Test that non-test files are skipped."""
