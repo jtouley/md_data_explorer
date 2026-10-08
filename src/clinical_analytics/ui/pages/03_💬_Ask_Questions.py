@@ -25,6 +25,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.conversation_manager import ConversationManager, normalize_query
 from clinical_analytics.core.error_translation import translate_error_with_llm
+from clinical_analytics.core.execution_gate import (
+    apply_planned_query_result,
+    classify_planned_query,
+    format_plan_line,
+)
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
@@ -114,6 +119,53 @@ MAX_STORED_RESULTS_PER_DATASET = 5
 # - Small intermediates: Can be cached with @st.cache_data if needed (profiling, metadata)
 # - Cache keys: Must include dataset_version (upload_id/file_hash) as explicit function arguments
 # - Do NOT access st.session_state inside cached functions
+
+
+def run_planned_query(
+    semantic_layer: Any,
+    plan: Any,
+    dataset_version: str,
+    normalized_query: str,
+) -> dict[str, Any]:
+    """Run or reuse a planned query. A hold renders the plan line and is not cached."""
+    query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
+    exec_cache_key = f"exec_result:{dataset_version}:{query_hash}"
+    pending_key = f"pending_confirmation:{dataset_version}:{query_hash}"
+    force_rerun = st.session_state.get(f"force_rerun:{dataset_version}", False)
+    if not force_rerun and exec_cache_key in st.session_state:
+        cached = cast(dict[str, Any], st.session_state[exec_cache_key])
+        if cached.get("success") is True:
+            return cached
+
+    confirmed = bool(st.session_state.get(pending_key, False))
+    execution_result = cast(
+        dict[str, Any],
+        semantic_layer.execute_query_plan(
+            plan,
+            confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
+            query_text=normalized_query,
+            confirmed=confirmed,
+        ),
+    )
+    branch = classify_planned_query(execution_result)
+    if branch == "hold":
+        st.markdown(format_plan_line(plan))
+        if execution_result.get("requires_confirmation"):
+
+            def _confirm() -> None:
+                st.session_state[pending_key] = True
+                st.rerun()
+
+            def _reject() -> None:
+                st.session_state.pop(pending_key, None)
+
+            st.button("Confirm", on_click=_confirm)
+            st.button("Reject", on_click=_reject)
+        return execution_result
+    if branch == "execution_error":
+        return execution_result
+    st.session_state[exec_cache_key] = execution_result
+    return execution_result
 
 
 @st.cache_resource(show_spinner="Loading semantic layer...")
@@ -2069,77 +2121,47 @@ def main():
                     st.warning("Please enter a non-empty query.")
                     return
 
-                # Phase 2.4: Cache execution results to prevent duplicate execute_query_plan() calls
-                # Use stable sha256 digest (not hash()) for deterministic cache keys across sessions
-                # run_key is only available after execution, so we use query hash for pre-execution cache lookup
-                query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
-                exec_cache_key = f"exec_result:{dataset_version}:{query_hash}"
-
-                # Check if user requested force rerun
-                force_rerun_key = f"force_rerun:{dataset_version}"
-                force_rerun = st.session_state.get(force_rerun_key, False)
-
-                # Try to get cached execution result (unless forcing rerun)
-                execution_result = None
-                if not force_rerun and exec_cache_key in st.session_state:
-                    execution_result = st.session_state[exec_cache_key]
-                    logger.debug(
-                        "query_execution_cache_hit", cache_key=exec_cache_key, query_preview=normalized_query[:50]
+                execution_result = run_planned_query(semantic_layer, query_plan, dataset_version, normalized_query)
+                branch = apply_planned_query_result(execution_result, st.session_state, dataset_version)
+                if branch == "hold":
+                    return
+                if branch == "execution_error":
+                    error_msg = (
+                        execution_result.get("error")
+                        or execution_result.get("failure_reason")
+                        or "Query execution failed"
                     )
-
-                # Phase 2.5.1: Progressive thinking indicator for query execution
-                if execution_result is None:
-                    # Execute query (core layer generates step information)
-                    # INVARIANT: Pass normalized_query (not raw query_text) to enforce contract
-                    execution_result = semantic_layer.execute_query_plan(
-                        query_plan, confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD, query_text=normalized_query
-                    )
-
-                    # Cache the execution result
-                    st.session_state[exec_cache_key] = execution_result
-                    logger.debug(
-                        "query_execution_cache_miss", cache_key=exec_cache_key, query_preview=normalized_query[:50]
-                    )
-
-                    # PR25: Evict old execution cache entries (unbounded growth prevention)
-                    _evict_old_execution_cache(dataset_version)
-
-                # Phase 2.5.1: Check for failure first, then render thinking indicator
-                if execution_result.get("success") is False:
-                    error_msg = execution_result.get("error", "Query execution failed")
                     _render_error_with_translation(error_msg, prefix="❌")
-                    # Don't show "Query complete!" for failures
-                elif execution_result.get("steps"):
-                    _render_thinking_indicator(execution_result["steps"])
-                # Note: Cached results render silently (no notice needed)
-
-                # Clear force_rerun flag after use
-                if force_rerun:
-                    st.session_state[force_rerun_key] = False
-
-                # Phase 2.3: Always execute, show warnings inline (no gating)
-                st.divider()
-
-                # Display errors only (skip info warnings - they're noise)
-                warnings = execution_result.get("warnings", [])
-                if warnings:
-                    # Filter to error-level warnings only
+                    warnings = execution_result.get("warnings", [])
                     error_warnings = [
                         w for w in warnings if any(kw in w.lower() for kw in ("error", "failed", "validation failed"))
                     ]
+                    if error_warnings:
+                        with st.expander(f"❌ Errors ({len(error_warnings)})", expanded=True):
+                            for warning in error_warnings:
+                                st.error(f"❌ {warning}")
+                    return
 
-                    # Only show expander for actual errors
+                if execution_result.get("steps"):
+                    _render_thinking_indicator(execution_result["steps"])
+                _evict_old_execution_cache(dataset_version)
+
+                st.divider()
+
+                warnings = execution_result.get("warnings", [])
+                if warnings:
+                    error_warnings = [
+                        w for w in warnings if any(kw in w.lower() for kw in ("error", "failed", "validation failed"))
+                    ]
                     if error_warnings:
                         with st.expander(f"❌ Errors ({len(error_warnings)})", expanded=True):
                             for warning in error_warnings:
                                 st.error(f"❌ {warning}")
 
-                # Phase 1.1.5: Always use run_key from execution result (semantic layer generates it deterministically)
                 run_key = execution_result.get("run_key")
                 if not run_key:
                     raise ValueError("Execution result must include run_key - semantic layer should always generate it")
 
-                # Proceed with analysis if successful
                 if execution_result.get("success"):
                     execute_analysis_with_idempotency(
                         cohort,
@@ -2212,6 +2234,7 @@ def main():
                     # Phase 2.4: Add "Re-run Query" button for explicit re-execution
                     # Use stable hash for button key (same normalization as cache key)
                     query_hash = hashlib.sha256(normalized_query.encode("utf-8")).hexdigest()[:16]
+                    force_rerun_key = f"force_rerun:{dataset_version}"
                     if st.button("🔄 Re-run Query", key=f"rerun_btn_{dataset_version}_{query_hash}"):
                         st.session_state[force_rerun_key] = True
                         st.rerun()

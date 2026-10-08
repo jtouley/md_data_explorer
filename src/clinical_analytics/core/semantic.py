@@ -21,6 +21,7 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
 
@@ -1651,7 +1652,11 @@ class SemanticLayer:
             return False
 
     def execute_query_plan(
-        self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
+        self,
+        plan: "QueryPlan",
+        confidence_threshold: float = 0.75,
+        query_text: str | None = None,
+        confirmed: bool = False,
     ) -> dict[str, Any]:
         """
         Execute a QueryPlan with warnings for observability (ADR003 Phase 3 + Phase 2.2).
@@ -1753,6 +1758,24 @@ class SemanticLayer:
         if not validation_result["valid"]:
             warning_msg = f"Validation failed: {validation_result['error']}"
             warnings.append(warning_msg)
+
+        decision = evaluate_execution_gate(
+            plan,
+            threshold=confidence_threshold,
+            confirmed=confirmed,
+            is_complete=is_complete,
+            completeness_error=completeness_error,
+            validation_valid=bool(validation_result["valid"]),
+            validation_error=str(validation_result.get("error") or ""),
+        )
+        if not decision.allow:
+            return {
+                "success": False,
+                "requires_confirmation": decision.requires_confirmation,
+                "failure_reason": decision.failure_reason,
+                "warnings": warnings,
+                "result": None,
+            }
 
         # Step 5: Validating plan (Phase 2.5.1)
         steps.append(
