@@ -14,6 +14,7 @@ import ibis
 import pandas as pd
 import polars as pl
 import pytest
+
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
