@@ -9,12 +9,9 @@ from clinical_analytics.ui.components.question_engine import AnalysisContext, Qu
 
 
 @pytest.fixture
-def mock_semantic_layer():
-    """Create a mock semantic layer for testing."""
-    mock = MagicMock()
-    mock.get_column_alias_index.return_value = {"mortality": "mortality", "treatment": "treatment_arm"}
-    mock.get_collision_suggestions.return_value = None
-    return mock
+def mock_semantic_layer(mock_semantic_layer):
+    """File-specific columns on top of the shared conftest mock_semantic_layer factory."""
+    return mock_semantic_layer(columns={"mortality": "mortality", "treatment": "treatment_arm"})
 
 
 def test_ask_free_form_question_propagates_confidence_to_context(mock_semantic_layer):

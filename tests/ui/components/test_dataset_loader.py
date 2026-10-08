@@ -23,32 +23,3 @@ def test_dataset_loader_encapsulates_loading_logic():
     from clinical_analytics.ui.components.dataset_loader import render_dataset_selector
 
     assert callable(render_dataset_selector), "render_dataset_selector should be a callable function"
-
-
-def test_dataset_loader_returns_dataset_and_cohort():
-    """Dataset loader should return both dataset and cohort."""
-    # Placeholder for future UI testing
-    # Should verify that render_dataset_selector returns:
-    # - dataset: The loaded dataset object
-    # - cohort: The cohort DataFrame
-    # - dataset_choice: The selected upload_id
-    # - dataset_version: The dataset version for caching
-    pass
-
-
-def test_dataset_loader_handles_no_datasets():
-    """Dataset loader should handle case when no datasets are available."""
-    # Placeholder for future UI testing
-    # Should verify that when no datasets exist:
-    # - Error message is displayed
-    # - Info message directs user to "Add Your Data" page
-    # - Function returns None or raises appropriate exception
-    pass
-
-
-def test_dataset_loader_shows_semantic_scope():
-    """Dataset loader should optionally show semantic scope expander."""
-    # Placeholder for future UI testing
-    # Should verify that show_semantic_scope parameter controls
-    # whether the "🔍 Semantic Scope" expander is rendered
-    pass

@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import from config (single source of truth)
 from clinical_analytics.core.column_parser import parse_column_name
-from clinical_analytics.core.conversation_manager import ConversationManager
+from clinical_analytics.core.conversation_manager import ConversationManager, normalize_query
 from clinical_analytics.core.error_translation import translate_error_with_llm
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, ENABLE_RESULT_INTERPRETATION
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
@@ -140,96 +140,6 @@ def get_cached_semantic_layer(dataset_version: str, _dataset: Any) -> "SemanticL
         ValueError: If semantic layer not available
     """
     return cast(SemanticLayer, _dataset.get_semantic_layer())
-
-
-def normalize_query(q: str | None) -> str:
-    """
-    Normalize query text: collapse whitespace, lowercase, strip.
-
-    This is the single source of truth for query normalization.
-    All queries must be normalized immediately after st.chat_input().
-
-    Args:
-        q: Raw query text (may be None)
-
-    Returns:
-        Normalized query string (lowercase, single spaces, stripped)
-    """
-    if q is None:
-        return ""
-    # Collapse whitespace, lowercase, strip
-    return " ".join(q.strip().split()).lower()
-
-
-def canonicalize_scope(scope: dict | None) -> dict:
-    """
-    Canonicalize semantic scope dict for stable hashing (Phase 1.4 - Recursive).
-
-    - Drops None values recursively
-    - Sorts dictionary keys recursively
-    - Sorts list values recursively
-    - Ensures stable JSON serialization
-
-    PR25: Improved to handle common edge cases (enums, dataclasses).
-    Limitations: Complex objects (dataclasses with nested objects) should be
-    converted to dicts before calling this function.
-
-    Args:
-        scope: Semantic scope dict (may be None)
-
-    Returns:
-        Canonicalized scope dict (stable, sorted, no Nones)
-
-    Raises:
-        TypeError: If scope contains non-serializable objects (enums/dataclasses
-                   should be converted to primitives before calling)
-    """
-    if scope is None:
-        return {}
-
-    canonical: dict[str, Any] = {}
-    for key in sorted(scope.keys()):
-        value = scope[key]
-        if value is None:
-            continue  # Drop None values
-        elif isinstance(value, dict):
-            # Recursively canonicalize nested dicts
-            nested_canonical = canonicalize_scope(value)
-            if nested_canonical:  # Only add non-empty dicts
-                canonical[key] = nested_canonical
-        elif isinstance(value, list):
-            # Sort lists, recursively canonicalize list items if they are dicts
-            sorted_list = []
-            for item in value:
-                if isinstance(item, dict):
-                    sorted_list.append(canonicalize_scope(item))
-                else:
-                    # PR25: Handle enums and other objects with .value or .name attributes
-                    if hasattr(item, "value"):
-                        sorted_list.append(item.value)
-                    elif hasattr(item, "name"):
-                        sorted_list.append(item.name)
-                    else:
-                        sorted_list.append(item)
-            # Sort the list (works for primitives, dicts as JSON strings for comparison)
-            try:
-                canonical[key] = sorted(sorted_list, key=lambda x: str(x))
-            except TypeError as e:
-                # PR25: If sorting fails, raise with helpful error message
-                raise TypeError(
-                    f"Scope contains non-serializable value for key '{key}': {type(value).__name__}. "
-                    "Convert enums/dataclasses to primitives (use .value or .name) before canonicalizing."
-                ) from e
-        else:
-            # PR25: Handle enums and other objects with .value or .name attributes
-            if hasattr(value, "value"):
-                canonical[key] = value.value
-            elif hasattr(value, "name"):
-                canonical[key] = value.name
-            else:
-                canonical[key] = value
-
-    return canonical
 
 
 def remember_run(dataset_version: str, run_key: str) -> None:
@@ -1205,8 +1115,9 @@ def execute_analysis_with_idempotency(
                 intent_type=context.inferred_intent.value,
             )
 
-            # Format result via semantic layer (no re-execution, just formatting)
-            result = semantic_layer.format_execution_result(execution_result, context)
+            # Format result via semantic layer. Non-COUNT intents are computed from the raw cohort
+            # (the aggregated execution result is not renderer-compatible for them).
+            result = semantic_layer.format_execution_result(execution_result, context, cohort=cohort)
         else:
             # Phase 3.1: No legacy path - execution_result is required
             # All queries must go through execute_query_plan() first

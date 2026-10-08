@@ -352,49 +352,51 @@ class TestResultCache:
         # Assert
         assert history == []
 
-    def test_result_cache_serialize_returns_dict(self):
-        """Test that serialize returns serializable dict."""
+    def test_result_cache_roundtrip_serializeDeserialize_preservesAllState(self):
+        """serialize -> deserialize -> serialize is lossless (results, timestamps, LRU history, max_size)."""
         # Arrange
-        cache = ResultCache(max_size=50)
-        cache.put(
-            CachedResult(
-                run_key="key1",
-                query="query1",
-                result={"data": 1},
-                timestamp=datetime.now(),
-                dataset_version="dataset_v1",
-            )
-        )
-
-        # Act
-        serialized = cache.serialize()
-
-        # Assert
-        assert isinstance(serialized, dict)
-        assert "results" in serialized
-        assert "histories" in serialized
-
-    def test_result_cache_deserialize_restores_state(self):
-        """Test that deserialize restores ResultCache state."""
-        # Arrange
-        cache = ResultCache(max_size=50)
-        cache.put(
-            CachedResult(
-                run_key="key1",
-                query="query1",
-                result={"data": 1},
-                timestamp=datetime.now(),
-                dataset_version="dataset_v1",
-            )
-        )
+        ts = datetime(2026, 1, 2, 3, 4, 5)
+        cache = ResultCache(max_size=7)
+        for version, key, data in [("v1", "k1", {"a": 1}), ("v1", "k2", {"b": 2}), ("v2", "k1", {"c": 3})]:
+            cache.put(CachedResult(run_key=key, query=f"q-{key}", result=data, timestamp=ts, dataset_version=version))
+        cache.get("k1", "v1")  # touch: LRU order for v1 becomes k2, k1
         serialized = cache.serialize()
 
         # Act
         restored = ResultCache.deserialize(serialized)
 
         # Assert
-        assert restored.get("key1", "dataset_v1") is not None
-        assert restored.get("key1", "dataset_v1").query == "query1"
+        assert restored.serialize() == serialized
+        assert restored.get_history("v1") == ["k2", "k1"]
+        restored_k1 = restored.get("k1", "v2")
+        assert (restored_k1.query, restored_k1.result, restored_k1.timestamp, restored_k1.dataset_version) == (
+            "q-k1",
+            {"c": 3},
+            ts,
+            "v2",
+        )
+
+    def test_result_cache_deserialize_emptyPayload_usesDefaults(self):
+        # Act
+        restored = ResultCache.deserialize({})
+
+        # Assert
+        assert restored.serialize() == {"results": {}, "histories": {}, "max_size": 50}
+
+    def test_result_cache_deserialize_restoredCache_enforcesMaxSize(self):
+        # Arrange
+        ts = datetime(2026, 1, 1)
+        cache = ResultCache(max_size=2)
+        for key in ("k1", "k2"):
+            cache.put(CachedResult(run_key=key, query=key, result={}, timestamp=ts, dataset_version="v1"))
+        restored = ResultCache.deserialize(cache.serialize())
+
+        # Act
+        restored.put(CachedResult(run_key="k3", query="k3", result={}, timestamp=ts, dataset_version="v1"))
+
+        # Assert: oldest evicted, size limit survived the round trip
+        assert restored.get("k1", "v1") is None
+        assert restored.get_history("v1") == ["k2", "k3"]
 
     def test_result_cache_per_dataset_isolation(self):
         """Test that results are isolated per dataset version."""

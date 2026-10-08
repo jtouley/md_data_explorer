@@ -125,15 +125,6 @@ class TestAskQuestionsSolidMigration:
         with patch("streamlit.metric"), patch("streamlit.info"):
             render_result(cached, query_text="What is average?")
 
-    def test_deprecated_functions_exist_for_backward_compat(self):
-        """Test that deprecated functions still exist during migration."""
-        # This test ensures we don't break existing code during migration
-        # The functions should exist but may log deprecation warnings
-
-        # Note: This test will be updated once we add deprecation markers
-        # For now, we just verify the module loads without error
-        assert True
-
     def test_state_store_conversation_manager_integration(self):
         """Test that ConversationManager works with StateStore."""
         # Arrange

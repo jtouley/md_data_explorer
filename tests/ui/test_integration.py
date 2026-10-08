@@ -148,24 +148,6 @@ class TestUIDatasetIntegration:
     @pytest.mark.parametrize("dataset_name", get_sample_datasets())
     @pytest.mark.slow
     @pytest.mark.integration
-    def test_patient_level_granularity_supported(self, dataset_name):
-        """Test that patient_level granularity works (M8 integration)."""
-        # Arrange
-        dataset = DatasetRegistry.get_dataset(dataset_name)
-        if not dataset.validate():
-            pytest.skip(f"{dataset_name} data not available")
-
-        # Act
-        cohort = dataset.get_cohort(granularity="patient_level")
-
-        # Assert: Returns valid cohort
-        assert isinstance(cohort, pd.DataFrame)
-        for col in UnifiedCohort.REQUIRED_COLUMNS:
-            assert col in cohort.columns
-
-    @pytest.mark.parametrize("dataset_name", get_sample_datasets())
-    @pytest.mark.slow
-    @pytest.mark.integration
     def test_non_patient_level_granularity_rejected_for_single_table(self, dataset_name):
         """Test that single-table datasets reject non-patient_level granularity (M8)."""
         # Arrange

@@ -11,6 +11,8 @@ Tests cover:
 """
 
 # Test will fail until autocontext.py is created
+import pytest
+
 from clinical_analytics.core.autocontext import AutoContext, ColumnContext, build_autocontext
 
 
@@ -286,7 +288,12 @@ class TestEstimateTokens:
 
     def test_estimate_tokens_accuracy_with_tiktoken(self):
         """Test token estimation accuracy using tiktoken."""
-        # Arrange
+        # Arrange: tiktoken downloads its encoding on first use; skip when it cannot be loaded
+        tiktoken = pytest.importorskip("tiktoken")
+        try:
+            tiktoken.get_encoding("cl100k_base")
+        except (OSError, ValueError) as e:
+            pytest.skip(f"tiktoken cl100k_base encoding unavailable (not cached, no network): {e}")
         from clinical_analytics.core.autocontext import _estimate_tokens
 
         # Text that exposes character approximation inaccuracy:

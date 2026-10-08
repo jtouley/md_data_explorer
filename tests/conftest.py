@@ -339,7 +339,12 @@ def cached_sentence_transformer():
 
     # Use same model name as NLQueryEngine default
     model_name = "all-MiniLM-L6-v2"
-    encoder = SentenceTransformer(model_name)
+    try:
+        encoder = SentenceTransformer(model_name)
+    except OSError as e:
+        # Model is downloaded from huggingface.co on first use; offline/sandboxed runs cannot fetch it.
+        # Skipping (session-scoped, so evaluated once) keeps the rest of the suite runnable offline.
+        pytest.skip(f"SentenceTransformer model '{model_name}' unavailable (not cached, no network): {e}")
 
     yield encoder
 
@@ -977,7 +982,7 @@ def mock_semantic_layer():
     """
     from unittest.mock import MagicMock
 
-    def _make(columns=None, collision_suggestions=None):
+    def _make(columns=None, collision_suggestions=None, dimensions=None, quality_warnings=None):
         mock = MagicMock()
         default_columns = {
             "mortality": "mortality",
@@ -995,6 +1000,12 @@ def mock_semantic_layer():
         base_view_mock = MagicMock()
         base_view_mock.columns = list(column_map.values())  # Use actual column names
         mock.get_base_view.return_value = base_view_mock
+
+        # Optional: only set when a test needs them (otherwise MagicMock defaults apply)
+        if dimensions is not None:
+            mock.get_available_dimensions.return_value = dimensions
+        if quality_warnings is not None:
+            mock.get_data_quality_warnings.return_value = quality_warnings
 
         return mock
 

@@ -1905,6 +1905,17 @@ class UserDatasetStorage:
                         rename_map[time_zero_col] = UnifiedCohort.TIME_ZERO
 
                 if rename_map:
+                    # Drop pre-existing columns that already carry a canonical name but are not the
+                    # mapped source (e.g. a raw "outcome" column when the user maps outcome -> "mortality").
+                    # Renaming onto them would create duplicate column names and crash validation.
+                    colliding = [
+                        target
+                        for source, target in rename_map.items()
+                        if target != source and target in cohort_df.columns and target not in rename_map
+                    ]
+                    if colliding:
+                        logger.info(f"Dropping columns shadowed by canonical schema names for validation: {colliding}")
+                        cohort_df = cohort_df.drop(columns=colliding)
                     cohort_df = cohort_df.rename(columns=rename_map)
 
                     # Add outcome_label if not present
