@@ -8,8 +8,9 @@ failed load, and invalidation.
 from unittest.mock import MagicMock, patch
 
 import pytest
-from clinical_analytics.api import dependencies
 from fastapi import HTTPException
+
+from clinical_analytics.api import dependencies
 
 
 @pytest.fixture(autouse=True)

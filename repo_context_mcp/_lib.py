@@ -23,7 +23,7 @@ def parse_initiative_slug(raw: str | None) -> str | None:
         return None
     s = str(raw).strip()
     if not _INITIATIVE_RE.fullmatch(s):
-        msg = "initiative must match [a-zA-Z0-9][a-zA-Z0-9_-]{0,199} " "(no path segments or '..')"
+        msg = "initiative must match [a-zA-Z0-9][a-zA-Z0-9_-]{0,199} (no path segments or '..')"
         raise ValueError(msg)
     return s
 

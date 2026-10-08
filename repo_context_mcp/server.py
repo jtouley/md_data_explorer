@@ -94,7 +94,7 @@ async def get_repo_context_diagnostic(initiative: str = "") -> str:
         return f"Error: {e}"
     path = diagnostic_file(root, slug)
     if not path.is_file():
-        hint = "Run the repo-context skill workflow (step 5) or create this file. " f"Expected: {path}"
+        hint = f"Run the repo-context skill workflow (step 5) or create this file. Expected: {path}"
         return f"Error: diagnostic not found. {hint}"
     text = _read_text(path, 2_000_000)
     if text is None:

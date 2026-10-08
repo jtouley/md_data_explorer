@@ -7,6 +7,7 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import pytest
+
 from clinical_analytics.core.query_plan import QueryPlan
 
 
@@ -85,6 +86,7 @@ class TestQueryPlanOnlyPath:
         """format_execution_result() should format COUNT result DataFrame correctly."""
         # Arrange: COUNT query result (already aggregated)
         import pandas as pd
+
         from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
         from clinical_analytics.core.query_plan import QueryPlan
 
