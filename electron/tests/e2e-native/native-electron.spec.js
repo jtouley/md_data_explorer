@@ -1,5 +1,5 @@
 const { test, expect, _electron: electron } = require('@playwright/test');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 
 const REPO_ROOT = require('node:path').resolve(__dirname, '..', '..', '..');
 const ELECTRON_ROOT = require('node:path').resolve(REPO_ROOT, 'electron');
@@ -56,6 +56,47 @@ function stopProcess(child) {
   child.kill('SIGTERM');
 }
 
+function buildForgeMainBundle() {
+  const script = `
+    const { build } = require('vite');
+    const path = require('node:path');
+    const root = ${JSON.stringify(ELECTRON_ROOT)};
+    const define = {
+      MAIN_WINDOW_VITE_DEV_SERVER_URL: JSON.stringify(${JSON.stringify(RENDERER_URL)}),
+      MAIN_WINDOW_VITE_NAME: JSON.stringify('main_window'),
+    };
+    const external = ['electron', 'electron-squirrel-startup'];
+    async function bundle(entry, fileName) {
+      await build({
+        configFile: false,
+        root,
+        define,
+        build: {
+          outDir: path.join(root, '.vite/build'),
+          emptyOutDir: false,
+          lib: {
+            entry: path.join(root, entry),
+            formats: ['cjs'],
+            fileName: () => fileName,
+          },
+          rollupOptions: { external },
+        },
+      });
+    }
+    (async () => {
+      await bundle('src/main.js', 'main.js');
+      await bundle('src/preload.js', 'preload.js');
+    })().catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  `;
+  execFileSync(process.execPath, ['-e', script], {
+    cwd: ELECTRON_ROOT,
+    stdio: 'inherit',
+  });
+}
+
 test.describe.serial('Native Electron binary harness', () => {
   test.beforeAll(async () => {
     const apiAlreadyRunning = await isUrlHealthy(API_URL);
@@ -81,6 +122,7 @@ test.describe.serial('Native Electron binary harness', () => {
       );
     }
     await waitForUrl(RENDERER_URL, 60000);
+    buildForgeMainBundle();
   });
 
   test.afterAll(async () => {
@@ -97,8 +139,11 @@ test.describe.serial('Native Electron binary harness', () => {
     delete env.ELECTRON_RUN_AS_NODE;
 
     const app = await electron.launch({
-      args: [ELECTRON_ROOT],
-      env,
+      args: ['--no-sandbox', ELECTRON_ROOT],
+      env: {
+        ...env,
+        ELECTRON_DISABLE_SANDBOX: '1',
+      },
     });
 
     const page = await app.firstWindow();
