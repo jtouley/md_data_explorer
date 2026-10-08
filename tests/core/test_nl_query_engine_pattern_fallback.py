@@ -12,6 +12,7 @@ the LLM tier 3 is called to provide a result.
 """
 
 import pytest
+
 from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 
 
@@ -166,6 +167,6 @@ def test_parse_query_logs_partial_pattern_match(mock_semantic_layer):
 
         # Should log pattern_match_partial when fuzzy match fails for some terms
         log_calls = [str(call) for call in mock_logger.info.call_args_list]
-        assert any(
-            "pattern_match_partial" in str(call) for call in log_calls
-        ), "Should log partial pattern match when fuzzy match fails for some terms"
+        assert any("pattern_match_partial" in str(call) for call in log_calls), (
+            "Should log partial pattern match when fuzzy match fails for some terms"
+        )

@@ -37,6 +37,7 @@ class TestAutoContextTier3Integration:
         """
         # Create sample schema
         import polars as pl
+
         from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
         df = pl.DataFrame(

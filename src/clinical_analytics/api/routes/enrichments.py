@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Path as FastAPIPath
 from pydantic import BaseModel, Field
 
@@ -24,7 +24,7 @@ from clinical_analytics.ui.components.enrichment_integration import EnrichmentSe
 router = APIRouter()
 logger = structlog.get_logger()
 
-DEFAULT_OVERLAY_DIR = Path("data/uploads/metadata/overlays")
+DEFAULT_OVERLAY_DIR = Path("data/uploads/metadata")
 
 
 class PendingSuggestion(BaseModel):
@@ -112,6 +112,19 @@ def get_overlay_store() -> OverlayStore:
     return OverlayStore(base_dir=DEFAULT_OVERLAY_DIR)
 
 
+def get_dataset_version(
+    dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
+) -> str:
+    """Content hash stored on the upload. OverlayStore appends this under overlays/."""
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    metadata = UserDatasetStorage().get_upload_metadata(dataset_id) or {}
+    version = metadata.get("dataset_version")
+    if not isinstance(version, str) or not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="dataset_version not found")
+    return version
+
+
 def get_enrichment_service(
     overlay_store: Annotated[OverlayStore, Depends(get_overlay_store)],
 ) -> EnrichmentService:
@@ -157,13 +170,14 @@ def _patch_to_history_item(patch: MetadataPatch) -> PatchHistoryItem:
 async def get_pending_suggestions(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     enrichment_service: Annotated[EnrichmentService, Depends(get_enrichment_service)],
+    dataset_version: Annotated[str, Depends(get_dataset_version)],
 ) -> PendingResponse:
     """Get pending enrichment suggestions for a dataset."""
     logger.info("enrichments_get_pending", dataset_id=dataset_id)
 
     pending = enrichment_service.get_pending_suggestions(
         upload_id=dataset_id,
-        version="v1",
+        version=dataset_version,
     )
 
     suggestions = [_patch_to_pending_suggestion(p) for p in pending if isinstance(p, MetadataPatch)]
@@ -183,6 +197,7 @@ async def accept_suggestion(
     patch_id: Annotated[str, FastAPIPath(..., description="Patch ID")],
     request: AcceptRequest,
     enrichment_service: Annotated[EnrichmentService, Depends(get_enrichment_service)],
+    dataset_version: Annotated[str, Depends(get_dataset_version)],
 ) -> AcceptRejectResponse:
     """Accept an enrichment suggestion."""
     logger.info(
@@ -195,7 +210,7 @@ async def accept_suggestion(
     try:
         enrichment_service.accept_suggestion(
             upload_id=dataset_id,
-            version="v1",
+            version=dataset_version,
             patch_id=patch_id,
             accepted_by=request.accepted_by,
         )
@@ -220,6 +235,7 @@ async def reject_suggestion(
     patch_id: Annotated[str, FastAPIPath(..., description="Patch ID")],
     request: RejectRequest,
     enrichment_service: Annotated[EnrichmentService, Depends(get_enrichment_service)],
+    dataset_version: Annotated[str, Depends(get_dataset_version)],
 ) -> AcceptRejectResponse:
     """Reject an enrichment suggestion."""
     logger.info(
@@ -232,7 +248,7 @@ async def reject_suggestion(
     try:
         enrichment_service.reject_suggestion(
             upload_id=dataset_id,
-            version="v1",
+            version=dataset_version,
             patch_id=patch_id,
             reason=request.reason,
         )
@@ -257,6 +273,7 @@ async def revert_accepted_suggestion(
     patch_id: Annotated[str, FastAPIPath(..., description="Patch ID")],
     request: RevertRequest,
     enrichment_service: Annotated[EnrichmentService, Depends(get_enrichment_service)],
+    dataset_version: Annotated[str, Depends(get_dataset_version)],
 ) -> AcceptRejectResponse:
     """Revert a previously accepted enrichment patch (append-only log)."""
     logger.info(
@@ -269,7 +286,7 @@ async def revert_accepted_suggestion(
     try:
         enrichment_service.revert_accepted_patch(
             upload_id=dataset_id,
-            version="v1",
+            version=dataset_version,
             patch_id=patch_id,
             reverted_by=request.reverted_by,
         )
@@ -292,13 +309,14 @@ async def revert_accepted_suggestion(
 async def get_patch_history(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     overlay_store: Annotated[OverlayStore, Depends(get_overlay_store)],
+    dataset_version: Annotated[str, Depends(get_dataset_version)],
 ) -> PatchHistoryResponse:
     """Get patch history for a dataset."""
     logger.info("enrichments_get_history", dataset_id=dataset_id)
 
     patches = overlay_store.load_patches(
         upload_id=dataset_id,
-        version="v1",
+        version=dataset_version,
     )
 
     history = [_patch_to_history_item(p) for p in patches if isinstance(p, MetadataPatch)]
