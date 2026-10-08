@@ -13,6 +13,93 @@ from uuid import uuid4
 __all__ = ["Message", "ConversationManager"]
 
 
+def normalize_query(q: str | None) -> str:
+    """
+    Normalize query text: collapse whitespace, lowercase, strip.
+
+    Single implementation shared by ConversationManager and the Ask Questions page.
+    This is the single source of truth for query normalization.
+
+    Args:
+        q: Raw query text (may be None)
+
+    Returns:
+        Normalized query string (lowercase, single spaces, stripped)
+    """
+    if q is None:
+        return ""
+    # Collapse whitespace, lowercase, strip
+    return " ".join(q.strip().split()).lower()
+
+
+def canonicalize_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Canonicalize semantic scope dict for stable hashing.
+
+    Single implementation shared by ConversationManager and the Ask Questions page.
+    - Drops None values recursively
+    - Sorts dictionary keys recursively
+    - Sorts list values recursively
+    - Ensures stable JSON serialization
+
+    Args:
+        scope: Semantic scope dict (may be None)
+
+    Returns:
+        Canonicalized scope dict (stable, sorted, no Nones)
+
+    Raises:
+        TypeError: If scope contains non-serializable objects (enums/dataclasses
+                   should be converted to primitives before calling)
+    """
+    if scope is None:
+        return {}
+
+    canonical: dict[str, Any] = {}
+    for key in sorted(scope.keys()):
+        value = scope[key]
+        if value is None:
+            continue  # Drop None values
+        elif isinstance(value, dict):
+            # Recursively canonicalize nested dicts
+            nested_canonical = canonicalize_scope(value)
+            if nested_canonical:  # Only add non-empty dicts
+                canonical[key] = nested_canonical
+        elif isinstance(value, list):
+            # Sort lists, recursively canonicalize list items if they are dicts
+            sorted_list: list[Any] = []
+            for item in value:
+                if isinstance(item, dict):
+                    sorted_list.append(canonicalize_scope(item))
+                else:
+                    # Handle enums and other objects with .value or .name attributes
+                    if hasattr(item, "value"):
+                        sorted_list.append(item.value)
+                    elif hasattr(item, "name"):
+                        sorted_list.append(item.name)
+                    else:
+                        sorted_list.append(item)
+            # Sort the list (works for primitives, dicts as JSON strings for comparison)
+            try:
+                canonical[key] = sorted(sorted_list, key=lambda x: str(x))
+            except TypeError as e:
+                # If sorting fails, raise with helpful error message
+                raise TypeError(
+                    f"Scope contains non-serializable value for key '{key}': {type(value).__name__}. "
+                    "Convert enums/dataclasses to primitives (use .value or .name) before canonicalizing."
+                ) from e
+        else:
+            # Handle enums and other objects with .value or .name attributes
+            if hasattr(value, "value"):
+                canonical[key] = value.value
+            elif hasattr(value, "name"):
+                canonical[key] = value.name
+            else:
+                canonical[key] = value
+
+    return canonical
+
+
 @dataclass
 class Message:
     """Represents a single message in the conversation transcript."""
@@ -161,89 +248,12 @@ class ConversationManager:
         self._follow_ups = []
 
     def normalize_query(self, q: str | None) -> str:
-        """
-        Normalize query text: collapse whitespace, lowercase, strip.
-
-        Extracted from Ask_Questions.py (lines 141-158).
-        This is the single source of truth for query normalization.
-
-        Args:
-            q: Raw query text (may be None)
-
-        Returns:
-            Normalized query string (lowercase, single spaces, stripped)
-        """
-        if q is None:
-            return ""
-        # Collapse whitespace, lowercase, strip
-        return " ".join(q.strip().split()).lower()
+        """Normalize query text (delegates to module-level normalize_query)."""
+        return normalize_query(q)
 
     def canonicalize_scope(self, scope: dict[str, Any] | None) -> dict[str, Any]:
-        """
-        Canonicalize semantic scope dict for stable hashing.
-
-        Extracted from Ask_Questions.py (lines 160-228).
-        - Drops None values recursively
-        - Sorts dictionary keys recursively
-        - Sorts list values recursively
-        - Ensures stable JSON serialization
-
-        Args:
-            scope: Semantic scope dict (may be None)
-
-        Returns:
-            Canonicalized scope dict (stable, sorted, no Nones)
-
-        Raises:
-            TypeError: If scope contains non-serializable objects (enums/dataclasses
-                       should be converted to primitives before calling)
-        """
-        if scope is None:
-            return {}
-
-        canonical: dict[str, Any] = {}
-        for key in sorted(scope.keys()):
-            value = scope[key]
-            if value is None:
-                continue  # Drop None values
-            elif isinstance(value, dict):
-                # Recursively canonicalize nested dicts
-                nested_canonical = self.canonicalize_scope(value)
-                if nested_canonical:  # Only add non-empty dicts
-                    canonical[key] = nested_canonical
-            elif isinstance(value, list):
-                # Sort lists, recursively canonicalize list items if they are dicts
-                sorted_list: list[Any] = []
-                for item in value:
-                    if isinstance(item, dict):
-                        sorted_list.append(self.canonicalize_scope(item))
-                    else:
-                        # Handle enums and other objects with .value or .name attributes
-                        if hasattr(item, "value"):
-                            sorted_list.append(item.value)
-                        elif hasattr(item, "name"):
-                            sorted_list.append(item.name)
-                        else:
-                            sorted_list.append(item)
-                # Sort the list (works for primitives, dicts as JSON strings for comparison)
-                try:
-                    canonical[key] = sorted(sorted_list, key=lambda x: str(x))
-                except TypeError as e:
-                    # If sorting fails, raise with helpful error message
-                    raise TypeError(
-                        f"Scope contains non-serializable value for key '{key}': {type(value).__name__}. "
-                        "Convert enums/dataclasses to primitives (use .value or .name) before canonicalizing."
-                    ) from e
-            else:
-                # Handle enums and other objects with .value or .name attributes
-                if hasattr(value, "value"):
-                    canonical[key] = value.value
-                elif hasattr(value, "name"):
-                    canonical[key] = value.name
-                else:
-                    canonical[key] = value
-
-        return canonical
+        """Canonicalize scope for stable hashing (delegates to module-level canonicalize_scope)."""
+        return canonicalize_scope(scope)
 
     def serialize(self) -> dict[str, Any]:
         """

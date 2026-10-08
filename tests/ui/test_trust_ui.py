@@ -250,32 +250,12 @@ def test_trust_ui_tautology_detection():
     assert "non-restrictive" in effective_filters[0].get("label", "").lower()
 
 
-def test_trust_ui_integration_with_descriptive_analysis(ask_questions_page):
+def test_render_result_wiresTrustUiVerification(ask_questions_page):
     """Verify trust UI appears in render_result() for transcript-driven rendering."""
     # NOTE: This test verifies integration points exist
     # Actual rendering is tested via Streamlit testing tools or manual inspection
     # Phase 4: TrustUI moved from execute_analysis_with_idempotency to render_result
     # render_result is called by render_chat for transcript-driven rendering
-    import inspect
-
-    # Check that render_result has trust UI call (Phase 4: transcript-driven rendering)
-    source = inspect.getsource(ask_questions_page.render_result)
-    assert "TrustUI" in source
-    assert "render_verification" in source
-
-
-def test_trust_ui_integration_with_comparison_analysis(ask_questions_page):
-    """Verify trust UI appears in render_result() for transcript-driven rendering."""
-    import inspect
-
-    # Check that render_result has trust UI call (Phase 4: transcript-driven rendering)
-    source = inspect.getsource(ask_questions_page.render_result)
-    assert "TrustUI" in source
-    assert "render_verification" in source
-
-
-def test_trust_ui_integration_with_count_analysis(ask_questions_page):
-    """Verify trust UI appears in render_result() for transcript-driven rendering."""
     import inspect
 
     # Check that render_result has trust UI call (Phase 4: transcript-driven rendering)

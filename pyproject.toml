@@ -46,6 +46,7 @@ dev = [
     "pre-commit>=3.5.0",
     "types-requests>=2.31.0",
     "types-PyYAML>=6.0.0",
+    "mutmut>=3.3",
 ]
 
 [build-system]
@@ -134,3 +135,14 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
 ]
+
+[tool.mutmut]
+# Mutation testing (see `make mutation` / `make mutation-module`). Streamlit page scripts
+# are excluded for the same reason they are excluded from coverage: they run at import time.
+source_paths = ["src/clinical_analytics/"]
+do_not_mutate = ["src/clinical_analytics/ui/pages/*", "*/__init__.py"]
+also_copy = ["config/", "scripts/", "docs/", "data/dicitonaries/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
+pytest_add_cli_args_test_selection = ["tests/"]
+# Each mutant pays ~15s of pytest collection; the 1s default budget misclassifies most as timeouts.
+timeout_constant = 60
+pytest_add_cli_args = ["-m", "not slow and not integration", "-p", "no:randomly", "-q"]

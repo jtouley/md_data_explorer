@@ -243,3 +243,6 @@ data/uploads/parquet/
 data/uploads/raw/
 data/uploads/metadata/
 data/uploads/parquet/.vscode/settings.json
+
+# Mutation testing workdir
+mutants/

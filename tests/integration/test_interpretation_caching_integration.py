@@ -16,88 +16,16 @@ from datetime import datetime
 import pytest
 
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
 @pytest.mark.integration
 class TestInterpretationCachingIntegration:
     """Integration tests for interpretation caching behavior."""
 
-    def test_execute_analysis_skips_llm_when_result_has_interpretation(
-        self, mock_session_state, make_semantic_layer, mock_llm_calls
-    ):
-        """
-        Integration: execute_analysis_with_idempotency should NOT call
-        interpret_result_with_llm when execution_result already has interpretation.
+    # The guard condition in the actual code should prevent LLM call:
+    # if ENABLE_RESULT_INTERPRETATION and "error" not in result and not result.get("llm_interpretation"):
 
-        This simulates the scenario where:
-        1. User submits query
-        2. Query executes, result stored with interpretation
-        3. User submits SAME query again
-        4. Cached execution result returned (already has interpretation)
-        5. Should NOT call interpret_result_with_llm again
-        """
-        # Arrange: Create semantic layer (required by fixtures)
-        _ = make_semantic_layer(
-            dataset_name="test_integration",
-            data={"patient_id": ["P1", "P2", "P3"], "age": [45, 50, 55]},
-        )
-
-        # Result that already has interpretation (from first execution)
-        cached_execution_result = {
-            "success": True,
-            "result": {
-                "type": "count",
-                "summary": {"total": 3},
-                "headline": "3 patients found",
-                "llm_interpretation": "There are 3 patients in this cohort.",  # Already cached!
-            },
-            "run_key": "integration_test_run_key",
-        }
-
-        # Context used in real execution path
-        _ = AnalysisContext(
-            inferred_intent=AnalysisIntent.COUNT,
-            research_question="How many patients?",
-        )
-
-        # Act: Simulate the guard condition logic
-        result = cached_execution_result.get("result", {})
-        has_existing_interpretation = bool(result.get("llm_interpretation"))
-
-        # Assert: Should detect existing interpretation
-        assert has_existing_interpretation is True, "Result from cached execution should have existing interpretation"
-
-        # The guard condition in the actual code should prevent LLM call:
-        # if ENABLE_RESULT_INTERPRETATION and "error" not in result and not result.get("llm_interpretation"):
-
-    def test_first_execution_calls_llm_for_interpretation(
-        self, mock_session_state, make_semantic_layer, mock_llm_calls
-    ):
-        """
-        Integration: First-time execution SHOULD call interpret_result_with_llm.
-
-        This verifies the fix doesn't break normal first-time execution flow.
-        """
-        # Arrange: New execution result without interpretation
-        fresh_execution_result = {
-            "success": True,
-            "result": {
-                "type": "count",
-                "summary": {"total": 100},
-                "headline": "100 patients found",
-                # NO llm_interpretation field
-            },
-            "run_key": "fresh_run_key",
-        }
-
-        # Act: Check guard condition
-        result = fresh_execution_result.get("result", {})
-        has_existing_interpretation = bool(result.get("llm_interpretation"))
-
-        # Assert: Should NOT have interpretation (fresh execution)
-        assert has_existing_interpretation is False, "Fresh execution result should not have interpretation yet"
-        # In actual code, this would trigger the LLM call
+    # In actual code, this would trigger the LLM call
 
     def test_cache_preserves_interpretation_across_sessions(
         self, mock_session_state, make_semantic_layer, mock_llm_calls

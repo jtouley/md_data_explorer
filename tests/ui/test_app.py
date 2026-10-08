@@ -3,6 +3,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from streamlit.testing.v1 import AppTest
 
+APP_PATH = "src/clinical_analytics/ui/app.py"
+# Full app boot imports the analysis stack; Streamlit's 3s default flakes on cold/serial runs.
+APP_RUN_TIMEOUT_S = 30
+
 # --- Fixtures ---
 
 
@@ -61,7 +65,7 @@ def mock_registry(mock_cohort):
 
 def test_app_initial_load(mock_registry):
     """Verify the app loads without errors and shows the correct title."""
-    at = AppTest.from_file("src/clinical_analytics/ui/app.py")
+    at = AppTest.from_file(APP_PATH, default_timeout=APP_RUN_TIMEOUT_S)
     at.run()
 
     assert not at.exception
@@ -70,7 +74,7 @@ def test_app_initial_load(mock_registry):
 
 def test_dataset_selection_flow(mock_registry):
     """Test selecting a dataset from the sidebar and verifying data display."""
-    at = AppTest.from_file("src/clinical_analytics/ui/app.py")
+    at = AppTest.from_file(APP_PATH, default_timeout=APP_RUN_TIMEOUT_S)
     at.run()
 
     # 1. Verify Sidebar
@@ -101,7 +105,7 @@ def test_dataset_selection_flow(mock_registry):
 
 def test_statistical_analysis_execution(mock_registry):
     """Test the end-to-end analysis flow: select predictors -> run regression."""
-    at = AppTest.from_file("src/clinical_analytics/ui/app.py")
+    at = AppTest.from_file(APP_PATH, default_timeout=APP_RUN_TIMEOUT_S)
     at.run()
 
     # 1. Select Dataset

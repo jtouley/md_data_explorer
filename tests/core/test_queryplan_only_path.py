@@ -245,6 +245,59 @@ class TestQueryPlanOnlyPath:
         assert all("Statin Used" in gc and "count" in gc for gc in formatted["group_counts"])
         assert "headline" in formatted
 
+    @pytest.mark.parametrize(
+        ("intent", "plan_intent", "group_by", "expected_type"),
+        [
+            ("DESCRIBE", "DESCRIBE", None, "descriptive"),
+            ("COMPARE_GROUPS", "COMPARE_GROUPS", "treatment", "comparison"),
+        ],
+    )
+    def test_format_execution_result_non_count_intent_with_cohort_returns_renderable_result(
+        self, make_semantic_layer, sample_cohort, intent, plan_intent, group_by, expected_type
+    ):
+        """
+        Regression: non-COUNT intents rendered blank (DESCRIBE) or
+        "Formatting not yet implemented" (COMPARE_GROUPS) in Ask Questions.
+        """
+        from clinical_analytics.core.query_plan import QueryPlan
+        from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+        # Arrange
+        layer = make_semantic_layer(data=sample_cohort)
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent[intent]
+        context.primary_variable = "age"
+        context.grouping_variable = group_by
+        context.query_plan = QueryPlan(intent=plan_intent, metric="age", group_by=group_by, confidence=0.9)
+        execution_result = {"success": True, "result": sample_cohort, "run_key": "k", "warnings": []}
+
+        # Act
+        formatted = layer.format_execution_result(execution_result, context, cohort=sample_cohort)
+
+        # Assert
+        assert formatted["type"] == expected_type
+        assert "error" not in formatted
+
+    def test_format_execution_result_non_count_without_cohort_uses_base_view(self, make_semantic_layer, sample_cohort):
+        """Non-COUNT formatting uses the filtered base view when the UI has no cohort."""
+        from clinical_analytics.core.query_plan import QueryPlan
+        from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+
+        # Arrange
+        layer = make_semantic_layer(data=sample_cohort)
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.DESCRIBE
+        context.primary_variable = "age"
+        context.query_plan = QueryPlan(intent="DESCRIBE", metric="age", confidence=0.9)
+        execution_result = {"success": True, "result": sample_cohort, "run_key": "k", "warnings": []}
+
+        # Act
+        formatted = layer.format_execution_result(execution_result, context)
+
+        # Assert
+        assert formatted["type"] == "descriptive"
+        assert "error" not in formatted
+
 
 @pytest.fixture
 def mock_semantic_layer(tmp_path):
