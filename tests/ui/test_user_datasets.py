@@ -13,9 +13,20 @@ from clinical_analytics.ui.storage.user_datasets import (
 )
 
 
-def _frame(data):
-    """Construct a Polars frame for a test."""
-    return pl.DataFrame(data)
+@pytest.fixture
+def ordered_columns():
+    def _make(rows_by_name: dict, column_order: list[str]) -> pl.DataFrame:
+        return pl.DataFrame({name: rows_by_name[name] for name in column_order})
+
+    return _make
+
+
+@pytest.fixture
+def single_named_column():
+    def _make(values: list) -> pl.DataFrame:
+        return pl.DataFrame({"col": values})
+
+    return _make
 
 
 class TestUserDatasetStorage:
@@ -58,7 +69,7 @@ class TestUserDatasetStorage:
         renamed onto it, producing duplicate column names and failing every save.
         """
         # Arrange
-        df = _frame(
+        df = pl.DataFrame(
             {
                 "patient_id": [f"P{i:03d}" for i in range(150)],
                 "age": [20 + (i % 60) for i in range(150)],
@@ -456,7 +467,7 @@ class TestSaveTableList:
         storage = upload_storage
         upload_id = "test_upload_123"
 
-        df = _frame({"patient_id": ["P001", "P002"], "age": [25, 30], "outcome": [0, 1]})
+        df = pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30], "outcome": [0, 1]})
         tables = [{"name": "patient_outcomes", "data": df}]
         metadata = {
             "dataset_name": "test",
@@ -501,7 +512,7 @@ class TestSaveTableList:
         storage = upload_storage
         upload_id = "test_upload_789"
 
-        df = _frame(
+        df = pl.DataFrame(
             {
                 "Patient ID": ["P001", "P002"],
                 "Outcome": [0, 1],  # Binary outcome
@@ -539,8 +550,8 @@ class TestSaveTableList:
         storage = upload_storage
         upload_id = "test_multi_upload"
 
-        patients_df = _frame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
-        admissions_df = _frame(
+        patients_df = pl.DataFrame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
+        admissions_df = pl.DataFrame(
             {"admission_id": ["A001", "A002"], "patient_id": ["P001", "P002"], "date": ["2024-01-01", "2024-01-02"]}
         )
 
@@ -1342,7 +1353,7 @@ class TestSchemaFingerprint:
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: DataFrame with UTF-8 column names
-        df = _frame(
+        df = pl.DataFrame(
             {
                 "patient_id": ["P001", "P002"],
                 "âge": [25, 30],  # UTF-8 character
@@ -1357,13 +1368,13 @@ class TestSchemaFingerprint:
         assert len(fingerprint) == 64  # SHA256 hex digest length
         assert all(c in "0123456789abcdef" for c in fingerprint)
 
-    def test_compute_schema_fingerprint_sorts_by_column_name(self, upload_storage):
+    def test_compute_schema_fingerprint_sorts_by_column_name(self, upload_storage, ordered_columns):
         """Schema fingerprint should sort columns alphabetically by name."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: DataFrame with columns in non-alphabetical order
-        df1 = _frame({"zebra": [1], "alpha": [2], "beta": [3]})
-        df2 = _frame({"alpha": [2], "beta": [3], "zebra": [1]})
+        df1 = ordered_columns({"zebra": [1], "alpha": [2], "beta": [3]}, ["zebra", "alpha", "beta"])
+        df2 = ordered_columns({"alpha": [2], "beta": [3], "zebra": [1]}, ["alpha", "beta", "zebra"])
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
@@ -1372,15 +1383,15 @@ class TestSchemaFingerprint:
         # Assert: Same fingerprint regardless of column order
         assert fp1 == fp2
 
-    def test_compute_schema_fingerprint_sorts_by_column_type(self, upload_storage):
+    def test_compute_schema_fingerprint_sorts_by_column_type(self, upload_storage, single_named_column):
         """Schema fingerprint should sort by column type when names are same."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: Two DataFrames with same column names but different types
         # Note: Polars doesn't allow same column name with different types in one DataFrame
         # So we test that type is included in fingerprint
-        df1 = _frame({"col": [1, 2, 3]})  # Int64
-        df2 = _frame({"col": [1.0, 2.0, 3.0]})  # Float64
+        df1 = single_named_column([1, 2, 3])  # Int64
+        df2 = single_named_column([1.0, 2.0, 3.0])  # Float64
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
@@ -1395,7 +1406,7 @@ class TestSchemaFingerprint:
 
         # Arrange: Same schema, different data
         df1 = simple_test_df
-        df2 = _frame({"patient_id": ["P999"], "age": [99]})
+        df2 = pl.DataFrame({"patient_id": ["P999"], "age": [99]})
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
