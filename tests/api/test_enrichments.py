@@ -199,8 +199,8 @@ class TestEnrichmentsRevert:
 class TestEnrichmentsHistory:
     """Tests for GET patch history."""
 
-    def test_enrichments_history_returns_error_when_store_fails(self, api_client, mock_overlay_store):
-        """A store failure surfaces as a server error."""
+    def test_enrichments_history_propagates_store_failure(self, api_client, mock_overlay_store):
+        """The history route does not catch a store failure, so the error propagates."""
         mock_overlay_store.load_patches.side_effect = RuntimeError("disk unreadable")
         with pytest.raises(RuntimeError, match="disk unreadable"):
             api_client.get("/api/datasets/upload_test/enrichments/history")

@@ -232,7 +232,7 @@ class TestEnsurePolars:
         """Values that are not frames are not converted."""
         from clinical_analytics.ui.components.data_validator import _ensure_polars
 
-        with pytest.raises(Exception):
+        with pytest.raises(TypeError, match="expected pandas DataFrame"):
             _ensure_polars(None)
 
     def test_ensure_polars_with_polars_dataframe(self):

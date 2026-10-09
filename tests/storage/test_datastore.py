@@ -13,9 +13,20 @@ import polars as pl
 import pytest
 
 
-def _frame(data):
-    """Construct a Polars frame for a test."""
-    return pl.DataFrame(data)
+@pytest.fixture
+def patient_age_rows():
+    def _make(patient_ids: list[int], ages: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"patient_id": patient_ids, "age": ages})
+
+    return _make
+
+
+@pytest.fixture
+def patient_id_rows():
+    def _make(patient_ids: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"patient_id": patient_ids})
+
+    return _make
 
 
 @pytest.fixture
@@ -30,7 +41,7 @@ def datastore(tmp_path):
 @pytest.fixture
 def sample_table():
     """Sample patient table for testing."""
-    return _frame(
+    return pl.DataFrame(
         {
             "patient_id": [1, 2, 3, 4, 5],
             "age": [25, 30, 35, 40, 45],
@@ -94,7 +105,7 @@ class TestDataStoreSaveLoad:
         assert loaded_data.columns == sample_table.columns
         assert loaded_data.to_dicts() == sample_table.to_dicts()
 
-    def test_datastore_save_multiple_tables(self, datastore):
+    def test_datastore_save_multiple_tables(self, datastore, patient_age_rows):
         """DataStore should handle multiple tables from different uploads."""
         # Arrange: Multiple tables
         tables = [
@@ -102,19 +113,19 @@ class TestDataStoreSaveLoad:
                 "upload_id": "upload_001",
                 "table_name": "patients",
                 "version": "v1",
-                "data": _frame({"patient_id": [1, 2], "age": [25, 30]}),
+                "data": patient_age_rows([1, 2], [25, 30]),
             },
             {
                 "upload_id": "upload_001",
                 "table_name": "visits",
                 "version": "v1",
-                "data": _frame({"visit_id": [1, 2], "patient_id": [1, 2]}),
+                "data": pl.DataFrame({"visit_id": [1, 2], "patient_id": [1, 2]}),
             },
             {
                 "upload_id": "upload_002",
                 "table_name": "patients",
                 "version": "v2",
-                "data": _frame({"patient_id": [3, 4], "age": [35, 40]}),
+                "data": patient_age_rows([3, 4], [35, 40]),
             },
         ]
 
@@ -175,13 +186,13 @@ class TestDataStorePersistence:
 class TestDataStoreListDatasets:
     """Test listing datasets in DuckDB."""
 
-    def test_datastore_list_datasets_returns_all_uploads(self, datastore):
+    def test_datastore_list_datasets_returns_all_uploads(self, datastore, patient_id_rows):
         """list_datasets should return all unique upload_ids."""
         # Arrange: Save multiple tables from different uploads
         tables = [
-            ("upload_001", "patients", "v1", _frame({"patient_id": [1, 2]})),
-            ("upload_001", "visits", "v1", _frame({"visit_id": [1, 2]})),
-            ("upload_002", "patients", "v2", _frame({"patient_id": [3, 4]})),
+            ("upload_001", "patients", "v1", patient_id_rows([1, 2])),
+            ("upload_001", "visits", "v1", pl.DataFrame({"visit_id": [1, 2]})),
+            ("upload_002", "patients", "v2", patient_id_rows([3, 4])),
         ]
 
         for upload_id, table_name, version, data in tables:
@@ -258,7 +269,7 @@ class TestDataStoreParquetExport:
     def test_parquet_compression_smaller_than_csv(self, datastore, tmp_path):
         """Parquet files should be ≥40% smaller than CSV."""
         # Arrange: Create larger dataset for compression test
-        large_df = _frame(
+        large_df = pl.DataFrame(
             {
                 "patient_id": list(range(1000)),
                 "age": [25 + (i % 50) for i in range(1000)],

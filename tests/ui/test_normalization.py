@@ -19,9 +19,17 @@ from clinical_analytics.ui.storage.user_datasets import (
 )
 
 
-def _frame(data):
-    """Construct a Polars frame for a test."""
-    return pl.DataFrame(data)
+@pytest.fixture
+def patients_with_age():
+    return pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+
+
+@pytest.fixture
+def id_column():
+    def _make(values: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"id": values})
+
+    return _make
 
 
 class TestNormalizeUploadToTableList:
@@ -36,7 +44,7 @@ class TestNormalizeUploadToTableList:
         """Test normalizing CSV upload returns single table with filename stem as name."""
         # Arrange
         df_data = {"patient_id": ["P001", "P002"], "age": [25, 30]}
-        df = _frame(df_data)
+        df = pl.DataFrame(df_data)
         file_bytes = df.write_csv().encode("utf-8")
         filename = "patient_outcomes.csv"
 
@@ -55,7 +63,7 @@ class TestNormalizeUploadToTableList:
         """Test normalizing Excel upload returns single table."""
         # Arrange
         df_data = {"patient_id": ["P001", "P002"], "age": [25, 30]}
-        df = _frame(df_data)
+        df = pl.DataFrame(df_data)
         # Write to Excel bytes
         buffer = io.BytesIO()
         df.write_excel(buffer)
@@ -74,8 +82,8 @@ class TestNormalizeUploadToTableList:
     def test_normalize_zip_to_table_list(self):
         """Test normalizing ZIP upload returns multiple tables with ZIP entry names."""
         # Arrange
-        patients_df = _frame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
-        admissions_df = _frame({"admission_id": ["A001", "A002"], "patient_id": ["P001", "P002"]})
+        patients_df = pl.DataFrame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
+        admissions_df = pl.DataFrame({"admission_id": ["A001", "A002"], "patient_id": ["P001", "P002"]})
 
         # Create ZIP with two CSV files
         zip_buffer = io.BytesIO()
@@ -104,7 +112,7 @@ class TestNormalizeUploadToTableList:
     def test_normalize_preserves_original_filename_stem(self):
         """Test that single-file normalization uses original filename stem, not 'table_0'."""
         # Arrange
-        df = _frame({"patient_id": ["P001"], "outcome": [1]})
+        df = pl.DataFrame({"patient_id": ["P001"], "outcome": [1]})
         file_bytes = df.write_csv().encode("utf-8")
         filename = "viral_load_study.csv"
 
@@ -115,12 +123,12 @@ class TestNormalizeUploadToTableList:
         assert tables[0]["name"] == "viral_load_study"
         assert tables[0]["name"] != "table_0"  # CRITICAL: not generic name
 
-    def test_normalize_handles_gzip_compressed_csv_in_zip(self):
+    def test_normalize_handles_gzip_compressed_csv_in_zip(self, patients_with_age):
         """Test normalizing ZIP with .csv.gz files."""
         # Arrange
         import gzip
 
-        df = _frame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+        df = patients_with_age
         csv_bytes = df.write_csv().encode("utf-8")
         gzip_bytes = gzip.compress(csv_bytes)
 
@@ -146,8 +154,8 @@ class TestExtractZipTables:
     def test_extract_valid_zip_returns_tables(self):
         """Test extracting valid ZIP returns table list."""
         # Arrange
-        df1 = _frame({"id": [1, 2], "name": ["A", "B"]})
-        df2 = _frame({"id": [3, 4], "value": [10, 20]})
+        df1 = pl.DataFrame({"id": [1, 2], "name": ["A", "B"]})
+        df2 = pl.DataFrame({"id": [3, 4], "value": [10, 20]})
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -189,11 +197,11 @@ class TestExtractZipTables:
         with pytest.raises(UploadError, match="No CSV files in ZIP"):
             extract_zip_tables(file_bytes)
 
-    def test_extract_zip_handles_duplicate_table_names(self):
+    def test_extract_zip_handles_duplicate_table_names(self, id_column):
         """Test that ZIP with duplicate table names raises UploadError."""
         # Arrange
-        df1 = _frame({"id": [1, 2]})
-        df2 = _frame({"id": [3, 4]})
+        df1 = id_column([1, 2])
+        df2 = id_column([3, 4])
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -206,10 +214,10 @@ class TestExtractZipTables:
         with pytest.raises(UploadError, match="Duplicate table name"):
             extract_zip_tables(file_bytes)
 
-    def test_extract_zip_skips_macosx_files(self):
+    def test_extract_zip_skips_macosx_files(self, id_column):
         """Test that __MACOSX files are skipped."""
         # Arrange
-        df = _frame({"id": [1, 2]})
+        df = id_column([1, 2])
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -238,10 +246,10 @@ class TestExtractZipTables:
 class TestLoadSingleFile:
     """Test suite for load_single_file() helper function."""
 
-    def test_load_csv_returns_polars_dataframe(self):
+    def test_load_csv_returns_polars_dataframe(self, patients_with_age):
         """Test loading CSV returns Polars DataFrame."""
         # Arrange
-        df = _frame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+        df = patients_with_age
         file_bytes = df.write_csv().encode("utf-8")
         filename = "patients.csv"
 
@@ -254,10 +262,10 @@ class TestLoadSingleFile:
         assert "patient_id" in result.columns
 
     @pytest.mark.skip(reason="Excel writing requires xlsxwriter - manual testing needed")
-    def test_load_excel_returns_polars_dataframe(self):
+    def test_load_excel_returns_polars_dataframe(self, patients_with_age):
         """Test loading Excel returns Polars DataFrame."""
         # Arrange
-        df = _frame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+        df = patients_with_age
         buffer = io.BytesIO()
         df.write_excel(buffer)
         file_bytes = buffer.getvalue()
@@ -283,7 +291,7 @@ class TestLoadSingleFile:
     def test_load_preserves_column_types(self):
         """Test that column types are preserved during load."""
         # Arrange
-        df = _frame(
+        df = pl.DataFrame(
             {
                 "patient_id": ["P001", "P002"],
                 "age": [25, 30],
