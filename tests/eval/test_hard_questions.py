@@ -53,6 +53,24 @@ def test_unbound_death_word_is_not_success() -> None:
     assert result["success"] is False
 
 
+def test_query_service_unbound_death_is_an_error() -> None:
+    """The service path must fail closed, not only the headless wrapper."""
+    from clinical_analytics.eval.headless import service_for
+
+    raw = service_for("mimic_patients").ask(
+        "How many MIMIC patients died?",
+        dataset_id="mimic_patients",
+        dataset_version="golden",
+    )
+    assert any(item.get("severity") == "error" for item in raw.issues)
+
+
+def test_grouped_count_stays_success() -> None:
+    result = ask("gdsi", "how many patients by sex?")
+    assert result["success"] is True
+    assert result["group_by"] == "sex"
+
+
 def test_non_numeric_correlation_is_not_success() -> None:
     result = ask("gdsi", "correlation between age and BMI")
     assert result["success"] is False
