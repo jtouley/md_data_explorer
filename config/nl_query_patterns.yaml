@@ -13,6 +13,12 @@
 patterns:
   # COMPARE_GROUPS patterns
   COMPARE_GROUPS:
+    - pattern: "compare\\s+(.+?)\\s+by\\s+(.+?)(?:\\s+variant\\s+\\d+)?\\s*\\??\\s*$"
+      groups:
+        "1": "primary_variable"
+        "2": "grouping_variable"
+      confidence: 0.95
+
     - pattern: "compare\\s+(\\w+)\\s+(?:by|between|across)\\s+(\\w+)"
       groups:
         "1": "primary_variable"
@@ -58,6 +64,21 @@ patterns:
 
   # COUNT patterns
   COUNT:
+    - pattern: "how\\s+many\\s+patients(?:\\s+by\\s+(.+?))?(?:\\s+variant\\s+\\d+)?\\s*\\??\\s*$"
+      groups:
+        "1": "grouping_variable"
+      confidence: 0.95
+
+    - pattern: "number\\s+of\\s+patients(?:\\s+by\\s+(.+?))?(?:\\s+variant\\s+\\d+)?\\s*\\??\\s*$"
+      groups:
+        "1": "grouping_variable"
+      confidence: 0.95
+
+    - pattern: "count\\s+patients(?:\\s+by\\s+(.+?))?(?:\\s+variant\\s+\\d+)?\\s*\\??\\s*$"
+      groups:
+        "1": "grouping_variable"
+      confidence: 0.95
+
     - pattern: "how many"
       groups: {}
       confidence: 0.9
@@ -89,6 +110,18 @@ patterns:
 
   # DESCRIBE patterns
   DESCRIBE:
+    - pattern: "what\\s+is\\s+the\\s+(?:average|mean|median|minimum|maximum|min|max|std)\\s+(?:of\\s+)?(.+?)(?:\\s+by\\s+(.+?))?(?:\\s+variant\\s+\\d+)?\\s*\\??\\s*$"
+      groups:
+        "1": "primary_variable"
+        "2": "grouping_variable"
+      confidence: 0.95
+
+    - pattern: "\\b(?:average|mean|median|minimum|maximum|min|max|std)\\s+(?:of\\s+)?(.+?)(?:\\s+by\\s+(.+?))?(?:\\s+variant\\s+\\d+)?\\s*\\??\\s*$"
+      groups:
+        "1": "primary_variable"
+        "2": "grouping_variable"
+      confidence: 0.95
+
     - pattern: "what\\s+is\\s+the\\s+(?:(?:average|mean|median)(?:\\s+and\\s+(?:average|mean|median))*\\s+)(\\w+(?:\\s+\\w+)*?)"
       groups:
         "1": "primary_variable"

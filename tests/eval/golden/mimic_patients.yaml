@@ -1,0 +1,671 @@
+dataset_id: mimic_patients
+questions:
+- id: mimic_patients_001
+  dataset_id: mimic_patients
+  query: what is the average anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: average
+  expected: 61.75
+- id: mimic_patients_002
+  dataset_id: mimic_patients
+  query: what is the average of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: average
+  expected: 61.75
+- id: mimic_patients_003
+  dataset_id: mimic_patients
+  query: average anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: average
+  expected: 61.75
+- id: mimic_patients_004
+  dataset_id: mimic_patients
+  query: what is the average anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: average
+  expected: 2148.68
+- id: mimic_patients_005
+  dataset_id: mimic_patients
+  query: what is the average of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: average
+  expected: 2148.68
+- id: mimic_patients_006
+  dataset_id: mimic_patients
+  query: average anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: average
+  expected: 2148.68
+- id: mimic_patients_007
+  dataset_id: mimic_patients
+  query: what is the mean anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: mean
+  expected: 61.75
+- id: mimic_patients_008
+  dataset_id: mimic_patients
+  query: what is the mean of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: mean
+  expected: 61.75
+- id: mimic_patients_009
+  dataset_id: mimic_patients
+  query: mean anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: mean
+  expected: 61.75
+- id: mimic_patients_010
+  dataset_id: mimic_patients
+  query: what is the mean anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: mean
+  expected: 2148.68
+- id: mimic_patients_011
+  dataset_id: mimic_patients
+  query: what is the mean of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: mean
+  expected: 2148.68
+- id: mimic_patients_012
+  dataset_id: mimic_patients
+  query: mean anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: mean
+  expected: 2148.68
+- id: mimic_patients_013
+  dataset_id: mimic_patients
+  query: what is the median anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: median
+  expected: 63.0
+- id: mimic_patients_014
+  dataset_id: mimic_patients
+  query: what is the median of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: median
+  expected: 63.0
+- id: mimic_patients_015
+  dataset_id: mimic_patients
+  query: median anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: median
+  expected: 63.0
+- id: mimic_patients_016
+  dataset_id: mimic_patients
+  query: what is the median anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: median
+  expected: 2145.5
+- id: mimic_patients_017
+  dataset_id: mimic_patients
+  query: what is the median of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: median
+  expected: 2145.5
+- id: mimic_patients_018
+  dataset_id: mimic_patients
+  query: median anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: median
+  expected: 2145.5
+- id: mimic_patients_019
+  dataset_id: mimic_patients
+  query: what is the minimum anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: minimum
+  expected: 21.0
+- id: mimic_patients_020
+  dataset_id: mimic_patients
+  query: what is the minimum of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: minimum
+  expected: 21.0
+- id: mimic_patients_021
+  dataset_id: mimic_patients
+  query: minimum anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: minimum
+  expected: 21.0
+- id: mimic_patients_022
+  dataset_id: mimic_patients
+  query: what is the minimum anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: minimum
+  expected: 2110.0
+- id: mimic_patients_023
+  dataset_id: mimic_patients
+  query: what is the minimum of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: minimum
+  expected: 2110.0
+- id: mimic_patients_024
+  dataset_id: mimic_patients
+  query: minimum anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: minimum
+  expected: 2110.0
+- id: mimic_patients_025
+  dataset_id: mimic_patients
+  query: what is the maximum anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: maximum
+  expected: 91.0
+- id: mimic_patients_026
+  dataset_id: mimic_patients
+  query: what is the maximum of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: maximum
+  expected: 91.0
+- id: mimic_patients_027
+  dataset_id: mimic_patients
+  query: maximum anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: maximum
+  expected: 91.0
+- id: mimic_patients_028
+  dataset_id: mimic_patients
+  query: what is the maximum anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: maximum
+  expected: 2201.0
+- id: mimic_patients_029
+  dataset_id: mimic_patients
+  query: what is the maximum of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: maximum
+  expected: 2201.0
+- id: mimic_patients_030
+  dataset_id: mimic_patients
+  query: maximum anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: maximum
+  expected: 2201.0
+- id: mimic_patients_031
+  dataset_id: mimic_patients
+  query: what is the min anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: min
+  expected: 21.0
+- id: mimic_patients_032
+  dataset_id: mimic_patients
+  query: what is the min of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: min
+  expected: 21.0
+- id: mimic_patients_033
+  dataset_id: mimic_patients
+  query: min anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: min
+  expected: 21.0
+- id: mimic_patients_034
+  dataset_id: mimic_patients
+  query: what is the min anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: min
+  expected: 2110.0
+- id: mimic_patients_035
+  dataset_id: mimic_patients
+  query: what is the min of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: min
+  expected: 2110.0
+- id: mimic_patients_036
+  dataset_id: mimic_patients
+  query: min anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: min
+  expected: 2110.0
+- id: mimic_patients_037
+  dataset_id: mimic_patients
+  query: what is the max anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: max
+  expected: 91.0
+- id: mimic_patients_038
+  dataset_id: mimic_patients
+  query: what is the max of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: max
+  expected: 91.0
+- id: mimic_patients_039
+  dataset_id: mimic_patients
+  query: max anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: max
+  expected: 91.0
+- id: mimic_patients_040
+  dataset_id: mimic_patients
+  query: what is the max anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: max
+  expected: 2201.0
+- id: mimic_patients_041
+  dataset_id: mimic_patients
+  query: what is the max of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: max
+  expected: 2201.0
+- id: mimic_patients_042
+  dataset_id: mimic_patients
+  query: max anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: max
+  expected: 2201.0
+- id: mimic_patients_043
+  dataset_id: mimic_patients
+  query: what is the std anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: std
+  expected: 16.169790388626602
+- id: mimic_patients_044
+  dataset_id: mimic_patients
+  query: what is the std of anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: std
+  expected: 16.169790388626602
+- id: mimic_patients_045
+  dataset_id: mimic_patients
+  query: std anchor age?
+  kind: stat
+  metric: anchor_age
+  stat: std
+  expected: 16.169790388626602
+- id: mimic_patients_046
+  dataset_id: mimic_patients
+  query: what is the std anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: std
+  expected: 25.629008186156184
+- id: mimic_patients_047
+  dataset_id: mimic_patients
+  query: what is the std of anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: std
+  expected: 25.629008186156184
+- id: mimic_patients_048
+  dataset_id: mimic_patients
+  query: std anchor year?
+  kind: stat
+  metric: anchor_year
+  stat: std
+  expected: 25.629008186156184
+- id: mimic_patients_049
+  dataset_id: mimic_patients
+  query: what is the average anchor age by gender?
+  kind: mean_by
+  metric: anchor_age
+  group_by: gender
+  expected: &id001
+    F: 60.81395348837209
+    M: 62.45614035087719
+- id: mimic_patients_050
+  dataset_id: mimic_patients
+  query: average anchor age by gender?
+  kind: mean_by
+  metric: anchor_age
+  group_by: gender
+  expected: *id001
+- id: mimic_patients_051
+  dataset_id: mimic_patients
+  query: compare anchor age by gender?
+  kind: compare
+  metric: anchor_age
+  group_by: gender
+  expected: *id001
+- id: mimic_patients_052
+  dataset_id: mimic_patients
+  query: what is the average anchor age by anchor year group?
+  kind: mean_by
+  metric: anchor_age
+  group_by: anchor_year_group
+  expected: &id002
+    2011 - 2013: 60.674418604651166
+    2014 - 2016: 62.56140350877193
+- id: mimic_patients_053
+  dataset_id: mimic_patients
+  query: average anchor age by anchor year group?
+  kind: mean_by
+  metric: anchor_age
+  group_by: anchor_year_group
+  expected: *id002
+- id: mimic_patients_054
+  dataset_id: mimic_patients
+  query: compare anchor age by anchor year group?
+  kind: compare
+  metric: anchor_age
+  group_by: anchor_year_group
+  expected: *id002
+- id: mimic_patients_055
+  dataset_id: mimic_patients
+  query: what is the average anchor year by gender?
+  kind: mean_by
+  metric: anchor_year
+  group_by: gender
+  expected: &id003
+    F: 2145.6744186046512
+    M: 2150.9473684210525
+- id: mimic_patients_056
+  dataset_id: mimic_patients
+  query: average anchor year by gender?
+  kind: mean_by
+  metric: anchor_year
+  group_by: gender
+  expected: *id003
+- id: mimic_patients_057
+  dataset_id: mimic_patients
+  query: compare anchor year by gender?
+  kind: compare
+  metric: anchor_year
+  group_by: gender
+  expected: *id003
+- id: mimic_patients_058
+  dataset_id: mimic_patients
+  query: what is the average anchor year by anchor year group?
+  kind: mean_by
+  metric: anchor_year
+  group_by: anchor_year_group
+  expected: &id004
+    2011 - 2013: 2143.1627906976746
+    2014 - 2016: 2152.842105263158
+- id: mimic_patients_059
+  dataset_id: mimic_patients
+  query: average anchor year by anchor year group?
+  kind: mean_by
+  metric: anchor_year
+  group_by: anchor_year_group
+  expected: *id004
+- id: mimic_patients_060
+  dataset_id: mimic_patients
+  query: compare anchor year by anchor year group?
+  kind: compare
+  metric: anchor_year
+  group_by: anchor_year_group
+  expected: *id004
+- id: mimic_patients_061
+  dataset_id: mimic_patients
+  query: how many patients by gender?
+  kind: count_by
+  group_by: gender
+  expected: &id005
+    F: 43
+    M: 57
+- id: mimic_patients_062
+  dataset_id: mimic_patients
+  query: number of patients by gender?
+  kind: count_by
+  group_by: gender
+  expected: *id005
+- id: mimic_patients_063
+  dataset_id: mimic_patients
+  query: count patients by gender?
+  kind: count_by
+  group_by: gender
+  expected: *id005
+- id: mimic_patients_064
+  dataset_id: mimic_patients
+  query: how many patients by anchor year group?
+  kind: count_by
+  group_by: anchor_year_group
+  expected: &id006
+    2011 - 2013: 43
+    2014 - 2016: 57
+- id: mimic_patients_065
+  dataset_id: mimic_patients
+  query: number of patients by anchor year group?
+  kind: count_by
+  group_by: anchor_year_group
+  expected: *id006
+- id: mimic_patients_066
+  dataset_id: mimic_patients
+  query: count patients by anchor year group?
+  kind: count_by
+  group_by: anchor_year_group
+  expected: *id006
+- id: mimic_patients_067
+  dataset_id: mimic_patients
+  query: how many patients?
+  kind: count
+  expected: 100
+- id: mimic_patients_068
+  dataset_id: mimic_patients
+  query: number of patients?
+  kind: count
+  expected: 100
+- id: mimic_patients_069
+  dataset_id: mimic_patients
+  query: count patients?
+  kind: count
+  expected: 100
+- id: mimic_patients_070
+  dataset_id: mimic_patients
+  query: how many patients variant 1?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_071
+  dataset_id: mimic_patients
+  query: how many patients variant 2?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_072
+  dataset_id: mimic_patients
+  query: how many patients variant 3?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_073
+  dataset_id: mimic_patients
+  query: how many patients variant 4?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_074
+  dataset_id: mimic_patients
+  query: how many patients variant 5?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_075
+  dataset_id: mimic_patients
+  query: how many patients variant 6?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_076
+  dataset_id: mimic_patients
+  query: how many patients variant 7?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_077
+  dataset_id: mimic_patients
+  query: how many patients variant 8?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_078
+  dataset_id: mimic_patients
+  query: how many patients variant 9?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_079
+  dataset_id: mimic_patients
+  query: how many patients variant 10?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_080
+  dataset_id: mimic_patients
+  query: how many patients variant 11?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_081
+  dataset_id: mimic_patients
+  query: how many patients variant 12?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_082
+  dataset_id: mimic_patients
+  query: how many patients variant 13?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_083
+  dataset_id: mimic_patients
+  query: how many patients variant 14?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_084
+  dataset_id: mimic_patients
+  query: how many patients variant 15?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_085
+  dataset_id: mimic_patients
+  query: how many patients variant 16?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_086
+  dataset_id: mimic_patients
+  query: how many patients variant 17?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_087
+  dataset_id: mimic_patients
+  query: how many patients variant 18?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_088
+  dataset_id: mimic_patients
+  query: how many patients variant 19?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_089
+  dataset_id: mimic_patients
+  query: how many patients variant 20?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_090
+  dataset_id: mimic_patients
+  query: how many patients variant 21?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_091
+  dataset_id: mimic_patients
+  query: how many patients variant 22?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_092
+  dataset_id: mimic_patients
+  query: how many patients variant 23?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_093
+  dataset_id: mimic_patients
+  query: how many patients variant 24?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_094
+  dataset_id: mimic_patients
+  query: how many patients variant 25?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_095
+  dataset_id: mimic_patients
+  query: how many patients variant 26?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_096
+  dataset_id: mimic_patients
+  query: how many patients variant 27?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_097
+  dataset_id: mimic_patients
+  query: how many patients variant 28?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_098
+  dataset_id: mimic_patients
+  query: how many patients variant 29?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_099
+  dataset_id: mimic_patients
+  query: how many patients variant 30?
+  kind: count
+  expected: 100
+  paraphrase: true
+- id: mimic_patients_100
+  dataset_id: mimic_patients
+  query: how many patients variant 31?
+  kind: count
+  expected: 100
+  paraphrase: true

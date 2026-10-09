@@ -26,7 +26,7 @@ from typing import Any
 import structlog
 
 from clinical_analytics.core.config_loader import load_patterns_config
-from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
 
 logger = structlog.get_logger()
 
@@ -105,6 +105,13 @@ class QueryIntent:
     interpretation: str = ""  # Human-readable explanation of what the query is asking
     confidence_explanation: str = ""  # Why the confidence score is what it is
     explanation: str = ""  # Human-readable explanation (legacy alias for interpretation)
+    cohort_steps: list[CohortStep] = field(default_factory=list)
+    proportion_column: str | None = None
+    proportion_value: str | int | float | None = None
+    rate_column: str | None = None
+    rate_value: str | int | float | None = None
+    locked_metric: str | None = None
+    locked_group: str | None = None
 
     def __post_init__(self) -> None:
         """Validate intent_type."""
@@ -410,6 +417,16 @@ class NLQueryEngine:
             raise ValueError("Query cannot be empty")
 
         query = query.strip()
+        from clinical_analytics.core.cohort_constraints import (
+            PeelResult,
+            attach_cohort,
+            peel_cohort,
+        )
+
+        columns = list(self.semantic_layer.get_base_view().columns)
+        peeled = peel_cohort(query, columns, lambda column: self._distinct_values(column))
+        self._pending_cohort: PeelResult | None = peeled
+        query = peeled.residual
 
         # Import config constants
         from clinical_analytics.core.nl_query_config import (
@@ -858,6 +875,11 @@ class NLQueryEngine:
                         intent_type=intent.intent_type,
                     )
 
+        pending = getattr(self, "_pending_cohort", None)
+        if pending is not None:
+            intent = attach_cohort(intent, pending)
+            self._pending_cohort = None
+
         return intent
 
     def _get_matched_variables(self, intent: QueryIntent) -> list[str]:
@@ -921,8 +943,8 @@ class NLQueryEngine:
             "FIND_PREDICTORS",
             "SURVIVAL",
             "CORRELATIONS",
-            "COUNT",
             "DESCRIBE",
+            "COUNT",
         ]
 
         for intent_type in intent_order:
@@ -2593,6 +2615,20 @@ Fix the errors and return a corrected query intent as JSON.
 
         return matched_vars, collision_suggestions
 
+    def _distinct_values(self, column: str) -> list[Any]:
+        """Cached distinct values for cohort matching. Uses the layer's own frame."""
+        cache: dict[str, list[Any]] = getattr(self, "_distinct_value_cache", {})
+        if column in cache:
+            return cache[column]
+        frame = self.semantic_layer.get_base_view().select(column).execute()
+        if hasattr(frame, "get_column"):
+            values = list(frame.get_column(column).unique().to_list())
+        else:
+            values = [value for value in frame[column].drop_duplicates().tolist()]
+        cache[column] = values
+        self._distinct_value_cache = cache
+        return values
+
     def _fuzzy_match_variable(self, query_term: str) -> tuple[str | None, float, list[str] | None]:
         """
         Match variable with collision awareness.
@@ -2619,6 +2655,10 @@ Fix the errors and return a corrected query intent as JSON.
         # Strategy 3: Just lowercase (for exact matches)
         normalized_query_lower = query_term.lower().strip()
 
+        # Strategy 4: Drop function words so "year of onset" matches alias "year onset"
+        normalized_query_content = re.sub(r"\b(of|the|a|an)\b", " ", normalized_query)
+        normalized_query_content = re.sub(r"\s+", " ", normalized_query_content).strip()
+
         # Check if this alias was dropped due to collision
         suggestions = self.semantic_layer.get_collision_suggestions(query_term)
         if suggestions:
@@ -2626,7 +2666,12 @@ Fix the errors and return a corrected query intent as JSON.
             return None, 0.2, suggestions
 
         # Try direct matches with all normalization strategies
-        for norm_query in [normalized_query, normalized_query_underscore, normalized_query_lower]:
+        for norm_query in [
+            normalized_query,
+            normalized_query_underscore,
+            normalized_query_lower,
+            normalized_query_content,
+        ]:
             if norm_query in alias_index:
                 collisions = self.semantic_layer.get_collision_warnings()
                 if norm_query in collisions:
@@ -2635,7 +2680,12 @@ Fix the errors and return a corrected query intent as JSON.
                 return alias_index[norm_query], 0.9, None
 
         # Fuzzy match using difflib - try all normalization strategies
-        for norm_query in [normalized_query, normalized_query_underscore, normalized_query_lower]:
+        for norm_query in [
+            normalized_query,
+            normalized_query_underscore,
+            normalized_query_lower,
+            normalized_query_content,
+        ]:
             matches = get_close_matches(
                 norm_query,
                 alias_index.keys(),
@@ -3547,12 +3597,17 @@ Fix the errors and return a corrected query intent as JSON.
 
         plan = QueryPlan(
             intent=intent.intent_type,  # type: ignore[arg-type]  # QueryPlan expects Literal, but we validate in QueryIntent
-            metric=resolved_metric,
-            group_by=resolved_group_by,
+            metric=intent.locked_metric or resolved_metric,
+            group_by=intent.locked_group or resolved_group_by,
             filters=resolved_filters,
             confidence=intent.confidence,
             explanation="",  # Will be populated from intent if available
             run_key=None,  # Phase 1.1.5: Semantic layer will generate run_key deterministically
+            cohort_steps=list(intent.cohort_steps),
+            proportion_column=intent.proportion_column,
+            proportion_value=intent.proportion_value,
+            rate_column=intent.rate_column,
+            rate_value=intent.rate_value,
         )
 
         logger.debug(
