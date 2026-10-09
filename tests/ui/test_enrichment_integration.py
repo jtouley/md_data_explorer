@@ -92,7 +92,7 @@ class TestEnrichmentService:
         )
 
         with patch(
-            "clinical_analytics.ui.components.enrichment_integration.generate_enrichment_suggestions"
+            "clinical_analytics.ui.components.enrichment_integration.generate_enrichment_suggestions", spec=True
         ) as mock_gen:
             mock_gen.return_value = [mock_patch]
 
@@ -115,7 +115,7 @@ class TestEnrichmentService:
         service = EnrichmentService(overlay_store=overlay_store)
 
         with patch(
-            "clinical_analytics.ui.components.enrichment_integration.generate_enrichment_suggestions"
+            "clinical_analytics.ui.components.enrichment_integration.generate_enrichment_suggestions", spec=True
         ) as mock_gen:
             mock_gen.return_value = []
 
@@ -146,7 +146,7 @@ class TestEnrichmentService:
         )
 
         with patch(
-            "clinical_analytics.ui.components.enrichment_integration.generate_enrichment_suggestions"
+            "clinical_analytics.ui.components.enrichment_integration.generate_enrichment_suggestions", spec=True
         ) as mock_gen:
             mock_gen.return_value = [mock_patch]
 

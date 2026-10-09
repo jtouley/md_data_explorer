@@ -15,6 +15,11 @@ from clinical_analytics.core.multi_table_handler import (
 )
 
 
+def _frame(data):
+    """Construct a Polars frame for a test."""
+    return pl.DataFrame(data)
+
+
 class TestTableClassification:
     """Test suite for Milestone 1: Table Classification System."""
 
@@ -128,7 +133,7 @@ class TestTableClassification:
         - Data order
         """
         # Arrange: Create DataFrame with multiple ID columns
-        df_original = pl.DataFrame(
+        df_original = _frame(
             {
                 "encounter_id": ["E1", "E2", "E3"],
                 "patient_id": ["P1", "P1", "P2"],
@@ -187,7 +192,7 @@ class TestTableClassification:
     def test_time_column_detection(self, dummy_table):
         """Test detection of time columns."""
         # Arrange: DataFrame with time column
-        df_with_time = pl.DataFrame(
+        df_with_time = _frame(
             {
                 "id": [1, 2, 3],
                 "charttime": ["2024-01-01", "2024-01-02", "2024-01-03"],
@@ -196,10 +201,10 @@ class TestTableClassification:
         )
 
         # DataFrame without time column
-        df_no_time = pl.DataFrame({"id": [1, 2, 3], "value": [100, 200, 300]})
+        df_no_time = _frame({"id": [1, 2, 3], "value": [100, 200, 300]})
 
         # DataFrame with constant time column (should not detect)
-        df_constant_time = pl.DataFrame({"id": [1, 2, 3], "timestamp": ["2024-01-01", "2024-01-01", "2024-01-01"]})
+        df_constant_time = _frame({"id": [1, 2, 3], "timestamp": ["2024-01-01", "2024-01-01", "2024-01-01"]})
 
         handler = MultiTableHandler(dummy_table)
 
@@ -306,7 +311,7 @@ class TestTableClassificationEdgeCases:
     def test_single_row_dataframe(self):
         """Test classification with single row."""
         # Arrange
-        single_row = pl.DataFrame({"patient_id": ["P1"], "age": [30]})
+        single_row = _frame({"patient_id": ["P1"], "age": [30]})
 
         tables = {"single": single_row}
 
@@ -349,7 +354,7 @@ class TestPerformanceOptimizations:
         (event_id, row_id, uuid).
         """
         # Arrange: event_id is perfectly unique (row-level ID), patient_id has duplicates
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2"],  # 2 unique
                 "event_id": ["E1", "E2", "E3", "E4"],  # 4 unique (higher uniqueness!)
@@ -366,14 +371,14 @@ class TestPerformanceOptimizations:
 
         handler.close()
 
-    def test_id_pattern_does_not_match_false_positives(self):
+    def test_id_pattern_rejects_false_positive_tokens(self):
         """
         Acceptance: endswith('_id') pattern does not match 'valid', 'fluid', 'paid'.
 
         This tests the tightened ID pattern matching that requires exact 'id' or endswith('_id').
         """
         # Arrange: False positives that end with 'id'
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "valid": [True, False, True],
                 "fluid": [100, 200, 300],
@@ -505,7 +510,7 @@ class TestAnchorSelection:
         - Anchor is "patients" (dimension), never vitals or patient_medications
         """
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = _frame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
 
         # Large vitals table (event classification)
         num_vitals = 100_000
@@ -523,7 +528,7 @@ class TestAnchorSelection:
             .drop("idx")
         )
 
-        medications = pl.DataFrame(
+        medications = _frame(
             {
                 "medication_id": ["M1", "M2", "M3"],
                 "drug_name": ["Aspirin", "Metformin", "Lisinopril"],
@@ -531,7 +536,7 @@ class TestAnchorSelection:
         )
 
         # Bridge table
-        patient_medications = pl.DataFrame(
+        patient_medications = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P3"],
                 "medication_id": ["M1", "M2", "M1", "M3"],
@@ -572,9 +577,9 @@ class TestAnchorSelection:
         Run anchor selection multiple times with same data, verify same result.
         """
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3", "P4"], "age": [30, 45, 28, 55]})
+        patients = _frame({"patient_id": ["P1", "P2", "P3", "P4"], "age": [30, 45, 28, 55]})
 
-        admissions = pl.DataFrame(
+        admissions = _frame(
             {
                 "hadm_id": ["H1", "H2", "H3", "H4", "H5"],
                 "patient_id": ["P1", "P1", "P2", "P3", "P4"],
@@ -619,13 +624,13 @@ class TestAnchorSelection:
         """
         # Arrange: Three dimension tables with different null rates and sizes
         # dim_a: 0% nulls, small size
-        dim_a = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "value_a": [100, 200, 300]})
+        dim_a = _frame({"patient_id": ["P1", "P2", "P3"], "value_a": [100, 200, 300]})
 
         # dim_b: 20% nulls (1 out of 5), smaller bytes
-        dim_b = pl.DataFrame({"patient_id": ["P1", "P2", None, "P4", "P5"], "value_b": [10, 20, 30, 40, 50]})
+        dim_b = _frame({"patient_id": ["P1", "P2", None, "P4", "P5"], "value_b": [10, 20, 30, 40, 50]})
 
         # dim_c: 0% nulls, larger size (more columns and longer strings)
-        dim_c = pl.DataFrame(
+        dim_c = _frame(
             {
                 "patient_id": ["P1", "P2", "P3"],
                 "col1": ["A" * 100, "B" * 100, "C" * 100],  # Long strings
@@ -663,7 +668,7 @@ class TestAnchorSelection:
     def test_hard_exclusions_no_unique_grain(self):
         """Test that tables without unique grain keys are excluded from anchor selection."""
         # Arrange: Only non-unique tables
-        non_unique = pl.DataFrame(
+        non_unique = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2"],  # Not unique
                 "value": [100, 200, 300, 400],
@@ -684,7 +689,7 @@ class TestAnchorSelection:
     def test_hard_exclusions_high_null_rate(self):
         """Test that tables with >50% NULL rate are excluded."""
         # Arrange: Table with >50% NULLs
-        high_nulls = pl.DataFrame(
+        high_nulls = _frame(
             {
                 "patient_id": ["P1", None, None, None, "P5"],  # 60% nulls
                 "value": [100, 200, 300, 400, 500],
@@ -717,7 +722,7 @@ class TestDimensionMart:
         Critical invariant: Joining dimensions should preserve anchor cardinality.
         """
         # Arrange: Anchor with 3 unique patients + dimension with patient attributes
-        patients = pl.DataFrame(
+        patients = _frame(
             {
                 "patient_id": ["P1", "P2", "P3"],
                 "name": ["Alice", "Bob", "Charlie"],
@@ -726,7 +731,7 @@ class TestDimensionMart:
         )
 
         # Dimension table (1:1 relationship with patients)
-        demographics = pl.DataFrame(
+        demographics = _frame(
             {
                 "patient_id": ["P1", "P2", "P3"],
                 "gender": ["F", "M", "M"],
@@ -752,7 +757,7 @@ class TestDimensionMart:
 
         handler.close()
 
-    def test_no_joins_where_rhs_key_is_non_unique(self):
+    def test_dimension_mart_rejects_non_unique_rhs_keys(self):
         """
         M3 Acceptance Test 2: No joins where RHS key is non-unique.
 
@@ -760,14 +765,14 @@ class TestDimensionMart:
         to prevent row explosion.
         """
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = _frame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
 
         # Valid dimension (unique patient_id)
-        demographics = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "gender": ["F", "M", "M"]})
+        demographics = _frame({"patient_id": ["P1", "P2", "P3"], "gender": ["F", "M", "M"]})
 
         # Invalid "dimension" (non-unique patient_id - actually a fact table)
         # This would cause row explosion if joined
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],  # Non-unique!
                 "charttime": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03", "2024-01-01"],
@@ -828,13 +833,13 @@ class TestFactAggregation:
         n_patients = 1000
         n_vitals_per_patient = 200  # 200k total vitals rows (should be ~14 MB)
 
-        patients = pl.DataFrame(
+        patients = _frame(
             {
                 "patient_id": [f"P{i}" for i in range(n_patients)],
             }
         )
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "diagnosis_code": [
@@ -884,13 +889,13 @@ class TestFactAggregation:
         n_patients = 1000
         n_vitals_per_patient = 200  # 200k rows for > 10 MB
 
-        patients = pl.DataFrame(
+        patients = _frame(
             {
                 "patient_id": [f"P{i}" for i in range(n_patients)],
             }
         )
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "icd_code": [f"I{i % 100}" for i in range(n_patients * n_vitals_per_patient)],
@@ -942,13 +947,13 @@ class TestFactAggregation:
         n_patients = 1000
         n_vitals_per_patient = 200  # 200k rows for > 10 MB
 
-        patients = pl.DataFrame(
+        patients = _frame(
             {
                 "patient_id": [f"P{i}" for i in range(n_patients)],
             }
         )
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "measurement_id": [
@@ -1002,13 +1007,13 @@ class TestFactAggregation:
         n_patients = 1000
         n_vitals_per_patient = 200  # 200k rows for > 10 MB
 
-        patients = pl.DataFrame(
+        patients = _frame(
             {
                 "patient_id": [f"P{i}" for i in range(n_patients)],
             }
         )
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": [f"P{i % n_patients}" for i in range(n_patients * n_vitals_per_patient)],
                 "heart_rate": [72 + (i % 30) for i in range(n_patients * n_vitals_per_patient)],
@@ -1051,7 +1056,7 @@ class TestFactAggregation:
         n_vitals_per_patient = 200  # 200k rows for > 10 MB
         n_total = n_patients * n_vitals_per_patient
 
-        patients = pl.DataFrame(
+        patients = _frame(
             {
                 "patient_id": [f"P{i}" for i in range(n_patients)],
             }
@@ -1059,7 +1064,7 @@ class TestFactAggregation:
 
         from datetime import datetime, timedelta
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": [f"P{i % n_patients}" for i in range(n_total)],
                 "heart_rate": [72 + (i % 30) for i in range(n_total)],
@@ -1111,13 +1116,13 @@ class TestFactAggregation:
         and excludes dimensions, bridges, and reference tables.
         """
         # Arrange: Create mixed table types
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [45, 32, 67]})
+        patients = _frame({"patient_id": ["P1", "P2", "P3"], "age": [45, 32, 67]})
 
         # Dimension table (unique on grain, small bytes)
-        demographics = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "gender": ["M", "F", "M"]})
+        demographics = _frame({"patient_id": ["P1", "P2", "P3"], "gender": ["M", "F", "M"]})
 
         # Fact table (high cardinality, not unique)
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3", "P3"],
                 "heart_rate": [72, 78, 85, 80, 90, 88],
@@ -1161,7 +1166,7 @@ class TestBuildUnifiedCohort:
         tables = make_multi_table_setup()
         patients = tables["patients"]
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],
@@ -1200,7 +1205,7 @@ class TestBuildUnifiedCohort:
         tables = make_multi_table_setup()
         patients = tables["patients"]
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],
@@ -1231,8 +1236,8 @@ class TestBuildUnifiedCohort:
     def test_lazy_join_validate_1_1_fails_on_duplicates(self):
         """Prove validate='1:1' works on LazyFrame.join() by testing duplicate keys."""
         # Arrange
-        left = pl.DataFrame({"patient_id": ["P1", "P2"]}).lazy()
-        right = pl.DataFrame({"patient_id": ["P1", "P1"], "x": [1, 2]}).lazy()
+        left = _frame({"patient_id": ["P1", "P2"]}).lazy()
+        right = _frame({"patient_id": ["P1", "P1"], "x": [1, 2]}).lazy()
 
         # Act & Assert
         with pytest.raises(pl.exceptions.ComputeError):
@@ -1244,7 +1249,7 @@ class TestBuildUnifiedCohort:
         tables = make_multi_table_setup()
         patients = tables["patients"]
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],
@@ -1252,7 +1257,7 @@ class TestBuildUnifiedCohort:
             }
         )
 
-        labevents = pl.DataFrame(
+        labevents = _frame(
             {
                 "patient_id": ["P1", "P2", "P3"],
                 "glucose": [100, 110, 95],
@@ -1322,7 +1327,7 @@ class TestMaterializeMart:
         tables = make_multi_table_setup()
         patients = tables["patients"]
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],
@@ -1386,7 +1391,7 @@ class TestMaterializeMart:
         tables = make_multi_table_setup()
         patients = tables["patients"]
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],
@@ -1421,7 +1426,7 @@ class TestMaterializeMart:
         tables = make_multi_table_setup()
         patients = tables["patients"]
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],
@@ -1452,9 +1457,9 @@ class TestMaterializeMart:
     def test_dataset_fingerprint_changes_when_data_changes(self, tmp_path):
         """Verify dataset fingerprint includes content hash, not just shape."""
         # Arrange: Create two datasets with same shape but different values
-        patients1 = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients1 = _frame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
 
-        patients2 = pl.DataFrame(
+        patients2 = _frame(
             {
                 "patient_id": ["P1", "P2", "P3"],
                 "age": [31, 46, 29],  # Different values, same shape
@@ -1501,7 +1506,7 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_bucket_column_dropped_from_planned_table(self, tmp_path, make_multi_table_setup):
+    def test_bucket_column_missing_from_planned_table(self, tmp_path, make_multi_table_setup):
         """Verify bucket column is dropped from planned tables (internal partition column)."""
         pytest.importorskip("ibis")
 
@@ -1510,7 +1515,7 @@ class TestMaterializeMart:
         tables = make_multi_table_setup()
         patients = tables["patients"]
 
-        events = pl.DataFrame(
+        events = _frame(
             {
                 "event_id": ["E1", "E2", "E3", "E4", "E5"],
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
@@ -1641,9 +1646,9 @@ class TestPlanMart:
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = _frame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],
@@ -1675,7 +1680,7 @@ class TestPlanMart:
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = _frame({"patient_id": ["P1", "P2"], "age": [30, 45]})
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1704,9 +1709,9 @@ class TestPlanMart:
         pytest.importorskip("ibis")
 
         # Arrange: Create a scenario where we can test partitioned reading
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = _frame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
 
-        vitals = pl.DataFrame(
+        vitals = _frame(
             {
                 "patient_id": ["P1", "P1", "P2", "P2", "P3"],
                 "heart_rate": [70, 72, 68, 71, 75],

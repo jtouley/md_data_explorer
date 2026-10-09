@@ -47,7 +47,7 @@ class TestGoldenQuestionGeneration:
 
         assert callable(maintain_golden_questions_automatically)
 
-    @patch("clinical_analytics.core.golden_question_generator.call_llm")
+    @patch("clinical_analytics.core.golden_question_generator.call_llm", spec=True)
     def test_generate_golden_questions_success(self, mock_call_llm):
         """Test successful golden question generation from logs."""
         # Arrange
@@ -95,7 +95,7 @@ class TestGoldenQuestionGeneration:
         assert all(isinstance(q, dict) for q in result)
         assert all("question" in q for q in result)
 
-    @patch("clinical_analytics.core.golden_question_generator.call_llm")
+    @patch("clinical_analytics.core.golden_question_generator.call_llm", spec=True)
     def test_generate_golden_questions_graceful_degradation(self, mock_call_llm):
         """Test graceful degradation when LLM unavailable."""
         # Arrange
@@ -116,7 +116,7 @@ class TestGoldenQuestionGeneration:
         # Assert: Should return empty list (graceful degradation)
         assert result == []
 
-    @patch("clinical_analytics.core.golden_question_generator.call_llm")
+    @patch("clinical_analytics.core.golden_question_generator.call_llm", spec=True)
     def test_analyze_golden_question_coverage(self, mock_call_llm):
         """Test coverage gap analysis."""
         # Arrange
@@ -197,7 +197,7 @@ class TestGoldenQuestionGeneration:
         assert error is not None
         assert "intent" in error.lower()
 
-    @patch("clinical_analytics.core.golden_question_generator.call_llm")
+    @patch("clinical_analytics.core.golden_question_generator.call_llm", spec=True)
     def test_maintain_golden_questions_automatically_dry_run(self, mock_call_llm):
         """Test dry-run mode (no modifications)."""
         # Arrange
@@ -222,7 +222,7 @@ class TestGoldenQuestionGeneration:
         assert isinstance(result, dict)
         assert "recommendations" in result or "action" in result
 
-    @patch("clinical_analytics.core.golden_question_generator.call_llm")
+    @patch("clinical_analytics.core.golden_question_generator.call_llm", spec=True)
     def test_maintain_golden_questions_automatically_with_updates(self, mock_call_llm):
         """Test automatic maintenance with updates."""
         # Arrange

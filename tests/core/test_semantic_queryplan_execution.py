@@ -137,7 +137,7 @@ def test_execute_query_plan_validates_operators(mock_semantic_layer_for_executio
     assert result["success"] is True
 
 
-def test_execute_query_plan_validates_type_compatibility(mock_semantic_layer_for_execution):
+def test_execute_query_plan_rejects_numeric_compare_on_categorical(mock_semantic_layer_for_execution):
     """Verify executor checks type compatibility (e.g., can't use '>' on categorical)."""
     # Arrange
     plan = QueryPlan(

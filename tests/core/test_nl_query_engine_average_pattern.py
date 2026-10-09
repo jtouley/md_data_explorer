@@ -18,7 +18,15 @@ def mock_semantic_layer_with_bmi_ldl():
     """Create a mock semantic layer with BMI and LDL columns."""
     from unittest.mock import MagicMock
 
-    mock = MagicMock()
+    mock = MagicMock(
+        spec=[
+            "_normalize_alias",
+            "_fuzzy_match_variable",
+            "get_column_alias_index",
+            "get_collision_suggestions",
+            "get_collision_warnings",
+        ]
+    )
     mock.get_column_alias_index.return_value = {
         "bmi": "BMI",
         "body mass index": "BMI",
@@ -46,6 +54,12 @@ def mock_semantic_layer_with_bmi_ldl():
 
 class TestAveragePatternDetection:
     """Test that 'average X' queries are recognized as DESCRIBE with variable extraction."""
+
+    def test_parse_query_rejects_empty_query(self, mock_semantic_layer_with_bmi_ldl):
+        """An empty question is rejected before pattern matching."""
+        engine = NLQueryEngine(mock_semantic_layer_with_bmi_ldl)
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            engine.parse_query("   ")
 
     def test_average_bmi_pattern_detected(self, mock_semantic_layer_with_bmi_ldl):
         """Test that 'average BMI of patients' is detected as DESCRIBE with BMI variable."""

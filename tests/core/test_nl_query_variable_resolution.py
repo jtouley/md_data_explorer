@@ -24,7 +24,9 @@ LDL_COLUMN = "LDL mg/dL"
 @pytest.fixture
 def nl_engine_with_statin_column():
     """NLQueryEngine with semantic layer containing statin column aliases."""
-    mock_semantic = MagicMock()
+    mock_semantic = MagicMock(
+        spec=["get_collision_warnings", "get_column_alias_index", "get_collision_suggestions", "_normalize_alias"]
+    )
     mock_semantic.get_column_alias_index.return_value = {
         "statin": STATIN_COLUMN,
         "statin used": STATIN_COLUMN,

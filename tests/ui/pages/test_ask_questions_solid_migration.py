@@ -77,8 +77,8 @@ class TestAskQuestionsSolidMigration:
         result = AnalysisResult(type="count", payload={"count": 42})
 
         # Act - should not raise
-        with patch("streamlit.metric"):
-            with patch("streamlit.info"):
+        with patch("streamlit.metric", spec=True):
+            with patch("streamlit.info", spec=True):
                 render_result(result, query_text="How many?")
 
     def test_executor_enrichment_pipeline_works(self):
@@ -94,7 +94,7 @@ class TestAskQuestionsSolidMigration:
         )
 
         # Act
-        with patch("clinical_analytics.core.analysis_executor.translate_error_with_llm") as mock_translate:
+        with patch("clinical_analytics.core.analysis_executor.translate_error_with_llm", spec=True) as mock_translate:
             mock_translate.return_value = "Friendly error message"
             enriched = executor.enrich_with_error_translation(error_result)
 
@@ -122,7 +122,7 @@ class TestAskQuestionsSolidMigration:
         assert cached is not None
 
         # Render (should not raise)
-        with patch("streamlit.metric"), patch("streamlit.info"):
+        with patch("streamlit.metric", spec=True), patch("streamlit.info", spec=True):
             render_result(cached, query_text="What is average?")
 
     def test_state_store_conversation_manager_integration(self):

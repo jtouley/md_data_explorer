@@ -9,18 +9,45 @@ Tests follow AAA pattern (Arrange, Act, Assert) and MVP scope:
 """
 
 import polars as pl
+import pytest
+
+from clinical_analytics.storage.versioning import compute_dataset_version
+
+
+def _frame(data):
+    """Construct a Polars frame for a test."""
+    return pl.DataFrame(data)
+
+
+@pytest.fixture
+def upload_storage(tmp_path):
+    """Storage rooted in a temporary upload directory."""
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    return UserDatasetStorage(upload_dir=tmp_path / "uploads")
 
 
 class TestComputeDatasetVersion:
     """Test dataset version computation (MVP scope only)."""
+
+    def test_compute_dataset_version_empty_list_raises(self):
+        """An empty table list has no content hash."""
+        with pytest.raises(ValueError, match="empty table list"):
+            compute_dataset_version([])
+
+    def test_compute_dataset_version_rejects_lazyframe(self):
+        """Versioning requires a materialized frame."""
+        lazy = _frame({"patient_id": [1]}).lazy()
+        with pytest.raises(TypeError, match="LazyFrame"):
+            compute_dataset_version([lazy])
 
     def test_compute_dataset_version_identical_tables_same_version(self):
         """Identical DataFrames should produce the same version hash."""
         # Arrange: Two identical DataFrames
         from clinical_analytics.storage.versioning import compute_dataset_version
 
-        df1 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
-        df2 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
+        df1 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
+        df2 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
 
         # Act: Compute versions
         version1 = compute_dataset_version([df1])
@@ -35,8 +62,8 @@ class TestComputeDatasetVersion:
         # Arrange: Two different DataFrames
         from clinical_analytics.storage.versioning import compute_dataset_version
 
-        df1 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
-        df2 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 40]})  # Different age
+        df1 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
+        df2 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 40]})  # Different age
 
         # Act: Compute versions
         version1 = compute_dataset_version([df1])
@@ -50,8 +77,8 @@ class TestComputeDatasetVersion:
         # Arrange: Same data, different row order
         from clinical_analytics.storage.versioning import compute_dataset_version
 
-        df1 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
-        df2 = pl.DataFrame({"patient_id": [3, 1, 2], "age": [35, 25, 30]})  # Different row order
+        df1 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
+        df2 = _frame({"patient_id": [3, 1, 2], "age": [35, 25, 30]})  # Different row order
 
         # Act: Compute versions
         version1 = compute_dataset_version([df1])
@@ -65,8 +92,8 @@ class TestComputeDatasetVersion:
         # Arrange: Same data, different column order
         from clinical_analytics.storage.versioning import compute_dataset_version
 
-        df1 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
-        df2 = pl.DataFrame({"age": [25, 30, 35], "patient_id": [1, 2, 3]})  # Different column order
+        df1 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
+        df2 = _frame({"age": [25, 30, 35], "patient_id": [1, 2, 3]})  # Different column order
 
         # Act: Compute versions
         version1 = compute_dataset_version([df1])
@@ -80,8 +107,8 @@ class TestComputeDatasetVersion:
         # Arrange: Multiple tables
         from clinical_analytics.storage.versioning import compute_dataset_version
 
-        df1 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
-        df2 = pl.DataFrame({"visit_id": [1, 2], "patient_id": [1, 2], "date": ["2020-01-01", "2020-01-02"]})
+        df1 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
+        df2 = _frame({"visit_id": [1, 2], "patient_id": [1, 2], "date": ["2020-01-01", "2020-01-02"]})
 
         # Act: Compute version
         version = compute_dataset_version([df1, df2])
@@ -95,8 +122,8 @@ class TestComputeDatasetVersion:
         # Arrange: DataFrame with nulls
         from clinical_analytics.storage.versioning import compute_dataset_version
 
-        df1 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, None, 35]})
-        df2 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, None, 35]})
+        df1 = _frame({"patient_id": [1, 2, 3], "age": [25, None, 35]})
+        df2 = _frame({"patient_id": [1, 2, 3], "age": [25, None, 35]})
 
         # Act: Compute versions
         version1 = compute_dataset_version([df1])
@@ -110,8 +137,8 @@ class TestComputeDatasetVersion:
         # Arrange: Different schemas (different columns)
         from clinical_analytics.storage.versioning import compute_dataset_version
 
-        df1 = pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
-        df2 = pl.DataFrame({"patient_id": [1, 2, 3], "weight": [70, 80, 90]})  # Different column
+        df1 = _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})
+        df2 = _frame({"patient_id": [1, 2, 3], "weight": [70, 80, 90]})  # Different column
 
         # Act: Compute versions
         version1 = compute_dataset_version([df1])
@@ -124,19 +151,16 @@ class TestComputeDatasetVersion:
 class TestSaveTableListStoresVersion:
     """Test that save_table_list stores dataset_version in metadata."""
 
-    def test_save_table_list_stores_dataset_version(self, tmp_path):
+    def test_save_table_list_stores_dataset_version(self, upload_storage):
         """save_table_list should compute and store dataset_version in metadata."""
         # Arrange: Storage, tables, metadata
 
-        from clinical_analytics.ui.storage.user_datasets import (
-            UserDatasetStorage,
-            save_table_list,
-        )
+        from clinical_analytics.ui.storage.user_datasets import save_table_list
 
-        storage = UserDatasetStorage(upload_dir=tmp_path / "uploads")
+        storage = upload_storage
         upload_id = "test_upload_123"
         tables = [
-            {"name": "patients", "data": pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})},
+            {"name": "patients", "data": _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})},
         ]
         metadata = {
             "upload_id": upload_id,
@@ -154,19 +178,16 @@ class TestSaveTableListStoresVersion:
         assert "dataset_version" in saved_metadata
         assert len(saved_metadata["dataset_version"]) == 16  # 16-char hex hash
 
-    def test_save_table_list_stores_table_fingerprints(self, tmp_path):
+    def test_save_table_list_stores_table_fingerprints(self, upload_storage):
         """save_table_list should store basic table fingerprints in provenance."""
         # Arrange: Storage, tables, metadata
-        from clinical_analytics.ui.storage.user_datasets import (
-            UserDatasetStorage,
-            save_table_list,
-        )
+        from clinical_analytics.ui.storage.user_datasets import save_table_list
 
-        storage = UserDatasetStorage(upload_dir=tmp_path / "uploads")
+        storage = upload_storage
         upload_id = "test_upload_456"
         tables = [
-            {"name": "patients", "data": pl.DataFrame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})},
-            {"name": "visits", "data": pl.DataFrame({"visit_id": [1, 2], "patient_id": [1, 2]})},
+            {"name": "patients", "data": _frame({"patient_id": [1, 2, 3], "age": [25, 30, 35]})},
+            {"name": "visits", "data": _frame({"visit_id": [1, 2], "patient_id": [1, 2]})},
         ]
         metadata = {
             "upload_id": upload_id,

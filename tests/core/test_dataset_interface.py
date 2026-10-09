@@ -289,7 +289,7 @@ class TestSchemaCompliance:
     they load real data.
     """
 
-    def test_required_columns_present(self, dataset_name):
+    def test_dataset_interface_frame_includes_cohort_fields(self, dataset_name):
         """Test that all required UnifiedCohort columns are present."""
         # Arrange
         dataset = DatasetRegistry.get_dataset(dataset_name)

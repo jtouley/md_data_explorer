@@ -42,7 +42,7 @@ class TestAnalyzeParseOutcomes:
         empty_log.write_text("")
 
         # Act
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.print", spec=True) as mock_print:
             analyze_logs(empty_log)
 
             # Assert: Should print warning about no parse_outcome events
@@ -60,7 +60,7 @@ class TestAnalyzeParseOutcomes:
         log_file.write_text('{"event": "query_parse_start", "query": "test"}\n')
 
         # Act
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.print", spec=True) as mock_print:
             analyze_logs(log_file)
 
             # Assert: Should warn about missing parse_outcome events
@@ -83,7 +83,7 @@ class TestAnalyzeParseOutcomes:
         log_file.write_text("\n".join(json.dumps(e) for e in events))
 
         # Act
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.print", spec=True) as mock_print:
             analyze_logs(log_file)
 
             # Assert: Should process events without errors
@@ -103,7 +103,7 @@ class TestAnalyzeParseOutcomes:
         )
 
         # Act & Assert: Should not crash, should process valid lines
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.print", spec=True) as mock_print:
             analyze_logs(log_file)
 
             # Should still process valid events
@@ -125,7 +125,7 @@ class TestAnalyzeParseOutcomes:
         log_file.write_text("\n".join(json.dumps(e) for e in events))
 
         # Act
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.print", spec=True) as mock_print:
             analyze_logs(log_file)
 
             # Assert: Should show tier distribution
@@ -157,7 +157,7 @@ class TestAnalyzeParseOutcomes:
         log_file.write_text("\n".join(json.dumps(e) for e in events))
 
         # Act
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.print", spec=True) as mock_print:
             analyze_logs(log_file)
 
             # Assert: Should show tier3 checkpoints

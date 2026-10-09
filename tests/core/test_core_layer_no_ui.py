@@ -51,7 +51,7 @@ class TestCoreLayerNoStreamlitImports:
 class TestClarifyingQuestionsReturnsData:
     """Verify clarifying_questions returns data structures, not renders UI."""
 
-    def test_clarifying_questions_module_has_no_streamlit(self) -> None:
+    def test_clarifying_questions_module_has_zero_streamlit_imports(self) -> None:
         """clarifying_questions.py should have zero Streamlit imports after refactor."""
         # Arrange
         clarifying_path = Path("src/clinical_analytics/core/clarifying_questions.py")
@@ -100,7 +100,9 @@ class TestClarifyingQuestionsReturnsData:
         )
         from clinical_analytics.core.nl_query_engine import QueryIntent
 
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_available_dimensions", "get_collision_suggestions", "get_data_quality_warnings"]
+        )
         mock_semantic_layer.get_available_dimensions.return_value = {"age_group": "Age Group"}
         mock_semantic_layer.get_collision_suggestions.return_value = []
         mock_semantic_layer.get_data_quality_warnings.return_value = []

@@ -24,7 +24,9 @@ class TestLowConfidenceFeedback:
         auto_execute_threshold = 0.75
 
         # Act & Assert
-        with patch("streamlit.session_state", {"confirmed_analysis:test_dataset_v1:test_run_key_123": False}):
+        with patch(
+            "streamlit.session_state", {"confirmed_analysis:test_dataset_v1:test_run_key_123": False}, spec=True
+        ):
             # Simulate low confidence check
             confidence = getattr(low_confidence_context, "confidence", 0.0)
             user_confirmed = False
@@ -38,8 +40,8 @@ class TestLowConfidenceFeedback:
     def test_low_confidence_shows_detected_variables(self, sample_cohort, low_confidence_context):
         """Test that low confidence shows detected variables with display names."""
         # Act & Assert
-        with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
-            mock_meta = MagicMock()
+        with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
+            mock_meta = MagicMock(spec=["display_name"])
             mock_meta.display_name = "Mortality"
             mock_parse.return_value = mock_meta
 
@@ -73,7 +75,7 @@ class TestLowConfidenceFeedback:
         available_cols = [c for c in sample_cohort.columns if c not in ["patient_id", "time_zero"]]
 
         # Act & Assert
-        with patch("streamlit.selectbox") as mock_selectbox:
+        with patch("streamlit.selectbox", spec=True) as mock_selectbox:
             mock_selectbox.return_value = "age"  # User changes selection
 
             # Simulate selectbox for primary variable
@@ -158,7 +160,7 @@ class TestLowConfidenceFeedback:
     def test_low_confidence_handles_missing_semantic_layer(self, sample_cohort, low_confidence_context):
         """Test that missing semantic layer shows error message."""
         # Arrange
-        dataset = MagicMock()
+        dataset = MagicMock(spec=["semantic"])
         dataset.semantic = None
 
         # Act & Assert

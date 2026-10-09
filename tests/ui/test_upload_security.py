@@ -119,7 +119,7 @@ class TestFilenameSecure:
         result = UploadSecurityValidator.sanitize_filename("patient_data_2024.csv")
         assert result == "patient_data_2024.csv"
 
-    def test_sanitize_path_traversal(self):
+    def test_sanitize_filename_rejects_path_traversal(self):
         """Path traversal attempts should be neutralized."""
         result = UploadSecurityValidator.sanitize_filename("../../etc/passwd")
         assert "/" not in result
@@ -217,7 +217,7 @@ class TestSecurityConstants:
         assert UploadSecurityValidator.MAX_FILE_SIZE_BYTES == 100 * 1024 * 1024  # 100MB
         assert UploadSecurityValidator.MIN_FILE_SIZE_BYTES == 1024  # 1KB
 
-    def test_allowed_extensions_secure(self):
+    def test_allowed_extensions_reject_executables(self):
         """Only safe file types should be allowed."""
         dangerous_extensions = {".exe", ".bat", ".sh", ".py", ".js", ".php"}
         allowed = UploadSecurityValidator.ALLOWED_EXTENSIONS

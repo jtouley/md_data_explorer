@@ -193,7 +193,7 @@ class TestEnsurePatientId:
             assert metadata["patient_id_columns"] is not None
             assert len(metadata["patient_id_columns"]) >= 2
 
-    def test_ensure_patient_id_no_identifier_found(self):
+    def test_ensure_patient_id_when_identifier_missing(self):
         """Test behavior when no identifier can be found."""
         # All rows identical - no unique combination possible
         df = pl.DataFrame(

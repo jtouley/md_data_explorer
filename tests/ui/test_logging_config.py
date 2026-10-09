@@ -8,45 +8,11 @@ Following AGENTS.md guidelines:
 
 import logging
 
-import yaml
-
-from clinical_analytics.core.config_loader import load_logging_config
 from clinical_analytics.ui.logging_config import configure_logging
 
 
 class TestLoggingConfigYAMLLoading:
-    """Test suite for logging config YAML loading via config_loader."""
-
-    def test_logging_config_loads_from_yaml(self, tmp_path):
-        """Test that load_logging_config loads values from YAML file."""
-        # Arrange: Create temporary YAML config file
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        config_file = config_dir / "logging.yaml"
-        config_data = {
-            "root_level": "DEBUG",
-            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            "module_levels": {
-                "clinical_analytics.core.semantic": "DEBUG",
-                "clinical_analytics.core.registry": "DEBUG",
-            },
-            "reduce_noise": {
-                "streamlit": "WARNING",
-                "urllib3": "WARNING",
-            },
-        }
-        config_file.write_text(yaml.dump(config_data))
-
-        # Act: Load config via config_loader
-        yaml_config = load_logging_config(config_path=config_file)
-
-        # Assert: Values match YAML file
-        assert yaml_config["root_level"] == "DEBUG"
-        assert yaml_config["format"] == "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        assert yaml_config["module_levels"]["clinical_analytics.core.semantic"] == "DEBUG"
-        assert yaml_config["module_levels"]["clinical_analytics.core.registry"] == "DEBUG"
-        assert yaml_config["reduce_noise"]["streamlit"] == "WARNING"
-        assert yaml_config["reduce_noise"]["urllib3"] == "WARNING"
+    """configure_logging behavior. YAML parsing is covered in test_config_loader.py."""
 
     def test_configure_logging_is_idempotent(self):
         """Test that configure_logging() is idempotent (safe to call multiple times)."""

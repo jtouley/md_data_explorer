@@ -15,7 +15,7 @@ from clinical_analytics.core.eval_harness import EvalHarness, load_golden_questi
 class TestGoldenQuestionsYAML:
     """Test loading golden questions from YAML."""
 
-    def test_load_golden_questions_from_yaml(self, tmp_path):
+    def test_eval_harness_parses_temporary_question_yaml(self, tmp_path):
         """load_golden_questions should parse YAML file."""
         # Arrange: Create golden questions YAML
         yaml_path = tmp_path / "golden_questions.yaml"

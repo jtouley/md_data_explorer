@@ -57,7 +57,7 @@ class TestAtomicOverlayWrite:
         # Assert: File updated atomically (no partial writes)
         assert overlay_path.read_text(encoding="utf-8") == new_content
 
-    def test_write_overlay_leaves_no_temp_files(self, tmp_path):
+    def test_write_overlay_leaves_zero_temp_files(self, tmp_path):
         """Test that write_prompt_overlay() cleans up temp files after write."""
         # Arrange: Import and set up
         import sys
@@ -184,8 +184,7 @@ class TestGoldenQuestionsRefresh:
         ]
 
         with patch(
-            "self_improve_nl_parsing.generate_golden_questions_from_logs",
-            return_value=mock_candidates,
+            "self_improve_nl_parsing.generate_golden_questions_from_logs", return_value=mock_candidates, spec=True
         ):
             # Act: Refresh golden questions
             new_count = refresh_golden_questions_from_logs(
@@ -230,8 +229,7 @@ class TestGoldenQuestionsRefresh:
         ]
 
         with patch(
-            "self_improve_nl_parsing.generate_golden_questions_from_logs",
-            return_value=mock_candidates,
+            "self_improve_nl_parsing.generate_golden_questions_from_logs", return_value=mock_candidates, spec=True
         ):
             # Act: Refresh golden questions
             new_count = refresh_golden_questions_from_logs(
@@ -268,8 +266,7 @@ class TestGoldenQuestionsRefresh:
         mock_candidates = [{"query": f"query {i}", "expected_intent": "COUNT"} for i in range(10)]
 
         with patch(
-            "self_improve_nl_parsing.generate_golden_questions_from_logs",
-            return_value=mock_candidates,
+            "self_improve_nl_parsing.generate_golden_questions_from_logs", return_value=mock_candidates, spec=True
         ):
             # Act: Refresh with max_new_questions=3
             new_count = refresh_golden_questions_from_logs(
@@ -301,10 +298,7 @@ class TestGoldenQuestionsRefresh:
         log_file = tmp_path / "nonexistent.log"
 
         # Mock returns empty list
-        with patch(
-            "self_improve_nl_parsing.generate_golden_questions_from_logs",
-            return_value=[],
-        ):
+        with patch("self_improve_nl_parsing.generate_golden_questions_from_logs", return_value=[], spec=True):
             # Act: Refresh with missing log
             new_count = refresh_golden_questions_from_logs(
                 log_file=log_file,

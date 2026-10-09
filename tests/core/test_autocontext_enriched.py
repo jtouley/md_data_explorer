@@ -34,7 +34,18 @@ class TestAutoContextWithResolvedMetadata:
     @pytest.fixture
     def mock_semantic_layer(self):
         """Create a mock semantic layer for testing."""
-        mock_sl = MagicMock()
+        mock_sl = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "dataset_name",
+                "upload_id",
+                "dataset_version",
+                "config",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         mock_sl.dataset_name = "test_dataset"
         mock_sl.upload_id = "test_upload_001"
         mock_sl.dataset_version = "v1"

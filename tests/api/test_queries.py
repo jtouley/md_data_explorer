@@ -26,7 +26,7 @@ def mock_query_service():
 
 
 @pytest.fixture
-def test_client(mock_query_service):
+def api_client(mock_query_service):
     """Create test client with mocked query service."""
 
     async def mock_find_query_result(query_id: str):
@@ -39,11 +39,9 @@ def test_client(mock_query_service):
         patch(
             "clinical_analytics.api.routes.queries.get_query_service_for_dataset",
             return_value=mock_query_service,
+            spec=True,
         ),
-        patch(
-            "clinical_analytics.api.routes.queries.find_query_result",
-            side_effect=mock_find_query_result,
-        ),
+        patch("clinical_analytics.api.routes.queries.find_query_result", side_effect=mock_find_query_result, spec=True),
     ):
         yield TestClient(app)
 
@@ -62,13 +60,13 @@ def mock_async_query_service(mock_query_service):
 class TestQuerySubmitEndpoint:
     """Tests for POST /api/queries endpoint."""
 
-    def test_queries_post_valid_returns_query_id(self, test_client, mock_async_query_service):
+    def test_queries_post_valid_returns_query_id(self, api_client, mock_async_query_service):
         """Valid query submission returns query_id and stream URL."""
         # Arrange
         mock_async_query_service.submit_query = AsyncMock(return_value="qry_abc123")
 
         # Act
-        response = test_client.post(
+        response = api_client.post(
             "/api/queries",
             json={
                 "session_id": "sess_test123",
@@ -86,13 +84,13 @@ class TestQuerySubmitEndpoint:
         assert "stream_url" in data
         assert "/api/queries/qry_abc123/stream" in data["stream_url"]
 
-    def test_queries_post_invalid_dataset_returns_404(self, test_client, mock_async_query_service):
+    def test_queries_post_invalid_dataset_returns_404(self, api_client, mock_async_query_service):
         """Invalid dataset ID returns 404 error."""
         # Arrange
         mock_async_query_service.submit_query = AsyncMock(side_effect=ValueError("Dataset 'nonexistent' not found"))
 
         # Act
-        response = test_client.post(
+        response = api_client.post(
             "/api/queries",
             json={
                 "session_id": "sess_test123",
@@ -104,10 +102,10 @@ class TestQuerySubmitEndpoint:
         # Assert
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_queries_post_empty_query_returns_400(self, test_client, mock_async_query_service):
+    def test_queries_post_empty_query_returns_400(self, api_client, mock_async_query_service):
         """Empty query text returns 400 validation error."""
         # Act
-        response = test_client.post(
+        response = api_client.post(
             "/api/queries",
             json={
                 "session_id": "sess_test123",
@@ -123,7 +121,7 @@ class TestQuerySubmitEndpoint:
 class TestQueryStatusEndpoint:
     """Tests for GET /api/queries/{query_id} endpoint."""
 
-    def test_queries_get_pending_returns_status(self, test_client, mock_async_query_service):
+    def test_queries_get_pending_returns_status(self, api_client, mock_async_query_service):
         """Pending query returns processing status."""
         # Arrange
         from clinical_analytics.api.services.query_service import AsyncQueryResult
@@ -136,7 +134,7 @@ class TestQueryStatusEndpoint:
         )
 
         # Act
-        response = test_client.get("/api/queries/qry_abc123")
+        response = api_client.get("/api/queries/qry_abc123")
 
         # Assert
         assert response.status_code == status.HTTP_200_OK
@@ -144,7 +142,7 @@ class TestQueryStatusEndpoint:
         assert data["query_id"] == "qry_abc123"
         assert data["status"] == "processing"
 
-    def test_queries_get_completed_returns_result(self, test_client, mock_async_query_service):
+    def test_queries_get_completed_returns_result(self, api_client, mock_async_query_service):
         """Completed query returns full result."""
         # Arrange
         from clinical_analytics.api.services.query_service import AsyncQueryResult
@@ -160,7 +158,7 @@ class TestQueryStatusEndpoint:
         )
 
         # Act
-        response = test_client.get("/api/queries/qry_abc123")
+        response = api_client.get("/api/queries/qry_abc123")
 
         # Assert
         assert response.status_code == status.HTTP_200_OK
@@ -171,13 +169,13 @@ class TestQueryStatusEndpoint:
         assert data["result_data"] == {"mean_age": 45.5, "std_age": 12.3}
         assert data["confidence"] == 0.95
 
-    def test_queries_get_missing_returns_404(self, test_client, mock_async_query_service):
+    def test_queries_get_missing_returns_404(self, api_client, mock_async_query_service):
         """Missing query ID returns 404."""
         # Arrange
         mock_async_query_service.get_result = AsyncMock(return_value=None)
 
         # Act
-        response = test_client.get("/api/queries/qry_nonexistent")
+        response = api_client.get("/api/queries/qry_nonexistent")
 
         # Assert
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -186,7 +184,7 @@ class TestQueryStatusEndpoint:
 class TestQueryStreamEndpoint:
     """Tests for GET /api/queries/{query_id}/stream SSE endpoint."""
 
-    def test_queries_stream_emits_events(self, test_client, mock_async_query_service):
+    def test_queries_stream_emits_events(self, api_client, mock_async_query_service):
         """SSE stream emits progress events."""
         # Arrange
         from datetime import UTC, datetime
@@ -222,7 +220,7 @@ class TestQueryStreamEndpoint:
         mock_async_query_service.stream_events = mock_stream_events
 
         # Act - Use iter_lines for SSE
-        with test_client.stream("GET", "/api/queries/qry_abc123/stream") as response:
+        with api_client.stream("GET", "/api/queries/qry_abc123/stream") as response:
             lines = list(response.iter_lines())
 
         # Assert
@@ -232,13 +230,13 @@ class TestQueryStreamEndpoint:
         assert "query_started" in content
         assert "query_completed" in content
 
-    def test_queries_stream_missing_returns_404(self, test_client, mock_async_query_service):
+    def test_queries_stream_missing_returns_404(self, api_client, mock_async_query_service):
         """SSE stream for missing query returns 404."""
         # Arrange - query doesn't exist
         mock_async_query_service.get_result = AsyncMock(return_value=None)
 
         # Act
-        response = test_client.get("/api/queries/qry_nonexistent/stream")
+        response = api_client.get("/api/queries/qry_nonexistent/stream")
 
         # Assert
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -246,6 +244,11 @@ class TestQueryStreamEndpoint:
 
 class TestDataFrameEncoder:
     """Tests for DataFrameEncoder JSON serialization."""
+
+    def test_dataframe_encoder_rejects_non_serializable_value(self):
+        """Values the encoder does not know how to encode still fail."""
+        with pytest.raises(TypeError):
+            json.dumps({"data": object()}, cls=DataFrameEncoder)
 
     def test_dataframe_encoder_serializes_polars_dataframe(self):
         """DataFrameEncoder converts Polars DataFrame to dict."""

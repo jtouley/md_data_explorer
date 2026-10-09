@@ -18,7 +18,7 @@ def _service(layer: MagicMock) -> QueryService:
 
 def test_ask_invalid_plan_error_key_becomes_an_issue() -> None:
     """Validation returns {valid: False, error: ...} with no issues list."""
-    layer = MagicMock()
+    layer = MagicMock(spec=["_con_lock", "_generate_run_key", "_validate_query_plan", "execute_query_plan"])
     layer._con_lock = threading.Lock()
     layer._generate_run_key.return_value = "run"
     layer._validate_query_plan.return_value = {
@@ -39,7 +39,7 @@ def test_ask_invalid_plan_error_key_becomes_an_issue() -> None:
 
 
 def test_ask_execution_success_false_is_an_error_issue() -> None:
-    layer = MagicMock()
+    layer = MagicMock(spec=["_con_lock", "_generate_run_key", "_validate_query_plan", "execute_query_plan"])
     layer._con_lock = threading.Lock()
     layer._generate_run_key.return_value = "run"
     layer._validate_query_plan.return_value = {"valid": True, "error": None}
@@ -59,7 +59,7 @@ def test_ask_execution_success_false_is_an_error_issue() -> None:
 
 
 def test_ask_holds_connection_lock_across_overlapping_callers() -> None:
-    layer = MagicMock()
+    layer = MagicMock(spec=["_con_lock"])
     layer._con_lock = threading.Lock()
     service = _service(layer)
     spans: list[tuple[float, float]] = []

@@ -19,6 +19,8 @@ from clinical_analytics.core.config_loader import (
     get_project_root,
     load_logging_config,
     load_nl_query_config,
+    load_paths_config,
+    load_patterns_config,
     load_ui_config,
     load_validation_config,
 )
@@ -235,6 +237,13 @@ class TestConfigLoaderNLQuery:
 class TestConfigLoaderUI:
     """Test suite for UI configuration loading."""
 
+    def test_load_ui_config_rejects_invalid_yaml(self, tmp_path):
+        """Malformed UI YAML fails closed."""
+        config_file = tmp_path / "ui.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_ui_config(config_path=config_file)
+
     def test_load_ui_config_loads_from_yaml_file(self, tmp_path):
         """Test that load_ui_config loads values from YAML file."""
         # Arrange: Create temporary YAML config file
@@ -290,6 +299,13 @@ class TestConfigLoaderUI:
 
 class TestConfigLoaderLogging:
     """Test suite for logging configuration loading."""
+
+    def test_load_logging_config_rejects_invalid_yaml(self, tmp_path):
+        """Malformed logging YAML fails closed."""
+        config_file = tmp_path / "logging.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_logging_config(config_path=config_file)
 
     def test_load_logging_config_loads_from_yaml_file(self, tmp_path):
         """Test that load_logging_config loads values from YAML file."""
@@ -384,6 +400,12 @@ class TestConfigLoaderProjectRoot:
 
 class TestConfigLoaderValidation:
     """Test suite for validation configuration loading."""
+
+    def test_load_validation_config_missing_file_raises(self, tmp_path):
+        """A missing validation config file is an error, not a silent default."""
+        missing = tmp_path / "missing.yaml"
+        with pytest.raises(FileNotFoundError):
+            load_validation_config(config_path=missing)
 
     def test_load_validation_config_loads_from_yaml_file(self, tmp_path):
         """Test that load_validation_config loads values from YAML file."""
@@ -486,6 +508,13 @@ class TestConfigLoaderValidation:
 
 class TestConfigLoaderPaths:
     """Test suite for path configuration loading."""
+
+    def test_load_paths_config_rejects_invalid_yaml(self, tmp_path):
+        """Malformed paths YAML fails closed."""
+        config_file = tmp_path / "paths.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_paths_config(config_path=config_file)
 
     def test_load_paths_config_loads_from_yaml_file(self, tmp_path):
         """Test that load_paths_config loads values from YAML file."""
@@ -650,6 +679,13 @@ class TestConfigLoaderPaths:
 
 class TestConfigLoaderPatterns:
     """Test suite for NL query pattern configuration loading."""
+
+    def test_load_patterns_config_rejects_invalid_yaml(self, tmp_path):
+        """Malformed pattern YAML fails closed."""
+        config_file = tmp_path / "nl_query_patterns.yaml"
+        config_file.write_text("invalid: yaml: content: [unclosed")
+        with pytest.raises(ValueError, match="Invalid YAML"):
+            load_patterns_config(config_path=config_file)
 
     def test_load_patterns_config_loads_from_yaml_file(self, tmp_path):
         """Test that load_patterns_config loads patterns from YAML file."""

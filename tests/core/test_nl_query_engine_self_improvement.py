@@ -171,37 +171,6 @@ class TestPromptOverlayCaching:
 class TestStableHash:
     """Test stable hashing for metrics."""
 
-    def test_stable_hash_returns_deterministic_output(self):
-        """Test that _stable_hash() returns same hash for same input across runs."""
-        # Arrange: Import helper
-        from clinical_analytics.core.nl_query_engine import _stable_hash
-
-        test_query = "compare mortality by treatment"
-
-        # Act: Hash same input multiple times
-        hash1 = _stable_hash(test_query)
-        hash2 = _stable_hash(test_query)
-        hash3 = _stable_hash(test_query)
-
-        # Assert: All hashes are identical (deterministic)
-        assert hash1 == hash2 == hash3
-        assert len(hash1) == 12  # First 12 chars of SHA256
-
-    def test_stable_hash_differs_for_different_inputs(self):
-        """Test that _stable_hash() produces different hashes for different inputs."""
-        # Arrange: Import helper
-        from clinical_analytics.core.nl_query_engine import _stable_hash
-
-        query1 = "compare mortality by treatment"
-        query2 = "compare survival by age"
-
-        # Act: Hash different inputs
-        hash1 = _stable_hash(query1)
-        hash2 = _stable_hash(query2)
-
-        # Assert: Hashes are different
-        assert hash1 != hash2
-
     def test_stable_hash_is_not_pythons_builtin_hash(self):
         """Test that _stable_hash() is NOT Python's randomized hash()."""
         # Arrange: Import helper

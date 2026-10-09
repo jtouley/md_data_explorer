@@ -17,7 +17,9 @@ from clinical_analytics.core.nl_query_engine import NLQueryEngine
 @pytest.fixture
 def mock_semantic_for_pattern():
     """Create mock semantic layer for pattern match testing."""
-    mock = MagicMock()
+    mock = MagicMock(
+        spec=["_normalize_alias", "get_column_alias_index", "get_collision_suggestions", "get_collision_warnings"]
+    )
     mock.get_column_alias_index.return_value = {
         "age": "age",
         "bmi": "BMI",
@@ -144,7 +146,7 @@ class TestPatternMatchConfigDriven:
         import re as regex_module
 
         # Arrange - patch at the import location in nl_query_engine
-        with patch("clinical_analytics.core.nl_query_engine.load_patterns_config") as mock_load_patterns:
+        with patch("clinical_analytics.core.nl_query_engine.load_patterns_config", spec=True) as mock_load_patterns:
             mock_load_patterns.return_value = {
                 "COUNT": [
                     {

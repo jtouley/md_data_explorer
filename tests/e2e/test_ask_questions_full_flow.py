@@ -99,7 +99,7 @@ class TestE2EFullQueryFlow:
 class TestE2EFilterExtraction:
     """Test filter extraction behavior that spans NL parsing and filter logic."""
 
-    def test_e2e_filter_extraction_stops_at_continuation_words(self, mock_semantic_layer):
+    def test_e2e_filter_extraction_rejects_continuation_words(self, mock_semantic_layer):
         """Test that filter extraction doesn't capture continuation phrases - catches real bugs."""
         # Arrange: Create generic semantic layer with grouping column
         grouping_col = "Treatment Group"

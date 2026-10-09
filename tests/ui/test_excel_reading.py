@@ -6,6 +6,7 @@ and fallback to pandas when needed.
 """
 
 import io
+import zipfile
 
 import pandas as pd
 import polars as pl
@@ -17,6 +18,13 @@ from clinical_analytics.ui.storage.user_datasets import _detect_excel_header_row
 
 class TestPolarsExcelReading:
     """Tests for Polars Excel reading functionality."""
+
+    def test_read_excel_rejects_invalid_workbook(self, tmp_path):
+        """Bytes that are not a workbook fail closed in the Excel reader."""
+        bad = tmp_path / "bad.xlsx"
+        bad.write_bytes(b"this is not a workbook")
+        with pytest.raises(zipfile.BadZipFile):
+            pl.read_excel(bad, engine="openpyxl")
 
     def test_read_excel_with_openpyxl_engine(self, tmp_path):
         """Test that Excel files can be read with openpyxl engine."""
@@ -86,26 +94,10 @@ class TestPolarsExcelReading:
 
 
 class TestEnsurePolarsErrorHandling:
-    """Tests for _ensure_polars error handling with mixed types."""
+    """Tests for _ensure_polars error handling with mixed types.
 
-    def test_ensure_polars_with_polars_dataframe(self):
-        """Test that Polars DataFrames pass through unchanged."""
-        df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
-
-        result = _ensure_polars(df)
-
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 3
-
-    def test_ensure_polars_with_normal_pandas(self):
-        """Test that normal pandas DataFrames convert successfully."""
-        df_pandas = pd.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
-
-        result = _ensure_polars(df_pandas)
-
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 3
-        assert result.width == 2
+    Pass-through and plain pandas conversion live in test_data_validator.py.
+    """
 
     def test_ensure_polars_with_mixed_types_fallback(self):
         """Test that mixed types trigger fallback to string conversion."""

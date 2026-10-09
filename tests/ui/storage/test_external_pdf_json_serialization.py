@@ -56,7 +56,7 @@ def make_metadata_with_external_pdf():
 class TestExternalPdfJsonSerialization:
     """Test suite for external PDF JSON serialization."""
 
-    def test_save_table_list_removes_external_pdf_bytes_before_json_save(
+    def test_save_table_list_rejects_raw_pdf_bytes_in_json(
         self,
         upload_storage,
         sample_test_tables,

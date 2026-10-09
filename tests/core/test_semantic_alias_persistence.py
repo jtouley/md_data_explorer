@@ -325,10 +325,7 @@ def test_alias_scope_per_dataset(
         workspace_root=workspace,
     )
 
-    with patch(
-        "clinical_analytics.core.semantic.Path",
-        return_value=mock_metadata_storage["dir"],
-    ):
+    with patch("clinical_analytics.core.semantic.Path", return_value=mock_metadata_storage["dir"], spec=True):
         layer_1._load_user_aliases(upload_id_1, dataset_version)
         layer_2._load_user_aliases(upload_id_2, dataset_version)
 

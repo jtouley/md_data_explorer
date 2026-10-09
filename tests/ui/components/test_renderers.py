@@ -17,6 +17,12 @@ from clinical_analytics.ui.components.renderers import (
 class TestRendererRegistry:
     """Test suite for Renderer registry."""
 
+    def test_renderer_registry_rejects_unknown_type(self):
+        """Lookup of an unregistered result type fails closed."""
+        registry = RendererRegistry()
+        with pytest.raises(ValueError, match="Unknown result type"):
+            registry.get("not_a_result")
+
     def test_renderer_registry_known_type_returns_renderer(self):
         """Test that registry returns renderer for known type."""
         # Arrange
@@ -93,7 +99,7 @@ class TestRendererRegistry:
         )
 
         # Act - should not raise
-        with patch("streamlit.write"), patch("streamlit.dataframe"):
+        with patch("streamlit.write", spec=True), patch("streamlit.dataframe", spec=True):
             renderer.render(result, query_text="What is the average?")
 
         # Assert - renderer executed without error
@@ -111,8 +117,8 @@ class TestRendererRegistry:
         )
 
         # Act - should not raise
-        with patch("streamlit.write"):
-            with patch("streamlit.metric"):
+        with patch("streamlit.write", spec=True):
+            with patch("streamlit.metric", spec=True):
                 renderer.render(result, query_text="Compare groups")
 
     def test_count_renderer_renders_count(self):
@@ -127,7 +133,7 @@ class TestRendererRegistry:
         )
 
         # Act - should not raise
-        with patch("streamlit.metric"):
+        with patch("streamlit.metric", spec=True):
             renderer.render(result, query_text="How many patients?")
 
     def test_renderer_with_error_shows_friendly_message(self):
@@ -143,7 +149,7 @@ class TestRendererRegistry:
         )
 
         # Act - should not raise
-        with patch("streamlit.error") as mock_error:
+        with patch("streamlit.error", spec=True) as mock_error:
             renderer.render(result, query_text="Calculate average")
 
         # Assert

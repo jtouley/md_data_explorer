@@ -104,6 +104,13 @@ class TestTypeAwareIntentSelection:
 class TestGroupingVariableValidation:
     """Test that grouping variables are validated as categorical."""
 
+    def test_query_intent_rejects_unknown_intent_type(self):
+        """Intent types outside the allowlist are rejected."""
+        from clinical_analytics.core.nl_query_engine import QueryIntent
+
+        with pytest.raises(ValueError, match="Invalid intent_type"):
+            QueryIntent(intent_type="NOT_A_REAL_INTENT")
+
     def test_numeric_grouping_variable_handled_appropriately(self, mock_semantic_layer):
         """Numeric variable used for grouping should be handled (binning or error)."""
         # Arrange: Numeric age column

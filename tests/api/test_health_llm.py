@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def test_client():
+def api_client():
     """Create FastAPI test client."""
     from clinical_analytics.api.main import app
 
@@ -18,7 +18,7 @@ def test_client():
 class TestGetOllamaHealthSnapshot:
     """Unit tests for clinical_analytics.api.health_llm.get_ollama_health_snapshot."""
 
-    def test_get_ollama_health_snapshot_unreachable_sets_reachable_false(self):
+    def test_get_ollama_health_snapshot_unreachable_sets_reachable_false_rejects_invalid(self):
         """When Ollama HTTP probe fails, snapshot reports not reachable."""
         from clinical_analytics.api import health_llm
 
@@ -33,7 +33,7 @@ class TestGetOllamaHealthSnapshot:
         """When /api/tags succeeds, default model availability is computed."""
         from clinical_analytics.api import health_llm
 
-        mock_resp = MagicMock()
+        mock_resp = MagicMock(spec=["status_code", "json"])
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "models": [
@@ -56,7 +56,7 @@ class TestGetOllamaHealthSnapshot:
         """Non-200 from Ollama is treated as unreachable."""
         from clinical_analytics.api import health_llm
 
-        mock_resp = MagicMock()
+        mock_resp = MagicMock(spec=["status_code"])
         mock_resp.status_code = 503
 
         with patch.object(health_llm.requests, "get", return_value=mock_resp):
@@ -69,7 +69,7 @@ class TestGetOllamaHealthSnapshot:
 class TestHealthEndpointOllamaFields:
     """GET /health includes ollama_* keys for desktop clients."""
 
-    def test_health_check_includes_ollama_snapshot_keys(self, test_client):
+    def test_health_check_includes_ollama_snapshot_keys(self, api_client):
         """Health response merges API status with Ollama snapshot fields."""
         from clinical_analytics.api import health_llm
 
@@ -82,7 +82,7 @@ class TestHealthEndpointOllamaFields:
         }
 
         with patch.object(health_llm, "get_ollama_health_snapshot", return_value=fake_snap):
-            response = test_client.get("/health")
+            response = api_client.get("/health")
 
         assert response.status_code == 200
         body = response.json()

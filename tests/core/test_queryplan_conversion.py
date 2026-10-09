@@ -29,7 +29,7 @@ def mock_semantic_layer(mock_semantic_layer):
 class TestQueryPlanConversion:
     """Test QueryIntent to QueryPlan conversion."""
 
-    def test_intent_to_plan_creates_queryplan_without_run_key(self, mock_semantic_layer):
+    def test_intent_to_plan_leaves_run_key_missing(self, mock_semantic_layer):
         """Test that _intent_to_plan creates QueryPlan with run_key=None (Phase 1.1.5)."""
         # Arrange: Create QueryIntent
         engine = NLQueryEngine(mock_semantic_layer)

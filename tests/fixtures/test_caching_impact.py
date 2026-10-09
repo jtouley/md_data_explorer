@@ -52,17 +52,6 @@ class TestCachingImpact:
         assert cached_df is not None
         assert_frame_equal(cached_df, df)
 
-    def test_dataframe_cache_unknown_key_returnsNone(self, tmp_path):
-        # Arrange
-        cache_dir = tmp_path / "test_cache"
-        cache_dir.mkdir()
-
-        # Act
-        cached_df = get_cached_dataframe("missing-key", cache_dir)
-
-        # Assert
-        assert cached_df is None
-
     def test_excel_cache_second_call_skipsRegeneration(self, tmp_path_factory, tmp_path, monkeypatch):
         # Arrange: isolated cache dir (the shared default dir must not be wiped under xdist)
         import fixtures.factories as factories

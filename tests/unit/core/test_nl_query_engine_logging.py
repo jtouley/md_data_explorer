@@ -15,7 +15,9 @@ from clinical_analytics.core.nl_query_engine import NLQueryEngine, QueryIntent
 @pytest.fixture
 def mock_semantic_layer():
     """Mock semantic layer for testing."""
-    semantic = MagicMock()
+    semantic = MagicMock(
+        spec=["_normalize_alias", "get_column_alias_index", "get_collision_suggestions", "get_collision_warnings"]
+    )
     semantic.get_column_alias_index.return_value = {
         "mortality": "mortality",
         "treatment": "treatment_arm",

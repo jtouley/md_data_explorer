@@ -46,7 +46,7 @@ class TestThinkingIndicatorCompletionBehavior:
         ]
 
         # Act: Import and call _render_thinking_indicator
-        with patch("streamlit.status") as mock_status:
+        with patch("streamlit.status", spec=True) as mock_status:
             # Load module dynamically to avoid Streamlit runtime errors
             ask_questions = _load_ask_questions_module()
             ask_questions._render_thinking_indicator(steps)
@@ -63,7 +63,7 @@ class TestThinkingIndicatorCompletionBehavior:
         ]
 
         # Act: Import and call _render_thinking_indicator
-        with patch("streamlit.status") as mock_status:
+        with patch("streamlit.status", spec=True) as mock_status:
             ask_questions = _load_ask_questions_module()
             ask_questions._render_thinking_indicator(steps)
 
@@ -82,7 +82,7 @@ class TestThinkingIndicatorCompletionBehavior:
         ]
 
         # Act: Import and call _render_thinking_indicator
-        with patch("streamlit.status") as mock_status:
+        with patch("streamlit.status", spec=True) as mock_status:
             ask_questions = _load_ask_questions_module()
             ask_questions._render_thinking_indicator(steps)
 
@@ -99,7 +99,7 @@ class TestThinkingIndicatorCompletionBehavior:
         steps = []
 
         # Act: Import and call _render_thinking_indicator
-        with patch("streamlit.status") as mock_status:
+        with patch("streamlit.status", spec=True) as mock_status:
             ask_questions = _load_ask_questions_module()
             ask_questions._render_thinking_indicator(steps)
 

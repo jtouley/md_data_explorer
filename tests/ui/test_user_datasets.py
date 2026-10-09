@@ -9,75 +9,13 @@ import polars as pl
 import pytest
 
 from clinical_analytics.ui.storage.user_datasets import (
-    UploadSecurityValidator,
     save_table_list,
 )
 
 
-class TestUploadSecurityValidator:
-    """Test suite for UploadSecurityValidator."""
-
-    def test_validate_file_type_csv(self):
-        """Test validating CSV file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.csv")
-        assert is_valid is True
-        assert error == ""
-
-    def test_validate_file_type_xlsx(self):
-        """Test validating XLSX file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.xlsx")
-        assert is_valid is True
-
-    def test_validate_file_type_invalid(self):
-        """Test validating invalid file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.exe")
-        assert is_valid is False
-        assert "not allowed" in error
-
-    def test_validate_file_type_no_extension(self):
-        """Test validating file with no extension."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test")
-        assert is_valid is False
-        assert "no extension" in error
-
-    def test_validate_file_size_valid(self):
-        """Test validating file size within limits."""
-        file_bytes = b"x" * (10 * 1024)  # 10KB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is True
-        assert error == ""
-
-    def test_validate_file_size_too_small(self):
-        """Test validating file that's too small."""
-        file_bytes = b"x" * 100  # Less than 1KB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is False
-        assert "too small" in error
-
-    def test_validate_file_size_too_large(self):
-        """Test validating file that's too large."""
-        file_bytes = b"x" * (101 * 1024 * 1024)  # 101MB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is False
-        assert "too large" in error
-
-    def test_sanitize_filename(self):
-        """Test filename sanitization."""
-        safe = UploadSecurityValidator.sanitize_filename("test_file.csv")
-        assert safe == "test_file.csv"
-
-    def test_sanitize_filename_path_traversal(self):
-        """Test sanitizing filename with path traversal."""
-        safe = UploadSecurityValidator.sanitize_filename("../../../etc/passwd")
-        assert ".." not in safe
-        assert "/" not in safe
-
-    def test_sanitize_filename_special_chars(self):
-        """Test sanitizing filename with special characters."""
-        safe = UploadSecurityValidator.sanitize_filename("test@file#name$.csv")
-        assert "@" not in safe
-        assert "#" not in safe
-        assert "$" not in safe
+def _frame(data):
+    """Construct a Polars frame for a test."""
+    return pl.DataFrame(data)
 
 
 class TestUserDatasetStorage:
@@ -120,7 +58,7 @@ class TestUserDatasetStorage:
         renamed onto it, producing duplicate column names and failing every save.
         """
         # Arrange
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "patient_id": [f"P{i:03d}" for i in range(150)],
                 "age": [20 + (i % 60) for i in range(150)],
@@ -518,7 +456,7 @@ class TestSaveTableList:
         storage = upload_storage
         upload_id = "test_upload_123"
 
-        df = pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30], "outcome": [0, 1]})
+        df = _frame({"patient_id": ["P001", "P002"], "age": [25, 30], "outcome": [0, 1]})
         tables = [{"name": "patient_outcomes", "data": df}]
         metadata = {
             "dataset_name": "test",
@@ -563,7 +501,7 @@ class TestSaveTableList:
         storage = upload_storage
         upload_id = "test_upload_789"
 
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "Patient ID": ["P001", "P002"],
                 "Outcome": [0, 1],  # Binary outcome
@@ -601,8 +539,8 @@ class TestSaveTableList:
         storage = upload_storage
         upload_id = "test_multi_upload"
 
-        patients_df = pl.DataFrame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
-        admissions_df = pl.DataFrame(
+        patients_df = _frame({"patient_id": ["P001", "P002"], "name": ["Alice", "Bob"]})
+        admissions_df = _frame(
             {"admission_id": ["A001", "A002"], "patient_id": ["P001", "P002"], "date": ["2024-01-01", "2024-01-02"]}
         )
 
@@ -1191,7 +1129,14 @@ class TestSeparateEventsList:
 
 
 class TestVersionHistoryMetadata:
-    """Test suite for version history metadata structure (Phase 2)."""
+    """Test suite for version history stored on upload metadata."""
+
+    def test_assert_metadata_invariants_rejects_missing_version_history(self):
+        """Metadata without version_history fails the invariant check."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        with pytest.raises(ValueError, match="version_history"):
+            assert_metadata_invariants({})
 
     def test_metadata_includes_version_history(self, upload_storage):
         """Metadata should include version_history array."""
@@ -1302,6 +1247,13 @@ class TestVersionHistoryMetadata:
 class TestSchemaDriftDetection:
     """Test suite for schema drift detection and policy (Phase 3)."""
 
+    def test_schema_drift_policy_rejects_unknown_value(self):
+        """Policy names outside the enum are rejected."""
+        from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
+
+        with pytest.raises(ValueError):
+            SchemaDriftPolicy("not_a_policy")
+
     def test_detect_schema_drift_policy_defined(self, upload_storage):
         """Schema drift detection should have defined policy constants."""
         from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
@@ -1378,12 +1330,19 @@ class TestSchemaDriftDetection:
 class TestSchemaFingerprint:
     """Test suite for schema fingerprint computation (Phase 3)."""
 
+    def test_compute_schema_fingerprint_rejects_missing_frame(self):
+        """Fingerprint computation requires a frame."""
+        from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
+
+        with pytest.raises(AttributeError):
+            compute_schema_fingerprint(None)
+
     def test_compute_schema_fingerprint_uses_utf8_encoding(self, upload_storage):
         """Schema fingerprint should use UTF-8 encoding."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: DataFrame with UTF-8 column names
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "patient_id": ["P001", "P002"],
                 "âge": [25, 30],  # UTF-8 character
@@ -1403,8 +1362,8 @@ class TestSchemaFingerprint:
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: DataFrame with columns in non-alphabetical order
-        df1 = pl.DataFrame({"zebra": [1], "alpha": [2], "beta": [3]})
-        df2 = pl.DataFrame({"alpha": [2], "beta": [3], "zebra": [1]})
+        df1 = _frame({"zebra": [1], "alpha": [2], "beta": [3]})
+        df2 = _frame({"alpha": [2], "beta": [3], "zebra": [1]})
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
@@ -1420,8 +1379,8 @@ class TestSchemaFingerprint:
         # Arrange: Two DataFrames with same column names but different types
         # Note: Polars doesn't allow same column name with different types in one DataFrame
         # So we test that type is included in fingerprint
-        df1 = pl.DataFrame({"col": [1, 2, 3]})  # Int64
-        df2 = pl.DataFrame({"col": [1.0, 2.0, 3.0]})  # Float64
+        df1 = _frame({"col": [1, 2, 3]})  # Int64
+        df2 = _frame({"col": [1.0, 2.0, 3.0]})  # Float64
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
@@ -1436,7 +1395,7 @@ class TestSchemaFingerprint:
 
         # Arrange: Same schema, different data
         df1 = simple_test_df
-        df2 = pl.DataFrame({"patient_id": ["P999"], "age": [99]})
+        df2 = _frame({"patient_id": ["P999"], "age": [99]})
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
@@ -1556,7 +1515,7 @@ class TestSchemaDriftPolicy:
         assert "allowed" in message.lower() or "additive" in message.lower()
         assert len(warnings) == 0
 
-    def test_apply_schema_drift_policy_blocks_breaking_removal(self, upload_storage):
+    def test_apply_schema_drift_policy_blocks_breaking_removal_rejects_invalid(self, upload_storage):
         """Breaking changes (removed columns) should be blocked without override."""
         from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
 
@@ -1638,7 +1597,7 @@ class TestSchemaDriftPolicy:
 class TestSchemaDriftPolicyEnforcement:
     """Test suite for schema drift policy enforcement in overwrite flow (Phase 3 integration)."""
 
-    def test_overwrite_with_breaking_schema_changes_blocked(self, upload_storage):
+    def test_overwrite_with_breaking_schema_changes_blocked_rejects_invalid(self, upload_storage):
         """Overwrite with breaking schema changes (removed column) should be blocked."""
         # Arrange: Upload initial dataset
         storage = upload_storage

@@ -11,13 +11,18 @@ import polars as pl
 from clinical_analytics.core.relationship_detector import RelationshipDetector
 
 
+def _frame(data):
+    """Construct a Polars frame for a test."""
+    return pl.DataFrame(data)
+
+
 class TestPrimaryKeyDetection:
     """Test suite for primary key detection."""
 
     def test_detect_primary_key_with_id_column_returns_id(self):
         """Primary key detection should prefer 'id' column (Phase 0.3)."""
         # Arrange: DataFrame with 'id' column that is unique and non-null
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "id": [1, 2, 3, 4, 5],
                 "patient_id": [1, 2, 3, 4, 5],
@@ -35,7 +40,7 @@ class TestPrimaryKeyDetection:
     def test_detect_primary_key_with_patient_id_column_returns_patient_id(self):
         """Primary key detection should detect patient_id (Phase 0.3)."""
         # Arrange: DataFrame with unique patient_id
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "patient_id": [1, 2, 3, 4, 5],
                 "name": ["A", "B", "C", "D", "E"],
@@ -53,7 +58,7 @@ class TestPrimaryKeyDetection:
     def test_detect_primary_key_with_duplicates_returns_none(self):
         """Primary key detection should return None when no unique column (Phase 0.3)."""
         # Arrange: DataFrame with duplicates in all columns
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "patient_id": [1, 1, 2, 2, 3],
                 "name": ["A", "A", "B", "B", "C"],
@@ -70,7 +75,7 @@ class TestPrimaryKeyDetection:
     def test_detect_primary_key_with_nulls_returns_none(self):
         """Primary key detection should return None when all columns have nulls (Phase 0.3)."""
         # Arrange: DataFrame with nulls in all columns
-        df = pl.DataFrame(
+        df = _frame(
             {
                 "id": [1, 2, None, 4, 5],
                 "name": ["A", "B", None, "D", "E"],
@@ -139,8 +144,8 @@ class TestReferentialIntegrityVerification:
     def test_verify_referential_integrity_full_match_returns_one(self):
         """Referential integrity should return 1.0 for 100% match (Phase 0.3)."""
         # Arrange: All child values exist in parent
-        parent_df = pl.DataFrame({"id": [1, 2, 3, 4, 5]})
-        child_df = pl.DataFrame({"parent_id": [1, 2, 3, 1, 2]})
+        parent_df = _frame({"id": [1, 2, 3, 4, 5]})
+        child_df = _frame({"parent_id": [1, 2, 3, 1, 2]})
         detector = RelationshipDetector()
 
         # Act
@@ -152,8 +157,8 @@ class TestReferentialIntegrityVerification:
     def test_verify_referential_integrity_partial_match_returns_ratio(self):
         """Referential integrity should return partial match ratio (Phase 0.3)."""
         # Arrange: 2 out of 3 unique child values exist in parent
-        parent_df = pl.DataFrame({"id": [1, 2]})
-        child_df = pl.DataFrame({"parent_id": [1, 2, 3]})
+        parent_df = _frame({"id": [1, 2]})
+        child_df = _frame({"parent_id": [1, 2, 3]})
         detector = RelationshipDetector()
 
         # Act
@@ -165,8 +170,8 @@ class TestReferentialIntegrityVerification:
     def test_verify_referential_integrity_no_match_returns_zero(self):
         """Referential integrity should return 0.0 for no match (Phase 0.3)."""
         # Arrange: No child values exist in parent
-        parent_df = pl.DataFrame({"id": [1, 2, 3]})
-        child_df = pl.DataFrame({"parent_id": [4, 5, 6]})
+        parent_df = _frame({"id": [1, 2, 3]})
+        child_df = _frame({"parent_id": [4, 5, 6]})
         detector = RelationshipDetector()
 
         # Act
@@ -178,8 +183,8 @@ class TestReferentialIntegrityVerification:
     def test_verify_referential_integrity_handles_nulls(self):
         """Referential integrity should ignore null values (Phase 0.3)."""
         # Arrange: Child has nulls
-        parent_df = pl.DataFrame({"id": [1, 2, 3]})
-        child_df = pl.DataFrame({"parent_id": [1, 2, None, None]})
+        parent_df = _frame({"id": [1, 2, 3]})
+        child_df = _frame({"parent_id": [1, 2, None, None]})
         detector = RelationshipDetector()
 
         # Act
@@ -191,8 +196,8 @@ class TestReferentialIntegrityVerification:
     def test_verify_referential_integrity_handles_type_mismatch(self):
         """Referential integrity should handle type mismatches by casting (Phase 0.3)."""
         # Arrange: Parent has int, child has string
-        parent_df = pl.DataFrame({"id": [1, 2, 3]})
-        child_df = pl.DataFrame({"parent_id": ["1", "2", "3"]})
+        parent_df = _frame({"id": [1, 2, 3]})
+        child_df = _frame({"parent_id": ["1", "2", "3"]})
         detector = RelationshipDetector()
 
         # Act
@@ -209,8 +214,8 @@ class TestRelationshipDetection:
         """Relationship detection should find one-to-many relationships (Phase 0.3)."""
         # Arrange: Parent-child relationship
         tables = {
-            "patients": pl.DataFrame({"patient_id": [1, 2, 3]}),
-            "admissions": pl.DataFrame(
+            "patients": _frame({"patient_id": [1, 2, 3]}),
+            "admissions": _frame(
                 {
                     "admission_id": [101, 102, 103, 104],
                     "patient_id": [1, 1, 2, 3],
@@ -232,12 +237,12 @@ class TestRelationshipDetection:
         assert rel.relationship_type == "one-to-many"
         assert rel.confidence > 0.8
 
-    def test_detect_relationships_excludes_low_confidence(self):
+    def test_detect_relationships_rejects_low_confidence(self):
         """Relationship detection should exclude low-confidence matches (Phase 0.3)."""
         # Arrange: Tables with poor referential integrity
         tables = {
-            "table_a": pl.DataFrame({"id": [1, 2, 3]}),
-            "table_b": pl.DataFrame(
+            "table_a": _frame({"id": [1, 2, 3]}),
+            "table_b": _frame(
                 {
                     "b_id": [201, 202],
                     "id": [99, 100],  # No matches with table_a
@@ -256,14 +261,14 @@ class TestRelationshipDetection:
         """Relationship detection should return results sorted by confidence (Phase 0.3)."""
         # Arrange: Multiple relationships with different confidence levels
         tables = {
-            "patients": pl.DataFrame({"patient_id": [1, 2, 3]}),
-            "admissions": pl.DataFrame(
+            "patients": _frame({"patient_id": [1, 2, 3]}),
+            "admissions": _frame(
                 {
                     "admission_id": [101, 102, 103],
                     "patient_id": [1, 2, 3],  # 100% match
                 }
             ),
-            "labs": pl.DataFrame(
+            "labs": _frame(
                 {
                     "lab_id": [501, 502, 503, 504, 505],
                     "patient_id": [1, 2, 3, 1, 2],  # 100% match but more rows (still one-to-many)

@@ -12,6 +12,8 @@ Tests cover:
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from clinical_analytics.core.llm_feature import (
     LLMCallResult,
     LLMFeature,
@@ -22,47 +24,38 @@ from clinical_analytics.core.llm_feature import (
 class TestLLMFeature:
     """Test LLMFeature enum."""
 
-    def test_llmfeature_has_all_expected_values(self):
-        # Arrange & Act & Assert
-        assert LLMFeature.PARSE
-        assert LLMFeature.FOLLOWUPS
-        assert LLMFeature.INTERPRETATION
-        assert LLMFeature.RESULT_INTERPRETATION
-        assert LLMFeature.ERROR_TRANSLATION
-        assert LLMFeature.FILTER_EXTRACTION
-        assert LLMFeature.QUESTION_GENERATION
+    def test_llm_feature_rejects_unknown_value(self):
+        """Wire values outside the enum are rejected."""
+        with pytest.raises(ValueError):
+            LLMFeature("not_a_feature")
 
-    def test_llmfeature_validation_values_exist(self):
-        """Test that validation layer LLMFeature values exist."""
-        # Arrange & Act & Assert
-        assert LLMFeature.DBA_VALIDATION
-        assert LLMFeature.VALIDATION_RETRY
-
-    def test_llmfeature_values_are_strings(self):
-        # Arrange & Act & Assert
-        assert LLMFeature.PARSE.value == "parse"
-        assert LLMFeature.FOLLOWUPS.value == "followups"
-        assert LLMFeature.INTERPRETATION.value == "interpretation"
-        assert LLMFeature.RESULT_INTERPRETATION.value == "result_interpretation"
-        assert LLMFeature.ERROR_TRANSLATION.value == "error_translation"
-        assert LLMFeature.FILTER_EXTRACTION.value == "filter_extraction"
-        assert LLMFeature.QUESTION_GENERATION.value == "question_generation"
-
-    def test_llmfeature_validation_values_are_strings(self):
-        """Test that validation layer LLMFeature values are correct strings."""
-        # Arrange & Act & Assert
-        assert LLMFeature.DBA_VALIDATION.value == "dba_validation"
-        assert LLMFeature.VALIDATION_RETRY.value == "validation_retry"
+    @pytest.mark.parametrize(
+        ("member", "value"),
+        [
+            ("PARSE", "parse"),
+            ("FOLLOWUPS", "followups"),
+            ("INTERPRETATION", "interpretation"),
+            ("RESULT_INTERPRETATION", "result_interpretation"),
+            ("ERROR_TRANSLATION", "error_translation"),
+            ("FILTER_EXTRACTION", "filter_extraction"),
+            ("QUESTION_GENERATION", "question_generation"),
+            ("DBA_VALIDATION", "dba_validation"),
+            ("VALIDATION_RETRY", "validation_retry"),
+        ],
+    )
+    def test_llmfeature_member_stores_wire_value(self, member: str, value: str):
+        """Each LLMFeature member stores its wire value."""
+        assert getattr(LLMFeature, member).value == value
 
 
 class TestCallLLM:
     """Test unified call_llm() wrapper."""
 
-    @patch("clinical_analytics.core.llm_feature.OllamaClient")
-    @patch("clinical_analytics.core.llm_feature.parse_json_response")
+    @patch("clinical_analytics.core.llm_feature.OllamaClient", spec=True)
+    @patch("clinical_analytics.core.llm_feature.parse_json_response", spec=True)
     def test_call_llm_success_returns_result(self, mock_parse, mock_client_class):
         # Arrange
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client_class.return_value = mock_client
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"intent": "DESCRIBE"}'
@@ -83,10 +76,10 @@ class TestCallLLM:
         assert result.error is None
         assert result.latency_ms > 0
 
-    @patch("clinical_analytics.core.llm_feature.OllamaClient")
+    @patch("clinical_analytics.core.llm_feature.OllamaClient", spec=True)
     def test_call_llm_ollama_unavailable_returns_error(self, mock_client_class):
         # Arrange
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available"])
         mock_client_class.return_value = mock_client
         mock_client.is_available.return_value = False
 
@@ -105,10 +98,10 @@ class TestCallLLM:
         assert result.error == "ollama_unavailable"
         assert result.latency_ms > 0
 
-    @patch("clinical_analytics.core.llm_feature.OllamaClient")
+    @patch("clinical_analytics.core.llm_feature.OllamaClient", spec=True)
     def test_call_llm_timeout_sets_timed_out_flag(self, mock_client_class):
         # Arrange
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client_class.return_value = mock_client
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = None  # Simulates timeout
@@ -127,11 +120,11 @@ class TestCallLLM:
         assert result.timed_out is True
         assert result.error == "timeout"
 
-    @patch("clinical_analytics.core.llm_feature.OllamaClient")
-    @patch("clinical_analytics.core.llm_feature.parse_json_response")
+    @patch("clinical_analytics.core.llm_feature.OllamaClient", spec=True)
+    @patch("clinical_analytics.core.llm_feature.parse_json_response", spec=True)
     def test_call_llm_malformed_json_returns_raw_text_only(self, mock_parse, mock_client_class):
         # Arrange
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client_class.return_value = mock_client
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = "Not valid JSON"
@@ -151,10 +144,10 @@ class TestCallLLM:
         assert result.timed_out is False
         assert result.error == "json_parse_failed"
 
-    @patch("clinical_analytics.core.llm_feature.OllamaClient")
+    @patch("clinical_analytics.core.llm_feature.OllamaClient", spec=True)
     def test_call_llm_respects_timeout_parameter(self, mock_client_class):
         # Arrange
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client_class.return_value = mock_client
         mock_client.is_available.return_value = True
 
@@ -174,11 +167,11 @@ class TestCallLLM:
         call_args = mock_client_class.call_args
         assert call_args[1]["timeout"] == timeout_s
 
-    @patch("clinical_analytics.core.llm_feature.OllamaClient")
-    @patch("clinical_analytics.core.llm_feature.parse_json_response")
+    @patch("clinical_analytics.core.llm_feature.OllamaClient", spec=True)
+    @patch("clinical_analytics.core.llm_feature.parse_json_response", spec=True)
     def test_call_llm_tracks_latency(self, mock_parse, mock_client_class):
         # Arrange
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client_class.return_value = mock_client
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"result": "ok"}'
@@ -196,11 +189,11 @@ class TestCallLLM:
         assert result.latency_ms > 0
         assert isinstance(result.latency_ms, float)
 
-    @patch("clinical_analytics.core.llm_feature.OllamaClient")
-    @patch("clinical_analytics.core.llm_feature.parse_json_response")
+    @patch("clinical_analytics.core.llm_feature.OllamaClient", spec=True)
+    @patch("clinical_analytics.core.llm_feature.parse_json_response", spec=True)
     def test_call_llm_uses_json_mode(self, mock_parse, mock_client_class):
         # Arrange
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client_class.return_value = mock_client
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"test": "value"}'

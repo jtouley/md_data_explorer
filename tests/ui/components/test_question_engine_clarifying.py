@@ -22,26 +22,29 @@ def test_ask_free_form_question_uses_clarifying_questions_for_low_confidence(moc
     # Create a low-confidence intent
     low_confidence_intent = QueryIntent(intent_type="DESCRIBE", confidence=0.3)
 
-    with patch("streamlit.text_input", return_value="some unclear query"):
-        with patch("streamlit.markdown"):
-            with patch("clinical_analytics.core.nl_query_engine.NLQueryEngine") as mock_engine_class:
-                mock_engine = MagicMock()
+    with patch("streamlit.text_input", return_value="some unclear query", spec=True):
+        with patch("streamlit.markdown", spec=True):
+            with patch("clinical_analytics.core.nl_query_engine.NLQueryEngine", spec=True) as mock_engine_class:
+                mock_engine = MagicMock(spec=["parse_query", "_extract_variables_from_query"])
                 mock_engine.parse_query.return_value = low_confidence_intent
                 mock_engine._extract_variables_from_query.return_value = ([], {})
                 mock_engine_class.return_value = mock_engine
 
                 with patch(
-                    "clinical_analytics.core.clarifying_questions.ClarifyingQuestionsEngine.ask_clarifying_questions"
+                    "clinical_analytics.core.clarifying_questions.ClarifyingQuestionsEngine.ask_clarifying_questions",
+                    spec=True,
                 ) as mock_clarify:
                     # Mock clarifying questions to return refined intent
                     refined_intent = QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.7)
                     mock_clarify.return_value = refined_intent
 
-                    with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", True):
-                        with patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False):
-                            with patch("streamlit.spinner"):
-                                with patch("streamlit.expander"):
-                                    with patch("streamlit.radio", return_value="Yes, that's correct"):
+                    with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", True, spec=True):
+                        with patch(
+                            "clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False, spec=True
+                        ):
+                            with patch("streamlit.spinner", spec=True):
+                                with patch("streamlit.expander", spec=True):
+                                    with patch("streamlit.radio", return_value="Yes, that's correct", spec=True):
                                         QuestionEngine.ask_free_form_question(mock_semantic_layer)
 
                                         # Verify clarifying questions were called
@@ -52,22 +55,25 @@ def test_ask_free_form_question_skips_clarifying_questions_for_high_confidence(m
     """ask_free_form_question() should skip clarifying questions when confidence is high."""
     high_confidence_intent = QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.9)
 
-    with patch("streamlit.text_input", return_value="compare mortality by treatment"):
-        with patch("streamlit.markdown"):
-            with patch("clinical_analytics.core.nl_query_engine.NLQueryEngine") as mock_engine_class:
-                mock_engine = MagicMock()
+    with patch("streamlit.text_input", return_value="compare mortality by treatment", spec=True):
+        with patch("streamlit.markdown", spec=True):
+            with patch("clinical_analytics.core.nl_query_engine.NLQueryEngine", spec=True) as mock_engine_class:
+                mock_engine = MagicMock(spec=["parse_query", "_extract_variables_from_query"])
                 mock_engine.parse_query.return_value = high_confidence_intent
                 mock_engine._extract_variables_from_query.return_value = (["mortality", "treatment"], {})
                 mock_engine_class.return_value = mock_engine
 
                 with patch(
-                    "clinical_analytics.core.clarifying_questions.ClarifyingQuestionsEngine.ask_clarifying_questions"
+                    "clinical_analytics.core.clarifying_questions.ClarifyingQuestionsEngine.ask_clarifying_questions",
+                    spec=True,
                 ) as mock_clarify:
-                    with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", True):
-                        with patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False):
-                            with patch("streamlit.spinner"):
-                                with patch("streamlit.expander"):
-                                    with patch("streamlit.radio", return_value="Yes, that's correct"):
+                    with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", True, spec=True):
+                        with patch(
+                            "clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False, spec=True
+                        ):
+                            with patch("streamlit.spinner", spec=True):
+                                with patch("streamlit.expander", spec=True):
+                                    with patch("streamlit.radio", return_value="Yes, that's correct", spec=True):
                                         QuestionEngine.ask_free_form_question(mock_semantic_layer)
 
                                         # Verify clarifying questions were NOT called (confidence too high)

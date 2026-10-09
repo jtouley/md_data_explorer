@@ -28,14 +28,22 @@ class TestFilterExtractionLLM:
         # Act & Assert: Function should be callable
         assert callable(_extract_filters_with_llm)
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_success_simple(self, mock_call_llm):
         """Test successful filter extraction for simple pattern."""
         # Arrange
         query = "get rid of the n/a"
-        semantic_layer = MagicMock()
+        semantic_layer = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_base_view",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         # Mock get_base_view() to return a view with columns
-        mock_view = MagicMock()
+        mock_view = MagicMock(spec=["columns"])
         mock_view.columns = ["treatment_group", "age", "bmi"]
         semantic_layer.get_base_view.return_value = mock_view
         semantic_layer.get_column_alias_index.return_value = {
@@ -70,14 +78,22 @@ class TestFilterExtractionLLM:
             or call_args[0][0] == LLMFeature.FILTER_EXTRACTION
         )
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_real_world_case(self, mock_call_llm):
         """Test real-world case: 'get rid of the n/a' (currently fails with regex)."""
         # Arrange
         query = "get rid of the n/a"
-        semantic_layer = MagicMock()
+        semantic_layer = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_base_view",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         # Mock get_base_view() to return a view with columns
-        mock_view = MagicMock()
+        mock_view = MagicMock(spec=["columns"])
         mock_view.columns = ["treatment_group", "age", "bmi"]
         semantic_layer.get_base_view.return_value = mock_view
         semantic_layer.get_column_alias_index.return_value = {
@@ -106,14 +122,22 @@ class TestFilterExtractionLLM:
         assert confidence_delta == 0.0
         assert len(validation_failures) == 0
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_complex_patterns(self, mock_call_llm):
         """Test complex filter patterns that regex struggles with."""
         # Arrange
         query = "exclude missing values and patients on statins, but remove the n/a"
-        semantic_layer = MagicMock()
+        semantic_layer = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_base_view",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         # Mock get_base_view() to return a view with columns
-        mock_view = MagicMock()
+        mock_view = MagicMock(spec=["columns"])
         mock_view.columns = ["statin_prescribed", "treatment_group", "age", "bmi"]
         semantic_layer.get_base_view.return_value = mock_view
         semantic_layer.get_column_alias_index.return_value = {
@@ -153,14 +177,22 @@ class TestFilterExtractionLLM:
         assert confidence_delta == 0.0
         assert len(validation_failures) == 0
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_independent_validation(self, mock_call_llm):
         """Test that filters are validated independently (not all-or-nothing)."""
         # Arrange: LLM returns mix of valid and invalid filters
         query = "exclude n/a and invalid_column"
-        semantic_layer = MagicMock()
+        semantic_layer = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_base_view",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         # Mock get_base_view() to return a view with columns
-        mock_view = MagicMock()
+        mock_view = MagicMock(spec=["columns"])
         mock_view.columns = ["treatment_group", "age", "bmi"]
         semantic_layer.get_base_view.return_value = mock_view
         semantic_layer.get_column_alias_index.return_value = {
@@ -199,14 +231,22 @@ class TestFilterExtractionLLM:
         # Confidence delta should be negative (reduction) or zero if capped at 0.6
         assert confidence_delta <= 0  # Confidence reduced or capped
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_confidence_reduction(self, mock_call_llm):
         """Test that confidence is reduced when invalid filters are detected."""
         # Arrange: LLM returns mix of valid and invalid filters
         query = "exclude n/a and invalid_column"
-        semantic_layer = MagicMock()
+        semantic_layer = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_base_view",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         # Mock get_base_view() to return a view with columns
-        mock_view = MagicMock()
+        mock_view = MagicMock(spec=["columns"])
         mock_view.columns = ["treatment_group", "age", "bmi"]
         semantic_layer.get_base_view.return_value = mock_view
         semantic_layer.get_column_alias_index.return_value = {
@@ -243,7 +283,7 @@ class TestFilterExtractionLLM:
         assert confidence_delta <= 0  # Confidence reduced or capped
         assert len(validation_failures) > 0  # Invalid filters logged
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_graceful_degradation(self, mock_call_llm):
         """Test graceful degradation when LLM unavailable."""
         # Arrange: LLM unavailable
@@ -266,7 +306,7 @@ class TestFilterExtractionLLM:
         assert confidence_delta == 0.0
         assert len(validation_failures) == 0
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_timeout_handling(self, mock_call_llm):
         """Test timeout handling (LLM may timeout on complex patterns)."""
         # Arrange: LLM times out
@@ -289,7 +329,7 @@ class TestFilterExtractionLLM:
         assert confidence_delta == 0.0
         assert len(validation_failures) == 0
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_json_parse_failure(self, mock_call_llm):
         """Test graceful handling of JSON parse failures."""
         # Arrange: LLM returns invalid JSON
@@ -312,14 +352,22 @@ class TestFilterExtractionLLM:
         assert confidence_delta == 0.0
         assert len(validation_failures) == 0
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_operator_validation(self, mock_call_llm):
         """Test that invalid operators are rejected."""
         # Arrange: LLM returns invalid operator
         query = "exclude n/a"
-        semantic_layer = MagicMock()
+        semantic_layer = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_base_view",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         # Mock get_base_view() to return a view with columns
-        mock_view = MagicMock()
+        mock_view = MagicMock(spec=["columns"])
         mock_view.columns = ["treatment_group", "age", "bmi"]
         semantic_layer.get_base_view.return_value = mock_view
         semantic_layer.get_column_alias_index.return_value = {
@@ -346,14 +394,22 @@ class TestFilterExtractionLLM:
         # Confidence delta should be negative (reduction) or zero if capped at 0.6
         assert confidence_delta <= 0  # Confidence reduced or capped
 
-    @patch("clinical_analytics.core.filter_extraction.call_llm")
+    @patch("clinical_analytics.core.filter_extraction.call_llm", spec=True)
     def test_extract_filters_with_llm_value_type_validation(self, mock_call_llm):
         """Test that value types are validated against column types."""
         # Arrange: LLM returns string value for numeric column
         query = "age above 50"
-        semantic_layer = MagicMock()
+        semantic_layer = MagicMock(
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_base_view",
+                "get_column_alias_index",
+                "get_column_metadata",
+            ]
+        )
         # Mock get_base_view() to return a view with columns
-        mock_view = MagicMock()
+        mock_view = MagicMock(spec=["columns"])
         mock_view.columns = ["age", "bmi", "treatment_group"]
         semantic_layer.get_base_view.return_value = mock_view
         semantic_layer.get_column_alias_index.return_value = {

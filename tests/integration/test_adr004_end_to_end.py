@@ -202,7 +202,9 @@ class TestADR004EndToEnd:
         # Create mock semantic layer for question generation (simplified for integration test)
         from unittest.mock import MagicMock
 
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+        )
         mock_semantic_layer.get_column_alias_index.return_value = {
             "patient_id": "patient_id",
             "age": "age",

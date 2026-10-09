@@ -8,6 +8,7 @@ The validator uses a non-blocking philosophy:
 """
 
 import polars as pl
+import pytest
 
 
 class TestDataQualityValidatorComplete:
@@ -185,8 +186,8 @@ class TestVariableTypeDetector:
 
         assert variable_info["outcome"]["type"] == "binary"
 
-    def test_detect_continuous(self):
-        """Test that high-cardinality numeric with nulls is detected as continuous."""
+    def test_detect_all_variables_high_cardinality_with_nulls_returns_continuous(self):
+        """DataFrame-level detection marks high-cardinality numeric columns continuous."""
         from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
 
         # Add more rows and some nulls so uniqueness < 95%
@@ -226,6 +227,13 @@ class TestVariableTypeDetector:
 
 class TestEnsurePolars:
     """Tests for _ensure_polars conversion function."""
+
+    def test_ensure_polars_rejects_non_dataframe(self):
+        """Values that are not frames are not converted."""
+        from clinical_analytics.ui.components.data_validator import _ensure_polars
+
+        with pytest.raises(Exception):
+            _ensure_polars(None)
 
     def test_ensure_polars_with_polars_dataframe(self):
         """Test that Polars DataFrames pass through unchanged."""

@@ -6,12 +6,19 @@ Tests that vectorized operations are used instead of apply(lambda).
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from clinical_analytics.analysis.stats import run_logistic_regression
 
 
 class TestVectorizedOperations:
     """Test that vectorized operations are used in stats calculations."""
+
+    def test_run_logistic_regression_all_null_rows_raises(self):
+        """Logistic regression rejects a frame that is empty after nulls are dropped."""
+        df = pd.DataFrame({"outcome": [None, None], "predictor": [None, None]})
+        with pytest.raises(ValueError, match="No data remaining after dropping nulls"):
+            run_logistic_regression(df, outcome_col="outcome", predictors=["predictor"])
 
     def test_odds_ratio_calculation_uses_vectorized_operations(self):
         """Test that odds ratio calculation uses np.exp directly, not apply(lambda)."""

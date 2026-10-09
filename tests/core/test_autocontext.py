@@ -286,6 +286,13 @@ class TestBuildAutoContext:
 class TestEstimateTokens:
     """Test suite for _estimate_tokens() function."""
 
+    def test_estimate_tokens_rejects_none(self):
+        """Token estimation does not accept a missing string."""
+        from clinical_analytics.core.autocontext import _estimate_tokens
+
+        with pytest.raises(TypeError):
+            _estimate_tokens(None)
+
     def test_estimate_tokens_accuracy_with_tiktoken(self):
         """Test token estimation accuracy using tiktoken."""
         # Arrange: tiktoken downloads its encoding on first use; skip when it cannot be loaded

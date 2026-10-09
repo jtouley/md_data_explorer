@@ -25,7 +25,7 @@ class TestPluginHelpers:
     def test_plugin_is_tracking_enabled_with_flag(self):
         """Test that tracking is enabled when --track-performance flag is set."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["getoption"])
         mock_config.getoption.return_value = True
 
         # Act
@@ -38,7 +38,7 @@ class TestPluginHelpers:
     def test_plugin_is_tracking_enabled_without_flag(self):
         """Test that tracking is disabled when --track-performance flag is not set."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["getoption"])
         mock_config.getoption.return_value = False
 
         # Act
@@ -50,7 +50,7 @@ class TestPluginHelpers:
     def test_plugin_should_exclude_test_excludes_performance_tests(self):
         """Test that performance system tests are excluded from tracking."""
         # Arrange
-        mock_item = MagicMock()
+        mock_item = MagicMock(spec=["nodeid"])
         mock_item.nodeid = "tests/performance/test_plugin.py::test_example"
 
         # Act
@@ -62,7 +62,7 @@ class TestPluginHelpers:
     def test_plugin_should_exclude_test_includes_other_tests(self):
         """Test that non-performance tests are not excluded."""
         # Arrange
-        mock_item = MagicMock()
+        mock_item = MagicMock(spec=["nodeid"])
         mock_item.nodeid = "tests/core/test_example.py::test_example"
 
         # Act
@@ -74,7 +74,7 @@ class TestPluginHelpers:
     def test_plugin_get_worker_id_returns_worker_id(self):
         """Test that worker ID is extracted correctly."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["workerinput"])
         mock_config.workerinput = {"workerid": "gw1"}
 
         # Act
@@ -86,7 +86,7 @@ class TestPluginHelpers:
     def test_plugin_get_worker_id_returns_master_when_no_worker(self):
         """Test that master is returned when not in worker process."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["workerinput"])
         mock_config.workerinput = None
 
         # Act
@@ -98,7 +98,7 @@ class TestPluginHelpers:
     def test_plugin_is_worker_process_returns_true_for_worker(self):
         """Test that worker process is detected correctly."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["workerinput"])
         mock_config.workerinput = {"workerid": "gw1"}
 
         # Act
@@ -110,7 +110,7 @@ class TestPluginHelpers:
     def test_plugin_is_worker_process_returns_false_for_master(self):
         """Test that master process is detected correctly."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["workerinput"])
         mock_config.workerinput = None
 
         # Act
@@ -122,7 +122,7 @@ class TestPluginHelpers:
     def test_plugin_get_performance_data_file_returns_correct_path(self):
         """Test that performance data file path is correct."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["rootdir"])
         mock_config.rootdir = Path("/test/project")
 
         # Act
@@ -134,7 +134,7 @@ class TestPluginHelpers:
     def test_plugin_get_worker_file_returns_correct_path(self):
         """Test that worker file path is correct."""
         # Arrange
-        mock_config = MagicMock()
+        mock_config = MagicMock(spec=["rootdir"])
         mock_config.rootdir = Path("/test/project")
         worker_id = "gw1"
 

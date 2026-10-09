@@ -24,7 +24,7 @@ class TestDatasetSwitching:
             "last_dataset_choice": "dataset_a",
         }
 
-        with patch("streamlit.session_state", session_state):
+        with patch("streamlit.session_state", session_state, spec=True):
             # Simulate dataset change
             current_dataset = "dataset_b"
             if "last_dataset_choice" not in session_state:
@@ -54,7 +54,7 @@ class TestDatasetSwitching:
         }
         session_state["analysis_context"].inferred_intent = AnalysisIntent.COUNT
 
-        with patch("streamlit.session_state", session_state):
+        with patch("streamlit.session_state", session_state, spec=True):
             # Simulate dataset change
             current_dataset = "dataset_b"
             if "last_dataset_choice" not in session_state:
@@ -86,7 +86,7 @@ class TestDatasetSwitching:
                 "last_dataset_choice": dataset_a,
             }
 
-            with patch("streamlit.session_state", session_state):
+            with patch("streamlit.session_state", session_state, spec=True):
                 # Simulate switching from dataset_a to dataset_b
                 current_dataset = dataset_b
                 if "last_dataset_choice" not in session_state:
@@ -120,7 +120,7 @@ class TestDatasetSwitching:
             "last_dataset_choice": "dataset_a",
         }
 
-        with patch("streamlit.session_state", session_state):
+        with patch("streamlit.session_state", session_state, spec=True):
             # Simulate selecting same dataset
             current_dataset = "dataset_a"
             if "last_dataset_choice" not in session_state:
