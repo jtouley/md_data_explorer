@@ -34,6 +34,20 @@ from clinical_analytics.core.query_plan import generate_chart_spec
 logger = logging.getLogger(__name__)
 
 
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _sql_literal(value: Any) -> str:
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if value is None:
+        return "NULL"
+    return str(value)
+
+
 class TypeValidationError(Exception):
     """
     Exception raised when filter type validation fails.
@@ -2027,12 +2041,8 @@ class SemanticLayer:
                     "valid": False,
                     "error": "scope='filtered' requires filters, but no filters provided.",
                 }
-            # Require entity_key or group_by for COUNT
-            if not plan.entity_key and not plan.group_by:
-                return {
-                    "valid": False,
-                    "error": "COUNT intent requires entity_key or group_by. Please specify what to count.",
-                }
+            # A COUNT with neither entity_key nor group_by is a row count.
+            # Completeness still warns; execution is allowed.
 
         # Breakdown validation
         if plan.group_by:
@@ -2277,11 +2287,93 @@ class SemanticLayer:
             if filter_spec.exclude_nulls:
                 view = view.filter(~col_expr.isnull())
 
+        for step in plan.cohort_steps:
+            view = self._apply_cohort_step(view, step)
+
         return view
+
+    def _apply_cohort_step(self, view: Any, step: Any) -> Any:
+        """Apply one cohort restriction. Cutoffs run in DuckDB so they match the SQL oracle."""
+        column = step.column
+        if column not in view.columns:
+            logger.warning(f"Cohort column '{column}' not found in view, skipping step")
+            return view
+        if step.op == "eq":
+            return self._filter_equal(view, column, step.value)
+        if step.op == "gt":
+            return view.filter(view[column].cast("float64") > float(step.value))
+        if step.op == "lt":
+            return view.filter(view[column].cast("float64") < float(step.value))
+        if step.op == "not_null":
+            return view.filter(view[column].notnull())
+        if step.op == "gt_median":
+            sql = (
+                "WITH cut AS (SELECT median({col}) AS m FROM _cohort_in) "
+                "SELECT i.* FROM _cohort_in i, cut WHERE i.{col} > cut.m"
+            )
+            return self._cohort_sql(view, sql, column)
+        if step.op == "ge_percent_rank":
+            quantile = 0.9 if step.quantile is None else step.quantile
+            sql = (
+                "WITH cut AS (SELECT quantile_cont({col}, " + str(quantile) + ") AS q FROM _cohort_in) "
+                "SELECT i.* FROM _cohort_in i, cut WHERE i.{col} >= cut.q"
+            )
+            return self._cohort_sql(view, sql, column)
+        logger.warning(f"Unsupported cohort op: {step.op}")
+        return view
+
+    def _filter_equal(self, view: Any, column: str, value: Any) -> Any:
+        if isinstance(value, bool) or value is None or isinstance(value, str):
+            return view.filter(view[column] == value)
+        return view.filter(view[column].cast("float64") == float(value))
+
+    def _cohort_sql(self, view: Any, sql_template: str, column: str) -> Any:
+        quoted = '"' + column.replace('"', '""') + '"'
+        frame = view.execute()
+        raw = self.con.con
+        raw.register("_cohort_in", frame)
+        try:
+            raw.execute("DROP TABLE IF EXISTS _cohort_out")
+            raw.execute("CREATE TEMP TABLE _cohort_out AS " + sql_template.format(col=quoted))
+        finally:
+            raw.unregister("_cohort_in")
+        return self.con.table("_cohort_out")
+
+    def _duck_aggregate(self, view: Any, sql: str) -> Any:
+        frame = view.execute()
+        raw = self.con.con
+        raw.register("_cohort_in", frame)
+        try:
+            return raw.execute(sql).df()
+        finally:
+            raw.unregister("_cohort_in")
 
     def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame:
         """Execute QueryPlan and return results DataFrame."""
         view = self._filtered_view(plan)
+
+        if plan.proportion_column:
+            column = _quote_ident(plan.proportion_column)
+            literal = _sql_literal(plan.proportion_value)
+            return self._duck_aggregate(
+                view,
+                f"SELECT avg(CASE WHEN {column} = {literal} THEN 1.0 ELSE 0.0 END) AS proportion FROM _cohort_in",
+            )
+        if plan.rate_column and plan.group_by:
+            group = _quote_ident(plan.group_by)
+            column = _quote_ident(plan.rate_column)
+            literal = _sql_literal(plan.rate_value)
+            return self._duck_aggregate(
+                view,
+                f"SELECT {group}, avg(CASE WHEN {column} = {literal} THEN 1.0 ELSE 0.0 END) AS rate "
+                f"FROM _cohort_in GROUP BY 1",
+            )
+        if plan.intent == "CORRELATIONS" and plan.metric and plan.group_by:
+            if self._column_is_string(view, plan.metric) or self._column_is_string(view, plan.group_by):
+                raise TypeError(f"Correlation requires numeric columns, got {plan.metric} and {plan.group_by}")
+            left = _quote_ident(plan.metric)
+            right = _quote_ident(plan.group_by)
+            return self._duck_aggregate(view, f"SELECT corr({left}, {right}) AS corr FROM _cohort_in")
 
         # Execute based on intent
         if plan.intent == "COUNT":
@@ -2297,7 +2389,10 @@ class SemanticLayer:
                 result = view.count()
         elif plan.intent == "DESCRIBE":
             # DESCRIBE: Type-aware aggregation
-            if plan.metric:
+            if plan.metric and plan.group_by:
+                metric_col = view[plan.metric]
+                result = view.group_by(plan.group_by).aggregate(metric_col.mean().name("mean"))
+            elif plan.metric:
                 # Detect if categorical or numeric
                 is_categorical = self._detect_categorical_encoding(view[plan.metric])
                 if is_categorical:
@@ -2317,12 +2412,37 @@ class SemanticLayer:
                     )
             else:
                 result = view
+        elif plan.intent == "COMPARE_GROUPS" and plan.metric and plan.group_by:
+            if self._column_is_string(view, plan.metric):
+                group = _quote_ident(plan.group_by)
+                metric = _quote_ident(plan.metric)
+                return self._duck_aggregate(
+                    view,
+                    f"SELECT {group}, {metric}, count(*) AS n FROM _cohort_in GROUP BY 1, 2",
+                )
+            metric_col = view[plan.metric]
+            result = view.group_by(plan.group_by).aggregate(
+                [
+                    metric_col.mean().name("mean"),
+                    _.count().name("n"),
+                ]
+            )
         else:
             # Other intents: return base view for now
             result = view
 
         _log_ibis_sql_and_optional_explain(result, self.con.con)
         return result.execute()
+
+    def _column_is_string(self, view: Any, column: str) -> bool:
+        sample = view.select(column).limit(1).execute()
+        if len(sample) == 0:
+            return False
+        if hasattr(sample, "schema"):
+            dtype = str(sample.schema[column]).lower()
+        else:
+            dtype = str(sample[column].dtype).lower()
+        return any(token in dtype for token in ("object", "string", "utf", "str"))
 
     def _detect_categorical_encoding(self, column: Any) -> bool:
         """

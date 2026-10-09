@@ -1,0 +1,741 @@
+dataset_id: dexa
+questions:
+- id: dexa_001
+  dataset_id: dexa
+  query: what is the average age?
+  kind: stat
+  metric: Age
+  stat: average
+  expected: 61.24766355140187
+- id: dexa_002
+  dataset_id: dexa
+  query: what is the average of age?
+  kind: stat
+  metric: Age
+  stat: average
+  expected: 61.24766355140187
+- id: dexa_003
+  dataset_id: dexa
+  query: average age?
+  kind: stat
+  metric: Age
+  stat: average
+  expected: 61.24766355140187
+- id: dexa_004
+  dataset_id: dexa
+  query: what is the average had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: average
+  expected: 1.7955346650998825
+- id: dexa_005
+  dataset_id: dexa
+  query: what is the average of had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: average
+  expected: 1.7955346650998825
+- id: dexa_006
+  dataset_id: dexa
+  query: average had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: average
+  expected: 1.7955346650998825
+- id: dexa_007
+  dataset_id: dexa
+  query: what is the average results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: average
+  expected: 1.8333333333333333
+- id: dexa_008
+  dataset_id: dexa
+  query: what is the average of results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: average
+  expected: 1.8333333333333333
+- id: dexa_009
+  dataset_id: dexa
+  query: average results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: average
+  expected: 1.8333333333333333
+- id: dexa_010
+  dataset_id: dexa
+  query: what is the average cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: average
+  expected: 700.8994082840237
+- id: dexa_011
+  dataset_id: dexa
+  query: what is the average of cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: average
+  expected: 700.8994082840237
+- id: dexa_012
+  dataset_id: dexa
+  query: average cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: average
+  expected: 700.8994082840237
+- id: dexa_013
+  dataset_id: dexa
+  query: what is the average prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: average
+  expected: 1.3735224586288417
+- id: dexa_014
+  dataset_id: dexa
+  query: what is the average of prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: average
+  expected: 1.3735224586288417
+- id: dexa_015
+  dataset_id: dexa
+  query: average prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: average
+  expected: 1.3735224586288417
+- id: dexa_016
+  dataset_id: dexa
+  query: what is the mean age?
+  kind: stat
+  metric: Age
+  stat: mean
+  expected: 61.24766355140187
+- id: dexa_017
+  dataset_id: dexa
+  query: what is the mean of age?
+  kind: stat
+  metric: Age
+  stat: mean
+  expected: 61.24766355140187
+- id: dexa_018
+  dataset_id: dexa
+  query: mean age?
+  kind: stat
+  metric: Age
+  stat: mean
+  expected: 61.24766355140187
+- id: dexa_019
+  dataset_id: dexa
+  query: what is the mean had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: mean
+  expected: 1.7955346650998825
+- id: dexa_020
+  dataset_id: dexa
+  query: what is the mean of had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: mean
+  expected: 1.7955346650998825
+- id: dexa_021
+  dataset_id: dexa
+  query: mean had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: mean
+  expected: 1.7955346650998825
+- id: dexa_022
+  dataset_id: dexa
+  query: what is the mean results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: mean
+  expected: 1.8333333333333333
+- id: dexa_023
+  dataset_id: dexa
+  query: what is the mean of results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: mean
+  expected: 1.8333333333333333
+- id: dexa_024
+  dataset_id: dexa
+  query: mean results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: mean
+  expected: 1.8333333333333333
+- id: dexa_025
+  dataset_id: dexa
+  query: what is the mean cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: mean
+  expected: 700.8994082840237
+- id: dexa_026
+  dataset_id: dexa
+  query: what is the mean of cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: mean
+  expected: 700.8994082840237
+- id: dexa_027
+  dataset_id: dexa
+  query: mean cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: mean
+  expected: 700.8994082840237
+- id: dexa_028
+  dataset_id: dexa
+  query: what is the mean prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: mean
+  expected: 1.3735224586288417
+- id: dexa_029
+  dataset_id: dexa
+  query: what is the mean of prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: mean
+  expected: 1.3735224586288417
+- id: dexa_030
+  dataset_id: dexa
+  query: mean prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: mean
+  expected: 1.3735224586288417
+- id: dexa_031
+  dataset_id: dexa
+  query: what is the median age?
+  kind: stat
+  metric: Age
+  stat: median
+  expected: 61.0
+- id: dexa_032
+  dataset_id: dexa
+  query: what is the median of age?
+  kind: stat
+  metric: Age
+  stat: median
+  expected: 61.0
+- id: dexa_033
+  dataset_id: dexa
+  query: median age?
+  kind: stat
+  metric: Age
+  stat: median
+  expected: 61.0
+- id: dexa_034
+  dataset_id: dexa
+  query: what is the median had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: median
+  expected: 2.0
+- id: dexa_035
+  dataset_id: dexa
+  query: what is the median of had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: median
+  expected: 2.0
+- id: dexa_036
+  dataset_id: dexa
+  query: median had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: median
+  expected: 2.0
+- id: dexa_037
+  dataset_id: dexa
+  query: what is the median results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: median
+  expected: 2.0
+- id: dexa_038
+  dataset_id: dexa
+  query: what is the median of results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: median
+  expected: 2.0
+- id: dexa_039
+  dataset_id: dexa
+  query: median results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: median
+  expected: 2.0
+- id: dexa_040
+  dataset_id: dexa
+  query: what is the median cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: median
+  expected: 656.0
+- id: dexa_041
+  dataset_id: dexa
+  query: what is the median of cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: median
+  expected: 656.0
+- id: dexa_042
+  dataset_id: dexa
+  query: median cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: median
+  expected: 656.0
+- id: dexa_043
+  dataset_id: dexa
+  query: what is the median prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: median
+  expected: 1.0
+- id: dexa_044
+  dataset_id: dexa
+  query: what is the median of prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: median
+  expected: 1.0
+- id: dexa_045
+  dataset_id: dexa
+  query: median prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: median
+  expected: 1.0
+- id: dexa_046
+  dataset_id: dexa
+  query: what is the minimum age?
+  kind: stat
+  metric: Age
+  stat: minimum
+  expected: 50.0
+- id: dexa_047
+  dataset_id: dexa
+  query: what is the minimum of age?
+  kind: stat
+  metric: Age
+  stat: minimum
+  expected: 50.0
+- id: dexa_048
+  dataset_id: dexa
+  query: minimum age?
+  kind: stat
+  metric: Age
+  stat: minimum
+  expected: 50.0
+- id: dexa_049
+  dataset_id: dexa
+  query: what is the minimum had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: minimum
+  expected: 1.0
+- id: dexa_050
+  dataset_id: dexa
+  query: what is the minimum of had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: minimum
+  expected: 1.0
+- id: dexa_051
+  dataset_id: dexa
+  query: minimum had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: minimum
+  expected: 1.0
+- id: dexa_052
+  dataset_id: dexa
+  query: what is the minimum results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: minimum
+  expected: 1.0
+- id: dexa_053
+  dataset_id: dexa
+  query: what is the minimum of results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: minimum
+  expected: 1.0
+- id: dexa_054
+  dataset_id: dexa
+  query: minimum results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: minimum
+  expected: 1.0
+- id: dexa_055
+  dataset_id: dexa
+  query: what is the minimum cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: minimum
+  expected: 44.0
+- id: dexa_056
+  dataset_id: dexa
+  query: what is the minimum of cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: minimum
+  expected: 44.0
+- id: dexa_057
+  dataset_id: dexa
+  query: minimum cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: minimum
+  expected: 44.0
+- id: dexa_058
+  dataset_id: dexa
+  query: what is the minimum prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: minimum
+  expected: 1.0
+- id: dexa_059
+  dataset_id: dexa
+  query: what is the minimum of prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: minimum
+  expected: 1.0
+- id: dexa_060
+  dataset_id: dexa
+  query: minimum prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: minimum
+  expected: 1.0
+- id: dexa_061
+  dataset_id: dexa
+  query: what is the maximum age?
+  kind: stat
+  metric: Age
+  stat: maximum
+  expected: 84.0
+- id: dexa_062
+  dataset_id: dexa
+  query: what is the maximum of age?
+  kind: stat
+  metric: Age
+  stat: maximum
+  expected: 84.0
+- id: dexa_063
+  dataset_id: dexa
+  query: maximum age?
+  kind: stat
+  metric: Age
+  stat: maximum
+  expected: 84.0
+- id: dexa_064
+  dataset_id: dexa
+  query: what is the maximum had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: maximum
+  expected: 2.0
+- id: dexa_065
+  dataset_id: dexa
+  query: what is the maximum of had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: maximum
+  expected: 2.0
+- id: dexa_066
+  dataset_id: dexa
+  query: maximum had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: maximum
+  expected: 2.0
+- id: dexa_067
+  dataset_id: dexa
+  query: what is the maximum results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: maximum
+  expected: 3.0
+- id: dexa_068
+  dataset_id: dexa
+  query: what is the maximum of results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: maximum
+  expected: 3.0
+- id: dexa_069
+  dataset_id: dexa
+  query: maximum results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: maximum
+  expected: 3.0
+- id: dexa_070
+  dataset_id: dexa
+  query: what is the maximum cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: maximum
+  expected: 2098.0
+- id: dexa_071
+  dataset_id: dexa
+  query: what is the maximum of cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: maximum
+  expected: 2098.0
+- id: dexa_072
+  dataset_id: dexa
+  query: maximum cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: maximum
+  expected: 2098.0
+- id: dexa_073
+  dataset_id: dexa
+  query: what is the maximum prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: maximum
+  expected: 3.0
+- id: dexa_074
+  dataset_id: dexa
+  query: what is the maximum of prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: maximum
+  expected: 3.0
+- id: dexa_075
+  dataset_id: dexa
+  query: maximum prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: maximum
+  expected: 3.0
+- id: dexa_076
+  dataset_id: dexa
+  query: what is the min age?
+  kind: stat
+  metric: Age
+  stat: min
+  expected: 50.0
+- id: dexa_077
+  dataset_id: dexa
+  query: what is the min of age?
+  kind: stat
+  metric: Age
+  stat: min
+  expected: 50.0
+- id: dexa_078
+  dataset_id: dexa
+  query: min age?
+  kind: stat
+  metric: Age
+  stat: min
+  expected: 50.0
+- id: dexa_079
+  dataset_id: dexa
+  query: what is the min had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: min
+  expected: 1.0
+- id: dexa_080
+  dataset_id: dexa
+  query: what is the min of had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: min
+  expected: 1.0
+- id: dexa_081
+  dataset_id: dexa
+  query: min had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: min
+  expected: 1.0
+- id: dexa_082
+  dataset_id: dexa
+  query: what is the min results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: min
+  expected: 1.0
+- id: dexa_083
+  dataset_id: dexa
+  query: what is the min of results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: min
+  expected: 1.0
+- id: dexa_084
+  dataset_id: dexa
+  query: min results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: min
+  expected: 1.0
+- id: dexa_085
+  dataset_id: dexa
+  query: what is the min cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: min
+  expected: 44.0
+- id: dexa_086
+  dataset_id: dexa
+  query: what is the min of cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: min
+  expected: 44.0
+- id: dexa_087
+  dataset_id: dexa
+  query: min cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: min
+  expected: 44.0
+- id: dexa_088
+  dataset_id: dexa
+  query: what is the min prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: min
+  expected: 1.0
+- id: dexa_089
+  dataset_id: dexa
+  query: what is the min of prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: min
+  expected: 1.0
+- id: dexa_090
+  dataset_id: dexa
+  query: min prior tenofovir tdf use 1 yes 2 no 3 unknown?
+  kind: stat
+  metric: 'Prior Tenofovir TDF) use?                          1: Yes    2: No           3:
+    Unknown'
+  stat: min
+  expected: 1.0
+- id: dexa_091
+  dataset_id: dexa
+  query: what is the max age?
+  kind: stat
+  metric: Age
+  stat: max
+  expected: 84.0
+- id: dexa_092
+  dataset_id: dexa
+  query: what is the max of age?
+  kind: stat
+  metric: Age
+  stat: max
+  expected: 84.0
+- id: dexa_093
+  dataset_id: dexa
+  query: max age?
+  kind: stat
+  metric: Age
+  stat: max
+  expected: 84.0
+- id: dexa_094
+  dataset_id: dexa
+  query: what is the max had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: max
+  expected: 2.0
+- id: dexa_095
+  dataset_id: dexa
+  query: what is the max of had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: max
+  expected: 2.0
+- id: dexa_096
+  dataset_id: dexa
+  query: max had dexa scan yes 1 no 2?
+  kind: stat
+  metric: 'Had DEXA Scan?            Yes: 1 No: 2'
+  stat: max
+  expected: 2.0
+- id: dexa_097
+  dataset_id: dexa
+  query: what is the max results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: max
+  expected: 3.0
+- id: dexa_098
+  dataset_id: dexa
+  query: what is the max of results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: max
+  expected: 3.0
+- id: dexa_099
+  dataset_id: dexa
+  query: max results of dexa 1 normal 2 osteopenia 3 osteoporosis?
+  kind: stat
+  metric: 'Results of DEXA?  1: Normal                  2: Osteopenia                 3:
+    Osteoporosis'
+  stat: max
+  expected: 3.0
+- id: dexa_100
+  dataset_id: dexa
+  query: what is the max cd4 count?
+  kind: stat
+  metric: CD4 Count
+  stat: max
+  expected: 2098.0
