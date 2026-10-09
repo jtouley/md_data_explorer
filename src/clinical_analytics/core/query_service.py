@@ -151,7 +151,7 @@ class QueryService:
         result = None
         if validation_result.get("valid", False):
             try:
-                execution_result = self.semantic_layer.execute_query_plan(query_plan)
+                execution_result = self.semantic_layer.execute_query_plan(query_plan, query_text=normalized_query)
                 result = execution_result
                 if isinstance(execution_result, dict) and execution_result.get("success") is False:
                     warnings = execution_result.get("warnings") or ["Execution failed"]
