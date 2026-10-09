@@ -26,7 +26,7 @@ class TestVariableTypeDetector:
         assert var_type == "binary"
         assert metadata["unique_count"] == 2
 
-    def test_detect_binary_1_0(self):
+    def test_detect_variable_type_zero_one_codes_are_binary(self):
         """Test detecting binary variable with 1/0 values."""
         series = pl.Series("status", [1, 0, 1, 0, 1])
         var_type, metadata = VariableTypeDetector.detect_variable_type(series, "status")
@@ -48,8 +48,8 @@ class TestVariableTypeDetector:
         assert var_type == "categorical"
         assert metadata["unique_count"] == 3
 
-    def test_detect_continuous(self):
-        """Test detecting continuous variable (high cardinality numeric)."""
+    def test_detect_variable_type_high_cardinality_numeric_returns_continuous(self):
+        """Series-level detection marks high-cardinality numeric values continuous."""
         # Needs >20 unique values to be continuous, and some nulls to not be identifier
         values = [1.5 + i * 0.1 for i in range(30)]
         values[5] = None  # Add null so not 100% unique

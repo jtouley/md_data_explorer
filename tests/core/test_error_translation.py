@@ -31,7 +31,7 @@ class TestTranslateErrorWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result, spec=True):
             friendly_message = translate_error_with_llm(technical_error)
 
         # Assert
@@ -50,7 +50,7 @@ class TestTranslateErrorWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result, spec=True):
             friendly_message = translate_error_with_llm(technical_error)
 
         # Assert
@@ -69,7 +69,7 @@ class TestTranslateErrorWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result, spec=True):
             friendly_message = translate_error_with_llm(technical_error)
 
         # Assert
@@ -88,7 +88,7 @@ class TestTranslateErrorWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result, spec=True):
             friendly_message = translate_error_with_llm(technical_error)
 
         # Assert
@@ -107,7 +107,9 @@ class TestTranslateErrorWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result) as mock_call:
+        with patch(
+            "clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result, spec=True
+        ) as mock_call:
             translate_error_with_llm(technical_error)
 
         # Assert
@@ -128,7 +130,9 @@ class TestTranslateErrorWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result) as mock_call:
+        with patch(
+            "clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result, spec=True
+        ) as mock_call:
             translate_error_with_llm(technical_error)
 
         # Assert
@@ -150,7 +154,7 @@ class TestTranslateErrorWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.error_translation.call_llm", return_value=mock_llm_result, spec=True):
             friendly_message = translate_error_with_llm(technical_error)
 
         # Assert

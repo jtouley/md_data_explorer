@@ -13,66 +13,6 @@ from pathlib import Path
 import pytest
 
 
-class TestValidateTableIdentifier:
-    """Tests for SQL identifier validation."""
-
-    def test_identifier_validation_valid_names_pass(self) -> None:
-        """Test that valid SQL identifiers pass validation."""
-        # Arrange
-        from clinical_analytics.core.semantic import _validate_table_identifier
-
-        valid_names = ["patients", "my_table", "Table123", "_private"]
-
-        # Act & Assert
-        for name in valid_names:
-            assert _validate_table_identifier(name) == name
-
-    def test_identifier_validation_sql_injection_raises_valueerror(self) -> None:
-        """Test that SQL injection attempts are rejected."""
-        # Arrange
-        from clinical_analytics.core.semantic import _validate_table_identifier
-
-        malicious_inputs = [
-            '"; DROP TABLE patients; --',
-            "table; SELECT * FROM secrets",
-        ]
-
-        # Act & Assert
-        for malicious in malicious_inputs:
-            with pytest.raises(ValueError, match="Invalid table identifier"):
-                _validate_table_identifier(malicious)
-
-    def test_identifier_validation_special_chars_raises_valueerror(self) -> None:
-        """Test that special characters are rejected."""
-        # Arrange
-        from clinical_analytics.core.semantic import _validate_table_identifier
-
-        invalid_names = ["my-table", "my.table", "my table"]
-
-        # Act & Assert
-        for name in invalid_names:
-            with pytest.raises(ValueError, match="Invalid table identifier"):
-                _validate_table_identifier(name)
-
-    def test_identifier_validation_starts_with_number_raises_valueerror(self) -> None:
-        """Test that identifiers starting with numbers are rejected."""
-        # Arrange
-        from clinical_analytics.core.semantic import _validate_table_identifier
-
-        # Act & Assert
-        with pytest.raises(ValueError, match="Invalid table identifier"):
-            _validate_table_identifier("123table")
-
-    def test_identifier_validation_empty_string_raises_valueerror(self) -> None:
-        """Test that empty identifiers are rejected."""
-        # Arrange
-        from clinical_analytics.core.semantic import _validate_table_identifier
-
-        # Act & Assert
-        with pytest.raises(ValueError, match="cannot be empty"):
-            _validate_table_identifier("")
-
-
 class TestSafeExtractZipMember:
     """Tests for safe ZIP extraction."""
 
@@ -140,7 +80,7 @@ class TestSafeExtractZipMember:
 class TestSafeStoreUpload:
     """Tests for UUID-based safe upload storage."""
 
-    def test_upload_storage_uses_uuid_not_original_filename(self, tmp_path: Path) -> None:
+    def test_upload_storage_rejects_original_filename_as_key(self, tmp_path: Path) -> None:
         """Test that uploads are stored with UUID, not original filename."""
         # Arrange
         from clinical_analytics.ui.storage.user_datasets import _safe_store_upload

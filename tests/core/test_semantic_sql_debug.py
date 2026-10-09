@@ -14,8 +14,8 @@ class TestMddeSqlDebugHelper:
 
     def test_mdde_sql_debug_off_no_compile_no_explain(self) -> None:
         """When MDDE_SQL_DEBUG unset or 0, helper returns without compile or DuckDB calls."""
-        mock_expr = MagicMock()
-        mock_con = MagicMock()
+        mock_expr = MagicMock(spec=["compile"])
+        mock_con = MagicMock(spec=["execute"])
 
         with patch.dict(os.environ, {}, clear=True):
             semantic_mod._log_ibis_sql_and_optional_explain(mock_expr, mock_con)
@@ -30,9 +30,9 @@ class TestMddeSqlDebugHelper:
 
     def test_mdde_sql_debug_1_logs_compile_no_explain(self, caplog: pytest.LogCaptureFixture) -> None:
         """MDDE_SQL_DEBUG=1 compiles SQL and logs sql_chars; does not run EXPLAIN ANALYZE."""
-        mock_expr = MagicMock()
+        mock_expr = MagicMock(spec=["compile"])
         mock_expr.compile.return_value = "SELECT 1 AS x"
-        mock_con = MagicMock()
+        mock_con = MagicMock(spec=["execute"])
 
         with patch.dict(os.environ, {"MDDE_SQL_DEBUG": "1"}):
             with caplog.at_level(logging.INFO):
@@ -45,9 +45,9 @@ class TestMddeSqlDebugHelper:
 
     def test_mdde_sql_debug_analyze_runs_explain(self) -> None:
         """MDDE_SQL_DEBUG=analyze runs DuckDB EXPLAIN ANALYZE on compiled SQL."""
-        mock_expr = MagicMock()
+        mock_expr = MagicMock(spec=["compile"])
         mock_expr.compile.return_value = "SELECT 1"
-        mock_con = MagicMock()
+        mock_con = MagicMock(spec=["execute"])
 
         with patch.dict(os.environ, {"MDDE_SQL_DEBUG": "analyze"}):
             semantic_mod._log_ibis_sql_and_optional_explain(mock_expr, mock_con)
@@ -61,7 +61,7 @@ class TestMddeSqlDebugHelper:
     def test_mdde_sql_log_max_chars_truncates(self, caplog: pytest.LogCaptureFixture) -> None:
         """MDDE_SQL_LOG_MAX_CHARS truncates logged SQL preview."""
         long_sql = "x" * 100
-        mock_expr = MagicMock()
+        mock_expr = MagicMock(spec=["compile"])
         mock_expr.compile.return_value = long_sql
         mock_con = MagicMock()
 
@@ -74,8 +74,8 @@ class TestMddeSqlDebugHelper:
 
     def test_mdde_sql_debug_unknown_value_is_off(self, caplog: pytest.LogCaptureFixture) -> None:
         """Non-allowlisted MDDE_SQL_DEBUG (e.g. true) does not compile or call DuckDB."""
-        mock_expr = MagicMock()
-        mock_con = MagicMock()
+        mock_expr = MagicMock(spec=["compile"])
+        mock_con = MagicMock(spec=["execute"])
 
         with patch.dict(os.environ, {"MDDE_SQL_DEBUG": "true"}):
             with caplog.at_level(logging.WARNING):
@@ -87,9 +87,9 @@ class TestMddeSqlDebugHelper:
 
     def test_mdde_sql_debug_analyse_alias_runs_explain(self) -> None:
         """British spelling analyse is accepted as analyze."""
-        mock_expr = MagicMock()
+        mock_expr = MagicMock(spec=["compile"])
         mock_expr.compile.return_value = "SELECT 1"
-        mock_con = MagicMock()
+        mock_con = MagicMock(spec=["execute"])
 
         with patch.dict(os.environ, {"MDDE_SQL_DEBUG": "analyse"}):
             semantic_mod._log_ibis_sql_and_optional_explain(mock_expr, mock_con)

@@ -113,7 +113,9 @@ class TestChatInputHandling:
         from unittest.mock import MagicMock
 
         query = "what is the average age"
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+        )
         mock_semantic_layer.get_column_alias_index.return_value = {"age": "age"}
 
         # Act: Parse query (simulating chat_input flow)
@@ -158,7 +160,9 @@ class TestChatInputHandling:
 
         query = "how many patients on statins"
         dataset_version = "dataset_v1"
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+        )
         mock_semantic_layer.get_column_alias_index.return_value = {
             "statin_prescribed": "Statin Prescribed? 1: Yes 2: No"
         }
@@ -349,7 +353,9 @@ class TestChatInputHandling:
 
         query = "how many had covid and recovered"
         dataset_version = None  # Missing dataset_version should prevent QueryPlan creation
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+        )
         mock_semantic_layer.get_column_alias_index.return_value = {}
 
         # Act: Parse query and attempt QueryPlan creation (simulating chat input handler logic)

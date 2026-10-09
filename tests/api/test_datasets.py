@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def test_client():
+def api_client():
     """Create FastAPI test client."""
     from clinical_analytics.api.main import app
 
@@ -23,7 +23,7 @@ def test_client():
 @pytest.fixture
 def mock_empty_uploads():
     """Mock UploadedDatasetFactory to return empty list."""
-    with patch("clinical_analytics.api.routes.datasets.UploadedDatasetFactory") as mock_factory:
+    with patch("clinical_analytics.api.routes.datasets.UploadedDatasetFactory", spec=True) as mock_factory:
         mock_factory.list_available_uploads.return_value = []
         yield mock_factory
 
@@ -31,7 +31,7 @@ def mock_empty_uploads():
 @pytest.fixture
 def mock_uploads_with_data():
     """Mock UploadedDatasetFactory to return test datasets."""
-    with patch("clinical_analytics.api.routes.datasets.UploadedDatasetFactory") as mock_factory:
+    with patch("clinical_analytics.api.routes.datasets.UploadedDatasetFactory", spec=True) as mock_factory:
         mock_factory.list_available_uploads.return_value = [
             {
                 "upload_id": "test_upload_001",
@@ -56,10 +56,10 @@ def mock_uploads_with_data():
 class TestDatasetListEndpoint:
     """Tests for GET /api/datasets endpoint."""
 
-    def test_datasets_list_empty_returns_empty_list(self, test_client, mock_empty_uploads):
+    def test_datasets_list_empty_returns_empty_list(self, api_client, mock_empty_uploads):
         """When no datasets exist, return empty list."""
         # Act
-        response = test_client.get("/api/datasets")
+        response = api_client.get("/api/datasets")
 
         # Assert
         assert response.status_code == 200
@@ -67,10 +67,10 @@ class TestDatasetListEndpoint:
         assert data["datasets"] == []
         assert data["total"] == 0
 
-    def test_datasets_list_with_uploads_returns_datasets(self, test_client, mock_uploads_with_data):
+    def test_datasets_list_with_uploads_returns_datasets(self, api_client, mock_uploads_with_data):
         """When datasets exist, return dataset summaries."""
         # Act
-        response = test_client.get("/api/datasets")
+        response = api_client.get("/api/datasets")
 
         # Assert
         assert response.status_code == 200
@@ -89,7 +89,7 @@ class TestDatasetListEndpoint:
 class TestDatasetDetailEndpoint:
     """Tests for GET /api/datasets/{dataset_id} endpoint."""
 
-    def test_datasets_get_existing_returns_detail(self, test_client, mock_uploads_with_data):
+    def test_datasets_get_existing_returns_detail(self, api_client, mock_uploads_with_data):
         """When dataset exists, return full metadata."""
         # Arrange
         mock_uploads_with_data.create_dataset.return_value.get_info.return_value = {
@@ -103,7 +103,7 @@ class TestDatasetDetailEndpoint:
         }
 
         # Act
-        response = test_client.get("/api/datasets/test_upload_001")
+        response = api_client.get("/api/datasets/test_upload_001")
 
         # Assert
         assert response.status_code == 200
@@ -115,13 +115,13 @@ class TestDatasetDetailEndpoint:
         assert "patient_id" in data["schema"]
         assert len(data["tables"]) >= 1
 
-    def test_datasets_get_missing_returns_404(self, test_client, mock_empty_uploads):
+    def test_datasets_get_missing_returns_404(self, api_client, mock_empty_uploads):
         """When dataset doesn't exist, return 404."""
         # Arrange
         mock_empty_uploads.create_dataset.side_effect = ValueError("Upload not_found_id not found")
 
         # Act
-        response = test_client.get("/api/datasets/not_found_id")
+        response = api_client.get("/api/datasets/not_found_id")
 
         # Assert
         assert response.status_code == 404
@@ -132,7 +132,7 @@ class TestDatasetDetailEndpoint:
 class TestDatasetPreviewEndpoint:
     """Tests for GET /api/datasets/{dataset_id}/preview endpoint."""
 
-    def test_datasets_preview_returns_rows(self, test_client, tmp_path):
+    def test_datasets_preview_returns_rows(self, api_client, tmp_path):
         """Preview endpoint returns sample rows."""
         # Arrange: Create mock storage with CSV file
         upload_id = "preview_test_001"
@@ -151,7 +151,7 @@ class TestDatasetPreviewEndpoint:
         df.write_csv(csv_path)
 
         # Mock storage to return metadata and use our upload_dir
-        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_storage_cls:
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage", spec=True) as mock_storage_cls:
             mock_storage = mock_storage_cls.return_value
             mock_storage.get_upload_metadata.return_value = {
                 "upload_id": upload_id,
@@ -160,7 +160,7 @@ class TestDatasetPreviewEndpoint:
             mock_storage.upload_dir = upload_dir
 
             # Act
-            response = test_client.get(f"/api/datasets/{upload_id}/preview")
+            response = api_client.get(f"/api/datasets/{upload_id}/preview")
 
             # Assert
             assert response.status_code == 200
@@ -170,7 +170,7 @@ class TestDatasetPreviewEndpoint:
             assert data["total_rows"] == 3
             assert "patient_id" in data["columns"]
 
-    def test_datasets_preview_respects_limit(self, test_client, tmp_path):
+    def test_datasets_preview_respects_limit(self, api_client, tmp_path):
         """Preview endpoint respects limit parameter."""
         # Arrange: Create dataset with many rows
         upload_id = "limit_test_001"
@@ -186,7 +186,7 @@ class TestDatasetPreviewEndpoint:
         csv_path = upload_dir / f"{upload_id}_unified_cohort.csv"
         df.write_csv(csv_path)
 
-        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_storage_cls:
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage", spec=True) as mock_storage_cls:
             mock_storage = mock_storage_cls.return_value
             mock_storage.get_upload_metadata.return_value = {
                 "upload_id": upload_id,
@@ -195,7 +195,7 @@ class TestDatasetPreviewEndpoint:
             mock_storage.upload_dir = upload_dir
 
             # Act
-            response = test_client.get(f"/api/datasets/{upload_id}/preview?limit=5")
+            response = api_client.get(f"/api/datasets/{upload_id}/preview?limit=5")
 
             # Assert
             assert response.status_code == 200
@@ -203,15 +203,15 @@ class TestDatasetPreviewEndpoint:
             assert len(data["rows"]) == 5
             assert data["total_rows"] == 100
 
-    def test_datasets_preview_missing_returns_404(self, test_client):
+    def test_datasets_preview_missing_returns_404(self, api_client):
         """Preview endpoint returns 404 for missing dataset."""
         # Arrange
-        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_storage_cls:
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage", spec=True) as mock_storage_cls:
             mock_storage = mock_storage_cls.return_value
             mock_storage.get_upload_metadata.return_value = None
 
             # Act
-            response = test_client.get("/api/datasets/not_found/preview")
+            response = api_client.get("/api/datasets/not_found/preview")
 
             # Assert
             assert response.status_code == 404
@@ -237,17 +237,17 @@ class TestDatasetUploadEndpoint:
             lines.append(f"P{i:04d},{20 + i},{sex},{outcome},{drug}\n")
         return (header + "".join(lines)).encode()
 
-    def test_datasets_upload_csv_creates_dataset(self, test_client):
+    def test_datasets_upload_csv_creates_dataset(self, api_client):
         """Uploading a valid CSV creates a dataset and returns upload metadata."""
         # Arrange
         csv_content = self._make_csv()
 
-        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage", spec=True) as mock_cls:
             mock_storage = mock_cls.return_value
             mock_storage.save_upload.return_value = (True, "Upload successful", "upload_abc123")
 
             # Act
-            response = test_client.post(
+            response = api_client.post(
                 "/api/datasets/upload",
                 files={"file": ("patients.csv", csv_content, "text/csv")},
                 data={"dataset_name": "Patient Data"},
@@ -261,21 +261,21 @@ class TestDatasetUploadEndpoint:
         assert data["dataset_name"] == "Patient Data"
         mock_storage.save_upload.assert_called_once()
 
-    def test_datasets_upload_xlsx_creates_dataset(self, test_client):
+    def test_datasets_upload_xlsx_creates_dataset(self, api_client):
         """Uploading a valid Excel file creates a dataset."""
         # Arrange — fake xlsx payload above 1 KB
         xlsx_content = b"\x50\x4b\x03\x04" + b"\x00" * 2000
 
         with (
-            patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls,
-            patch("clinical_analytics.api.routes.datasets.UploadSecurityValidator") as mock_val,
+            patch("clinical_analytics.api.routes.datasets.UserDatasetStorage", spec=True) as mock_cls,
+            patch("clinical_analytics.api.routes.datasets.UploadSecurityValidator", spec=True) as mock_val,
         ):
             mock_val.validate_file_size.return_value = (True, "")
             mock_storage = mock_cls.return_value
             mock_storage.save_upload.return_value = (True, "Upload successful", "upload_xlsx_001")
 
             # Act
-            response = test_client.post(
+            response = api_client.post(
                 "/api/datasets/upload",
                 files={
                     "file": (
@@ -292,21 +292,21 @@ class TestDatasetUploadEndpoint:
         assert data["upload_id"] == "upload_xlsx_001"
         assert data["status"] == "ready"
 
-    def test_datasets_upload_no_file_returns_422(self, test_client):
+    def test_datasets_upload_no_file_returns_422(self, api_client):
         """Uploading without a file returns 422."""
         # Act
-        response = test_client.post("/api/datasets/upload")
+        response = api_client.post("/api/datasets/upload")
 
         # Assert
         assert response.status_code == 422
 
-    def test_datasets_upload_unsupported_type_returns_400(self, test_client):
+    def test_datasets_upload_unsupported_type_returns_400(self, api_client):
         """Uploading an unsupported file type returns 400."""
         # Arrange
         exe_content = b"\x00" * 2000
 
         # Act — extension check happens before size check, so no validator mock needed
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload",
             files={"file": ("malware.exe", exe_content, "application/octet-stream")},
         )
@@ -316,17 +316,17 @@ class TestDatasetUploadEndpoint:
         data = response.json()
         assert "not allowed" in data["detail"].lower()
 
-    def test_datasets_upload_storage_failure_returns_500(self, test_client):
+    def test_datasets_upload_storage_failure_returns_500(self, api_client):
         """When storage save_upload fails, return 500."""
         # Arrange
         csv_content = self._make_csv()
 
-        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage", spec=True) as mock_cls:
             mock_storage = mock_cls.return_value
             mock_storage.save_upload.return_value = (False, "Disk full", None)
 
             # Act
-            response = test_client.post(
+            response = api_client.post(
                 "/api/datasets/upload",
                 files={"file": ("data.csv", csv_content, "text/csv")},
             )

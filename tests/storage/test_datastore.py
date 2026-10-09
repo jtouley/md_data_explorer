@@ -13,6 +13,11 @@ import polars as pl
 import pytest
 
 
+def _frame(data):
+    """Construct a Polars frame for a test."""
+    return pl.DataFrame(data)
+
+
 @pytest.fixture
 def datastore(tmp_path):
     """Create DataStore with temporary database."""
@@ -25,7 +30,7 @@ def datastore(tmp_path):
 @pytest.fixture
 def sample_table():
     """Sample patient table for testing."""
-    return pl.DataFrame(
+    return _frame(
         {
             "patient_id": [1, 2, 3, 4, 5],
             "age": [25, 30, 35, 40, 45],
@@ -97,19 +102,19 @@ class TestDataStoreSaveLoad:
                 "upload_id": "upload_001",
                 "table_name": "patients",
                 "version": "v1",
-                "data": pl.DataFrame({"patient_id": [1, 2], "age": [25, 30]}),
+                "data": _frame({"patient_id": [1, 2], "age": [25, 30]}),
             },
             {
                 "upload_id": "upload_001",
                 "table_name": "visits",
                 "version": "v1",
-                "data": pl.DataFrame({"visit_id": [1, 2], "patient_id": [1, 2]}),
+                "data": _frame({"visit_id": [1, 2], "patient_id": [1, 2]}),
             },
             {
                 "upload_id": "upload_002",
                 "table_name": "patients",
                 "version": "v2",
-                "data": pl.DataFrame({"patient_id": [3, 4], "age": [35, 40]}),
+                "data": _frame({"patient_id": [3, 4], "age": [35, 40]}),
             },
         ]
 
@@ -174,9 +179,9 @@ class TestDataStoreListDatasets:
         """list_datasets should return all unique upload_ids."""
         # Arrange: Save multiple tables from different uploads
         tables = [
-            ("upload_001", "patients", "v1", pl.DataFrame({"patient_id": [1, 2]})),
-            ("upload_001", "visits", "v1", pl.DataFrame({"visit_id": [1, 2]})),
-            ("upload_002", "patients", "v2", pl.DataFrame({"patient_id": [3, 4]})),
+            ("upload_001", "patients", "v1", _frame({"patient_id": [1, 2]})),
+            ("upload_001", "visits", "v1", _frame({"visit_id": [1, 2]})),
+            ("upload_002", "patients", "v2", _frame({"patient_id": [3, 4]})),
         ]
 
         for upload_id, table_name, version, data in tables:
@@ -253,7 +258,7 @@ class TestDataStoreParquetExport:
     def test_parquet_compression_smaller_than_csv(self, datastore, tmp_path):
         """Parquet files should be ≥40% smaller than CSV."""
         # Arrange: Create larger dataset for compression test
-        large_df = pl.DataFrame(
+        large_df = _frame(
             {
                 "patient_id": list(range(1000)),
                 "age": [25 + (i % 50) for i in range(1000)],
@@ -333,7 +338,7 @@ class TestDataStoreParquetExport:
 class TestDataStoreTableNameSanitization:
     """Test SQL-safe table name sanitization."""
 
-    def test_datastore_save_table_sanitizes_table_name_with_spaces(self, datastore, sample_table):
+    def test_datastore_save_table_rejects_spaces_in_name(self, datastore, sample_table):
         """Table names with spaces should be sanitized to SQL-safe identifiers."""
         # Arrange: Table name with spaces and special characters (matches real-world case)
         upload_id = "user_upload_20251229_225650_45c58677"

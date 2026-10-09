@@ -323,7 +323,7 @@ class TestSemanticLayerRetryLogic:
 
         # Act
         with patch.object(semantic_layer, "_execute_plan", side_effect=mock_execute_plan):
-            with patch("time.sleep", side_effect=mock_sleep):
+            with patch("time.sleep", side_effect=mock_sleep, spec=True):
                 result_df = semantic_layer._execute_plan_with_retry(plan, max_retries=3, initial_delay=0.5)
 
         # Assert

@@ -49,7 +49,7 @@ def mock_registry(mock_cohort):
         ]
 
         # 2. Mock the dataset object itself
-        mock_dataset = MagicMock()
+        mock_dataset = MagicMock(spec=["name", "validate", "load", "get_cohort"])
         mock_dataset.validate.return_value = True
         mock_dataset.load.return_value = None
         mock_dataset.get_cohort.return_value = mock_cohort

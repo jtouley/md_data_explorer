@@ -289,7 +289,7 @@ class TestRunKeyDeterminismAllExecutionPaths:
         # Assert: run_key should be None (semantic layer will generate it)
         assert plan.run_key is None, "nl_query_engine should not set run_key - semantic layer will generate it"
 
-    def test_execute_query_plan_always_generates_run_key(self, semantic_layer):
+    def test_missing_plan_run_key_is_filled_on_execute(self, semantic_layer):
         """execute_query_plan() should always generate run_key even if plan.run_key is None (Phase 1.1.5)."""
         # Arrange: Plan with run_key=None (as nl_query_engine should produce)
         plan = QueryPlan(intent="COUNT", metric="age", group_by="status", entity_key="patient_id", run_key=None)

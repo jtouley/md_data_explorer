@@ -19,7 +19,7 @@ from clinical_analytics.core.query_plan import FilterSpec
 class TestFilterExtractionStopsAtContinuationWords:
     """Test that filter extraction stops at continuation words."""
 
-    def test_filter_extraction_stops_at_and(
+    def test_filter_extraction_rejects_continuation_after_and(
         self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
     ):
         """Test that filter extraction stops at 'and' in compound queries."""
@@ -259,7 +259,7 @@ class TestCodedColumnDetection:
 class TestFilterExtractionTypeSafety:
     """Test that filter extraction produces type-safe filters for coded columns."""
 
-    def test_filter_extraction_extracts_numeric_codes_not_strings_for_coded_columns(
+    def test_filter_extraction_rejects_string_codes_for_coded_columns(
         self, mock_semantic_layer, mock_llm_calls, nl_query_engine_with_cached_model
     ):
         """Test that 'on statins' extracts numeric codes, not string 'statins'."""
@@ -449,7 +449,15 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
         # Mock returns {alias: canonical} for get_column_alias_index (as per real semantic layer)
         from unittest.mock import MagicMock
 
-        mock = MagicMock()
+        mock = MagicMock(
+            spec=[
+                "_normalize_alias",
+                "get_column_alias_index",
+                "get_collision_suggestions",
+                "get_collision_warnings",
+                "get_column_metadata",
+            ]
+        )
         mock.get_column_alias_index.return_value = {
             statin_alias: canonical_name,  # {alias: canonical}
             "statin used": canonical_name,  # normalized version
@@ -550,7 +558,15 @@ class TestFilterExtractionStrategy1ToStrategy2Handoff:
 
         from unittest.mock import MagicMock
 
-        mock = MagicMock()
+        mock = MagicMock(
+            spec=[
+                "_normalize_alias",
+                "get_column_alias_index",
+                "get_collision_suggestions",
+                "get_collision_warnings",
+                "get_column_metadata",
+            ]
+        )
         mock.get_column_alias_index.return_value = {
             full_alias: full_alias,  # Canonical name is the alias itself
         }

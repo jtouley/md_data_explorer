@@ -8,7 +8,7 @@ from clinical_analytics.core.schema import UnifiedCohort
 class TestUnifiedCohort:
     """Test suite for UnifiedCohort schema."""
 
-    def test_required_columns(self):
+    def test_unified_cohort_schema_names_required_fields(self):
         """Test that required columns are defined."""
         assert UnifiedCohort.PATIENT_ID in UnifiedCohort.REQUIRED_COLUMNS
         assert UnifiedCohort.TIME_ZERO in UnifiedCohort.REQUIRED_COLUMNS

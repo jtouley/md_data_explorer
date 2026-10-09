@@ -30,7 +30,7 @@ class TestBuildEnrichmentPrompt:
         assert "age" in prompt
         assert "bmi" in prompt
 
-    def test_build_enrichment_prompt_excludes_raw_data(self):
+    def test_build_enrichment_prompt_rejects_raw_data(self):
         """Test that prompt does NOT include any raw data values."""
         from clinical_analytics.core.llm_enrichment import build_enrichment_prompt
         from clinical_analytics.core.schema_inference import InferredSchema
@@ -254,7 +254,7 @@ class TestGenerateEnrichmentSuggestions:
         }
         """
 
-        with patch("clinical_analytics.core.llm_enrichment.OllamaClient") as mock_client_class:
+        with patch("clinical_analytics.core.llm_enrichment.OllamaClient", spec=True) as mock_client_class:
             mock_client = MagicMock()
             mock_client.generate.return_value = mock_response
             mock_client_class.return_value = mock_client
@@ -272,7 +272,7 @@ class TestGenerateEnrichmentSuggestions:
 
         schema = InferredSchema(continuous_columns=["age"])
 
-        with patch("clinical_analytics.core.llm_enrichment.OllamaClient") as mock_client_class:
+        with patch("clinical_analytics.core.llm_enrichment.OllamaClient", spec=True) as mock_client_class:
             mock_client = MagicMock()
             mock_client.generate.side_effect = Exception("Connection refused")
             mock_client_class.return_value = mock_client
@@ -292,12 +292,12 @@ class TestGenerateEnrichmentSuggestions:
         schema = InferredSchema(continuous_columns=["hba1c"])
         doc_context = "hba1c: Hemoglobin A1c percentage"
 
-        with patch("clinical_analytics.core.llm_enrichment.OllamaClient") as mock_client_class:
+        with patch("clinical_analytics.core.llm_enrichment.OllamaClient", spec=True) as mock_client_class:
             mock_client = MagicMock()
             mock_client.generate.return_value = '{"suggestions": []}'
             mock_client_class.return_value = mock_client
 
-            with patch("clinical_analytics.core.llm_enrichment.build_enrichment_prompt") as mock_build:
+            with patch("clinical_analytics.core.llm_enrichment.build_enrichment_prompt", spec=True) as mock_build:
                 mock_build.return_value = "mocked prompt"
                 generate_enrichment_suggestions(schema, doc_context=doc_context)
 
@@ -330,7 +330,7 @@ class TestGenerateEnrichmentSuggestions:
         }
         """
 
-        with patch("clinical_analytics.core.llm_enrichment.OllamaClient") as mock_client_class:
+        with patch("clinical_analytics.core.llm_enrichment.OllamaClient", spec=True) as mock_client_class:
             mock_client = MagicMock()
             mock_client.generate.return_value = mock_response
             mock_client_class.return_value = mock_client
@@ -382,7 +382,7 @@ class TestErrorHandling:
         )
 
         with (
-            patch("clinical_analytics.core.llm_enrichment.OllamaClient") as mock_client_class,
+            patch("clinical_analytics.core.llm_enrichment.OllamaClient", spec=True) as mock_client_class,
             patch("clinical_analytics.core.llm_enrichment.logger") as mock_logger,
         ):
             mock_client = MagicMock()

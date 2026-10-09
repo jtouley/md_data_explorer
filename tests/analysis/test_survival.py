@@ -16,6 +16,12 @@ from clinical_analytics.analysis.survival import (
 class TestSurvivalAnalysis:
     """Test suite for survival analysis functions."""
 
+    def test_run_kaplan_meier_all_null_durations_raises(self):
+        """Kaplan-Meier rejects a frame that is empty after nulls are dropped."""
+        df = pd.DataFrame({"duration": [None, None], "event": [None, None]})
+        with pytest.raises(ValueError, match="No data remaining after dropping nulls"):
+            run_kaplan_meier(df, duration_col="duration", event_col="event")
+
     def test_run_kaplan_meier_single_cohort(self):
         """Test Kaplan-Meier analysis for single cohort."""
         # Create test survival data

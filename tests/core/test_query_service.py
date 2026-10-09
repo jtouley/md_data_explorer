@@ -29,7 +29,20 @@ class TestQueryService:
         query = "what is the average age?"
 
         # Mock NLQueryEngine.parse_query to return QueryIntent
-        mock_intent = MagicMock()
+        mock_intent = MagicMock(
+            spec=[
+                "grouping_variable",
+                "predictor_variables",
+                "time_variable",
+                "event_variable",
+                "intent_type",
+                "primary_variable",
+                "confidence",
+                "filters",
+                "interpretation",
+                "confidence_explanation",
+            ]
+        )
         mock_intent.intent_type = "DESCRIBE"
         mock_intent.primary_variable = "age"
         mock_intent.confidence = 0.9
@@ -71,7 +84,18 @@ class TestQueryService:
         query = "what is the average age?"
 
         # Mock NLQueryEngine
-        mock_intent = MagicMock()
+        mock_intent = MagicMock(
+            spec=[
+                "grouping_variable",
+                "predictor_variables",
+                "time_variable",
+                "event_variable",
+                "intent_type",
+                "primary_variable",
+                "confidence",
+                "filters",
+            ]
+        )
         mock_intent.intent_type = "DESCRIBE"
         mock_intent.primary_variable = "age"
         mock_intent.confidence = 0.9
@@ -104,7 +128,18 @@ class TestQueryService:
         query = "compare groups"
 
         # Mock NLQueryEngine
-        mock_intent = MagicMock()
+        mock_intent = MagicMock(
+            spec=[
+                "grouping_variable",
+                "primary_variable",
+                "predictor_variables",
+                "time_variable",
+                "event_variable",
+                "intent_type",
+                "confidence",
+                "filters",
+            ]
+        )
         mock_intent.intent_type = "COMPARE_GROUPS"
         mock_intent.confidence = 0.5
         mock_intent.filters = []
@@ -160,7 +195,18 @@ class TestQueryService:
         query = "  What  IS   the  Average  AGE?  "  # Has extra spaces and mixed case
 
         # Mock NLQueryEngine
-        mock_intent = MagicMock()
+        mock_intent = MagicMock(
+            spec=[
+                "grouping_variable",
+                "predictor_variables",
+                "time_variable",
+                "event_variable",
+                "intent_type",
+                "primary_variable",
+                "confidence",
+                "filters",
+            ]
+        )
         mock_intent.intent_type = "DESCRIBE"
         mock_intent.primary_variable = "age"
         mock_intent.confidence = 0.9

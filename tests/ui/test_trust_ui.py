@@ -64,7 +64,9 @@ def mock_semantic_layer_with_aliases():
     import re
     from unittest.mock import MagicMock
 
-    mock = MagicMock()
+    mock = MagicMock(
+        spec=["get_collision_warnings", "get_collision_suggestions", "_normalize_alias", "get_column_alias_index"]
+    )
 
     # Match actual SemanticLayer normalization: lowercase, collapse whitespace, keep spaces
     def normalize(text: str) -> str:

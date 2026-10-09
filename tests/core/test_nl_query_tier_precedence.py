@@ -84,7 +84,7 @@ class TestNLQueryEngineTierPrecedence:
 
         from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-        with patch("clinical_analytics.core.config_loader.get_project_root", return_value=tmp_path):
+        with patch("clinical_analytics.core.config_loader.get_project_root", return_value=tmp_path, spec=True):
             engine = NLQueryEngine(semantic)
 
             # Act: Parse query - should try semantic first due to config
@@ -119,7 +119,7 @@ class TestNLQueryEngineTierPrecedence:
 
         from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-        with patch("clinical_analytics.core.config_loader.get_project_root", return_value=tmp_path):
+        with patch("clinical_analytics.core.config_loader.get_project_root", return_value=tmp_path, spec=True):
             engine = NLQueryEngine(semantic)
 
             # Act: Parse query

@@ -26,7 +26,7 @@ def test_progressive_feedback_returns_intent_with_diagnostics(mock_nl_engine):
     query = "compare mortality by treatment"
 
     # Test behavior, not implementation details
-    with patch("streamlit.status") as mock_status:
+    with patch("streamlit.status", spec=True) as mock_status:
         mock_status.return_value.__enter__.return_value.update = MagicMock()
         intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
 
@@ -56,7 +56,7 @@ def test_progressive_feedback_tracks_all_attempts(mock_nl_engine):
     )
 
     with (
-        patch("streamlit.status") as mock_status,
+        patch("streamlit.status", spec=True) as mock_status,
         patch.object(mock_nl_engine, "_llm_parse", return_value=mock_llm_intent),
     ):
         mock_status.return_value.__enter__.return_value.update = MagicMock()
@@ -90,10 +90,10 @@ def test_progressive_feedback_handles_timeout(mock_nl_engine):
 
     mock_nl_engine._semantic_match = slow_semantic_match
 
-    with patch("streamlit.status") as mock_status:
+    with patch("streamlit.status", spec=True) as mock_status:
         mock_status.return_value.__enter__.return_value.update = MagicMock()
         # Mock signal.alarm for timeout (Unix only)
-        with patch("signal.alarm"), patch("signal.signal"):
+        with patch("signal.alarm", spec=True), patch("signal.signal", spec=True):
             intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)
 
             # Should return something (either intent or None, but not crash)
@@ -119,7 +119,7 @@ def test_progressive_feedback_respects_feature_flag(mock_nl_engine):
 
     # When feature flag is disabled, should fall back to simple parsing
     with (
-        patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False),
+        patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False, spec=True),
         patch.object(mock_nl_engine, "parse_query", return_value=mock_intent) as mock_parse,
     ):
         intent = QuestionEngine._show_progressive_feedback(mock_nl_engine, query)

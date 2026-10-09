@@ -175,12 +175,12 @@ class TestLLMQueryPlanSchema:
 class TestLLMConstrainedOutput:
     """Test that LLM output is constrained to QueryPlan schema."""
 
-    @patch("clinical_analytics.core.ollama_manager.get_ollama_manager")
+    @patch("clinical_analytics.core.ollama_manager.get_ollama_manager", spec=True)
     def test_llm_fallback_returns_valid_queryplan_compatible_dict(self, mock_get_manager, mock_semantic_layer):
         """LLM fallback should return QueryPlan JSON schema (Phase 5.1)."""
         # Arrange: Mock Ollama manager and client
-        mock_manager = MagicMock()
-        mock_client = MagicMock()
+        mock_manager = MagicMock(spec=["get_client"])
+        mock_client = MagicMock(spec=["is_available", "generate"])
 
         # Configure mock client to return QueryPlan schema JSON
         mock_client.is_available.return_value = True

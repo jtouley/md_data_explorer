@@ -373,7 +373,7 @@ class TestSemanticLayerGranularity:
         assert isinstance(sql, str)
         assert len(sql) > 0
 
-    def test_build_cohort_query_accepts_all_granularity_values(self, semantic_layer):
+    def test_real_semantic_compiles_sql_for_every_granularity(self, semantic_layer):
         """Test that build_cohort_query accepts all granularity values."""
         for granularity in ["patient_level", "admission_level", "event_level"]:
             query = semantic_layer.build_cohort_query(granularity=granularity)

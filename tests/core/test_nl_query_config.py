@@ -126,7 +126,7 @@ class TestNLQueryConfigYAMLLoading:
         assert yaml_config["clarifying_questions_threshold"] == 0.45
         assert yaml_config["auto_execute_confidence_threshold"] == 0.70
 
-    def test_nl_query_config_backward_compatibility_all_constants_exist(self):
+    def test_nl_query_constants_stay_importable(self):
         """Test that all constants are still importable and exist after refactor."""
         # Act & Assert: All constants should be importable
         assert TIER_1_PATTERN_MATCH_THRESHOLD is not None

@@ -70,7 +70,7 @@ class TestDatasetRegistry:
         # Don't assert specific dataset names - use discovery
         assert all(isinstance(name, str) for name in datasets.keys())
 
-    def test_list_datasets_returns_non_empty_list(self):
+    def test_registry_catalog_includes_shipped_datasets(self):
         """Test listing available datasets returns non-empty list."""
         # Arrange
         DatasetRegistry.reset()

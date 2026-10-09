@@ -77,7 +77,7 @@ def test_granularity_default_value_is_patient_level() -> None:
     "granularity",
     ["patient_level", "admission_level", "event_level"],
 )
-def test_build_cohort_query_all_granularity_values_accepted(granularity: str) -> None:
+def test_fake_semantic_records_each_granularity_argument(granularity: str) -> None:
     """Test that build_cohort_query accepts all valid granularity values."""
     # Arrange
     s = _FakeSemantic()

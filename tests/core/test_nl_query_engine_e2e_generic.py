@@ -92,13 +92,17 @@ class TestE2EQueryParsingAndExecution:
         query = f"which {grouping_col} had the lowest {metric_col}"
 
         # Act: Full flow through QuestionEngine
-        with patch("streamlit.text_input", return_value=query):
-            with patch("streamlit.markdown"):
-                with patch("streamlit.expander"):
-                    with patch("streamlit.radio", return_value="Yes, that's correct"):
-                        with patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False):
-                            with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", False):
-                                with patch("streamlit.spinner"):
+        with patch("streamlit.text_input", return_value=query, spec=True):
+            with patch("streamlit.markdown", spec=True):
+                with patch("streamlit.expander", spec=True):
+                    with patch("streamlit.radio", return_value="Yes, that's correct", spec=True):
+                        with patch(
+                            "clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False, spec=True
+                        ):
+                            with patch(
+                                "clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", False, spec=True
+                            ):
+                                with patch("streamlit.spinner", spec=True):
                                     context = QuestionEngine.ask_free_form_question(mock)
 
                                     # Assert: Context should be complete

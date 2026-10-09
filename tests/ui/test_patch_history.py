@@ -56,7 +56,7 @@ class TestPatchHistoryLoader:
             accepted_at=datetime(2025, 1, 15, 11, 0, tzinfo=UTC),
         )
 
-        mock_store = MagicMock()
+        mock_store = MagicMock(spec=["load_patches"])
         mock_store.load_patches.return_value = [patch]
 
         result = load_patch_history(
@@ -97,7 +97,7 @@ class TestPatchHistoryLoader:
             accepted_at=datetime(2025, 1, 15, 11, 0, tzinfo=UTC),
         )
 
-        mock_store = MagicMock()
+        mock_store = MagicMock(spec=["load_patches"])
         mock_store.load_patches.return_value = [patch]
 
         result = load_patch_history(
@@ -158,7 +158,7 @@ class TestPatchHistoryFiltering:
         """Test filtering patches by accepted status."""
         from clinical_analytics.ui.components.patch_history import filter_patch_history
 
-        mock_store = MagicMock()
+        mock_store = MagicMock(spec=["load_patches"])
         mock_store.load_patches.return_value = sample_patches
 
         result = filter_patch_history(

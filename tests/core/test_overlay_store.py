@@ -361,7 +361,7 @@ class TestOverlayStorePath:
         expected = overlay_store.base_dir / "overlays" / upload_id / version
         assert path == expected
 
-    def test_overlay_exists_false_initially(self, overlay_store):
+    def test_overlay_missing_before_first_write(self, overlay_store):
         """Test overlay_exists returns False for non-existent overlay."""
         assert not overlay_store.overlay_exists("nonexistent", "v1")
 

@@ -18,7 +18,7 @@ from clinical_analytics.api.services.query_service import AsyncQueryService
 @pytest.fixture
 def mock_semantic_layer():
     """Mock SemanticLayer for unit tests."""
-    mock = MagicMock()
+    mock = MagicMock(spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"])
     mock.get_column_alias_index.return_value = {"age": "age", "outcome": "outcome"}
     return mock
 
@@ -26,7 +26,7 @@ def mock_semantic_layer():
 @pytest.fixture
 def mock_core_query_service():
     """Mock core QueryService for unit tests."""
-    with patch("clinical_analytics.api.services.query_service.CoreQueryService") as mock_cls:
+    with patch("clinical_analytics.api.services.query_service.CoreQueryService", spec=True) as mock_cls:
         mock_instance = MagicMock()
         mock_cls.return_value = mock_instance
         yield mock_instance
@@ -45,6 +45,12 @@ def async_query_service(mock_semantic_layer, mock_core_query_service):
 
 class TestAsyncQueryServiceDelegation:
     """Tests for AsyncQueryService delegating to core QueryService."""
+
+    @pytest.mark.asyncio
+    async def test_submit_query_rejects_empty_query(self, async_query_service):
+        """An empty question is rejected before a query id is issued."""
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            await async_query_service.submit_query("  ", dataset_id="demo")
 
     @pytest.mark.asyncio
     async def test_async_query_service_delegates_to_core(self, async_query_service, mock_core_query_service):

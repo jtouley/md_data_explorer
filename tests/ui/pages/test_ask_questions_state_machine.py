@@ -181,7 +181,7 @@ class TestAskQuestionsChatRendering:
         assert retrieved.result == result_data, "Result data should match"
         assert retrieved.run_key == run_key, "run_key should match"
 
-    def test_render_chat_handles_cache_miss(self, mock_session_state):
+    def test_render_chat_handles_missing_result_cache(self, mock_session_state):
         """
         Test that render_chat handles gracefully when result is not in cache.
 
