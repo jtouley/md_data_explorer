@@ -1,0 +1,706 @@
+dataset_id: gdsi
+questions:
+- id: gdsi_001
+  dataset_id: gdsi
+  query: what is the average edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: average
+  expected: 0.0
+- id: gdsi_002
+  dataset_id: gdsi
+  query: what is the average of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: average
+  expected: 0.0
+- id: gdsi_003
+  dataset_id: gdsi
+  query: average edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: average
+  expected: 0.0
+- id: gdsi_004
+  dataset_id: gdsi
+  query: what is the average year onset?
+  kind: stat
+  metric: year_onset
+  stat: average
+  expected: 2008.7872954764196
+- id: gdsi_005
+  dataset_id: gdsi
+  query: what is the average of year onset?
+  kind: stat
+  metric: year_onset
+  stat: average
+  expected: 2008.7872954764196
+- id: gdsi_006
+  dataset_id: gdsi
+  query: average year onset?
+  kind: stat
+  metric: year_onset
+  stat: average
+  expected: 2008.7872954764196
+- id: gdsi_007
+  dataset_id: gdsi
+  query: what is the average duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: average
+  expected: 0.8153153153153153
+- id: gdsi_008
+  dataset_id: gdsi
+  query: what is the average of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: average
+  expected: 0.8153153153153153
+- id: gdsi_009
+  dataset_id: gdsi
+  query: average duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: average
+  expected: 0.8153153153153153
+- id: gdsi_010
+  dataset_id: gdsi
+  query: what is the average comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: average
+  expected: 1.0
+- id: gdsi_011
+  dataset_id: gdsi
+  query: what is the average of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: average
+  expected: 1.0
+- id: gdsi_012
+  dataset_id: gdsi
+  query: average comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: average
+  expected: 1.0
+- id: gdsi_013
+  dataset_id: gdsi
+  query: what is the mean edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: mean
+  expected: 0.0
+- id: gdsi_014
+  dataset_id: gdsi
+  query: what is the mean of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: mean
+  expected: 0.0
+- id: gdsi_015
+  dataset_id: gdsi
+  query: mean edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: mean
+  expected: 0.0
+- id: gdsi_016
+  dataset_id: gdsi
+  query: what is the mean year onset?
+  kind: stat
+  metric: year_onset
+  stat: mean
+  expected: 2008.7872954764196
+- id: gdsi_017
+  dataset_id: gdsi
+  query: what is the mean of year onset?
+  kind: stat
+  metric: year_onset
+  stat: mean
+  expected: 2008.7872954764196
+- id: gdsi_018
+  dataset_id: gdsi
+  query: mean year onset?
+  kind: stat
+  metric: year_onset
+  stat: mean
+  expected: 2008.7872954764196
+- id: gdsi_019
+  dataset_id: gdsi
+  query: what is the mean duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: mean
+  expected: 0.8153153153153153
+- id: gdsi_020
+  dataset_id: gdsi
+  query: what is the mean of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: mean
+  expected: 0.8153153153153153
+- id: gdsi_021
+  dataset_id: gdsi
+  query: mean duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: mean
+  expected: 0.8153153153153153
+- id: gdsi_022
+  dataset_id: gdsi
+  query: what is the mean comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: mean
+  expected: 1.0
+- id: gdsi_023
+  dataset_id: gdsi
+  query: what is the mean of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: mean
+  expected: 1.0
+- id: gdsi_024
+  dataset_id: gdsi
+  query: mean comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: mean
+  expected: 1.0
+- id: gdsi_025
+  dataset_id: gdsi
+  query: what is the median edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: median
+  expected: 0.0
+- id: gdsi_026
+  dataset_id: gdsi
+  query: what is the median of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: median
+  expected: 0.0
+- id: gdsi_027
+  dataset_id: gdsi
+  query: median edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: median
+  expected: 0.0
+- id: gdsi_028
+  dataset_id: gdsi
+  query: what is the median year onset?
+  kind: stat
+  metric: year_onset
+  stat: median
+  expected: 2011.0
+- id: gdsi_029
+  dataset_id: gdsi
+  query: what is the median of year onset?
+  kind: stat
+  metric: year_onset
+  stat: median
+  expected: 2011.0
+- id: gdsi_030
+  dataset_id: gdsi
+  query: median year onset?
+  kind: stat
+  metric: year_onset
+  stat: median
+  expected: 2011.0
+- id: gdsi_031
+  dataset_id: gdsi
+  query: what is the median duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: median
+  expected: 1.0
+- id: gdsi_032
+  dataset_id: gdsi
+  query: what is the median of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: median
+  expected: 1.0
+- id: gdsi_033
+  dataset_id: gdsi
+  query: median duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: median
+  expected: 1.0
+- id: gdsi_034
+  dataset_id: gdsi
+  query: what is the median comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: median
+  expected: 1.0
+- id: gdsi_035
+  dataset_id: gdsi
+  query: what is the median of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: median
+  expected: 1.0
+- id: gdsi_036
+  dataset_id: gdsi
+  query: median comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: median
+  expected: 1.0
+- id: gdsi_037
+  dataset_id: gdsi
+  query: what is the minimum edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: minimum
+  expected: 0.0
+- id: gdsi_038
+  dataset_id: gdsi
+  query: what is the minimum of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: minimum
+  expected: 0.0
+- id: gdsi_039
+  dataset_id: gdsi
+  query: minimum edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: minimum
+  expected: 0.0
+- id: gdsi_040
+  dataset_id: gdsi
+  query: what is the minimum year onset?
+  kind: stat
+  metric: year_onset
+  stat: minimum
+  expected: 1804.0
+- id: gdsi_041
+  dataset_id: gdsi
+  query: what is the minimum of year onset?
+  kind: stat
+  metric: year_onset
+  stat: minimum
+  expected: 1804.0
+- id: gdsi_042
+  dataset_id: gdsi
+  query: minimum year onset?
+  kind: stat
+  metric: year_onset
+  stat: minimum
+  expected: 1804.0
+- id: gdsi_043
+  dataset_id: gdsi
+  query: what is the minimum duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: minimum
+  expected: 0.0
+- id: gdsi_044
+  dataset_id: gdsi
+  query: what is the minimum of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: minimum
+  expected: 0.0
+- id: gdsi_045
+  dataset_id: gdsi
+  query: minimum duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: minimum
+  expected: 0.0
+- id: gdsi_046
+  dataset_id: gdsi
+  query: what is the minimum comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: minimum
+  expected: 1.0
+- id: gdsi_047
+  dataset_id: gdsi
+  query: what is the minimum of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: minimum
+  expected: 1.0
+- id: gdsi_048
+  dataset_id: gdsi
+  query: minimum comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: minimum
+  expected: 1.0
+- id: gdsi_049
+  dataset_id: gdsi
+  query: what is the maximum edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: maximum
+  expected: 0.0
+- id: gdsi_050
+  dataset_id: gdsi
+  query: what is the maximum of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: maximum
+  expected: 0.0
+- id: gdsi_051
+  dataset_id: gdsi
+  query: maximum edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: maximum
+  expected: 0.0
+- id: gdsi_052
+  dataset_id: gdsi
+  query: what is the maximum year onset?
+  kind: stat
+  metric: year_onset
+  stat: maximum
+  expected: 2020.0
+- id: gdsi_053
+  dataset_id: gdsi
+  query: what is the maximum of year onset?
+  kind: stat
+  metric: year_onset
+  stat: maximum
+  expected: 2020.0
+- id: gdsi_054
+  dataset_id: gdsi
+  query: maximum year onset?
+  kind: stat
+  metric: year_onset
+  stat: maximum
+  expected: 2020.0
+- id: gdsi_055
+  dataset_id: gdsi
+  query: what is the maximum duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: maximum
+  expected: 1.0
+- id: gdsi_056
+  dataset_id: gdsi
+  query: what is the maximum of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: maximum
+  expected: 1.0
+- id: gdsi_057
+  dataset_id: gdsi
+  query: maximum duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: maximum
+  expected: 1.0
+- id: gdsi_058
+  dataset_id: gdsi
+  query: what is the maximum comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: maximum
+  expected: 1.0
+- id: gdsi_059
+  dataset_id: gdsi
+  query: what is the maximum of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: maximum
+  expected: 1.0
+- id: gdsi_060
+  dataset_id: gdsi
+  query: maximum comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: maximum
+  expected: 1.0
+- id: gdsi_061
+  dataset_id: gdsi
+  query: what is the min edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: min
+  expected: 0.0
+- id: gdsi_062
+  dataset_id: gdsi
+  query: what is the min of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: min
+  expected: 0.0
+- id: gdsi_063
+  dataset_id: gdsi
+  query: min edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: min
+  expected: 0.0
+- id: gdsi_064
+  dataset_id: gdsi
+  query: what is the min year onset?
+  kind: stat
+  metric: year_onset
+  stat: min
+  expected: 1804.0
+- id: gdsi_065
+  dataset_id: gdsi
+  query: what is the min of year onset?
+  kind: stat
+  metric: year_onset
+  stat: min
+  expected: 1804.0
+- id: gdsi_066
+  dataset_id: gdsi
+  query: min year onset?
+  kind: stat
+  metric: year_onset
+  stat: min
+  expected: 1804.0
+- id: gdsi_067
+  dataset_id: gdsi
+  query: what is the min duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: min
+  expected: 0.0
+- id: gdsi_068
+  dataset_id: gdsi
+  query: what is the min of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: min
+  expected: 0.0
+- id: gdsi_069
+  dataset_id: gdsi
+  query: min duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: min
+  expected: 0.0
+- id: gdsi_070
+  dataset_id: gdsi
+  query: what is the min comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: min
+  expected: 1.0
+- id: gdsi_071
+  dataset_id: gdsi
+  query: what is the min of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: min
+  expected: 1.0
+- id: gdsi_072
+  dataset_id: gdsi
+  query: min comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: min
+  expected: 1.0
+- id: gdsi_073
+  dataset_id: gdsi
+  query: what is the max edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: max
+  expected: 0.0
+- id: gdsi_074
+  dataset_id: gdsi
+  query: what is the max of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: max
+  expected: 0.0
+- id: gdsi_075
+  dataset_id: gdsi
+  query: max edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: max
+  expected: 0.0
+- id: gdsi_076
+  dataset_id: gdsi
+  query: what is the max year onset?
+  kind: stat
+  metric: year_onset
+  stat: max
+  expected: 2020.0
+- id: gdsi_077
+  dataset_id: gdsi
+  query: what is the max of year onset?
+  kind: stat
+  metric: year_onset
+  stat: max
+  expected: 2020.0
+- id: gdsi_078
+  dataset_id: gdsi
+  query: max year onset?
+  kind: stat
+  metric: year_onset
+  stat: max
+  expected: 2020.0
+- id: gdsi_079
+  dataset_id: gdsi
+  query: what is the max duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: max
+  expected: 1.0
+- id: gdsi_080
+  dataset_id: gdsi
+  query: what is the max of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: max
+  expected: 1.0
+- id: gdsi_081
+  dataset_id: gdsi
+  query: max duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: max
+  expected: 1.0
+- id: gdsi_082
+  dataset_id: gdsi
+  query: what is the max comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: max
+  expected: 1.0
+- id: gdsi_083
+  dataset_id: gdsi
+  query: what is the max of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: max
+  expected: 1.0
+- id: gdsi_084
+  dataset_id: gdsi
+  query: max comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: max
+  expected: 1.0
+- id: gdsi_085
+  dataset_id: gdsi
+  query: what is the std edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: std
+  expected: 0.0
+- id: gdsi_086
+  dataset_id: gdsi
+  query: what is the std of edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: std
+  expected: 0.0
+- id: gdsi_087
+  dataset_id: gdsi
+  query: std edss in cat2?
+  kind: stat
+  metric: edss_in_cat2
+  stat: std
+  expected: 0.0
+- id: gdsi_088
+  dataset_id: gdsi
+  query: what is the std year onset?
+  kind: stat
+  metric: year_onset
+  stat: std
+  expected: 10.927682772252817
+- id: gdsi_089
+  dataset_id: gdsi
+  query: what is the std of year onset?
+  kind: stat
+  metric: year_onset
+  stat: std
+  expected: 10.927682772252817
+- id: gdsi_090
+  dataset_id: gdsi
+  query: std year onset?
+  kind: stat
+  metric: year_onset
+  stat: std
+  expected: 10.927682772252817
+- id: gdsi_091
+  dataset_id: gdsi
+  query: what is the std duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: std
+  expected: 0.3889184907330365
+- id: gdsi_092
+  dataset_id: gdsi
+  query: what is the std of duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: std
+  expected: 0.3889184907330365
+- id: gdsi_093
+  dataset_id: gdsi
+  query: std duration treatment cat2?
+  kind: stat
+  metric: duration_treatment_cat2
+  stat: std
+  expected: 0.3889184907330365
+- id: gdsi_094
+  dataset_id: gdsi
+  query: what is the std comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: std
+  expected: 0.0
+- id: gdsi_095
+  dataset_id: gdsi
+  query: what is the std of comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: std
+  expected: 0.0
+- id: gdsi_096
+  dataset_id: gdsi
+  query: std comorbidities other?
+  kind: stat
+  metric: comorbidities_other
+  stat: std
+  expected: 0.0
+- id: gdsi_097
+  dataset_id: gdsi
+  query: what is the average edss in cat2 by report source?
+  kind: mean_by
+  metric: edss_in_cat2
+  group_by: report_source
+  expected: &id001
+    clinicians: 0.0
+    patients: 0.0
+- id: gdsi_098
+  dataset_id: gdsi
+  query: average edss in cat2 by report source?
+  kind: mean_by
+  metric: edss_in_cat2
+  group_by: report_source
+  expected: *id001
+- id: gdsi_099
+  dataset_id: gdsi
+  query: compare edss in cat2 by report source?
+  kind: compare
+  metric: edss_in_cat2
+  group_by: report_source
+  expected: *id001
+- id: gdsi_100
+  dataset_id: gdsi
+  query: what is the average edss in cat2 by age in cat?
+  kind: mean_by
+  metric: edss_in_cat2
+  group_by: age_in_cat
+  expected:
+    '1': 0.0
+    '2': 0.0

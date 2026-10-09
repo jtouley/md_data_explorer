@@ -20,7 +20,7 @@ from clinical_analytics.api import health_llm
 from clinical_analytics.api.db.database import create_tables
 
 # Import routes
-from clinical_analytics.api.routes import datasets, enrichments, queries, sessions
+from clinical_analytics.api.routes import datasets, enrichments, headless, queries, sessions
 
 
 @asynccontextmanager
@@ -113,6 +113,7 @@ async def health_check() -> dict[str, Any]:
 app.include_router(sessions.router, prefix="/api", tags=["sessions"])
 app.include_router(datasets.router, prefix="/api", tags=["datasets"])
 app.include_router(queries.router, prefix="/api", tags=["queries"])
+app.include_router(headless.router, prefix="/api", tags=["headless"])
 app.include_router(enrichments.router, prefix="/api", tags=["enrichments"])
 
 

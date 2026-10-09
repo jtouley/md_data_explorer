@@ -13,6 +13,20 @@ from typing import Any, Literal
 
 
 @dataclass
+class CohortStep:
+    """One cohort restriction applied in order before aggregation.
+
+    gt_median and ge_quantile are computed on the rows that survive earlier steps,
+    which is the SQL equivalent of a CTE cutoff.
+    """
+
+    op: Literal["eq", "gt", "lt", "not_null", "gt_median", "ge_quantile", "ge_percent_rank"]
+    column: str
+    value: str | int | float | None = None
+    quantile: float | None = None
+
+
+@dataclass
 class FilterSpec:
     """Single filter condition specification."""
 
@@ -55,6 +69,13 @@ class QueryPlan:
     # ADR009 Phase 2: Query interpretation and confidence explanation
     interpretation: str = ""  # Human-readable explanation of what the query is asking
     confidence_explanation: str = ""  # Why the confidence score is what it is
+    cohort_steps: list[CohortStep] = field(default_factory=list)
+    # When set, the result is the share of rows whose column equals value, after cohort_steps.
+    proportion_column: str | None = None
+    proportion_value: str | int | float | None = None
+    # When set with group_by, the result is the rate of this value inside each group.
+    rate_column: str | None = None
+    rate_value: str | int | float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "QueryPlan":
