@@ -337,9 +337,12 @@ def unapplied_constraints(
         and not steps
         and not getattr(plan, "rate_column", None)
         and not getattr(plan, "proportion_column", None)
-        and tokens
     ):
-        gaps.append("unbound subject")
+        used_tokens: set[str] = set()
+        for column in used:
+            used_tokens |= _tokens(str(column))
+        if tokens - used_tokens:
+            gaps.append("unbound subject")
     return gaps
 
 

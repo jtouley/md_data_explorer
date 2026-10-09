@@ -1807,6 +1807,31 @@ class SemanticLayer:
             }
         )
 
+        if query_text:
+            from clinical_analytics.core.cohort_constraints import unapplied_constraints
+
+            gap_columns = list(self.get_base_view().columns)
+            gaps = unapplied_constraints(query_text, plan, gap_columns)
+            if gaps:
+                message = "Cohort constraint was not applied: " + ", ".join(gaps)
+                warnings.append(message)
+                steps.append(
+                    {
+                        "status": "error",
+                        "text": "Query failed",
+                        "details": {"error": message},
+                    }
+                )
+                return {
+                    "success": False,
+                    "result": None,
+                    "run_key": run_key,
+                    "warnings": warnings,
+                    "error": message,
+                    "steps": steps,
+                    "chart_spec": chart_spec,
+                }
+
         # Step 8: Execute query with retry logic (Phase 2.5.2)
         try:
             result_df = self._execute_plan_with_retry(plan)
