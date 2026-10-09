@@ -60,7 +60,7 @@ class TestSanitizeQuery:
         expected_hash = hashlib.sha256(query.encode()).hexdigest()
         assert result["query_hash"] == expected_hash
 
-    def test_sanitize_query_never_includes_raw_text(self):
+    def test_sanitize_query_redacts_forbidden_raw_text(self):
         # Arrange
         query = "sensitive patient data query"
 

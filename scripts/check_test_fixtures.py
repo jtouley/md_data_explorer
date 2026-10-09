@@ -48,18 +48,41 @@ def find_inline_storage_creation(content: str, filepath: Path) -> list[tuple[int
     return violations
 
 
+_FRAME_CALLS = ("pl.DataFrame(", "_frame(")
+
+
+def _line_starts_frame_call(line: str) -> bool:
+    """True when the line constructs a frame directly or through the local alias."""
+    return any(call in line for call in _FRAME_CALLS)
+
+
 def find_duplicate_dataframe_creation(content: str, filepath: Path) -> list[tuple[int, str]]:
-    """Find duplicate pl.DataFrame creation patterns in same file."""
+    """Find duplicate frame-construction patterns in the same file.
+
+    `_frame({...})` counts as a constructor. A wrapper whose only job is to
+    call `pl.DataFrame` must not hide repeated column sets. Text inside
+    triple-quoted docstrings is not a constructor.
+    """
     violations = []
     lines = content.split("\n")
 
-    # Find all pl.DataFrame( calls with their column definitions
     dataframe_creations = []
+    in_docstring = False
+    in_frame_helper = False
     i = 0
     while i < len(lines):
         line = lines[i]
-        if "pl.DataFrame(" in line:
-            # Collect multi-line DataFrame definition (up to 10 lines)
+        if line.startswith("def _frame("):
+            in_frame_helper = True
+        elif in_frame_helper and line and not line.startswith((" ", "\t")):
+            in_frame_helper = False
+
+        quote_count = line.count('"""')
+        constructor = _line_starts_frame_call(line) and not in_docstring and not in_frame_helper
+        if quote_count % 2 == 1:
+            in_docstring = not in_docstring
+
+        if constructor:
             df_lines = [line]
             j = i + 1
             brace_count = line.count("{") - line.count("}")
@@ -69,7 +92,6 @@ def find_duplicate_dataframe_creation(content: str, filepath: Path) -> list[tupl
                 j += 1
 
             context = "\n".join(df_lines)
-            # Extract column names from DataFrame
             cols = re.findall(r'"([^"]+)":', context)
             if cols:
                 dataframe_creations.append((i + 1, tuple(sorted(cols))))

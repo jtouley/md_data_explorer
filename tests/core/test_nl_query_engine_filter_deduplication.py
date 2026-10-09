@@ -13,7 +13,7 @@ from clinical_analytics.core.nl_query_engine import NLQueryEngine
 class TestFilterDeduplication:
     """Test that duplicate filters are removed before returning."""
 
-    def test_deduplication_removes_identical_filters(self, mock_semantic_layer):
+    def test_deduplication_rejects_identical_filters(self, mock_semantic_layer):
         """Test that identical filters are deduplicated."""
         # Arrange: Create semantic layer with medication column
         mock = mock_semantic_layer(

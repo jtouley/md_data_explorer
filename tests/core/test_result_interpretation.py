@@ -34,7 +34,7 @@ class TestInterpretResultWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result, spec=True):
             interpretation = interpret_result_with_llm(result)
 
         # Assert
@@ -57,7 +57,7 @@ class TestInterpretResultWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result, spec=True):
             interpretation = interpret_result_with_llm(result)
 
         # Assert
@@ -80,7 +80,7 @@ class TestInterpretResultWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result, spec=True):
             interpretation = interpret_result_with_llm(result)
 
         # Assert
@@ -103,7 +103,7 @@ class TestInterpretResultWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result):
+        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result, spec=True):
             interpretation = interpret_result_with_llm(result)
 
         # Assert
@@ -122,7 +122,9 @@ class TestInterpretResultWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result) as mock_call:
+        with patch(
+            "clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result, spec=True
+        ) as mock_call:
             interpret_result_with_llm(result)
 
         # Assert
@@ -149,7 +151,9 @@ class TestInterpretResultWithLLM:
         )
 
         # Act
-        with patch("clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result) as mock_call:
+        with patch(
+            "clinical_analytics.core.result_interpretation.call_llm", return_value=mock_llm_result, spec=True
+        ) as mock_call:
             interpret_result_with_llm(result)
 
         # Assert

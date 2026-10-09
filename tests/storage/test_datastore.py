@@ -14,6 +14,22 @@ import pytest
 
 
 @pytest.fixture
+def patient_age_rows():
+    def _make(patient_ids: list[int], ages: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"patient_id": patient_ids, "age": ages})
+
+    return _make
+
+
+@pytest.fixture
+def patient_id_rows():
+    def _make(patient_ids: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"patient_id": patient_ids})
+
+    return _make
+
+
+@pytest.fixture
 def datastore(tmp_path):
     """Create DataStore with temporary database."""
     from clinical_analytics.storage.datastore import DataStore
@@ -89,7 +105,7 @@ class TestDataStoreSaveLoad:
         assert loaded_data.columns == sample_table.columns
         assert loaded_data.to_dicts() == sample_table.to_dicts()
 
-    def test_datastore_save_multiple_tables(self, datastore):
+    def test_datastore_save_multiple_tables(self, datastore, patient_age_rows):
         """DataStore should handle multiple tables from different uploads."""
         # Arrange: Multiple tables
         tables = [
@@ -97,7 +113,7 @@ class TestDataStoreSaveLoad:
                 "upload_id": "upload_001",
                 "table_name": "patients",
                 "version": "v1",
-                "data": pl.DataFrame({"patient_id": [1, 2], "age": [25, 30]}),
+                "data": patient_age_rows([1, 2], [25, 30]),
             },
             {
                 "upload_id": "upload_001",
@@ -109,7 +125,7 @@ class TestDataStoreSaveLoad:
                 "upload_id": "upload_002",
                 "table_name": "patients",
                 "version": "v2",
-                "data": pl.DataFrame({"patient_id": [3, 4], "age": [35, 40]}),
+                "data": patient_age_rows([3, 4], [35, 40]),
             },
         ]
 
@@ -170,13 +186,13 @@ class TestDataStorePersistence:
 class TestDataStoreListDatasets:
     """Test listing datasets in DuckDB."""
 
-    def test_datastore_list_datasets_returns_all_uploads(self, datastore):
+    def test_datastore_list_datasets_returns_all_uploads(self, datastore, patient_id_rows):
         """list_datasets should return all unique upload_ids."""
         # Arrange: Save multiple tables from different uploads
         tables = [
-            ("upload_001", "patients", "v1", pl.DataFrame({"patient_id": [1, 2]})),
+            ("upload_001", "patients", "v1", patient_id_rows([1, 2])),
             ("upload_001", "visits", "v1", pl.DataFrame({"visit_id": [1, 2]})),
-            ("upload_002", "patients", "v2", pl.DataFrame({"patient_id": [3, 4]})),
+            ("upload_002", "patients", "v2", patient_id_rows([3, 4])),
         ]
 
         for upload_id, table_name, version, data in tables:
@@ -333,7 +349,7 @@ class TestDataStoreParquetExport:
 class TestDataStoreTableNameSanitization:
     """Test SQL-safe table name sanitization."""
 
-    def test_datastore_save_table_sanitizes_table_name_with_spaces(self, datastore, sample_table):
+    def test_datastore_save_table_rejects_spaces_in_name(self, datastore, sample_table):
         """Table names with spaces should be sanitized to SQL-safe identifiers."""
         # Arrange: Table name with spaces and special characters (matches real-world case)
         upload_id = "user_upload_20251229_225650_45c58677"

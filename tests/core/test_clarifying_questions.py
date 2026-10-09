@@ -41,7 +41,7 @@ class TestGenerateClarifications:
     ):
         """When intent is ambiguous, generate intent type clarification."""
         # Arrange
-        with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+        with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
             from clinical_analytics.core.column_parser import ColumnMetadata
 
             mock_parse.return_value = ColumnMetadata(display_name="Mortality", canonical_name="mortality")
@@ -62,7 +62,7 @@ class TestGenerateClarifications:
         # Arrange
         intent = QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.5, primary_variable=None)
 
-        with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+        with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
             from clinical_analytics.core.column_parser import ColumnMetadata
 
             mock_parse.return_value = ColumnMetadata(display_name="Mortality", canonical_name="mortality")
@@ -103,7 +103,7 @@ class TestGenerateClarifications:
         mock_semantic_layer.get_collision_suggestions.return_value = ["mortality_1", "mortality_2"]
         intent = QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.5, primary_variable="mortality")
 
-        with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+        with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
             from clinical_analytics.core.column_parser import ColumnMetadata
 
             def parse_side_effect(name):
@@ -172,7 +172,7 @@ class TestApplyClarificationResponse:
             options=["Mortality", "Age"],
         )
 
-        with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+        with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
             from clinical_analytics.core.column_parser import ColumnMetadata
 
             def parse_side_effect(name):
@@ -220,7 +220,7 @@ class TestClarifyingQuestionsEngine:
     def test_ask_clarifying_questions_stores_pending_clarifications(self, mock_semantic_layer, low_confidence_intent):
         """ask_clarifying_questions stores clarifications for UI layer."""
         # Arrange
-        with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+        with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
             from clinical_analytics.core.column_parser import ColumnMetadata
 
             mock_parse.return_value = ColumnMetadata(display_name="Mortality", canonical_name="mortality")
@@ -237,7 +237,7 @@ class TestClarifyingQuestionsEngine:
 
     def test_clarifying_questions_respects_feature_flag(self, mock_semantic_layer, low_confidence_intent):
         """Clarifying questions should respect ENABLE_CLARIFYING_QUESTIONS feature flag."""
-        with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", False):
+        with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", False, spec=True):
             result = ClarifyingQuestionsEngine.ask_clarifying_questions(
                 low_confidence_intent, mock_semantic_layer, available_columns=["mortality"]
             )
@@ -250,7 +250,7 @@ class TestClarifyingQuestionsEngine:
 
     def test_generate_clarifications_returns_empty_when_feature_disabled(self, mock_semantic_layer):
         """generate_clarifications returns empty list when feature disabled."""
-        with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", False):
+        with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", False, spec=True):
             intent = QueryIntent(intent_type="DESCRIBE", confidence=0.2)
             result = generate_clarifications(intent, mock_semantic_layer, available_columns=["mortality"])
 
@@ -260,7 +260,7 @@ class TestClarifyingQuestionsEngine:
 # Keep these tests for backward compatibility during migration
 def test_clarifying_questions_asks_about_intent_type(mock_semantic_layer, low_confidence_intent):
     """When intent is ambiguous, generate intent type clarification."""
-    with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+    with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
         from clinical_analytics.core.column_parser import ColumnMetadata
 
         mock_parse.return_value = ColumnMetadata(display_name="Mortality", canonical_name="mortality")
@@ -276,7 +276,7 @@ def test_clarifying_questions_asks_about_intent_type(mock_semantic_layer, low_co
 
 def test_clarifying_questions_uses_semantic_layer_metadata(mock_semantic_layer):
     """Clarifying questions should use semantic layer metadata for context."""
-    with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+    with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
         from clinical_analytics.core.column_parser import ColumnMetadata
 
         mock_parse.return_value = ColumnMetadata(display_name="Mortality", canonical_name="mortality")
@@ -296,7 +296,7 @@ def test_clarifying_questions_handles_collisions(mock_semantic_layer):
 
     intent = QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.4, primary_variable="mortality")
 
-    with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+    with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
         from clinical_analytics.core.column_parser import ColumnMetadata
 
         def parse_side_effect(name):
@@ -337,7 +337,7 @@ def test_clarifying_questions_asks_about_variables(mock_semantic_layer):
     """When variables are missing, generate variable clarifications."""
     intent = QueryIntent(intent_type="COMPARE_GROUPS", confidence=0.4, primary_variable=None)
 
-    with patch("clinical_analytics.core.column_parser.parse_column_name") as mock_parse:
+    with patch("clinical_analytics.core.column_parser.parse_column_name", spec=True) as mock_parse:
         from clinical_analytics.core.column_parser import ColumnMetadata
 
         def parse_side_effect(name):

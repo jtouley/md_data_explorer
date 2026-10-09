@@ -7,8 +7,41 @@ Test name follows: test_unit_scenario_expectedBehavior
 """
 
 import polars as pl
+import pytest
 
 from clinical_analytics.core.relationship_detector import RelationshipDetector
+
+
+@pytest.fixture
+def id_column():
+    def _make(values: list) -> pl.DataFrame:
+        return pl.DataFrame({"id": values})
+
+    return _make
+
+
+@pytest.fixture
+def parent_id_column():
+    def _make(values: list) -> pl.DataFrame:
+        return pl.DataFrame({"parent_id": values})
+
+    return _make
+
+
+@pytest.fixture
+def patient_id_column():
+    def _make(values: list) -> pl.DataFrame:
+        return pl.DataFrame({"patient_id": values})
+
+    return _make
+
+
+@pytest.fixture
+def admissions_columns():
+    def _make(admission_ids: list[int], patient_ids: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"admission_id": admission_ids, "patient_id": patient_ids})
+
+    return _make
 
 
 class TestPrimaryKeyDetection:
@@ -136,11 +169,11 @@ class TestForeignKeyCandidateDetection:
 class TestReferentialIntegrityVerification:
     """Test suite for referential integrity verification."""
 
-    def test_verify_referential_integrity_full_match_returns_one(self):
+    def test_verify_referential_integrity_full_match_returns_one(self, id_column, parent_id_column):
         """Referential integrity should return 1.0 for 100% match (Phase 0.3)."""
         # Arrange: All child values exist in parent
-        parent_df = pl.DataFrame({"id": [1, 2, 3, 4, 5]})
-        child_df = pl.DataFrame({"parent_id": [1, 2, 3, 1, 2]})
+        parent_df = id_column([1, 2, 3, 4, 5])
+        child_df = parent_id_column([1, 2, 3, 1, 2])
         detector = RelationshipDetector()
 
         # Act
@@ -149,11 +182,11 @@ class TestReferentialIntegrityVerification:
         # Assert: Should return 1.0 (100% match)
         assert ratio == 1.0
 
-    def test_verify_referential_integrity_partial_match_returns_ratio(self):
+    def test_verify_referential_integrity_partial_match_returns_ratio(self, id_column, parent_id_column):
         """Referential integrity should return partial match ratio (Phase 0.3)."""
         # Arrange: 2 out of 3 unique child values exist in parent
-        parent_df = pl.DataFrame({"id": [1, 2]})
-        child_df = pl.DataFrame({"parent_id": [1, 2, 3]})
+        parent_df = id_column([1, 2])
+        child_df = parent_id_column([1, 2, 3])
         detector = RelationshipDetector()
 
         # Act
@@ -162,11 +195,11 @@ class TestReferentialIntegrityVerification:
         # Assert: Should return ~0.67 (2 out of 3 unique values match)
         assert 0.65 <= ratio <= 0.70
 
-    def test_verify_referential_integrity_no_match_returns_zero(self):
+    def test_verify_referential_integrity_no_match_returns_zero(self, id_column, parent_id_column):
         """Referential integrity should return 0.0 for no match (Phase 0.3)."""
         # Arrange: No child values exist in parent
-        parent_df = pl.DataFrame({"id": [1, 2, 3]})
-        child_df = pl.DataFrame({"parent_id": [4, 5, 6]})
+        parent_df = id_column([1, 2, 3])
+        child_df = parent_id_column([4, 5, 6])
         detector = RelationshipDetector()
 
         # Act
@@ -175,11 +208,11 @@ class TestReferentialIntegrityVerification:
         # Assert: Should return 0.0 (no match)
         assert ratio == 0.0
 
-    def test_verify_referential_integrity_handles_nulls(self):
+    def test_verify_referential_integrity_handles_nulls(self, id_column, parent_id_column):
         """Referential integrity should ignore null values (Phase 0.3)."""
         # Arrange: Child has nulls
-        parent_df = pl.DataFrame({"id": [1, 2, 3]})
-        child_df = pl.DataFrame({"parent_id": [1, 2, None, None]})
+        parent_df = id_column([1, 2, 3])
+        child_df = parent_id_column([1, 2, None, None])
         detector = RelationshipDetector()
 
         # Act
@@ -188,11 +221,11 @@ class TestReferentialIntegrityVerification:
         # Assert: Should return 1.0 (nulls ignored, 2 non-null values match)
         assert ratio == 1.0
 
-    def test_verify_referential_integrity_handles_type_mismatch(self):
+    def test_verify_referential_integrity_handles_type_mismatch(self, id_column, parent_id_column):
         """Referential integrity should handle type mismatches by casting (Phase 0.3)."""
         # Arrange: Parent has int, child has string
-        parent_df = pl.DataFrame({"id": [1, 2, 3]})
-        child_df = pl.DataFrame({"parent_id": ["1", "2", "3"]})
+        parent_df = id_column([1, 2, 3])
+        child_df = parent_id_column(["1", "2", "3"])
         detector = RelationshipDetector()
 
         # Act
@@ -205,17 +238,12 @@ class TestReferentialIntegrityVerification:
 class TestRelationshipDetection:
     """Test suite for full relationship detection."""
 
-    def test_detect_relationships_finds_one_to_many(self):
+    def test_detect_relationships_finds_one_to_many(self, patient_id_column, admissions_columns):
         """Relationship detection should find one-to-many relationships (Phase 0.3)."""
         # Arrange: Parent-child relationship
         tables = {
-            "patients": pl.DataFrame({"patient_id": [1, 2, 3]}),
-            "admissions": pl.DataFrame(
-                {
-                    "admission_id": [101, 102, 103, 104],
-                    "patient_id": [1, 1, 2, 3],
-                }
-            ),
+            "patients": patient_id_column([1, 2, 3]),
+            "admissions": admissions_columns([101, 102, 103, 104], [1, 1, 2, 3]),
         }
         detector = RelationshipDetector()
 
@@ -232,11 +260,11 @@ class TestRelationshipDetection:
         assert rel.relationship_type == "one-to-many"
         assert rel.confidence > 0.8
 
-    def test_detect_relationships_excludes_low_confidence(self):
+    def test_detect_relationships_rejects_low_confidence(self, id_column):
         """Relationship detection should exclude low-confidence matches (Phase 0.3)."""
         # Arrange: Tables with poor referential integrity
         tables = {
-            "table_a": pl.DataFrame({"id": [1, 2, 3]}),
+            "table_a": id_column([1, 2, 3]),
             "table_b": pl.DataFrame(
                 {
                     "b_id": [201, 202],
@@ -252,17 +280,12 @@ class TestRelationshipDetection:
         # Assert: Should not find relationship (low integrity)
         assert len(relationships) == 0
 
-    def test_detect_relationships_returns_sorted_by_confidence(self):
+    def test_detect_relationships_returns_sorted_by_confidence(self, patient_id_column, admissions_columns):
         """Relationship detection should return results sorted by confidence (Phase 0.3)."""
         # Arrange: Multiple relationships with different confidence levels
         tables = {
-            "patients": pl.DataFrame({"patient_id": [1, 2, 3]}),
-            "admissions": pl.DataFrame(
-                {
-                    "admission_id": [101, 102, 103],
-                    "patient_id": [1, 2, 3],  # 100% match
-                }
-            ),
+            "patients": patient_id_column([1, 2, 3]),
+            "admissions": admissions_columns([101, 102, 103], [1, 2, 3]),
             "labs": pl.DataFrame(
                 {
                     "lab_id": [501, 502, 503, 504, 505],

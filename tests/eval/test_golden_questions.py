@@ -95,7 +95,7 @@ def test_golden_questions_evaluation(make_semantic_layer):
     )
 
 
-def test_load_golden_questions_yaml():
+def test_shipped_golden_question_file_has_ids_and_intents():
     """Test that golden questions YAML can be loaded."""
     # Act: Load questions
     yaml_path = "tests/eval/golden_questions.yaml"

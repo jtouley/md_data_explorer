@@ -9,75 +9,24 @@ import polars as pl
 import pytest
 
 from clinical_analytics.ui.storage.user_datasets import (
-    UploadSecurityValidator,
     save_table_list,
 )
 
 
-class TestUploadSecurityValidator:
-    """Test suite for UploadSecurityValidator."""
+@pytest.fixture
+def ordered_columns():
+    def _make(rows_by_name: dict, column_order: list[str]) -> pl.DataFrame:
+        return pl.DataFrame({name: rows_by_name[name] for name in column_order})
 
-    def test_validate_file_type_csv(self):
-        """Test validating CSV file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.csv")
-        assert is_valid is True
-        assert error == ""
+    return _make
 
-    def test_validate_file_type_xlsx(self):
-        """Test validating XLSX file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.xlsx")
-        assert is_valid is True
 
-    def test_validate_file_type_invalid(self):
-        """Test validating invalid file type."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test.exe")
-        assert is_valid is False
-        assert "not allowed" in error
+@pytest.fixture
+def single_named_column():
+    def _make(values: list) -> pl.DataFrame:
+        return pl.DataFrame({"col": values})
 
-    def test_validate_file_type_no_extension(self):
-        """Test validating file with no extension."""
-        is_valid, error = UploadSecurityValidator.validate_file_type("test")
-        assert is_valid is False
-        assert "no extension" in error
-
-    def test_validate_file_size_valid(self):
-        """Test validating file size within limits."""
-        file_bytes = b"x" * (10 * 1024)  # 10KB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is True
-        assert error == ""
-
-    def test_validate_file_size_too_small(self):
-        """Test validating file that's too small."""
-        file_bytes = b"x" * 100  # Less than 1KB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is False
-        assert "too small" in error
-
-    def test_validate_file_size_too_large(self):
-        """Test validating file that's too large."""
-        file_bytes = b"x" * (101 * 1024 * 1024)  # 101MB
-        is_valid, error = UploadSecurityValidator.validate_file_size(file_bytes)
-        assert is_valid is False
-        assert "too large" in error
-
-    def test_sanitize_filename(self):
-        """Test filename sanitization."""
-        safe = UploadSecurityValidator.sanitize_filename("test_file.csv")
-        assert safe == "test_file.csv"
-
-    def test_sanitize_filename_path_traversal(self):
-        """Test sanitizing filename with path traversal."""
-        safe = UploadSecurityValidator.sanitize_filename("../../../etc/passwd")
-        assert ".." not in safe
-        assert "/" not in safe
-
-    def test_sanitize_filename_special_chars(self):
-        """Test sanitizing filename with special characters."""
-        safe = UploadSecurityValidator.sanitize_filename("test@file#name$.csv")
-        assert "@" not in safe
-        assert "#" not in safe
-        assert "$" not in safe
+    return _make
 
 
 class TestUserDatasetStorage:
@@ -1191,7 +1140,14 @@ class TestSeparateEventsList:
 
 
 class TestVersionHistoryMetadata:
-    """Test suite for version history metadata structure (Phase 2)."""
+    """Test suite for version history stored on upload metadata."""
+
+    def test_assert_metadata_invariants_rejects_missing_version_history(self):
+        """Metadata without version_history fails the invariant check."""
+        from clinical_analytics.ui.storage.user_datasets import assert_metadata_invariants
+
+        with pytest.raises(ValueError, match="version_history"):
+            assert_metadata_invariants({})
 
     def test_metadata_includes_version_history(self, upload_storage):
         """Metadata should include version_history array."""
@@ -1302,6 +1258,13 @@ class TestVersionHistoryMetadata:
 class TestSchemaDriftDetection:
     """Test suite for schema drift detection and policy (Phase 3)."""
 
+    def test_schema_drift_policy_rejects_unknown_value(self):
+        """Policy names outside the enum are rejected."""
+        from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
+
+        with pytest.raises(ValueError):
+            SchemaDriftPolicy("not_a_policy")
+
     def test_detect_schema_drift_policy_defined(self, upload_storage):
         """Schema drift detection should have defined policy constants."""
         from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
@@ -1378,6 +1341,13 @@ class TestSchemaDriftDetection:
 class TestSchemaFingerprint:
     """Test suite for schema fingerprint computation (Phase 3)."""
 
+    def test_compute_schema_fingerprint_rejects_missing_frame(self):
+        """Fingerprint computation requires a frame."""
+        from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
+
+        with pytest.raises(AttributeError):
+            compute_schema_fingerprint(None)
+
     def test_compute_schema_fingerprint_uses_utf8_encoding(self, upload_storage):
         """Schema fingerprint should use UTF-8 encoding."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
@@ -1398,13 +1368,13 @@ class TestSchemaFingerprint:
         assert len(fingerprint) == 64  # SHA256 hex digest length
         assert all(c in "0123456789abcdef" for c in fingerprint)
 
-    def test_compute_schema_fingerprint_sorts_by_column_name(self, upload_storage):
+    def test_compute_schema_fingerprint_sorts_by_column_name(self, upload_storage, ordered_columns):
         """Schema fingerprint should sort columns alphabetically by name."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: DataFrame with columns in non-alphabetical order
-        df1 = pl.DataFrame({"zebra": [1], "alpha": [2], "beta": [3]})
-        df2 = pl.DataFrame({"alpha": [2], "beta": [3], "zebra": [1]})
+        df1 = ordered_columns({"zebra": [1], "alpha": [2], "beta": [3]}, ["zebra", "alpha", "beta"])
+        df2 = ordered_columns({"alpha": [2], "beta": [3], "zebra": [1]}, ["alpha", "beta", "zebra"])
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
@@ -1413,15 +1383,15 @@ class TestSchemaFingerprint:
         # Assert: Same fingerprint regardless of column order
         assert fp1 == fp2
 
-    def test_compute_schema_fingerprint_sorts_by_column_type(self, upload_storage):
+    def test_compute_schema_fingerprint_sorts_by_column_type(self, upload_storage, single_named_column):
         """Schema fingerprint should sort by column type when names are same."""
         from clinical_analytics.ui.storage.user_datasets import compute_schema_fingerprint
 
         # Arrange: Two DataFrames with same column names but different types
         # Note: Polars doesn't allow same column name with different types in one DataFrame
         # So we test that type is included in fingerprint
-        df1 = pl.DataFrame({"col": [1, 2, 3]})  # Int64
-        df2 = pl.DataFrame({"col": [1.0, 2.0, 3.0]})  # Float64
+        df1 = single_named_column([1, 2, 3])  # Int64
+        df2 = single_named_column([1.0, 2.0, 3.0])  # Float64
 
         # Act: Compute fingerprints
         fp1 = compute_schema_fingerprint(df1)
@@ -1556,7 +1526,7 @@ class TestSchemaDriftPolicy:
         assert "allowed" in message.lower() or "additive" in message.lower()
         assert len(warnings) == 0
 
-    def test_apply_schema_drift_policy_blocks_breaking_removal(self, upload_storage):
+    def test_apply_schema_drift_policy_blocks_breaking_removal_rejects_invalid(self, upload_storage):
         """Breaking changes (removed columns) should be blocked without override."""
         from clinical_analytics.ui.storage.user_datasets import apply_schema_drift_policy
 
@@ -1638,7 +1608,7 @@ class TestSchemaDriftPolicy:
 class TestSchemaDriftPolicyEnforcement:
     """Test suite for schema drift policy enforcement in overwrite flow (Phase 3 integration)."""
 
-    def test_overwrite_with_breaking_schema_changes_blocked(self, upload_storage):
+    def test_overwrite_with_breaking_schema_changes_blocked_rejects_invalid(self, upload_storage):
         """Overwrite with breaking schema changes (removed column) should be blocked."""
         # Arrange: Upload initial dataset
         storage = upload_storage

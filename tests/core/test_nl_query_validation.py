@@ -156,7 +156,7 @@ class TestDBAValidation:
         )
 
         # Mock the LLM client to return a valid response
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"is_valid": true, "errors": [], "warnings": []}'
 
@@ -190,7 +190,7 @@ class TestDBAValidation:
         )
 
         # Mock the LLM client to return invalid response
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = (
             '{"is_valid": false, "errors": ["Type mismatch: age expects numeric"], "warnings": []}'
@@ -233,7 +233,7 @@ class TestConfigCaching:
         )
 
         # Mock the LLM client
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"is_valid": true, "errors": [], "warnings": []}'
 
@@ -247,8 +247,7 @@ class TestConfigCaching:
 
         with patch.object(engine, "_get_ollama_client", return_value=mock_client):
             with patch(
-                "clinical_analytics.core.config_loader.load_validation_config",
-                mock_load_validation_config,
+                "clinical_analytics.core.config_loader.load_validation_config", mock_load_validation_config, spec=True
             ):
                 # Act - call validation twice
                 engine._dba_validate_llm(intent, "describe age")
@@ -281,7 +280,7 @@ class TestValidationErrorHandling:
         )
 
         # Mock the LLM client to raise an exception
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.side_effect = Exception("LLM connection error")
 
@@ -332,7 +331,7 @@ class TestMultiLayerValidationIntegration:
         engine = NLQueryEngine(semantic)
 
         # Mock OllamaClient to return valid intent
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
 
@@ -350,8 +349,7 @@ class TestMultiLayerValidationIntegration:
         with patch.object(engine, "_get_ollama_client", return_value=mock_client):
             with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
                 with patch(
-                    "clinical_analytics.core.config_loader.load_nl_query_config",
-                    return_value=mock_config,
+                    "clinical_analytics.core.config_loader.load_nl_query_config", return_value=mock_config, spec=True
                 ):
                     # Act
                     result = engine._llm_parse("describe age")
@@ -375,7 +373,7 @@ class TestMultiLayerValidationIntegration:
         )
         engine = NLQueryEngine(semantic)
 
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
 
@@ -399,6 +397,7 @@ class TestMultiLayerValidationIntegration:
                     with patch(
                         "clinical_analytics.core.config_loader.load_nl_query_config",
                         return_value=mock_config,
+                        spec=True,
                     ):
                         # Act
                         result = engine._llm_parse("describe age")
@@ -470,7 +469,7 @@ class TestFeatureFlag:
         engine = NLQueryEngine(semantic)
 
         # Mock OllamaClient to return valid intent
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
 
@@ -488,8 +487,7 @@ class TestFeatureFlag:
         with patch.object(engine, "_get_ollama_client", return_value=mock_client):
             with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
                 with patch(
-                    "clinical_analytics.core.config_loader.load_nl_query_config",
-                    return_value=mock_config,
+                    "clinical_analytics.core.config_loader.load_nl_query_config", return_value=mock_config, spec=True
                 ):
                     # Act
                     result = engine._llm_parse("describe age")
@@ -529,7 +527,7 @@ class TestFeatureFlag:
         engine = NLQueryEngine(semantic)
 
         # Mock OllamaClient to return valid intent
-        mock_client = MagicMock()
+        mock_client = MagicMock(spec=["is_available", "generate"])
         mock_client.is_available.return_value = True
         mock_client.generate.return_value = '{"intent_type": "DESCRIBE", "primary_variable": "age", "confidence": 0.9}'
 
@@ -549,8 +547,7 @@ class TestFeatureFlag:
         with patch.object(engine, "_get_ollama_client", return_value=mock_client):
             with patch.object(engine, "_dba_validate_llm", side_effect=mock_dba_validate):
                 with patch(
-                    "clinical_analytics.core.config_loader.load_nl_query_config",
-                    return_value=mock_config,
+                    "clinical_analytics.core.config_loader.load_nl_query_config", return_value=mock_config, spec=True
                 ):
                     # Act
                     result = engine._llm_parse("describe age")

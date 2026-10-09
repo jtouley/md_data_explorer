@@ -21,6 +21,17 @@ from clinical_analytics.analysis.compute import (
 )
 from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
+
+@pytest.fixture
+def age_only_frame():
+    """One-column age frame. Values differ; the column set does not."""
+
+    def _make(ages: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"age": ages})
+
+    return _make
+
+
 # All fixtures moved to conftest.py - use shared fixtures
 # sample_numeric_df, sample_categorical_df, sample_mixed_df
 # sample_context_describe, sample_context_compare, sample_context_predictor
@@ -29,6 +40,12 @@ from clinical_analytics.ui.components.question_engine import AnalysisContext, An
 
 class TestComputeDescriptiveAnalysis:
     """Test compute_descriptive_analysis function."""
+
+    def test_compute_descriptive_analysis_missing_column_returns_error(self, age_only_frame):
+        """A requested column that is not in the frame is an error result."""
+        context = AnalysisContext(primary_variable="not_a_column")
+        result = compute_descriptive_analysis(age_only_frame([1, 2]), context)
+        assert "not_a_column" in result["error"]
 
     def test_compute_descriptive_analysis_returns_serializable_dict(self, sample_numeric_df, sample_context_describe):
         """Test that compute_descriptive_analysis returns serializable dict."""
@@ -187,6 +204,11 @@ class TestComputeDescriptiveAnalysis:
 
 class TestComputeComparisonAnalysis:
     """Test compute_comparison_analysis function."""
+
+    def test_compute_comparison_analysis_missing_variables_returns_error(self, age_only_frame):
+        """Comparison without an outcome and a group is an error result."""
+        result = compute_comparison_analysis(age_only_frame([1, 2]), AnalysisContext())
+        assert result["error"] == "Missing required columns for comparison"
 
     def test_compute_comparison_analysis_returns_serializable_dict(self, sample_mixed_df, sample_context_compare):
         """Test that compute_comparison_analysis returns serializable dict."""
@@ -422,6 +444,11 @@ class TestComputeComparisonAnalysis:
 class TestComputePredictorAnalysis:
     """Test compute_predictor_analysis function."""
 
+    def test_compute_predictor_analysis_missing_outcome_returns_error(self, age_only_frame):
+        """Predictor analysis without an outcome is an error result."""
+        result = compute_predictor_analysis(age_only_frame([1, 2]), AnalysisContext())
+        assert result["error"] == "No outcome variable specified"
+
     def test_compute_predictor_analysis_returns_serializable_dict(self, sample_context_predictor):
         """Test that compute_predictor_analysis returns serializable dict."""
         # Arrange: Binary outcome with predictors
@@ -484,6 +511,11 @@ class TestComputePredictorAnalysis:
 class TestComputeSurvivalAnalysis:
     """Test compute_survival_analysis function."""
 
+    def test_compute_survival_analysis_missing_time_and_event_returns_error(self, age_only_frame):
+        """Survival analysis without time and event columns is an error result."""
+        result = compute_survival_analysis(age_only_frame([1, 2]), AnalysisContext())
+        assert result["error"] == "Time and event variables required for survival analysis"
+
     def test_compute_survival_analysis_returns_serializable_dict(self, sample_context_survival):
         """Test that compute_survival_analysis returns serializable dict."""
         # Arrange: Survival data
@@ -538,6 +570,14 @@ class TestComputeSurvivalAnalysis:
 class TestComputeRelationshipAnalysis:
     """Test compute_relationship_analysis function."""
 
+    def test_compute_relationship_analysis_too_few_variables_returns_error(self):
+        """Relationship analysis with fewer than two variables is an error result."""
+        result = compute_relationship_analysis(
+            pl.DataFrame({"age": [1, 2], "bmi": [3, 4]}),
+            AnalysisContext(),
+        )
+        assert result["error"] == "Need at least 2 variables to examine relationships"
+
     def test_compute_relationship_analysis_returns_serializable_dict(self, sample_context_relationship):
         """Test that compute_relationship_analysis returns serializable dict."""
         # Arrange: Multiple numeric variables
@@ -559,10 +599,10 @@ class TestComputeRelationshipAnalysis:
         assert "correlations" in result
         assert "strong_correlations" in result
 
-    def test_compute_relationship_analysis_handles_insufficient_variables(self):
+    def test_compute_relationship_analysis_handles_insufficient_variables(self, age_only_frame):
         """Test that compute_relationship_analysis handles insufficient variables."""
         # Arrange: Only one variable
-        df = pl.DataFrame({"age": [25, 30, 35]})
+        df = age_only_frame([25, 30, 35])
         context = AnalysisContext()
         context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
         context.predictor_variables = ["age"]
@@ -615,6 +655,15 @@ class TestComputeRelationshipAnalysis:
 
 class TestComputeAnalysisByType:
     """Test compute_analysis_by_type router function."""
+
+    def test_compute_analysis_by_type_unknown_intent_returns_error(self, age_only_frame):
+        """An unrecognized intent is an error result, not a crash."""
+        result = compute_analysis_by_type(
+            age_only_frame([1, 2]),
+            AnalysisContext(inferred_intent=AnalysisIntent.UNKNOWN),
+        )
+        assert result["type"] == "unknown"
+        assert "error" in result
 
     def test_compute_analysis_by_type_routes_to_descriptive(self, sample_numeric_df, sample_context_describe):
         """Test that compute_analysis_by_type routes DESCRIBE intent correctly."""

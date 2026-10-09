@@ -120,7 +120,7 @@ class TestZipExtraction:
         assert success is True
         # Should only process patients.csv, not __MACOSX files
 
-    def test_extract_zip_no_csv_files(self, upload_storage):
+    def test_save_zip_upload_rejects_archive_without_csv(self, upload_storage):
         """Test ZIP file with no CSV files raises error."""
         zip_buffer = io.BytesIO()
 

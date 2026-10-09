@@ -17,6 +17,12 @@ from clinical_analytics.datasets.uploaded.schema_conversion import (
 class TestConvertSchema:
     """Test suite for convert_schema() function."""
 
+    def test_convert_schema_rejects_missing_outcome_column(self):
+        """Mapping an outcome column that is not in the frame fails closed."""
+        df = pl.DataFrame({"patient_id": ["P001"]})
+        with pytest.raises(ValueError, match="Outcome column"):
+            convert_schema({"outcome": "not_present"}, df)
+
     def test_convert_basic_variable_mapping_to_inferred_schema(self):
         """Test converting basic variable_mapping to inferred_schema format."""
         # Arrange
@@ -403,6 +409,11 @@ class TestCategoricalDetection:
 
 class TestGranularityInference:
     """Test suite for infer_granularities() helper."""
+
+    def test_infer_granularities_rejects_missing_frame(self):
+        """Granularity inference requires a frame."""
+        with pytest.raises(AttributeError):
+            infer_granularities(None)
 
     def test_infer_granularities_patient_only(self):
         """Test that patient_level is always inferred."""

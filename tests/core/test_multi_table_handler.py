@@ -15,6 +15,26 @@ from clinical_analytics.core.multi_table_handler import (
 )
 
 
+@pytest.fixture
+def patients_by_age():
+    """Patient frame. Row values differ; the column set does not."""
+
+    def _make(patient_ids: list[str], ages: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"patient_id": patient_ids, "age": ages})
+
+    return _make
+
+
+@pytest.fixture
+def patients_by_gender():
+    """Demographics frame. Gender codes differ; the column set does not."""
+
+    def _make(patient_ids: list[str], genders: list[str]) -> pl.DataFrame:
+        return pl.DataFrame({"patient_id": patient_ids, "gender": genders})
+
+    return _make
+
+
 class TestTableClassification:
     """Test suite for Milestone 1: Table Classification System."""
 
@@ -303,10 +323,10 @@ class TestTableClassificationEdgeCases:
 
         handler.close()
 
-    def test_single_row_dataframe(self):
+    def test_single_row_dataframe(self, patients_by_age):
         """Test classification with single row."""
         # Arrange
-        single_row = pl.DataFrame({"patient_id": ["P1"], "age": [30]})
+        single_row = patients_by_age(["P1"], [30])
 
         tables = {"single": single_row}
 
@@ -366,7 +386,7 @@ class TestPerformanceOptimizations:
 
         handler.close()
 
-    def test_id_pattern_does_not_match_false_positives(self):
+    def test_id_pattern_rejects_false_positive_tokens(self):
         """
         Acceptance: endswith('_id') pattern does not match 'valid', 'fluid', 'paid'.
 
@@ -492,7 +512,7 @@ class TestPerformanceOptimizations:
 class TestAnchorSelection:
     """Test suite for Milestone 2: Centrality-Based Anchor Selection."""
 
-    def test_never_anchors_on_event_fact_bridge(self):
+    def test_never_anchors_on_event_fact_bridge(self, patients_by_age):
         """
         M2 Acceptance Test 1: Never anchors on {event, fact, bridge} classifications.
 
@@ -505,7 +525,7 @@ class TestAnchorSelection:
         - Anchor is "patients" (dimension), never vitals or patient_medications
         """
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = patients_by_age(["P1", "P2", "P3"], [30, 45, 28])
 
         # Large vitals table (event classification)
         num_vitals = 100_000
@@ -565,14 +585,14 @@ class TestAnchorSelection:
 
         handler.close()
 
-    def test_same_input_graph_yields_same_anchor(self):
+    def test_same_input_graph_yields_same_anchor(self, patients_by_age):
         """
         M2 Acceptance Test 2: Same input graph yields same anchor (determinism).
 
         Run anchor selection multiple times with same data, verify same result.
         """
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3", "P4"], "age": [30, 45, 28, 55]})
+        patients = patients_by_age(["P1", "P2", "P3", "P4"], [30, 45, 28, 55])
 
         admissions = pl.DataFrame(
             {
@@ -752,7 +772,7 @@ class TestDimensionMart:
 
         handler.close()
 
-    def test_no_joins_where_rhs_key_is_non_unique(self):
+    def test_dimension_mart_rejects_non_unique_rhs_keys(self, patients_by_age, patients_by_gender):
         """
         M3 Acceptance Test 2: No joins where RHS key is non-unique.
 
@@ -760,10 +780,10 @@ class TestDimensionMart:
         to prevent row explosion.
         """
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = patients_by_age(["P1", "P2", "P3"], [30, 45, 28])
 
         # Valid dimension (unique patient_id)
-        demographics = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "gender": ["F", "M", "M"]})
+        demographics = patients_by_gender(["P1", "P2", "P3"], ["F", "M", "M"])
 
         # Invalid "dimension" (non-unique patient_id - actually a fact table)
         # This would cause row explosion if joined
@@ -1103,7 +1123,7 @@ class TestFactAggregation:
 
         handler.close()
 
-    def test_feature_tables_exclude_dimension_and_bridge_tables(self):
+    def test_feature_tables_exclude_dimension_and_bridge_tables(self, patients_by_age, patients_by_gender):
         """
         M4 Acceptance: Only fact/event tables are aggregated, dimensions/bridges excluded.
 
@@ -1111,10 +1131,10 @@ class TestFactAggregation:
         and excludes dimensions, bridges, and reference tables.
         """
         # Arrange: Create mixed table types
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [45, 32, 67]})
+        patients = patients_by_age(["P1", "P2", "P3"], [45, 32, 67])
 
         # Dimension table (unique on grain, small bytes)
-        demographics = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "gender": ["M", "F", "M"]})
+        demographics = patients_by_gender(["P1", "P2", "P3"], ["M", "F", "M"])
 
         # Fact table (high cardinality, not unique)
         vitals = pl.DataFrame(
@@ -1449,10 +1469,10 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_dataset_fingerprint_changes_when_data_changes(self, tmp_path):
+    def test_dataset_fingerprint_changes_when_data_changes(self, tmp_path, patients_by_age):
         """Verify dataset fingerprint includes content hash, not just shape."""
         # Arrange: Create two datasets with same shape but different values
-        patients1 = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients1 = patients_by_age(["P1", "P2", "P3"], [30, 45, 28])
 
         patients2 = pl.DataFrame(
             {
@@ -1501,7 +1521,7 @@ class TestMaterializeMart:
 
         handler.close()
 
-    def test_bucket_column_dropped_from_planned_table(self, tmp_path, make_multi_table_setup):
+    def test_bucket_column_missing_from_planned_table(self, tmp_path, make_multi_table_setup):
         """Verify bucket column is dropped from planned tables (internal partition column)."""
         pytest.importorskip("ibis")
 
@@ -1636,12 +1656,12 @@ class TestPlanMart:
 
         handler.close()
 
-    def test_plan_mart_materialized_parquet_readable(self, tmp_path):
+    def test_plan_mart_materialized_parquet_readable(self, tmp_path, patients_by_age):
         """Verify materialized parquet is readable and rowcount matches."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = patients_by_age(["P1", "P2", "P3"], [30, 45, 28])
 
         vitals = pl.DataFrame(
             {
@@ -1670,12 +1690,12 @@ class TestPlanMart:
 
         handler.close()
 
-    def test_plan_mart_uses_duckdb_backend(self, tmp_path):
+    def test_plan_mart_uses_duckdb_backend(self, tmp_path, patients_by_age):
         """Verify plan_mart() uses DuckDB backend explicitly."""
         pytest.importorskip("ibis")
 
         # Arrange
-        patients = pl.DataFrame({"patient_id": ["P1", "P2"], "age": [30, 45]})
+        patients = patients_by_age(["P1", "P2"], [30, 45])
 
         tables = {"patients": patients}
         handler = MultiTableHandler(tables)
@@ -1698,13 +1718,13 @@ class TestPlanMart:
 
         handler.close()
 
-    def test_plan_mart_handles_partitioned_directories(self, tmp_path):
+    def test_plan_mart_handles_partitioned_directories(self, tmp_path, patients_by_age):
         """Verify plan_mart() handles partitioned directories (simulated with
         patient grain but partitioned structure)."""
         pytest.importorskip("ibis")
 
         # Arrange: Create a scenario where we can test partitioned reading
-        patients = pl.DataFrame({"patient_id": ["P1", "P2", "P3"], "age": [30, 45, 28]})
+        patients = patients_by_age(["P1", "P2", "P3"], [30, 45, 28])
 
         vitals = pl.DataFrame(
             {

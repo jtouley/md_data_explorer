@@ -84,7 +84,7 @@ class TestAnalysisExecutor:
         )
 
         # Act
-        with patch("clinical_analytics.core.analysis_executor.translate_error_with_llm") as mock_translate:
+        with patch("clinical_analytics.core.analysis_executor.translate_error_with_llm", spec=True) as mock_translate:
             mock_translate.return_value = "Unable to calculate due to missing data."
             enriched = executor.enrich_with_error_translation(error_result)
 
@@ -104,7 +104,7 @@ class TestAnalysisExecutor:
         )
 
         # Act
-        with patch("clinical_analytics.core.analysis_executor.interpret_result_with_llm") as mock_interpret:
+        with patch("clinical_analytics.core.analysis_executor.interpret_result_with_llm", spec=True) as mock_interpret:
             mock_interpret.return_value = "The average age is 45.5 years."
             enriched = executor.enrich_with_interpretation(success_result, "What is the average age?")
 
@@ -118,7 +118,7 @@ class TestAnalysisExecutor:
         store = InMemoryStateStore()
         cache = ResultCache()
         executor = AnalysisExecutor(state_store=store, result_cache=cache)
-        mock_conversation = MagicMock()
+        mock_conversation = MagicMock(spec=["add_message"])
         store.set("conversation_manager", mock_conversation)
 
         result = AnalysisResult(

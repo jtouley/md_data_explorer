@@ -19,8 +19,26 @@ from clinical_analytics.ui.storage.user_datasets import (
 )
 
 
+@pytest.fixture
+def patients_with_age():
+    return pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+
+
+@pytest.fixture
+def id_column():
+    def _make(values: list[int]) -> pl.DataFrame:
+        return pl.DataFrame({"id": values})
+
+    return _make
+
+
 class TestNormalizeUploadToTableList:
     """Test suite for normalize_upload_to_table_list() function."""
+
+    def test_normalize_upload_rejects_unsupported_extension(self):
+        """A non-CSV, non-ZIP upload fails when the single-file loader rejects the type."""
+        with pytest.raises(ValueError, match="Unsupported file type"):
+            normalize_upload_to_table_list(b"not a spreadsheet", "notes.txt")
 
     def test_normalize_csv_to_table_list(self):
         """Test normalizing CSV upload returns single table with filename stem as name."""
@@ -105,12 +123,12 @@ class TestNormalizeUploadToTableList:
         assert tables[0]["name"] == "viral_load_study"
         assert tables[0]["name"] != "table_0"  # CRITICAL: not generic name
 
-    def test_normalize_handles_gzip_compressed_csv_in_zip(self):
+    def test_normalize_handles_gzip_compressed_csv_in_zip(self, patients_with_age):
         """Test normalizing ZIP with .csv.gz files."""
         # Arrange
         import gzip
 
-        df = pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+        df = patients_with_age
         csv_bytes = df.write_csv().encode("utf-8")
         gzip_bytes = gzip.compress(csv_bytes)
 
@@ -179,11 +197,11 @@ class TestExtractZipTables:
         with pytest.raises(UploadError, match="No CSV files in ZIP"):
             extract_zip_tables(file_bytes)
 
-    def test_extract_zip_handles_duplicate_table_names(self):
+    def test_extract_zip_handles_duplicate_table_names(self, id_column):
         """Test that ZIP with duplicate table names raises UploadError."""
         # Arrange
-        df1 = pl.DataFrame({"id": [1, 2]})
-        df2 = pl.DataFrame({"id": [3, 4]})
+        df1 = id_column([1, 2])
+        df2 = id_column([3, 4])
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -196,10 +214,10 @@ class TestExtractZipTables:
         with pytest.raises(UploadError, match="Duplicate table name"):
             extract_zip_tables(file_bytes)
 
-    def test_extract_zip_skips_macosx_files(self):
+    def test_extract_zip_skips_macosx_files(self, id_column):
         """Test that __MACOSX files are skipped."""
         # Arrange
-        df = pl.DataFrame({"id": [1, 2]})
+        df = id_column([1, 2])
 
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w") as zf:
@@ -228,10 +246,10 @@ class TestExtractZipTables:
 class TestLoadSingleFile:
     """Test suite for load_single_file() helper function."""
 
-    def test_load_csv_returns_polars_dataframe(self):
+    def test_load_csv_returns_polars_dataframe(self, patients_with_age):
         """Test loading CSV returns Polars DataFrame."""
         # Arrange
-        df = pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+        df = patients_with_age
         file_bytes = df.write_csv().encode("utf-8")
         filename = "patients.csv"
 
@@ -244,10 +262,10 @@ class TestLoadSingleFile:
         assert "patient_id" in result.columns
 
     @pytest.mark.skip(reason="Excel writing requires xlsxwriter - manual testing needed")
-    def test_load_excel_returns_polars_dataframe(self):
+    def test_load_excel_returns_polars_dataframe(self, patients_with_age):
         """Test loading Excel returns Polars DataFrame."""
         # Arrange
-        df = pl.DataFrame({"patient_id": ["P001", "P002"], "age": [25, 30]})
+        df = patients_with_age
         buffer = io.BytesIO()
         df.write_excel(buffer)
         file_bytes = buffer.getvalue()

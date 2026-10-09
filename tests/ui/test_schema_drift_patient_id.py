@@ -14,7 +14,7 @@ from clinical_analytics.ui.storage.user_datasets import (
 class TestSchemaDriftPatientIdHandling:
     """Test suite for patient_id handling in schema drift detection."""
 
-    def test_schema_drift_does_not_flag_patient_id_as_removed_when_will_be_added(self):
+    def test_schema_drift_does_not_flag_missing_patient_id_that_will_be_added(self):
         """
         Test that schema drift doesn't flag patient_id as removed when it will be added by ensure_patient_id.
 

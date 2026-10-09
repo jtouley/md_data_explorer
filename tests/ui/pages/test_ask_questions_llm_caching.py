@@ -24,9 +24,9 @@ def _run_execute(ask_questions_page, mock_session_state, sample_cohort, sample_c
     cache = ResultCache(max_size=10)
     mock_session_state["result_cache"] = cache
     sample_context.inferred_intent = AnalysisIntent.COUNT
-    semantic_layer = Mock()
+    semantic_layer = Mock(spec=["format_execution_result"])
     semantic_layer.format_execution_result.return_value = dict(formatted_result)
-    spinner = Mock()
+    spinner = Mock(spec=["__enter__", "__exit__"])
     spinner.__enter__ = Mock(return_value=spinner)
     spinner.__exit__ = Mock(return_value=None)
     with (

@@ -33,7 +33,7 @@ class TestQueryPlanContractEnforcement:
             "execute_query_plan should log execution for observability"
         )
 
-    def test_execute_query_plan_validates_plan_type(self, make_semantic_layer):
+    def test_execute_query_plan_rejects_non_queryplan_input(self, make_semantic_layer):
         """execute_query_plan() should reject non-QueryPlan inputs."""
         # Arrange: Invalid input (dict instead of QueryPlan)
         invalid_plan = {"intent": "COUNT", "entity_key": "patient_id"}
@@ -71,7 +71,7 @@ class TestQueryPlanContractEnforcement:
         assert isinstance(result["warnings"], list), "warnings should be list"
         assert isinstance(result["steps"], list), "steps should be list"
 
-    def test_execute_query_plan_generates_deterministic_run_key(self, make_semantic_layer):
+    def test_same_queryplan_yields_identical_run_key(self, make_semantic_layer):
         """execute_query_plan() should generate deterministic run_key for same plan."""
         # Arrange: Same QueryPlan executed twice
         plan1 = QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.9)

@@ -65,7 +65,7 @@ class TestAskQuestionsRerunBehavior:
         assert retrieved is not None
         assert retrieved.result["headline"] == "**0** with 327 patients"
 
-    def test_render_chat_reads_from_result_cache(self, mock_session_state):
+    def test_render_chat_ignores_transcript_and_uses_result_cache(self, mock_session_state):
         """Test that render_chat() retrieves results from ResultCache, not transcript.
 
         This verifies the fix rationale: result rendering is cache-driven,

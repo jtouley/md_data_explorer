@@ -25,9 +25,10 @@ class TestOllamaUIFeedback:
                 "message": "Model download failed",
                 "auto_downloaded": False,
             },
+            spec=True,
         ):
-            with patch("streamlit.warning"):
-                with patch("streamlit.info"):
+            with patch("streamlit.warning", spec=True):
+                with patch("streamlit.info", spec=True):
                     # Act: Import app (which should show warning)
                     import clinical_analytics.ui.app
 
@@ -40,7 +41,7 @@ class TestOllamaUIFeedback:
     def test_app_initialization_with_auto_download_success(self):
         """Test that app handles successful auto-download gracefully."""
         # Arrange & Act: Mock successful auto-download
-        with patch("clinical_analytics.ui.ollama_init.initialize_ollama") as mock_init:
+        with patch("clinical_analytics.ui.ollama_init.initialize_ollama", spec=True) as mock_init:
             mock_init.return_value = {
                 "installed": True,
                 "running": True,
@@ -62,7 +63,7 @@ class TestOllamaUIFeedback:
     def test_app_provides_helpful_message_on_download_failure(self):
         """Test that app provides actionable message when download fails."""
         # Arrange
-        with patch("clinical_analytics.ui.ollama_init.initialize_ollama") as mock_init:
+        with patch("clinical_analytics.ui.ollama_init.initialize_ollama", spec=True) as mock_init:
             mock_init.return_value = {
                 "installed": True,
                 "running": True,

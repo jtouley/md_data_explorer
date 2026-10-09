@@ -29,7 +29,9 @@ class TestGenerateUploadQuestions:
     def test_generate_upload_questions_deterministic_fallback_returns_questions(self):
         """Test that deterministic fallback returns questions when LLM unavailable."""
         # Arrange: Mock semantic layer with columns
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+        )
         mock_semantic_layer.get_column_alias_index.return_value = {
             "age": "age",
             "outcome": "outcome",
@@ -52,7 +54,9 @@ class TestGenerateUploadQuestions:
     def test_generate_upload_questions_empty_columns_returns_empty_list(self):
         """Test that empty columns returns empty list."""
         # Arrange: Mock semantic layer with no columns
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+        )
         mock_semantic_layer.get_column_alias_index.return_value = {}
 
         mock_inferred_schema = MagicMock()
@@ -97,7 +101,7 @@ class TestGenerateProactiveQuestions:
     @pytest.fixture
     def mock_semantic_layer(self):
         """Create mock semantic layer with columns."""
-        mock = MagicMock()
+        mock = MagicMock(spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"])
         mock.get_column_alias_index.return_value = {
             "age": "age",
             "outcome": "outcome",
@@ -211,7 +215,9 @@ class TestGenerateProactiveQuestions:
     def test_generate_proactive_questions_empty_columns_returns_empty(self, dict_cache_backend):
         """Test that empty columns returns empty list."""
         # Arrange: Mock semantic layer with no columns
-        mock_semantic_layer = MagicMock()
+        mock_semantic_layer = MagicMock(
+            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+        )
         mock_semantic_layer.get_column_alias_index.return_value = {}
 
         high_confidence_intent = QueryIntent(intent_type="DESCRIBE", confidence=0.9)
@@ -257,7 +263,7 @@ class TestGenerateProactiveQuestions:
         # Assert: Should return same questions (from cache)
         assert questions1 == questions2
 
-    @patch("clinical_analytics.core.question_generator.ENABLE_PROACTIVE_QUESTIONS", False)
+    @patch("clinical_analytics.core.question_generator.ENABLE_PROACTIVE_QUESTIONS", False, spec=True)
     def test_generate_proactive_questions_feature_flag_disabled_returns_empty(
         self, mock_semantic_layer, high_confidence_intent, dict_cache_backend
     ):

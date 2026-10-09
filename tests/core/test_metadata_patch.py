@@ -14,153 +14,87 @@ import pytest
 class TestPatchOperation:
     """Tests for PatchOperation enum."""
 
-    def test_patch_operation_set_label_exists(self):
-        """Verify SET_LABEL operation exists."""
+    def test_patch_operation_rejects_unknown_value(self):
+        """Wire values outside the enum are rejected."""
         from clinical_analytics.core.metadata_patch import PatchOperation
 
-        assert PatchOperation.SET_LABEL is not None
-        assert PatchOperation.SET_LABEL.value == "set_label"
+        with pytest.raises(ValueError):
+            PatchOperation("not_a_real_operation")
 
-    def test_patch_operation_add_alias_exists(self):
-        """Verify ADD_ALIAS operation exists."""
+    @pytest.mark.parametrize(
+        ("member", "value"),
+        [
+            ("SET_LABEL", "set_label"),
+            ("ADD_ALIAS", "add_alias"),
+            ("SET_DESCRIPTION", "set_description"),
+            ("SET_SEMANTIC_TYPE", "set_semantic_type"),
+            ("MARK_PHI", "mark_phi"),
+            ("SET_UNIT", "set_unit"),
+            ("SET_CODEBOOK_ENTRY", "set_codebook_entry"),
+            ("SET_RELATIONSHIP", "set_relationship"),
+            ("SET_EXCLUSION_PATTERN", "set_exclusion_pattern"),
+        ],
+    )
+    def test_patch_operation_member_value(self, member: str, value: str):
+        """Each PatchOperation member stores its wire value."""
         from clinical_analytics.core.metadata_patch import PatchOperation
 
-        assert PatchOperation.ADD_ALIAS is not None
-        assert PatchOperation.ADD_ALIAS.value == "add_alias"
-
-    def test_patch_operation_set_description_exists(self):
-        """Verify SET_DESCRIPTION operation exists."""
-        from clinical_analytics.core.metadata_patch import PatchOperation
-
-        assert PatchOperation.SET_DESCRIPTION is not None
-        assert PatchOperation.SET_DESCRIPTION.value == "set_description"
-
-    def test_patch_operation_set_semantic_type_exists(self):
-        """Verify SET_SEMANTIC_TYPE operation exists."""
-        from clinical_analytics.core.metadata_patch import PatchOperation
-
-        assert PatchOperation.SET_SEMANTIC_TYPE is not None
-        assert PatchOperation.SET_SEMANTIC_TYPE.value == "set_semantic_type"
-
-    def test_patch_operation_mark_phi_exists(self):
-        """Verify MARK_PHI operation exists."""
-        from clinical_analytics.core.metadata_patch import PatchOperation
-
-        assert PatchOperation.MARK_PHI is not None
-        assert PatchOperation.MARK_PHI.value == "mark_phi"
-
-    def test_patch_operation_set_unit_exists(self):
-        """Verify SET_UNIT operation exists."""
-        from clinical_analytics.core.metadata_patch import PatchOperation
-
-        assert PatchOperation.SET_UNIT is not None
-        assert PatchOperation.SET_UNIT.value == "set_unit"
-
-    def test_patch_operation_set_codebook_entry_exists(self):
-        """Verify SET_CODEBOOK_ENTRY operation exists."""
-        from clinical_analytics.core.metadata_patch import PatchOperation
-
-        assert PatchOperation.SET_CODEBOOK_ENTRY is not None
-        assert PatchOperation.SET_CODEBOOK_ENTRY.value == "set_codebook_entry"
-
-    def test_patch_operation_set_relationship_exists(self):
-        """Verify SET_RELATIONSHIP operation exists."""
-        from clinical_analytics.core.metadata_patch import PatchOperation
-
-        assert PatchOperation.SET_RELATIONSHIP is not None
-        assert PatchOperation.SET_RELATIONSHIP.value == "set_relationship"
-
-    def test_patch_operation_set_exclusion_pattern_exists(self):
-        """Verify SET_EXCLUSION_PATTERN operation exists."""
-        from clinical_analytics.core.metadata_patch import PatchOperation
-
-        assert PatchOperation.SET_EXCLUSION_PATTERN is not None
-        assert PatchOperation.SET_EXCLUSION_PATTERN.value == "set_exclusion_pattern"
+        assert getattr(PatchOperation, member).value == value
 
 
 class TestSemanticType:
     """Tests for SemanticType enum."""
 
-    def test_semantic_type_identifier_exists(self):
-        """Verify IDENTIFIER type exists."""
+    def test_semantic_type_rejects_unknown_value(self):
+        """Wire values outside the enum are rejected."""
         from clinical_analytics.core.metadata_patch import SemanticType
 
-        assert SemanticType.IDENTIFIER is not None
-        assert SemanticType.IDENTIFIER.value == "identifier"
+        with pytest.raises(ValueError):
+            SemanticType("not_a_semantic_type")
 
-    def test_semantic_type_demographic_exists(self):
-        """Verify DEMOGRAPHIC type exists."""
+    @pytest.mark.parametrize(
+        ("member", "value"),
+        [
+            ("IDENTIFIER", "identifier"),
+            ("DEMOGRAPHIC", "demographic"),
+            ("CLINICAL", "clinical"),
+            ("TEMPORAL", "temporal"),
+            ("OUTCOME", "outcome"),
+            ("MEASUREMENT", "measurement"),
+            ("CODED", "coded"),
+        ],
+    )
+    def test_semantic_type_member_value(self, member: str, value: str):
+        """Each SemanticType member stores its wire value."""
         from clinical_analytics.core.metadata_patch import SemanticType
 
-        assert SemanticType.DEMOGRAPHIC is not None
-        assert SemanticType.DEMOGRAPHIC.value == "demographic"
-
-    def test_semantic_type_clinical_exists(self):
-        """Verify CLINICAL type exists."""
-        from clinical_analytics.core.metadata_patch import SemanticType
-
-        assert SemanticType.CLINICAL is not None
-        assert SemanticType.CLINICAL.value == "clinical"
-
-    def test_semantic_type_temporal_exists(self):
-        """Verify TEMPORAL type exists."""
-        from clinical_analytics.core.metadata_patch import SemanticType
-
-        assert SemanticType.TEMPORAL is not None
-        assert SemanticType.TEMPORAL.value == "temporal"
-
-    def test_semantic_type_outcome_exists(self):
-        """Verify OUTCOME type exists."""
-        from clinical_analytics.core.metadata_patch import SemanticType
-
-        assert SemanticType.OUTCOME is not None
-        assert SemanticType.OUTCOME.value == "outcome"
-
-    def test_semantic_type_measurement_exists(self):
-        """Verify MEASUREMENT type exists."""
-        from clinical_analytics.core.metadata_patch import SemanticType
-
-        assert SemanticType.MEASUREMENT is not None
-        assert SemanticType.MEASUREMENT.value == "measurement"
-
-    def test_semantic_type_coded_exists(self):
-        """Verify CODED type exists."""
-        from clinical_analytics.core.metadata_patch import SemanticType
-
-        assert SemanticType.CODED is not None
-        assert SemanticType.CODED.value == "coded"
+        assert getattr(SemanticType, member).value == value
 
 
 class TestPatchStatus:
     """Tests for PatchStatus enum."""
 
-    def test_patch_status_pending_exists(self):
-        """Verify PENDING status exists."""
+    def test_patch_status_rejects_unknown_value(self):
+        """Wire values outside the enum are rejected."""
         from clinical_analytics.core.metadata_patch import PatchStatus
 
-        assert PatchStatus.PENDING is not None
-        assert PatchStatus.PENDING.value == "pending"
+        with pytest.raises(ValueError):
+            PatchStatus("not_a_status")
 
-    def test_patch_status_accepted_exists(self):
-        """Verify ACCEPTED status exists."""
+    @pytest.mark.parametrize(
+        ("member", "value"),
+        [
+            ("PENDING", "pending"),
+            ("ACCEPTED", "accepted"),
+            ("REJECTED", "rejected"),
+            ("REVERTED", "reverted"),
+        ],
+    )
+    def test_patch_status_member_value(self, member: str, value: str):
+        """Each PatchStatus member stores its wire value."""
         from clinical_analytics.core.metadata_patch import PatchStatus
 
-        assert PatchStatus.ACCEPTED is not None
-        assert PatchStatus.ACCEPTED.value == "accepted"
-
-    def test_patch_status_rejected_exists(self):
-        """Verify REJECTED status exists."""
-        from clinical_analytics.core.metadata_patch import PatchStatus
-
-        assert PatchStatus.REJECTED is not None
-        assert PatchStatus.REJECTED.value == "rejected"
-
-    def test_patch_status_reverted_exists(self):
-        """Verify REVERTED status exists."""
-        from clinical_analytics.core.metadata_patch import PatchStatus
-
-        assert PatchStatus.REVERTED is not None
-        assert PatchStatus.REVERTED.value == "reverted"
+        assert getattr(PatchStatus, member).value == value
 
 
 class TestMetadataPatch:
@@ -318,6 +252,13 @@ class TestMetadataPatch:
 class TestExclusionPatternPatch:
     """Tests for exclusion pattern patches."""
 
+    def test_exclusion_pattern_patch_rejects_missing_fields(self):
+        """Required fields are not optional."""
+        from clinical_analytics.core.metadata_patch import ExclusionPatternPatch
+
+        with pytest.raises(TypeError):
+            ExclusionPatternPatch()
+
     def test_exclusion_pattern_creation(self):
         """Test creating an exclusion pattern patch."""
         from clinical_analytics.core.metadata_patch import (
@@ -370,6 +311,13 @@ class TestExclusionPatternPatch:
 
 class TestRelationshipPatch:
     """Tests for cross-column relationship patches."""
+
+    def test_relationship_patch_rejects_missing_fields(self):
+        """Required fields are not optional."""
+        from clinical_analytics.core.metadata_patch import RelationshipPatch
+
+        with pytest.raises(TypeError):
+            RelationshipPatch()
 
     def test_relationship_patch_creation(self):
         """Test creating a relationship patch between columns."""

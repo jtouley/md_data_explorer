@@ -65,7 +65,7 @@ def test_idempotency_same_query_uses_cached_result(
     mock_session_state["result_cache"] = cache
 
     # Mock Streamlit functions - patch st.session_state and st.spinner on the module
-    spinner_context = Mock()
+    spinner_context = Mock(spec=["__enter__", "__exit__"])
     spinner_context.__enter__ = Mock(return_value=spinner_context)
     spinner_context.__exit__ = Mock(return_value=None)
     # Patch session_state directly on the st object in the module
@@ -118,7 +118,7 @@ def test_idempotency_different_query_computes_new_result(
     execution_result = {"success": True, "result_df": Mock(), "run_key": run_key}
 
     # Create mock semantic_layer
-    mock_semantic_layer = Mock()
+    mock_semantic_layer = Mock(spec=["format_execution_result"])
     formatted_result = {
         "type": "descriptive",
         "row_count": 5,
@@ -130,7 +130,7 @@ def test_idempotency_different_query_computes_new_result(
     mock_semantic_layer.format_execution_result.return_value = formatted_result
 
     # Mock Streamlit functions
-    spinner_context = Mock()
+    spinner_context = Mock(spec=["__enter__", "__exit__"])
     spinner_context.__enter__ = Mock(return_value=spinner_context)
     spinner_context.__exit__ = Mock(return_value=None)
     mock_spinner = Mock(return_value=spinner_context)
@@ -183,7 +183,7 @@ def test_idempotency_result_persists_across_reruns(
 
     # Create mock execution_result and semantic_layer
     execution_result = {"success": True, "result_df": Mock(), "run_key": run_key}
-    mock_semantic_layer = Mock()
+    mock_semantic_layer = Mock(spec=["format_execution_result"])
     formatted_result = {
         "type": "descriptive",
         "row_count": 5,
@@ -195,7 +195,7 @@ def test_idempotency_result_persists_across_reruns(
     mock_semantic_layer.format_execution_result.return_value = formatted_result
 
     # Mock Streamlit functions
-    spinner_context = Mock()
+    spinner_context = Mock(spec=["__enter__", "__exit__"])
     spinner_context.__enter__ = Mock(return_value=spinner_context)
     spinner_context.__exit__ = Mock(return_value=None)
     mock_spinner = Mock(return_value=spinner_context)
@@ -258,7 +258,7 @@ def test_idempotency_result_stored_with_dataset_scoped_key(
 
     # Create mock execution_result and semantic_layer
     execution_result = {"success": True, "result_df": Mock(), "run_key": run_key}
-    mock_semantic_layer = Mock()
+    mock_semantic_layer = Mock(spec=["format_execution_result"])
     formatted_result = {
         "type": "descriptive",
         "row_count": 5,
@@ -270,7 +270,7 @@ def test_idempotency_result_stored_with_dataset_scoped_key(
     mock_semantic_layer.format_execution_result.return_value = formatted_result
 
     # Mock Streamlit functions
-    spinner_context = Mock()
+    spinner_context = Mock(spec=["__enter__", "__exit__"])
     spinner_context.__enter__ = Mock(return_value=spinner_context)
     spinner_context.__exit__ = Mock(return_value=None)
     mock_spinner = Mock(return_value=spinner_context)

@@ -29,7 +29,7 @@ def mock_overlay_store():
 
 
 @pytest.fixture
-def test_client(mock_enrichment_service, mock_overlay_store):
+def api_client(mock_enrichment_service, mock_overlay_store):
     """Create test client with mocked services."""
     from clinical_analytics.api.routes.enrichments import (
         get_dataset_version,
@@ -47,7 +47,7 @@ def test_client(mock_enrichment_service, mock_overlay_store):
 class TestEnrichmentsGetPending:
     """Tests for GET /api/datasets/{dataset_id}/enrichments/pending endpoint."""
 
-    def test_enrichments_get_pending_returns_suggestions(self, test_client, mock_enrichment_service):
+    def test_enrichments_get_pending_returns_suggestions(self, api_client, mock_enrichment_service):
         """Pending suggestions are returned as a list."""
         from clinical_analytics.core.metadata_patch import (
             MetadataPatch,
@@ -68,7 +68,7 @@ class TestEnrichmentsGetPending:
         )
         mock_enrichment_service.get_pending_suggestions.return_value = [mock_patch]
 
-        response = test_client.get("/api/datasets/upload_test/enrichments/pending")
+        response = api_client.get("/api/datasets/upload_test/enrichments/pending")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -79,11 +79,11 @@ class TestEnrichmentsGetPending:
         assert data["suggestions"][0]["column"] == "age"
         assert data["suggestions"][0]["suggested_value"] == "Patient Age"
 
-    def test_enrichments_get_pending_empty_returns_empty_list(self, test_client, mock_enrichment_service):
+    def test_enrichments_get_pending_empty_returns_empty_list(self, api_client, mock_enrichment_service):
         """No pending suggestions returns empty list."""
         mock_enrichment_service.get_pending_suggestions.return_value = []
 
-        response = test_client.get("/api/datasets/upload_test/enrichments/pending")
+        response = api_client.get("/api/datasets/upload_test/enrichments/pending")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -94,9 +94,19 @@ class TestEnrichmentsGetPending:
 class TestEnrichmentsAccept:
     """Tests for POST /api/datasets/{dataset_id}/enrichments/{patch_id}/accept endpoint."""
 
-    def test_enrichments_post_accept_applies_patch(self, test_client, mock_enrichment_service):
+    def test_enrichments_accept_reports_error_when_service_fails(self, api_client, mock_enrichment_service):
+        """A service failure is returned as an unsuccessful accept, not a crash."""
+        mock_enrichment_service.accept_suggestion.side_effect = RuntimeError("missing patch")
+        response = api_client.post(
+            "/api/datasets/upload_test/enrichments/patch_001/accept",
+            json={},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["success"] is False
+
+    def test_enrichments_post_accept_applies_patch(self, api_client, mock_enrichment_service):
         """Accept endpoint applies the patch and returns success."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/patch_001/accept",
             json={},
         )
@@ -104,9 +114,9 @@ class TestEnrichmentsAccept:
         assert response.status_code == status.HTTP_200_OK
         mock_enrichment_service.accept_suggestion.assert_called_once()
 
-    def test_enrichments_post_accept_with_custom_user(self, test_client, mock_enrichment_service):
+    def test_enrichments_post_accept_with_custom_user(self, api_client, mock_enrichment_service):
         """Accept endpoint supports custom accepted_by user."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/patch_001/accept",
             json={"accepted_by": "test_user"},
         )
@@ -117,11 +127,21 @@ class TestEnrichmentsAccept:
 
 
 class TestEnrichmentsReject:
-    """Tests for POST /api/datasets/{dataset_id}/enrichments/{patch_id}/reject endpoint."""
+    """Tests for POST reject."""
 
-    def test_enrichments_post_reject_marks_rejected(self, test_client, mock_enrichment_service):
+    def test_enrichments_reject_reports_error_when_service_fails(self, api_client, mock_enrichment_service):
+        """A service failure is returned as an unsuccessful reject."""
+        mock_enrichment_service.reject_suggestion.side_effect = RuntimeError("missing patch")
+        response = api_client.post(
+            "/api/datasets/upload_test/enrichments/patch_001/reject",
+            json={},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["success"] is False
+
+    def test_enrichments_post_reject_marks_rejected(self, api_client, mock_enrichment_service):
         """Reject endpoint marks patch as rejected."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/patch_001/reject",
             json={},
         )
@@ -129,9 +149,9 @@ class TestEnrichmentsReject:
         assert response.status_code == status.HTTP_200_OK
         mock_enrichment_service.reject_suggestion.assert_called_once()
 
-    def test_enrichments_post_reject_with_reason(self, test_client, mock_enrichment_service):
+    def test_enrichments_post_reject_with_reason(self, api_client, mock_enrichment_service):
         """Reject endpoint accepts custom reason."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/patch_001/reject",
             json={"reason": "Incorrect label for this column"},
         )
@@ -144,9 +164,19 @@ class TestEnrichmentsReject:
 class TestEnrichmentsRevert:
     """Tests for POST /api/datasets/{dataset_id}/enrichments/{patch_id}/revert."""
 
-    def test_enrichments_post_revert_calls_service(self, test_client, mock_enrichment_service):
+    def test_enrichments_revert_reports_error_when_patch_missing(self, api_client, mock_enrichment_service):
+        """Reverting a missing patch is an unsuccessful response."""
+        mock_enrichment_service.revert_accepted_patch.side_effect = ValueError("patch not accepted")
+        response = api_client.post(
+            "/api/datasets/upload_test/enrichments/patch_001/revert",
+            json={},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["success"] is False
+
+    def test_enrichments_post_revert_calls_service(self, api_client, mock_enrichment_service):
         """Revert endpoint delegates to EnrichmentService.revert_accepted_patch."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/patch_001/revert",
             json={},
         )
@@ -154,9 +184,9 @@ class TestEnrichmentsRevert:
         assert response.status_code == status.HTTP_200_OK
         mock_enrichment_service.revert_accepted_patch.assert_called_once()
 
-    def test_enrichments_post_revert_with_custom_actor(self, test_client, mock_enrichment_service):
+    def test_enrichments_post_revert_with_custom_actor(self, api_client, mock_enrichment_service):
         """Revert endpoint passes reverted_by."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/patch_001/revert",
             json={"reverted_by": "auditor_1"},
         )
@@ -167,9 +197,15 @@ class TestEnrichmentsRevert:
 
 
 class TestEnrichmentsHistory:
-    """Tests for GET /api/datasets/{dataset_id}/enrichments/history endpoint."""
+    """Tests for GET patch history."""
 
-    def test_enrichments_get_history_returns_patches(self, test_client, mock_overlay_store):
+    def test_enrichments_history_propagates_store_failure(self, api_client, mock_overlay_store):
+        """The history route does not catch a store failure, so the error propagates."""
+        mock_overlay_store.load_patches.side_effect = RuntimeError("disk unreadable")
+        with pytest.raises(RuntimeError, match="disk unreadable"):
+            api_client.get("/api/datasets/upload_test/enrichments/history")
+
+    def test_enrichments_get_history_returns_patches(self, api_client, mock_overlay_store):
         """History endpoint returns applied patches."""
         from clinical_analytics.core.metadata_patch import (
             MetadataPatch,
@@ -192,7 +228,7 @@ class TestEnrichmentsHistory:
         )
         mock_overlay_store.load_patches.return_value = [mock_patch]
 
-        response = test_client.get("/api/datasets/upload_test/enrichments/history")
+        response = api_client.get("/api/datasets/upload_test/enrichments/history")
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
@@ -203,11 +239,19 @@ class TestEnrichmentsHistory:
 
 
 class TestEnrichmentsGenerate:
-    """Tests for POST /api/datasets/{dataset_id}/enrichments/generate endpoint."""
+    """Tests for POST generate."""
 
-    def test_enrichments_post_generate_returns_accepted(self, test_client, mock_enrichment_service):
+    def test_enrichments_generate_rejects_invalid_force_flag(self, api_client):
+        """force_regenerate must be a boolean."""
+        response = api_client.post(
+            "/api/datasets/upload_test/enrichments/generate",
+            json={"force_regenerate": "nope"},
+        )
+        assert response.status_code == 422
+
+    def test_enrichments_post_generate_returns_accepted(self, api_client, mock_enrichment_service):
         """Generate endpoint returns 202 Accepted status."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/generate",
             json={},
         )
@@ -216,9 +260,9 @@ class TestEnrichmentsGenerate:
         data = response.json()
         assert "message" in data
 
-    def test_enrichments_post_generate_with_force(self, test_client, mock_enrichment_service):
+    def test_enrichments_post_generate_with_force(self, api_client, mock_enrichment_service):
         """Generate endpoint supports force regeneration flag."""
-        response = test_client.post(
+        response = api_client.post(
             "/api/datasets/upload_test/enrichments/generate",
             json={"force_regenerate": True},
         )

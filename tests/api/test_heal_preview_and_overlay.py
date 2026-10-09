@@ -38,7 +38,7 @@ def test_default_overlay_dir_matches_store_contract() -> None:
 
 
 def test_pending_route_passes_dataset_version_not_v1() -> None:
-    service = MagicMock()
+    service = MagicMock(spec=["get_pending_suggestions"])
     service.get_pending_suggestions.return_value = []
     app.dependency_overrides[get_enrichment_service] = lambda: service
     app.dependency_overrides[get_overlay_store] = lambda: MagicMock()

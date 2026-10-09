@@ -13,7 +13,7 @@ class TestExampleQuestionsDisplay:
     def test_example_questions_displayed_on_first_load(self):
         """Test that example_questions from metadata are available when chat is empty."""
         # Arrange: Create mock dataset with example_questions in metadata
-        mock_dataset = MagicMock()
+        mock_dataset = MagicMock(spec=["metadata", "upload_id"])
         mock_dataset.metadata = {
             "example_questions": [
                 "What is the distribution of age?",
@@ -32,7 +32,7 @@ class TestExampleQuestionsDisplay:
     def test_example_questions_not_displayed_when_chat_has_messages(self):
         """Test that example_questions are NOT displayed when chat already has messages."""
         # Arrange: Chat has messages (not first load)
-        mock_dataset = MagicMock()
+        mock_dataset = MagicMock(spec=["metadata"])
         mock_dataset.metadata = {
             "example_questions": ["Question 1", "Question 2"],
         }
@@ -47,7 +47,7 @@ class TestExampleQuestionsDisplay:
     def test_example_questions_handles_missing_metadata_gracefully(self):
         """Test that missing example_questions in metadata doesn't cause errors."""
         # Arrange: Dataset with no example_questions in metadata
-        mock_dataset = MagicMock()
+        mock_dataset = MagicMock(spec=["metadata"])
         mock_dataset.metadata = {
             "dataset_name": "test_dataset",
             # No example_questions key
@@ -62,7 +62,7 @@ class TestExampleQuestionsDisplay:
     def test_example_questions_handles_empty_list_gracefully(self):
         """Test that empty example_questions list doesn't cause errors."""
         # Arrange: Dataset with empty example_questions list
-        mock_dataset = MagicMock()
+        mock_dataset = MagicMock(spec=["metadata"])
         mock_dataset.metadata = {
             "example_questions": [],
             "dataset_name": "test_dataset",
