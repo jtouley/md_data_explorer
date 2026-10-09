@@ -114,7 +114,12 @@ class TestChatInputHandling:
 
         query = "what is the average age"
         mock_semantic_layer = MagicMock(
-            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_column_alias_index",
+                "_normalize_alias",
+            ]
         )
         mock_semantic_layer.get_column_alias_index.return_value = {"age": "age"}
 
@@ -161,7 +166,12 @@ class TestChatInputHandling:
         query = "how many patients on statins"
         dataset_version = "dataset_v1"
         mock_semantic_layer = MagicMock(
-            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_column_alias_index",
+                "_normalize_alias",
+            ]
         )
         mock_semantic_layer.get_column_alias_index.return_value = {
             "statin_prescribed": "Statin Prescribed? 1: Yes 2: No"
@@ -354,7 +364,12 @@ class TestChatInputHandling:
         query = "how many had covid and recovered"
         dataset_version = None  # Missing dataset_version should prevent QueryPlan creation
         mock_semantic_layer = MagicMock(
-            spec=["get_collision_warnings", "get_collision_suggestions", "get_column_alias_index"]
+            spec=[
+                "get_collision_warnings",
+                "get_collision_suggestions",
+                "get_column_alias_index",
+                "_normalize_alias",
+            ]
         )
         mock_semantic_layer.get_column_alias_index.return_value = {}
 
