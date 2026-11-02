@@ -1,4 +1,4 @@
-.PHONY: help mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-app run-app-keep run-api headless-preview validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -364,6 +364,10 @@ run-app-keep: ## Start application with bash script (keep Ollama running on exit
 run-api: ensure-venv ## Start FastAPI backend (for Electron desktop dev)
 	@echo "$(GREEN)Starting FastAPI on http://127.0.0.1:8000 ...$(NC)"
 	$(UV) run uvicorn clinical_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
+
+headless-preview: ensure-venv ## Load a CSV via upload storage and print JSON preview (no Streamlit)
+	@echo "$(GREEN)Headless CSV preview (issue #51)...$(NC)"
+	$(PYTHON_RUN) scripts/headless_preview.py $(ARGS)
 
 validate: ## Run platform validation (tests serve as validation)
 	@echo "$(GREEN)Platform validation via test suite...$(NC)"
