@@ -63,7 +63,6 @@ def classify_planned_query(result: dict) -> str:
     return "execution_error"
 
 
-
 def apply_planned_query_result(result: dict, session: dict, dataset_version: str) -> str:
     """Return the branch label and clear the rerun flag. Rendering stays in the page."""
     session[f"force_rerun:{dataset_version}"] = False

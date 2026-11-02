@@ -109,7 +109,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
             if abs(diff) < 1e-12:
                 claim = f"Mean {outcome} did not differ between {groups[0]} and {groups[1]}"
             else:
-                # mean_diff = mean(groups[0]) - mean(groups[1])
+                # Positive mean_diff means the first listed group has the higher mean.
                 higher, lower = (groups[0], groups[1]) if diff > 0 else (groups[1], groups[0])
                 claim = f"Mean {outcome} was {_fmt(abs(diff))} higher in {higher} than {lower}"
             details = []

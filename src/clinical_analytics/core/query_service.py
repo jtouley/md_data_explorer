@@ -165,7 +165,7 @@ class QueryService:
         requires_confirmation = False
         failure_reason: str | None = None
         plan_line: str | None = None
-        execution_run_key = run_key
+        execution_run_key: str | None = run_key
 
         try:
             execution_result = self.semantic_layer.execute_query_plan(
@@ -178,17 +178,16 @@ class QueryService:
             if isinstance(execution_result, dict):
                 requires_confirmation = bool(execution_result.get("requires_confirmation"))
                 failure_reason = execution_result.get("failure_reason")
-                if execution_result.get("run_key"):
-                    execution_run_key = execution_result["run_key"]
+                next_run_key = execution_result.get("run_key")
+                if isinstance(next_run_key, str) and next_run_key:
+                    execution_run_key = next_run_key
                 elif requires_confirmation or execution_result.get("success") is False:
                     execution_run_key = None
 
                 if requires_confirmation:
                     plan_line = format_plan_line(query_plan)
                 elif execution_result.get("success") is False:
-                    reason = failure_reason or (
-                        (execution_result.get("warnings") or ["Execution failed"])[0]
-                    )
+                    reason = failure_reason or ((execution_result.get("warnings") or ["Execution failed"])[0])
                     issues.append({"message": str(reason), "severity": "error"})
                 elif execution_result.get("success") is True:
                     # Run the statistics for the plan's intent (t-test, regression, ...).

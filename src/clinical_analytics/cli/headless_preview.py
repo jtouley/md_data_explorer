@@ -102,7 +102,6 @@ def preview_csv(
             shutil.rmtree(cleanup_dir, ignore_errors=True)
 
 
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint: print JSON preview to stdout."""
     parser = argparse.ArgumentParser(description="Load a CSV via upload storage and print a JSON preview.")

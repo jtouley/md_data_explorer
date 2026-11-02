@@ -60,7 +60,7 @@ def _claim_compare(result: dict[str, Any], plan: QueryPlan) -> str:
         if abs(diff) < 1e-12:
             parts.append(f"Mean {outcome} did not differ between groups")
         elif len(groups) >= 2:
-            # mean_diff = mean(groups[0]) - mean(groups[1])
+            # Positive mean_diff means the first listed group has the higher mean.
             higher, lower = (groups[0], groups[1]) if diff > 0 else (groups[1], groups[0])
             parts.append(f"Mean {outcome} was {abs(diff):.1f} higher in {higher} than {lower}")
         elif result.get("headline_text"):

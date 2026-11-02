@@ -108,9 +108,7 @@ class AsyncQueryService:
         self._events[query_id] = []
 
         # Start query execution in background
-        asyncio.create_task(
-            self._execute_query_background(query_id, query, dataset_id, session_id, confirmed)
-        )
+        asyncio.create_task(self._execute_query_background(query_id, query, dataset_id, session_id, confirmed))
 
         return query_id
 
