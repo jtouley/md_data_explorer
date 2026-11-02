@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.11 or higher
+- Node.js 20+ (for the Electron desktop app)
 - pip or uv package manager
 
 ## Install from Source
@@ -22,14 +23,11 @@ pip install -e .
 ## Verify Installation
 
 ```bash
-# Run the application
-streamlit run src/clinical_analytics/ui/app.py
-
-# Or use the CLI
-clinical-analytics serve
+make run                            # FastAPI backend on http://127.0.0.1:8000
+cd electron && npm ci && npm start  # Electron desktop app (separate terminal)
 ```
 
-The application should open in your browser at `http://localhost:8501`.
+Or run `./scripts/run_app.sh`, which also sets up Ollama. The desktop window opens once the API at `http://127.0.0.1:8000/health` responds.
 
 ## Dependencies
 
@@ -37,7 +35,8 @@ The platform requires:
 
 - **Data Processing**: pandas, polars, duckdb
 - **Statistical Analysis**: scipy, statsmodels, lifelines
-- **UI**: streamlit
+- **API**: fastapi, uvicorn
+- **Desktop UI**: Electron (Node, under `electron/`)
 - **NL Query Engine**: sentence-transformers, scikit-learn
 - **Semantic Layer**: ibis-framework
 
@@ -47,10 +46,10 @@ All dependencies are automatically installed during setup.
 
 ### Port Already in Use
 
-If port 8501 is already in use:
+If port 8000 is already in use, stop the other process. The desktop app expects the API on 8000; for API-only use you can run:
 
 ```bash
-streamlit run src/clinical_analytics/ui/app.py --server.port 8502
+uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8001
 ```
 
 ### Missing Dependencies

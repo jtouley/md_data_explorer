@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Clinical Analytics Platform - Streamlit Launcher
-# This script automatically installs dependencies and runs the Streamlit application
+# Clinical Analytics Platform - Desktop Launcher
+# This script installs dependencies, manages Ollama, starts the FastAPI backend,
+# and opens the Electron desktop app (or leaves the API running if Node is absent)
 # Designed for easy use by doctors - everything is automated!
 
 # Don't exit on error - we want to handle installation failures gracefully
@@ -21,12 +22,18 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 # Global variables for cleanup
 OLLAMA_PID=""
+API_PID=""
 STOP_OLLAMA_ON_EXIT="${STOP_OLLAMA_ON_EXIT:-true}"
 
 # Cleanup function - called on script exit
 cleanup() {
     echo ""
     echo -e "${YELLOW}🛑 Shutting down...${NC}"
+
+    if [ -n "$API_PID" ]; then
+        echo -e "${YELLOW}   Stopping FastAPI backend (PID: $API_PID)...${NC}"
+        kill "$API_PID" 2>/dev/null || true
+    fi
 
     # Stop Ollama if we started it AND flag is set
     if [ -n "$OLLAMA_PID" ] && [ "$STOP_OLLAMA_ON_EXIT" = "true" ]; then
@@ -313,19 +320,40 @@ echo -e "   • Logistic regression analysis"
 echo -e "   • CSV/JSON data export"
 echo -e "   • 44+ automated tests passing"
 
-# Activate virtual environment and run streamlit
+# Start the FastAPI backend, then the Electron desktop app
+API_URL="http://127.0.0.1:8000"
 echo ""
-echo -e "${GREEN}🎬 Starting Streamlit application...${NC}"
-echo -e "${YELLOW}   The app will open in your browser at:${NC} ${GREEN}http://localhost:8501${NC}"
-echo ""
-echo -e "${YELLOW}   Press Ctrl+C to stop the server${NC}"
-echo ""
-
-# Re-enable exit on error for the actual app run
-set -e
-
-# Run streamlit with the app (verbose mode for debugging)
+echo -e "${GREEN}🎬 Starting FastAPI backend at ${API_URL} ...${NC}"
 source .venv/bin/activate
-streamlit run src/clinical_analytics/ui/app.py \
-    --logger.level=info \
-    --server.fileWatcherType=poll
+# Ollama was already handled above, so the API's own auto-init stays off here.
+uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8000 --log-level info &
+API_PID=$!
+
+for _ in $(seq 1 60); do
+    if curl -s "${API_URL}/health" > /dev/null 2>&1; then
+        break
+    fi
+    if ! kill -0 "$API_PID" 2>/dev/null; then
+        echo -e "${RED}✗ FastAPI backend exited during startup (see log above)${NC}"
+        exit 1
+    fi
+    sleep 1
+done
+if ! curl -s "${API_URL}/health" > /dev/null 2>&1; then
+    echo -e "${RED}✗ FastAPI backend did not become healthy within 60s${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ FastAPI backend ready${NC}"
+
+echo -e "${YELLOW}   Press Ctrl+C to stop${NC}"
+echo ""
+
+if command -v npm >/dev/null 2>&1 && [ -d electron/node_modules ]; then
+    echo -e "${GREEN}🖥  Opening the desktop app (Electron)...${NC}"
+    npm --prefix electron start
+else
+    echo -e "${YELLOW}⚠ Electron dependencies not installed - desktop window not opened.${NC}"
+    echo -e "${CYAN}   Install once with: cd electron && npm ci   then re-run this script.${NC}"
+    echo -e "${CYAN}   The API stays available at ${API_URL} (docs: ${API_URL}/api/docs).${NC}"
+    wait "$API_PID"
+fi

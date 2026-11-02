@@ -1,6 +1,6 @@
 # Clinical Analytics Platform
 
-Polars-first clinical analytics: user-uploaded datasets, semantic layer, natural-language queries, and statistical workflows. The **interactive UI** is primarily **Streamlit**; **FastAPI** backs API clients; **Electron** (under `electron/`) is an in-progress desktop shell—see the [omnibus spec](docs/specs/omnibus_electron_streamlit_cutover.md).
+Polars-first clinical analytics: user-uploaded datasets, semantic layer, natural-language queries, and statistical workflows. The **desktop UI** is **Electron** (under `electron/`), backed by a local **FastAPI** server; Streamlit has been removed—see the [omnibus spec](docs/specs/omnibus_electron_streamlit_cutover.md).
 
 **Reviewer / architect entry points:** [As-built architecture](docs/architecture/AS_BUILT_ARCHITECTURE.md) · [Module boundaries](docs/architecture/ARCHITECTURE_BOUNDARIES.md) · [Threat model](docs/security/THREAT_MODEL.md)
 
@@ -12,8 +12,8 @@ Polars-first clinical analytics: user-uploaded datasets, semantic layer, natural
 make install-dev          # uv sync --extra dev --group dev
 make test-fast            # Fast tests (matches CI test job)
 make check                # lint, format-check, type-check, tests
-make run                  # Streamlit (http://localhost:8501)
-make run-api              # FastAPI (see Makefile / api for port)
+make run                  # FastAPI backend at http://127.0.0.1:8000 (alias of run-api)
+cd electron && npm ci && npm start   # Electron desktop app (needs the backend running)
 ```
 
 Optional pytest flags: `make test-ui-serial PYTEST_ARGS='-k foo -xvs'`. See [tests/AGENTS.md](tests/AGENTS.md) and [docs/development/testing.md](docs/development/testing.md).
@@ -27,40 +27,40 @@ Optional pytest flags: `make test-ui-serial PYTEST_ARGS='-k foo -xvs'`. See [tes
 - **Upload-driven workflows:** CSV/Excel and related paths through the dataset registry and semantic layer
 - **Question-driven analysis:** NL query engine with pattern, embedding, and LLM fallbacks (see `docs/`)
 - **Statistical engine:** Descriptive, group comparison, survival, prediction, correlations (see `src/clinical_analytics/analysis/`)
-- **Tech stack:** Python 3.11+, Polars, DuckDB, Ibis, Streamlit; FastAPI for HTTP; Electron migration tracked in docs above
+- **Tech stack:** Python 3.11+, Polars, DuckDB, Ibis, FastAPI; Electron desktop UI
 
 ---
 
-## User guide (Streamlit-oriented)
+## User guide
 
-The section below describes a **sidebar dataset picker** and named public datasets. That matches **legacy Streamlit UX**; today you should expect **upload-first** flows. Keep the procedural tips (ports, troubleshooting) that still apply.
+### Quick start
 
-### Quick start (Streamlit)
-
-**Mac/Linux:**
+**Mac/Linux** (sets up Ollama, starts the API, opens the desktop app):
 
 ```bash
 ./scripts/run_app.sh
 ```
 
-**Or:**
+**Or, in two terminals:**
 
 ```bash
-make run
+make run                           # FastAPI backend on http://127.0.0.1:8000
+cd electron && npm ci && npm start # Electron desktop app
 ```
 
-Default URL: `http://localhost:8501`
+API docs: `http://127.0.0.1:8000/api/docs`
 
 ### Interface (conceptual)
 
-- **Sidebar:** Dataset / session selection (uploaded data in current product)
-- **Main area:** Overview, preview, analyses, NL query where enabled
+- **Dataset bar:** Upload a file or pick an uploaded dataset
+- **Sidebar:** Chat sessions per dataset
+- **Main area:** Dataset overview and preview, natural-language questions and results
 
 ### Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| Port 8501 in use | Stop other Streamlit apps or change port in Streamlit options |
+| Port 8000 in use | Stop the other process, or run `uv run uvicorn clinical_analytics.api.main:app --port 8001` (the desktop app expects 8000) |
 | Module not found | `make install-dev` |
 | Data not loading | Confirm uploads completed; see `docs/getting-started/uploading-data.md` |
 
@@ -87,7 +87,7 @@ src/clinical_analytics/
 ├── core/           # Semantic layer, NL engine, schemas, query service
 ├── datasets/       # Dataset definitions (uploaded + registry)
 ├── analysis/       # Statistical methods
-├── ui/             # Streamlit app, pages, components, storage helpers
+├── ui/             # Upload storage and enrichment helpers (no UI framework)
 └── storage/        # Shared storage utilities
 electron/           # Desktop shell (Vite + Electron)
 tests/              # Pytest suites (see tests/AGENTS.md)
