@@ -1842,7 +1842,9 @@ class SemanticLayer:
                 "chart_spec": chart_spec,  # Phase 3.3: Chart specification (still included on error)
             }
 
-    def format_execution_result(self, execution_result: dict[str, Any], context: Any) -> dict[str, Any]:
+    def format_execution_result(
+        self, execution_result: dict[str, Any], context: Any, cohort: pl.DataFrame | None = None
+    ) -> dict[str, Any]:
         """
         Format execution result from execute_query_plan() for UI consumption (Phase 3.1).
 
@@ -1852,6 +1854,8 @@ class SemanticLayer:
         Args:
             execution_result: Result dict from execute_query_plan()
             context: AnalysisContext with intent and variables (for legacy compatibility)
+            cohort: Optional frame from get_cohort(). Ignored for the numbers.
+                Non-COUNT stats are computed from the filtered base view.
 
         Returns:
             Formatted result dict compatible with render_analysis_by_type()
@@ -1896,14 +1900,21 @@ class SemanticLayer:
         # Phase 3.3: Pass chart_spec to formatting methods
         if query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
-        elif query_plan.intent == "DESCRIBE":
-            formatted = self._format_describe_result(result_df_pl, query_plan, context)
         else:
-            # For other intents, return basic format (will be enhanced in Phase 3.3)
-            formatted = {
-                "type": "unknown",
-                "error": f"Formatting not yet implemented for intent: {query_plan.intent}",
-            }
+            # The aggregated SQL frame is not renderer-shaped. Recompute from the
+            # filtered base view the plan validated, not from get_cohort().
+            from clinical_analytics.analysis.compute import compute_analysis_by_type
+
+            base_rows = self._filtered_view(query_plan).execute()
+            if isinstance(base_rows, pd.DataFrame):
+                base_rows = pl.from_pandas(base_rows)
+            if cohort is not None:
+                logger.debug(
+                    "non_count_format_uses_base_view cohort_passed=%s intent=%s",
+                    True,
+                    query_plan.intent,
+                )
+            formatted = compute_analysis_by_type(base_rows, context)
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
@@ -1963,21 +1974,6 @@ class SemanticLayer:
                 "total_count": total_count,
                 "headline": f"Total count: **{total_count}**",
             }
-
-    def _format_describe_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
-        """Format DESCRIBE result DataFrame to result dict format."""
-        # Phase 3.1: Basic formatting for DESCRIBE (will be enhanced in Phase 3.3)
-        if result_df.height == 0:
-            return {"type": "error", "error": "No data to describe"}
-
-        # Convert to dict format
-        result_dict = result_df.to_dicts()[0] if result_df.height == 1 else result_df.to_dicts()
-
-        return {
-            "type": "descriptive",
-            "summary": result_dict,
-            "headline": f"Descriptive statistics for {query_plan.metric or 'data'}",
-        }
 
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
@@ -2144,8 +2140,12 @@ class SemanticLayer:
 
         return run_key
 
-    def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame:
-        """Execute QueryPlan and return results DataFrame."""
+    def _filtered_view(self, plan: "QueryPlan") -> Any:
+        """Row-level base view with the plan filters applied.
+
+        This is the frame execute_query_plan validates. Non-COUNT rendering
+        must use it so a cohort alias cannot rename outcome.
+        """
         view = self.get_base_view()
 
         # Filter deduplication: remove redundant filters (filtering and grouping on same field)
@@ -2276,6 +2276,12 @@ class SemanticLayer:
             # Handle exclude_nulls
             if filter_spec.exclude_nulls:
                 view = view.filter(~col_expr.isnull())
+
+        return view
+
+    def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame:
+        """Execute QueryPlan and return results DataFrame."""
+        view = self._filtered_view(plan)
 
         # Execute based on intent
         if plan.intent == "COUNT":
