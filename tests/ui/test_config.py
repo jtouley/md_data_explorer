@@ -10,7 +10,6 @@ import yaml
 
 from clinical_analytics.core.config_loader import load_ui_config
 from clinical_analytics.ui.config import (
-    ASK_QUESTIONS_PAGE,
     LOG_LEVEL,
     MAX_UPLOAD_SIZE_MB,
     MULTI_TABLE_ENABLED,
@@ -32,7 +31,6 @@ class TestUIConfigYAMLLoading:
             "v1_mvp_mode": False,
             "log_level": "DEBUG",
             "max_upload_size_mb": 200,
-            "ask_questions_page": "pages/03_💬_Ask_Questions.py",
         }
         config_file.write_text(yaml.dump(config_data))
 
@@ -44,7 +42,6 @@ class TestUIConfigYAMLLoading:
         assert yaml_config["v1_mvp_mode"] is False
         assert yaml_config["log_level"] == "DEBUG"
         assert yaml_config["max_upload_size_mb"] == 200
-        assert yaml_config["ask_questions_page"] == "pages/03_💬_Ask_Questions.py"
 
     def test_ui_config_backward_compatibility_all_constants_exist(self):
         """Test that all constants are still importable and exist after refactor."""
@@ -53,4 +50,3 @@ class TestUIConfigYAMLLoading:
         assert V1_MVP_MODE is not None
         assert LOG_LEVEL is not None
         assert MAX_UPLOAD_SIZE_MB is not None
-        assert ASK_QUESTIONS_PAGE is not None

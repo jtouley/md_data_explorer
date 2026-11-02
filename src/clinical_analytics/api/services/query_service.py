@@ -6,8 +6,8 @@ Provides async interface with SSE streaming support for real-time query progress
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,6 +20,34 @@ from clinical_analytics.core.result_presentation import present_analysis, to_jso
 from clinical_analytics.core.semantic import SemanticLayer
 
 logger = structlog.get_logger()
+
+# Turns kept per session for refinement parsing ("now by site", "remove the n/a").
+MAX_CONVERSATION_TURNS = 20
+
+
+def context_to_turn(context: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Map a client-supplied QueryRequest.context to one conversation_history entry.
+
+    Accepts history-shaped keys (query, intent, group_by, metric, filters_applied) or the
+    schema's previous_* keys; previous_variables is read as [metric, group_by].
+    """
+    if not context:
+        return None
+    variables = context.get("previous_variables") or []
+    turn = {
+        "query": context.get("query") or context.get("previous_query"),
+        "intent": context.get("intent") or context.get("previous_intent"),
+        "metric": context.get("metric")
+        or context.get("previous_metric")
+        or (variables[0] if len(variables) > 0 else None),
+        "group_by": context.get("group_by")
+        or context.get("previous_group_by")
+        or (variables[1] if len(variables) > 1 else None),
+        "filters_applied": context.get("filters_applied") or context.get("previous_filters") or [],
+    }
+    if not any(turn[k] for k in ("query", "intent", "metric", "group_by")):
+        return None
+    return turn
 
 
 @dataclass
@@ -56,6 +84,34 @@ class AsyncQueryService:
         self._core = CoreQueryService(semantic_layer)
         self._queries: dict[str, AsyncQueryResult] = {}
         self._events: dict[str, list[SSEEvent]] = {}
+        self._history: dict[str, list[dict[str, Any]]] = {}
+
+    def conversation_history(
+        self, session_id: str | None, context: Mapping[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Prior turns for a session; falls back to the client's context when there are none."""
+        history = list(self._history.get(session_id, [])) if session_id else []
+        if history:
+            return history
+        turn = context_to_turn(context)
+        return [turn] if turn else []
+
+    def _record_turn(self, session_id: str | None, query: str, result: CoreQueryResult) -> None:
+        """Remember a completed turn so the session's next question can refine it."""
+        if not session_id or result.plan is None:
+            return
+        plan = result.plan
+        turns = self._history.setdefault(session_id, [])
+        turns.append(
+            {
+                "query": query,
+                "intent": plan.intent,
+                "metric": plan.metric,
+                "group_by": plan.group_by,
+                "filters_applied": [asdict(f) for f in plan.filters],
+            }
+        )
+        del turns[:-MAX_CONVERSATION_TURNS]
 
     @property
     def semantic_layer(self) -> SemanticLayer:
@@ -71,6 +127,7 @@ class AsyncQueryService:
         query: str,
         dataset_id: str,
         session_id: str | None = None,
+        context: Mapping[str, Any] | None = None,
     ) -> str:
         """
         Submit query for async execution, returns query_id immediately.
@@ -102,7 +159,7 @@ class AsyncQueryService:
         self._events[query_id] = []
 
         # Start query execution in background
-        asyncio.create_task(self._execute_query_background(query_id, query, dataset_id, session_id))
+        asyncio.create_task(self._execute_query_background(query_id, query, dataset_id, session_id, context))
 
         return query_id
 
@@ -112,6 +169,7 @@ class AsyncQueryService:
         query: str,
         dataset_id: str,
         session_id: str | None = None,
+        context: Mapping[str, Any] | None = None,
     ) -> None:
         """Execute query in background and emit SSE events."""
         try:
@@ -133,11 +191,13 @@ class AsyncQueryService:
             )
 
             # Execute query synchronously in thread pool
+            # session_id identifies the conversation, not the upload: it selects the history
+            # passed to the parser, while dataset_id stays the data key.
             result: CoreQueryResult = await asyncio.to_thread(
                 self._core.ask,
                 question=query,
                 dataset_id=dataset_id,
-                upload_id=session_id,
+                conversation_history=self.conversation_history(session_id, context),
             )
 
             # Emit progress event
@@ -171,6 +231,7 @@ class AsyncQueryService:
             self._queries[query_id].intent_type = intent_type
             payload = self._analysis_payload(result)
             self._queries[query_id].result = payload
+            self._record_turn(session_id, query, result)
             self._queries[query_id].confidence = result.confidence
             self._queries[query_id].completed_at = datetime.now(UTC)
 
@@ -362,7 +423,7 @@ class AsyncQueryService:
             self._core.ask,
             question=query,
             dataset_id=dataset_id,
-            upload_id=session_id,
+            conversation_history=self.conversation_history(session_id),
         )
 
         # Check for errors
@@ -373,6 +434,9 @@ class AsyncQueryService:
                 error_msg = "; ".join(errors)
                 if "not found" in error_msg.lower():
                     raise ValueError(error_msg)
+
+        if not any(i.get("severity") == "error" for i in result.issues):
+            self._record_turn(session_id, query, result)
 
         # Determine intent type
         intent_type = None

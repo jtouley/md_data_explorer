@@ -246,7 +246,6 @@ class TestConfigLoaderUI:
             "v1_mvp_mode": False,
             "log_level": "DEBUG",
             "max_upload_size_mb": 200,
-            "ask_questions_page": "pages/03_💬_Ask_Questions.py",
         }
         config_file.write_text(yaml.dump(config_data))
 
@@ -258,7 +257,6 @@ class TestConfigLoaderUI:
         assert result["v1_mvp_mode"] is False
         assert result["log_level"] == "DEBUG"
         assert result["max_upload_size_mb"] == 200
-        assert result["ask_questions_page"] == "pages/03_💬_Ask_Questions.py"
 
     def test_load_ui_config_env_var_overrides_yaml(self, tmp_path):
         """Test that environment variables override YAML values."""

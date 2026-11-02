@@ -345,3 +345,116 @@ class TestAsyncQueryServiceAnalysisPayload:
 
         # Assert
         assert result.result == {"test": "data"}
+
+
+class TestAsyncQueryServiceConversation:
+    """session_id selects conversation history for the parser; it is never the upload id."""
+
+    @staticmethod
+    def _completed(plan):
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        return CoreQueryResult(
+            plan=plan, issues=[], result=None, confidence=0.9, run_key="rk", context=None, analysis=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_query_secondTurn_receivesFirstTurnAsHistory(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        first_plan = QueryPlan(
+            intent="COUNT",
+            group_by="sex",
+            confidence=0.9,
+            filters=[FilterSpec(column="age", operator=">", value=50)],
+        )
+        mock_core_query_service.ask.return_value = self._completed(first_plan)
+
+        # Act
+        await async_query_service.execute_query(query="count by sex", dataset_id="ds", session_id="sess_1")
+        await async_query_service.execute_query(query="now by site", dataset_id="ds", session_id="sess_1")
+        await async_query_service.execute_query(query="how many?", dataset_id="ds", session_id="sess_other")
+
+        # Assert
+        first, second, other = mock_core_query_service.ask.call_args_list
+        assert first.kwargs["conversation_history"] == []
+        assert second.kwargs["conversation_history"][0] == {
+            "query": "count by sex",
+            "intent": "COUNT",
+            "metric": None,
+            "group_by": "sex",
+            "filters_applied": [{"column": "age", "operator": ">", "value": 50, "exclude_nulls": True}],
+        }
+        assert other.kwargs["conversation_history"] == []
+        assert all("upload_id" not in call.kwargs for call in mock_core_query_service.ask.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_submit_query_contextWithoutHistory_usedAsPreviousTurn(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        mock_core_query_service.ask.return_value = self._completed(None)
+
+        # Act
+        query_id = await async_query_service.submit_query(
+            query="now by site",
+            dataset_id="ds",
+            session_id="sess_new",
+            context={"previous_intent": "COUNT", "previous_group_by": "sex"},
+        )
+        _ = [event async for event in async_query_service.stream_events(query_id)]
+
+        # Assert
+        history = mock_core_query_service.ask.call_args.kwargs["conversation_history"]
+        assert [(turn["intent"], turn["group_by"]) for turn in history] == [("COUNT", "sex")]
+
+    def test_record_turn_manyTurns_keepsMostRecentTwenty(self, async_query_service):
+        # Arrange
+        from clinical_analytics.api.services.query_service import MAX_CONVERSATION_TURNS
+        from clinical_analytics.core.query_plan import QueryPlan
+
+        result = self._completed(QueryPlan(intent="DESCRIBE", metric="age", confidence=0.9))
+
+        # Act
+        for i in range(MAX_CONVERSATION_TURNS + 5):
+            async_query_service._record_turn("sess", f"q{i}", result)
+
+        # Assert
+        history = async_query_service.conversation_history("sess")
+        assert len(history) == MAX_CONVERSATION_TURNS
+        assert history[0]["query"] == "q5"
+
+
+class TestContextToTurn:
+    @pytest.mark.parametrize(
+        ("context", "expected"),
+        [
+            (None, None),
+            ({}, None),
+            ({"unrelated": 1}, None),
+            (
+                {"intent": "COUNT", "group_by": "sex", "query": "count by sex"},
+                {"query": "count by sex", "intent": "COUNT", "metric": None, "group_by": "sex", "filters_applied": []},
+            ),
+            (
+                {"previous_intent": "COMPARE_GROUPS", "previous_variables": ["ldl", "treatment"]},
+                {
+                    "query": None,
+                    "intent": "COMPARE_GROUPS",
+                    "metric": "ldl",
+                    "group_by": "treatment",
+                    "filters_applied": [],
+                },
+            ),
+        ],
+        ids=["none", "empty", "unrelated_keys", "history_shaped", "previous_variables"],
+    )
+    def test_context_to_turn_shapes_mappedToHistoryEntry(self, context, expected):
+        # Arrange
+        from clinical_analytics.api.services.query_service import context_to_turn
+
+        # Act / Assert
+        assert context_to_turn(context) == expected

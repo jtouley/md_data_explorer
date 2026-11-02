@@ -104,6 +104,36 @@ class TestGetSemanticLayer:
         assert "dataset_1" not in dependencies._semantic_layer_cache
 
 
+class TestGetSemanticLayerConcurrency:
+    def test_unit_concurrentColdRequests_loadOnce(self):
+        """Concurrent first requests for one dataset build a single SemanticLayer."""
+        # Arrange
+        import threading
+        import time
+
+        mock_dataset = MagicMock()
+        mock_dataset.get_semantic_layer.side_effect = lambda: (time.sleep(0.1), MagicMock())[1]
+        results = []
+
+        def request():
+            results.append(dependencies.get_semantic_layer("dataset_1"))
+
+        threads = [threading.Thread(target=request) for _ in range(4)]
+
+        # Act
+        with patch.object(
+            dependencies.UploadedDatasetFactory, "create_dataset", return_value=mock_dataset
+        ) as mock_create:
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+        # Assert
+        mock_create.assert_called_once_with("dataset_1")
+        assert all(layer is results[0] for layer in results)
+
+
 class TestInvalidateSemanticLayerCache:
     """Tests for invalidate_semantic_layer_cache."""
 

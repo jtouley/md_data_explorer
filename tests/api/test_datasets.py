@@ -5,7 +5,7 @@ Electron UI Migration:
 - Phase 8: POST /api/datasets/upload — multipart file upload
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
@@ -263,6 +263,27 @@ class TestDatasetUploadEndpoint:
         assert data["status"] == "ready"
         assert data["dataset_name"] == "Patient Data"
         mock_storage.save_upload.assert_called_once()
+
+    def test_datasets_upload_success_invalidatesCachedSemanticLayer(self, test_client):
+        """A save that reuses an upload_id must not keep serving the previous upload's layer."""
+        # Arrange
+        from clinical_analytics.api import dependencies
+
+        stale_layer = MagicMock()
+        dependencies._semantic_layer_cache["upload_reused"] = stale_layer
+
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
+            mock_cls.return_value.save_upload.return_value = (True, "Upload successful", "upload_reused")
+
+            # Act
+            response = test_client.post(
+                "/api/datasets/upload",
+                files={"file": ("patients.csv", self._make_csv(), "text/csv")},
+            )
+
+        # Assert
+        assert response.status_code == 200
+        assert "upload_reused" not in dependencies._semantic_layer_cache
 
     def test_datasets_upload_xlsx_creates_dataset(self, test_client):
         """Uploading a valid Excel file creates a dataset."""

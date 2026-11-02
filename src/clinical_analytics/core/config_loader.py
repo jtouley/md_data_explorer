@@ -360,7 +360,6 @@ class UIConfigDefaults:
     v1_mvp_mode: bool = True
     log_level: str = "INFO"
     max_upload_size_mb: int = 100
-    ask_questions_page: str = "pages/03_💬_Ask_Questions.py"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert dataclass to dictionary."""
@@ -369,7 +368,6 @@ class UIConfigDefaults:
             "v1_mvp_mode": self.v1_mvp_mode,
             "log_level": self.log_level,
             "max_upload_size_mb": self.max_upload_size_mb,
-            "ask_questions_page": self.ask_questions_page,
         }
 
 
@@ -388,7 +386,6 @@ def load_ui_config(config_path: Path | None = None) -> dict[str, Any]:
         - v1_mvp_mode: bool
         - log_level: str
         - max_upload_size_mb: int
-        - ask_questions_page: str
 
     Raises:
         ValueError: If YAML is invalid

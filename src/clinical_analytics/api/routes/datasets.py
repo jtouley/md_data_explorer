@@ -14,6 +14,7 @@ import structlog
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
+from clinical_analytics.api.dependencies import invalidate_semantic_layer_cache
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.ui.storage.user_datasets import (
     UploadSecurityValidator,
@@ -309,6 +310,9 @@ async def upload_dataset(
         log.error("dataset_upload_failed", message=message)
         raise HTTPException(status_code=500, detail=message)
 
+    # A save can reuse an existing upload_id (e.g. overwrite); drop any cached layer so the
+    # next query reads the new data instead of the previous upload's DuckDB view.
+    invalidate_semantic_layer_cache(upload_id)
     log.info("dataset_upload_completed", upload_id=upload_id)
     return DatasetUploadResponse(
         upload_id=upload_id,

@@ -110,6 +110,7 @@ async def submit_query(
             query=request.query_text,
             dataset_id=request.dataset_id,
             session_id=request.session_id,
+            context=request.context,
         )
 
         return QueryResponse(

@@ -86,6 +86,29 @@ class TestQuerySubmitEndpoint:
         assert "stream_url" in data
         assert "/api/queries/qry_abc123/stream" in data["stream_url"]
 
+    def test_queries_post_withContext_forwardsContextAndSession(self, test_client, mock_async_query_service):
+        """QueryRequest.context and session_id reach the service instead of being dropped."""
+        # Arrange
+        mock_async_query_service.submit_query = AsyncMock(return_value="qry_ctx")
+        context = {"previous_intent": "COUNT", "previous_group_by": "sex"}
+
+        # Act
+        response = test_client.post(
+            "/api/queries",
+            json={
+                "session_id": "sess_ctx",
+                "dataset_id": "test_dataset",
+                "query_text": "now by site",
+                "context": context,
+            },
+        )
+
+        # Assert
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        kwargs = mock_async_query_service.submit_query.call_args.kwargs
+        assert kwargs["session_id"] == "sess_ctx"
+        assert kwargs["context"] == context
+
     def test_queries_post_invalid_dataset_returns_404(self, test_client, mock_async_query_service):
         """Invalid dataset ID returns 404 error."""
         # Arrange
