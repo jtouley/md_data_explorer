@@ -522,6 +522,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "ci_lower": float(ci_lower),
                 "ci_upper": float(ci_upper),
                 "group_means": group_means,
+                "n": int(n1 + n2),
                 **headline,
             }
 

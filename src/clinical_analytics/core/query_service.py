@@ -131,7 +131,7 @@ class QueryService:
         query_plan: QueryPlan = self.nl_engine._intent_to_plan(query_intent, dataset_version)
 
         # Generate run_key using semantic layer (canonical implementation)
-        run_key = self._generate_run_key(query_plan, normalized_query)
+        run_key: str | None = self._generate_run_key(query_plan, normalized_query)
 
         # Validate query plan. The semantic layer returns {valid, error}, not issues.
         validation_result = self.semantic_layer._validate_query_plan(query_plan)
@@ -154,8 +154,14 @@ class QueryService:
                 execution_result = self.semantic_layer.execute_query_plan(query_plan)
                 result = execution_result
                 if isinstance(execution_result, dict) and execution_result.get("success") is False:
-                    warnings = execution_result.get("warnings") or ["Execution failed"]
-                    issues.append({"message": str(warnings[0]), "severity": "error"})
+                    failure_reason = execution_result.get("failure_reason")
+                    if failure_reason and "run_key" not in execution_result:
+                        run_key = None
+                        message = str(failure_reason)
+                    else:
+                        warnings = execution_result.get("warnings") or ["Execution failed"]
+                        message = str(warnings[0])
+                    issues.append({"message": message, "severity": "error"})
             except Exception as e:
                 issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
 
