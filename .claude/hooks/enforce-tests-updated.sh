@@ -12,29 +12,18 @@ case "$FILE_PATH" in
     *) exit 0 ;;
 esac
 
-# Check if we have uncommitted changes in src/clinical_analytics
-SRC_CHANGES=$(git diff --name-only HEAD 2>/dev/null | grep -c "^src/clinical_analytics/" || echo "0")
+# Changed paths vs HEAD, including untracked files (a brand-new test file counts).
+# `grep -c` prints 0 and exits 1 on no match, so `|| true` (not `|| echo 0`) keeps one number.
+CHANGED=$(git status --porcelain --untracked-files=all 2>/dev/null | cut -c4- || true)
+SRC_CHANGES=$(grep -c "^src/clinical_analytics/" <<<"$CHANGED" || true)
+TEST_CHANGES=$(grep -c "^tests/" <<<"$CHANGED" || true)
 
-# Check if we have uncommitted changes in tests/
-TEST_CHANGES=$(git diff --name-only HEAD 2>/dev/null | grep -c "^tests/" || echo "0")
-
-# Allowlist: docs, config files, comments-only changes shouldn't trigger
-ALLOWLIST_PATTERN="(docs/|config/|mkdocs|\.md$|\.yaml$|\.toml$|\.json$)"
-ALLOWLISTED_ONLY=$(git diff --name-only HEAD 2>/dev/null | grep -vE "$ALLOWLIST_PATTERN" | wc -l || echo "0")
-
-# If no changes at all, allow
-if [[ "$SRC_CHANGES" -eq 0 ]]; then
+if [[ "$SRC_CHANGES" -eq 0 ]] || [[ "$TEST_CHANGES" -gt 0 ]]; then
     exit 0
 fi
 
-# If only allowlisted files changed, allow
-if [[ "$ALLOWLISTED_ONLY" -eq 0 ]]; then
-    exit 0
-fi
-
-# If src changed but no test changes, warn (feedback, not a hard block)
-if [[ "$SRC_CHANGES" -gt 0 ]] && [[ "$TEST_CHANGES" -eq 0 ]]; then
-    cat >&2 <<EOF
+# Feedback only: running the test suite here would cost minutes on every edit.
+cat >&2 <<EOF
 🚫 Source code changed without test updates!
 
 📂 Files changed in src/clinical_analytics/: $SRC_CHANGES
@@ -50,16 +39,4 @@ if [[ "$SRC_CHANGES" -gt 0 ]] && [[ "$TEST_CHANGES" -eq 0 ]]; then
    - make_cohort_with_categorical
    - make_multi_table_setup
 EOF
-    exit 2
-fi
-
-# Tests were updated - run fast tests to verify, feed failures back as feedback
-if command -v make &> /dev/null && grep -q "test-fast:" Makefile; then
-    if ! TEST_OUTPUT=$(make test-fast 2>&1); then
-        echo "❌ Fast tests failed!" >&2
-        echo "$TEST_OUTPUT" | tail -30 >&2
-        exit 2
-    fi
-fi
-
-exit 0
+exit 2
