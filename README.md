@@ -2,7 +2,7 @@
 
 Upload a clinical cohort and ask statistical questions in plain language.
 
-**V1 surface (default):** **Add Your Data** + **Ask Questions** only (`V1_MVP_MODE`).  
+**V1 surface (default):** **Add Your Data** + **Ask Questions** only (`V1_MVP_MODE`).
 **Shell:** Streamlit via `make run`. Electron + FastAPI exist but are **experimental**.
 
 ---
