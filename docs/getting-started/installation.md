@@ -2,69 +2,61 @@
 
 ## Prerequisites
 
-- Python 3.10 or higher
-- pip or uv package manager
+- **Python 3.11 or higher**
+- **[uv](https://docs.astral.sh/uv/)** (required — do not use bare `pip` for this project)
+- **make**
 
-## Install from Source
+## Install from source
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/md_data_explorer.git
+git clone https://github.com/jtouley/md_data_explorer.git
 cd md_data_explorer
-
-# Install with uv (recommended)
-uv sync
-
-# Or install with pip
-pip install -e .
+make install-dev
 ```
 
-## Verify Installation
+`make install-dev` creates `.venv` via uv and installs the package in editable mode with dev extras.
+
+## Run
+
+| Command | What it starts |
+|---------|----------------|
+| `make run` | Streamlit UI (primary) at `http://localhost:8501` |
+| `make run-api` | FastAPI at `http://127.0.0.1:8000` (experimental / Electron) |
+| `./scripts/run_app.sh` | Streamlit with optional Ollama lifecycle helpers |
+
+## Verify without the UI
 
 ```bash
-# Run the application
-streamlit run src/clinical_analytics/ui/app.py
-
-# Or use the CLI
-clinical-analytics serve
+make headless-preview
 ```
 
-The application should open in your browser at `http://localhost:8501`.
+Prints JSON with `columns` and `row_count` for the bundled sample cohort (or pass `ARGS='--csv path/to/file.csv'`).
 
-## Dependencies
+## Dependencies (high level)
 
-The platform requires:
+- **Data:** Polars, DuckDB, Ibis
+- **Stats:** scipy, statsmodels, lifelines
+- **UI:** Streamlit (V1)
+- **NL query:** sentence-transformers / optional Ollama
 
-- **Data Processing**: pandas, polars, duckdb
-- **Statistical Analysis**: scipy, statsmodels, lifelines
-- **UI**: streamlit
-- **NL Query Engine**: sentence-transformers, scikit-learn
-- **Semantic Layer**: ibis-framework
-
-All dependencies are automatically installed during setup.
+Pandas is not used in new application code.
 
 ## Troubleshooting
 
-### Port Already in Use
-
-If port 8501 is already in use:
+### Port 8501 in use
 
 ```bash
-streamlit run src/clinical_analytics/ui/app.py --server.port 8502
+uv run streamlit run src/clinical_analytics/ui/app.py --server.port 8502
 ```
 
-### Missing Dependencies
-
-If you see import errors:
+### Missing environment
 
 ```bash
-uv sync --reinstall
+make install-dev
 ```
 
-### DuckDB Issues
-
-If DuckDB fails to load:
+### Import errors after pull
 
 ```bash
-pip install --upgrade duckdb
+uv sync
 ```
