@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import platform
+import threading
 import time
 import uuid
 import zipfile
@@ -1420,6 +1421,16 @@ def save_table_list(
         return False, f"Error saving tables: {str(e)}"
 
 
+_MIGRATION_LOCKS: dict[str, threading.Lock] = {}
+_MIGRATION_LOCKS_GUARD = threading.Lock()
+
+
+def _migration_lock(upload_id: str) -> threading.Lock:
+    """Per-upload lock so concurrent readers never migrate the same legacy upload twice."""
+    with _MIGRATION_LOCKS_GUARD:
+        return _MIGRATION_LOCKS.setdefault(upload_id, threading.Lock())
+
+
 def _migrate_legacy_upload(
     storage: "UserDatasetStorage",
     upload_id: str,
@@ -2180,6 +2191,11 @@ class UserDatasetStorage:
             result = json.load(f)
             return dict(result) if isinstance(result, dict) else None
 
+    def _needs_legacy_migration(self, upload_id: str, metadata: dict[str, Any]) -> bool:
+        """Whether an upload predates the unified multi-table format."""
+        tables_dir = self.raw_dir / f"{upload_id}_tables"
+        return not metadata.get("migrated_to_v2", False) and (not metadata.get("tables") or not tables_dir.exists())
+
     def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | None:
         """
         Load uploaded dataset with automatic legacy migration.
@@ -2215,16 +2231,16 @@ class UserDatasetStorage:
             return None
 
         # Check if legacy upload needs migration
-        tables_dir = self.raw_dir / f"{upload_id}_tables"
-        needs_migration = not metadata.get("migrated_to_v2", False) and (
-            not metadata.get("tables") or not tables_dir.exists()
-        )
-
-        if needs_migration:
-            logger.info(f"Detected legacy upload {upload_id}, migrating to unified format")
-            _migrate_legacy_upload(self, upload_id, metadata)
-            # Reload metadata after migration
-            metadata = self.get_upload_metadata(upload_id)
+        if self._needs_legacy_migration(upload_id, metadata):
+            # Reads (API preview, concurrent queries) can reach this path at the same time;
+            # serialize per upload and re-check so only one caller migrates.
+            with _migration_lock(upload_id):
+                metadata = self.get_upload_metadata(upload_id)
+                if metadata and self._needs_legacy_migration(upload_id, metadata):
+                    logger.info(f"Detected legacy upload {upload_id}, migrating to unified format")
+                    _migrate_legacy_upload(self, upload_id, metadata)
+                    # Reload metadata after migration
+                    metadata = self.get_upload_metadata(upload_id)
 
         # Primary: upload_id is the immutable storage key
         csv_path = self.raw_dir / f"{upload_id}.csv"
@@ -2250,12 +2266,13 @@ class UserDatasetStorage:
         from clinical_analytics.core.type_guards import safe_get
 
         parquet_paths = safe_get(metadata, "parquet_paths", {})
-        if parquet_paths:
-            # Try to load from Parquet first (single-table upload = first table)
-            # For multi-table, this loads the unified cohort's first table
-            tables = safe_get(metadata, "tables", [])
-            first_table_name = tables[0] if tables else None
-            if first_table_name and first_table_name in parquet_paths:
+        tables = safe_get(metadata, "tables", [])
+        # Parquet holds the raw source tables. Only a single-table upload's table is the
+        # unified cohort; a multi-table upload must load {upload_id}.csv (the unified cohort
+        # the semantic layer queries), not its first source table.
+        if parquet_paths and len(tables) == 1:
+            first_table_name = tables[0]
+            if first_table_name in parquet_paths:
                 from pathlib import Path
 
                 from clinical_analytics.storage.datastore import DataStore

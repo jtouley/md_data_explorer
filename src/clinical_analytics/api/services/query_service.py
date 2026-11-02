@@ -56,6 +56,11 @@ class AsyncQueryService:
         self._queries: dict[str, AsyncQueryResult] = {}
         self._events: dict[str, list[SSEEvent]] = {}
 
+    @property
+    def semantic_layer(self) -> SemanticLayer:
+        """Semantic layer this service executes against."""
+        return self._semantic_layer
+
     def _generate_query_id(self) -> str:
         """Generate unique query ID."""
         return f"qry_{uuid.uuid4().hex[:12]}"

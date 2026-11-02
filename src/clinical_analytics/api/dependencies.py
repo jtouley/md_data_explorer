@@ -41,7 +41,7 @@ def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset
         SemanticLayer: Cached or newly created semantic layer instance
 
     Raises:
-        HTTPException: 404 if dataset not found
+        HTTPException: 404 if dataset not found (other load failures propagate)
 
     Example:
         @app.get("/api/datasets/{dataset_id}/info")
@@ -67,11 +67,8 @@ def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Dataset '{dataset_id}' not found: {e}",
             ) from e
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to load dataset '{dataset_id}': {e}",
-            ) from e
+        # Any other failure is a bug, not a client error: let it propagate so FastAPI logs
+        # the traceback and returns a generic 500 without leaking paths or internals.
 
     return _semantic_layer_cache[dataset_id]
 

@@ -42,14 +42,17 @@ _query_services: dict[str, AsyncQueryService] = {}
 def get_query_service_for_dataset(dataset_id: str) -> AsyncQueryService:
     """Get or create AsyncQueryService for a specific dataset.
 
-    Raises:
-        HTTPException: 404 if the dataset doesn't exist, 500 on other load failures
-            (raised by get_semantic_layer).
-    """
-    if dataset_id in _query_services:
-        return _query_services[dataset_id]
+    The service is rebuilt whenever the shared semantic layer cache hands back a different
+    instance (e.g. after invalidate_semantic_layer_cache), so it never queries a stale layer.
 
+    Raises:
+        HTTPException: 404 if the dataset doesn't exist (raised by get_semantic_layer).
+    """
     semantic_layer: SemanticLayer = get_semantic_layer(dataset_id)
+    cached = _query_services.get(dataset_id)
+    if cached is not None and cached.semantic_layer is semantic_layer:
+        return cached
+
     service = AsyncQueryService(semantic_layer)
     _query_services[dataset_id] = service
     logger.info("query_service_created", dataset_id=dataset_id)

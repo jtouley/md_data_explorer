@@ -9,10 +9,12 @@ Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 """
 
 import os
+import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,6 +23,28 @@ from clinical_analytics.api.db.database import create_tables
 
 # Import routes
 from clinical_analytics.api.routes import datasets, enrichments, queries, sessions
+from clinical_analytics.core.ollama_init import initialize_ollama
+
+logger = structlog.get_logger()
+
+# Opt-in so tests and bare uvicorn runs never start downloads; `make run-api` sets it.
+OLLAMA_AUTOINIT_ENV = "CLINICAL_ANALYTICS_OLLAMA_AUTOINIT"
+
+
+def _ollama_autoinit_enabled() -> bool:
+    return os.getenv(OLLAMA_AUTOINIT_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def _initialize_ollama_in_background() -> threading.Thread:
+    """Check Ollama and pull a missing model without blocking startup (a pull can take minutes)."""
+
+    def _run() -> None:
+        status = initialize_ollama(auto_download=True)
+        logger.info("ollama_autoinit_finished", ready=status["ready"], message=status["message"])
+
+    thread = threading.Thread(target=_run, name="ollama-autoinit", daemon=True)
+    thread.start()
+    return thread
 
 
 @asynccontextmanager
@@ -28,7 +52,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager.
 
     Runs on startup and shutdown:
-    - Startup: Create database tables, pre-warm semantic layer cache (future)
+    - Startup: Create database tables; when CLINICAL_ANALYTICS_OLLAMA_AUTOINIT is set,
+      check Ollama and pull a missing model in a background thread
     - Shutdown: Close connections, cleanup resources
 
     Args:
@@ -38,16 +63,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         None: Control returns to application during runtime
     """
     # Startup
-    print("🚀 Starting FastAPI backend...")
+    logger.info("api_starting")
 
     # Create database tables (in production, use Alembic migrations)
     create_tables()
-    print("✅ Database tables ready")
+    logger.info("api_database_ready")
+
+    if _ollama_autoinit_enabled():
+        _initialize_ollama_in_background()
 
     yield
 
     # Shutdown
-    print("👋 Shutting down FastAPI backend...")
+    logger.info("api_shutting_down")
 
 
 # ============================================================================

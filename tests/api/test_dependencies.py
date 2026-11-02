@@ -1,7 +1,7 @@
 """Tests for FastAPI dependency injection providers (api/dependencies.py).
 
 Covers the per-dataset SemanticLayer cache: creation, reuse, error mapping
-(dataset-not-found -> 404, unexpected failure -> 500), cache-poisoning on
+(dataset-not-found -> 404, unexpected failure propagates), cache-poisoning on
 failed load, and invalidation.
 """
 
@@ -76,17 +76,18 @@ class TestGetSemanticLayer:
         assert exc_info.value.status_code == 404
         assert "missing_dataset" not in dependencies._semantic_layer_cache
 
-    def test_unit_unexpectedFailure_raises500(self):
+    def test_unit_unexpectedFailure_propagatesUnwrapped(self):
+        """Bugs are not mapped to an HTTPException whose detail would leak internals."""
         # Act / Assert
         with patch.object(
             dependencies.UploadedDatasetFactory,
             "create_dataset",
-            side_effect=RuntimeError("unexpected"),
+            side_effect=RuntimeError("unexpected /private/path"),
         ):
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(RuntimeError, match="unexpected"):
                 dependencies.get_semantic_layer("dataset_1")
 
-        assert exc_info.value.status_code == 500
+        assert "dataset_1" not in dependencies._semantic_layer_cache
 
     def test_unit_failedLoad_doesNotPoisonCache(self):
         """A failed load must not leave a broken/partial entry blocking retry."""

@@ -288,3 +288,45 @@ class TestDataFrameEncoder:
 
         # Assert
         assert parsed == data
+
+
+class TestQueryServiceCache:
+    """get_query_service_for_dataset follows the shared semantic layer cache."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_query_services(self):
+        from clinical_analytics.api.routes import queries
+
+        queries._query_services.clear()
+        yield
+        queries._query_services.clear()
+
+    def _service_for(self, semantic_layer: MagicMock) -> MagicMock:
+        service = MagicMock()
+        service.semantic_layer = semantic_layer
+        return service
+
+    @pytest.mark.parametrize(
+        ("layer_changes", "expected_builds"),
+        [(False, 1), (True, 2)],
+        ids=["same_layer_reuses_service", "replaced_layer_rebuilds_service"],
+    )
+    def test_get_query_service_layerIdentity_rebuildsOnlyWhenLayerChanges(self, layer_changes, expected_builds):
+        # Arrange
+        from clinical_analytics.api.routes import queries
+
+        first_layer, second_layer = MagicMock(), MagicMock()
+        layers = [first_layer, second_layer if layer_changes else first_layer]
+
+        # Act
+        with (
+            patch.object(queries, "get_semantic_layer", side_effect=layers),
+            patch.object(queries, "AsyncQueryService", side_effect=self._service_for) as build,
+        ):
+            first = queries.get_query_service_for_dataset("dataset_1")
+            second = queries.get_query_service_for_dataset("dataset_1")
+
+        # Assert
+        assert build.call_count == expected_builds
+        assert second.semantic_layer is layers[1]
+        assert (first is second) is not layer_changes

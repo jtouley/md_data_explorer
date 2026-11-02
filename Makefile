@@ -331,7 +331,7 @@ run: run-api ## Start the application (FastAPI backend)
 
 run-api: ensure-venv ## Start FastAPI backend
 	@echo "$(GREEN)Starting FastAPI on http://127.0.0.1:8000 ...$(NC)"
-	$(UV) run uvicorn clinical_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
+	CLINICAL_ANALYTICS_OLLAMA_AUTOINIT=1 $(UV) run uvicorn clinical_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
 
 validate: ## Run platform validation (tests serve as validation)
 	@echo "$(GREEN)Platform validation via test suite...$(NC)"
