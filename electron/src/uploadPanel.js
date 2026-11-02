@@ -43,7 +43,7 @@ export function isAllowedExtension(filename) {
 /**
  * Render the upload area UI into a container.
  * @param {HTMLElement} container
- * @param {{ onFileSelect: (file: File) => void, statusText?: string }} handlers
+ * @param {{ onFileSelect: (file: File) => void, onLoadSample?: () => void, statusText?: string }} handlers
  */
 export function renderUploadArea(container, handlers) {
   container.replaceChildren();
@@ -66,11 +66,21 @@ export function renderUploadArea(container, handlers) {
   btn.type = 'button';
   btn.className = 'btn-upload';
   btn.dataset.testid = 'upload-btn';
-  btn.textContent = '📤 Upload dataset';
+  btn.textContent = 'Upload dataset';
   btn.addEventListener('click', () => input.click());
 
   wrapper.appendChild(input);
   wrapper.appendChild(btn);
+
+  if (typeof handlers.onLoadSample === 'function') {
+    const sampleBtn = document.createElement('button');
+    sampleBtn.type = 'button';
+    sampleBtn.className = 'btn-upload btn-load-sample';
+    sampleBtn.dataset.testid = 'load-sample-btn';
+    sampleBtn.textContent = 'Load sample';
+    sampleBtn.addEventListener('click', () => handlers.onLoadSample());
+    wrapper.appendChild(sampleBtn);
+  }
 
   if (handlers.statusText) {
     const status = document.createElement('span');

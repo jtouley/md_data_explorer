@@ -21,6 +21,7 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
 
@@ -1651,34 +1652,34 @@ class SemanticLayer:
             return False
 
     def execute_query_plan(
-        self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
+        self,
+        plan: "QueryPlan",
+        confidence_threshold: float = 0.75,
+        query_text: str | None = None,
+        confirmed: bool = False,
     ) -> dict[str, Any]:
         """
-        Execute a QueryPlan with warnings for observability (ADR003 Phase 3 + Phase 2.2).
+        Execute a QueryPlan with pre-execution gate + warnings (ADR003 + issue #52).
 
-        Phase 2.1: Added warnings infrastructure for observability.
-        Phase 2.2: Removed gating logic - always execute, collect warnings only.
-        Phase 2.5.1: Returns step information for progressive thinking indicator (core layer).
-
-        This method no longer blocks execution. Instead, it:
-        - Collects warnings for low confidence, incompleteness, validation issues
-        - Always attempts execution
-        - Returns success=False only for actual execution errors
-        - Returns step information for UI rendering (Phase 2.5.1)
+        Incomplete/invalid plans refuse without a run_key. Complete plans below the
+        confidence threshold hold for confirmation unless ``confirmed=True``.
 
         Args:
             plan: QueryPlan to execute
-            confidence_threshold: Minimum confidence for warning threshold (default: 0.75)
+            confidence_threshold: Minimum confidence for auto-execute (default: 0.75)
             query_text: Optional query text for run_key generation
+            confirmed: When True, release a low-confidence hold
 
         Returns:
             dict with keys:
             - "success": bool - Whether execution succeeded
             - "result": pd.DataFrame | None - Query results if successful
-            - "run_key": str - Deterministic run key for idempotency
+            - "run_key": str - Deterministic run key for idempotency (omitted on hold/refuse)
+            - "requires_confirmation": bool - Present when held for confirmation
+            - "failure_reason": str - Present when held or refused
             - "warnings": list[str] - Warnings collected during execution
-            - "steps": list[dict] - Step information for progressive thinking indicator (Phase 2.5.1)
-            - "chart_spec": dict | None - Chart specification for visualization (Phase 3.3)
+            - "steps": list[dict] - Step information for progressive thinking indicator
+            - "chart_spec": dict | None - Chart specification for visualization
         """
         # Phase 3.2: Log execution start for contract enforcement and observability
         logger.debug(
@@ -1748,11 +1749,29 @@ class SemanticLayer:
             warning_msg = f"Incomplete plan: {completeness_error}"
             warnings.append(warning_msg)
 
-        # Step 4: Validation Check (warning only, no blocking)
+        # Step 4: Validation Check (warning only when gate allows)
         validation_result = self._validate_query_plan(plan)
         if not validation_result["valid"]:
             warning_msg = f"Validation failed: {validation_result['error']}"
             warnings.append(warning_msg)
+
+        decision = evaluate_execution_gate(
+            plan,
+            threshold=confidence_threshold,
+            confirmed=confirmed,
+            is_complete=is_complete,
+            completeness_error=completeness_error or "",
+            validation_valid=bool(validation_result["valid"]),
+            validation_error=str(validation_result.get("error") or ""),
+        )
+        if not decision.allow:
+            return {
+                "success": False,
+                "requires_confirmation": decision.requires_confirmation,
+                "failure_reason": decision.failure_reason,
+                "warnings": warnings,
+                "result": None,
+            }
 
         # Step 5: Validating plan (Phase 2.5.1)
         steps.append(
@@ -1766,7 +1785,7 @@ class SemanticLayer:
             }
         )
 
-        # Step 6: Generate run_key (always generate)
+        # Step 6: Generate run_key (only after gate allows)
         run_key = self._generate_run_key(plan, query_text)
 
         # Phase 3.3: Generate chart_spec from QueryPlan (deterministic, tied to plan)

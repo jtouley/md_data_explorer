@@ -7,7 +7,10 @@
 import './index.css';
 import { normalizePendingResponse, renderEnrichmentCards } from './enrichmentPanel.js';
 import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
-import { buildQueryCompletedPresentation } from './resultPresentation.js';
+import {
+  buildConfirmationHoldPresentation,
+  buildQueryCompletedPresentation,
+} from './resultPresentation.js';
 import { normalizeSessionListResponse, renderSessionList } from './sessionSidebar.js';
 import { normalizeUploadResponse, renderUploadArea } from './uploadPanel.js';
 
@@ -385,6 +388,14 @@ function renderResultCard(result) {
     card.setAttribute('data-intent', result.intentType);
   }
 
+  if (result.claim) {
+    const claimEl = document.createElement('p');
+    claimEl.className = 'result-claim';
+    claimEl.setAttribute('data-testid', 'result-claim');
+    claimEl.textContent = `Claim: ${result.claim}`;
+    card.appendChild(claimEl);
+  }
+
   if (result.title) {
     const titleEl = document.createElement('div');
     titleEl.className = 'result-card-title';
@@ -400,6 +411,45 @@ function renderResultCard(result) {
     card.appendChild(summary);
   }
 
+  if (result.awaitingConfirmation) {
+    card.classList.add('result-card-confirm');
+    card.setAttribute('data-testid', 'result-confirm-card');
+    if (result.planLine) {
+      const planEl = document.createElement('p');
+      planEl.className = 'result-plan-line';
+      planEl.setAttribute('data-testid', 'result-plan-line');
+      planEl.textContent = result.planLine;
+      card.appendChild(planEl);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'result-confirm-actions';
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'btn-confirm';
+    confirmBtn.dataset.testid = 'confirm-query-btn';
+    confirmBtn.textContent = 'Confirm';
+    confirmBtn.addEventListener('click', () => {
+      void handleConfirmPendingQuery(result.pendingQuery || '');
+    });
+    const rejectBtn = document.createElement('button');
+    rejectBtn.type = 'button';
+    rejectBtn.className = 'btn-reject';
+    rejectBtn.dataset.testid = 'reject-query-btn';
+    rejectBtn.textContent = 'Reject';
+    rejectBtn.addEventListener('click', () => {
+      card.querySelectorAll('button').forEach((b) => {
+        b.disabled = true;
+      });
+      const note = document.createElement('p');
+      note.className = 'result-rejected';
+      note.textContent = 'Query rejected — not executed.';
+      card.appendChild(note);
+    });
+    actions.appendChild(confirmBtn);
+    actions.appendChild(rejectBtn);
+    card.appendChild(actions);
+  }
+
   if (result.table) {
     const tableWrapper = document.createElement('div');
     tableWrapper.className = 'result-table-wrapper';
@@ -408,6 +458,47 @@ function renderResultCard(result) {
   }
 
   return card;
+}
+
+/**
+ * Resubmit a held query with confirmed=true.
+ * @param {string} queryText
+ */
+async function handleConfirmPendingQuery(queryText) {
+  if (!queryText || !state.currentDatasetId || state.isProcessing) {
+    return;
+  }
+  state.isProcessing = true;
+  setQueryInputEnabled(true);
+
+  const assistantMessageId = generateMessageId();
+  addMessage({
+    id: assistantMessageId,
+    role: 'assistant',
+    content: '',
+    isStreaming: true,
+    timestamp: new Date(),
+  });
+
+  try {
+    const response = await window.clinicalAPI.submitQuery(
+      state.sessionId,
+      state.currentDatasetId,
+      queryText,
+      true
+    );
+    if (response.stream_url || response.query_id) {
+      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText);
+    }
+  } catch (error) {
+    updateMessage(assistantMessageId, {
+      content: `Sorry, I encountered an error: ${error.message}`,
+      isStreaming: false,
+    });
+  } finally {
+    state.isProcessing = false;
+    setQueryInputEnabled(!!state.currentDatasetId);
+  }
 }
 
 /**
@@ -899,14 +990,15 @@ async function handleQuerySubmit(event) {
     const response = await window.clinicalAPI.submitQuery(
       state.sessionId,
       state.currentDatasetId,
-      queryText
+      queryText,
+      false
     );
 
     console.log('📡 Query submitted, got response:', response);
 
     // Start SSE stream if stream URL provided
     if (response.stream_url || response.query_id) {
-      await subscribeToQueryStream(response.query_id, assistantMessageId);
+      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText);
     } else {
       // Fallback: use direct result if available
       updateMessage(assistantMessageId, {
@@ -931,8 +1023,9 @@ async function handleQuerySubmit(event) {
  * Subscribe to SSE stream for query results.
  * @param {string} queryId
  * @param {string} assistantMessageId
+ * @param {string} [pendingQuery]
  */
-async function subscribeToQueryStream(queryId, assistantMessageId) {
+async function subscribeToQueryStream(queryId, assistantMessageId, pendingQuery = '') {
   return new Promise((resolve, reject) => {
     let contentBuffer = '';
     let resolved = false;
@@ -957,7 +1050,11 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
           break;
 
         case 'query_completed': {
-          const pres = buildQueryCompletedPresentation(data.intent_type, data.result_preview || {});
+          const pres = buildQueryCompletedPresentation(
+            data.intent_type,
+            data.result_preview || {},
+            data.claim
+          );
 
           updateMessage(assistantMessageId, {
             content: pres.content,
@@ -972,9 +1069,22 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
           break;
         }
 
+        case 'query_awaiting_confirmation': {
+          const hold = buildConfirmationHoldPresentation(data, pendingQuery);
+          updateMessage(assistantMessageId, {
+            content: hold.content,
+            result: hold.result,
+            isStreaming: false,
+          });
+          if (cleanupFn) cleanupFn();
+          resolved = true;
+          resolve();
+          break;
+        }
+
         case 'query_failed':
           updateMessage(assistantMessageId, {
-            content: `Error: ${data.error || 'Unknown error'}`,
+            content: `Error: ${data.error || data.failure_reason || 'Unknown error'}`,
             isStreaming: false,
           });
           if (cleanupFn) cleanupFn();
@@ -1052,7 +1162,49 @@ function initUploadArea() {
 
   renderUploadArea(uploadArea, {
     onFileSelect: (file) => handleFileUpload(file),
+    onLoadSample: () => void handleLoadSample(),
   });
+}
+
+async function handleLoadSample() {
+  const { uploadArea } = elements;
+  if (!uploadArea) return;
+  if (typeof window.clinicalAPI?.loadSampleDataset !== 'function') return;
+
+  renderUploadArea(uploadArea, {
+    onFileSelect: (f) => handleFileUpload(f),
+    onLoadSample: () => void handleLoadSample(),
+    statusText: 'Loading sample…',
+  });
+
+  try {
+    const raw = await window.clinicalAPI.loadSampleDataset();
+    const result = normalizeUploadResponse(raw);
+    if (result.status === 'ready' && result.upload_id) {
+      renderUploadArea(uploadArea, {
+        onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
+        statusText: `✓ ${result.dataset_name || 'Sample'} loaded`,
+      });
+      await loadDatasets();
+      elements.datasetSelect.value = result.upload_id;
+      elements.datasetSelect.dispatchEvent(new Event('change'));
+      void loadDatasetOverview();
+    } else {
+      renderUploadArea(uploadArea, {
+        onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
+        statusText: `✗ Sample load failed: ${result.message}`,
+      });
+    }
+  } catch (error) {
+    console.error('Sample load failed:', error);
+    renderUploadArea(uploadArea, {
+      onFileSelect: (f) => handleFileUpload(f),
+      onLoadSample: () => void handleLoadSample(),
+      statusText: `✗ ${error.message}`,
+    });
+  }
 }
 
 async function handleFileUpload(file) {
@@ -1062,6 +1214,7 @@ async function handleFileUpload(file) {
 
   renderUploadArea(uploadArea, {
     onFileSelect: (f) => handleFileUpload(f),
+    onLoadSample: () => void handleLoadSample(),
     statusText: `Uploading ${file.name}…`,
   });
 
@@ -1072,6 +1225,7 @@ async function handleFileUpload(file) {
     if (result.status === 'ready') {
       renderUploadArea(uploadArea, {
         onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
         statusText: `✓ ${result.dataset_name || file.name} uploaded`,
       });
       await loadDatasets();
@@ -1083,6 +1237,7 @@ async function handleFileUpload(file) {
     } else {
       renderUploadArea(uploadArea, {
         onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
         statusText: `✗ Upload failed: ${result.message}`,
       });
     }
@@ -1090,6 +1245,7 @@ async function handleFileUpload(file) {
     console.error('Upload failed:', error);
     renderUploadArea(uploadArea, {
       onFileSelect: (f) => handleFileUpload(f),
+      onLoadSample: () => void handleLoadSample(),
       statusText: `✗ ${error.message}`,
     });
   }

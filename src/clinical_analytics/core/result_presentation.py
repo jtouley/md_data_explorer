@@ -106,10 +106,14 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         diff = _num(analysis.get("mean_diff"))
         lo, hi = _num(analysis.get("ci_lower")), _num(analysis.get("ci_upper"))
         if len(groups) == 2 and diff is not None:
-            direction = "lower" if diff < 0 else "higher"
-            claim = f"Mean {outcome} was {_fmt(abs(diff))} {direction} in {groups[0]} than in {groups[1]}"
+            if abs(diff) < 1e-12:
+                claim = f"Mean {outcome} did not differ between {groups[0]} and {groups[1]}"
+            else:
+                # mean_diff = mean(groups[0]) - mean(groups[1])
+                higher, lower = (groups[0], groups[1]) if diff > 0 else (groups[1], groups[0])
+                claim = f"Mean {outcome} was {_fmt(abs(diff))} higher in {higher} than {lower}"
             details = []
-            if lo is not None and hi is not None:
+            if abs(diff) >= 1e-12 and lo is not None and hi is not None:
                 details.append(f"95% CI {_fmt(lo)} to {_fmt(hi)}")
             if p is not None:
                 details.append(f"t-test {_fmt_p(p)}")

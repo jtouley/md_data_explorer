@@ -11,8 +11,10 @@ from typing import Any
 
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
+from clinical_analytics.core.execution_gate import format_plan_line
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import QueryPlan
+from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
 
 
@@ -28,6 +30,10 @@ class QueryResult:
     context: AnalysisContext | None  # Analysis context (None if parse failed)
     # Statistical result from SemanticLayer.format_execution_result (None if not executed)
     analysis: dict[str, Any] | None = None
+    claim: str | None = None  # Plain-language claim (issue #52)
+    requires_confirmation: bool = False  # Low-confidence hold
+    failure_reason: str | None = None  # Hold or refuse reason
+    plan_line: str | None = None  # One-line plan summary for confirm UI
 
 
 class QueryService:
@@ -56,6 +62,7 @@ class QueryService:
         upload_id: str | None = None,
         dataset_version: str | None = None,
         conversation_history: list[dict[str, Any]] | None = None,
+        confirmed: bool = False,
     ) -> QueryResult:
         """Parse and execute a query on this layer's single DuckDB connection."""
         lock = getattr(self.semantic_layer, "_con_lock", None)
@@ -72,6 +79,7 @@ class QueryService:
                 upload_id=upload_id,
                 dataset_version=dataset_version,
                 conversation_history=conversation_history,
+                confirmed=confirmed,
             )
 
     def _ask_unlocked(
@@ -81,6 +89,7 @@ class QueryService:
         upload_id: str | None = None,
         dataset_version: str | None = None,
         conversation_history: list[dict[str, Any]] | None = None,
+        confirmed: bool = False,
     ) -> QueryResult:
         """
         Parse and execute query, return structured result.
@@ -149,33 +158,60 @@ class QueryService:
         # Convert AnalysisContext for compatibility (if needed)
         context = self._intent_to_context(query_intent, query_plan)
 
-        # Execute if valid
-        result = None
-        analysis = None
-        if validation_result.get("valid", False):
-            try:
-                execution_result = self.semantic_layer.execute_query_plan(query_plan)
-                result = execution_result
-                if isinstance(execution_result, dict) and execution_result.get("success") is False:
-                    warnings = execution_result.get("warnings") or ["Execution failed"]
-                    issues.append({"message": str(warnings[0]), "severity": "error"})
-                else:
-                    # Run the statistics for the plan's intent (t-test, regression, ...). Without
-                    # this the caller only gets the cohort rows the plan selected.
+        # Execute via semantic gate (completeness / confidence hold / confirm)
+        result: dict[str, Any] | None = None
+        analysis: dict[str, Any] | None = None
+        claim: str | None = None
+        requires_confirmation = False
+        failure_reason: str | None = None
+        plan_line: str | None = None
+        execution_run_key = run_key
+
+        try:
+            execution_result = self.semantic_layer.execute_query_plan(
+                query_plan,
+                query_text=normalized_query,
+                confirmed=confirmed,
+            )
+            result = execution_result if isinstance(execution_result, dict) else {"value": execution_result}
+
+            if isinstance(execution_result, dict):
+                requires_confirmation = bool(execution_result.get("requires_confirmation"))
+                failure_reason = execution_result.get("failure_reason")
+                if execution_result.get("run_key"):
+                    execution_run_key = execution_result["run_key"]
+                elif requires_confirmation or execution_result.get("success") is False:
+                    execution_run_key = None
+
+                if requires_confirmation:
+                    plan_line = format_plan_line(query_plan)
+                elif execution_result.get("success") is False:
+                    reason = failure_reason or (
+                        (execution_result.get("warnings") or ["Execution failed"])[0]
+                    )
+                    issues.append({"message": str(reason), "severity": "error"})
+                elif execution_result.get("success") is True:
+                    # Run the statistics for the plan's intent (t-test, regression, ...).
                     analysis = self.semantic_layer.format_execution_result(execution_result, context)
                     if analysis.get("error"):
                         issues.append({"message": str(analysis["error"]), "severity": "error"})
-            except Exception as e:
-                issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
+                    else:
+                        claim = present_analysis(analysis).get("claim")
+        except Exception as e:
+            issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
 
         return QueryResult(
             plan=query_plan,
             issues=issues,
             result=result,
             confidence=query_intent.confidence,
-            run_key=run_key,
+            run_key=execution_run_key,
             context=context,
             analysis=analysis,
+            claim=claim,
+            requires_confirmation=requires_confirmation,
+            failure_reason=failure_reason,
+            plan_line=plan_line,
         )
 
     def _generate_run_key(self, plan: QueryPlan, query_text: str) -> str:

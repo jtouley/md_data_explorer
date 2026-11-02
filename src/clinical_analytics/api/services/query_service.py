@@ -27,13 +27,17 @@ class AsyncQueryResult:
     """Result of async query execution."""
 
     query_id: str
-    status: str  # "pending", "processing", "completed", "failed"
+    status: str  # "pending", "processing", "completed", "failed", "awaiting_confirmation"
     intent_type: str | None = None
     result: dict[str, Any] | None = None
     interpretation: str | None = None
     follow_ups: list[str] = field(default_factory=list)
     error: str | None = None
     confidence: float | None = None
+    claim: str | None = None
+    requires_confirmation: bool = False
+    failure_reason: str | None = None
+    plan_line: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -71,6 +75,7 @@ class AsyncQueryService:
         query: str,
         dataset_id: str,
         session_id: str | None = None,
+        confirmed: bool = False,
     ) -> str:
         """
         Submit query for async execution, returns query_id immediately.
@@ -79,6 +84,7 @@ class AsyncQueryService:
             query: Natural language query text
             dataset_id: Dataset to query
             session_id: Optional session ID for conversation context
+            confirmed: Release a low-confidence execution hold
 
         Returns:
             Unique query ID for tracking
@@ -92,7 +98,7 @@ class AsyncQueryService:
 
         query_id = self._generate_query_id()
 
-        logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id)
+        logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id, confirmed=confirmed)
 
         # Initialize query state
         self._queries[query_id] = AsyncQueryResult(
@@ -102,9 +108,78 @@ class AsyncQueryService:
         self._events[query_id] = []
 
         # Start query execution in background
-        asyncio.create_task(self._execute_query_background(query_id, query, dataset_id, session_id))
+        asyncio.create_task(
+            self._execute_query_background(query_id, query, dataset_id, session_id, confirmed)
+        )
 
         return query_id
+
+    def _apply_core_result(self, query_id: str, result: CoreQueryResult) -> None:
+        """Map a CoreQueryResult onto AsyncQueryResult + SSE events."""
+        intent_type = None
+        if result.context and result.context.inferred_intent:
+            intent_type = result.context.inferred_intent.value
+
+        self._queries[query_id].intent_type = intent_type
+        self._queries[query_id].confidence = result.confidence
+        self._queries[query_id].claim = result.claim
+        self._queries[query_id].requires_confirmation = result.requires_confirmation
+        self._queries[query_id].failure_reason = result.failure_reason
+        self._queries[query_id].plan_line = result.plan_line
+        self._queries[query_id].completed_at = datetime.now(UTC)
+
+        if result.requires_confirmation:
+            self._queries[query_id].status = "awaiting_confirmation"
+            self._queries[query_id].result = self._serialize_result(result.result)
+            self._emit_event(
+                query_id,
+                "query_awaiting_confirmation",
+                {
+                    "query_id": query_id,
+                    "intent_type": intent_type,
+                    "failure_reason": result.failure_reason,
+                    "plan_line": result.plan_line,
+                    "confidence": result.confidence,
+                },
+            )
+            logger.info("query_awaiting_confirmation", query_id=query_id)
+            return
+
+        if result.issues:
+            errors = [i["message"] for i in result.issues if i.get("severity") == "error"]
+            if errors:
+                self._queries[query_id].status = "failed"
+                self._queries[query_id].error = "; ".join(errors)
+                self._queries[query_id].failure_reason = result.failure_reason or errors[0]
+                self._emit_event(
+                    query_id,
+                    "query_failed",
+                    {
+                        "error": "; ".join(errors),
+                        "details": result.issues,
+                        "failure_reason": result.failure_reason,
+                    },
+                )
+                logger.warning("query_failed", query_id=query_id, error=errors[0])
+                return
+
+        payload = self._analysis_payload(result)
+        # Prefer claim already computed on CoreQueryResult; fall back to payload claim.
+        claim = result.claim or (payload.get("claim") if payload else None)
+        self._queries[query_id].claim = claim
+        self._queries[query_id].status = "completed"
+        self._queries[query_id].result = payload
+        self._emit_event(
+            query_id,
+            "query_completed",
+            {
+                "query_id": query_id,
+                "intent_type": intent_type,
+                "result_preview": self._preview_of(payload),
+                "claim": claim,
+            },
+        )
+        logger.info("query_completed", query_id=query_id, intent_type=intent_type)
 
     async def _execute_query_background(
         self,
@@ -112,6 +187,7 @@ class AsyncQueryService:
         query: str,
         dataset_id: str,
         session_id: str | None = None,
+        confirmed: bool = False,
     ) -> None:
         """Execute query in background and emit SSE events."""
         try:
@@ -138,6 +214,7 @@ class AsyncQueryService:
                 question=query,
                 dataset_id=dataset_id,
                 upload_id=session_id,
+                confirmed=confirmed,
             )
 
             # Emit progress event
@@ -147,49 +224,7 @@ class AsyncQueryService:
                 {"stage": "executing", "message": "Running analysis..."},
             )
 
-            # Determine intent type from context
-            intent_type = None
-            if result.context and result.context.inferred_intent:
-                intent_type = result.context.inferred_intent.value
-
-            # Check for errors
-            if result.issues:
-                errors = [i["message"] for i in result.issues if i.get("severity") == "error"]
-                if errors:
-                    self._queries[query_id].status = "failed"
-                    self._queries[query_id].error = "; ".join(errors)
-                    self._emit_event(
-                        query_id,
-                        "query_failed",
-                        {"error": "; ".join(errors), "details": result.issues},
-                    )
-                    logger.warning("query_failed", query_id=query_id, error=errors[0])
-                    return
-
-            # Success - update query result (serialize DataFrames)
-            self._queries[query_id].status = "completed"
-            self._queries[query_id].intent_type = intent_type
-            payload = self._analysis_payload(result)
-            self._queries[query_id].result = payload
-            self._queries[query_id].confidence = result.confidence
-            self._queries[query_id].completed_at = datetime.now(UTC)
-
-            # Emit completed event
-            self._emit_event(
-                query_id,
-                "query_completed",
-                {
-                    "query_id": query_id,
-                    "intent_type": intent_type,
-                    "result_preview": self._preview_of(payload),
-                },
-            )
-
-            logger.info(
-                "query_completed",
-                query_id=query_id,
-                intent_type=intent_type,
-            )
+            self._apply_core_result(query_id, result)
 
         except Exception as e:
             self._queries[query_id].status = "failed"
@@ -332,6 +367,7 @@ class AsyncQueryService:
         query: str,
         dataset_id: str,
         session_id: str | None = None,
+        confirmed: bool = False,
     ) -> AsyncQueryResult:
         """
         Execute query synchronously (blocking) and return result.
@@ -342,6 +378,7 @@ class AsyncQueryService:
             query: Natural language query text
             dataset_id: Dataset to query
             session_id: Optional session ID for conversation context
+            confirmed: Release a low-confidence execution hold
 
         Returns:
             AsyncQueryResult with query results
@@ -355,7 +392,7 @@ class AsyncQueryService:
 
         query_id = self._generate_query_id()
 
-        logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id)
+        logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id, confirmed=confirmed)
 
         # Execute synchronously in thread pool
         result: CoreQueryResult = await asyncio.to_thread(
@@ -363,10 +400,11 @@ class AsyncQueryService:
             question=query,
             dataset_id=dataset_id,
             upload_id=session_id,
+            confirmed=confirmed,
         )
 
         # Check for errors
-        if result.issues:
+        if result.issues and not result.requires_confirmation:
             errors = [i["message"] for i in result.issues if i.get("severity") == "error"]
             if errors:
                 # Check if it's a "dataset not found" type error
@@ -379,12 +417,27 @@ class AsyncQueryService:
         if result.context and result.context.inferred_intent:
             intent_type = result.context.inferred_intent.value
 
+        status = "awaiting_confirmation" if result.requires_confirmation else "completed"
+        if result.issues and not result.requires_confirmation:
+            errors = [i["message"] for i in result.issues if i.get("severity") == "error"]
+            if errors:
+                status = "failed"
+
         return AsyncQueryResult(
             query_id=query_id,
-            status="completed",
+            status=status,
             intent_type=intent_type,
             result=self._analysis_payload(result),
             confidence=result.confidence,
+            claim=result.claim,
+            requires_confirmation=result.requires_confirmation,
+            failure_reason=result.failure_reason,
+            plan_line=result.plan_line,
+            error=(
+                "; ".join(i["message"] for i in result.issues if i.get("severity") == "error")
+                if status == "failed"
+                else None
+            ),
             completed_at=datetime.now(UTC),
         )
 
@@ -424,7 +477,11 @@ class AsyncQueryService:
 
             # Check if query is complete
             query_result = self._queries.get(query_id)
-            if query_result and query_result.status in ("completed", "failed"):
+            if query_result and query_result.status in (
+                "completed",
+                "failed",
+                "awaiting_confirmation",
+            ):
                 # Send explicit stream_end signal for client to close connection
                 yield SSEEvent(
                     event="stream_end",

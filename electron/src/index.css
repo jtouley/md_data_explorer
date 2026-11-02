@@ -1086,3 +1086,52 @@ body {
   font-size: 0.75rem;
   color: var(--color-text-secondary);
 }
+
+.btn-load-sample {
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
+
+.btn-load-sample:hover {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.result-claim {
+  font-weight: 600;
+  margin: 0 0 var(--spacing-sm);
+}
+
+.result-confirm-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.btn-confirm,
+.btn-reject {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn-confirm {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.btn-reject {
+  background: transparent;
+  border-color: var(--color-text-secondary);
+  color: var(--color-text-secondary);
+}
+
+.result-plan-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  margin: var(--spacing-xs) 0;
+}
+

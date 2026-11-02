@@ -74,7 +74,7 @@ const clinicalAPI = {
    * @param {string} queryText - Natural language query
    * @returns {Promise<{query_id: string, status: string, stream_url: string}>}
    */
-  async submitQuery(sessionId, datasetId, queryText) {
+  async submitQuery(sessionId, datasetId, queryText, confirmed = false) {
     const response = await fetch(`${API_BASE_URL}/api/queries`, {
       method: 'POST',
       headers: {
@@ -84,6 +84,7 @@ const clinicalAPI = {
         session_id: sessionId,
         dataset_id: datasetId,
         query_text: queryText,
+        confirmed: Boolean(confirmed),
       }),
     });
     if (!response.ok) {
@@ -337,6 +338,21 @@ const clinicalAPI = {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data?.detail || `Upload failed: ${response.statusText}`);
+    }
+    return data;
+  },
+
+  /**
+   * Load the bundled sample cohort into upload storage.
+   * @returns {Promise<{ upload_id: string, dataset_name: string, status: string, message: string }>}
+   */
+  async loadSampleDataset() {
+    const response = await fetch(`${API_BASE_URL}/api/datasets/sample`, {
+      method: 'POST',
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.detail || `Sample load failed: ${response.statusText}`);
     }
     return data;
   },

@@ -110,6 +110,7 @@ async def submit_query(
             query=request.query_text,
             dataset_id=request.dataset_id,
             session_id=request.session_id,
+            confirmed=request.confirmed,
         )
 
         return QueryResponse(
@@ -196,6 +197,10 @@ async def get_query_result(
         follow_up_suggestions=result.follow_ups,
         error=result.error,
         execution_time_ms=None,
+        claim=result.claim,
+        requires_confirmation=result.requires_confirmation,
+        failure_reason=result.failure_reason,
+        plan_line=result.plan_line,
     )
 
 
