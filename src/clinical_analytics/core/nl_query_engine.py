@@ -983,10 +983,18 @@ class NLQueryEngine:
                     grouping_var=grouping_var,
                 )
 
+                # The FIND_PREDICTORS pattern captures only the outcome; every other variable the
+                # question names ("do age and treatment predict outcome?") is a predictor.
+                predictor_vars: list[str] = []
+                if intent_type == "FIND_PREDICTORS" and primary_var:
+                    mentioned, _ = self._extract_variables_from_query(query_lower)
+                    predictor_vars = [v for v in mentioned if v != primary_var]
+
                 return QueryIntent(
                     intent_type=intent_type,
                     primary_variable=primary_var,
                     grouping_variable=grouping_var,
+                    predictor_variables=predictor_vars,
                     confidence=confidence,
                 )
 

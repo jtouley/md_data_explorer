@@ -2027,12 +2027,8 @@ class SemanticLayer:
                     "valid": False,
                     "error": "scope='filtered' requires filters, but no filters provided.",
                 }
-            # Require entity_key or group_by for COUNT
-            if not plan.entity_key and not plan.group_by:
-                return {
-                    "valid": False,
-                    "error": "COUNT intent requires entity_key or group_by. Please specify what to count.",
-                }
+            # A COUNT with neither entity_key nor group_by is a row count.
+            # Completeness still warns; execution is allowed.
 
         # Breakdown validation
         if plan.group_by:
