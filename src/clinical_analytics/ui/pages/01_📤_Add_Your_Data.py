@@ -15,6 +15,7 @@ import streamlit as st
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from clinical_analytics.datasets.demo import DEMO_DATASET_NAME, load_sample_dataset
 from clinical_analytics.ui.app_utils import restore_datasets
 from clinical_analytics.ui.components.data_validator import DataQualityValidator
 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
@@ -84,6 +85,35 @@ if previous_datasets and "selected_upload_id" not in st.session_state:
 def render_upload_step():
     """Step 1: File Upload"""
     st.markdown("## 📤 Upload Your Data")
+
+    st.markdown(
+        f"**New here?** Load the bundled **{DEMO_DATASET_NAME}** in one click — "
+        "no schema mapping required — then open Ask Questions."
+    )
+    if st.button("Load sample dataset", type="secondary", key="load_sample_dataset"):
+        try:
+            success, message, upload_id = load_sample_dataset(storage, overwrite=True)
+        except FileNotFoundError as exc:
+            st.error(f"❌ {exc}")
+        else:
+            if success and upload_id:
+                metadata = storage.get_upload_metadata(upload_id)
+                st.session_state["selected_upload_id"] = upload_id
+                st.session_state["current_dataset_metadata"] = metadata
+                st.session_state["upload_success"] = True
+                st.session_state["upload_result"] = {
+                    "success": True,
+                    "message": message,
+                    "upload_id": upload_id,
+                }
+                st.success(
+                    f"✅ Loaded {DEMO_DATASET_NAME}. Open **Ask Questions** to analyze it — mapping wizard skipped."
+                )
+                st.rerun()
+            else:
+                st.error(f"❌ Could not load sample dataset: {message}")
+
+    st.divider()
 
     # Determine allowed file types based on feature flag
     if MULTI_TABLE_ENABLED:

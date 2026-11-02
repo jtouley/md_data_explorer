@@ -197,19 +197,13 @@ if [ ! -d ".venv" ]; then
 fi
 echo -e "${GREEN}✓ Virtual environment found${NC}"
 
-# Check for data files
+# Check for bundled demo sample (uploads-only product; no built-in COVID/Sepsis)
 echo ""
-echo -e "${YELLOW}📂 Checking for datasets...${NC}"
-if [ -f "data/covid_ms/covid_ms_data.csv" ]; then
-    echo -e "${GREEN}✓ COVID-MS dataset available${NC}"
+echo -e "${YELLOW}📂 Checking for sample dataset...${NC}"
+if [ -f "data/demo/sample_cohort.csv" ]; then
+    echo -e "${GREEN}✓ Sample clinical cohort available (Load sample dataset in UI)${NC}"
 else
-    echo -e "${YELLOW}⚠ COVID-MS dataset not found (will skip in UI)${NC}"
-fi
-
-if [ -d "data/sepsis" ]; then
-    echo -e "${GREEN}✓ Sepsis dataset directory found${NC}"
-else
-    echo -e "${YELLOW}⚠ Sepsis dataset not found (will skip in UI)${NC}"
+    echo -e "${YELLOW}⚠ Sample cohort missing at data/demo/sample_cohort.csv${NC}"
 fi
 
 # Check persistent storage (DuckDB and user uploads)
