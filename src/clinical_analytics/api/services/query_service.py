@@ -16,6 +16,7 @@ import structlog
 from clinical_analytics.api.models.schemas import SSEEvent
 from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
 from clinical_analytics.core.query_service import QueryService as CoreQueryService
+from clinical_analytics.core.result_presentation import present_analysis, to_json_safe
 from clinical_analytics.core.semantic import SemanticLayer
 
 logger = structlog.get_logger()
@@ -168,7 +169,8 @@ class AsyncQueryService:
             # Success - update query result (serialize DataFrames)
             self._queries[query_id].status = "completed"
             self._queries[query_id].intent_type = intent_type
-            self._queries[query_id].result = self._serialize_result(result.result)
+            payload = self._analysis_payload(result)
+            self._queries[query_id].result = payload
             self._queries[query_id].confidence = result.confidence
             self._queries[query_id].completed_at = datetime.now(UTC)
 
@@ -179,7 +181,7 @@ class AsyncQueryService:
                 {
                     "query_id": query_id,
                     "intent_type": intent_type,
-                    "result_preview": self._get_result_preview(result.result),
+                    "result_preview": self._preview_of(payload),
                 },
             )
 
@@ -207,6 +209,30 @@ class AsyncQueryService:
             timestamp=datetime.now(UTC),
         )
         self._events.setdefault(query_id, []).append(event)
+
+    def _analysis_payload(self, result: CoreQueryResult) -> dict[str, Any] | None:
+        """Claim, statistics table and full analysis for a completed query.
+
+        Falls back to the raw execution rows only when no analysis was produced.
+        """
+        if result.analysis is None:
+            return self._serialize_result(result.result)
+        presentation = present_analysis(result.analysis)
+        table = presentation["table"]
+        return {
+            "analysis_type": result.analysis.get("type"),
+            "claim": presentation["claim"],
+            "table": table,
+            "row_count": len(table["rows"]) if table else 0,
+            "chart_spec": to_json_safe(result.analysis.get("chart_spec")),
+            "analysis": to_json_safe(result.analysis),
+        }
+
+    def _preview_of(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:
+        """SSE preview: the claim-first payload without the full analysis dict."""
+        if payload is None or "claim" not in payload:
+            return self._get_result_preview(payload)
+        return {k: v for k, v in payload.items() if k != "analysis"}
 
     def _table_payload(self, frame: Any) -> dict[str, Any] | None:
         """JSON table for a Polars or pandas frame. Ibis execute() returns pandas."""
@@ -357,7 +383,7 @@ class AsyncQueryService:
             query_id=query_id,
             status="completed",
             intent_type=intent_type,
-            result=self._serialize_result(result.result),
+            result=self._analysis_payload(result),
             confidence=result.confidence,
             completed_at=datetime.now(UTC),
         )

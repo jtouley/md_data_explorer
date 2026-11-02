@@ -522,6 +522,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "ci_lower": float(ci_lower),
                 "ci_upper": float(ci_upper),
                 "group_means": group_means,
+                "group_sizes": {str(groups[0]): n1, str(groups[1]): n2},
                 **headline,
             }
 
@@ -871,6 +872,13 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
 
     if outcome_col is None:
         return {"type": "predictor", "error": "No outcome variable specified"}
+    if not predictors:
+        # An empty right-hand side would reach the regression as "outcome ~" and fail to parse.
+        return {
+            "type": "predictor",
+            "error": f"No predictors specified for {outcome_col}. Name them, e.g. 'do age and treatment predict "
+            f"{outcome_col}?'",
+        }
 
     # Prepare data
     analysis_cols = [outcome_col] + predictors

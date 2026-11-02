@@ -26,6 +26,8 @@ class QueryResult:
     confidence: float  # Parsing confidence (0.0-1.0)
     run_key: str | None  # Deterministic run key (None if parse failed)
     context: AnalysisContext | None  # Analysis context (None if parse failed)
+    # Statistical result from SemanticLayer.format_execution_result (None if not executed)
+    analysis: dict[str, Any] | None = None
 
 
 class QueryService:
@@ -149,6 +151,7 @@ class QueryService:
 
         # Execute if valid
         result = None
+        analysis = None
         if validation_result.get("valid", False):
             try:
                 execution_result = self.semantic_layer.execute_query_plan(query_plan)
@@ -156,6 +159,12 @@ class QueryService:
                 if isinstance(execution_result, dict) and execution_result.get("success") is False:
                     warnings = execution_result.get("warnings") or ["Execution failed"]
                     issues.append({"message": str(warnings[0]), "severity": "error"})
+                else:
+                    # Run the statistics for the plan's intent (t-test, regression, ...). Without
+                    # this the caller only gets the cohort rows the plan selected.
+                    analysis = self.semantic_layer.format_execution_result(execution_result, context)
+                    if analysis.get("error"):
+                        issues.append({"message": str(analysis["error"]), "severity": "error"})
             except Exception as e:
                 issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
 
@@ -166,6 +175,7 @@ class QueryService:
             confidence=query_intent.confidence,
             run_key=run_key,
             context=context,
+            analysis=analysis,
         )
 
     def _generate_run_key(self, plan: QueryPlan, query_text: str) -> str:

@@ -6,6 +6,8 @@ Tests verify UI-agnostic query parsing, validation, and execution.
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.query_service import QueryResult, QueryService
 
@@ -25,6 +27,8 @@ class TestQueryService:
     def test_query_service_ask_parses_query(self, mock_semantic_layer):
         """Test that ask() parses query using NLQueryEngine."""
         # Arrange
+        mock_semantic_layer = mock_semantic_layer()
+        mock_semantic_layer.format_execution_result.return_value = {"type": "descriptive", "mean": 45.5}
         service = QueryService(mock_semantic_layer)
         query = "what is the average age?"
 
@@ -203,3 +207,58 @@ class TestQueryService:
         # Assert
         assert run_key == "delegated_key"
         mock_semantic_layer._generate_run_key.assert_called_once_with(plan, query)
+
+
+class TestQueryServiceAnalysis:
+    """ask() runs the statistics for the plan via SemanticLayer.format_execution_result."""
+
+    def _service(self, mock_semantic_layer, execution_result, formatted=None):
+        layer = mock_semantic_layer()
+        layer._generate_run_key.return_value = "run_key"
+        layer._validate_query_plan.return_value = {"valid": True, "issues": []}
+        layer.execute_query_plan.return_value = execution_result
+        layer.format_execution_result.return_value = formatted
+        service = QueryService(layer)
+        intent = MagicMock(intent_type="COMPARE_GROUPS", primary_variable="ldl", confidence=0.95, filters=[])
+        service.nl_engine.parse_query = MagicMock(return_value=intent)
+        service.nl_engine._intent_to_plan = MagicMock(
+            return_value=QueryPlan(intent="COMPARE_GROUPS", metric="ldl", group_by="treatment", confidence=0.95)
+        )
+        return service, layer
+
+    @pytest.mark.parametrize(
+        ("formatted", "expected_errors"),
+        [
+            ({"type": "comparison", "p_value": 0.01}, []),
+            (
+                {"type": "predictor", "error": "No predictors specified for outcome."},
+                ["No predictors specified for outcome."],
+            ),
+        ],
+        ids=["analysis_ok", "analysis_error_becomes_issue"],
+    )
+    def test_ask_executedPlan_attachesFormatterAnalysis(self, mock_semantic_layer, formatted, expected_errors):
+        # Arrange
+        execution_result = {"success": True, "result": "rows"}
+        service, layer = self._service(mock_semantic_layer, execution_result, formatted)
+
+        # Act
+        result = service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert
+        assert result.analysis == formatted
+        assert layer.format_execution_result.call_args.args[0] == execution_result
+        assert layer.format_execution_result.call_args.args[1] is result.context
+        assert [i["message"] for i in result.issues if i["severity"] == "error"] == expected_errors
+
+    def test_ask_failedExecution_skipsFormatter(self, mock_semantic_layer):
+        # Arrange
+        service, layer = self._service(mock_semantic_layer, {"success": False, "warnings": ["boom"]})
+
+        # Act
+        result = service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert
+        layer.format_execution_result.assert_not_called()
+        assert result.analysis is None
+        assert {"message": "boom", "severity": "error"} in result.issues

@@ -279,3 +279,69 @@ class TestAsyncQueryServiceSerialization:
         assert "table" in json_str
         assert "columns" in json_str
         assert "level1" in result
+
+
+class TestAsyncQueryServiceAnalysisPayload:
+    """Completed queries return the claim and statistics table, not the cohort rows."""
+
+    @pytest.mark.asyncio
+    async def test_submit_query_withAnalysis_returnsClaimFirstPayload(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        analysis = {
+            "type": "count",
+            "total_count": 5,
+            "grouped_by": "sex",
+            "group_counts": [{"sex": "F", "count": 3}, {"sex": "M", "count": 2}],
+            "chart_spec": {"type": "bar", "x": "sex"},
+        }
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result={"success": True, "result": "raw cohort rows"},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis=analysis,
+        )
+
+        # Act
+        query_id = await async_query_service.submit_query(query="how many by sex?", dataset_id="ds")
+        events = [event async for event in async_query_service.stream_events(query_id)]
+        stored = await async_query_service.get_result(query_id)
+
+        # Assert
+        assert stored.result["claim"] == "5 total across 2 sex groups."
+        assert stored.result["analysis_type"] == "count"
+        assert stored.result["table"]["rows"] == [{"sex": "F", "count": 3}, {"sex": "M", "count": 2}]
+        assert stored.result["analysis"]["total_count"] == 5
+        assert "raw cohort rows" not in str(stored.result)
+        completed = next(e for e in events if e.event == "query_completed")
+        preview = completed.data["result_preview"]
+        assert preview["claim"] == stored.result["claim"]
+        assert "analysis" not in preview
+
+    @pytest.mark.asyncio
+    async def test_execute_query_withoutAnalysis_fallsBackToSerializedResult(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result={"test": "data"},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+        )
+
+        # Act
+        result = await async_query_service.execute_query(query="anything", dataset_id="ds")
+
+        # Assert
+        assert result.result == {"test": "data"}

@@ -212,6 +212,15 @@ class TestComputeComparisonAnalysis:
         assert "p_value" in result
         assert "statistic" in result
 
+    def test_compute_comparison_analysis_twoGroups_reportsGroupSizes(self, sample_mixed_df, sample_context_compare):
+        """The claim reports n, so the t-test result carries per-group sizes."""
+        # Act
+        result = compute_comparison_analysis(sample_mixed_df, sample_context_compare)
+
+        # Assert
+        assert result["test_type"] == "t_test"
+        assert result["group_sizes"] == {"A": 3, "B": 2}
+
     def test_compute_comparison_analysis_t_test_for_two_groups(self):
         """Test that compute_comparison_analysis uses t-test for two numeric groups."""
         # Arrange: Two groups with clear difference
@@ -479,6 +488,20 @@ class TestComputePredictorAnalysis:
         # Assert: Error returned
         assert result["type"] == "predictor"
         assert "error" in result
+
+    def test_compute_predictor_analysis_noPredictors_returnsActionableError(
+        self, sample_mixed_df, sample_context_predictor
+    ):
+        """An empty predictor list must not reach the regression as 'outcome ~'."""
+        # Arrange
+        sample_context_predictor.predictor_variables = []
+
+        # Act
+        result = compute_predictor_analysis(sample_mixed_df, sample_context_predictor)
+
+        # Assert
+        assert result["type"] == "predictor"
+        assert result["error"].startswith(f"No predictors specified for {sample_context_predictor.primary_variable}")
 
 
 class TestComputeSurvivalAnalysis:

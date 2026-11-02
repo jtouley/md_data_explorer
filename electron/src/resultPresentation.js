@@ -196,7 +196,8 @@ export function buildIntentSummary(normalizedIntent, resultPreview, rowCount) {
     const strongestR = formatNumeric(correlations.strongest_r);
     const parts = [];
     if (method) parts.push(`Method: ${method}`);
-    if (strongestPair.length === 2) parts.push(`Strongest: ${strongestPair[0]} ~ ${strongestPair[1]}`);
+    if (strongestPair.length === 2)
+      parts.push(`Strongest: ${strongestPair[0]} ~ ${strongestPair[1]}`);
     if (strongestR) parts.push(`r=${strongestR}`);
     return parts.length > 0 ? parts.join(' | ') : null;
   }
@@ -214,9 +215,15 @@ export function buildQueryCompletedPresentation(intentRaw, resultPreview) {
   const extracted = extractTableFromResultPreview(resultPreview);
   const hasTable = extracted != null;
   const rowCount = extracted ? extracted.rowCount : 0;
-  const content = buildCompletionMessage(intentType, rowCount, hasTable);
   const title = resultTitleForIntent(intentType);
-  const summary = buildIntentSummary(intentType, resultPreview, rowCount);
+  // The API's claim sentence (effect, interval, n, test) leads the card when present;
+  // the table below it holds the statistics behind the claim, not cohort rows.
+  const claim =
+    typeof resultPreview?.claim === 'string' && resultPreview.claim ? resultPreview.claim : null;
+  const content = claim
+    ? title || 'Analysis complete.'
+    : buildCompletionMessage(intentType, rowCount, hasTable);
+  const summary = claim || buildIntentSummary(intentType, resultPreview, rowCount);
 
   if (!extracted && !title && !summary) {
     return { content, result: null };

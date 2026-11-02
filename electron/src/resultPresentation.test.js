@@ -134,6 +134,46 @@ describe('buildQueryCompletedPresentation', () => {
   });
 });
 
+describe('buildQueryCompletedPresentation with API claim', () => {
+  const claimPreview = {
+    analysis_type: 'comparison',
+    claim:
+      'Mean ldl was 16.14 lower in drug than in placebo (95% CI -18.83 to -13.44; t-test p<0.001; n=300).',
+    table: {
+      columns: ['treatment', 'mean ldl', 'n'],
+      rows: [
+        { treatment: 'drug', 'mean ldl': 113.96, n: 160 },
+        { treatment: 'placebo', 'mean ldl': 130.09, n: 140 },
+      ],
+    },
+    row_count: 2,
+  };
+
+  it('leads with the claim and keeps the statistics table', () => {
+    const pres = buildQueryCompletedPresentation('compare_groups', claimPreview);
+    expect(pres.content).toBe('Group comparison');
+    expect(pres.result.summary).toBe(claimPreview.claim);
+    expect(pres.result.table).toEqual(claimPreview.table);
+  });
+
+  it('falls back to a generic heading for an unknown intent', () => {
+    const pres = buildQueryCompletedPresentation('mystery', {
+      claim: 'Total count: 3.',
+      table: null,
+    });
+    expect(pres.content).toBe('Analysis complete.');
+    expect(pres.result.summary).toBe('Total count: 3.');
+  });
+
+  it('ignores an empty claim and uses the row-count message', () => {
+    const pres = buildQueryCompletedPresentation('count', {
+      claim: '',
+      table: { columns: ['n'], rows: [{ n: 1 }] },
+    });
+    expect(pres.content).toBe('Counts: 1 row (preview)');
+  });
+});
+
 describe('buildCompletionMessage', () => {
   it('uses row count when table present', () => {
     expect(buildCompletionMessage('describe', 5, true)).toMatch(/5 rows/);
