@@ -12,7 +12,7 @@ from clinical_analytics.storage.store_format import EnginePreparation, StoreForm
 
 @pytest.mark.parametrize(
     "result",
-    [None, EnginePreparation("1.4.2", "2.0.0", backed_up=True, storage_version="v1.0.0")],
+    [None, EnginePreparation("1.4.2", "2.0.0", verified=True, storage_version="v1.0.0")],
     ids=["no-store", "engine-changed"],
 )
 def test_lifespan_storePrepared_startsAndRunsCheckOnDataDir(result: EnginePreparation | None) -> None:

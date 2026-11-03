@@ -2369,15 +2369,15 @@ class SemanticLayer:
             if distinct_count <= 20:
                 # Check if values look like codes (numeric codes with labels)
                 # Sample a few values to check pattern
-                sample = column_expr.head(100).execute()
-                if len(sample) > 0:
+                # Ibis columns have no head(): sample through a one-column table.
+                sample = column_expr.as_table().limit(100).to_polars().to_series().drop_nulls()
+                if sample.len() > 0:
                     # Check if values are strings containing ":" pattern (encoded labels)
-                    if hasattr(sample, "str") and sample.str.contains(":").any():
+                    if sample.dtype == pl.String and bool(sample.str.contains(":").any()):
                         return True
                     # Check if all values are small integers (likely codes)
-                    if sample.dtype in ["int8", "int16", "int32", "int64"]:
-                        if sample.min() >= 0 and sample.max() <= 20:
-                            return True
+                    if sample.dtype.is_integer() and sample.min() >= 0 and sample.max() <= 20:  # type: ignore[operator]
+                        return True
 
             # Check column name/alias for encoding patterns
             column_name = column if isinstance(column, str) else str(column)

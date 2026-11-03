@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import duckdb
@@ -27,7 +28,6 @@ from clinical_analytics.storage.datastore import (
 from clinical_analytics.storage.store_format import (
     STORE_STORAGE_VERSION,
     current_storage_version,
-    prepare_store_for_engine,
     store_backups,
 )
 
@@ -314,10 +314,11 @@ def test_purgeDatasetFiles_compaction_keepsStoreStorageVersion(tmp_path: Path) -
 
 
 def test_purgeDatasetFiles_preUpgradeBackupPresent_backupRemoved(tmp_path: Path) -> None:
-    # Arrange: a pre-upgrade backup holds the dataset's rows too.
+    # Arrange: a backup kept by a failed engine check holds the dataset's rows too.
     _seed(tmp_path, "dsx")
     _seed_sentinel(tmp_path, "backup-sentinel-")
-    prepare_store_for_engine(tmp_path, engine="0.0.0-test")
+    db_path = tmp_path / "analytics.duckdb"
+    shutil.copy2(db_path, db_path.with_name("analytics.duckdb.backup-1.4.2-20261101T000000Z"))
     backups = store_backups(tmp_path / "analytics.duckdb")
     assert backups and any(b"backup-sentinel-" in p.read_bytes() for p in backups)
 

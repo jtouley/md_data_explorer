@@ -8,14 +8,18 @@ and recreated by every dataset delete (``COPY FROM DATABASE`` into a fresh file)
 pin a library upgrade would silently make users' stores one-way. Two guards:
 
 * New and rewritten store files use ``STORE_STORAGE_VERSION`` (see ``new_store_config`` and
-  ``attach_storage_option``), so the previous DuckDB line can still open them.
-* ``prepare_store_for_engine`` runs at startup. When the DuckDB version that last opened the
-  store differs from the running one, it copies the store (and WAL) to a backup first, then
-  checks the running DuckDB can open it, then records the new version and drops older backups
-  (only the newest is kept). A store the running DuckDB cannot read fails loudly with
-  ``StoreFormatError`` and is left untouched.
+  ``attach_storage_option``), so the previous DuckDB line can still open them. The DuckDB version
+  that created the store is recorded next to it (``analytics.duckdb.engine``).
+* ``prepare_store_for_engine`` runs at startup. When the DuckDB line that last opened the store
+  differs from the running one, it copies the store (and WAL) to a backup, opens the store
+  read-write with the running DuckDB and reads its catalog, records the new version, then
+  deletes the backup. The backup is a full copy of patient data and the on-disk format does not
+  change, so it is kept only while that check runs. If the check fails, the backup is kept, the
+  marker is left alone and startup stops with ``StoreFormatError`` naming the backup. A store
+  held open by another program raises ``StoreLockedError`` and leaves no backup.
 
-Backups hold patient rows, so a dataset delete removes them too (see ``store_backups``).
+Backups that are still on disk are removed by the next successful start and by a dataset delete
+(see ``store_backups``).
 """
 
 from __future__ import annotations
@@ -48,13 +52,17 @@ class StoreFormatError(RuntimeError):
     """The store cannot be opened by the running DuckDB (for example, written by a newer one)."""
 
 
+class StoreLockedError(StoreFormatError):
+    """Another program holds DuckDB's lock on the store file."""
+
+
 @dataclass(frozen=True)
 class EnginePreparation:
     """What ``prepare_store_for_engine`` did (safe to log: no paths)."""
 
     previous_engine: str | None
     current_engine: str
-    backed_up: bool
+    verified: bool  # the engine line changed and the running DuckDB opened the store
     storage_version: str | None
 
 
@@ -94,17 +102,41 @@ def _engine_line(version: str) -> str:
     return ".".join(version.split(".")[:2])
 
 
+def _fsync_dir(directory: Path) -> None:
+    """Make file creations and deletions in ``directory`` durable (no-op where unsupported)."""
+    if os.name == "nt":  # Windows cannot open a directory for fsync
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _remove_backups(paths: list[Path], db_path: Path) -> None:
+    for path in paths:
+        path.unlink(missing_ok=True)
+    if paths:
+        _fsync_dir(db_path.parent)
+
+
 def _backup_store(db_path: Path, previous_engine: str | None) -> list[Path]:
+    """Copy store and WAL to backups; on any failure remove what was written and re-raise."""
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     label = f"{previous_engine or 'unknown'}-{stamp}"
     written: list[Path] = []
-    for source in (db_path, db_path.with_name(f"{db_path.name}.wal")):
-        if source.exists():
-            target = source.with_name(f"{db_path.name}{BACKUP_INFIX}{label}{source.name[len(db_path.name) :]}")
-            shutil.copy2(source, target)
-            with target.open("rb") as f:
-                os.fsync(f.fileno())
-            written.append(target)
+    try:
+        for source in (db_path, db_path.with_name(f"{db_path.name}.wal")):
+            if source.exists():
+                target = source.with_name(f"{db_path.name}{BACKUP_INFIX}{label}{source.name[len(db_path.name) :]}")
+                written.append(target)
+                shutil.copy2(source, target)
+                with target.open("rb") as f:
+                    os.fsync(f.fileno())
+        _fsync_dir(db_path.parent)
+    except OSError:
+        _remove_backups(written, db_path)
+        raise
     return written
 
 
@@ -117,11 +149,41 @@ def _write_marker(marker: Path, engine: str) -> None:
     os.replace(tmp, marker)
 
 
+def record_store_engine(db_path: Path, engine: str | None = None) -> None:
+    """Record the DuckDB version that created the store, so its first restart needs no check."""
+    _write_marker(engine_marker(db_path), engine or duckdb.__version__)
+
+
+def _is_lock_error(error: duckdb.Error) -> bool:
+    return isinstance(error, duckdb.IOException) and "lock" in str(error).lower()
+
+
+def _verify_store(db_path: Path, current: str) -> str:
+    """Open the store read-write with the running DuckDB, read its catalog; return its format."""
+    try:
+        con = duckdb.connect(str(db_path), read_only=False, config=new_store_config())
+    except duckdb.Error as e:  # IOException on 1.x; 2.0 raises some header errors as plain Error
+        if _is_lock_error(e):
+            raise StoreLockedError(
+                "The data store is open in another program. Close that program and start the app again."
+            ) from e
+        raise StoreFormatError(
+            f"DuckDB {current} cannot open the data store (written by a newer DuckDB, or damaged) ({type(e).__name__})"
+        ) from e
+    try:
+        con.execute("SELECT count(*) FROM duckdb_tables()").fetchall()
+        return current_storage_version(con)
+    except duckdb.Error as e:
+        raise StoreFormatError(f"DuckDB {current} cannot read the data store's catalog ({type(e).__name__})") from e
+    finally:
+        con.close()
+
+
 def prepare_store_for_engine(data_dir: Path, engine: str | None = None) -> EnginePreparation | None:
-    """Back up and verify the store before the running DuckDB first opens it. Run at startup.
+    """Check the store opens on the running DuckDB, with a backup only during the check. Run at startup.
 
     Returns None when there is no store yet. Safe to run twice: a second run with the same
-    engine finds the marker current and does nothing.
+    engine finds the marker current, removes any leftover backup and does nothing else.
     """
     from clinical_analytics.storage.datastore import exclusive_store  # datastore imports this module
 
@@ -136,29 +198,33 @@ def prepare_store_for_engine(data_dir: Path, engine: str | None = None) -> Engin
 
 
 def _prepare_locked(db_path: Path, marker: Path, previous: str | None, current: str) -> EnginePreparation:
+    leftover = store_backups(db_path)
     if previous is not None and _engine_line(previous) == _engine_line(current):
         if previous != current:
             _write_marker(marker, current)
-        return EnginePreparation(previous, current, backed_up=False, storage_version=None)
+        # Left by a run that verified the store but stopped before deleting its backup.
+        _remove_backups(leftover, db_path)
+        return EnginePreparation(previous, current, verified=False, storage_version=None)
 
     log = logger.bind(previous_engine=previous, current_engine=current)
-    written = _backup_store(db_path, previous)
-    log.info("store_backed_up_before_engine_change")
+    backups = _backup_store(db_path, previous)
+    # A backup kept by an earlier failed check may predate later writes (for example, by the
+    # previous app release): the fresh copy replaces it, so there is never more than one.
+    _remove_backups(leftover, db_path)
+    log.info("store_backed_up_for_engine_check", replaced_backups=len(leftover))
     try:
-        con = duckdb.connect(str(db_path), read_only=True, config=new_store_config())
-    except duckdb.Error as e:  # IOException on 1.x; 2.0 raises some header errors as plain Error
+        storage_version = _verify_store(db_path, current)
+    except StoreLockedError:
+        _remove_backups(backups, db_path)
+        raise
+    except StoreFormatError as e:
+        names = ", ".join(str(p) for p in backups)
         raise StoreFormatError(
-            f"DuckDB {current} cannot open the data store (written by a newer DuckDB, or damaged); "
-            f"restore a backup or run the DuckDB release that wrote it ({type(e).__name__})"
+            f"{e} The store was not changed. A copy taken before this check is kept at: {names}. "
+            "Run the app version you used before, or restore that copy over analytics.duckdb, "
+            "then delete the copy: it holds patient data."
         ) from e
-    try:
-        storage_version = current_storage_version(con)
-    finally:
-        con.close()
     _write_marker(marker, current)
-    # Keep only the newest backup: each one is a full copy of the patient data.
-    stale = [p for p in store_backups(db_path) if p not in written]
-    for path in stale:
-        path.unlink()
-    log.info("store_engine_recorded", storage_version=storage_version, stale_backups_removed=len(stale))
-    return EnginePreparation(previous, current, backed_up=True, storage_version=storage_version)
+    _remove_backups(backups, db_path)
+    log.info("store_engine_recorded", storage_version=storage_version)
+    return EnginePreparation(previous, current, verified=True, storage_version=storage_version)

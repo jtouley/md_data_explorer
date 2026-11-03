@@ -90,11 +90,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     create_tables()
     logger.info("api_database_ready")
 
-    # Back up the store before a new DuckDB release first opens it, and fail loudly on a store
-    # this DuckDB cannot read (for example, after a rollback). Before any compaction or upload.
+    # When the DuckDB line changes, check (with a backup only for the check) that this DuckDB can
+    # open the store; fail loudly if not (for example, after a rollback). Before any compaction.
     try:
         prepared = await asyncio.to_thread(prepare_store_for_engine, uploads_dir().parent)
-        if prepared is not None and prepared.backed_up:
+        if prepared is not None and prepared.verified:
             logger.info(
                 "api_store_engine_changed",
                 previous_engine=prepared.previous_engine,
@@ -102,7 +102,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 storage_version=prepared.storage_version,
             )
     except (StoreFormatError, OSError) as e:
-        # No backup or an unreadable store: do not let this DuckDB write to it. Fail startup.
+        # Unreadable, locked, or no room for the backup: do not let this DuckDB use it. The
+        # exception raised here says what to do and where any backup is kept.
         logger.error("api_store_unreadable", error_type=type(e).__name__)
         raise
 
