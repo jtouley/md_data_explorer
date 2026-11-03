@@ -46,10 +46,9 @@ YAML_SUFFIXES = (".yaml", ".yml")
 JSON_SUFFIXES = (".json",)
 SOURCE_HASH_PROPERTY = "sourceFileSha256"
 SYNTHETIC_TAG = "synthetic"
-# Synthetic fixtures and public data dictionaries only.
+# Synthetic fixtures only. Data dictionaries come with the user's upload and stay local.
 ALLOWLIST = (
     "data/demo/*.csv",
-    "data/dictionaries/*.pdf",
     "tests/fixtures/synthetic/*",
     # Hand-written NL questions and expected intents; no rows, no column profiles.
     "tests/eval/golden_questions.yaml",

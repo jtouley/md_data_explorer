@@ -10,8 +10,12 @@ authors = [{ name = "Jason Touleyrou", email = "jtouley@gmail.com" }]
 dependencies = [
     "pandas>=2.1.0",
     "polars>=0.19.0",
-    "duckdb>=0.9.0",
-    "ibis-framework[duckdb]>=10.0.0",
+    # DuckDB 2.0 LTS (supported to 2027-10-22; 1.4 LTS ends 2026-11-17, duckdb.org/release_calendar).
+    # <2.1: Ibis 12 still calls DuckDBPyRelation.fetch_arrow_table, deprecated in 2.0.
+    "duckdb>=2.0.0,<2.1",
+    # Ibis 12.0.0 is the newest release (2026-11-03). Some of its DuckDB calls are broken on 2.0
+    # (ibis#12196, fix in ibis#12206); tests/core/test_ibis_duckdb_compat.py keeps the app off them.
+    "ibis-framework[duckdb]>=12.0.0,<13",
     "statsmodels>=0.14.0",
     "pyyaml>=6.0",
     "lifelines>=0.27.0",
@@ -146,7 +150,7 @@ dev = [
 # are excluded for the same reason they are excluded from coverage: they run at import time.
 source_paths = ["src/clinical_analytics/"]
 do_not_mutate = ["src/clinical_analytics/ui/pages/*", "*/__init__.py"]
-also_copy = ["config/", "scripts/", "docs/", "data/dictionaries/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
+also_copy = ["config/", "scripts/", "docs/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Each mutant pays ~15s of pytest collection; the 1s default budget misclassifies most as timeouts.
 timeout_constant = 60

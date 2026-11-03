@@ -7,7 +7,8 @@ An upload leaves data in several places under the data home (``<data home>/data`
 * ``uploads/metadata/{id}.json`` and the enrichment overlays ``uploads/metadata/overlays/{id}/``
 * Parquet exports ``parquet/{id}_<table>_<version>.parquet``
 * Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``
-* DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``
+* DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``, and any pre-upgrade backup
+  copies of the store (``analytics.duckdb.backup-*``, see ``storage.store_format``)
 
 Dropping a DuckDB table frees its blocks but leaves the bytes in the file, so after dropping,
 the store is rewritten into a fresh file (``COPY FROM DATABASE``) and swapped in. A durable
@@ -33,11 +34,19 @@ import structlog
 
 from clinical_analytics.contracts.config import CONTRACTS_DIRNAME, DQ_DIRNAME
 from clinical_analytics.storage.datastore import StoreInUseError, exclusive_store
+from clinical_analytics.storage.store_format import (
+    STORE_FILENAME,
+    StoreFormatError,
+    attach_storage_option,
+    current_storage_version,
+    new_store_config,
+    store_backups,
+)
 
 logger = structlog.get_logger()
 
 DATASET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,127}$")
-DUCKDB_FILENAME = "analytics.duckdb"
+DUCKDB_FILENAME = STORE_FILENAME
 PARQUET_DIRNAME = "parquet"
 DERIVED_DIRNAMES = (CONTRACTS_DIRNAME, DQ_DIRNAME)
 
@@ -144,7 +153,7 @@ def _purge_duckdb(db_path: Path, dataset_id: str | None, other_ids: set[str], re
     try:
         with exclusive_store(db_path):
             compacted.unlink(missing_ok=True)
-            con = duckdb.connect(str(db_path))
+            con = duckdb.connect(str(db_path), config=new_store_config())
             try:
                 tables = [row[0] for row in con.execute("SHOW TABLES").fetchall()]
                 owned = [t for t in tables if dataset_id is not None and _owned_by(t, dataset_id, other_ids)]
@@ -158,8 +167,11 @@ def _purge_duckdb(db_path: Path, dataset_id: str | None, other_ids: set[str], re
                 source = con.execute("SELECT current_database()").fetchone()
                 if source is None:
                     raise DatasetDeletionError("DuckDB returned no current database")
+                # Keep the store's storage format: a fresh file would otherwise get the running
+                # DuckDB's newest format, which older DuckDB releases cannot open.
+                storage_option = attach_storage_option(current_storage_version(con))
                 attach_path = str(compacted).replace("'", "''")
-                con.execute(f"ATTACH '{attach_path}' AS compacted_store")
+                con.execute(f"ATTACH '{attach_path}' AS compacted_store {storage_option}")
                 con.execute(f'COPY FROM DATABASE "{source[0]}" TO compacted_store')
                 con.execute("DETACH compacted_store")
             finally:
@@ -169,7 +181,7 @@ def _purge_duckdb(db_path: Path, dataset_id: str | None, other_ids: set[str], re
             marker.unlink()
     except StoreInUseError as e:
         raise DatasetStoreBusyError(f"The data store is in use ({e}); try again in a moment") from e
-    except duckdb.Error as e:
+    except (duckdb.Error, StoreFormatError) as e:
         compacted.unlink(missing_ok=True)
         raise DatasetDeletionError(f"Could not remove DuckDB tables ({type(e).__name__})") from e
     except OSError:
@@ -239,6 +251,9 @@ def purge_dataset_files(dataset_id: str, uploads_root: Path) -> DeletionReport:
                     _remove(parquet, data_dir, report)
 
         _purge_duckdb(data_dir / DUCKDB_FILENAME, dataset_id, other_ids, report)
+        # Pre-upgrade backups of the store still hold this dataset's rows.
+        for backup in store_backups(data_dir / DUCKDB_FILENAME):
+            _remove(backup, data_dir, report)
 
         # Last: while metadata exists the dataset stays listed, so a failed delete can be retried.
         _remove(metadata_path, uploads_root, report)

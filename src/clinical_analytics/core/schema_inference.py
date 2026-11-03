@@ -794,7 +794,7 @@ class SchemaInferenceEngine:
 
         Example:
             >>> df = pl.read_csv("patient_data.csv")
-            >>> dict_path = Path("data/dictionaries/patient_data_dict.pdf")
+            >>> dict_path = Path("my_dictionary.pdf")
             >>> schema = engine.infer_schema_with_dictionary(df, dict_path)
             >>> print(schema.summary())  # Shows DataFrame + dictionary context
         """

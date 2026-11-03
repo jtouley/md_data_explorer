@@ -241,7 +241,6 @@ docs/screenshots/
 *.parquet
 data/*
 !data/demo/
-!data/dictionaries/
 # Data contracts, quality reports, lineage and eval golden sets derived from real uploads.
 # Synthetic examples under tests/fixtures/synthetic/ are the only exception.
 *.odcs.yaml

@@ -9,6 +9,8 @@ export const THEME_SOURCES = Object.freeze(['system', 'light', 'dark']);
 export const THEME_GET_CHANNEL = 'app:theme-get';
 export const THEME_SET_CHANNEL = 'app:theme-set';
 export const THEME_STORAGE_KEY = 'ca-theme';
+/** main passes the saved choice to preload as this argument, so first paint follows it. */
+export const THEME_ARG_PREFIX = '--ca-theme=';
 export const WINDOW_BACKGROUND = Object.freeze({ light: '#F7F6F3', dark: '#161513' });
 
 /**
@@ -53,4 +55,16 @@ export function serializeThemeSetting(previousText, theme) {
     }
   }
   return `${JSON.stringify({ ...data, theme }, null, 2)}\n`;
+}
+
+/**
+ * The saved theme main passed on the command line, or null when absent or invalid.
+ * @param {readonly string[] | undefined} argv
+ * @returns {'system' | 'light' | 'dark' | null}
+ */
+export function themeFromArgv(argv) {
+  const arg = (argv || []).find((a) => typeof a === 'string' && a.startsWith(THEME_ARG_PREFIX));
+  if (!arg) return null;
+  const value = arg.slice(THEME_ARG_PREFIX.length);
+  return isThemeSource(value) ? value : null;
 }

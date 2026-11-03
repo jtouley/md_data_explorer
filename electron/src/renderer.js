@@ -8,6 +8,7 @@ import './index.css';
 import {
   normalizePendingResponse,
   renderEnrichmentCards,
+  createEnrichmentPanelGate,
   runEnrichmentDecision,
 } from './enrichmentPanel.js';
 import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
@@ -318,7 +319,7 @@ function setQueryInputEnabled(enabled) {
     submitBtn.setAttribute('aria-label', 'Stop');
     submitBtn.title = 'Stop';
     submitBtn.innerHTML = icon('stop');
-    inputHintText.textContent = 'Working on your answer. Press Stop to cancel.';
+    inputHintText.textContent = 'Working on your answer. Press Stop to stop waiting.';
     return;
   }
 
@@ -884,6 +885,8 @@ async function handleConfirmPendingQuery(held, card) {
   });
   if (!built.ok) {
     setCardNote(card, built.message);
+    // Nothing was sent: keep "Not what I meant" usable so the question can come back.
+    setCardButtonsDisabled(card, false);
     return;
   }
   const { request } = built;
@@ -891,8 +894,10 @@ async function handleConfirmPendingQuery(held, card) {
 
   const assistantMessageId = addWorkingMessage();
   let outcome = 'error';
+  let sent = false;
   try {
     const response = await submitConfirmation(window.clinicalAPI, request);
+    sent = true;
     outcome = await followQuery(response, assistantMessageId, request.queryText, {
       datasetId: request.datasetId,
       sessionId: request.sessionId,
@@ -906,8 +911,11 @@ async function handleConfirmPendingQuery(held, card) {
 
   if (outcome === 'completed' || outcome === 'held') {
     settleCard(card, 'You approved this plan. The answer is below.');
+  } else if (sent) {
+    // The server accepted the approval, so it may have run: never offer to send it twice.
+    settleCard(card, 'You approved this plan and it was sent. Ask again to see a new answer.');
   } else {
-    // Nothing ran, so the held plan stays confirmable.
+    // The approval never reached the server, so the held plan stays confirmable.
     setCardButtonsDisabled(card, false);
   }
 }
@@ -1241,6 +1249,7 @@ function closeDatasetPanel() {
 // ============================================================================
 
 const noopEnrichment = () => {};
+const enrichmentPanelGate = createEnrichmentPanelGate();
 
 /**
  * Load pending metadata enrichments for the current dataset into the panel.
@@ -1260,6 +1269,8 @@ async function loadEnrichmentPanel() {
     return;
   }
 
+  const load = enrichmentPanelGate.startLoad();
+  const datasetId = state.currentDatasetId;
   enrichmentSection.classList.remove('hidden');
   enrichmentHint.textContent = 'Loading…';
   if (patchHistoryHint) patchHistoryHint.textContent = 'Loading…';
@@ -1280,26 +1291,30 @@ async function loadEnrichmentPanel() {
 
   try {
     const pendingP = hasPending
-      ? window.clinicalAPI.getPendingEnrichments(state.currentDatasetId)
+      ? window.clinicalAPI.getPendingEnrichments(datasetId)
       : Promise.resolve({ suggestions: [], total: 0 });
     const historyP = hasHistory
-      ? window.clinicalAPI.getEnrichmentHistory(state.currentDatasetId)
+      ? window.clinicalAPI.getEnrichmentHistory(datasetId)
       : Promise.resolve({ patches: [], total: 0 });
 
     const [pendingRaw, historyRaw] = await Promise.all([pendingP, historyP]);
+    // A newer load (refresh, dataset change, decision reload) owns the panel now.
+    if (!enrichmentPanelGate.isLatestLoad(load)) return;
 
     const { suggestions, total } = normalizePendingResponse(pendingRaw);
-    enrichmentHint.textContent =
-      total === 0
-        ? 'No pending suggestions.'
-        : `${total} pending suggestion${total === 1 ? '' : 's'}.`;
+    if (enrichmentPanelGate.mayWriteHint(load, 'suggestions')) {
+      enrichmentHint.textContent =
+        total === 0
+          ? 'No pending suggestions.'
+          : `${total} pending suggestion${total === 1 ? '' : 's'}.`;
+    }
     renderEnrichmentCards(enrichmentList, suggestions, {
       onAccept: (patchId) => handleEnrichmentAccept(patchId),
       onReject: (patchId) => handleEnrichmentReject(patchId),
     });
 
     const { patches, total: histTotal } = normalizeHistoryResponse(historyRaw);
-    if (patchHistoryHint) {
+    if (patchHistoryHint && enrichmentPanelGate.mayWriteHint(load, 'history')) {
       patchHistoryHint.textContent =
         histTotal === 0
           ? 'No changes yet.'
@@ -1312,6 +1327,7 @@ async function loadEnrichmentPanel() {
     }
   } catch (error) {
     console.error('Failed to load enrichments / history:', error?.message);
+    if (!enrichmentPanelGate.isLatestLoad(load)) return;
     enrichmentHint.textContent = `Could not load enrichments: ${error.message}`;
     renderEnrichmentCards(enrichmentList, [], {
       onAccept: noopEnrichment,
@@ -1331,17 +1347,17 @@ async function loadEnrichmentPanel() {
  */
 async function handleEnrichmentAccept(patchId) {
   const { enrichmentHint } = elements;
-  if (!state.currentDatasetId) return;
-  await runEnrichmentDecision(
-    () => window.clinicalAPI.acceptEnrichment(state.currentDatasetId, patchId),
-    {
-      reload: loadEnrichmentPanel,
-      showMessage: (text) => {
-        if (enrichmentHint) enrichmentHint.textContent = text;
-      },
-      fallback: 'Accept failed',
-    }
-  );
+  const datasetId = state.currentDatasetId;
+  if (!datasetId) return;
+  await runEnrichmentDecision(() => window.clinicalAPI.acceptEnrichment(datasetId, patchId), {
+    reload: loadEnrichmentPanel,
+    showMessage: (text) => {
+      enrichmentPanelGate.noteMessage('suggestions');
+      if (enrichmentHint) enrichmentHint.textContent = text;
+    },
+    isCurrent: () => state.currentDatasetId === datasetId,
+    fallback: 'Accept failed',
+  });
 }
 
 /**
@@ -1349,17 +1365,17 @@ async function handleEnrichmentAccept(patchId) {
  */
 async function handleEnrichmentReject(patchId) {
   const { enrichmentHint } = elements;
-  if (!state.currentDatasetId) return;
-  await runEnrichmentDecision(
-    () => window.clinicalAPI.rejectEnrichment(state.currentDatasetId, patchId),
-    {
-      reload: loadEnrichmentPanel,
-      showMessage: (text) => {
-        if (enrichmentHint) enrichmentHint.textContent = text;
-      },
-      fallback: 'Reject failed',
-    }
-  );
+  const datasetId = state.currentDatasetId;
+  if (!datasetId) return;
+  await runEnrichmentDecision(() => window.clinicalAPI.rejectEnrichment(datasetId, patchId), {
+    reload: loadEnrichmentPanel,
+    showMessage: (text) => {
+      enrichmentPanelGate.noteMessage('suggestions');
+      if (enrichmentHint) enrichmentHint.textContent = text;
+    },
+    isCurrent: () => state.currentDatasetId === datasetId,
+    fallback: 'Reject failed',
+  });
 }
 
 /**
@@ -1367,21 +1383,21 @@ async function handleEnrichmentReject(patchId) {
  */
 async function handlePatchRevert(patchId) {
   const { patchHistoryHint } = elements;
-  if (!state.currentDatasetId) return;
+  const datasetId = state.currentDatasetId;
+  if (!datasetId) return;
   if (typeof window.clinicalAPI?.revertEnrichmentPatch !== 'function') {
     if (patchHistoryHint) patchHistoryHint.textContent = 'Undo is not available.';
     return;
   }
-  await runEnrichmentDecision(
-    () => window.clinicalAPI.revertEnrichmentPatch(state.currentDatasetId, patchId),
-    {
-      reload: loadEnrichmentPanel,
-      showMessage: (text) => {
-        if (patchHistoryHint) patchHistoryHint.textContent = text;
-      },
-      fallback: 'Revert failed',
-    }
-  );
+  await runEnrichmentDecision(() => window.clinicalAPI.revertEnrichmentPatch(datasetId, patchId), {
+    reload: loadEnrichmentPanel,
+    showMessage: (text) => {
+      enrichmentPanelGate.noteMessage('history');
+      if (patchHistoryHint) patchHistoryHint.textContent = text;
+    },
+    isCurrent: () => state.currentDatasetId === datasetId,
+    fallback: 'Revert failed',
+  });
 }
 
 // ============================================================================

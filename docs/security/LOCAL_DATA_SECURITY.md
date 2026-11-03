@@ -110,6 +110,8 @@ the page, then removes, for that dataset id:
 - its Parquet exports (`parquet/{id}_*.parquet`)
 - its DuckDB tables; the store is then rewritten into a fresh file, because DuckDB leaves the
   bytes of dropped tables in free blocks
+- any copy of the store left by a failed DuckDB upgrade check (`analytics.duckdb.backup-*`, see
+  [DuckDB upgrades and rollbacks](#duckdb-upgrades-and-rollbacks))
 - its sessions and their messages (SQLite runs with `secure_delete=ON`, so deleted rows are
   zeroed rather than left in free pages)
 - in-memory query results, events and conversation history
@@ -130,6 +132,55 @@ before `secure_delete` was turned on.
 `tests/api/test_dataset_delete.py` uploads a dataset, adds a session, a message, an overlay and a
 query service, deletes it, and checks that neither the dataset id nor a cell value appears in
 any file name or file content under the data home or in the session database.
+
+## DuckDB upgrades and rollbacks
+
+The DuckDB store is `analytics.duckdb` in the data home's `data/` folder.
+
+**File format.** The app creates and rewrites the store in DuckDB storage format `v1.0.0`
+(`STORE_STORAGE_VERSION` in `clinical_analytics.storage.store_format`). Both DuckDB 1.x and
+2.x can read that format. Without this setting, DuckDB 2.0 would create files in its own
+format, which 1.x cannot open. With it, rolling back to an app release that uses DuckDB 1.4
+keeps working. DuckDB keeps a file's existing format when it writes to it, so stores created
+before the upgrade are not converted. Raise the pinned format only once rollback to the older
+DuckDB line is no longer supported.
+
+**Engine check at startup.** `analytics.duckdb.engine` records the DuckDB version that last
+opened the store. It is written when the store is first created. At startup, the app compares
+it with the running DuckDB. A different patch release, such as 2.0.0 to 2.0.1, needs nothing
+more. A different major or minor line, such as 1.4 to 2.0, triggers a check:
+
+1. The app first makes sure no other program has the store open. It then copies the store,
+   and its `.wal` file if present, to `analytics.duckdb.backup-<previous version>-<UTC time>-<random>`
+   in the same folder. While the copy is made and checked, the store is locked against other
+   connections.
+2. The running DuckDB opens the store read-write and reads its catalog.
+3. If that works, the app records the new version and **deletes the backup**.
+
+The backup exists only for those few seconds: it is a full copy of patient data, and keeping
+it has no value because the file format does not change. If a previous start passed the check
+but stopped before deleting the backup, the next start deletes it. A backup with no
+`analytics.duckdb` next to it is also deleted at startup.
+
+**If the check fails**, the app does not start. `python -m clinical_analytics.api.serve` prints
+one line saying why and exits with status 2:
+
+- *Unreadable store* (written by a newer DuckDB, or damaged). The error names the backup path,
+  and the backup is kept. The backup is the store exactly as it was just before the check, and
+  the check normally leaves the store unchanged. So first run the app release you used before,
+  and copy the backup over `analytics.duckdb` only if that release cannot open the store either.
+  Then **delete the backup yourself**. It holds every dataset as it was
+  before the upgrade, and an older app release does not know about it, so datasets deleted
+  there remain in the backup until you delete it. Deleting a dataset in this release also
+  deletes any backup, and a later successful start deletes it too.
+- *Store open in another program* (for example, the DuckDB command-line tool). The message is
+  "The data store is open in another program." Close that program and start the app again. This
+  is checked before anything is copied, so no backup is made.
+- *No room for the backup* (or another file error during the copy). Any partial copy is deleted
+  and the app does not start.
+
+The app never keeps more than one backup. When a start finds a backup left by a failed check,
+it copies the store again and deletes the old backup, since the store may have changed since then.
 
 ## Disk encryption is required
 

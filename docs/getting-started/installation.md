@@ -26,7 +26,7 @@ On Windows without `make`, run `uv sync --extra dev --group dev` instead of `mak
 |----------|-----|
 | macOS | `./scripts/run_app.sh` starts Ollama (installing it with Homebrew if missing), the API and the desktop app |
 | Linux | Install Ollama yourself from <https://ollama.com/download> (the script will not), then `./scripts/run_app.sh` |
-| Windows, or any OS by hand | Terminal 1: `uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8000`. Terminal 2: `cd electron && npm start`. Start Ollama with `ollama serve` and `ollama pull llama3.1:8b`. |
+| Windows, or any OS by hand | Terminal 1: `uv run python -m clinical_analytics.api.serve --port 8000`. Terminal 2: `cd electron && npm start`. Start Ollama with `ollama serve` and `ollama pull llama3.1:8b`. |
 
 `make run` (macOS/Linux) starts the API with auto-reload and, if Ollama is running, pulls a missing model. The desktop window needs the API at `http://127.0.0.1:8000/health` to respond.
 
@@ -55,7 +55,7 @@ This is local software, not a compliance certification.
 Stop the other process on port 8000. The desktop app only talks to `127.0.0.1:8000`; for API-only use you can pick another port:
 
 ```bash
-uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8001
+uv run python -m clinical_analytics.api.serve --port 8001
 ```
 
 ### Missing dependencies
