@@ -39,6 +39,13 @@ _NEGATION = re.compile(
     r"get rid of|don'?t want|do not want|no longer)\b",
     re.IGNORECASE,
 )
+# "proportion of <denominator> are/who/have ... <numerator>": the words before the verb name
+# the population, the words after it the thing being counted.
+_SHARE_SPLIT = re.compile(
+    r"\b(?:proportion|share|percentage|percent|fraction)\s+of\s+(?P<den>.+?)\s+"
+    r"(?:are|is|who|that|have|has|had|were|was|use|uses|using|on|with|taking|take|takes)\b",
+    re.IGNORECASE,
+)
 _SEX_WORDS = {"sex", "gender", "woman", "women", "man", "men", "female", "male"}
 _STOP = {
     "the",
@@ -173,7 +180,13 @@ def peel_cohort(
     value_hits = _value_hits(lowered, columns, values_for)
     name_tokens = set().union(*(_tokens(column) for column in columns)) if columns else set()
     comparing = re.search(r"\bcompare\b|\bby sex\b|\bby gender\b", lowered) is not None
-    rating = re.search(r"\b(proportion|share|more likely)\b", lowered) is not None
+    rating = re.search(r"\b(proportion|share|percentage|percent|fraction|more likely)\b", lowered) is not None
+    more_likely = re.search(r"\bmore likely\b", lowered) is not None
+    # Share questions: denominator before the verb, numerator after it. Without that
+    # structure the direction is unknown, so no proportion is set and the plan holds.
+    share_split = _SHARE_SPLIT.search(lowered) if rating and not more_likely else None
+    numerator_at = share_split.end("den") if share_split else None
+    numerators: list[tuple[str, Any]] = []
     counting = re.search(r"\bhow many\b", lowered) is not None or rating
     mentioned = _mentioned(lowered, columns, _tokens(lowered) - consumed)
     bound_columns = {step.column for _phase, step in steps}
@@ -201,6 +214,10 @@ def peel_cohort(
             # "most common Current Regimen" names the column; "regimen" inside the
             # stored value "regimen_1" is not a request to filter to that value.
             continue
+        if numerator_at is not None and at >= numerator_at:
+            numerators.append((column, value))
+            bound_columns.add(column)
+            continue
         steps.append((0, CohortStep("eq", column, value)))
         bound_columns.add(column)
         consumed |= _tokens(str(value)) | _VALUE_INFLECTIONS.get(str(value).strip().lower(), set())
@@ -225,16 +242,22 @@ def peel_cohort(
     rate_column = None
     rate_value = None
     for at, column, polarity in binary_hits:
-        phase = 2 if column == outcome else 0
-        if rating and column == outcome:
-            if re.search(r"\bmore likely\b", lowered):
-                rate_column, rate_value = column, polarity
+        if numerator_at is not None:
+            if at >= numerator_at:
+                numerators.append((column, polarity))
             else:
-                proportion_column, proportion_value = column, polarity
+                steps.append((0, CohortStep("eq", column, polarity)))
+            bound_columns.add(column)
+            continue
+        phase = 2 if column == outcome else 0
+        if rating and more_likely and column == outcome:
+            rate_column, rate_value = column, polarity
             bound_columns.add(column)
             continue
         steps.append((phase, CohortStep("eq", column, polarity)))
         bound_columns.add(column)
+    if len(numerators) == 1:
+        proportion_column, proportion_value = numerators[0]
 
     locked_metric = None
     locked_group = None
@@ -367,7 +390,10 @@ def unapplied_constraints(
 
     tokens = _tokens(text)
     if columns and not comparing:
-        grouped = _is_group(str(getattr(plan, "group_by", "") or ""))
+        # Sex is applied by grouping on it or by counting a share/rate of it, not only by a step.
+        grouped = any(
+            _is_group(str(getattr(plan, attr, "") or "")) for attr in ("group_by", "proportion_column", "rate_column")
+        )
         for word, inflections in (("women", {"woman", "women"}), ("men", {"man", "men"})):
             if (
                 tokens & inflections

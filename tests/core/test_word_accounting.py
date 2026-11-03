@@ -237,3 +237,113 @@ def test_allNullStatisticsReason_result_refusesOnlyWhenEveryStatIsNull(
 
     # Assert
     assert (reason is not None) is refused
+
+
+_SITE_IN = FilterSpec("site", "IN", ["North", "West"])
+
+
+@pytest.mark.parametrize(
+    ("question", "plan", "expected"),
+    [
+        pytest.param(
+            "how many women not on drug?",
+            _count(WOMEN, filters=[FilterSpec("site", "!=", "West")]),
+            ["not", "drug"],
+            id="negation_operator_on_other_column",
+        ),
+        pytest.param(
+            "how many women in the north or west on drug?",
+            _count(WOMEN, filters=[FilterSpec("treatment", "IN", ["drug", "placebo"])]),
+            ["north", "or", "west"],
+            id="or_operator_on_other_column",
+        ),
+        pytest.param(
+            "compare ldl by sex for patients between 50 and 65",
+            QueryPlan(intent="COMPARE_GROUPS", metric="ldl", group_by="sex", confidence=0.9),
+            ["between", "50", "65"],
+            id="between_needs_a_range_not_an_intent",
+        ),
+        pytest.param(
+            "average ldl by site",
+            QueryPlan(intent="DESCRIBE", metric="ldl", group_by="sex", confidence=0.9),
+            ["by", "site"],
+            id="by_names_another_grouping",
+        ),
+        pytest.param(
+            "average ldl by site in the north",
+            QueryPlan(intent="DESCRIBE", metric="ldl", group_by="site", confidence=0.9),
+            ["north"],
+            id="one_group_value_is_a_dropped_limit",
+        ),
+        pytest.param(
+            "compare ldl between the north and the south",
+            QueryPlan(intent="COMPARE_GROUPS", metric="ldl", group_by="site", confidence=0.9),
+            ["north", "south"],
+            id="two_of_three_group_values_is_a_dropped_limit",
+        ),
+        pytest.param(
+            "average hba1c above 7",
+            QueryPlan(intent="DESCRIBE", metric="hba1c", cohort_steps=[CohortStep("gt", "hba1c", 7.0)], confidence=0.9),
+            ["above", "7"],
+            id="cutoff_on_only_mention_of_measure",
+        ),
+    ],
+)
+def test_unusedWords_logicWordOnTheWrongColumn_isUnused(question: str, plan: QueryPlan, expected: list[str]) -> None:
+    # Arrange
+    columns = [*_COLUMNS, "hba1c"]
+    values = {**_VALUES, "hba1c": [5.1, 6.4, 8.2]}
+
+    # Act
+    unused = unused_words(question, plan, columns, lambda column: values[column], alias_index=_ALIASES)
+
+    # Assert
+    assert unused == expected
+
+
+@pytest.mark.parametrize(
+    ("question", "plan"),
+    [
+        pytest.param(
+            "how many patients in the north or west?",
+            _count(filters=[_SITE_IN]),
+            id="or_with_in_on_named_column",
+        ),
+        pytest.param(
+            "compare ldl between drug and placebo",
+            QueryPlan(intent="COMPARE_GROUPS", metric="ldl", group_by="treatment", confidence=0.9),
+            id="all_group_values_named",
+        ),
+        pytest.param(
+            "what share of women are not on statin?",
+            QueryPlan(
+                intent="COUNT",
+                cohort_steps=[WOMEN],
+                proportion_column="Statin use 1: Yes 2: No",
+                proportion_value=2,
+                confidence=0.9,
+            ),
+            id="negation_as_no_code_proportion",
+        ),
+        pytest.param(
+            "what is the average hdl in patients with hba1c above 7?",
+            QueryPlan(intent="DESCRIBE", metric="hdl", cohort_steps=[CohortStep("gt", "hba1c", 7.0)], confidence=0.9),
+            id="alphanumeric_measure_cutoff",
+        ),
+    ],
+)
+def test_unusedWords_logicWordOnItsColumn_isUsed(question: str, plan: QueryPlan) -> None:
+    # Arrange
+    columns = [*_COLUMNS, "hdl", "hba1c"]
+    values = {**_VALUES, "hdl": [40.0, 50.0, 60.0], "hba1c": [5.1, 6.4, 8.2]}
+
+    # Act
+    unused = unused_words(question, plan, columns, lambda column: values[column], alias_index=_ALIASES)
+
+    # Assert
+    assert unused == []
+
+
+def test_tokenize_alphanumericMeasure_staysOneToken() -> None:
+    # Arrange / Act / Assert
+    assert tokenize("average hba1c above 7") == ["average", "hba1c", "above", "7"]

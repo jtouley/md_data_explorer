@@ -41,7 +41,7 @@ SUBJECT_WORDS: frozenset[str] = frozenset(
     }
 )  # fmt: skip
 # Verbs that only link a patient to a stored value ("patients who received placebo").
-LINK_WORDS: frozenset[str] = frozenset({"given", "received", "receiving", "taking", "treated"})
+LINK_WORDS: frozenset[str] = frozenset({"given", "received", "receiving", "taking", "treated", "use", "uses", "using"})
 INTENT_WORDS: dict[str, frozenset[str]] = {
     "COUNT": frozenset({"how", "many", "number", "count", "total"}),
     "STAT": frozenset(
@@ -114,6 +114,8 @@ _SEX_INFLECTIONS = {
     "male": {"male", "males", "man", "men"},
 }
 HOLD_PREFIX = "I didn't use:"
+# A word starts with a letter and keeps its digits ("hba1c", "cd4"); a number stands alone.
+_TOKEN = r"__[a-z_]+__|[a-z][a-z0-9]*|\d+(?:\.\d+)?"
 
 
 @dataclass(frozen=True)
@@ -127,7 +129,7 @@ def tokenize(question: str) -> list[str]:
     text = question.lower()
     for pattern, replacement in _PHRASES:
         text = re.sub(pattern, replacement, text)
-    return re.findall(r"__[a-z_]+__|\d+(?:\.\d+)?|[a-z]+", text)
+    return re.findall(_TOKEN, text)
 
 
 def shown(word: str) -> str:
@@ -140,7 +142,7 @@ def hold_reason(words: Iterable[str]) -> str:
 
 
 def name_tokens(name: str) -> list[str]:
-    return re.findall(r"\d+(?:\.\d+)?|[a-z]+", name.lower())
+    return re.findall(_TOKEN, name.lower())
 
 
 def stem_match(word: str, target: str) -> bool:
@@ -240,22 +242,44 @@ def unused_words(
         elif any(stem_match(word, alias) for alias, target in (alias_index or {}).items() if target in referenced):
             used[at] = True
 
-    # Bound values: equality/IN filters, equality cohort steps, every value of the grouping column.
-    value_words: set[str] = set()
+    # Bound values: equality/IN filters, equality cohort steps, the proportion/rate value.
+    bound_words: dict[str, set[str]] = {}
     for spec in filters:
         if spec.operator in {"==", "IN", "!=", "NOT_IN"}:
             values = spec.value if isinstance(spec.value, list) else [spec.value]
-            value_words |= _value_words(spec.column, values)
+            bound_words.setdefault(spec.column, set()).update(_value_words(spec.column, values))
     for step in steps:
         if step.op == "eq":
-            value_words |= _value_words(step.column, [step.value])
-    if group_by:
-        value_words |= _value_words(group_by, values_for(group_by))
+            bound_words.setdefault(step.column, set()).update(_value_words(step.column, [step.value]))
+    for column_attr, value_attr in (("proportion_column", "proportion_value"), ("rate_column", "rate_value")):
+        share_column = getattr(plan, column_attr, None)
+        if share_column:
+            share_value = getattr(plan, value_attr, None)
+            bound_words.setdefault(str(share_column), set()).update(_value_words(str(share_column), [share_value]))
     for at, word in enumerate(tokens):
-        if not used[at] and word not in LOGIC_WORDS and any(stem_match(word, value) for value in value_words):
+        if used[at] or word in LOGIC_WORDS:
+            continue
+        if any(stem_match(word, value) for words in bound_words.values() for value in words):
             used[at] = True
 
+    # Values of the grouping column count only when the question names every stored value
+    # ("between drug and placebo", "women and men"): then grouping covers exactly what was
+    # asked. Naming some of them ("in the north", "north and south" of three sites) is a
+    # limit the plan did not apply.
+    if group_by:
+        stored = {str(value) for value in values_for(group_by) if value is not None}
+        group_values = _value_words(group_by, values_for(group_by))
+        hits = [at for at, word in enumerate(tokens) if not used[at] and _names_value(word, group_values)]
+        named = {_value_key(tokens[at], group_by, values_for) for at in hits}
+        if stored and named >= stored:
+            for at in hits:
+                used[at] = True
+
+    namer = _ColumnNamer(columns, values_for, alias_index)
+
     # Numbers: bound to a comparison of the same direction on the column they belong to.
+    metric = getattr(plan, "metric", None)
+    metric_mentions = sum(1 for word in tokens if metric and metric in namer.columns_named(word))
     for at, word in enumerate(tokens):
         if used[at] or not re.fullmatch(r"\d+(?:\.\d+)?", word):
             continue
@@ -264,20 +288,15 @@ def unused_words(
             continue
         owner = number_owner(tokens, at, columns, numeric_columns, alias_index)
         op = DIRECTION_OPS[tokens[direction_at]]
-        # "median ldl over 70": a cutoff on the very measure being summarised could equally
-        # mean an age cutoff. Ambiguous, so the number stays unused and the plan holds.
-        summarised = (
-            intent in {"DESCRIBE", "COMPARE_GROUPS"}
-            and owner == getattr(plan, "metric", None)
-            and direction_at >= 2
-            and tokens[direction_at - 2] in INTENT_WORDS["STAT"]
-        )
+        # "median ldl over 70": when the only mention of the summarised measure is also the
+        # number's owner, the cutoff could equally mean age. Ambiguous: the number stays unused.
+        summarised = intent in {"DESCRIBE", "COMPARE_GROUPS"} and owner == metric and metric_mentions <= 1
         if owner is not None and not summarised and _has_comparison(filters, steps, owner, op, float(word)):
             used[at] = True
             used[direction_at] = True
 
     # Fixed vocabulary and intent words.
-    stat_ok = bool(getattr(plan, "metric", None)) and intent in {"DESCRIBE", "COMPARE_GROUPS"}
+    stat_ok = bool(metric) and intent in {"DESCRIBE", "COMPARE_GROUPS"}
     counting = intent == "COUNT" or bool(getattr(plan, "proportion_column", None) or getattr(plan, "rate_column", None))
     for at, word in enumerate(tokens):
         if used[at]:
@@ -293,31 +312,118 @@ def unused_words(
         ):
             used[at] = any(word in INTENT_WORDS[name] and intent == name for name in INTENT_WORDS)
         else:
-            used[at] = _logic_used(word, plan, filters, steps, values_for)
+            used[at] = _logic_used(tokens, at, plan, filters, steps, values_for, namer, context)
 
     return [shown(word) for at, word in enumerate(tokens) if not used[at]]
 
 
+class _ColumnNamer:
+    """Which dataset columns a question word names: by name, alias, stem, or a stored value."""
+
+    def __init__(
+        self, columns: list[str], values_for: Callable[[str], list[Any]], alias_index: dict[str, str] | None
+    ) -> None:
+        self._columns = columns
+        self._alias_index = alias_index
+        self._values = {column: _value_words(column, values_for(column)) for column in columns}
+
+    def columns_named(self, word: str) -> set[str]:
+        if word in LOGIC_WORDS or word in FUNCTION_WORDS or word in SUBJECT_WORDS or word in LINK_WORDS:
+            return set()
+        named = {column for column in self._columns if _column_for_word(word, [column], self._alias_index) == column}
+        for alias, column in (self._alias_index or {}).items():
+            if " " not in alias and stem_match(word, alias):
+                named.add(column)
+        named |= {column for column, words in self._values.items() if _names_value(word, words)}
+        return named
+
+    def neighbour(self, tokens: list[str], at: int, step: int, reach: int = 4) -> set[str]:
+        """Columns named by the nearest content word after (step=1) or before (step=-1) ``at``."""
+        index = at + step
+        while 0 <= index < len(tokens) and abs(index - at) <= reach:
+            word = tokens[index]
+            if word not in FUNCTION_WORDS and word not in SUBJECT_WORDS and word not in LINK_WORDS:
+                named = self.columns_named(word)
+                if named or word not in LOGIC_WORDS:
+                    return named
+            index += step
+        return set()
+
+
+def _names_value(word: str, values: set[str]) -> bool:
+    return any(stem_match(word, value) for value in values)
+
+
+def _value_key(word: str, column: str, values_for: Callable[[str], list[Any]]) -> str:
+    """The stored value a word names (so "women" and "females" count as one value)."""
+    for value in values_for(column):
+        if value is not None and _names_value(word, _value_words(column, [value])):
+            return str(value)
+    return word
+
+
 def _logic_used(
-    word: str, plan: Any, filters: list[Any], steps: list[Any], values_for: Callable[[str], list[Any]]
+    tokens: list[str],
+    at: int,
+    plan: Any,
+    filters: list[Any],
+    steps: list[Any],
+    values_for: Callable[[str], list[Any]],
+    namer: _ColumnNamer,
+    context: Any,
 ) -> bool:
+    """A logic word is used only when the plan holds its operator on the column it is about."""
+    word = tokens[at]
     intent = str(getattr(plan, "intent", "") or "")
     if word in NEGATION_WORDS:
-        if any(spec.operator in {"!=", "NOT_IN"} for spec in filters):
-            return True
-        return any(step.op == "eq" and _is_no_value(step.column, step.value, values_for) for step in steps)
+        targets = namer.neighbour(tokens, at, 1)
+        return any(_negated_in_plan(plan, filters, steps, column, values_for) for column in targets)
     if word in OR_WORDS:
-        return any(spec.operator == "IN" and isinstance(spec.value, list) and len(spec.value) >= 2 for spec in filters)
+        targets = namer.neighbour(tokens, at, -1) | namer.neighbour(tokens, at, 1)
+        return any(
+            spec.operator == "IN" and isinstance(spec.value, list) and len(spec.value) >= 2 and spec.column in targets
+            for spec in filters
+        )
     if word in BETWEEN_WORDS:
-        return intent in {"COMPARE_GROUPS", "CORRELATIONS"} or _has_range(filters, steps)
+        after = namer.neighbour(tokens, at, 1)
+        if intent == "COMPARE_GROUPS":
+            return getattr(plan, "group_by", None) in after
+        if intent == "CORRELATIONS":
+            variables = {getattr(plan, "metric", None), getattr(plan, "group_by", None)}
+            variables |= set(getattr(context, "predictor_variables", None) or [])
+            return bool(after & variables)
+        return _has_range(filters, steps)
     if word in RATE_WORDS:
         return bool(getattr(plan, "proportion_column", None) or getattr(plan, "rate_column", None))
     if word in BY_WORDS:
-        return bool(getattr(plan, "group_by", None))
+        return getattr(plan, "group_by", None) in namer.neighbour(tokens, at, 1)
     if word in CUTOFF_WORDS:
         return any(step.op == "ge_percent_rank" for step in steps)
     if word in DIRECTION_OPS:
         return DIRECTION_OPS[word] == "gt" and any(step.op == "gt_median" for step in steps)
+    return False
+
+
+def _negated_in_plan(
+    plan: Any, filters: list[Any], steps: list[Any], column: str, values_for: Callable[[str], list[Any]]
+) -> bool:
+    """The plan excludes on this column: != / NOT IN, or equality to the column's "No" code."""
+    for spec in filters:
+        if spec.column != column:
+            continue
+        if spec.operator in {"!=", "NOT_IN"}:
+            return True
+        if spec.operator == "==" and _is_no_value(column, spec.value, values_for):
+            return True
+    if any(
+        step.op == "eq" and step.column == column and _is_no_value(column, step.value, values_for) for step in steps
+    ):
+        return True
+    for column_attr, value_attr in (("proportion_column", "proportion_value"), ("rate_column", "rate_value")):
+        if getattr(plan, column_attr, None) == column and _is_no_value(
+            column, getattr(plan, value_attr, None), values_for
+        ):
+            return True
     return False
 
 

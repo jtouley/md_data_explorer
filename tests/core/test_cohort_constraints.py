@@ -327,3 +327,71 @@ def test_peelCohort_columnNameInsideStoredValue_isNotAValueFilter() -> None:
     # Assert
     assert peeled.steps == []
     assert peeled.residual == "what was the most common Current Regimen"
+
+
+_SHARE_COLUMNS = ["patient_id", "sex", "treatment", "site", "Statin use 1: Yes 2: No"]
+_SHARE_VALUES: dict[str, list[Any]] = {
+    "patient_id": ["a", "b", "c"],
+    "sex": ["F", "M"],
+    "treatment": ["drug", "placebo"],
+    "site": ["North", "South", "West"],
+    "Statin use 1: Yes 2: No": [1, 2],
+}
+_STATIN = "Statin use 1: Yes 2: No"
+
+
+@pytest.mark.parametrize(
+    ("query", "limits", "numerator"),
+    [
+        pytest.param(
+            "what proportion of statin users are women?",
+            [CohortStep("eq", _STATIN, 1)],
+            ("sex", "F"),
+            id="statin_users_are_women",
+        ),
+        pytest.param(
+            "what proportion of women are on statin?",
+            [CohortStep("eq", "sex", "F")],
+            (_STATIN, 1),
+            id="women_on_statin",
+        ),
+        pytest.param(
+            "what share of women are not on statin?",
+            [CohortStep("eq", "sex", "F")],
+            (_STATIN, 2),
+            id="negated_numerator",
+        ),
+        pytest.param("what proportion of patients are on drug?", [], ("treatment", "drug"), id="value_numerator"),
+        pytest.param(
+            "what percentage of patients in the north use statins?",
+            [CohortStep("eq", "site", "North")],
+            (_STATIN, 1),
+            id="denominator_with_limit",
+        ),
+    ],
+)
+def test_peelCohort_shareQuestion_denominatorBeforeVerbNumeratorAfter(
+    query: str, limits: list[CohortStep], numerator: tuple[str, Any]
+) -> None:
+    # Arrange / Act
+    peeled = peel_cohort(query, _SHARE_COLUMNS, lambda column: _SHARE_VALUES[column])
+
+    # Assert
+    assert peeled.steps == limits
+    assert (peeled.proportion_column, peeled.proportion_value) == numerator
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("what is the statin proportion for women?", id="no_of_split"),
+        pytest.param("what proportion are women on drug?", id="no_denominator"),
+        pytest.param("what proportion of patients are women on drug?", id="two_numerators"),
+    ],
+)
+def test_peelCohort_shareQuestionWithoutClearDirection_setsNoProportion(query: str) -> None:
+    # Arrange / Act
+    peeled = peel_cohort(query, _SHARE_COLUMNS, lambda column: _SHARE_VALUES[column])
+
+    # Assert
+    assert peeled.proportion_column is None
