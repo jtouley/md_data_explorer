@@ -1,25 +1,38 @@
-"""Run a natural-language question against a DuckDB dataset without Streamlit."""
+"""Run a natural-language question against a golden dataset CSV without the UI.
+
+Dev and test use only: results carry raw rows with no small-cell suppression, so this
+module must never be exposed through the production API.
+"""
 
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import polars as pl
 
 from clinical_analytics.core.cohort_constraints import unapplied_constraints
 from clinical_analytics.core.query_service import QueryService
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.eval.catalog import DATASET_TABLES, load_dataset_frame
+from clinical_analytics.eval.catalog import DATASET_FILES, load_dataset_frame
 
 _LAYERS: dict[str, SemanticLayer] = {}
 _FRAMES: dict[str, pl.DataFrame] = {}
 _SERVICES: dict[str, QueryService] = {}
+_CACHE_DIR: Path | None = None
+
+
+def _cache_dir() -> Path:
+    """Per-process scratch dir so parallel test workers never share or race on a CSV copy."""
+    global _CACHE_DIR
+    if _CACHE_DIR is None:
+        _CACHE_DIR = Path(tempfile.mkdtemp(prefix="mdde-golden-"))
+    return _CACHE_DIR
 
 
 def dataset_ids() -> list[str]:
-    return list(DATASET_TABLES)
+    return list(DATASET_FILES)
 
 
 def frame_for(dataset_id: str, workspace: Path | None = None) -> pl.DataFrame:
@@ -29,13 +42,11 @@ def frame_for(dataset_id: str, workspace: Path | None = None) -> pl.DataFrame:
 
 
 def layer_for(dataset_id: str, workspace: Path | None = None) -> SemanticLayer:
-    """Semantic layer backed by a CSV extract of the dataset table."""
+    """Semantic layer backed by a per-process CSV copy of the dataset."""
     if dataset_id in _LAYERS:
         return _LAYERS[dataset_id]
     frame = frame_for(dataset_id, workspace)
-    cache_dir = Path(tempfile.gettempdir()) / "mdde-golden"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = cache_dir / f"{dataset_id}.csv"
+    csv_path = _cache_dir() / f"{dataset_id}.csv"
     frame.write_csv(csv_path)
     config: dict[str, Any] = {
         "init_params": {"source_path": str(csv_path)},
@@ -195,3 +206,16 @@ def values_match(expected: Any, actual: Any) -> bool:
             return expected is actual
         return abs(float(expected) - float(actual)) <= 1e-4 + 1e-5 * abs(float(expected))
     return bool(expected == actual)
+
+
+Outcome = Literal["answered", "refused", "wrong"]
+
+
+def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) -> tuple[Outcome, Any]:
+    """Answered matches ground truth, refused is success False, wrong is a success that does not match."""
+    actual = actual_value(question["kind"], question.get("stat"), question.get("group_by"), result.get("payload"))
+    if not result["success"]:
+        return "refused", actual
+    if expected is not None and values_match(expected, actual):
+        return "answered", actual
+    return "wrong", actual

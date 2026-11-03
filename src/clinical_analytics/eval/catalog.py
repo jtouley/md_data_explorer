@@ -73,8 +73,8 @@ def _numeric_columns(frame: pl.DataFrame) -> list[str]:
             continue
         if dtype.is_integer():
             distinct = series.n_unique()
-            maximum = series.max()
-            if distinct <= 20 and maximum is not None and maximum <= 20:
+            maximum = series.cast(pl.Int64).max()
+            if distinct <= 20 and isinstance(maximum, int) and maximum <= 20:
                 continue
         numeric.append(name)
     return numeric
@@ -152,7 +152,13 @@ def build_questions(dataset_id: str, frame: pl.DataFrame) -> list[dict[str, Any]
             template = _STAT_PHRASINGS[turn % len(_STAT_PHRASINGS)]
             turn += 1
             value = _stat_value(frame, column, stat)
-            add(template.format(stat=stat, phrase=column_phrase(column)), "stat", metric=column, stat=stat, expected=value)
+            add(
+                template.format(stat=stat, phrase=column_phrase(column)),
+                "stat",
+                metric=column,
+                stat=stat,
+                expected=value,
+            )
 
     for column in numerics:
         phrase = column_phrase(column)
@@ -160,7 +166,13 @@ def build_questions(dataset_id: str, frame: pl.DataFrame) -> list[dict[str, Any]
             group_phrase = column_phrase(group)
             expected = _mean_by(frame, column, group)
             if turn % 2 == 0:
-                add(f"what is the average {phrase} by {group_phrase}?", "mean_by", metric=column, group_by=group, expected=expected)
+                add(
+                    f"what is the average {phrase} by {group_phrase}?",
+                    "mean_by",
+                    metric=column,
+                    group_by=group,
+                    expected=expected,
+                )
             else:
                 add(f"compare {phrase} by {group_phrase}", "compare", metric=column, group_by=group, expected=expected)
             turn += 1

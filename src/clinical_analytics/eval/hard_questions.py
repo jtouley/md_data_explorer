@@ -200,7 +200,12 @@ def _cohort_analytical(table: str) -> list[dict[str, Any]]:
         for phrase, column in (("ldl", ldl), ("bmi", bmi)):
             for stat_name, fn in (("average", "avg"), ("median", "median")):
                 rows.append(
-                    _row(f"What is the {stat_name} {phrase} {who}?", _stat(table, fn, column, *preds), "stat", stat=stat_name)
+                    _row(
+                        f"What is the {stat_name} {phrase} {who}?",
+                        _stat(table, fn, column, *preds),
+                        "stat",
+                        stat=stat_name,
+                    )
                 )
     rows.extend(
         [
@@ -226,6 +231,11 @@ def _cohort_analytical(table: str) -> list[dict[str, Any]]:
             ),
             _row("Compare hdl by sex", _mean_by(table, "sex", hdl), "mean_by", group_by="sex"),
             _row("What is the correlation between age and bmi?", _corr(table, age, bmi), "corr"),
+            # "male" is a substring of "female": the value binding must pick the right sex.
+            _row("How many male patients?", _count(table, men), "count"),
+            _row(
+                "What is the average ldl for female patients?", _stat(table, "avg", ldl, women), "stat", stat="average"
+            ),
         ]
     )
     return rows
@@ -241,9 +251,25 @@ def _cohort_provider(table: str) -> list[dict[str, Any]]:
     diabetic = f"{_ident('diabetes')} = 1"
     return [
         _row("ldl for women?", _stat(table, "avg", ldl, women), "stat", stat="average", citation=CITATIONS["searcher"]),
-        _row("median ldl over 70?", _stat(table, "median", ldl, over70), "stat", stat="median", citation=CITATIONS["searcher"]),
-        _row("How many women over 70 are on the drug?", _count(table, women, over70, drug), "count", citation=CITATIONS["research"]),
-        _row("How many men on placebo have diabetes?", _count(table, men, placebo, diabetic), "count", citation=CITATIONS["research"]),
+        _row(
+            "median ldl over 70?",
+            _stat(table, "median", ldl, over70),
+            "stat",
+            stat="median",
+            citation=CITATIONS["searcher"],
+        ),
+        _row(
+            "How many women over 70 are on the drug?",
+            _count(table, women, over70, drug),
+            "count",
+            citation=CITATIONS["research"],
+        ),
+        _row(
+            "How many men on placebo have diabetes?",
+            _count(table, men, placebo, diabetic),
+            "count",
+            citation=CITATIONS["research"],
+        ),
         _row(
             "Risk check: what proportion of patients over 70 had the outcome?",
             _proportion(table, "outcome", "1", over70),
