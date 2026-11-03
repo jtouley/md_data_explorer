@@ -185,7 +185,7 @@ Users working with different datasets see:
 
 Data dictionaries are supplied by the user with their own upload (a PDF, Markdown or text file inside the ZIP, a standalone PDF uploaded alongside the data, or added later to an existing upload). Their extracted text is stored as `doc_context` in the upload's metadata in the per-user data home and stays local; the repo ships no dictionaries.
 
-The PDF dictionaries for the removed built-in datasets (COVID-MS, Sepsis, VAP) were previously kept
+The PDF dictionaries for the removed built-in datasets (COVID-MS, Sepsis) were previously kept
 in `data/dictionaries/`; that folder has been removed and is git-ignored.
 
 ### Current Implementation
@@ -197,7 +197,7 @@ in `data/dictionaries/`; that folder has been removed and is git-ignored.
 - ✅ Data dictionaries can be included in ZIP uploads for RAG context
 
 **Reference Data Dictionaries:**
-- The original PhysioNet project pages (COVID-MS, Sepsis, VAP) remain good examples of comprehensive documentation
+- The original PhysioNet project pages (COVID-MS, Sepsis) remain good examples of comprehensive documentation
 
 ### Future Enhancement: Auto-Parsing
 
