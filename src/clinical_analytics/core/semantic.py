@@ -2342,7 +2342,11 @@ class SemanticLayer:
 
     def _detect_categorical_encoding(self, column: Any) -> bool:
         """
-        Detect if column is categorical (encoded as '1: Yes 2: No' or limited distinct values).
+        Detect if column is categorical: low-cardinality text labelled like '1: Yes 2: No'.
+
+        Whole-number columns with few distinct values (pain 0-10, length of stay, 0/1 outcomes)
+        stay numeric so DESCRIBE reports mean, median and std. A metadata-based categorical rule
+        is a separate change.
 
         Args:
             column: Ibis column expression or column name
@@ -2365,19 +2369,14 @@ class SemanticLayer:
             # Get distinct count (efficient check)
             distinct_count = column_expr.nunique().execute()
 
-            # If very few distinct values (< 20), likely categorical
+            # Few distinct values: categorical only when the values are "1: Yes"-style labels.
+            # Whole-number columns (scores, counts, 0/1 outcomes) stay numeric, so DESCRIBE gives
+            # mean/median/std. Returning here also keeps low-cardinality columns off the alias and
+            # metadata checks below, as before this sampling worked (head() did not exist on Ibis
+            # columns, so these columns always came out numeric).
             if distinct_count <= 20:
-                # Check if values look like codes (numeric codes with labels)
-                # Sample a few values to check pattern
-                sample = column_expr.head(100).execute()
-                if len(sample) > 0:
-                    # Check if values are strings containing ":" pattern (encoded labels)
-                    if hasattr(sample, "str") and sample.str.contains(":").any():
-                        return True
-                    # Check if all values are small integers (likely codes)
-                    if sample.dtype in ["int8", "int16", "int32", "int64"]:
-                        if sample.min() >= 0 and sample.max() <= 20:
-                            return True
+                sample = column_expr.as_table().limit(100).to_polars().to_series().drop_nulls()
+                return sample.dtype == pl.String and bool(sample.str.contains(":").any())
 
             # Check column name/alias for encoding patterns
             column_name = column if isinstance(column, str) else str(column)
@@ -2396,8 +2395,9 @@ class SemanticLayer:
                     var_type = metadata.get("type")
                     if var_type in ("categorical", "binary"):
                         return True
-            except Exception:
-                pass  # Metadata check failed, continue with other checks
+            except (AttributeError, TypeError) as e:
+                # config "metadata" / "variable_types" not shaped as dicts: skip this check
+                logger.warning("semantic_column_metadata_unreadable error_type=%s", type(e).__name__)
 
             # Default: assume numeric if high cardinality
             return False

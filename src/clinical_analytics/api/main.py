@@ -37,12 +37,8 @@ from clinical_analytics.api.security import (
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.core.ollama_init import initialize_ollama
-from clinical_analytics.storage.dataset_deletion import (
-    DUCKDB_FILENAME,
-    DatasetDeletionError,
-    compaction_marker,
-    resume_pending_compaction,
-)
+from clinical_analytics.storage.dataset_deletion import finish_pending_compaction
+from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
 
 # Redacting processor chain + INFO default (CLINICAL_ANALYTICS_LOG_LEVEL overrides).
 configure_logging()
@@ -50,16 +46,6 @@ logger = structlog.get_logger()
 
 # Opt-in so tests and bare uvicorn runs never start downloads; `make run-api` sets it.
 OLLAMA_AUTOINIT_ENV = "CLINICAL_ANALYTICS_OLLAMA_AUTOINIT"
-
-
-STORE_RECOVERY_DOC = "docs/security/LOCAL_DATA_SECURITY.md (Recovering from a pending store rewrite)"
-
-
-class StoreCompactionPendingError(RuntimeError):
-    """A delete left dropped-table bytes in the store and the rewrite still cannot finish.
-
-    The API refuses to start rather than serve queries from that file.
-    """
 
 
 def _ollama_autoinit_enabled() -> bool:
@@ -104,27 +90,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     create_tables()
     logger.info("api_database_ready")
 
+    # When the DuckDB line changes, check (with a backup only for the check) that this DuckDB can
+    # open the store; fail loudly if not (for example, after a rollback). Before any compaction.
+    try:
+        prepared = await asyncio.to_thread(prepare_store_for_engine, uploads_dir().parent)
+        if prepared is not None and prepared.verified:
+            logger.info(
+                "api_store_engine_changed",
+                previous_engine=prepared.previous_engine,
+                current_engine=prepared.current_engine,
+                storage_version=prepared.storage_version,
+            )
+    except (StoreFormatError, OSError) as e:
+        # Unreadable, locked, or no room for the backup: do not let this DuckDB use it. The
+        # exception raised here says what to do and where any backup is kept.
+        logger.error("api_store_unreadable", error_type=type(e).__name__)
+        raise
+
     # A delete that failed between DROP and the store rewrite leaves a marker: finish it now,
     # so dropped rows do not linger in analytics.duckdb. If it cannot finish, the API does not
-    # start: serving would read the file that still holds a deleted dataset's bytes.
-    data_dir = uploads_dir().parent
-    try:
-        if await asyncio.to_thread(resume_pending_compaction, data_dir):
-            logger.info("api_store_compaction_resumed")
-    except DatasetDeletionError as e:
-        marker = compaction_marker(data_dir / DUCKDB_FILENAME)
-        logger.error(
-            "api_store_compaction_failed",
-            error_type=type(e).__name__,
-            cause_type=type(e.__cause__).__name__ if e.__cause__ else None,
-            marker=marker.name,
-            recovery=f"API not started; see {STORE_RECOVERY_DOC}",
-        )
-        raise StoreCompactionPendingError(
-            f"A deleted dataset is still in the data store ({marker.name} is present) and the "
-            f"store rewrite failed ({type(e.__cause__ or e).__name__}). The API will not start "
-            f"until it succeeds; see {STORE_RECOVERY_DOC}."
-        ) from e
+    # start (StoreCompactionPendingError): serving would read the file that still holds a
+    # deleted dataset's bytes. serve.py runs the same step first and exits 2 with one line.
+    if await asyncio.to_thread(finish_pending_compaction, uploads_dir().parent):
+        logger.info("api_store_compaction_resumed")
 
     if _ollama_autoinit_enabled():
         _initialize_ollama_in_background()

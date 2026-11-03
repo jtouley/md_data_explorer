@@ -31,7 +31,12 @@ def test_lifespan_pendingCompactionCannotFinish_refusesToStartAndKeepsMarker(
 
     # Act
     # (RuntimeError: the base of StoreCompactionPendingError, so the check also runs on old code.)
-    with patch.object(main, "create_tables"), pytest.raises(RuntimeError, match="needs-compaction") as raised:
+    # The engine check (store_format) is its own concern, tested in test_lifespan_store_format.
+    with (
+        patch.object(main, "create_tables"),
+        patch.object(main, "prepare_store_for_engine", return_value=None),
+        pytest.raises(RuntimeError, match="needs-compaction") as raised,
+    ):
         with TestClient(main.app) as client:
             client.get("/health")
 

@@ -6,7 +6,8 @@ An upload leaves data in several places under the data home (``<data home>/data`
   original file named in metadata (``stored_relpath`` / ``stored_filename``)
 * ``uploads/metadata/{id}.json`` and the enrichment overlays ``uploads/metadata/overlays/{id}/``
 * Parquet exports ``parquet/{id}_<table>_<version>.parquet``
-* DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``
+* DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``, and any pre-upgrade backup
+  copies of the store (``analytics.duckdb.backup-*``, see ``storage.store_format``)
 
 Dropping a DuckDB table frees its blocks but leaves the bytes in the file, so after dropping,
 the store is rewritten into a fresh file (``COPY FROM DATABASE``) and swapped in. A durable
@@ -15,7 +16,7 @@ is removed last, only after the swap, so a failure part-way leaves the dataset l
 delete can be retried; running it twice is safe. The purge takes the store lock before it
 touches anything and refuses to run while any registered connection to the store is open (see
 ``storage.datastore``); on a busy store nothing is removed. Order under the lock: DuckDB tables
-(and the rewrite), then files, then metadata.
+(and the rewrite) and pre-upgrade store backups, then files, then metadata.
 
 Sessions and in-memory query results are API state and are removed by the API route.
 """
@@ -33,11 +34,19 @@ import duckdb
 import structlog
 
 from clinical_analytics.storage.datastore import StoreInUseError, exclusive_store
+from clinical_analytics.storage.store_format import (
+    STORE_FILENAME,
+    StoreFormatError,
+    attach_storage_option,
+    current_storage_version,
+    new_store_config,
+    store_backups,
+)
 
 logger = structlog.get_logger()
 
 DATASET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,127}$")
-DUCKDB_FILENAME = "analytics.duckdb"
+DUCKDB_FILENAME = STORE_FILENAME
 PARQUET_DIRNAME = "parquet"
 
 
@@ -143,7 +152,7 @@ def _purge_duckdb(db_path: Path, dataset_id: str | None, other_ids: set[str], re
     try:
         with exclusive_store(db_path):
             compacted.unlink(missing_ok=True)
-            con = duckdb.connect(str(db_path))
+            con = duckdb.connect(str(db_path), config=new_store_config())
             try:
                 tables = [row[0] for row in con.execute("SHOW TABLES").fetchall()]
                 owned = [t for t in tables if dataset_id is not None and _owned_by(t, dataset_id, other_ids)]
@@ -157,8 +166,11 @@ def _purge_duckdb(db_path: Path, dataset_id: str | None, other_ids: set[str], re
                 source = con.execute("SELECT current_database()").fetchone()
                 if source is None:
                     raise DatasetDeletionError("DuckDB returned no current database")
+                # Keep the store's storage format: a fresh file would otherwise get the running
+                # DuckDB's newest format, which older DuckDB releases cannot open.
+                storage_option = attach_storage_option(current_storage_version(con))
                 attach_path = str(compacted).replace("'", "''")
-                con.execute(f"ATTACH '{attach_path}' AS compacted_store")
+                con.execute(f"ATTACH '{attach_path}' AS compacted_store {storage_option}")
                 con.execute(f'COPY FROM DATABASE "{source[0]}" TO compacted_store')
                 con.execute("DETACH compacted_store")
             finally:
@@ -168,7 +180,7 @@ def _purge_duckdb(db_path: Path, dataset_id: str | None, other_ids: set[str], re
             marker.unlink()
     except StoreInUseError as e:
         raise DatasetStoreBusyError(f"The data store is in use ({e}); try again in a moment") from e
-    except duckdb.Error as e:
+    except (duckdb.Error, StoreFormatError) as e:
         compacted.unlink(missing_ok=True)
         raise DatasetDeletionError(f"Could not remove DuckDB tables ({type(e).__name__})") from e
     except OSError:
@@ -196,6 +208,38 @@ def resume_pending_compaction(data_dir: Path) -> bool:
         ) from e
     logger.info("store_compaction_resumed")
     return True
+
+
+STORE_RECOVERY_DOC = "docs/security/LOCAL_DATA_SECURITY.md (Recovering from a pending store rewrite)"
+
+
+class StoreCompactionPendingError(DatasetDeletionError):
+    """A delete left dropped-table bytes in the store and the rewrite still cannot finish.
+
+    The API must not start (and so serve queries from that file) until it does.
+    """
+
+
+def finish_pending_compaction(data_dir: Path) -> bool:
+    """``resume_pending_compaction`` for startup: a failure becomes StoreCompactionPendingError,
+    whose message is one plain line saying what is wrong and where the recovery steps are."""
+    try:
+        return resume_pending_compaction(data_dir)
+    except DatasetDeletionError as e:
+        marker = compaction_marker(data_dir / DUCKDB_FILENAME)
+        cause = e.__cause__ or e
+        logger.error(
+            "store_compaction_failed",
+            error_type=type(e).__name__,
+            cause_type=type(cause).__name__,
+            marker=marker.name,
+            recovery=f"API not started; see {STORE_RECOVERY_DOC}",
+        )
+        raise StoreCompactionPendingError(
+            f"A deleted dataset is still in the data store ({marker.name} is present) and the "
+            f"store rewrite failed ({type(cause).__name__}). The API will not start until it "
+            f"succeeds; see {STORE_RECOVERY_DOC}."
+        ) from e
 
 
 def purge_dataset_files(dataset_id: str, uploads_root: Path) -> DeletionReport:
@@ -227,6 +271,9 @@ def purge_dataset_files(dataset_id: str, uploads_root: Path) -> DeletionReport:
             # Validated before anything is dropped: a bad stored path refuses the whole delete.
             stored_originals = _stored_original(metadata_path, raw_dir)
             _purge_duckdb(db_path, dataset_id, other_ids, report)
+            # Pre-upgrade backups of the store still hold this dataset's rows.
+            for backup in store_backups(db_path):
+                _remove(backup, data_dir, report)
 
             for path in [
                 *stored_originals,
