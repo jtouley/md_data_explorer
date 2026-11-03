@@ -558,6 +558,23 @@ class TestPatchDecisionAtomicity:
         assert (overlay_dir / "pending.json").read_bytes() == before
         assert sorted(p.name for p in overlay_dir.iterdir()) == ["pending.json"]
 
+    def test_save_pending_unencodableValue_leavesNoTempFile(self, overlay_store, sample_patch):
+        """A value json can't encode raises, keeps the old pending.json and leaves no temp file."""
+        # Arrange
+        from dataclasses import replace
+
+        overlay_store.save_pending("upload_tmp", "v1", [sample_patch])
+        overlay_dir = overlay_store.get_overlay_path("upload_tmp", "v1")
+        before = (overlay_dir / "pending.json").read_bytes()
+
+        # Act
+        with pytest.raises(TypeError):
+            overlay_store.save_pending("upload_tmp", "v1", [replace(sample_patch, value=object())])
+
+        # Assert
+        assert (overlay_dir / "pending.json").read_bytes() == before
+        assert sorted(p.name for p in overlay_dir.iterdir()) == ["pending.json"]
+
 
 class TestPatchDecisionStaleState:
     """A patch the log has already decided but pending.json still lists (pre-rollback failure)."""
@@ -603,15 +620,17 @@ class TestPatchDecisionConcurrency:
                 outcomes.append("ok")
 
         second = threading.Thread(target=decide, args=(second_action,))
+        blocked_while_first_held_lock: list[bool] = []
         real_load_pending = OverlayStore.load_pending
 
         def load_pending_then_race(self_, upload_id, version):
             pending = real_load_pending(self_, upload_id, version)
             if threading.current_thread() is not second and not second.is_alive() and not outcomes:
-                # Run the competing decision now. Unlocked, it finishes and both write; locked, it
-                # blocks until this decision is done, so the join times out and we carry on.
+                # Run the competing decision now. Locked, it must still be waiting after a short
+                # join; unlocked, it would finish and both decisions would write (caught below).
                 second.start()
-                second.join(timeout=2.0)
+                second.join(timeout=0.2)
+                blocked_while_first_held_lock.append(second.is_alive())
             return pending
 
         monkeypatch.setattr(OverlayStore, "load_pending", load_pending_then_race)
@@ -621,6 +640,7 @@ class TestPatchDecisionConcurrency:
         second.join()
 
         # Assert
+        assert blocked_while_first_held_lock == [True]
         assert sorted(outcomes) == ["ok", "state_error"]
         assert [p.patch_id for p in overlay_store.load_patches("upload_race", "v1")] == [sample_patch.patch_id]
 
@@ -695,3 +715,37 @@ class TestDeserializePatchImmutability:
         # Original dict should not be modified
         assert original_data == original_copy
         assert "_patch_type" in original_data
+
+
+class TestSavePendingConcurrentWriters:
+    """Two writers never share a temp file, so pending.json is never torn."""
+
+    def test_save_pending_concurrentWriters_pendingJsonIsAlwaysValid(self, overlay_store, sample_patch):
+        # Arrange
+        import json
+        import threading
+
+        upload_id, version = "upload_tmp", "v1"
+        overlay_store.save_pending(upload_id, version, [sample_patch])
+        pending_path = overlay_store.get_overlay_path(upload_id, version) / "pending.json"
+        errors: list[BaseException] = []
+
+        def write_many() -> None:
+            try:
+                for _ in range(50):
+                    overlay_store.save_pending(upload_id, version, [sample_patch] * 20)
+            except OSError as exc:  # a shared temp name made os.replace raise FileNotFoundError
+                errors.append(exc)
+
+        writers = [threading.Thread(target=write_many) for _ in range(4)]
+
+        # Act
+        for w in writers:
+            w.start()
+        for w in writers:
+            w.join()
+
+        # Assert
+        assert errors == []
+        assert len(json.loads(pending_path.read_text())) == 20
+        assert sorted(p.name for p in pending_path.parent.glob("*.tmp")) == []
