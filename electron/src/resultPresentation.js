@@ -303,8 +303,9 @@ export const SMALL_CELL_TOKEN = `<${SMALL_CELL_THRESHOLD}`;
  * @returns {boolean}
  */
 export function isSmallCellToken(s) {
+  // The characters the API writes, not any number equal to the threshold ("<011" is a label).
   const m = /^<\s*(\d+)$/.exec(s);
-  return m !== null && Number(m[1]) === SMALL_CELL_THRESHOLD;
+  return m !== null && m[1] === String(SMALL_CELL_THRESHOLD);
 }
 
 /**

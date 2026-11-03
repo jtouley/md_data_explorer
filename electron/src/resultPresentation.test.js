@@ -420,6 +420,8 @@ describe('classifyCell', () => {
     ['< 10', '< 10'],
     ['<110', '<110'],
     ['<12', '<12'],
+    ['<011', '<011'],
+    ['< 011', '< 011'],
   ])('classifyCell_inequalityLabel_%s_staysText', (value, text) => {
     // Arrange / Act
     const result = classifyCell(value);

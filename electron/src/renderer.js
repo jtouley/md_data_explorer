@@ -880,6 +880,8 @@ async function handleConfirmPendingQuery(held, card) {
   });
   if (!built.ok) {
     setCardNote(card, built.message);
+    // Nothing was sent: keep "Not what I meant" usable so the question can come back.
+    setCardButtonsDisabled(card, false);
     return;
   }
   const { request } = built;
