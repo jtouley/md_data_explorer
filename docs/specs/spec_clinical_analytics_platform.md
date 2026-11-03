@@ -107,7 +107,6 @@ clinical-analytics-platform/
 │   │   └── mimic3/         # Future use
 │   ├── configs/
 │   │   └── datasets.yaml    # Semantic layer configuration
-│   ├── dictionaries/       # Data dictionary PDFs (for NL queries)
 │   └── processed/          # Parquet/DuckDB for standardized data
 ├── src/
 │   └── clinical_analytics/

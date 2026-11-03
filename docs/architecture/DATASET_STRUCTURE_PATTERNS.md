@@ -14,13 +14,10 @@ Clinical datasets from PhysioNet and similar sources follow a consistent structu
 1. **Data Files** - The actual dataset (CSV, PSV, or relational tables) in `data/raw/`
 2. **README/Documentation** - Data dictionary with column descriptions
    - Original location: In `data/raw/{dataset}/` alongside data files
-   - **Centralized location:** `data/dictionaries/` - PDF documentation files for all datasets
 3. **License Files** - Usage terms and conditions
 4. **Checksums** - File integrity verification
 
-**Note:** Data dictionaries are available in two locations:
-- **Original location:** In the raw data directory alongside data files (README.txt, README.md, or PDF)
-- **Centralized location:** `data/dictionaries/` - Contains PDF copies for easy reference and NL query implementation
+**Note:** Data dictionaries are supplied by the user with their own upload (a PDF, Markdown or text file inside the ZIP, a standalone PDF uploaded alongside the data, or added later to an existing upload). Their extracted text is stored as `doc_context` in the upload's metadata in the per-user data home and stays local; the repo ships no dictionaries.
 
 ---
 
@@ -184,21 +181,12 @@ Users working with different datasets see:
 
 ## 🔄 Platform Integration
 
-### Centralized Data Dictionary Location
+### Data Dictionaries
 
-**All data dictionaries are now centralized in:**
-- `data/dictionaries/` - Contains PDF documentation files for all datasets
+Data dictionaries are supplied by the user with their own upload (a PDF, Markdown or text file inside the ZIP, a standalone PDF uploaded alongside the data, or added later to an existing upload). Their extracted text is stored as `doc_context` in the upload's metadata in the per-user data home and stays local; the repo ships no dictionaries.
 
-**Current dictionaries:**
-- `Patient-level dataset to study the effect of COVID-19 in people with Multiple Sclerosis v1.0.1.pdf` - COVID-MS
-- `Early Prediction of Sepsis from Clinical Data_ The PhysioNet_Computing in Cardiology Challenge 2019 v1.0.0.pdf` - Sepsis
-- `Microbiological, Immunological and Biochemical Characteristics of the Development of Ventilator Associated Pneumonia v1.1.0.pdf` - VAP dataset
-
-**Benefits of centralization:**
-- Single location for all data dictionary documentation
-- Easier to reference for NL query implementation
-- Consistent access pattern across datasets
-- Can be used for RAG context generation
+The PDF dictionaries for the removed built-in datasets (COVID-MS, Sepsis, VAP) were previously kept
+in `data/dictionaries/`; that folder has been removed and is git-ignored.
 
 ### Current Implementation
 
@@ -209,16 +197,14 @@ Users working with different datasets see:
 - ✅ Data dictionaries can be included in ZIP uploads for RAG context
 
 **Reference Data Dictionaries:**
-- PDF dictionaries in `data/dictionaries/` provide examples of comprehensive documentation
-- These serve as templates for user-provided documentation
+- The original PhysioNet project pages (COVID-MS, Sepsis, VAP) remain good examples of comprehensive documentation
 
 ### Future Enhancement: Auto-Parsing
 
 **Goal:** Automatically generate semantic layer config from data dictionaries
 
 ```python
-# Future: Auto-generate config from data dictionary
-# Can use centralized location: data/dictionaries/
+# Future: Auto-generate config from a user-supplied data dictionary
 
 def parse_data_dictionary(dict_path: str) -> dict:
     """
@@ -230,7 +216,7 @@ def parse_data_dictionary(dict_path: str) -> dict:
 
     Supports:
     - README.md or README.txt (text/markdown)
-    - PDF files (from data/dictionaries/ or raw locations)
+    - PDF files (supplied with the user's upload)
     """
     if dict_path.endswith('.pdf'):
         return parse_pdf_dictionary(dict_path)
@@ -239,9 +225,8 @@ def parse_data_dictionary(dict_path: str) -> dict:
     else:
         raise ValueError(f"Unsupported dictionary format: {dict_path}")
 
-# Example usage with centralized dictionaries
-covid_dict = parse_data_dictionary("data/dictionaries/Patient-level dataset to study the effect of COVID-19 in people with Multiple Sclerosis v1.0.1.pdf")
-sepsis_dict = parse_data_dictionary("data/dictionaries/Early Prediction of Sepsis from Clinical Data_ The PhysioNet_Computing in Cardiology Challenge 2019 v1.0.0.pdf")
+# Example usage with a user-supplied dictionary
+my_dict = parse_data_dictionary("my_dictionary.pdf")
 ```
 
 **Benefits:**
@@ -249,7 +234,6 @@ sepsis_dict = parse_data_dictionary("data/dictionaries/Early Prediction of Sepsi
 - Zero-config dataset addition (future)
 - Automatic variable name mapping
 - Relationship inference from documentation
-- Centralized dictionary location simplifies access
 
 ---
 
@@ -282,19 +266,17 @@ When implementing semantic NL queries (Phase 3), the data dictionary becomes cri
 
 ```python
 # Use documentation to understand variable names
-# Centralized dictionaries location: data/dictionaries/
+# Dictionaries are supplied by the user with their upload (none ship in the repo)
 
-# For COVID-MS: PDF from centralized location
-data_dictionary = parse_pdf("data/dictionaries/Patient-level dataset to study the effect of COVID-19 in people with Multiple Sclerosis v1.0.1.pdf")
-# Or use README.txt from raw data
+# For COVID-MS: README.txt from raw data
 data_dictionary = parse_readme("data/raw/covid_ms/README.txt")
 
-# For Sepsis: PDF from centralized location
-data_dictionary = parse_pdf("data/dictionaries/Early Prediction of Sepsis from Clinical Data_ The PhysioNet_Computing in Cardiology Challenge 2019 v1.0.0.pdf")
+# For Sepsis: the PDF the user uploaded with the data
+data_dictionary = parse_pdf("my_sepsis_dictionary.pdf")
 
 # For MIMIC: README.md (when available)
 data_dictionary = parse_readme("data/raw/mimic4_demo/README.md")
-# Or PDF from centralized location when added
+# Or a PDF the user uploaded with the data
 
 # User query: "What's the mortality rate?"
 # Match "mortality" to:
