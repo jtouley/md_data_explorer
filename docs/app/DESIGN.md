@@ -27,7 +27,7 @@ on what a clinician has to do with the screen.
 | No dark mode at all | Light and dark renders byte-identical (all four) | Full semantic token set, light + dark, System/Light/Dark toggle |
 | Chat squeezed by panels | 48 px of chat at 1280×820 under a 454 px preview and a 215 px enrichment block (ConardLi, Kowalski); ~115 px (MengTo); ~40 px (Owl) | Dataset preview, metadata suggestions and change history move to a dataset panel that opens from the sidebar. The chat owns the main column |
 | Message states look alike | Answer, hold, refusal and crash rendered with the same box (Owl, ConardLi, Kowalski) | Each state has its own shape, a word and an icon, not colour alone |
-| Plan line is the smallest text on the card | 12.8 px mono (Owl, ConardLi) | Plan shown as a 15–16 px labelled list in the body face |
+| Plan line is the smallest text on the card | 12.8 px mono (Owl, ConardLi) | Plan shown as a 16 px labelled list in the body face |
 | Mono, left-aligned table; literal "suppressed" reads as data | All four | Body face with tabular figures, numbers right-aligned, hidden cells muted with a footnote |
 | Emoji and glyph icons, generic copy | 📊, ◉, ⟳, →, ✕, ✓/✗; "Claim:" prefix; "Group comparison" twice (all four) | One small inline stroke-icon set; claim is the headline; the intent label shown once as a caption |
 | Centred column, docked composer | 720–760 px (all four) | 760 px column, composer docked and pinned |
@@ -234,7 +234,7 @@ Choreography:
 | Stopped | Muted note | "Stopped" | "Stopped waiting for this answer." |
 | Empty (no cohort) | Centred | — | "Choose a cohort to begin." + Upload / Use the sample cohort |
 | Empty (cohort chosen) | Centred serif greeting + chips | — | "What would you like to know about {cohort}?" + three questions built from its columns (fill the box, never auto-send) |
-| Offline | Banner at the top of the main column | Alert icon | "Can't reach the analysis engine on this computer." + Try again |
+| Offline | Banner at the top of the main column; empty state explains | Alert icon | "Can't reach the analysis engine on this computer." + Try again; empty state "Waiting for the analysis engine." |
 | Deleting | In-page dialog under the cohort switcher | — | Existing delete copy; "Deleting…" while busy |
 
 ## Theme
