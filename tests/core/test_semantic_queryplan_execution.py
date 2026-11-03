@@ -223,30 +223,21 @@ def test_execute_query_plan_confidence_gating(mock_semantic_layer_for_execution)
 
 
 def test_execute_query_plan_completeness_gating(mock_semantic_layer_for_execution):
-    """Verify executor adds warning when required fields missing (Phase 2.2: warnings only).
+    """An incomplete plan is refused before execution with the reason (issue #52 gate).
 
-    COUNT requires entity_key OR grouping_variable.
+    DESCRIBE requires a metric.
     """
     # Arrange
-    plan = QueryPlan(
-        intent="COUNT",
-        # Missing: entity_key and grouping_variable
-        confidence=0.9,
-    )
+    plan = QueryPlan(intent="DESCRIBE", confidence=0.9)
 
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert (Phase 2.2: No blocking, just warnings)
-    assert "warnings" in result
-    assert len(result["warnings"]) > 0
-    warnings_text = " ".join(result["warnings"])
-    assert (
-        "incomplete" in warnings_text.lower()
-        or "entity_key" in warnings_text.lower()
-        or "grouping" in warnings_text.lower()
-    )
-    # Phase 2.2: Still attempts execution (may succeed or fail depending on implementation)
+    # Assert
+    assert result["success"] is False
+    assert result["requires_confirmation"] is False
+    assert "run_key" not in result
+    assert "metric" in result["failure_reason"]
 
 
 def test_execute_query_plan_type_aware_categorical(mock_semantic_layer_for_execution, sample_cohort_with_categorical):

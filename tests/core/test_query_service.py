@@ -262,3 +262,18 @@ class TestQueryServiceAnalysis:
         layer.format_execution_result.assert_not_called()
         assert result.analysis is None
         assert {"message": "boom", "severity": "error"} in result.issues
+
+    @pytest.mark.parametrize("threshold", [0.5, 0.95], ids=["lenient", "strict"])
+    def test_ask_execution_usesConfiguredConfidenceThreshold(self, mock_semantic_layer, monkeypatch, threshold):
+        """The hold threshold comes from config/nl_query.yaml, not execute_query_plan's default."""
+        # Arrange
+        from clinical_analytics.core import query_service as query_service_module
+
+        monkeypatch.setattr(query_service_module, "AUTO_EXECUTE_CONFIDENCE_THRESHOLD", threshold)
+        service, layer = self._service(mock_semantic_layer, {"success": True, "run_key": "rk"}, {"type": "comparison"})
+
+        # Act
+        service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert
+        assert layer.execute_query_plan.call_args.kwargs["confidence_threshold"] == threshold

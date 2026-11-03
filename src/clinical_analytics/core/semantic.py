@@ -1997,9 +1997,8 @@ class SemanticLayer:
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
         if plan.intent == "COUNT":
-            # COUNT requires entity_key OR grouping_variable
-            if not plan.entity_key and not plan.group_by:
-                return False, "COUNT intent requires entity_key or grouping_variable"
+            # A COUNT with neither entity_key nor group_by is a row count ("how many patients?").
+            pass
         elif plan.intent == "DESCRIBE":
             # DESCRIBE requires metric (primary_variable)
             if not plan.metric:

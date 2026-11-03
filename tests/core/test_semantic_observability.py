@@ -107,19 +107,30 @@ class TestSemanticLayerObservability:
         assert "run_key" not in result
 
     def test_incomplete_plan_adds_warning_with_explanation(self, semantic_layer):
-        """Incomplete plan should add warning with explanation (Phase 2.2)."""
-        # Arrange: Incomplete COUNT plan (no entity_key, no group_by)
+        """An incomplete plan is refused before execution, with the reason (issue #52 gate)."""
+        # Arrange: Incomplete DESCRIBE plan (no metric)
+        plan = QueryPlan(intent="DESCRIBE", confidence=0.9)
+
+        # Act
+        result = semantic_layer.execute_query_plan(plan)
+
+        # Assert
+        assert result["success"] is False
+        assert result["requires_confirmation"] is False
+        assert "run_key" not in result
+        assert "metric" in result["failure_reason"]
+
+    def test_count_without_entity_key_runs_as_row_count(self, semantic_layer):
+        """'How many patients?' has no entity_key or group_by; it is a row count, not incomplete."""
+        # Arrange
         plan = QueryPlan(intent="COUNT", confidence=0.9)
 
         # Act
         result = semantic_layer.execute_query_plan(plan)
 
-        # Assert: Warning should explain incompleteness (Phase 2.2: warning only, no blocking)
-        assert "warnings" in result
-        assert len(result["warnings"]) > 0
-        assert "Incomplete plan" in result["warnings"][0]
-        # Phase 2.2: Still attempts execution (may succeed or fail depending on implementation)
-        # The key is that incompleteness doesn't block - it only warns
+        # Assert
+        assert result["success"] is True
+        assert int(result["result"]) == 3
 
     def test_validation_failure_adds_warning_with_explanation(self, semantic_layer):
         """Validation failure should add warning with explanation (Phase 2.2)."""

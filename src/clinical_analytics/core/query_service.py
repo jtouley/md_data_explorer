@@ -12,6 +12,7 @@ from typing import Any
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import format_plan_line
+from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
@@ -186,6 +187,7 @@ class QueryService:
         try:
             execution_result = self.semantic_layer.execute_query_plan(
                 query_plan,
+                confidence_threshold=AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
                 query_text=normalized_query,
                 confirmed=confirmed,
             )
