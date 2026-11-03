@@ -18,9 +18,13 @@ Key Design Decisions:
 """
 
 import json
+import os
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import structlog
 
@@ -46,6 +50,20 @@ class PatchNotFoundError(ValueError):
 
 class PatchStateError(ValueError):
     """The patch exists but its latest status does not allow the requested change."""
+
+
+AnyPatch: TypeAlias = MetadataPatch | ExclusionPatternPatch | RelationshipPatch
+
+# One lock per overlay directory, shared by every OverlayStore instance in the process (the API
+# builds a store per request and runs sync routes in a threadpool). Decisions on one upload/version
+# are serialized; the API is a single local process, so this does not guard against other processes.
+_DECISION_LOCKS: dict[Path, threading.Lock] = {}
+_DECISION_LOCKS_GUARD = threading.Lock()
+
+
+def _decision_lock(overlay_path: Path) -> threading.Lock:
+    with _DECISION_LOCKS_GUARD:
+        return _DECISION_LOCKS.setdefault(overlay_path.resolve(), threading.Lock())
 
 
 class OverlayStore:
@@ -199,8 +217,15 @@ class OverlayStore:
             patch_dict["_patch_type"] = type(patch).__name__
             data.append(patch_dict)
 
-        with open(pending_path, "w") as f:
-            json.dump(data, f, indent=2)
+        # Write-then-rename so a failed write leaves the previous pending.json intact.
+        tmp_path = pending_path.with_name(pending_path.name + ".tmp")
+        try:
+            with open(tmp_path, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, pending_path)
+        except OSError:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
         logger.info(
             "pending_saved",
@@ -280,34 +305,16 @@ class OverlayStore:
             PatchNotFoundError: If patch_id is neither pending nor in the patch log.
             PatchStateError: If patch_id was already resolved (accepted, rejected or reverted).
         """
-        pending = self.load_pending(upload_id, version)
-
-        for patch in pending:
-            if patch.patch_id == patch_id:
-                # Create accepted version of patch
-                accepted_patch = self._create_accepted_patch(patch, accepted_by)
-                self.append_patch(upload_id, version, accepted_patch)
-
-                # Remove from pending
-                remaining = [p for p in pending if p.patch_id != patch_id]
-                if remaining:
-                    self.save_pending(upload_id, version, remaining)
-                else:
-                    self.clear_pending(upload_id, version)
-
-                # Invalidate cache
-                self.invalidate_cache(upload_id, version)
-
-                logger.info(
-                    "patch_accepted",
-                    upload_id=upload_id,
-                    version=version,
-                    patch_id=patch_id,
-                    accepted_by=accepted_by,
-                )
-                return
-
-        raise self._not_pending_error(upload_id, version, patch_id)
+        self._decide_pending(
+            upload_id, version, patch_id, lambda patch: self._create_accepted_patch(patch, accepted_by)
+        )
+        logger.info(
+            "patch_accepted",
+            upload_id=upload_id,
+            version=version,
+            patch_id=patch_id,
+            accepted_by=accepted_by,
+        )
 
     def reject_patch(
         self,
@@ -329,41 +336,93 @@ class OverlayStore:
             PatchNotFoundError: If patch_id is neither pending nor in the patch log.
             PatchStateError: If patch_id was already resolved (accepted, rejected or reverted).
         """
-        pending = self.load_pending(upload_id, version)
+        self._decide_pending(upload_id, version, patch_id, lambda patch: self._create_rejected_patch(patch, reason))
+        logger.info(
+            "patch_rejected",
+            upload_id=upload_id,
+            version=version,
+            patch_id=patch_id,
+            reason=reason,
+        )
 
-        for patch in pending:
-            if patch.patch_id == patch_id:
-                # Create rejected version of patch
-                rejected_patch = self._create_rejected_patch(patch, reason)
-                self.append_patch(upload_id, version, rejected_patch)
+    @contextmanager
+    def _locked(self, upload_id: str, version: str) -> Iterator[None]:
+        """Serialize accept/reject/revert for one upload/version."""
+        with _decision_lock(self.get_overlay_path(upload_id, version)):
+            yield
 
-                # Remove from pending
-                remaining = [p for p in pending if p.patch_id != patch_id]
+    def _latest_by_id(self, upload_id: str, version: str) -> dict[str, AnyPatch]:
+        latest: dict[str, AnyPatch] = {}
+        for p in self.load_patches(upload_id, version):
+            latest[p.patch_id] = p
+        return latest
+
+    def _decide_pending(
+        self,
+        upload_id: str,
+        version: str,
+        patch_id: str,
+        make_row: Callable[[AnyPatch], AnyPatch],
+    ) -> None:
+        """Record one decision on a pending patch: log row appended and pending entry removed, or neither.
+
+        Raises:
+            PatchNotFoundError: patch_id is neither pending nor logged.
+            PatchStateError: patch_id already has a decision in the log.
+            OSError: a write failed; the log and pending.json are left as they were.
+        """
+        with self._locked(upload_id, version):
+            decided = self._latest_by_id(upload_id, version).get(patch_id)
+            pending = self.load_pending(upload_id, version)
+            if decided is not None:
+                if any(p.patch_id == patch_id for p in pending):
+                    # Left pending by a write that failed before rollback existed; drop it so the
+                    # UI stops offering a decision the log already holds.
+                    self.save_pending(upload_id, version, [p for p in pending if p.patch_id != patch_id])
+                raise PatchStateError(f"Patch {patch_id!r} is not pending (latest status={decided.status.name})")
+            patch = next((p for p in pending if p.patch_id == patch_id), None)
+            if patch is None:
+                raise PatchNotFoundError(f"No pending patch found for patch_id={patch_id!r}")
+
+            # resolved.json is derived from the log; drop it before writing so a failure here
+            # leaves nothing decided.
+            self.invalidate_cache(upload_id, version)
+            remaining = [p for p in pending if p.patch_id != patch_id]
+
+            def drop_from_pending() -> None:
                 if remaining:
                     self.save_pending(upload_id, version, remaining)
                 else:
                     self.clear_pending(upload_id, version)
 
-                logger.info(
-                    "patch_rejected",
+            self._append_with_rollback(upload_id, version, make_row(patch), then=drop_from_pending)
+
+    def _append_with_rollback(
+        self,
+        upload_id: str,
+        version: str,
+        row: AnyPatch,
+        then: Callable[[], None],
+    ) -> None:
+        """Append row, run then(); if either raises OSError, truncate the log back and re-raise."""
+        jsonl_path = self._ensure_overlay_dir(upload_id, version) / "patches.jsonl"
+        size_before = jsonl_path.stat().st_size if jsonl_path.exists() else 0
+        try:
+            self.append_patch(upload_id, version, row)
+            then()
+        except OSError:
+            try:
+                with open(jsonl_path, "r+b") as f:
+                    f.truncate(size_before)
+            except OSError as rollback_error:
+                logger.error(
+                    "patch_log_rollback_failed",
                     upload_id=upload_id,
                     version=version,
-                    patch_id=patch_id,
-                    reason=reason,
+                    patch_id=row.patch_id,
+                    error_type=type(rollback_error).__name__,
                 )
-                return
-
-        raise self._not_pending_error(upload_id, version, patch_id)
-
-    def _not_pending_error(self, upload_id: str, version: str, patch_id: str) -> ValueError:
-        """Why a patch_id cannot be accepted or rejected: never seen, or already resolved."""
-        latest = None
-        for p in self.load_patches(upload_id, version):
-            if p.patch_id == patch_id:
-                latest = p
-        if latest is None:
-            return PatchNotFoundError(f"No pending patch found for patch_id={patch_id!r}")
-        return PatchStateError(f"Patch {patch_id!r} is not pending (latest status={latest.status.name})")
+            raise
 
     def revert_accepted_patch(
         self,
@@ -379,20 +438,17 @@ class OverlayStore:
             PatchNotFoundError: If patch_id is not in the patch log.
             PatchStateError: If the latest row for patch_id is not ACCEPTED.
         """
-        patches = self.load_patches(upload_id, version)
-        latest_by_id: dict[str, MetadataPatch | ExclusionPatternPatch | RelationshipPatch] = {}
-        for p in patches:
-            latest_by_id[p.patch_id] = p
+        with self._locked(upload_id, version):
+            current = self._latest_by_id(upload_id, version).get(patch_id)
+            if current is None:
+                raise PatchNotFoundError(f"No patch found for patch_id={patch_id!r}")
+            if current.status != PatchStatus.ACCEPTED:
+                raise PatchStateError(f"Patch {patch_id!r} is not accepted (latest status={current.status.name})")
 
-        current = latest_by_id.get(patch_id)
-        if current is None:
-            raise PatchNotFoundError(f"No patch found for patch_id={patch_id!r}")
-        if current.status != PatchStatus.ACCEPTED:
-            raise PatchStateError(f"Patch {patch_id!r} is not accepted (latest status={current.status.name})")
-
-        reverted = self._create_reverted_patch(current, reverted_by)
-        self.append_patch(upload_id, version, reverted)
-        self.invalidate_cache(upload_id, version)
+            self.invalidate_cache(upload_id, version)
+            self._append_with_rollback(
+                upload_id, version, self._create_reverted_patch(current, reverted_by), then=lambda: None
+            )
 
         logger.info(
             "patch_reverted",

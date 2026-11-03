@@ -48,6 +48,18 @@ def test_client(mock_enrichment_service, mock_overlay_store):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture
+def real_store_client(tmp_path):
+    """Test client wired to a real OverlayStore in tmp_path (real EnrichmentService on top)."""
+    from clinical_analytics.api.routes.enrichments import get_dataset_version, get_overlay_store
+
+    store = OverlayStore(base_dir=tmp_path)
+    app.dependency_overrides[get_overlay_store] = lambda: store
+    app.dependency_overrides[get_dataset_version] = lambda: "v1"
+    yield TestClient(app), store
+    app.dependency_overrides.clear()
+
+
 class TestEnrichmentsGetPending:
     """Tests for GET /api/datasets/{dataset_id}/enrichments/pending endpoint."""
 
@@ -293,3 +305,39 @@ class TestEnrichmentsGenerate:
         )
 
         assert response.status_code == status.HTTP_202_ACCEPTED
+
+
+class TestEnrichmentsDecisionsOnRealStore:
+    """End to end on a real OverlayStore: a second decision on one patch is a 409."""
+
+    @pytest.mark.parametrize("second_action", ["accept", "reject"])
+    def test_enrichments_secondDecision_returns409AndKeepsOneLogRow(self, real_store_client, second_action):
+        """The first accept is recorded; any later accept or reject of that patch is refused."""
+        # Arrange
+        from clinical_analytics.core.metadata_patch import MetadataPatch, PatchOperation, PatchStatus
+
+        client, store = real_store_client
+        store.save_pending(
+            "upload_twice",
+            "v1",
+            [
+                MetadataPatch(
+                    patch_id="patch_twice",
+                    operation=PatchOperation.SET_LABEL,
+                    column="age",
+                    value="Patient Age",
+                    status=PatchStatus.PENDING,
+                    created_at=datetime.now(UTC),
+                    provenance="llm",
+                )
+            ],
+        )
+        first = client.post("/api/datasets/upload_twice/enrichments/patch_twice/accept", json={})
+
+        # Act
+        second = client.post(f"/api/datasets/upload_twice/enrichments/patch_twice/{second_action}", json={})
+
+        # Assert
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_409_CONFLICT
+        assert [p.status for p in store.load_patches("upload_twice", "v1")] == [PatchStatus.ACCEPTED]

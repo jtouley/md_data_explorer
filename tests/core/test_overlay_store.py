@@ -456,6 +456,175 @@ class TestPatchAcceptRejectFailures:
         assert len(overlay_store.load_patches("upload_resolved", "v1")) == 1
 
 
+class TestPatchDecisionAtomicity:
+    """A failed write leaves no decided log row and the patch still pending, so a retry is safe."""
+
+    @pytest.mark.parametrize("action", ["accept_patch", "reject_patch"])
+    @pytest.mark.parametrize(
+        ("other_pending", "failing_write"),
+        [(True, "save_pending"), (False, "clear_pending")],
+        ids=["others_remain", "last_pending"],
+    )
+    def test_decide_pendingUpdateFails_rollsBackLogRow(
+        self, overlay_store, sample_patch, monkeypatch, action, other_pending, failing_write
+    ):
+        """If removing the patch from pending fails, the appended log row is rolled back."""
+        # Arrange
+        from dataclasses import replace
+
+        other = replace(sample_patch, patch_id="other_patch")
+        pending = [sample_patch, other] if other_pending else [sample_patch]
+        overlay_store.save_pending("upload_atomic", "v1", pending)
+
+        def disk_full(*_args: object) -> None:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(overlay_store, failing_write, disk_full)
+
+        # Act
+        with pytest.raises(OSError, match="No space left"):
+            getattr(overlay_store, action)("upload_atomic", "v1", sample_patch.patch_id, "actor")
+
+        # Assert
+        assert overlay_store.load_patches("upload_atomic", "v1") == []
+        assert [p.patch_id for p in overlay_store.load_pending("upload_atomic", "v1")] == [p.patch_id for p in pending]
+
+    def test_accept_patch_retryAfterFailure_writesOneRow(self, overlay_store, sample_patch, monkeypatch):
+        """Retrying after a failed accept records exactly one ACCEPTED row."""
+        # Arrange
+        from clinical_analytics.core.metadata_patch import PatchStatus
+
+        overlay_store.save_pending("upload_retry", "v1", [sample_patch])
+        real_clear = overlay_store.clear_pending
+
+        def fail_once(*_args: object) -> None:
+            monkeypatch.setattr(overlay_store, "clear_pending", real_clear)
+            raise OSError("transient")
+
+        monkeypatch.setattr(overlay_store, "clear_pending", fail_once)
+        with pytest.raises(OSError, match="transient"):
+            overlay_store.accept_patch("upload_retry", "v1", sample_patch.patch_id, "actor")
+
+        # Act
+        overlay_store.accept_patch("upload_retry", "v1", sample_patch.patch_id, "actor")
+
+        # Assert
+        patches = overlay_store.load_patches("upload_retry", "v1")
+        assert [p.status for p in patches] == [PatchStatus.ACCEPTED]
+        assert overlay_store.load_pending("upload_retry", "v1") == []
+
+    def test_accept_patch_partialLogWrite_truncatesLog(self, overlay_store, sample_patch, monkeypatch):
+        """A log append that writes half a line and then fails leaves the log byte-identical."""
+        # Arrange
+        overlay_store.save_pending("upload_partial", "v1", [sample_patch])
+        jsonl_path = overlay_store.get_overlay_path("upload_partial", "v1") / "patches.jsonl"
+
+        def half_write(*_args: object) -> None:
+            with open(jsonl_path, "a") as f:
+                f.write('{"patch_id": "trunc')
+            raise OSError("write interrupted")
+
+        monkeypatch.setattr(overlay_store, "append_patch", half_write)
+
+        # Act
+        with pytest.raises(OSError, match="write interrupted"):
+            overlay_store.accept_patch("upload_partial", "v1", sample_patch.patch_id, "actor")
+
+        # Assert
+        assert jsonl_path.read_bytes() == b""
+        assert [p.patch_id for p in overlay_store.load_pending("upload_partial", "v1")] == [sample_patch.patch_id]
+
+    def test_save_pending_replaceFails_keepsPreviousFile(self, overlay_store, sample_patch, monkeypatch):
+        """pending.json is written via a temp file, so a failed write keeps the old contents."""
+        # Arrange
+        from dataclasses import replace
+
+        from clinical_analytics.core import overlay_store as overlay_store_module
+
+        overlay_store.save_pending("upload_tmp", "v1", [sample_patch])
+        overlay_dir = overlay_store.get_overlay_path("upload_tmp", "v1")
+        before = (overlay_dir / "pending.json").read_bytes()
+
+        def replace_fails(*_args: object) -> None:
+            raise OSError("rename failed")
+
+        monkeypatch.setattr(overlay_store_module.os, "replace", replace_fails)
+
+        # Act
+        with pytest.raises(OSError, match="rename failed"):
+            overlay_store.save_pending("upload_tmp", "v1", [replace(sample_patch, patch_id="new")])
+
+        # Assert
+        assert (overlay_dir / "pending.json").read_bytes() == before
+        assert sorted(p.name for p in overlay_dir.iterdir()) == ["pending.json"]
+
+
+class TestPatchDecisionStaleState:
+    """A patch the log has already decided but pending.json still lists (pre-rollback failure)."""
+
+    @pytest.mark.parametrize("action", ["accept_patch", "reject_patch"])
+    def test_decide_decidedButStillPending_raisesAndDropsFromPending(self, overlay_store, sample_patch, action):
+        """The second decision is refused and the stale pending entry is removed."""
+        # Arrange
+        from clinical_analytics.core.overlay_store import PatchStateError
+
+        overlay_store.append_patch("upload_stale", "v1", sample_patch)  # status ACCEPTED
+        overlay_store.save_pending("upload_stale", "v1", [sample_patch])
+
+        # Act / Assert
+        with pytest.raises(PatchStateError, match="latest status=ACCEPTED"):
+            getattr(overlay_store, action)("upload_stale", "v1", sample_patch.patch_id, "actor")
+        assert overlay_store.load_pending("upload_stale", "v1") == []
+        assert len(overlay_store.load_patches("upload_stale", "v1")) == 1
+
+
+class TestPatchDecisionConcurrency:
+    """Concurrent decisions on one patch (sync API routes run in a threadpool) record exactly one."""
+
+    @pytest.mark.parametrize("second_action", ["accept_patch", "reject_patch"])
+    def test_decide_concurrentDecisions_oneRowOneStateError(
+        self, overlay_store, sample_patch, monkeypatch, second_action
+    ):
+        """A second decision made while the first is between its pending read and its write is refused."""
+        # Arrange
+        import threading
+
+        from clinical_analytics.core.overlay_store import OverlayStore, PatchStateError
+
+        overlay_store.save_pending("upload_race", "v1", [sample_patch])
+        outcomes: list[str] = []
+
+        def decide(action: str) -> None:
+            try:
+                getattr(overlay_store, action)("upload_race", "v1", sample_patch.patch_id, "actor")
+            except PatchStateError:
+                outcomes.append("state_error")
+            else:
+                outcomes.append("ok")
+
+        second = threading.Thread(target=decide, args=(second_action,))
+        real_load_pending = OverlayStore.load_pending
+
+        def load_pending_then_race(self_, upload_id, version):
+            pending = real_load_pending(self_, upload_id, version)
+            if threading.current_thread() is not second and not second.is_alive() and not outcomes:
+                # Run the competing decision now. Unlocked, it finishes and both write; locked, it
+                # blocks until this decision is done, so the join times out and we carry on.
+                second.start()
+                second.join(timeout=2.0)
+            return pending
+
+        monkeypatch.setattr(OverlayStore, "load_pending", load_pending_then_race)
+
+        # Act
+        decide("accept_patch")
+        second.join()
+
+        # Assert
+        assert sorted(outcomes) == ["ok", "state_error"]
+        assert [p.patch_id for p in overlay_store.load_patches("upload_race", "v1")] == [sample_patch.patch_id]
+
+
 class TestOverlayStoreRevert:
     """Tests for reverting accepted patches (append-only REVERTED row)."""
 
