@@ -19,10 +19,13 @@ def test_grouped_count_is_not_an_unbound_subject() -> None:
 
 
 def test_unbound_death_word_is_a_gap() -> None:
-    """died is not a stored column token, so the count must not pass as applied."""
+    """died is not a stored column token, so the count must not pass as applied.
+
+    The gap names the word itself, because the refusal shown to the user lists it.
+    """
     gaps = unapplied_constraints(
         "How many MIMIC patients died?",
         _Plan(),
         ["dod", "gender", "anchor_age"],
     )
-    assert "unbound subject" in gaps
+    assert "died" in gaps

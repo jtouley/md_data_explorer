@@ -14,25 +14,35 @@ import pytest
 from clinical_analytics.eval.hard_questions import all_hard_questions, oracle_value, questions_for_dataset
 from clinical_analytics.eval.headless import ask, classify
 
-# Hard questions the system currently refuses (mostly 0/1 outcome columns with no
-# yes/no labels, which the cohort binder will not guess a polarity for). Pinned so a
-# lost answer fails loudly; remove an id when it starts being answered correctly.
-HARD_REFUSED_IDS: frozenset[str] = frozenset(
+# Hard questions the system currently holds or refuses. Pinned so a lost answer fails
+# loudly; remove an id when it starts being answered correctly. Causes: 0/1 outcome columns
+# with no yes/no labels (no polarity is guessed); "<measure> for patients over N", where N
+# could belong to the measure (the word-accounting gate holds it); and residuals that did
+# not parse, which are held at confidence 0.0 rather than given a confidence.
+HARD_NOT_ANSWERED_IDS: frozenset[str] = frozenset(
     {
         "cohort-analytical-003",
         "cohort-analytical-005",
+        "cohort-analytical-014",
+        "cohort-analytical-015",
+        "cohort-analytical-016",
+        "cohort-analytical-017",
         "cohort-analytical-020",
         "cohort-analytical-021",
         "cohort-analytical-022",
         "cohort-analytical-023",
+        "cohort-analytical-025",
         "cohort-provider-001",
+        "cohort-provider-002",
         "cohort-provider-004",
         "cohort-provider-005",
         "cohort-provider-006",
         "cohort-provider-009",
     }
 )
-HARD_MIN_ANSWERED_RATE = 0.6
+# Ambiguous on purpose: "median ldl over 70?" could cut on ldl or on age. Must never run.
+HARD_MUST_HOLD_IDS: frozenset[str] = frozenset({"cohort-provider-002"})
+HARD_MIN_ANSWERED_RATE = 0.5
 
 
 def test_hardQuestions_catalog_uniqueQueriesAndCitedProviderQuestions() -> None:
@@ -55,7 +65,7 @@ def test_hardQuestions_pinnedRefusals_areKnownIds() -> None:
     ids = {question["id"] for question in all_hard_questions()}
 
     # Act
-    unknown = HARD_REFUSED_IDS - ids
+    unknown = (HARD_NOT_ANSWERED_IDS | HARD_MUST_HOLD_IDS) - ids
 
     # Assert
     assert unknown == set()
@@ -93,7 +103,7 @@ def test_hardSuite_everyQuestion_matchesOracleOrRefuses(project_root: Path) -> N
     questions = all_hard_questions()
 
     # Act
-    outcomes: dict[str, list[str]] = {"answered": [], "refused": [], "wrong": []}
+    outcomes: dict[str, list[str]] = {"answered": [], "held": [], "refused": [], "wrong": []}
     details: list[str] = []
     for question in questions:
         expected = oracle_value(question, project_root)
@@ -105,7 +115,8 @@ def test_hardSuite_everyQuestion_matchesOracleOrRefuses(project_root: Path) -> N
 
     # Assert
     assert details == [], "silently wrong answers"
-    assert set(outcomes["refused"]) == HARD_REFUSED_IDS
+    assert set(outcomes["held"]) | set(outcomes["refused"]) == HARD_NOT_ANSWERED_IDS
+    assert HARD_MUST_HOLD_IDS <= set(outcomes["held"])
     assert len(outcomes["answered"]) / len(questions) >= HARD_MIN_ANSWERED_RATE
 
 
@@ -114,7 +125,7 @@ def test_hardSuite_everyQuestion_matchesOracleOrRefuses(project_root: Path) -> N
 @pytest.mark.parametrize(
     "query",
     [
-        pytest.param("what predicts the outcome?", id="predictors_have_no_verified_statistic"),
+        pytest.param("what predicts the outcome?", id="predictor_on_unresolved_outcome"),
         pytest.param("How many patients died?", id="unbound_death_word"),
         pytest.param("tell me about the weather", id="unparseable_question"),
     ],
@@ -125,3 +136,4 @@ def test_headlessAsk_unanswerableQuestion_isRefused(project_root: Path, query: s
 
     # Assert
     assert result["success"] is False
+    assert result["failure_reason"] or any(item.get("severity") == "error" for item in result["issues"])

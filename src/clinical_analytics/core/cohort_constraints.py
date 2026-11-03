@@ -35,8 +35,8 @@ _BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE
 # Words that turn "<value>" into "everyone except <value>". Binding the value as an
 # equality would answer for exactly the patients the question excludes.
 _NEGATION = re.compile(
-    r"\b(?:not|remove|removing|exclude|excluding|without|except|drop|omit|other than|get rid of|"
-    r"don'?t want|do not want|no longer)\b",
+    r"\b(?:not|non|never|outside|remove|removing|exclude|excluding|without|except|drop|omit|other than|"
+    r"get rid of|don'?t want|do not want|no longer)\b",
     re.IGNORECASE,
 )
 _SEX_WORDS = {"sex", "gender", "woman", "women", "man", "men", "female", "male"}
@@ -134,7 +134,9 @@ def peel_cohort(
     age = _best_column(columns, {"age"})
     over = _OVER.search(text)
     if over:
-        named = _best_column(columns, _tokens(over.group(0))) or age
+        # The number belongs to the column the question names before it ("bmi over 30");
+        # age only when the words say so. Unknown owner: leave it unbound so the plan holds.
+        named = _over_owner(lowered, over, columns, values_for)
         if named:
             steps.append((0, CohortStep("gt", named, float(over.group(1)))))
             consumed |= _tokens(named) | _tokens(over.group(0))
@@ -297,29 +299,21 @@ def peel_cohort(
 def attach_cohort(intent: Any, peeled: PeelResult) -> Any:
     """Copy peeled restrictions onto the parsed intent.
 
-    A confident COUNT is only built when the peel itself found structure. A question
-    nothing understood stays unparsed (or low confidence) so it is refused or
-    confirmed, never answered as a count of every patient.
+    Confidence is never raised: the result keeps the parsed intent's confidence. When the
+    residual did not parse, an intent is built at confidence 0.0, so the execution gate
+    holds it for confirmation instead of running it.
     """
-    from clinical_analytics.core.nl_query_config import TIER_1_PATTERN_MATCH_THRESHOLD
-
-    # The peel is a pattern-tier parse: it gets the configured pattern threshold,
-    # never a hand-picked higher confidence (pattern confidence is uncalibrated).
-    pattern_confidence = TIER_1_PATTERN_MATCH_THRESHOLD
     has_structure = bool(peeled.steps or peeled.proportion_column or peeled.rate_column or peeled.force_intent)
-    weak = intent is None or intent.confidence < pattern_confidence
-    if weak and not has_structure:
+    if not has_structure:
         return intent
-    if weak:
+    if intent is None:
         from clinical_analytics.core.nl_query_engine import QueryIntent
 
         intent = QueryIntent(
             intent_type=peeled.force_intent or "COUNT",
-            confidence=pattern_confidence,
+            confidence=0.0,
             parsing_tier="pattern_match",
         )
-    if intent is None:
-        return None
     intent.cohort_steps.extend(peeled.steps)
     if peeled.proportion_column:
         intent.proportion_column = peeled.proportion_column
@@ -336,7 +330,10 @@ def attach_cohort(intent: Any, peeled: PeelResult) -> Any:
     if peeled.force_intent == "CORRELATIONS" and peeled.locked_metric and peeled.locked_group:
         # The relationship analysis reads predictor_variables, not metric/group.
         intent.predictor_variables = [peeled.locked_metric, peeled.locked_group]
-    if peeled.force_intent and intent.confidence < pattern_confidence:
+    from clinical_analytics.core.nl_query_config import TIER_1_PATTERN_MATCH_THRESHOLD
+
+    # The peel's intent only replaces a parse too weak to stand; confidence is untouched.
+    if peeled.force_intent and intent.confidence < TIER_1_PATTERN_MATCH_THRESHOLD:
         intent.intent_type = peeled.force_intent
     return intent
 
@@ -396,8 +393,8 @@ def unapplied_constraints(
         used_tokens: set[str] = set()
         for column in used:
             used_tokens |= _tokens(str(column))
-        if tokens - used_tokens:
-            gaps.append("unbound subject")
+        # Name the words themselves: the user sees this list.
+        gaps.extend(sorted(tokens - used_tokens))
     return gaps
 
 
@@ -428,11 +425,12 @@ def _value_hits(
     values_for: Callable[[str], list[Any]],
 ) -> list[tuple[str, Any, int]]:
     hits: list[tuple[str, Any, int]] = []
-    tokens = _tokens(text)
+    tokens = _tokens(text, digits=True)
     for column in columns:
-        # Rank first (exact word beats inflection beats prefix), then position, so a
-        # prefix guess can never beat a stored value the question names exactly.
-        best: tuple[int, int, Any] | None = None
+        # Rank (exact word, inflection, prefix), then specificity (more words of the value
+        # named: "North East" over "North"). Two values tied on both is ambiguous: bind
+        # neither, so the unbound word holds the plan. Never decide by value order.
+        found_values: list[tuple[int, int, int, Any]] = []
         for value in values_for(column):
             if value is None or isinstance(value, bool):
                 continue
@@ -442,10 +440,15 @@ def _value_hits(
             found = _label_at(text, tokens, label)
             if found is None:
                 continue
-            if best is None or found < best[:2]:
-                best = (found[0], found[1], value)
-        if best is not None:
-            hits.append((column, best[2], best[1]))
+            found_values.append((found[0], -len(_tokens(label, digits=True)), found[1], value))
+        if not found_values:
+            continue
+        found_values.sort(key=lambda item: (item[0], item[1]))
+        best = found_values[0]
+        tied = [item for item in found_values if item[:2] == best[:2]]
+        if len(tied) > 1:
+            continue
+        hits.append((column, best[3], best[2]))
     hits.sort(key=lambda item: item[2])
     return hits
 
@@ -457,14 +460,18 @@ def _label_at(text: str, tokens: set[str], label: str) -> tuple[int, int] | None
     word of the value ("diabet" for "diabetes"). A word inside another word does not
     count: "male" is inside "female" and must never select it.
     """
-    label_tokens = _tokens(label)
+    label_tokens = _tokens(label, digits=True)
     if label_tokens and label_tokens <= tokens:
         return 0, _word_at(text, next(iter(label_tokens)))
     inflections = _VALUE_INFLECTIONS.get(label, set())
     shared = inflections & tokens
     if shared:
         return 1, min(_word_at(text, word) for word in shared)
-    prefixed = [token for token in tokens if len(token) >= 4 and any(part.startswith(token) for part in label_tokens)]
+    prefixed = [
+        token
+        for token in tokens
+        if len(token) >= 4 and not token.isdigit() and any(part.startswith(token) for part in label_tokens)
+    ]
     if prefixed:
         return 2, min(_word_at(text, token) for token in prefixed)
     return None
@@ -481,7 +488,7 @@ def _binary_polarity(
     text: str,
     at: int,
 ) -> Any:
-    yes, no = _yes_no_values(column, values)
+    yes, no = yes_no_values(column, values)
     if yes is None or no is None:
         return None
     return no if _negated(text, at) else yes
@@ -492,7 +499,7 @@ def _negated(text: str, at: int) -> bool:
     return _NEGATION.search(text[max(0, at - 48) : at]) is not None
 
 
-def _yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:
+def yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:
     present = [value for value in values if value is not None]
     for value in present:
         if value is True:
@@ -584,9 +591,28 @@ def _score(column: str, tokens: set[str]) -> int:
     return len(matched) * 3 - len(extra)
 
 
-def _tokens(text: str) -> set[str]:
+def _tokens(text: str, digits: bool = False) -> set[str]:
+    """Content words. ``digits=True`` keeps numbers, so stored values "Type 1" and "Type 2" differ."""
     parts = re.findall(r"[a-z0-9]+", text.lower())
-    return {part for part in parts if part not in _STOP and not part.isdigit() and len(part) > 1}
+    return {
+        part
+        for part in parts
+        if part not in _STOP and (digits or not part.isdigit()) and (len(part) > 1 or (digits and part.isdigit()))
+    }
+
+
+def _over_owner(
+    lowered: str,
+    over: re.Match[str],
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+) -> str | None:
+    """Column the compared number belongs to (shared rule with the word-accounting gate)."""
+    from clinical_analytics.core.word_accounting import _is_measure, number_owner, tokenize
+
+    tokens = tokenize(lowered[: over.end()])
+    numeric = {column for column in columns if _is_measure(values_for(column))}
+    return number_owner(tokens, len(tokens) - 1, columns, numeric)
 
 
 def _is_group(column: str) -> bool:

@@ -1900,7 +1900,11 @@ class SemanticLayer:
             gap_columns = list(self.get_base_view().columns)
             gaps = unapplied_constraints(query_text, plan, gap_columns)
             if gaps:
-                message = "Cohort constraint was not applied: " + ", ".join(gaps)
+                quoted = ", ".join(f"'{gap}'" for gap in gaps)
+                message = (
+                    f"Part of the question could not be applied ({quoted}), so the answer would "
+                    "not match what you asked. Rephrase it using the dataset's columns and values."
+                )
                 warnings.append(message)
                 steps.append(
                     {
@@ -1915,6 +1919,7 @@ class SemanticLayer:
                     "run_key": run_key,
                     "warnings": warnings,
                     "error": message,
+                    "failure_reason": message,
                     "steps": steps,
                     "chart_spec": chart_spec,
                 }
@@ -1946,6 +1951,21 @@ class SemanticLayer:
                 "warnings": warnings,
                 "steps": steps,  # Phase 2.5.1: Core provides step data
                 "chart_spec": chart_spec,  # Phase 3.3: Chart specification for visualization
+            }
+        except CohortStepError as e:
+            # Plain language already: a limit that cannot be applied refuses the query.
+            reason = str(e)
+            warnings.append(reason)
+            steps.append({"status": "error", "text": "Query refused", "details": {"error": reason}})
+            return {
+                "success": False,
+                "result": None,
+                "run_key": run_key,
+                "warnings": warnings,
+                "error": reason,
+                "failure_reason": reason,
+                "steps": steps,
+                "chart_spec": chart_spec,
             }
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)

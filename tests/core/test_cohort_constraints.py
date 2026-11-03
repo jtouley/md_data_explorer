@@ -16,10 +16,10 @@ from clinical_analytics.core.query_plan import CohortStep, CohortStepError, Filt
 _COLUMNS = ["patient_id", "age", "gender", "treatment", "ldl", "Statin use 1: Yes 2: No"]
 _VALUES: dict[str, list[Any]] = {
     "patient_id": ["a", "b"],
-    "age": [40, 70],
+    "age": [40, 55, 70],
     "gender": ["Female", "Male"],
     "treatment": ["drug", "placebo"],
-    "ldl": [100.0, 150.0],
+    "ldl": [100.0, 150.0, 175.0],
     "Statin use 1: Yes 2: No": [1, 2],
 }
 
@@ -125,17 +125,76 @@ def test_attachCohort_peeledSteps_buildCountWithSteps() -> None:
     assert attached.cohort_steps == [CohortStep("eq", "gender", "Male")]
 
 
-def test_attachCohort_builtIntent_usesConfiguredPatternConfidence() -> None:
-    # Arrange
-    from clinical_analytics.core.nl_query_config import TIER_1_PATTERN_MATCH_THRESHOLD
-
+def test_attachCohort_unparsedResidual_buildsIntentAtZeroConfidence() -> None:
+    # Arrange: confidence is never raised; an intent built for an unparsed residual is held
     peeled = PeelResult(residual="how many patients?", steps=[CohortStep("eq", "gender", "Male")])
 
     # Act
     attached = attach_cohort(None, peeled)
 
     # Assert
-    assert attached.confidence == TIER_1_PATTERN_MATCH_THRESHOLD
+    assert attached.confidence == 0.0
+
+
+@pytest.mark.parametrize("confidence", [pytest.param(0.3, id="weak"), pytest.param(0.9, id="pattern")])
+def test_attachCohort_parsedIntent_keepsItsConfidence(confidence: float) -> None:
+    # Arrange
+    from clinical_analytics.core.nl_query_engine import QueryIntent
+
+    parsed = QueryIntent(intent_type="COUNT", confidence=confidence)
+    peeled = PeelResult(residual="how many patients?", steps=[CohortStep("eq", "gender", "Male")])
+
+    # Act
+    attached = attach_cohort(parsed, peeled)
+
+    # Assert
+    assert attached.confidence == confidence
+    assert attached.cohort_steps == [CohortStep("eq", "gender", "Male")]
+
+
+@pytest.mark.parametrize(
+    ("values", "query", "expected"),
+    [
+        pytest.param(
+            ["North", "North East", "South"], "how many patients in North East?", "North East", id="most_specific"
+        ),
+        pytest.param(["North", "North East", "South"], "how many patients in the north?", "North", id="shorter_exact"),
+        pytest.param(
+            ["Type 1", "Type 2", "None"], "how many patients with type 2 diabetes?", "Type 2", id="digits_decide"
+        ),
+        pytest.param(
+            ["Type 1", "Type 2", "None"], "how many patients with type diabetes?", None, id="tie_binds_nothing"
+        ),
+    ],
+)
+def test_peelCohort_storedValues_bindMostSpecificAndNeverATie(
+    values: list[Any], query: str, expected: str | None
+) -> None:
+    # Arrange
+    columns = ["patient_id", "label"]
+
+    # Act
+    peeled = peel_cohort(query, columns, lambda column: values if column == "label" else ["p1"])
+
+    # Assert
+    bound = [step.value for step in peeled.steps if step.column == "label"]
+    assert bound == ([] if expected is None else [expected])
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many patients with ldl over 130?", [CohortStep("gt", "ldl", 130.0)], id="named_measure"),
+        pytest.param("how many patients over 65?", [CohortStep("gt", "age", 65.0)], id="subject_means_age"),
+        pytest.param("what is the average ldl in patients over 30?", [], id="ambiguous_owner_unbound"),
+    ],
+)
+def test_peelCohort_overNumber_bindsItsOwnerOrNothing(query: str, expected: list[CohortStep]) -> None:
+    # Arrange / Act
+    peeled = _peel(query)
+
+    # Assert
+    assert [step for step in peeled.steps if step.op == "gt"] == expected
 
 
 def test_attachCohort_correlation_setsPredictorVariables() -> None:

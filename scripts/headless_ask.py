@@ -29,7 +29,7 @@ from clinical_analytics.eval.headless import _result_frame, ask, classify  # noq
 
 
 def _report(label: str, outcomes: list[tuple[dict[str, Any], str, Any, dict[str, Any]]]) -> int:
-    counts = {"answered": 0, "refused": 0, "wrong": 0}
+    counts = {"answered": 0, "held": 0, "refused": 0, "wrong": 0}
     for _question, outcome, _actual, _result in outcomes:
         counts[outcome] += 1
     print(f"{label}: checked {len(outcomes)}, " + ", ".join(f"{key} {value}" for key, value in counts.items()))

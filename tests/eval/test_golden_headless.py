@@ -15,7 +15,7 @@ import pytest
 from clinical_analytics.eval.catalog import DATASET_FILES, dataset_path, questions_for_dataset
 from clinical_analytics.eval.headless import ask, classify, values_match
 
-# Golden questions the system currently refuses. Pinned so a lost answer fails loudly;
+# Golden questions the system currently holds or refuses. Pinned so a lost answer fails loudly;
 # when a refusal starts being answered correctly, remove its id here.
 GOLDEN_REFUSED_IDS: frozenset[str] = frozenset()
 GOLDEN_MIN_ANSWERED_RATE = 0.95
@@ -77,17 +77,18 @@ class TestClassify:
             pytest.param(True, 7, "answered", id="success_matching_value"),
             pytest.param(True, 8, "wrong", id="success_different_value"),
             pytest.param(False, 8, "refused", id="refused_even_with_value"),
+            pytest.param("held", None, "held", id="held_for_confirmation"),
             pytest.param(False, None, "refused", id="refused_no_payload"),
             pytest.param(True, None, "wrong", id="success_without_value"),
         ],
     )
     def test_classify_outcome_onlyMatchingSuccessIsAnswered(
-        self, success: bool, rows: int | None, expected_outcome: str
+        self, success: bool | str, rows: int | None, expected_outcome: str
     ) -> None:
         # Arrange
         question: dict[str, Any] = {"kind": "count"}
         payload = None if rows is None else {"result": rows}
-        result = {"success": success, "payload": payload}
+        result = {"success": success is True, "held": success == "held", "payload": payload}
 
         # Act
         outcome, _actual = classify(question, 7, result)
@@ -133,7 +134,7 @@ def test_goldenSuite_everyQuestion_answeredCorrectlyOrRefused(project_root: Path
     questions = questions_for_dataset("cohort", project_root)
 
     # Act
-    outcomes: dict[str, list[str]] = {"answered": [], "refused": [], "wrong": []}
+    outcomes: dict[str, list[str]] = {"answered": [], "held": [], "refused": [], "wrong": []}
     details: list[str] = []
     for question in questions:
         result = ask("cohort", question["query"], project_root)
@@ -146,5 +147,5 @@ def test_goldenSuite_everyQuestion_answeredCorrectlyOrRefused(project_root: Path
 
     # Assert
     assert details == [], "silently wrong answers"
-    assert set(outcomes["refused"]) == GOLDEN_REFUSED_IDS
+    assert set(outcomes["held"]) | set(outcomes["refused"]) == GOLDEN_REFUSED_IDS
     assert len(outcomes["answered"]) / len(questions) >= GOLDEN_MIN_ANSWERED_RATE

@@ -12,7 +12,6 @@ from typing import Any, Literal
 
 import polars as pl
 
-from clinical_analytics.core.cohort_constraints import unapplied_constraints
 from clinical_analytics.core.query_service import QueryService
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.eval.catalog import DATASET_FILES, load_dataset_frame
@@ -165,23 +164,10 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str,
     plan = result.plan
     payload = result.result if isinstance(result.result, dict) else None
     issues = list(result.issues)
-    columns = list(service.semantic_layer.get_base_view().columns)
-    gaps = unapplied_constraints(query, plan, columns)
-    for gap in gaps:
-        issues.append(
-            {
-                "message": f"Cohort constraint was not applied: {gap}",
-                "severity": "error",
-            }
-        )
-    if plan is not None and plan.intent == "FIND_PREDICTORS":
-        issues.append(
-            {
-                "message": "Predictor questions do not return a verified statistic",
-                "severity": "error",
-            }
-        )
-    success = not any(item.get("severity") == "error" for item in issues) and payload is not None
+    # Same rule as production: a hold or any error is not an answer.
+    held = bool(result.requires_confirmation or (payload or {}).get("requires_confirmation"))
+    executed = payload is not None and payload.get("success") is True
+    success = executed and not held and not any(item.get("severity") == "error" for item in issues)
     return {
         "dataset_id": dataset_id,
         "query": query,
@@ -192,6 +178,8 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str,
         "confidence": result.confidence,
         "payload": payload,
         "success": success,
+        "held": held,
+        "failure_reason": result.failure_reason,
     }
 
 
@@ -208,14 +196,14 @@ def values_match(expected: Any, actual: Any) -> bool:
     return bool(expected == actual)
 
 
-Outcome = Literal["answered", "refused", "wrong"]
+Outcome = Literal["answered", "held", "refused", "wrong"]
 
 
 def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) -> tuple[Outcome, Any]:
     """Answered matches ground truth, refused is success False, wrong is a success that does not match."""
     actual = actual_value(question["kind"], question.get("stat"), question.get("group_by"), result.get("payload"))
     if not result["success"]:
-        return "refused", actual
+        return ("held" if result.get("held") else "refused"), actual
     if expected is not None and values_match(expected, actual):
         return "answered", actual
     return "wrong", actual

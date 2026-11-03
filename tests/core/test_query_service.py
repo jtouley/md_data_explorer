@@ -71,6 +71,7 @@ class TestQueryService:
     def test_query_service_ask_generates_run_key(self, mock_semantic_layer):
         """Test that ask() generates deterministic run_key."""
         # Arrange
+        mock_semantic_layer = mock_semantic_layer()  # factory fixture: build the layer
         service = QueryService(mock_semantic_layer)
         query = "what is the average age?"
 
@@ -160,6 +161,7 @@ class TestQueryService:
     def test_query_service_ask_normalizes_query(self, mock_semantic_layer):
         """Test that ask() normalizes query before parsing."""
         # Arrange
+        mock_semantic_layer = mock_semantic_layer()  # factory fixture: build the layer
         service = QueryService(mock_semantic_layer)
         query = "  What  IS   the  Average  AGE?  "  # Has extra spaces and mixed case
 

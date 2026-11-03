@@ -11,10 +11,12 @@ workflow management, and comparison questions.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import duckdb
+import polars as pl
 
 from clinical_analytics.eval.catalog import dataset_path
 
@@ -46,7 +48,7 @@ def _q(
     family: str,
     number: int,
     query: str,
-    sql: str,
+    sql: str | PolarsOracle,
     kind: str,
     *,
     stat: str | None = None,
@@ -58,7 +60,8 @@ def _q(
         "dataset_id": dataset_id,
         "family": family,
         "query": query,
-        "sql": sql.strip(),
+        "sql": sql.strip() if isinstance(sql, str) else None,
+        "compute": None if isinstance(sql, str) else sql,
         "kind": kind,
         "stat": stat,
         "group_by": group_by,
@@ -108,36 +111,31 @@ def _corr(table: str, left: str, right: str) -> str:
     return f"SELECT corr({_ident(left)}, {_ident(right)}) FROM {_ident(table)}"
 
 
-def _decile_avg(table: str, column: str, *preds: str) -> str:
-    where = " AND ".join(pred for pred in preds if pred) or "TRUE"
-    col = _ident(column)
-    return f"""
-    WITH cohort AS (SELECT * FROM {_ident(table)} WHERE {where}),
-    cut AS (SELECT quantile_cont({col}, 0.9) AS q FROM cohort)
-    SELECT avg({col}) FROM cohort, cut WHERE {col} >= q
-    """
+# Cutoff oracles are computed in Polars, not SQL: production applies these cutoffs with
+# DuckDB SQL, and an oracle that copies that SQL would agree with it by construction.
+PolarsOracle = Callable[[pl.DataFrame], Any]
 
 
-def _median_count(table: str, median_column: str, outcome: str, *preds: str) -> str:
-    where = " AND ".join(pred for pred in preds if pred) or "TRUE"
-    col = _ident(median_column)
-    return f"""
-    WITH cohort AS (SELECT * FROM {_ident(table)} WHERE {where}),
-    cut AS (SELECT median({col}) AS m FROM cohort),
-    limited AS (SELECT cohort.* FROM cohort, cut WHERE cohort.{col} > cut.m)
-    SELECT count(*) FROM limited WHERE {outcome}
-    """
+def _decile_avg(column: str, where: pl.Expr = pl.lit(True)) -> PolarsOracle:
+    """Mean of the rows at or above the 90th percentile (linear interpolation) of the cohort."""
+
+    def compute(frame: pl.DataFrame) -> float:
+        cohort = frame.filter(where)
+        cut = cohort.get_column(column).quantile(0.9, interpolation="linear")
+        return float(cohort.filter(pl.col(column) >= cut).get_column(column).mean())  # type: ignore[arg-type]
+
+    return compute
 
 
-def _median_avg(table: str, column: str, *preds: str) -> str:
-    where = " AND ".join(pred for pred in preds if pred) or "TRUE"
-    col = _ident(column)
-    return f"""
-    WITH cohort AS (SELECT * FROM {_ident(table)} WHERE {where}),
-    cut AS (SELECT median({col}) AS m FROM cohort),
-    limited AS (SELECT cohort.* FROM cohort, cut WHERE cohort.{col} > cut.m)
-    SELECT avg({col}) FROM limited
-    """
+def _median_count(median_column: str, outcome: pl.Expr, where: pl.Expr = pl.lit(True)) -> PolarsOracle:
+    """Rows strictly above the cohort median that also meet the outcome."""
+
+    def compute(frame: pl.DataFrame) -> int:
+        cohort = frame.filter(where)
+        cut = cohort.get_column(median_column).median()
+        return cohort.filter((pl.col(median_column) > cut) & outcome).height
+
+    return compute
 
 
 def _finish(dataset_id: str, family: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -164,7 +162,7 @@ def _finish(dataset_id: str, family: str, rows: list[dict[str, Any]]) -> list[di
 
 def _row(
     query: str,
-    sql: str,
+    sql: str | PolarsOracle,
     kind: str,
     *,
     stat: str | None = None,
@@ -209,16 +207,16 @@ def _cohort_analytical(table: str) -> list[dict[str, Any]]:
                 )
     rows.extend(
         [
-            _row("What is the average age in the oldest decile?", _decile_avg(table, age), "stat", stat="average"),
+            _row("What is the average age in the oldest decile?", _decile_avg(age), "stat", stat="average"),
             _row(
                 "Among women, what is the average ldl in the top decile of ldl?",
-                _decile_avg(table, ldl, women),
+                _decile_avg(ldl, pl.col("sex") == "F"),
                 "stat",
                 stat="average",
             ),
             _row(
                 "Among men older than the median age, how many had the outcome?",
-                _median_count(table, age, outcome, men),
+                _median_count(age, pl.col("outcome") == 1, pl.col("sex") == "M"),
                 "count",
             ),
             _row("What proportion of women have diabetes?", _proportion(table, "diabetes", "1", women), "proportion"),
@@ -330,9 +328,13 @@ def all_hard_questions() -> list[dict[str, Any]]:
 
 
 def oracle_value(question: dict[str, Any], workspace: Path | None = None) -> Any:
-    """Run the question's SQL against the dataset CSV in DuckDB. This is the expected answer."""
+    """Expected answer: the question's SQL in DuckDB, or its Polars oracle, over the dataset CSV."""
     dataset_id = question["dataset_id"]
     path = dataset_path(dataset_id, workspace)
+    compute = question.get("compute")
+    if compute is not None:
+        value = compute(pl.read_csv(path))
+        return None if value is None else (int(value) if question["kind"] == "count" else float(value))
     con = duckdb.connect()
     try:
         literal = "'" + str(path).replace("'", "''") + "'"

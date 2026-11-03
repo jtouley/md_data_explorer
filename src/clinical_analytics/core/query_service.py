@@ -9,14 +9,45 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+import polars as pl
+
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
-from clinical_analytics.core.query_plan import QueryPlan
+from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
+from clinical_analytics.core.word_accounting import hold_reason, unused_words
+
+_GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len"})
+
+
+def all_null_statistics_reason(result: Any, plan: QueryPlan) -> str | None:
+    """Plain-language refusal when every requested statistic came back empty.
+
+    A frame of null statistics (for example, no patient matched the limits) is not an
+    answer. Counts are exempt: zero patients is a real answer.
+    """
+    if plan.intent == "COUNT" or plan.proportion_column or plan.rate_column or result is None:
+        return None
+    frame = result if isinstance(result, pl.DataFrame) else _to_polars(result)
+    if frame is None:
+        return None
+    stats = [name for name in frame.columns if name != plan.group_by and name not in _GROUP_SIZE_COLUMNS]
+    if not stats:
+        return None
+    if frame.height == 0 or frame.select(pl.all_horizontal(pl.col(stats).is_null().all())).item():
+        return "No patients matched the question's limits, so there is no value to report."
+    return None
+
+
+def _to_polars(result: Any) -> pl.DataFrame | None:
+    try:
+        return pl.from_pandas(result)
+    except (TypeError, ValueError, ImportError):
+        return None
 
 
 @dataclass
@@ -211,6 +242,24 @@ class QueryService:
                 plan_line=shown_plan_line,
             )
 
+        # Word accounting (all tiers): a plan that leaves a word of the question unused answers
+        # a different question. Hold it for review regardless of confidence; only the user's
+        # confirmation of this exact plan releases it.
+        if not confirmed:
+            unused = self._unused_words(normalized_query, query_plan, context)
+            if unused:
+                return QueryResult(
+                    plan=query_plan,
+                    issues=issues,
+                    result=None,
+                    confidence=query_intent.confidence,
+                    run_key=None,
+                    context=context,
+                    requires_confirmation=True,
+                    failure_reason=hold_reason(unused),
+                    plan_line=shown_plan_line,
+                )
+
         try:
             execution_result = self.semantic_layer.execute_query_plan(
                 query_plan,
@@ -235,12 +284,21 @@ class QueryService:
                     reason = failure_reason or ((execution_result.get("warnings") or ["Execution failed"])[0])
                     issues.append({"message": str(reason), "severity": "error"})
                 elif execution_result.get("success") is True:
-                    # Run the statistics for the plan's intent (t-test, regression, ...).
-                    analysis = self.semantic_layer.format_execution_result(execution_result, context)
-                    if analysis.get("error"):
-                        issues.append({"message": str(analysis["error"]), "severity": "error"})
+                    empty_reason = all_null_statistics_reason(execution_result.get("result"), query_plan)
+                    if empty_reason:
+                        failure_reason = empty_reason
+                        issues.append({"message": empty_reason, "severity": "error"})
                     else:
-                        claim = present_analysis(analysis).get("claim")
+                        # Run the statistics for the plan's intent (t-test, regression, ...).
+                        analysis = self.semantic_layer.format_execution_result(execution_result, context)
+                        if analysis.get("error"):
+                            issues.append({"message": str(analysis["error"]), "severity": "error"})
+                        else:
+                            claim = present_analysis(analysis).get("claim")
+        except CohortStepError as e:
+            # Already plain language: say why the limit could not be applied.
+            failure_reason = str(e)
+            issues.append({"message": failure_reason, "severity": "error"})
         except Exception as e:
             issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
 
@@ -256,6 +314,18 @@ class QueryService:
             requires_confirmation=requires_confirmation,
             failure_reason=failure_reason,
             plan_line=plan_line,
+        )
+
+    def _unused_words(self, question: str, plan: QueryPlan, context: AnalysisContext) -> list[str]:
+        columns = list(self.semantic_layer.get_base_view().columns)
+        alias_index = self.semantic_layer.get_column_alias_index()
+        return unused_words(
+            question,
+            plan,
+            columns,
+            self.nl_engine._distinct_values,
+            alias_index=alias_index if isinstance(alias_index, dict) else None,
+            context=context,
         )
 
     def _generate_run_key(self, plan: QueryPlan, query_text: str) -> str:
