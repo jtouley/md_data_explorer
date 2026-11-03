@@ -25,6 +25,14 @@ _MEDIAN_CUT = re.compile(
     r"\b(?:older|greater|higher) than the (?:cohort )?median(?: ([a-z0-9 ]+?))?(?=[?]|,|$)",
     re.IGNORECASE,
 )
+# "compare <metric> by|between|across <group>": the group is what follows the preposition.
+_COMPARE_SPLIT = re.compile(
+    r"\bcompare\s+(?P<metric>.+?)\s+(?:by|between|across)\s+(?P<group>.+?)\s*[?.]?$",
+    re.IGNORECASE,
+)
+# Trailing "by <group>": that column is the grouping, never a filter on itself.
+_BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
+_SEX_WORDS = {"sex", "gender", "woman", "women", "man", "men", "female", "male"}
 _STOP = {
     "the",
     "a",
@@ -160,6 +168,11 @@ def peel_cohort(
     counting = re.search(r"\bhow many\b", lowered) is not None or rating
     mentioned = _mentioned(lowered, columns, _tokens(lowered) - consumed)
     bound_columns = {step.column for _phase, step in steps}
+    by_group = _BY_GROUP.search(lowered)
+    if by_group:
+        grouping_column = _best_column(columns, _tokens(by_group.group("group")))
+        if grouping_column:
+            bound_columns.add(grouping_column)
 
     for column, value, at in value_hits:
         if (
@@ -211,8 +224,17 @@ def peel_cohort(
     locked_group = None
     force_intent = None
     if comparing:
-        group = _best_column(columns, {"sex", "gender"})
-        metric_tokens = _tokens(lowered) - consumed - (_tokens(group) if group else set())
+        # The group comes from the words after by/between/across. Sex is only the default
+        # when the question itself is about sex; never substitute it for a named group.
+        split = _COMPARE_SPLIT.search(lowered)
+        if split:
+            group = _best_column(columns, _tokens(split.group("group")))
+            metric_tokens = _tokens(split.group("metric")) - consumed
+        else:
+            group = _best_column(columns, {"sex", "gender"}) if _tokens(lowered) & _SEX_WORDS else None
+            metric_tokens = _tokens(lowered) - consumed
+        if group:
+            metric_tokens -= _tokens(group)
         metric = _best_column(
             [column for column in columns if column not in bound_columns],
             metric_tokens,
@@ -232,7 +254,7 @@ def peel_cohort(
         lowered,
     )
     if stat_phrase and locked_metric is None:
-        phrase = re.split(r"\b(?:in|for|who|with|on|among)\b", stat_phrase.group(1))[0]
+        phrase = re.split(r"\b(?:in|for|who|with|on|among|by)\b", stat_phrase.group(1))[0]
         chosen = _best_column(columns, _tokens(phrase))
         if chosen:
             keep = _tokens(chosen)
@@ -257,7 +279,15 @@ def peel_cohort(
 
 
 def attach_cohort(intent: Any, peeled: PeelResult) -> Any:
-    """Copy peeled restrictions onto the parsed intent."""
+    """Copy peeled restrictions onto the parsed intent.
+
+    A confident COUNT is only built when the peel itself found structure. A question
+    nothing understood stays unparsed (or low confidence) so it is refused or
+    confirmed, never answered as a count of every patient.
+    """
+    has_structure = bool(peeled.steps or peeled.proportion_column or peeled.rate_column or peeled.force_intent)
+    if (intent is None or intent.confidence < 0.9) and not has_structure:
+        return intent
     if intent is None or intent.confidence < 0.9:
         from clinical_analytics.core.nl_query_engine import QueryIntent
 
@@ -375,37 +405,49 @@ def _value_hits(
     hits: list[tuple[str, Any, int]] = []
     tokens = _tokens(text)
     for column in columns:
-        best: tuple[int, Any] | None = None
+        # Rank first (exact word beats inflection beats prefix), then position, so a
+        # prefix guess can never beat a stored value the question names exactly.
+        best: tuple[int, int, Any] | None = None
         for value in values_for(column):
             if value is None or isinstance(value, bool):
                 continue
             label = str(value).strip().lower()
             if not label or label.isdigit():
                 continue
-            at = _label_at(text, tokens, label)
-            if at is None:
+            found = _label_at(text, tokens, label)
+            if found is None:
                 continue
-            if best is None or at < best[0]:
-                best = (at, value)
+            if best is None or found < best[:2]:
+                best = (found[0], found[1], value)
         if best is not None:
-            hits.append((column, best[1], best[0]))
+            hits.append((column, best[2], best[1]))
     hits.sort(key=lambda item: item[2])
     return hits
 
 
-def _label_at(text: str, tokens: set[str], label: str) -> int | None:
+def _label_at(text: str, tokens: set[str], label: str) -> tuple[int, int] | None:
+    """(rank, position) of a stored value named in the question, or None.
+
+    Rank 0 is every word of the value, 1 an English inflection, 2 a word that starts a
+    word of the value ("diabet" for "diabetes"). A word inside another word does not
+    count: "male" is inside "female" and must never select it.
+    """
     label_tokens = _tokens(label)
     if label_tokens and label_tokens <= tokens:
-        return text.find(next(iter(label_tokens)))
+        return 0, _word_at(text, next(iter(label_tokens)))
     inflections = _VALUE_INFLECTIONS.get(label, set())
     shared = inflections & tokens
     if shared:
-        word = next(iter(shared))
-        return text.find(word)
-    for token in tokens:
-        if len(token) >= 4 and any(token in part for part in label_tokens):
-            return text.find(token)
+        return 1, min(_word_at(text, word) for word in shared)
+    prefixed = [token for token in tokens if len(token) >= 4 and any(part.startswith(token) for part in label_tokens)]
+    if prefixed:
+        return 2, min(_word_at(text, token) for token in prefixed)
     return None
+
+
+def _word_at(text: str, word: str) -> int:
+    match = re.search(rf"\b{re.escape(word)}\b", text)
+    return match.start() if match else text.find(word)
 
 
 def _binary_polarity(

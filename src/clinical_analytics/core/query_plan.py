@@ -11,6 +11,17 @@ This prevents ad-hoc dict structures and ensures type safety.
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+# Cohort ops the semantic layer can execute. Anything else must refuse, not be skipped.
+SUPPORTED_COHORT_OPS: frozenset[str] = frozenset({"eq", "gt", "lt", "not_null", "gt_median", "ge_percent_rank"})
+
+
+class CohortStepError(ValueError):
+    """A cohort restriction or filter cannot be applied.
+
+    Skipping it would answer for a wider group of patients than the question asked
+    about, so the query is refused instead. The message is shown to the clinician.
+    """
+
 
 @dataclass
 class CohortStep:

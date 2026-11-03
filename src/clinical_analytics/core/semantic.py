@@ -31,7 +31,12 @@ if TYPE_CHECKING:
     from clinical_analytics.core.query_plan import QueryPlan
 
 # Phase 3.3: Import chart_spec generation function
-from clinical_analytics.core.query_plan import generate_chart_spec
+from clinical_analytics.core.query_plan import (
+    SUPPORTED_COHORT_OPS,
+    CohortStep,
+    CohortStepError,
+    generate_chart_spec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,48 @@ def _sql_literal(value: Any) -> str:
     if value is None:
         return "NULL"
     return str(value)
+
+
+_SUPPORTED_FILTER_OPS = frozenset({"==", "!=", "IN", "NOT_IN", ">", ">=", "<", "<="})
+
+
+def _missing_column_message(column: str) -> str:
+    return (
+        f"Cannot limit the patients by '{column}': that column is not in this dataset. "
+        "Answering without the limit would include patients the question excludes."
+    )
+
+
+def _unsupported_step_message(op: str, column: str) -> str:
+    return (
+        f"Cannot apply the limit '{op}' on '{column}': that kind of limit is not supported. "
+        "Answering without it would include patients the question excludes."
+    )
+
+
+def cohort_step_problem(step: CohortStep, columns: list[str]) -> str | None:
+    """Plain-language reason a cohort step cannot be applied, or None when it can."""
+    if step.column not in columns:
+        return _missing_column_message(step.column)
+    if step.op not in SUPPORTED_COHORT_OPS:
+        return _unsupported_step_message(step.op, step.column)
+    return None
+
+
+def plan_restriction_problem(plan: "QueryPlan", columns: list[str]) -> str | None:
+    """First filter or cohort step in the plan that cannot be applied, as a refusal reason."""
+    for filter_spec in plan.filters:
+        if plan.group_by and filter_spec.column == plan.group_by:
+            continue
+        if filter_spec.column not in columns:
+            return _missing_column_message(filter_spec.column)
+        if filter_spec.operator not in _SUPPORTED_FILTER_OPS:
+            return _unsupported_step_message(filter_spec.operator, filter_spec.column)
+    for step in plan.cohort_steps:
+        problem = cohort_step_problem(step, columns)
+        if problem:
+            return problem
+    return None
 
 
 class TypeValidationError(Exception):
@@ -1828,6 +1875,25 @@ class SemanticLayer:
             }
         )
 
+        # Fail closed before execution: a restriction that cannot be applied would
+        # silently widen the cohort.
+        base_columns = list(self.get_base_view().columns)
+        refusal = plan_restriction_problem(plan, base_columns)
+        if refusal:
+            logger.warning("cohort_restriction_refused reason=%s", refusal)
+            warnings.append(refusal)
+            steps.append({"status": "error", "text": "Query refused", "details": {"error": refusal}})
+            return {
+                "success": False,
+                "result": None,
+                "run_key": run_key,
+                "warnings": warnings,
+                "error": refusal,
+                "failure_reason": refusal,
+                "steps": steps,
+                "chart_spec": chart_spec,
+            }
+
         if query_text:
             from clinical_analytics.core.cohort_constraints import unapplied_constraints
 
@@ -2216,8 +2282,7 @@ class SemanticLayer:
         for filter_spec in effective_filters:
             column = filter_spec.column
             if column not in view.columns:
-                logger.warning(f"Filter column '{column}' not found in view, skipping filter")
-                continue
+                raise CohortStepError(_missing_column_message(column))
 
             col_expr = view[column]
 
@@ -2326,7 +2391,7 @@ class SemanticLayer:
             elif filter_spec.operator == "<=":
                 view = view.filter(col_expr <= filter_spec.value)
             else:
-                logger.warning(f"Unsupported filter operator: {filter_spec.operator}, skipping")
+                raise CohortStepError(_unsupported_step_message(filter_spec.operator, column))
 
             # Handle exclude_nulls
             if filter_spec.exclude_nulls:
@@ -2340,9 +2405,9 @@ class SemanticLayer:
     def _apply_cohort_step(self, view: Any, step: Any) -> Any:
         """Apply one cohort restriction. Cutoffs run in DuckDB so they match the SQL oracle."""
         column = step.column
-        if column not in view.columns:
-            logger.warning(f"Cohort column '{column}' not found in view, skipping step")
-            return view
+        problem = cohort_step_problem(step, list(view.columns))
+        if problem:
+            raise CohortStepError(problem)
         if step.op == "eq":
             return self._filter_equal(view, column, step.value)
         if step.op == "gt":
@@ -2364,8 +2429,7 @@ class SemanticLayer:
                 "SELECT i.* FROM _cohort_in i, cut WHERE i.{col} >= cut.q"
             )
             return self._cohort_sql(view, sql, column)
-        logger.warning(f"Unsupported cohort op: {step.op}")
-        return view
+        raise CohortStepError(_unsupported_step_message(step.op, column))
 
     def _filter_equal(self, view: Any, column: str, value: Any) -> Any:
         if isinstance(value, bool) or value is None or isinstance(value, str):
