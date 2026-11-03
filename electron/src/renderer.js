@@ -16,9 +16,11 @@ import {
   buildConfirmationHoldPresentation,
   buildExampleQuestions,
   buildQueryCompletedPresentation,
+  claimDecimals,
   classifyCell,
   describeQueryFailure,
   isNumericColumn,
+  isPValueColumn,
   parsePlanLine,
   splitClaim,
   stageLabel,
@@ -97,6 +99,7 @@ const elements = {
  * @property {boolean} [isStreaming] - Whether message is currently streaming
  * @property {MessageKind} [kind] - What the assistant message is (see DESIGN.md "Message states")
  * @property {number} [startedAt] - When work on the answer started (ms)
+ * @property {string} [detail] - The engine's exact words when the notice reworded them
  * @property {Date} timestamp - Message creation time
  */
 
@@ -527,9 +530,13 @@ function fillMessageContent(contentDiv, message) {
   }
   const kind = messageKind(message);
   if (kind === 'refused') {
-    contentDiv.appendChild(buildNotice('refused', message.content, RESTORED_QUESTION_HINT));
+    contentDiv.appendChild(
+      buildNotice('refused', message.content, RESTORED_QUESTION_HINT, message.detail)
+    );
   } else if (kind === 'error') {
-    contentDiv.appendChild(buildNotice('error', message.content, RESTORED_QUESTION_HINT));
+    contentDiv.appendChild(
+      buildNotice('error', message.content, RESTORED_QUESTION_HINT, message.detail)
+    );
   } else if (kind === 'stopped') {
     contentDiv.appendChild(buildNotice('stopped', message.content));
   } else if (message.result?.awaitingConfirmation) {
@@ -572,9 +579,10 @@ const NOTICE_LABELS = {
  * @param {'refused' | 'error' | 'stopped'} kind
  * @param {string} text
  * @param {string} [hint]
+ * @param {string} [detail] the engine's exact words, behind a disclosure
  * @returns {HTMLElement}
  */
-function buildNotice(kind, text, hint) {
+function buildNotice(kind, text, hint, detail) {
   const notice = el('div', `notice notice--${kind}`);
   notice.dataset.testid = `${kind}-notice`;
   const label = el('p', 'state-label');
@@ -582,6 +590,11 @@ function buildNotice(kind, text, hint) {
   notice.appendChild(label);
   if (text) notice.appendChild(el('p', 'notice-body', text));
   if (hint) notice.appendChild(el('p', 'notice-hint', hint));
+  if (detail) {
+    const raw = el('details', 'plan-raw notice-detail');
+    raw.append(el('summary', '', 'Exact message'), el('p', 'plan-raw-text', detail));
+    notice.appendChild(raw);
+  }
   return notice;
 }
 
@@ -624,7 +637,10 @@ function renderResultCard(result, content = '') {
   }
 
   if (result.table) {
-    const { wrapper, hasHidden } = buildResultTable(result.table);
+    const { wrapper, hasHidden } = buildResultTable(result.table, {
+      decimals: claimDecimals(result.claim),
+      label: result.title ? `${result.title} table` : 'Results table',
+    });
     card.appendChild(wrapper);
     if (hasHidden) {
       const foot = el('p', 'result-footnote');
@@ -659,20 +675,48 @@ function normalizeTableRows(columns, rows) {
 }
 
 /**
+ * Mark a table frame while columns are out of view to the right (edge fade and hint).
+ * @param {HTMLElement} frame
+ * @param {HTMLElement} scroller
+ * @param {HTMLElement} hint
+ */
+function trackTableOverflow(frame, scroller, hint) {
+  const update = () => {
+    const overflowing = scroller.scrollWidth - scroller.clientWidth > 1;
+    const atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1;
+    frame.classList.toggle('has-more-right', overflowing && !atEnd);
+    hint.classList.toggle('hidden', !overflowing);
+  };
+  scroller.addEventListener('scroll', update, { passive: true });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(update).observe(scroller);
+  window.requestAnimationFrame(update);
+}
+
+/**
  * Statistics table: body face, tabular figures, numbers right-aligned, hidden cells marked.
+ * The scrolling box is a labelled, focusable region so the keyboard can scroll it; the first
+ * column stays in view.
  * @param {{ columns?: string[], rows?: unknown[] }} tableData
+ * @param {{ decimals?: number, label?: string }} [opts]
  * @returns {{ wrapper: HTMLElement, hasHidden: boolean }}
  */
-function buildResultTable(tableData) {
+function buildResultTable(tableData, opts = {}) {
+  const frame = el('div', 'result-table-frame');
   const wrapper = el('div', 'result-table-wrapper');
+  frame.appendChild(wrapper);
   if (!tableData || !Array.isArray(tableData.columns) || !Array.isArray(tableData.rows)) {
     wrapper.appendChild(el('p', 'result-error', 'No table was returned for this answer.'));
-    return { wrapper, hasHidden: false };
+    return { wrapper: frame, hasHidden: false };
   }
+  wrapper.tabIndex = 0;
+  wrapper.setAttribute('role', 'region');
+  wrapper.setAttribute('aria-label', opts.label || 'Results table');
+  wrapper.dataset.testid = 'result-table-region';
 
   const cols = tableData.columns;
   const rows = normalizeTableRows(cols, tableData.rows);
   const numeric = cols.map((_, i) => i > 0 && isNumericColumn(rows, i));
+  const formats = cols.map((col) => ({ decimals: opts.decimals, pValue: isPValueColumn(col) }));
   let hasHidden = false;
 
   const table = el('table', 'result-table');
@@ -689,7 +733,7 @@ function buildResultTable(tableData) {
   rows.forEach((row) => {
     const tr = el('tr');
     cols.forEach((_, i) => {
-      const cell = classifyCell(row[i]);
+      const cell = classifyCell(row[i], formats[i]);
       const td = el(i === 0 ? 'th' : 'td', numeric[i] ? 'num' : '');
       if (i === 0) td.scope = 'row';
       if (cell.kind === 'hidden' || cell.kind === 'small') {
@@ -709,7 +753,17 @@ function buildResultTable(tableData) {
 
   table.append(thead, tbody);
   wrapper.appendChild(table);
-  return { wrapper, hasHidden };
+  const fade = el('div', 'result-table-fade');
+  fade.setAttribute('aria-hidden', 'true');
+  const hint = el(
+    'p',
+    'result-table-hint hidden',
+    `Scroll sideways to see all ${cols.length} columns.`
+  );
+  hint.dataset.testid = 'result-table-hint';
+  frame.append(fade, hint);
+  trackTableOverflow(frame, wrapper, hint);
+  return { wrapper: frame, hasHidden };
 }
 
 // ============================================================================
@@ -1421,14 +1475,29 @@ async function handleSessionDelete(sessionId) {
     announce('Conversation deleted.');
     if (sessionId === state.sessionId) {
       await handleNewChat();
+      elements.queryInput?.focus();
     } else {
+      const rows = [...(elements.sessionList?.querySelectorAll('.session-item') || [])];
+      const index = rows.findIndex((row) => row.dataset.sessionId === sessionId);
       await loadSessionList();
+      focusSessionRowAt(index);
     }
   } catch (error) {
     console.error('Delete session failed:', error?.message);
     announce("Couldn't delete the conversation.");
     await loadSessionList();
   }
+}
+
+/**
+ * After a delete, put focus on the row now at `index` (the next one), else the last row, else
+ * New conversation, so it never falls to the page.
+ * @param {number} index
+ */
+function focusSessionRowAt(index) {
+  const opens = [...(elements.sessionList?.querySelectorAll('[data-testid="session-open"]') || [])];
+  const target = opens[Math.max(0, Math.min(index, opens.length - 1))] || elements.newChatBtn;
+  target?.focus();
 }
 
 async function handleNewChat() {
@@ -1617,11 +1686,12 @@ function addWorkingMessage() {
  * @param {'refused' | 'error'} kind
  * @param {string} [message]
  */
-function showFailure(messageId, kind, message) {
+function showFailure(messageId, kind, message, detail) {
   updateMessage(messageId, {
     content: message || 'The analysis stopped before it could answer.',
     isStreaming: false,
     kind,
+    ...(detail ? { detail } : {}),
   });
   announce(kind === 'refused' ? 'Not answered.' : 'Something went wrong.');
 }
@@ -1738,7 +1808,7 @@ async function subscribeToQueryStream(
 
         case 'query_failed': {
           const failure = describeQueryFailure(data);
-          showFailure(assistantMessageId, failure.kind, failure.message);
+          showFailure(assistantMessageId, failure.kind, failure.message, failure.detail);
           finish(failure.kind);
           break;
         }
@@ -1807,12 +1877,10 @@ async function subscribeToQueryStream(
 
 const uploadHandlers = {
   onFileSelect: (file) => {
-    setDatasetMenuOpen(false);
-    void handleFileUpload(file);
+    void runFromDatasetMenu(() => handleFileUpload(file));
   },
   onLoadSample: () => {
-    setDatasetMenuOpen(false);
-    void handleLoadSample();
+    void runFromDatasetMenu(handleLoadSample);
   },
 };
 
@@ -1837,6 +1905,30 @@ async function selectNewDataset(datasetId) {
   if (!datasetId) return;
   elements.datasetSelect.value = datasetId;
   elements.datasetSelect.dispatchEvent(new Event('change'));
+}
+
+/**
+ * Close the ⋯ menu for a cohort action, keeping focus on the menu button while it runs; once
+ * a cohort is ready, move to the composer (unless the user has moved focus elsewhere).
+ * @param {() => Promise<void>} action
+ */
+async function runFromDatasetMenu(action) {
+  const fromMenu = !elements.datasetMenu?.classList.contains('hidden');
+  if (fromMenu) setDatasetMenuOpen(false, { focus: true });
+  const before = state.currentDatasetId;
+  await action();
+  const active = document.activeElement;
+  const focusIsFree = !active || active === document.body || active === elements.datasetMenuBtn;
+  if (!focusIsFree) return;
+  if (
+    state.currentDatasetId &&
+    state.currentDatasetId !== before &&
+    !elements.queryInput?.disabled
+  ) {
+    elements.queryInput.focus();
+  } else if (fromMenu) {
+    elements.datasetMenuBtn?.focus();
+  }
 }
 
 async function handleLoadSample() {

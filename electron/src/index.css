@@ -1087,13 +1087,42 @@ ul {
   color: var(--text-2);
 }
 
-.result-table-wrapper {
+.result-table-frame {
+  position: relative;
   margin-top: var(--sp-4);
+}
+
+.result-table-wrapper {
   overflow-x: auto;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--highlight);
+}
+
+/* A wide table says so: an edge fade and a hint while columns are out of view. */
+.result-table-fade {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 40px;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--surface-2));
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+.result-table-frame.has-more-right .result-table-fade {
+  opacity: 1;
+}
+
+.result-table-hint {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--text-3);
 }
 
 .result-table {
@@ -1124,6 +1153,19 @@ ul {
 .result-table tbody th {
   font-weight: 500;
   color: var(--text-1);
+}
+
+/* First column stays in view while the rest scrolls. */
+.result-table tbody th,
+.result-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  box-shadow: inset -1px 0 0 var(--border);
+}
+
+.result-table tbody th {
+  background: var(--surface-2);
 }
 
 .result-table tbody tr:last-child > * {
@@ -1232,7 +1274,11 @@ ul {
 }
 
 .plan-raw summary {
+  box-sizing: border-box;
   width: fit-content;
+  min-height: 24px;
+  padding: 2px 4px;
+  margin-left: -4px;
   cursor: pointer;
   border-radius: 4px;
 }
@@ -1741,8 +1787,15 @@ ul {
     padding-left: var(--sp-4);
   }
 
+  /* Icon only on narrow windows; the word stays as the radio's accessible name. */
   .theme-option-text {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
 }
 

@@ -7,11 +7,26 @@ const ANSWER_CLAIM =
   'Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; Welch t-test p<0.001; ' +
   'n=377; 23 excluded for missing data). Unadjusted comparison by treatment.';
 const PLAN_LINE =
-  'COMPARE_GROUPS · outcome ldl · grouping treatment · filters age > 65 · test Welch t-test';
+  'COMPARE_GROUPS · outcome ldl_mg_dl · grouping treatment · filters age > 65; first_visit >= 2024-01-01 (missing kept) · test Welch t-test';
+const ENGINE_FAILURE = 'DESCRIBE intent requires metric (primary_variable)';
+const WIDE_COLUMNS = [
+  'treatment',
+  'n',
+  'mean_age',
+  'mean_ldl_mg_dl',
+  'sd_ldl_mg_dl',
+  'median_ldl_mg_dl',
+  'mean_hdl_mg_dl',
+  'mean_bmi',
+  'pct_female',
+  'pct_diabetes',
+  'mean_sbp',
+  'p_value',
+];
 const REFUSAL =
   'This would list individual patients. I can only report group-level statistics; try asking for counts or averages.';
 
-function installMock({ answerClaim, planLine, refusal }) {
+function installMock({ answerClaim, planLine, refusal, engineFailure, wideColumns }) {
   const calls = [];
   window.__calls = calls;
   window.__streamMs = 150;
@@ -20,9 +35,20 @@ function installMock({ answerClaim, planLine, refusal }) {
   window.clinicalAPI = {
     healthCheck: async () => ({ status: 'healthy' }),
     listDatasets: async () => ({
-      datasets: [{ dataset_id: 'ds_cohort', name: 'cohort', row_count: 400 }],
-      total: 1,
+      datasets: [
+        { dataset_id: 'ds_cohort', name: 'cohort', row_count: 400 },
+        ...(window.__sampleLoaded
+          ? [{ dataset_id: 'ds_sample', name: 'sample', row_count: 50 }]
+          : []),
+      ],
+      total: window.__sampleLoaded ? 2 : 1,
     }),
+    uploadDataset: async () => ({ status: 'failed', message: 'not in this mock' }),
+    loadSampleDataset: async () => {
+      calls.push(['loadSampleDataset']);
+      window.__sampleLoaded = true;
+      return { status: 'ready', upload_id: 'ds_sample', dataset_name: 'sample' };
+    },
     getDataset: async () => ({
       dataset_id: 'ds_cohort',
       tables: [{ name: 'unified', row_count: 400 }],
@@ -45,7 +71,10 @@ function installMock({ answerClaim, planLine, refusal }) {
       window.__sessions = [s];
       return s;
     },
-    deleteSession: async () => {},
+    deleteSession: async (id) => {
+      calls.push(['deleteSession', id]);
+      window.__sessions = (window.__sessions || []).filter((s) => s.session_id !== id);
+    },
     getPendingEnrichments: async () => ({ suggestions: [], total: 0 }),
     getEnrichmentHistory: async () => ({ patches: [], total: 0 }),
     submitQuery: async (sessionId, datasetId, text, confirmed, plan) => {
@@ -60,9 +89,13 @@ function installMock({ answerClaim, planLine, refusal }) {
             ? 'refuse'
             : t.includes('slow')
               ? 'slow'
-              : t.includes('table')
-                ? 'table'
-                : 'answer';
+              : t.includes('wide')
+                ? 'wide'
+                : t.includes('nothing')
+                  ? 'engine'
+                  : t.includes('table')
+                    ? 'table'
+                    : 'answer';
       return { query_id: id, stream_url: `/stream/${id}` };
     },
     subscribeToQueryStream: (queryId, { onEvent }) => {
@@ -83,6 +116,28 @@ function installMock({ answerClaim, planLine, refusal }) {
         ]);
       } else if (kind === 'refuse') {
         events.push([ms, 'query_failed', { failure_reason: refusal, error: refusal }]);
+      } else if (kind === 'engine') {
+        events.push([ms, 'query_failed', { failure_reason: engineFailure, error: engineFailure }]);
+      } else if (kind === 'wide') {
+        const row = (name, base) =>
+          Object.fromEntries(
+            wideColumns.map((c, i) => [c, i === 0 ? name : i === 1 ? base : base / 3 + i / 7])
+          );
+        const drug = row('drug', 190);
+        drug.mean_age = 64.23400000000001;
+        drug.p_value = 0.00004;
+        events.push([
+          ms,
+          'query_completed',
+          {
+            intent_type: 'DESCRIBE',
+            claim: 'Mean age was 64.2 in drug (n=190).',
+            result_preview: {
+              table: { columns: wideColumns, rows: [drug, row('placebo', 187)] },
+              row_count: 2,
+            },
+          },
+        ]);
       } else if (kind === 'table') {
         events.push([
           ms,
@@ -140,6 +195,8 @@ async function setupStreamingMock(page) {
     answerClaim: ANSWER_CLAIM,
     planLine: PLAN_LINE,
     refusal: REFUSAL,
+    engineFailure: ENGINE_FAILURE,
+    wideColumns: WIDE_COLUMNS,
   });
   await page.goto('/');
   await page.waitForLoadState('networkidle');
@@ -154,4 +211,11 @@ async function ask(page, question) {
   await page.locator('#query-input').press('Enter');
 }
 
-module.exports = { setupStreamingMock, ask, ANSWER_CLAIM, PLAN_LINE, REFUSAL };
+module.exports = {
+  setupStreamingMock,
+  ask,
+  ANSWER_CLAIM,
+  ENGINE_FAILURE,
+  PLAN_LINE,
+  REFUSAL,
+};

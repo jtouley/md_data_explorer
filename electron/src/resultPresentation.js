@@ -323,14 +323,17 @@ function firstSentenceEnd(text) {
 }
 
 /**
- * Last top-level parenthetical in `sentence` that carries statistics.
+ * The statistics parenthetical of `sentence`, only when it is the sentence's only top-level
+ * group carrying statistics and it closes the sentence. "higher (p=0.03), but not after
+ * adjustment (p=0.20)." has two, so nothing is extracted and the headline stays whole.
  * @param {string} sentence
  * @returns {{ start: number, end: number, inner: string } | null}
  */
 function findStatsGroup(sentence) {
   let depth = 0;
   let start = -1;
-  let found = null;
+  /** @type {{ start: number, end: number, inner: string }[]} */
+  const found = [];
   for (let i = 0; i < sentence.length; i += 1) {
     const ch = sentence[i];
     if (ch === '(') {
@@ -340,11 +343,13 @@ function findStatsGroup(sentence) {
       depth -= 1;
       if (depth === 0) {
         const inner = sentence.slice(start + 1, i);
-        if (STATS_TOKEN.test(inner)) found = { start, end: i, inner };
+        if (STATS_TOKEN.test(inner)) found.push({ start, end: i, inner });
       }
     }
   }
-  return found;
+  if (found.length !== 1) return null;
+  const [group] = found;
+  return /^\s*\.?\s*$/.test(sentence.slice(group.end + 1)) ? group : null;
 }
 
 /**
@@ -391,22 +396,74 @@ export function splitClaim(claim) {
   return { headline, stats, notes };
 }
 
+const DEFAULT_DECIMALS = 2;
+const MAX_DECIMALS = 3;
+const P_FLOOR = 0.001;
+const P_COLUMN = /^p([\s_.-]?val(ue)?)?$|(^|[\s_])p[\s_.-]?val(ue)?$/i;
+
+/**
+ * Decimal places to show in a table: the most the claim itself shows (1–3), else 2.
+ * @param {string | null | undefined} claim
+ * @returns {number}
+ */
+export function claimDecimals(claim) {
+  const places = (String(claim || '').match(/\d+\.(\d+)/g) || []).map(
+    (n) => n.split('.')[1].length
+  );
+  if (places.length === 0) return DEFAULT_DECIMALS;
+  return Math.min(MAX_DECIMALS, Math.max(1, ...places));
+}
+
+/**
+ * A p-value column, by name ("p", "p_value", "P value", "pvalue").
+ * @param {unknown} name
+ * @returns {boolean}
+ */
+export function isPValueColumn(name) {
+  return P_COLUMN.test(String(name || '').trim());
+}
+
+/**
+ * A number with sensible precision: integers unchanged, float noise removed, other numbers
+ * at a fixed `decimals` places so a column lines up, and never rounded to zero. P-values keep at least three places and show
+ * "<0.001" below that, so a small p is never shown as 0.
+ * @param {number} value
+ * @param {{ decimals?: number, pValue?: boolean }} [opts]
+ * @returns {string}
+ */
+export function formatNumber(value, opts = {}) {
+  if (!Number.isFinite(value)) return String(value);
+  if (Number.isInteger(value)) return String(value);
+  const clean = Number(value.toPrecision(12));
+  if (opts.pValue) {
+    if (clean > 0 && clean < P_FLOOR) return `<${P_FLOOR}`;
+    const places = Math.max(MAX_DECIMALS, opts.decimals ?? 0);
+    return clean.toFixed(places);
+  }
+  const places = opts.decimals ?? DEFAULT_DECIMALS;
+  const rounded = Number(clean.toFixed(places));
+  if (rounded === 0 && clean !== 0) return String(Number(clean.toPrecision(2)));
+  return clean.toFixed(places);
+}
+
 /**
  * How a table cell should be shown.
  * @param {unknown} value
+ * @param {{ decimals?: number, pValue?: boolean }} [format] precision for numbers
  * @returns {{ kind: 'empty' | 'hidden' | 'small' | 'number' | 'text', text: string }}
  */
-export function classifyCell(value) {
+export function classifyCell(value, format = {}) {
   if (value === null || value === undefined || value === '') return { kind: 'empty', text: '' };
   if (typeof value === 'number') {
     return Number.isFinite(value)
-      ? { kind: 'number', text: String(value) }
+      ? { kind: 'number', text: formatNumber(value, format) }
       : { kind: 'text', text: String(value) };
   }
   if (typeof value === 'object') return { kind: 'text', text: JSON.stringify(value) };
   const s = String(value).trim();
   if (s.toLowerCase() === HIDDEN_CELL_MARKER) return { kind: 'hidden', text: 'hidden' };
   if (/^<\s*\d+$/.test(s)) return { kind: 'small', text: s.replace(/\s+/g, '') };
+  if (/^[-+]?\d+\.\d+$/.test(s)) return { kind: 'number', text: formatNumber(Number(s), format) };
   if (/^[-+]?\d[\d,]*(\.\d+)?%?$/.test(s)) return { kind: 'number', text: s };
   return { kind: 'text', text: s };
 }
@@ -449,6 +506,131 @@ const PLAN_KEYS = {
   test: 'Test',
 };
 
+/** Plan parts whose value is one or more column names. */
+const COLUMN_KEYS = new Set(['outcome', 'grouping', 'predictors', 'variables', 'time', 'event']);
+
+const OPERATOR_WORDS = {
+  '==': 'is',
+  '!=': 'is not',
+  '>': 'over',
+  '>=': 'at least',
+  '<': 'under',
+  '<=': 'at most',
+  IN: 'is one of',
+  NOT_IN: 'is not one of',
+};
+
+const ACRONYMS = new Set([
+  'ldl',
+  'hdl',
+  'bmi',
+  'a1c',
+  'egfr',
+  'crp',
+  'sbp',
+  'dbp',
+  'ecg',
+  'ekg',
+  'icu',
+  'id',
+  'hiv',
+  'alt',
+  'ast',
+  'tsh',
+  'mri',
+  'ct',
+  'copd',
+  'ckd',
+  'mi',
+  'inr',
+  'wbc',
+  'rbc',
+  'bp',
+  'hr',
+]);
+const SPECIAL_WORDS = { hba1c: 'HbA1c', ldlc: 'LDL-C', hdlc: 'HDL-C' };
+const UNITS = [
+  [['mg', 'dl'], 'mg/dL'],
+  [['mmol', 'l'], 'mmol/L'],
+  [['g', 'dl'], 'g/dL'],
+  [['kg', 'm2'], 'kg/m²'],
+  [['mm', 'hg'], 'mmHg'],
+  [['mmhg'], 'mmHg'],
+  [['pct'], '%'],
+  [['percent'], '%'],
+  [['kg'], 'kg'],
+  [['cm'], 'cm'],
+  [['yrs'], 'years'],
+  [['bpm'], 'bpm'],
+];
+
+/**
+ * A readable label for a column name: "ldl_mg_dl" → "LDL (mg/dL)", "first_visit" → "First visit".
+ * @param {string} column
+ * @returns {string}
+ */
+export function columnLabel(column) {
+  let words = String(column || '')
+    .trim()
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.toLowerCase());
+  if (words.length === 0) return '';
+  let unit = '';
+  for (const [parts, text] of UNITS) {
+    if (
+      words.length > parts.length &&
+      parts.every((p, i) => words[words.length - parts.length + i] === p)
+    ) {
+      unit = text;
+      words = words.slice(0, words.length - parts.length);
+      break;
+    }
+  }
+  const shown = words.map((w, i) => {
+    if (SPECIAL_WORDS[w]) return SPECIAL_WORDS[w];
+    if (ACRONYMS.has(w)) return w.toUpperCase();
+    return i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+  });
+  return unit ? `${shown.join(' ')} (${unit})` : shown.join(' ');
+}
+
+/**
+ * "LDL (mg/dL) — ldl_mg_dl": the readable label first, the exact column name kept.
+ * @param {string} column
+ * @returns {string}
+ */
+export function columnWithLabel(column) {
+  const name = String(column || '').trim();
+  const label = columnLabel(name);
+  return label && label.toLowerCase() !== name.toLowerCase() ? `${label} — ${name}` : label || name;
+}
+
+const FILTER_PATTERN = /^(.+?)\s+(==|!=|>=|<=|>|<|NOT_IN|IN)\s+(.*)$/;
+const MISSING_KEPT = /\s*\(missing kept\)\s*$/;
+
+/**
+ * One filter from the plan line in words: "ldl_mg_dl >= 130 (missing kept)" →
+ * "LDL (mg/dL) (ldl_mg_dl) at least 130; patients with no value are kept".
+ * @param {string} text
+ * @returns {string}
+ */
+function filterInWords(text) {
+  const keepsMissing = MISSING_KEPT.test(text);
+  const core = text.replace(MISSING_KEPT, '').trim();
+  const match = FILTER_PATTERN.exec(core);
+  if (!match) return text;
+  const [, column, operator, rawValue] = match;
+  const label = columnLabel(column);
+  const name =
+    label && label.toLowerCase() !== column.toLowerCase()
+      ? `${label} (${column})`
+      : label || column;
+  const value = rawValue.replace(/^\[(.*)\]$/, '$1');
+  const sentence = `${name} ${OPERATOR_WORDS[operator]} ${value}`;
+  return keepsMissing ? `${sentence}; patients with no value are kept` : sentence;
+}
+
 /**
  * Readable form of the API's one-line plan ("COMPARE_GROUPS · outcome ldl · …").
  * Display only: Confirm always sends the original line unchanged.
@@ -472,24 +654,115 @@ export function parsePlanLine(planLine) {
     const label = PLAN_KEYS[key];
     if (!label) return { label: '', value: part };
     if (raw === 'none') return { label, value: key === 'filters' ? 'All patients' : 'None' };
+    if (key === 'filters') {
+      return { label, value: raw.split('; ').map(filterInWords).join(' and ') };
+    }
+    if (COLUMN_KEYS.has(key)) {
+      return { label, value: raw.split(', ').map(columnWithLabel).join(', ') };
+    }
     return { label, value: raw };
   });
   return { analysis, items };
 }
 
+const quoteColumn = (c) => `“${c}”`;
+
+/**
+ * Known engine and validator messages, each as a plain sentence with a next step.
+ * @type {[RegExp, (m: RegExpExecArray) => string][]}
+ */
+const ENGINE_MESSAGES = [
+  [
+    /(?:Filter )?[Cc]olumn '([^']+)' not found/,
+    (m) =>
+      `This cohort has no column called ${quoteColumn(m[1])}. Check the spelling, or open the cohort details to see its columns.`,
+  ],
+  [
+    /Type mismatch for column '([^']+)'.*got string '([^']*)'/,
+    (m) =>
+      `${quoteColumn(m[2])} isn't a number, but ${columnLabel(m[1])} holds numbers. Ask again with a number, for example “over 65”.`,
+  ],
+  [
+    /\bDESCRIBE\b.*requires/,
+    () =>
+      'The question didn’t name what to summarise. Ask again naming the measurement, for example “What is the average age?”.',
+  ],
+  [
+    /\bCOMPARE_GROUPS\b.*requires/,
+    () =>
+      'To compare groups, the question needs a measurement and the groups to compare. Ask again in the form “Compare age by sex”.',
+  ],
+  [
+    /requires grouping/,
+    () =>
+      'The question asks for a breakdown but doesn’t say by what. Add “by” and a column, for example “by sex”.',
+  ],
+  [
+    /Cannot group by entity key/,
+    () =>
+      'That column identifies individual patients, so it can’t form groups. Choose a column such as sex or treatment.',
+  ],
+  [
+    /Time and event variables required/,
+    () =>
+      'Survival analysis needs a follow-up time and an event, such as death. Ask again naming both.',
+  ],
+  [
+    /scope='all' with filters/,
+    () => 'The question asks about all patients and a subgroup at once. Ask about one of them.',
+  ],
+  [
+    /scope='filtered' requires filters/,
+    () =>
+      'The question asks about a subgroup but doesn’t say which patients. Say who to include, for example “patients over 65”.',
+  ],
+  [
+    /Invalid operator/,
+    () =>
+      'The question uses a comparison the analysis can’t apply. Use words like is, is not, over, under, at least or at most.',
+  ],
+  [
+    /All parsing tiers failed/,
+    () =>
+      'The question couldn’t be matched to an analysis. Ask again using a column name from the cohort.',
+  ],
+];
+
+/** Words that only make sense to the people who built the engine. */
+const ENGINE_JARGON =
+  /\bLLM\b|\b[A-Z]{3,}_[A-Z_]+\b|\b(primary_variable|group_by|grouping_variable|entity_key)\b|\bintent\b|QueryPlan|\bscope=|Traceback|Exception|\bvalidation should\b/;
+
+const GENERIC_ENGINE_MESSAGE =
+  'The analysis couldn’t use this question as written. Ask again, naming the columns you mean.';
+
+/**
+ * Engine wording in plain language. Unknown text with engine jargon gets a generic sentence;
+ * anything else is already written for people and is kept.
+ * @param {string} text
+ * @returns {string}
+ */
+export function plainFailureMessage(text) {
+  for (const [pattern, toPlain] of ENGINE_MESSAGES) {
+    const match = pattern.exec(text);
+    if (match) return toPlain(match);
+  }
+  return ENGINE_JARGON.test(text) ? GENERIC_ENGINE_MESSAGE : text;
+}
+
 /**
  * A failed query is either a refusal (the product declining, with a reason) or an error.
+ * `detail` holds the engine's exact words when the message was reworded.
  * @param {Record<string, unknown> | null | undefined} data query_failed payload
- * @returns {{ kind: 'refused' | 'error', message: string }}
+ * @returns {{ kind: 'refused' | 'error', message: string, detail?: string }}
  */
 export function describeQueryFailure(data) {
   const d = asRecord(data);
   const pick = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
   const reason = pick(d.failure_reason) || pick(d.error);
-  if (d.error_type || !reason) {
-    return { kind: 'error', message: reason || 'The analysis stopped before it could answer.' };
-  }
-  return { kind: 'refused', message: reason };
+  const kind = d.error_type || !reason ? 'error' : 'refused';
+  if (!reason) return { kind, message: 'The analysis stopped before it could answer.' };
+  const message = plainFailureMessage(reason);
+  return message === reason ? { kind, message } : { kind, message, detail: reason };
 }
 
 /**
