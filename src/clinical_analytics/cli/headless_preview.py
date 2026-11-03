@@ -57,7 +57,8 @@ def preview_csv(
         storage = UserDatasetStorage(upload_dir=upload_dir)
 
         # Use demo metadata when loading the bundled sample; otherwise a minimal mapping.
-        if path.resolve() == get_demo_csv_path().resolve() or path.name == "sample_cohort.csv":
+        # Only the bundled file gets demo metadata; a user's own CSV with the same name keeps its columns.
+        if path.resolve() == get_demo_csv_path().resolve():
             metadata = build_demo_metadata()
         else:
             df_head = pl.read_csv(path, n_rows=50)

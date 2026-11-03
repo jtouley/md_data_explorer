@@ -199,7 +199,8 @@ describe('buildConfirmationHoldPresentation', () => {
   it('surfaces plan line and pending query for Confirm', () => {
     const hold = buildConfirmationHoldPresentation(
       {
-        plan_line: 'COMPARE_GROUPS · outcome ldl · grouping sex · filters none · test group comparison',
+        plan_line:
+          'COMPARE_GROUPS · outcome ldl · grouping sex · filters none · test group comparison',
         failure_reason: 'Confirmation required before execution.',
         confidence: 0.4,
       },
@@ -209,5 +210,32 @@ describe('buildConfirmationHoldPresentation', () => {
     expect(hold.result.pendingQuery).toBe('compare ldl by sex');
     expect(hold.result.planLine).toContain('COMPARE_GROUPS');
     expect(hold.content).toContain('Confirmation required');
+  });
+
+  it('keeps the plan line out of the message text so it renders once', () => {
+    const hold = buildConfirmationHoldPresentation(
+      {
+        plan_line: 'DESCRIBE · outcome age',
+        failure_reason: 'Confirmation required before execution.',
+      },
+      'average age'
+    );
+    expect(hold.content).toBe('Confirmation required before execution.');
+    expect(hold.content).not.toContain('DESCRIBE');
+  });
+
+  it('records the dataset and session the plan was held for', () => {
+    const hold = buildConfirmationHoldPresentation({ plan_line: 'p' }, 'q', {
+      datasetId: 'ds_a',
+      sessionId: 'sess_1',
+    });
+    expect(hold.result.datasetId).toBe('ds_a');
+    expect(hold.result.sessionId).toBe('sess_1');
+  });
+
+  it('leaves the binding empty when none is given', () => {
+    const hold = buildConfirmationHoldPresentation({ plan_line: 'p' }, 'q');
+    expect(hold.result.datasetId).toBeNull();
+    expect(hold.result.sessionId).toBeNull();
   });
 });

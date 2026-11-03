@@ -220,7 +220,8 @@ function renderDatasetPreview(columns, rows) {
     columns.forEach((column) => {
       const td = document.createElement('td');
       const value = row?.[column];
-      td.textContent = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      td.textContent =
+        value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
       tr.appendChild(td);
     });
     datasetPreviewBody.appendChild(tr);
@@ -258,7 +259,8 @@ async function loadDatasetOverview() {
       window.clinicalAPI.previewDataset(state.currentDatasetId, 10),
     ]);
 
-    const table = Array.isArray(detail?.tables) && detail.tables.length > 0 ? detail.tables[0] : null;
+    const table =
+      Array.isArray(detail?.tables) && detail.tables.length > 0 ? detail.tables[0] : null;
     const rowCount = table?.row_count ?? preview?.total_rows ?? 0;
     const columnCount = Array.isArray(preview?.columns) ? preview.columns.length : 0;
 
@@ -404,7 +406,7 @@ function renderResultCard(result) {
     card.appendChild(titleEl);
   }
 
-  if (result.summary) {
+  if (result.summary && result.summary !== result.claim) {
     const summary = document.createElement('p');
     summary.className = 'result-summary';
     summary.textContent = result.summary;
@@ -429,7 +431,11 @@ function renderResultCard(result) {
     confirmBtn.dataset.testid = 'confirm-query-btn';
     confirmBtn.textContent = 'Confirm';
     confirmBtn.addEventListener('click', () => {
-      void handleConfirmPendingQuery(result.pendingQuery || '');
+      // One decision per held plan: a second click must not run it again.
+      card.querySelectorAll('button').forEach((b) => {
+        b.disabled = true;
+      });
+      void handleConfirmPendingQuery(result, card);
     });
     const rejectBtn = document.createElement('button');
     rejectBtn.type = 'button';
@@ -464,8 +470,17 @@ function renderResultCard(result) {
  * Resubmit a held query with confirmed=true.
  * @param {string} queryText
  */
-async function handleConfirmPendingQuery(queryText) {
-  if (!queryText || !state.currentDatasetId || state.isProcessing) {
+async function handleConfirmPendingQuery(held, card) {
+  const queryText = held.pendingQuery || '';
+  if (!queryText || state.isProcessing) {
+    return;
+  }
+  if (held.datasetId && held.datasetId !== state.currentDatasetId) {
+    const note = document.createElement('p');
+    note.className = 'result-rejected';
+    note.textContent =
+      'This plan was for a different dataset. Ask the question again on the current dataset.';
+    card.appendChild(note);
     return;
   }
   state.isProcessing = true;
@@ -481,14 +496,21 @@ async function handleConfirmPendingQuery(queryText) {
   });
 
   try {
+    const sessionId = held.sessionId || state.sessionId;
+    const datasetId = held.datasetId || state.currentDatasetId;
+    // Send the plan the user saw: the backend releases the hold only for that exact plan.
     const response = await window.clinicalAPI.submitQuery(
-      state.sessionId,
-      state.currentDatasetId,
+      sessionId,
+      datasetId,
       queryText,
-      true
+      true,
+      held.planLine || null
     );
     if (response.stream_url || response.query_id) {
-      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText);
+      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText, {
+        datasetId,
+        sessionId,
+      });
     }
   } catch (error) {
     updateMessage(assistantMessageId, {
@@ -998,7 +1020,10 @@ async function handleQuerySubmit(event) {
 
     // Start SSE stream if stream URL provided
     if (response.stream_url || response.query_id) {
-      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText);
+      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText, {
+        datasetId: state.currentDatasetId,
+        sessionId: state.sessionId,
+      });
     } else {
       // Fallback: use direct result if available
       updateMessage(assistantMessageId, {
@@ -1024,8 +1049,14 @@ async function handleQuerySubmit(event) {
  * @param {string} queryId
  * @param {string} assistantMessageId
  * @param {string} [pendingQuery]
+ * @param {{ datasetId?: string | null, sessionId?: string | null }} [binding] dataset/session the query ran on
  */
-async function subscribeToQueryStream(queryId, assistantMessageId, pendingQuery = '') {
+async function subscribeToQueryStream(
+  queryId,
+  assistantMessageId,
+  pendingQuery = '',
+  binding = {}
+) {
   return new Promise((resolve, reject) => {
     let contentBuffer = '';
     let resolved = false;
@@ -1070,7 +1101,7 @@ async function subscribeToQueryStream(queryId, assistantMessageId, pendingQuery 
         }
 
         case 'query_awaiting_confirmation': {
-          const hold = buildConfirmationHoldPresentation(data, pendingQuery);
+          const hold = buildConfirmationHoldPresentation(data, pendingQuery, binding);
           updateMessage(assistantMessageId, {
             content: hold.content,
             result: hold.result,

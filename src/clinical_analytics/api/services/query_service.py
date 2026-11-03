@@ -133,6 +133,7 @@ class AsyncQueryService:
         session_id: str | None = None,
         context: Mapping[str, Any] | None = None,
         confirmed: bool = False,
+        confirm_plan_line: str | None = None,
     ) -> str:
         """
         Submit query for async execution, returns query_id immediately.
@@ -165,7 +166,11 @@ class AsyncQueryService:
         self._events[query_id] = []
 
         # Start query execution in background
-        asyncio.create_task(self._execute_query_background(query_id, query, dataset_id, session_id, context, confirmed))
+        asyncio.create_task(
+            self._execute_query_background(
+                query_id, query, dataset_id, session_id, context, confirmed, confirm_plan_line
+            )
+        )
 
         return query_id
 
@@ -252,6 +257,7 @@ class AsyncQueryService:
         session_id: str | None = None,
         context: Mapping[str, Any] | None = None,
         confirmed: bool = False,
+        confirm_plan_line: str | None = None,
     ) -> None:
         """Execute query in background and emit SSE events."""
         try:
@@ -281,6 +287,7 @@ class AsyncQueryService:
                 dataset_id=dataset_id,
                 conversation_history=self.conversation_history(session_id, context),
                 confirmed=confirmed,
+                confirm_plan_line=confirm_plan_line,
             )
 
             # Emit progress event
@@ -434,6 +441,7 @@ class AsyncQueryService:
         dataset_id: str,
         session_id: str | None = None,
         confirmed: bool = False,
+        confirm_plan_line: str | None = None,
     ) -> AsyncQueryResult:
         """
         Execute query synchronously (blocking) and return result.
@@ -467,6 +475,7 @@ class AsyncQueryService:
             dataset_id=dataset_id,
             conversation_history=self.conversation_history(session_id),
             confirmed=confirmed,
+            confirm_plan_line=confirm_plan_line,
         )
 
         # Check for errors
@@ -478,7 +487,8 @@ class AsyncQueryService:
                 if "not found" in error_msg.lower():
                     raise ValueError(error_msg)
 
-        if not any(i.get("severity") == "error" for i in result.issues):
+        # A held plan has not run, so it is not a turn the next question can refine.
+        if not result.requires_confirmation and not any(i.get("severity") == "error" for i in result.issues):
             self._record_turn(session_id, query, result)
 
         # Determine intent type

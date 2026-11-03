@@ -458,3 +458,29 @@ class TestContextToTurn:
 
         # Act / Assert
         assert context_to_turn(context) == expected
+
+
+class TestAsyncQueryServiceHeldTurns:
+    @pytest.mark.asyncio
+    async def test_execute_query_heldPlan_notRecordedAsTurn(self, async_query_service, mock_core_query_service):
+        """A held plan has not run, so the next question must not refine it."""
+        # Arrange
+        from clinical_analytics.core.query_plan import QueryPlan
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=QueryPlan(intent="DESCRIBE", metric="age", confidence=0.5),
+            issues=[],
+            result=None,
+            confidence=0.5,
+            run_key=None,
+            context=None,
+            requires_confirmation=True,
+            failure_reason="Confirmation required before execution.",
+        )
+
+        # Act
+        await async_query_service.execute_query(query="average age", dataset_id="ds", session_id="sess")
+
+        # Assert
+        assert async_query_service.conversation_history("sess") == []

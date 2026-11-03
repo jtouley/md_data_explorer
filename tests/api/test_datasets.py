@@ -389,3 +389,25 @@ class TestDatasetSampleEndpoint:
         assert data["status"] == "ready"
         assert data["dataset_name"] == "Demo Sample"
         mock_storage.save_upload.assert_called_once()
+
+    def test_datasets_sample_reload_invalidatesCachedSemanticLayer(self, test_client, tmp_path):
+        """Reloading the sample overwrites the same upload_id, so its cached layer must go."""
+        # Arrange
+        from clinical_analytics.api import dependencies
+
+        demo_csv = tmp_path / "sample_cohort.csv"
+        demo_csv.write_text("patient_id,outcome\n1,0\n", encoding="utf-8")
+        dependencies._semantic_layer_cache["upload_sample_1"] = MagicMock()
+
+        with (
+            patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls,
+            patch("clinical_analytics.datasets.demo.get_demo_csv_path", return_value=demo_csv),
+        ):
+            mock_cls.return_value.save_upload.return_value = (True, "ok", "upload_sample_1")
+
+            # Act
+            response = test_client.post("/api/datasets/sample")
+
+        # Assert
+        assert response.status_code == 200
+        assert "upload_sample_1" not in dependencies._semantic_layer_cache

@@ -284,6 +284,8 @@ async def load_sample_dataset() -> DatasetUploadResponse:
         log.error("dataset_sample_load_failed", message=message)
         raise HTTPException(status_code=500, detail=message)
 
+    # Reloading the sample overwrites the same upload_id; drop the cached layer like /upload does.
+    invalidate_semantic_layer_cache(upload_id)
     log.info("dataset_sample_load_completed", upload_id=upload_id)
     return DatasetUploadResponse(
         upload_id=upload_id,

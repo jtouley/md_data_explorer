@@ -277,3 +277,36 @@ class TestQueryServiceAnalysis:
 
         # Assert
         assert layer.execute_query_plan.call_args.kwargs["confidence_threshold"] == threshold
+
+    @pytest.mark.parametrize(
+        ("confirm_plan_line_matches", "expected_confirmed"),
+        [(True, True), (False, False)],
+        ids=["same_plan_released", "different_plan_held_again"],
+    )
+    def test_ask_confirmPlanLine_releasesHoldOnlyForTheConfirmedPlan(
+        self, mock_semantic_layer, confirm_plan_line_matches, expected_confirmed
+    ):
+        """Confirm covers the plan the user saw; a re-parse to another plan is held again."""
+        # Arrange
+        from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
+
+        held = {
+            "success": False,
+            "requires_confirmation": True,
+            "failure_reason": "Confirmation required before execution.",
+        }
+        service, layer = self._service(mock_semantic_layer, held, None)
+        shown = format_plan_line(service.nl_engine._intent_to_plan.return_value)
+        confirm_plan_line = shown if confirm_plan_line_matches else "COMPARE_GROUPS · outcome hdl · grouping sex"
+
+        # Act
+        result = service.ask(
+            "compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_line=confirm_plan_line
+        )
+
+        # Assert
+        assert layer.execute_query_plan.call_args.kwargs["confirmed"] is expected_confirmed
+        if not confirm_plan_line_matches:
+            assert result.requires_confirmation is True
+            assert result.failure_reason == PLAN_CHANGED_REASON
+            assert result.plan_line == shown

@@ -196,7 +196,8 @@ export function buildIntentSummary(normalizedIntent, resultPreview, rowCount) {
     const strongestR = formatNumeric(correlations.strongest_r);
     const parts = [];
     if (method) parts.push(`Method: ${method}`);
-    if (strongestPair.length === 2) parts.push(`Strongest: ${strongestPair[0]} ~ ${strongestPair[1]}`);
+    if (strongestPair.length === 2)
+      parts.push(`Strongest: ${strongestPair[0]} ~ ${strongestPair[1]}`);
     if (strongestR) parts.push(`r=${strongestR}`);
     return parts.length > 0 ? parts.join(' | ') : null;
   }
@@ -257,24 +258,28 @@ export function buildQueryCompletedPresentation(intentRaw, resultPreview, claimA
  * Build a confirmation-hold presentation for low-confidence plans.
  * @param {{ plan_line?: string, failure_reason?: string, confidence?: number } | null | undefined} data
  * @param {string} pendingQuery
+ * @param {{ datasetId?: string | null, sessionId?: string | null }} [binding] where the plan was held
  * @returns {{ content: string, result: { awaitingConfirmation: true, planLine: string, failureReason: string, pendingQuery: string, confidence: number | null } }}
  */
-export function buildConfirmationHoldPresentation(data, pendingQuery) {
+export function buildConfirmationHoldPresentation(data, pendingQuery, binding = {}) {
   const planLine = typeof data?.plan_line === 'string' ? data.plan_line : '';
   const failureReason =
     typeof data?.failure_reason === 'string' && data.failure_reason
       ? data.failure_reason
       : 'Confirmation required before execution.';
   const confidence = typeof data?.confidence === 'number' ? data.confidence : null;
-  const content = [failureReason, planLine].filter(Boolean).join('\n');
+  // The plan line renders once, inside the card; the message text carries only the reason.
   return {
-    content,
+    content: failureReason,
     result: {
       awaitingConfirmation: true,
       planLine,
       failureReason,
       pendingQuery: pendingQuery || '',
       confidence,
+      // The dataset and session the plan was held for; Confirm must not run it anywhere else.
+      datasetId: binding.datasetId || null,
+      sessionId: binding.sessionId || null,
     },
   };
 }

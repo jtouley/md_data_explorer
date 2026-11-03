@@ -74,7 +74,7 @@ const clinicalAPI = {
    * @param {string} queryText - Natural language query
    * @returns {Promise<{query_id: string, status: string, stream_url: string}>}
    */
-  async submitQuery(sessionId, datasetId, queryText, confirmed = false) {
+  async submitQuery(sessionId, datasetId, queryText, confirmed = false, confirmPlanLine = null) {
     const response = await fetch(`${API_BASE_URL}/api/queries`, {
       method: 'POST',
       headers: {
@@ -85,6 +85,7 @@ const clinicalAPI = {
         dataset_id: datasetId,
         query_text: queryText,
         confirmed: Boolean(confirmed),
+        confirm_plan_line: confirmPlanLine,
       }),
     });
     if (!response.ok) {

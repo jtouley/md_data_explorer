@@ -292,14 +292,17 @@ class TestRunKeyDeterminismAllExecutionPaths:
     def test_execute_query_plan_always_generates_run_key(self, semantic_layer):
         """execute_query_plan() should always generate run_key even if plan.run_key is None (Phase 1.1.5)."""
         # Arrange: Plan with run_key=None (as nl_query_engine should produce)
-        plan = QueryPlan(intent="COUNT", metric="age", group_by="status", entity_key="patient_id", run_key=None)
+        plan = QueryPlan(
+            intent="COUNT", metric="age", group_by="status", entity_key="patient_id", run_key=None, confidence=0.9
+        )
         query = "average age by status"
 
         # Act
         result = semantic_layer.execute_query_plan(plan, query_text=query)
 
-        assert result["success"] is False
-        assert "run_key" not in result
+        # Assert
+        assert result["success"] is True
+        assert result["run_key"]
 
     def test_execute_query_plan_run_key_matches_direct_generation(self, semantic_layer):
         """execute_query_plan() run_key should match direct _generate_run_key() call (Phase 1.1.5)."""

@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 HOLD_FAILURE_REASON = "Confirmation required before execution."
+PLAN_CHANGED_REASON = (
+    "The question was interpreted differently from the plan you confirmed. Review this plan before it runs."
+)
 
 _TEST_LABELS = {
     "COMPARE_GROUPS": "group comparison",

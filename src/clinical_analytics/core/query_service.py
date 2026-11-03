@@ -11,7 +11,7 @@ from typing import Any
 
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
-from clinical_analytics.core.execution_gate import format_plan_line
+from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import QueryPlan
@@ -64,6 +64,7 @@ class QueryService:
         dataset_version: str | None = None,
         conversation_history: list[dict[str, Any]] | None = None,
         confirmed: bool = False,
+        confirm_plan_line: str | None = None,
     ) -> QueryResult:
         """Parse and execute a query on this layer's single DuckDB connection."""
         lock = getattr(self.semantic_layer, "_con_lock", None)
@@ -81,6 +82,7 @@ class QueryService:
                 dataset_version=dataset_version,
                 conversation_history=conversation_history,
                 confirmed=confirmed,
+                confirm_plan_line=confirm_plan_line,
             )
 
     def _ask_unlocked(
@@ -91,6 +93,7 @@ class QueryService:
         dataset_version: str | None = None,
         conversation_history: list[dict[str, Any]] | None = None,
         confirmed: bool = False,
+        confirm_plan_line: str | None = None,
     ) -> QueryResult:
         """
         Parse and execute query, return structured result.
@@ -168,6 +171,13 @@ class QueryService:
         plan_line: str | None = None
         execution_run_key: str | None = run_key
 
+        # A confirmation covers the plan the user saw. Re-parsing (e.g. via the LLM tier) can
+        # yield a different plan; that one must be shown and confirmed on its own.
+        plan_changed = False
+        if confirmed and confirm_plan_line is not None and format_plan_line(query_plan) != confirm_plan_line:
+            confirmed = False
+            plan_changed = True
+
         if not validation_result.get("valid", False):
             # Fail closed: an invalid plan is refused here and never reaches execution.
             failure_reason = next(
@@ -204,6 +214,8 @@ class QueryService:
 
                 if requires_confirmation:
                     plan_line = format_plan_line(query_plan)
+                    if plan_changed:
+                        failure_reason = PLAN_CHANGED_REASON
                 elif execution_result.get("success") is False:
                     reason = failure_reason or ((execution_result.get("warnings") or ["Execution failed"])[0])
                     issues.append({"message": str(reason), "severity": "error"})

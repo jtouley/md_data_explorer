@@ -63,6 +63,13 @@ class QueryRequest(BaseModel):
         False,
         description="When true, release a low-confidence execution hold for this query",
     )
+    confirm_plan_line: str | None = Field(
+        None,
+        description=(
+            "The plan line the user confirmed. When set, the hold is released only if the query "
+            "still parses to exactly this plan; otherwise it is held again with the new plan."
+        ),
+    )
     context: dict[str, Any] | None = Field(
         None,
         description="Previous conversation context (e.g., previous_intent, previous_variables)",

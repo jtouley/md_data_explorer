@@ -109,11 +109,14 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
             if abs(diff) < 1e-12:
                 claim = f"Mean {outcome} did not differ between {groups[0]} and {groups[1]}"
             else:
-                # Positive mean_diff means the first listed group has the higher mean.
+                # mean_diff and its CI are groups[0] - groups[1]. When the claim names groups[1]
+                # as higher, it states groups[1] - groups[0], so the CI flips sign and order too.
                 higher, lower = (groups[0], groups[1]) if diff > 0 else (groups[1], groups[0])
                 claim = f"Mean {outcome} was {_fmt(abs(diff))} higher in {higher} than {lower}"
+                if diff < 0 and lo is not None and hi is not None:
+                    lo, hi = -hi, -lo
             details = []
-            if abs(diff) >= 1e-12 and lo is not None and hi is not None:
+            if lo is not None and hi is not None:
                 details.append(f"95% CI {_fmt(lo)} to {_fmt(hi)}")
             if p is not None:
                 details.append(f"t-test {_fmt_p(p)}")

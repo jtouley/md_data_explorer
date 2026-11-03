@@ -112,6 +112,7 @@ async def submit_query(
             session_id=request.session_id,
             context=request.context,
             confirmed=request.confirmed,
+            confirm_plan_line=request.confirm_plan_line,
         )
 
         return QueryResponse(

@@ -28,7 +28,7 @@ class TestPresentAnalysisClaims:
         [
             (
                 T_TEST,
-                "Mean ldl was 16.14 higher in placebo than drug (95% CI -18.83 to -13.44; t-test p<0.001; n=300). "
+                "Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; t-test p<0.001; n=300). "
                 "Unadjusted comparison by treatment.",
             ),
             (
@@ -160,6 +160,23 @@ class TestPresentAnalysisClaims:
 
         # Assert
         assert presentation == {"claim": None, "table": None}
+
+    @pytest.mark.parametrize(
+        ("mean_diff", "ci", "expected_ci"),
+        [(-1.25, (-8.30, 5.80), "95% CI -5.80 to 8.30"), (1.25, (-5.80, 8.30), "95% CI -5.80 to 8.30")],
+        ids=["second_group_higher_ci_flipped", "first_group_higher_ci_kept"],
+    )
+    def test_present_analysis_tTestDirection_ciCentredOnStatedDifference(self, mean_diff, ci, expected_ci):
+        """The CI is for the difference the claim states, so its centre equals the stated effect."""
+        # Arrange
+        analysis = {**T_TEST, "mean_diff": mean_diff, "ci_lower": ci[0], "ci_upper": ci[1]}
+
+        # Act
+        claim = present_analysis(analysis)["claim"]
+
+        # Assert
+        assert "1.25 higher in" in claim
+        assert expected_ci in claim
 
 
 class TestPresentAnalysisTables:
