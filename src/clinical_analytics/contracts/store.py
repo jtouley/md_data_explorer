@@ -7,7 +7,9 @@ Layout under the data directory (``<data home>/data``, the parent of ``uploads/`
 
 A contract is immutable: it is written to a temporary file and hard-linked into place, which
 fails if the target exists, so two concurrent uploads of the same content cannot interleave and
-a finished contract is never rewritten. Reports are written to a temporary file and renamed.
+a finished contract is never rewritten. File systems without hard links (exFAT, many SMB shares)
+fall back to an exclusive create (``open(path, "x")``) plus fsync: still never overwritten.
+Reports are written to a temporary file and renamed.
 """
 
 from __future__ import annotations
@@ -72,6 +74,19 @@ def _write_temp(directory: Path, text: str) -> Path:
     return Path(tmp)
 
 
+def _create_exclusive(path: Path, text: str) -> None:
+    """Create ``path`` with ``text``; FileExistsError if it exists. A partial file is removed."""
+    with open(path, "x", encoding="utf-8") as f:
+        try:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        except OSError:
+            f.close()
+            path.unlink(missing_ok=True)
+            raise
+
+
 def write_contract(data_dir: Path, upload_id: str, dataset_version: str, contract: OpenDataContractStandard) -> bool:
     """Write the contract for a version unless one exists. Returns True when this call wrote it.
 
@@ -83,13 +98,21 @@ def write_contract(data_dir: Path, upload_id: str, dataset_version: str, contrac
     if path.exists():
         log.info("contract_exists_kept")
         return False
+    text = contract.to_yaml()
     try:
-        tmp = _write_temp(path.parent, contract.to_yaml())
+        tmp = _write_temp(path.parent, text)
         try:
             os.link(tmp, path)
         except FileExistsError:
             log.info("contract_exists_kept")
             return False
+        except OSError as e:
+            log.info("contract_link_unsupported", errno=e.errno)
+            try:
+                _create_exclusive(path, text)
+            except FileExistsError:
+                log.info("contract_exists_kept")
+                return False
         finally:
             tmp.unlink(missing_ok=True)
     except OSError as e:

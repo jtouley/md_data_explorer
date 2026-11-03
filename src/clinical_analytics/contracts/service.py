@@ -11,7 +11,7 @@ import structlog
 
 from clinical_analytics.contracts.builder import ContractInputs, build_contract
 from clinical_analytics.contracts.errors import ContractError
-from clinical_analytics.contracts.quality import QualityReport, run_quality
+from clinical_analytics.contracts.quality import QualityNotRun, QualityReport, run_quality
 from clinical_analytics.contracts.store import contract_path, read_contract, write_contract, write_report
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.metadata_patch import (
@@ -101,11 +101,11 @@ def check_upload_or_log(
     dataset_version: str,
     metadata: dict[str, Any],
     overlay_dir: Path | None = None,
-) -> QualityReport | None:
-    """``check_upload`` for the upload path: a failure is logged as an error, not raised.
+) -> QualityReport | QualityNotRun:
+    """``check_upload`` for the upload path: a failure is logged and returned as not run, not raised.
 
-    The upload's data is already stored when this runs; a contract bug must not lose it. The
-    quality endpoint regenerates a missing contract and report on the next request.
+    The upload's data is already stored when this runs; a contract bug must not lose it, but the
+    user must see that the check did not run. The quality endpoint retries on the next request.
     """
     try:
         return check_upload(
@@ -118,4 +118,4 @@ def check_upload_or_log(
         )
     except (ContractError, OSError, ValueError, pl.exceptions.PolarsError) as e:
         logger.error("upload_check_failed", upload_id=upload_id, dataset_version=dataset_version, **error_fields(e))
-        return None
+        return QualityNotRun(reason=f"the check failed ({type(e).__name__})")

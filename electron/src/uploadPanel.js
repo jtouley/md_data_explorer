@@ -4,41 +4,47 @@
 
 const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
+export const QUALITY_NOT_RUN_NOTE = 'Data check could not run';
+
 /**
- * Plain-language data-quality lines from an upload response (already small-cell suppressed).
- * @param {unknown} quality
- * @returns {string[]}
+ * One plain-language data-quality note from a report or a not-run status (already suppressed).
+ * @param {unknown} quality API `quality` value: a report, `{ status: 'not_run' }`, or null
+ * @returns {string|null} null when there is nothing to say
  */
-function qualitySummary(quality) {
-  const lines = quality && typeof quality === 'object' ? quality.summary : null;
-  return Array.isArray(lines) ? lines.filter((l) => typeof l === 'string') : [];
+export function qualityNote(quality) {
+  if (!quality || typeof quality !== 'object') return null;
+  if (quality.status === 'not_run') return QUALITY_NOT_RUN_NOTE;
+  const lines = Array.isArray(quality.summary)
+    ? quality.summary.filter((l) => typeof l === 'string')
+    : [];
+  return lines.length ? `Data check: ${lines.join('; ')}` : null;
 }
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality_summary: string[] }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality_note: string|null }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
-    return { upload_id: '', dataset_name: '', status: 'failed', message: '', quality_summary: [] };
+    return { upload_id: '', dataset_name: '', status: 'failed', message: '', quality_note: null };
   }
   return {
     upload_id: String(raw.upload_id ?? ''),
     dataset_name: String(raw.dataset_name ?? ''),
     status: String(raw.status ?? 'failed'),
     message: String(raw.message ?? ''),
-    quality_summary: qualitySummary(raw.quality),
+    quality_note: qualityNote(raw.quality),
   };
 }
 
 /**
- * Status line after a successful upload, with the data-quality notes appended.
+ * Status line with the data-quality note appended.
  * @param {string} headline
- * @param {string[]} qualityLines
+ * @param {string|null} note from qualityNote
  * @returns {string}
  */
-export function uploadStatusText(headline, qualityLines) {
-  return qualityLines.length ? `${headline}. Data check: ${qualityLines.join('; ')}` : headline;
+export function uploadStatusText(headline, note) {
+  return note ? `${headline}. ${note}` : headline;
 }
 
 /**

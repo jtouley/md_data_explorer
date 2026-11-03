@@ -3,6 +3,8 @@ import { describe, test, expect, vi } from 'vitest';
 import {
   normalizeUploadResponse,
   uploadStatusText,
+  qualityNote,
+  QUALITY_NOT_RUN_NOTE,
   formatFileSize,
   isAllowedExtension,
   renderUploadArea,
@@ -23,36 +25,44 @@ describe('normalizeUploadResponse', () => {
       dataset_name: '',
       status: 'failed',
       message: '',
-      quality_summary: [],
+      quality_note: null,
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
       dataset_name: '',
       status: 'failed',
       message: '',
-      quality_summary: [],
+      quality_note: null,
     });
   });
 });
 
-describe('upload data-quality summary', () => {
+describe('upload data-quality note', () => {
   test.each([
-    [{ quality: { summary: ['ldl: 5.8% missing', 7] } }, ['ldl: 5.8% missing']],
-    [{ quality: null }, []],
-    [{ quality: { summary: 'not a list' } }, []],
-    [{}, []],
-  ])('normalizeUploadResponse keeps only string summary lines (%#)', (raw, expected) => {
-    expect(normalizeUploadResponse(raw).quality_summary).toEqual(expected);
+    [{ quality: { status: 'ran', summary: ['ldl: 5.8% missing', 7] } }, 'Data check: ldl: 5.8% missing'],
+    [{ quality: { status: 'not_run', reason: 'the check failed (OSError)', summary: [] } }, QUALITY_NOT_RUN_NOTE],
+    [{ quality: { status: 'ran', summary: [] } }, null],
+    [{ quality: null }, null],
+    [{ quality: { summary: 'not a list' } }, null],
+    [{}, null],
+  ])('normalizeUploadResponse turns quality into one note (%#)', (raw, expected) => {
+    expect(normalizeUploadResponse(raw).quality_note).toBe(expected);
   });
 
-  test('uploadStatusText appends quality lines', () => {
-    expect(
-      uploadStatusText('✓ A uploaded', ['ldl: 5.8% missing', 'age: <11 values outside 0–122 years'])
-    ).toBe('✓ A uploaded. Data check: ldl: 5.8% missing; age: <11 values outside 0–122 years');
+  test('a failed check is visible in the upload status line', () => {
+    const note = qualityNote({ status: 'not_run', reason: 'x', summary: [] });
+    expect(uploadStatusText('✓ A uploaded', note)).toBe('✓ A uploaded. Data check could not run');
   });
 
-  test('uploadStatusText leaves the headline alone without quality lines', () => {
-    expect(uploadStatusText('✓ A uploaded', [])).toBe('✓ A uploaded');
+  test('uploadStatusText appends the report note', () => {
+    const note = qualityNote({ summary: ['ldl: 5.8% missing', 'age: <11 values outside 0–122 years'] });
+    expect(uploadStatusText('✓ A uploaded', note)).toBe(
+      '✓ A uploaded. Data check: ldl: 5.8% missing; age: <11 values outside 0–122 years'
+    );
+  });
+
+  test('uploadStatusText leaves the headline alone without a note', () => {
+    expect(uploadStatusText('✓ A uploaded', null)).toBe('✓ A uploaded');
   });
 });
 

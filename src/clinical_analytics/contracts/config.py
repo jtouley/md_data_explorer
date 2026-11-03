@@ -18,7 +18,8 @@ CONTRACT_SUFFIX: Final = ".odcs.yaml"
 CONTRACTS_DIRNAME: Final = "contracts"
 DQ_DIRNAME: Final = "dq"
 GENERATOR: Final = "clinical_analytics.contracts.builder"
-# First contract for a dataset version. A later revision (accepted metadata patches) bumps it.
+# Every contract for a dataset version. Not bumped yet when a patch is accepted later: the
+# re-contract trigger is deferred (docs/architecture/AS_BUILT_ARCHITECTURE.md, known limits).
 INITIAL_CONTRACT_VERSION: Final = "1.0.0"
 UNIFIED_OBJECT_NAME: Final = "unified"
 SYNTHETIC_TAG: Final = "synthetic"
@@ -43,6 +44,16 @@ SEVERITY_CODEBOOK: Final[Severity] = "warning"
 SEVERITY_RANGE: Final[Severity] = "warning"
 SEVERITY_MISSING: Final[Severity] = "warning"
 SEVERITY_ROW_COUNT: Final[Severity] = "warning"
+
+# Without an identifier column the ID checks still appear in the report, as not run.
+ID_NOT_NULL_RULE_ID: Final = "id_not_null"
+ID_UNIQUE_RULE_ID: Final = "id_no_duplicates"
+ID_RULE_DISPLAY: Final = "Identifier"
+NO_ID_COLUMN_REASON: Final = "no ID column identified"
+
+# ODCS allows minimum/maximum only on numeric logical types; for a plausibility column loaded as
+# text the bounds go in this custom property so the range check is reported as not run.
+PLAUSIBILITY_RANGE_PROPERTY: Final = "plausibilityRange"
 
 
 @dataclass(frozen=True)
@@ -74,12 +85,14 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
     PlausibilityRange(
         variable="bmi",
         aliases=frozenset({"bmi", "bodymassindex"}),
-        # Survivors below BMI 12 are documented (Collins S, Nat Med 1995;1:810-814), so the lower
-        # bound sits below that. The upper bound is above recorded extremes; owner to confirm.
+        # Lower: survivors below BMI 12 are documented (Collins S, Nat Med 1995;1:810-814), so the
+        # bound sits below that. Upper: adult EHR BMI outside 15-90 kg/m2 is treated as implausible
+        # (Lin PD et al., JAMIA Open 2022;5(4):ooac089, PMC9629892). A warning, never a rejection.
         minimum=10,
-        maximum=200,
+        maximum=90,
         unit="kg/m2",
-        source="Lower: Collins, Nat Med 1995;1:810 (survival below BMI 12). Upper: unverified, owner to confirm",
+        source="Lower: Collins, Nat Med 1995;1:810 (survival below BMI 12). "
+        "Upper: Lin et al., JAMIA Open 2022;5(4):ooac089 (adult EHR BMI 15-90)",
     ),
 )
 

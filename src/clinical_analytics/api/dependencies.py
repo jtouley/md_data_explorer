@@ -61,6 +61,21 @@ def dataset_deletion_guard(dataset_id: str) -> Iterator[None]:
             _deleting_datasets.discard(dataset_id)
 
 
+# One lock per dataset_id around writes of derived files (contracts, quality reports) and the
+# purge that deletes them, so a slow backfill cannot write after a concurrent delete purged.
+_dataset_files_locks: dict[str, threading.Lock] = {}
+_dataset_files_locks_guard = threading.Lock()
+
+
+@contextmanager
+def dataset_files_lock(dataset_id: str) -> Iterator[None]:
+    """Hold the per-dataset lock for derived-file writes and the delete purge (blocking)."""
+    with _dataset_files_locks_guard:
+        lock = _dataset_files_locks.setdefault(dataset_id, threading.Lock())
+    with lock:
+        yield
+
+
 def _semantic_layer_lock(dataset_id: str) -> threading.Lock:
     with _semantic_layer_locks_guard:
         return _semantic_layer_locks.setdefault(dataset_id, threading.Lock())

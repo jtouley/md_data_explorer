@@ -171,14 +171,14 @@ schema:
     - property: variableKind
       value: continuous
     - property: plausibilitySource
-      value: 'Lower: Collins, Nat Med 1995;1:810 (survival below BMI 12). Upper: unverified,
-        owner to confirm'
+      value: 'Lower: Collins, Nat Med 1995;1:810 (survival below BMI 12). Upper: Lin
+        et al., JAMIA Open 2022;5(4):ooac089 (adult EHR BMI 15-90)'
     - property: assumedUnit
       value: kg/m2
     logicalType: number
     logicalTypeOptions:
       minimum: 10
-      maximum: 200
+      maximum: 90
     quality:
     - id: bmi_missing
       description: 'Share of empty values (Jakobsen et al. 2017: above ~5% complete-case

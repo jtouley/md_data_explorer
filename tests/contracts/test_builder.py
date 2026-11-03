@@ -13,6 +13,7 @@ import pytest
 import yaml
 from open_data_contract_standard.model import OpenDataContractStandard
 
+from clinical_analytics.contracts import config
 from clinical_analytics.contracts.builder import (
     find_plausibility_range,
     logical_type,
@@ -176,8 +177,13 @@ def test_buildContract_ageColumn_rangeOnlyWhenNumeric(make_contract, values, has
 
     # Assert
     assert ("logicalTypeOptions" in prop) is has_range
+    custom = {c["property"]: c["value"] for c in prop.get("customProperties", [])}
     if has_range:
         assert prop["logicalTypeOptions"] == {"minimum": 0, "maximum": 122}
+        assert config.PLAUSIBILITY_RANGE_PROPERTY not in custom
+    else:
+        # ODCS allows no minimum/maximum on a string; the bound is kept so the check reports not_run.
+        assert custom[config.PLAUSIBILITY_RANGE_PROPERTY] == {"minimum": 0, "maximum": 122}
 
 
 def test_buildContract_resolvedMetadata_patchesFoldedIn(make_contract):
@@ -238,3 +244,17 @@ def test_buildContract_noIdColumnAndNaiveTimestamp_tableRulesOnlyAndUtc(make_con
     assert "customProperties" not in prop  # no variable kind for an all-null column
     assert [q["metric"] for q in prop["quality"]] == ["nullValues"]
     assert contract.tags is None
+    table_rules = {q.id: (q.metric, q.arguments) for q in contract.schema_[0].quality}
+    assert table_rules[config.ID_NOT_NULL_RULE_ID] == ("nullValues", {"properties": []})
+    assert table_rules[config.ID_UNIQUE_RULE_ID] == ("duplicateValues", {"properties": []})
+
+
+def test_buildContract_noIdAndTextAge_bundledOdcsJsonSchemaValidates(make_contract):
+    # Arrange: the not-run paths add table rules with empty properties and a custom range.
+    df = pl.DataFrame({"age": ["40", "unknown"], "bmi": [float("nan"), 25.0]})
+
+    # Act
+    document = yaml.safe_load(make_contract(df, id_column=None).to_yaml())
+
+    # Assert (raises on any violation)
+    jsonschema.validate(document, json.loads(OpenDataContractStandard.json_schema()))

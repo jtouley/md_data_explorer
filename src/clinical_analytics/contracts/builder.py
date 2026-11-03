@@ -163,6 +163,32 @@ def _id_rules(name: str) -> list[dict[str, Any]]:
     ]
 
 
+def _unidentified_id_rules() -> list[dict[str, Any]]:
+    """Table-level ID rules naming no column: reported as not run instead of disappearing."""
+    return [
+        {
+            "id": config.ID_NOT_NULL_RULE_ID,
+            "type": "library",
+            "metric": "nullValues",
+            "arguments": {"properties": []},
+            "mustBe": 0,
+            "dimension": "completeness",
+            "severity": config.SEVERITY_ID,
+            "description": "Every row needs an identifier; none was identified",
+        },
+        {
+            "id": config.ID_UNIQUE_RULE_ID,
+            "type": "library",
+            "metric": "duplicateValues",
+            "arguments": {"properties": []},
+            "mustBe": 0,
+            "dimension": "uniqueness",
+            "severity": config.SEVERITY_ID,
+            "description": "One row per identifier; none was identified",
+        },
+    ]
+
+
 def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs) -> dict[str, Any]:
     meta = inputs.resolved.columns.get(column) if inputs.resolved else None
     dtype = series.dtype
@@ -221,8 +247,13 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
             prop["transformDescription"] = "Codebook decoded from the column header"
 
     bounds = find_plausibility_range(column)
-    if bounds is not None and dtype.is_numeric() and not is_id:
-        prop["logicalTypeOptions"] = {"minimum": bounds.minimum, "maximum": bounds.maximum}
+    if bounds is not None and not is_id:
+        limits = {"minimum": bounds.minimum, "maximum": bounds.maximum}
+        if dtype.is_numeric():
+            prop["logicalTypeOptions"] = limits
+        else:
+            # Kept (not dropped) so the check shows as not run: "column is not numeric".
+            custom.append(_custom(config.PLAUSIBILITY_RANGE_PROPERTY, limits))
         custom.append(_custom("plausibilitySource", bounds.source))
         if not (meta and meta.unit):
             custom.append(_custom("assumedUnit", bounds.unit))
@@ -280,6 +311,7 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
                 "logicalType": "object",
                 "dataGranularityDescription": "One row per record as uploaded",
                 "quality": [
+                    *([] if inputs.id_column else _unidentified_id_rules()),
                     {
                         "id": "row_count_min",
                         "type": "library",
@@ -288,7 +320,7 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
                         "dimension": "completeness",
                         "severity": config.SEVERITY_ROW_COUNT,
                         "description": "Below the small-cell threshold every count is suppressed",
-                    }
+                    },
                 ],
                 "properties": [_property(col, df.get_column(col), names[col], inputs) for col in df.columns],
             }

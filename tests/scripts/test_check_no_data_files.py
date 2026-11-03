@@ -108,3 +108,97 @@ def test_contentViolations_committedSyntheticContract_passes():
 
     # Assert
     assert result == []
+
+
+@pytest.mark.parametrize(
+    ("path", "flagged"),
+    [
+        ("src/clinical_analytics/lineage/__init__.py", False),
+        ("src/clinical_analytics/lineage/graph.py", False),
+        ("src/clinical_analytics/dq/checks.py", False),
+        ("tests/lineage/test_graph.py", False),
+        ("docs/lineage/overview.md", False),
+        ("exports/lineage/graph.jsonl", True),
+        ("exports/dq/u1/v1/run.yaml", True),
+        ("exports/dq/u1/v1/run.parquet", True),
+        ("contracts/upl_1/abc.odcs.json", True),
+        ("exports/product.odps.json", True),
+        ("tests/fixtures/synthetic/contracts/c.odcs.json", False),
+    ],
+    ids=[
+        "lineage_package_init",
+        "lineage_module",
+        "dq_module",
+        "lineage_test_module",
+        "lineage_doc",
+        "lineage_jsonl",
+        "dq_yaml_report",
+        "dq_parquet",
+        "odcs_json_contract",
+        "odps_json_contract",
+        "synthetic_odcs_json",
+    ],
+)
+def test_violations_derivedDirsAndJsonContracts_codeNotFlaggedDataFlagged(path, flagged):
+    # Act
+    result = check_no_data_files.violations([path])
+
+    # Assert
+    assert (result == [path]) is flagged
+
+
+_ODCS = "apiVersion: v3.2.0\nkind: DataContract\nid: u1\nschema:\n  - name: unified\n    physicalName: unified\n"
+_SCHEMA_ONLY = "schema:\n  - name: unified\n    physicalName: t\n    properties:\n      - name: age\n"
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "flagged"),
+    [
+        ("notes/cohort.yaml", _ODCS, True),
+        ("notes/cohort.yml", _ODCS.replace("v3.2.0", "v3.0.2"), True),
+        ("notes/cohort.json", '{"apiVersion": "v3.1.0", "kind": "DataContract", "id": "u1"}', True),
+        ("notes/cohort.yaml", _SCHEMA_ONLY, True),
+        ("tests/fixtures/synthetic/contracts/c.yaml", "tags: [synthetic]\n" + _ODCS, False),
+        ("tests/fixtures/synthetic/contracts/c.yaml", _ODCS, True),
+        ("docs/openapi.yaml", "openapi: 3.1.0\nkind: Api\n", False),
+        ("config/app.yaml", "apiVersion: v1\nkind: ConfigMap\n", False),
+        ("electron/package.json", '{"name": "app", "version": "1.0.0"}', False),
+        ("notes/broken.json", '{"apiVersion": "v3.2.0", "kind": ', False),
+    ],
+    ids=[
+        "renamed_yaml_no_hash",
+        "renamed_yml_v3_0",
+        "json_contract",
+        "schema_with_physical_name",
+        "synthetic_tagged_in_fixtures",
+        "untagged_in_fixtures",
+        "other_yaml",
+        "k8s_like_yaml",
+        "package_json",
+        "unparseable_json_without_hash",
+    ],
+)
+def test_contentViolations_odcsShapedFile_flaggedOutsideTaggedSyntheticFixtures(path, text, flagged):
+    # Act
+    result = check_no_data_files.content_violations([path], lambda _p: text)
+
+    # Assert
+    assert (result == [path]) is flagged
+
+
+def test_contentViolations_trackedRepoFiles_noFalsePositives():
+    # Arrange: every file git tracks today (the committed synthetic contract included).
+    root = Path(__file__).resolve().parents[2]
+    paths = check_no_data_files.tracked_files()
+
+    def read(p: str) -> str | None:
+        try:
+            return (root / p).read_text(encoding="utf-8")
+        except (FileNotFoundError, UnicodeDecodeError, IsADirectoryError):
+            return None
+
+    # Act
+    result = check_no_data_files.content_violations(paths, read) + check_no_data_files.violations(paths)
+
+    # Assert
+    assert result == []

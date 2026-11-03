@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,7 +11,7 @@ import polars as pl
 import pytest
 
 from clinical_analytics.contracts.errors import ContractStoreError, ContractValidationError
-from clinical_analytics.contracts.quality import run_quality
+from clinical_analytics.contracts.quality import QualityNotRun, run_quality
 from clinical_analytics.contracts.service import (
     accepted_patch_ids,
     check_upload,
@@ -192,13 +194,56 @@ def test_checkUpload_acceptedPatchInOverlay_labelInContract(tmp_path: Path, load
     assert {c.property: c.value for c in contract.customProperties}["metadataPatchIds"] == ["p1"]
 
 
-def test_checkUploadOrLog_idColumnMissing_returnsNoneAndWritesNothing(tmp_path: Path):
-    # Arrange
+def test_checkUploadOrLog_checkFails_returnsVisibleNotRunStatus(tmp_path: Path):
+    # Arrange: the mapped ID column is missing, so building the contract fails.
     df = pl.DataFrame({"a": [1, 2]})
 
     # Act
-    report = check_upload_or_log(tmp_path, df, upload_id="u1", dataset_version="v1", metadata=_META)
+    result = check_upload_or_log(tmp_path, df, upload_id="u1", dataset_version="v1", metadata=_META)
 
     # Assert
-    assert report is None
+    assert isinstance(result, QualityNotRun)
+    assert (result.status, result.reason) == ("not_run", "the check failed (ValueError)")
     assert not (tmp_path / "contracts").exists()
+
+
+@pytest.mark.parametrize("errno_code", [errno.EPERM, errno.ENOTSUP, errno.EXDEV], ids=["eperm", "enotsup", "exdev"])
+def test_writeContract_hardLinkUnsupported_fallsBackToExclusiveCreate(
+    tmp_path: Path, monkeypatch, load_synthetic_dataset, make_contract, errno_code
+):
+    # Arrange: exFAT and SMB shares refuse hard links.
+    def no_link(src, dst):
+        raise OSError(errno_code, os.strerror(errno_code))
+
+    monkeypatch.setattr("clinical_analytics.contracts.store.os.link", no_link)
+    contract = make_contract(load_synthetic_dataset("cohort"))
+    path = contract_path(tmp_path, "u1", "v1")
+
+    # Act
+    first = write_contract(tmp_path, "u1", "v1", contract)
+    second = write_contract(tmp_path, "u1", "v1", make_contract(load_synthetic_dataset("cohort").head(3)))
+
+    # Assert
+    assert (first, second) == (True, False)
+    assert read_contract(path) == contract
+    assert [p.name for p in path.parent.iterdir()] == [path.name]  # no temp file left
+
+
+def test_writeContract_fallbackTargetAppearsConcurrently_keepsOtherWritersFile(
+    tmp_path: Path, monkeypatch, load_synthetic_dataset, make_contract
+):
+    # Arrange: link unsupported, and another writer creates the file after our exists() check.
+    path = contract_path(tmp_path, "u1", "v1")
+
+    def no_link(src, dst):
+        Path(dst).write_text("other writer", encoding="utf-8")
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr("clinical_analytics.contracts.store.os.link", no_link)
+
+    # Act
+    written = write_contract(tmp_path, "u1", "v1", make_contract(load_synthetic_dataset("cohort")))
+
+    # Assert
+    assert written is False
+    assert path.read_text(encoding="utf-8") == "other writer"

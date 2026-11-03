@@ -69,7 +69,7 @@ class TestUserDatasetStorage:
         assert contract_path(data_dir, upload_id, version).is_file()
         report = latest_report(data_dir, upload_id, version)
         assert report is not None and report.summary == ["ldl: 5.8% missing"]
-        assert metadata["quality"] == {"run_ts": report.run_ts, "failed": 0, "warnings": 1}
+        assert metadata["quality"] == {"status": "ran", "run_ts": report.run_ts, "failed": 0, "warnings": 1}
 
     @pytest.mark.parametrize("mapped_outcome", ["outcome", "mortality"])
     def test_save_upload_outcome_mapped_to_other_column_with_existing_outcome_succeeds(

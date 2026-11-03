@@ -6,14 +6,19 @@ per-user data home, never in the repo. Only synthetic or public reference files 
 may be tracked.
 
 Data contracts describe a real upload (column names, codebooks, a hash of the source file), so
-``*.odcs.yaml`` / ``*.odps.yaml`` files, ``dq/`` and ``lineage/`` directories and eval golden sets
-are allowed only under ``tests/fixtures/synthetic/``. Any tracked YAML that records a
-``sourceFileSha256`` custom property must also be tagged ``synthetic``.
+``*.odcs.yaml`` / ``*.odcs.json`` (and ODPS) files, data files (JSON, YAML, Parquet, ...) under a
+``dq/`` or ``lineage/`` directory and eval golden sets are allowed only under
+``tests/fixtures/synthetic/``. Source code and docs in such directories (a ``lineage`` package)
+are fine. By content: any tracked YAML or JSON shaped like an ODCS contract (``apiVersion`` v3.x
+with ``kind: DataContract``, or a ``schema`` list with ``physicalName``) is allowed only under
+``tests/fixtures/synthetic/`` and tagged ``synthetic``, whatever its file name; any tracked YAML
+that records a ``sourceFileSha256`` custom property must also be tagged ``synthetic``.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import subprocess
 import sys
@@ -26,10 +31,16 @@ DATA_EXTENSIONS = (
     ".duckdb", ".db", ".sqlite", ".sqlite3", ".parquet", ".feather", ".arrow",
     ".sav", ".dta", ".sas7bdat", ".xlsx", ".xls", ".csv", ".tsv",
 )  # fmt: skip
-CONTRACT_SUFFIXES = (".odcs.yaml", ".odcs.yml", ".odps.yaml", ".odps.yml")
+CONTRACT_SUFFIXES = (".odcs.yaml", ".odcs.yml", ".odcs.json", ".odps.yaml", ".odps.yml", ".odps.json")
 DERIVED_DIRS = ("dq", "lineage")
+# Files under dq/ or lineage/ that hold results; .py, .md and other code or docs are not data.
+DERIVED_DATA_SUFFIXES = (".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".txt", *DATA_EXTENSIONS)
+SYNTHETIC_DIR = "tests/fixtures/synthetic/"
+ODCS_KIND = "DataContract"
+ODCS_API_PREFIX = "v3."
 EVAL_GOLDEN = re.compile(r"(^|/)eval/golden[^/]*")
 YAML_SUFFIXES = (".yaml", ".yml")
+JSON_SUFFIXES = (".json",)
 SOURCE_HASH_PROPERTY = "sourceFileSha256"
 SYNTHETIC_TAG = "synthetic"
 # Synthetic fixtures and public data dictionaries only.
@@ -52,7 +63,7 @@ def _derived_artifact(path: str) -> bool:
     parts = lower.split("/")
     return (
         lower.endswith(CONTRACT_SUFFIXES)
-        or any(d in parts[:-1] for d in DERIVED_DIRS)
+        or (any(d in parts[:-1] for d in DERIVED_DIRS) and lower.endswith(DERIVED_DATA_SUFFIXES))
         or bool(EVAL_GOLDEN.search(lower))
     )
 
@@ -79,24 +90,57 @@ def _tagged_synthetic(document: object) -> bool:
     return isinstance(document, dict) and SYNTHETIC_TAG in (document.get("tags") or [])
 
 
-def content_violations(paths: list[str], read_text: Callable[[str], str | None]) -> list[str]:
-    """YAML files recording a source-file hash without a ``synthetic`` tag (anywhere, allowlist too).
+def _odcs_shaped(document: object) -> bool:
+    """An ODCS contract by content, whatever the file is called."""
+    if not isinstance(document, dict):
+        return False
+    api = document.get("apiVersion")
+    if document.get("kind") == ODCS_KIND and isinstance(api, str) and api.startswith(ODCS_API_PREFIX):
+        return True
+    schema = document.get("schema")
+    return isinstance(schema, list) and any(isinstance(o, dict) and "physicalName" in o for o in schema)
 
-    A file that mentions the property but cannot be parsed is flagged: it cannot be shown safe.
+
+def _documents(path: str, text: str) -> list[object] | None:
+    """Parsed documents, or None if the text cannot be parsed."""
+    try:
+        if path.lower().endswith(JSON_SUFFIXES):
+            return [json.loads(text)]
+        return list(yaml.safe_load_all(text))
+    except (yaml.YAMLError, json.JSONDecodeError):
+        return None
+
+
+def _flagged(path: str, document: object) -> bool:
+    if _records_source_hash(document) and not _tagged_synthetic(document):
+        return True
+    in_fixtures = path.startswith(SYNTHETIC_DIR)
+    return _odcs_shaped(document) and not (in_fixtures and _tagged_synthetic(document))
+
+
+def content_violations(paths: list[str], read_text: Callable[[str], str | None]) -> list[str]:
+    """YAML/JSON contracts and source-hash records that are not tagged synthetic fixtures.
+
+    * any document recording a source-file hash without a ``synthetic`` tag (anywhere);
+    * any ODCS-shaped document outside ``tests/fixtures/synthetic/`` or without the tag.
+
+    A YAML file that mentions the hash property but cannot be parsed is flagged: it cannot be
+    shown safe. Unparseable JSON is left alone (it cannot be loaded as a contract either).
     """
     bad = []
     for path in paths:
-        if not path.lower().endswith(YAML_SUFFIXES):
+        lower = path.lower()
+        if not lower.endswith(YAML_SUFFIXES + JSON_SUFFIXES):
             continue
         text = read_text(path)
-        if text is None or SOURCE_HASH_PROPERTY not in text:
+        if text is None or not (SOURCE_HASH_PROPERTY in text or "physicalName" in text or ODCS_KIND in text):
             continue
-        try:
-            documents = list(yaml.safe_load_all(text))
-        except yaml.YAMLError:
-            bad.append(path)
+        documents = _documents(path, text)
+        if documents is None:
+            if lower.endswith(YAML_SUFFIXES) and SOURCE_HASH_PROPERTY in text:
+                bad.append(path)
             continue
-        if any(_records_source_hash(d) and not _tagged_synthetic(d) for d in documents):
+        if any(_flagged(path, d) for d in documents):
             bad.append(path)
     return bad
 

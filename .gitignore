@@ -248,8 +248,17 @@ data/*
 *.odcs.yml
 *.odps.yaml
 *.odps.yml
-dq/
-lineage/
+*.odcs.json
+*.odps.json
+# Results under dq/ and lineage/ (not code: a lineage/ package stays tracked).
+**/dq/**/*.json
+**/dq/**/*.jsonl
+**/dq/**/*.yaml
+**/dq/**/*.parquet
+**/lineage/**/*.json
+**/lineage/**/*.jsonl
+**/lineage/**/*.yaml
+**/lineage/**/*.parquet
 eval/golden*
 !tests/eval/golden_questions.yaml
 !tests/fixtures/synthetic/**

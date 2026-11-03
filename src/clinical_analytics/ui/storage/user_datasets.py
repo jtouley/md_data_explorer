@@ -1373,12 +1373,16 @@ def save_table_list(
             metadata=metadata,
             overlay_dir=storage.metadata_dir,
         )
-        if quality_report is not None:
+        # Recorded either way, so the upload response never shows an older run as this one's.
+        if quality_report.status == "ran":
             metadata["quality"] = {
+                "status": "ran",
                 "run_ts": quality_report.run_ts,
                 "failed": quality_report.failed,
                 "warnings": quality_report.warnings,
             }
+        else:
+            metadata["quality"] = {"status": "not_run", "reason": quality_report.reason}
 
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {

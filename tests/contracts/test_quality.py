@@ -101,16 +101,24 @@ def test_runQuality_cleanSyntheticCohort_onlyLdlMissingnessFlagged(load_syntheti
         ([100.0] * 20, 0, 0.0, "passed"),
         ([None] * 1 + [100.0] * 19, "<11", None, "passed"),
         ([None] * 10 + [100.0] * 10, "<11", None, "warning"),
-        ([None] * 11 + [100.0] * 9, 11, 55.0, "warning"),
+        ([None] * 11 + [100.0] * 9, "all but <11", None, "warning"),
+        ([None] * 11 + [100.0] * 11, 11, 50.0, "warning"),
         ([None] * 20, 20, 100.0, "warning"),
     ],
-    ids=["none_missing", "one_missing_5pct_boundary_passes", "boundary_10_suppressed", "boundary_11_shown", "all_null"],
+    ids=[
+        "none_missing",
+        "one_missing_5pct_boundary_passes",
+        "boundary_10_suppressed",
+        "count_11_complement_9_suppressed",
+        "count_and_complement_11_shown",
+        "all_null",
+    ],
 )
 def test_runQuality_missingCounts_suppressedBelowMinCell(
     make_contract, ldl, expected_count, expected_percent, expected_status
 ):
     # Arrange
-    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(20)], "ldl": pl.Series(ldl, dtype=pl.Float64)})
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(len(ldl))], "ldl": pl.Series(ldl, dtype=pl.Float64)})
 
     # Act
     check = _by_id(run_quality(df.lazy(), make_contract(df)))["ldl_missing"]
@@ -321,3 +329,87 @@ def test_runQuality_manyFindings_summaryCappedWithRemainder(make_contract):
     # Assert
     assert len(report.summary) == config.SUMMARY_MAX_LINES
     assert report.summary[-1] == f"…and {12 - config.SUMMARY_MAX_LINES + 1} more"
+
+
+@pytest.mark.parametrize(
+    ("n_missing", "expected_count", "expected_percent"),
+    [
+        (395, "all but <11", None),
+        (390, "all but <11", None),
+        (389, 389, 97.2),
+        (400, 400, 100.0),
+        (5, "<11", None),
+        (11, 11, 2.8),
+    ],
+    ids=[
+        "complement_5_hidden",
+        "complement_10_boundary_hidden",
+        "complement_11_shown",
+        "complement_0_all_missing_shown",
+        "count_small_hidden",
+        "count_11_shown",
+    ],
+)
+def test_runQuality_missingNearlyAll_complementSuppressed(make_contract, n_missing, expected_count, expected_percent):
+    # Arrange: 400 rows; a visible row count would reveal rows - count when that is small.
+    df = pl.DataFrame(
+        {
+            "patient_id": [f"P{i}" for i in range(400)],
+            "rare_marker": pl.Series([None] * n_missing + [1.0] * (400 - n_missing), dtype=pl.Float64),
+        }
+    )
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    check = _by_id(report)["rare_marker_missing"]
+    assert (check.count, check.percent) == (expected_count, expected_percent)
+    assert report.row_count == 400
+    shown_text = " ".join([check.message, *report.summary])
+    if expected_percent is None:
+        assert "%" not in check.message
+        assert str(400 - n_missing) + " " not in shown_text and str(n_missing) not in shown_text
+
+
+def test_runQuality_nanBmi_countedMissingNotOutOfRange(make_contract):
+    # Arrange: 30 rows, 12 NaN BMI and one 95 (above the 90 bound).
+    bmi = [float("nan")] * 12 + [95.0] + [25.0] * 17
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(30)], "bmi": bmi})
+
+    # Act
+    checks = _by_id(run_quality(df.lazy(), make_contract(df)))
+
+    # Assert
+    assert (checks["bmi_missing"].count, checks["bmi_missing"].percent) == (12, 40.0)
+    assert (checks["bmi_range"].count, checks["bmi_range"].status) == ("<11", "warning")
+    assert "90" in checks["bmi_range"].message
+
+
+def test_runQuality_noIdColumn_idChecksReportedNotRun(make_contract):
+    # Arrange
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(20)], "x": list(range(20))})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df, id_column=None))
+
+    # Assert
+    not_run = {c.id: c.message for c in report.checks if c.status == "not_run"}
+    assert not_run == {
+        config.ID_NOT_NULL_RULE_ID: f"Identifier: not checked ({config.NO_ID_COLUMN_REASON})",
+        config.ID_UNIQUE_RULE_ID: f"Identifier: not checked ({config.NO_ID_COLUMN_REASON})",
+    }
+    assert f"Identifier: not checked ({config.NO_ID_COLUMN_REASON})" in report.summary
+
+
+@pytest.mark.parametrize("column", ["age", "bmi"])
+def test_runQuality_plausibilityColumnLoadedAsText_rangeReportedNotRun(make_contract, column):
+    # Arrange
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(20)], column: ["40"] * 19 + ["unknown"]})
+
+    # Act
+    checks = _by_id(run_quality(df.lazy(), make_contract(df)))
+
+    # Assert
+    assert checks[f"{column}_range"].status == "not_run"
+    assert checks[f"{column}_range"].message.endswith("(column is not numeric)")

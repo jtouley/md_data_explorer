@@ -10,8 +10,13 @@ Supported (ODCS v3.2.0 ``library`` metrics plus type options):
 * ``logicalTypeOptions.minimum/maximum`` on a numeric column -> non-null values outside the bounds
 
 Anything else (``sql``, ``text``, ``custom`` rules, ``missingValues``) is reported as ``not_run``
-with the reason, never skipped silently. Reports carry counts already suppressed (1..10 -> "<11"),
-so the file on disk and the API response are safe to show as they are.
+with the reason, never skipped silently. NaN in a float column counts as missing, never as out of
+range.
+
+Reports carry counts already suppressed, so the file on disk and the API response are safe to show
+as they are. The row count is visible, so a count and its complement (rows - count) form a line
+with a known total: if either is 1..10 both are hidden (``suppress_count_matrix``), shown as
+"<11" or "all but <11", and the percent is dropped with them.
 """
 
 from __future__ import annotations
@@ -27,11 +32,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import QualityCheckError
-from clinical_analytics.core.result_presentation import suppress_count
+from clinical_analytics.core.result_presentation import suppress_count, suppress_count_matrix
 
 logger = structlog.get_logger()
 
 CheckStatus: TypeAlias = Literal["passed", "warning", "failed", "not_run"]
+COMPLEMENT_HIDDEN_PREFIX = "all but "
 ROWS_KEY = "__rows"
 RANGE_METRIC = "range"
 _OPERATORS = (
@@ -57,7 +63,9 @@ class QualityCheckResult(BaseModel):
     dimension: str | None = Field(None, description="ODCS data-quality dimension")
     severity: str = Field(..., description="error or warning")
     status: CheckStatus
-    count: int | str | None = Field(None, description="Rows affected; '<11' when 1..10; None if not run")
+    count: int | str | None = Field(
+        None, description="Rows affected; '<11' or 'all but <11' when it or rows - it is 1..10; None if not run"
+    )
     percent: float | None = Field(None, description="Share of rows (1 decimal); None when suppressed")
     message: str = Field(..., description="Plain-language result")
 
@@ -67,6 +75,7 @@ class QualityReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    status: Literal["ran"] = "ran"
     upload_id: str
     dataset_version: str
     contract_version: str
@@ -78,6 +87,16 @@ class QualityReport(BaseModel):
     not_run: int
     summary: list[str] = Field(default_factory=list, description="Short plain-language lines for the UI")
     checks: list[QualityCheckResult] = Field(default_factory=list)
+
+
+class QualityNotRun(BaseModel):
+    """The check could not run for this upload; shown instead of a report (never silently absent)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["not_run"] = "not_run"
+    reason: str = Field(..., description="Plain-language reason, without file paths or values")
+    summary: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -137,7 +156,8 @@ def _compile_property_rule(rule: DataQuality, prop: SchemaProperty, schema: pl.S
         return _not_run(base, "column not in the data")
     col = pl.col(column)
     if metric == "nullValues":
-        return CompiledCheck(**base, expr=col.null_count(), percent=rule.unit == "percent")
+        missing = (col.is_null() | col.is_nan()).sum() if schema[column].is_float() else col.null_count()
+        return CompiledCheck(**base, expr=missing, percent=rule.unit == "percent")
     if metric == "duplicateValues":
         return CompiledCheck(**base, expr=col.drop_nulls().len() - col.drop_nulls().n_unique())
     if metric == "invalidValues":
@@ -154,6 +174,11 @@ def _compile_property_rule(rule: DataQuality, prop: SchemaProperty, schema: pl.S
 
 def _compile_range(prop: SchemaProperty, schema: pl.Schema) -> CompiledCheck | None:
     options = prop.logicalTypeOptions or {}
+    custom = next(
+        (c.value for c in prop.customProperties or [] if c.property == config.PLAUSIBILITY_RANGE_PROPERTY), None
+    )
+    if "minimum" not in options and "maximum" not in options and isinstance(custom, dict):
+        options = custom
     lo, hi = options.get("minimum"), options.get("maximum")
     if lo is None and hi is None:
         return None
@@ -175,7 +200,8 @@ def _compile_range(prop: SchemaProperty, schema: pl.Schema) -> CompiledCheck | N
         return _not_run(base, "column is not numeric")
     col = pl.col(column)
     outside = (col < lo) if hi is None else (col > hi) if lo is None else ~col.is_between(lo, hi)
-    return CompiledCheck(**base, expr=(col.is_not_null() & outside).sum())
+    present = col.is_not_null() & col.is_not_nan() if schema[column].is_float() else col.is_not_null()
+    return CompiledCheck(**base, expr=(present & outside).sum())
 
 
 def _compile_object_rule(rule: DataQuality, props: dict[str, SchemaProperty], index: int) -> CompiledCheck:
@@ -191,6 +217,10 @@ def _compile_object_rule(rule: DataQuality, props: dict[str, SchemaProperty], in
     }
     if (rule.type or "library") != "library":
         return _not_run(base, f"'{rule.type}' rules are not run locally")
+    if base["id"] in (config.ID_NOT_NULL_RULE_ID, config.ID_UNIQUE_RULE_ID) and not (rule.arguments or {}).get(
+        "properties"
+    ):
+        return _not_run({**base, "display": config.ID_RULE_DISPLAY}, config.NO_ID_COLUMN_REASON)
     if metric == "rowCount":
         return CompiledCheck(**base, expr=pl.len())
     if metric == "duplicateValues":
@@ -276,6 +306,20 @@ def _message(check: CompiledCheck, count: int, shown: int | str, percent: float 
     return f"{name}: {shown} rows flagged"
 
 
+def _shown(check: CompiledCheck, count: int, rows: int) -> tuple[int | str, float | None]:
+    """Count and percent as shown. The row count is visible, so ``[count, rows - count]`` is a line
+    with a known total: when either cell is 1..10, both are hidden (primary + complementary)."""
+    if check.metric == "rowCount":
+        return suppress_count(count, config.MIN_CELL_SIZE), None
+    hidden = suppress_count_matrix([[count, rows - count]], config.MIN_CELL_SIZE)
+    if (0, 0) not in hidden:
+        return count, (round(100.0 * count / rows, 1) if rows else None)
+    small = suppress_count(count, config.MIN_CELL_SIZE)
+    if small != count:
+        return small, None
+    return f"{COMPLEMENT_HIDDEN_PREFIX}<{config.MIN_CELL_SIZE}", None
+
+
 def _result(check: CompiledCheck, raw: dict[str, int]) -> QualityCheckResult:
     common: dict[str, Any] = {
         "id": check.id,
@@ -291,9 +335,7 @@ def _result(check: CompiledCheck, raw: dict[str, int]) -> QualityCheckResult:
     count, rows = raw[check.id], raw[ROWS_KEY]
     observed: float = (100.0 * count / rows if rows else 0.0) if check.percent else count
     passed = _passes(check.rule, observed)
-    shown = suppress_count(count, config.MIN_CELL_SIZE)
-    # A percent next to a known row count reveals a small count, so it is hidden with the count.
-    percent = round(100.0 * count / rows, 1) if rows and shown == count and check.metric != "rowCount" else None
+    shown, percent = _shown(check, count, rows)
     status: CheckStatus = "passed" if passed else ("failed" if check.severity == "error" else "warning")
     return QualityCheckResult(
         **common, status=status, count=shown, percent=percent, message=_message(check, count, shown, percent)
