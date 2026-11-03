@@ -40,6 +40,13 @@ def frame_for(dataset_id: str, workspace: Path | None = None) -> pl.DataFrame:
     return _FRAMES[dataset_id]
 
 
+def register_frame(dataset_id: str, frame: pl.DataFrame) -> None:
+    """Serve an in-memory synthetic frame under ``dataset_id`` (probe suites on other schemas)."""
+    _FRAMES[dataset_id] = frame
+    _LAYERS.pop(dataset_id, None)
+    _SERVICES.pop(dataset_id, None)
+
+
 def layer_for(dataset_id: str, workspace: Path | None = None) -> SemanticLayer:
     """Semantic layer backed by a per-process CSV copy of the dataset."""
     if dataset_id in _LAYERS:
