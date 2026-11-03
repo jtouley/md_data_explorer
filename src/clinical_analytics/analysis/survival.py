@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from lifelines import CoxPHFitter, KaplanMeierFitter
 from lifelines.statistics import logrank_test, multivariate_logrank_test
+from lifelines.utils import median_survival_times
 
 
 def run_kaplan_meier(
@@ -200,6 +201,16 @@ def run_logrank_test(df: pd.DataFrame, duration_col: str, event_col: str, group_
         }
 
 
+def _median_ci(kmf: KaplanMeierFitter) -> tuple[float | None, float | None]:
+    """95% CI of the median survival time: the times where the survival CI bands cross 0.5.
+
+    A bound the band never reaches (inf) is reported as None ("not reached").
+    """
+    bounds = median_survival_times(kmf.confidence_interval_survival_function_)
+    lower, upper = (float(v) for v in bounds.iloc[0])
+    return (None if np.isinf(lower) else lower, None if np.isinf(upper) else upper)
+
+
 def calculate_median_survival(
     df: pd.DataFrame, duration_col: str, event_col: str, group_col: str | None = None
 ) -> pd.DataFrame:
@@ -222,17 +233,14 @@ def calculate_median_survival(
         data = df[[duration_col, event_col]].dropna()
 
         kmf.fit(durations=data[duration_col], event_observed=data[event_col])
+        ci_lower, ci_upper = _median_ci(kmf)
 
         results.append(
             {
                 "group": "Overall",
                 "median_survival": kmf.median_survival_time_,
-                "ci_lower": kmf.confidence_interval_survival_function_.iloc[0, 0]
-                if not kmf.confidence_interval_survival_function_.empty
-                else None,
-                "ci_upper": kmf.confidence_interval_survival_function_.iloc[0, 1]
-                if not kmf.confidence_interval_survival_function_.empty
-                else None,
+                "ci_lower": ci_lower,
+                "ci_upper": ci_upper,
                 "n": len(data),
                 "n_events": int(data[event_col].sum()),
             }
@@ -245,11 +253,14 @@ def calculate_median_survival(
             group_data = data[data[group_col] == group]
 
             kmf.fit(durations=group_data[duration_col], event_observed=group_data[event_col])
+            ci_lower, ci_upper = _median_ci(kmf)
 
             results.append(
                 {
                     "group": str(group),
                     "median_survival": kmf.median_survival_time_,
+                    "ci_lower": ci_lower,
+                    "ci_upper": ci_upper,
                     "n": len(group_data),
                     "n_events": int(group_data[event_col].sum()),
                 }

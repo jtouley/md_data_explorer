@@ -200,3 +200,26 @@ class TestSurvivalAnalysis:
         assert len(result) == 2  # Two groups
         assert "group" in result.columns
         assert "median_survival" in result.columns
+
+
+@pytest.mark.parametrize("group_col", [None, "group"], ids=["overall", "stratified"])
+def test_calculate_median_survival_ci_isMedianTimeInterval(group_col):
+    # Arrange: median survival 60; the lower 95% band crosses 0.5 at 10, the upper never does.
+    # PANDAS EXCEPTION: calculate_median_survival takes a pandas frame (lifelines input).
+    from lifelines import KaplanMeierFitter
+    from lifelines.utils import median_survival_times
+
+    df = pd.DataFrame(
+        {"duration": [10, 20, 30, 40, 50, 60, 70, 80], "event": [1, 1, 0, 1, 0, 1, 1, 0], "group": ["A"] * 8}
+    )
+    kmf = KaplanMeierFitter().fit(df["duration"], df["event"])
+    ref_lower, _ = median_survival_times(kmf.confidence_interval_survival_function_).iloc[0]
+
+    # Act
+    result = calculate_median_survival(df, duration_col="duration", event_col="event", group_col=group_col)
+
+    # Assert
+    row = result.iloc[0]
+    assert row["median_survival"] == 60
+    assert row["ci_lower"] == ref_lower
+    assert row["ci_upper"] is None

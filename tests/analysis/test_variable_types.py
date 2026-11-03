@@ -161,3 +161,113 @@ def test_short_name_header_stripsOnlyCodeList(column, expected):
 
     # Assert
     assert name == expected
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("Age at visit 1: years, visit 2: years", {}),
+        ("Age at visit 1: years visit 2: years", {}),
+        ("Weight 1: kg 2: kg", {}),
+        ("LDL 1: mg/dL 2: mg/dL", {}),
+        ("1: Yes, 2: No", {"1": "Yes", "2": "No"}),
+        ("0: male 1: female", {"0": "male", "1": "female"}),
+        ("Sex 1: M 2: F", {"1": "M", "2": "F"}),
+        ("Arm 1: Treatment A 2: Treatment B", {"1": "Treatment A", "2": "Treatment B"}),
+    ],
+    ids=[
+        "visit_units_comma", "visit_units", "unit_kg", "unit_with_slash",
+        "yes_no_comma", "male_female", "single_letters", "multi_word_labels",
+    ],
+)  # fmt: skip
+def test_code_labels_unitOrRunOnLabels_rejectsListButKeepsRealCodebooks(header, expected):
+    # Arrange: header from parametrize
+
+    # Act
+    labels = code_labels(header)
+
+    # Assert
+    assert labels == expected
+
+
+def test_classify_variable_visitUnitsHeader_staysContinuous():
+    # Arrange: ages under a header that mentions "visit 1: years, visit 2: years"
+    series = pl.Series("Age at visit 1: years, visit 2: years", [21.5, 44.0, 63.2, 30.1, 55.0])
+
+    # Act
+    kind = classify_variable(series)
+
+    # Assert
+    assert kind == "continuous"
+
+
+@pytest.mark.parametrize(
+    ("series", "expected"),
+    [
+        (pl.Series("smoker", ["1", "2", "1"]), None),
+        (pl.Series("smoker", ["2", "1", None]), None),
+        (pl.Series("smoker", [" 1", "2 "]), None),
+        (pl.Series("died", ["0", "1", "0"]), "1"),
+        (pl.Series("died", ["0", "0"]), "1"),
+        (pl.Series("Smoker (1=yes, 2=no)", ["1", "2"]), "1"),
+        (pl.Series("Smoker 1: No 2: Yes", ["1", "2"]), "2"),
+        (pl.Series("outcome", ["no", "yes"]), "yes"),
+    ],
+    ids=[
+        "text_one_two", "text_one_two_null", "text_padded", "text_zero_one", "text_zero_only",
+        "text_labelled_yes_first", "text_labelled_yes_second", "words_unchanged",
+    ],
+)  # fmt: skip
+def test_binary_event_level_integerLikeText_followsNumericRule(series, expected):
+    # Arrange: series from parametrize
+
+    # Act
+    level = binary_event_level(series)
+
+    # Assert
+    assert level == expected
+
+
+@pytest.mark.parametrize(
+    ("series", "expected"),
+    [
+        (pl.Series("censor", [0, 1, 1]), None),
+        (pl.Series("CNSR", [0, 1, 1]), None),
+        (pl.Series("Censor_flag", [0.0, 1.0]), None),
+        (pl.Series("cnsr", ["0", "1"]), None),
+        (pl.Series("CNSR 1: Yes 0: No", [0, 1]), None),
+        (pl.Series("CNSR 0: event 1: censored", [0, 1]), 0),
+        (pl.Series("censored 1: died 2: censored", [1, 2]), 1),
+    ],
+    ids=[
+        "censor", "cnsr_upper", "censor_token_float", "cnsr_text", "cnsr_yes_no_labels",
+        "cnsr_states_event", "censored_states_event",
+    ],
+)  # fmt: skip
+def test_binary_event_level_censorColumnName_refusesUnlessHeaderStatesEvent(series, expected):
+    # Arrange: series from parametrize; CDISC CNSR=1 means censored
+
+    # Act
+    level = binary_event_level(series)
+
+    # Assert
+    assert level == expected
+
+
+@pytest.mark.parametrize(
+    ("series", "expected"),
+    [
+        (pl.Series("n_stage", [0, 1]), 1),
+        (pl.Series("no_relapse", [0, 1]), None),
+        (pl.Series("No event", [0, 1]), None),
+    ],
+    ids=["n_token_is_not_no", "no_token_still_refused", "no_word_still_refused"],
+)
+def test_binary_event_level_nTokenInName_doesNotRefuseFlag(series, expected):
+    # Arrange: series from parametrize
+
+    # Act
+    level = binary_event_level(series)
+
+    # Assert
+    assert level == expected

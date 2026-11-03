@@ -7,6 +7,7 @@ These functions have no UI dependencies and can be tested independently.
 Test name follows: test_unit_scenario_expectedBehavior
 """
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -366,11 +367,12 @@ class TestComputeComparisonAnalysis:
 
     def test_comparison_analysis_with_european_comma_format(self):
         """Test European comma format conversion (e.g., '1,234.5')."""
-        # Arrange: European comma format, two values per group (a t-test needs n >= 2 per group)
+        # Arrange: European comma format, two varying values per group (a t-test needs n >= 2 and
+        # within-group spread; constant groups are refused)
         df = pl.DataFrame(
             {
                 "Treatment": ["A", "A", "B", "B"],
-                "Score": ["1,234.5", "1,234.5", "2,345.6", "2,345.6"],
+                "Score": ["1,233.5", "1,235.5", "2,344.6", "2,346.6"],
             }
         )
 
@@ -934,3 +936,145 @@ class TestComputeMissingColumns:
         assert result["type"] == expected_type
         assert result["error"] == "Column(s) not found in dataset: ['not_a_column']"
         assert result["available_columns"] == sample_numeric_df.columns
+
+
+class TestComputeMissingAndDegenerateInputs:
+    """NaN rows, constant groups and Fisher orientation (PR #66 statistics review)."""
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "neg_inf"])
+    def test_compute_comparison_nonFiniteOutcome_excludesAndCountsRow(self, bad, sample_context_compare):
+        # Arrange: 10 finite values per group plus one non-finite value in group A
+        df = pl.DataFrame(
+            {
+                "score": [float(v) for v in range(1, 11)] + [float(v) for v in range(5, 15)] + [bad],
+                "category": ["A"] * 10 + ["B"] * 10 + ["A"],
+            }
+        )
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert (result["n_used"], result["n_excluded"]) == (20, 1)
+        assert result["group_means"] == pytest.approx({"A": 5.5, "B": 9.5})
+        assert np.isfinite(result["p_value"])
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+    def test_compute_predictor_nonFinitePredictor_excludesAndCountsRow(self, bad, sample_context_predictor):
+        # Arrange: 40 complete rows plus one with a non-finite age
+        rng = np.random.default_rng(3)
+        df = pl.DataFrame(
+            {
+                "outcome": [*rng.integers(0, 2, 40).tolist(), 1],
+                "age": [*rng.normal(50.0, 10.0, 40).tolist(), bad],
+                "score": rng.normal(0.0, 1.0, 41).tolist(),
+            }
+        )
+
+        # Act
+        result = compute_predictor_analysis(df, sample_context_predictor)
+
+        # Assert
+        assert (result["n_used"], result["n_excluded"]) == (40, 1)
+        assert "error" not in result
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")], ids=["nan", "inf"])
+    def test_compute_survival_nonFiniteTime_excludesAndCountsRow(self, bad, sample_context_survival):
+        # Arrange: 12 complete rows plus one with a non-finite time
+        df = pl.DataFrame(
+            {
+                "time": [float(t) for t in range(10, 130, 10)] + [bad],
+                "event": [1, 0] * 6 + [1],
+            }
+        )
+
+        # Act
+        result = compute_survival_analysis(df, sample_context_survival)
+
+        # Assert
+        assert (result["n_used"], result["n_excluded"]) == (12, 1)
+        assert result["median_survival"] is not None
+
+    def test_compute_relationship_nanValue_excludesRowFromCorrelation(self, sample_context_relationship):
+        # Arrange: 5 complete rows plus one NaN
+        df = pl.DataFrame(
+            {
+                "age": [30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
+                "score": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                "value": [2.0, 4.0, 6.0, 8.0, 10.0, float("nan")],
+            }
+        )
+
+        # Act
+        result = compute_relationship_analysis(df, sample_context_relationship)
+
+        # Assert
+        assert result["n_observations"] == 5
+        assert all(np.isfinite(row["correlation"]) for row in result["correlations"])
+
+    def test_compute_descriptive_nanValue_reportsFiniteMean(self):
+        # Arrange
+        df = pl.DataFrame({"ldl": [100.0, float("nan"), 140.0]})
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.DESCRIBE
+        context.primary_variable = "ldl"
+
+        # Act
+        result = compute_descriptive_analysis(df, context)
+
+        # Assert
+        assert result["mean"] == pytest.approx(120.0)
+
+    @pytest.mark.parametrize(
+        ("a_values", "b_values", "constant"),
+        [
+            ([5.0] * 10, [8.0] * 10, "A, B"),
+            ([5.0] * 10, [float(v) for v in range(1, 11)], "A"),
+            ([float(v) for v in range(1, 11)], [8.0, 8.0], "B"),
+        ],
+        ids=["both_constant", "one_constant", "small_constant_group"],
+    )
+    def test_compute_comparison_constantGroupWelch_refusesWithoutPValue(
+        self, a_values, b_values, constant, sample_context_compare
+    ):
+        # Arrange
+        df = pl.DataFrame({"score": a_values + b_values, "category": ["A"] * len(a_values) + ["B"] * len(b_values)})
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert f"values do not vary within a group ({constant})" in result["error"]
+        assert "p_value" not in result
+        assert "ci_lower" not in result
+
+    @pytest.mark.parametrize("other_level", ["alive", "survived"], ids=["alive", "survived"])
+    def test_compute_comparison_fisherOtherLevelRenamed_oddsRatioUnchanged(self, other_level, sample_context_compare):
+        # Arrange: A has 1 dead / 8 other, B has 8 dead / 1 other; odds of death B vs A = 8 / (1/8) = 64
+        df = pl.DataFrame(
+            {
+                "score": ["dead"] + [other_level] * 8 + ["dead"] * 8 + [other_level],
+                "category": ["A"] * 9 + ["B"] * 9,
+            }
+        )
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert result["test_type"] == "fisher_exact"
+        assert result["event_level"] == "dead"
+        assert result["odds_ratio"] == pytest.approx(64.0)
+        assert (result["odds_ratio_group"], result["odds_ratio_reference"]) == ("B", "A")
+
+    def test_compute_comparison_fisherUnknownEventLevel_omitsOddsRatio(self, sample_context_compare):
+        # Arrange: text codes 1/2 have no stated event, so the ratio has no orientation
+        df = pl.DataFrame({"score": ["1"] + ["2"] * 8 + ["1"] * 8 + ["2"], "category": ["A"] * 9 + ["B"] * 9})
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert result["test_type"] == "fisher_exact"
+        assert "odds_ratio" not in result
+        assert np.isfinite(result["p_value"])
