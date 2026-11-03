@@ -28,13 +28,12 @@ class TestPresentAnalysisClaims:
         [
             (
                 T_TEST,
-                "Mean ldl was 16.14 lower in drug than in placebo (95% CI -18.83 to -13.44; t-test p<0.001; n=300). "
+                "Mean ldl was 16.14 higher in placebo than drug (95% CI -18.83 to -13.44; t-test p<0.001; n=300). "
                 "Unadjusted comparison by treatment.",
             ),
             (
                 {**T_TEST, "mean_diff": 2.5, "p_value": 0.2, "ci_lower": None, "ci_upper": None, "group_sizes": None},
-                "Mean ldl was 2.50 higher in drug than in placebo (t-test p=0.200). "
-                "Unadjusted comparison by treatment.",
+                "Mean ldl was 2.50 higher in drug than placebo (t-test p=0.200). Unadjusted comparison by treatment.",
             ),
             (
                 {

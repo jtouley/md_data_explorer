@@ -523,6 +523,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "ci_upper": float(ci_upper),
                 "group_means": group_means,
                 "group_sizes": {str(groups[0]): n1, str(groups[1]): n2},
+                "n": int(n1 + n2),
                 **headline,
             }
 

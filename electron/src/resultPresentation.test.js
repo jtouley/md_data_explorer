@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCompletionMessage,
+  buildConfirmationHoldPresentation,
   buildQueryCompletedPresentation,
   extractTableFromResultPreview,
   normalizeIntentType,
@@ -177,5 +178,36 @@ describe('buildQueryCompletedPresentation with API claim', () => {
 describe('buildCompletionMessage', () => {
   it('uses row count when table present', () => {
     expect(buildCompletionMessage('describe', 5, true)).toMatch(/5 rows/);
+  });
+});
+
+describe('buildQueryCompletedPresentation claim-first', () => {
+  it('prefers claim arg over preview and attaches claim on result', () => {
+    const claim = 'Mean ldl was 5.0 higher in Female than Male.';
+    const pres = buildQueryCompletedPresentation(
+      'compare_groups',
+      { table: { columns: ['g'], rows: [{ g: 1 }] }, row_count: 1 },
+      claim
+    );
+    expect(pres.content).toBe('Group comparison');
+    expect(pres.result?.summary).toBe(claim);
+    expect(pres.result?.claim).toBe(claim);
+  });
+});
+
+describe('buildConfirmationHoldPresentation', () => {
+  it('surfaces plan line and pending query for Confirm', () => {
+    const hold = buildConfirmationHoldPresentation(
+      {
+        plan_line: 'COMPARE_GROUPS · outcome ldl · grouping sex · filters none · test group comparison',
+        failure_reason: 'Confirmation required before execution.',
+        confidence: 0.4,
+      },
+      'compare ldl by sex'
+    );
+    expect(hold.result.awaitingConfirmation).toBe(true);
+    expect(hold.result.pendingQuery).toBe('compare ldl by sex');
+    expect(hold.result.planLine).toContain('COMPARE_GROUPS');
+    expect(hold.content).toContain('Confirmation required');
   });
 });

@@ -261,6 +261,38 @@ class DatasetUploadResponse(BaseModel):
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav"}
 
 
+@router.post("/datasets/sample", response_model=DatasetUploadResponse)
+async def load_sample_dataset() -> DatasetUploadResponse:
+    """Load the bundled sample cohort into upload storage (stranger-ready demo)."""
+    from clinical_analytics.datasets.demo import DEMO_DATASET_NAME, build_demo_metadata, get_demo_csv_path
+
+    log = logger.bind()
+    log.info("dataset_sample_load_requested")
+
+    path = get_demo_csv_path()
+    if not path.exists():
+        raise HTTPException(status_code=500, detail=f"Sample cohort missing: {path}")
+
+    storage = UserDatasetStorage()
+    success, message, upload_id = storage.save_upload(
+        file_bytes=path.read_bytes(),
+        original_filename=path.name,
+        metadata=build_demo_metadata(),
+        overwrite=True,
+    )
+    if not success or upload_id is None:
+        log.error("dataset_sample_load_failed", message=message)
+        raise HTTPException(status_code=500, detail=message)
+
+    log.info("dataset_sample_load_completed", upload_id=upload_id)
+    return DatasetUploadResponse(
+        upload_id=upload_id,
+        dataset_name=DEMO_DATASET_NAME,
+        status="ready",
+        message=message or "Sample cohort loaded",
+    )
+
+
 @router.post("/datasets/upload", response_model=DatasetUploadResponse)
 async def upload_dataset(
     file: UploadFile = File(..., description="CSV or Excel file to upload"),

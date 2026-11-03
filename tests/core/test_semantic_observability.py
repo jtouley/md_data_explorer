@@ -101,13 +101,10 @@ class TestSemanticLayerObservability:
         # Act
         result = semantic_layer.execute_query_plan(plan, confidence_threshold=0.75)
 
-        # Assert: Warning should explain low confidence (Phase 2.2: no blocking)
-        assert "warnings" in result
-        assert len(result["warnings"]) > 0
-        assert "Low confidence" in result["warnings"][0]
-        assert "0.30" in result["warnings"][0]
-        # Phase 2.2: Should still execute successfully despite low confidence
-        assert result["success"] is True
+        assert result["success"] is False
+        assert result["requires_confirmation"] is True
+        assert result["failure_reason"] == "Confirmation required before execution."
+        assert "run_key" not in result
 
     def test_incomplete_plan_adds_warning_with_explanation(self, semantic_layer):
         """Incomplete plan should add warning with explanation (Phase 2.2)."""

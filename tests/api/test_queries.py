@@ -85,6 +85,25 @@ class TestQuerySubmitEndpoint:
         assert data["status"] == "processing"
         assert "stream_url" in data
         assert "/api/queries/qry_abc123/stream" in data["stream_url"]
+        mock_async_query_service.submit_query.assert_awaited_once()
+        assert mock_async_query_service.submit_query.await_args.kwargs.get("confirmed") is False
+
+    def test_queries_post_confirmed_true_forwards_to_service(self, test_client, mock_async_query_service):
+        """confirmed=true is forwarded so the gate can release a hold."""
+        mock_async_query_service.submit_query = AsyncMock(return_value="qry_confirm")
+
+        response = test_client.post(
+            "/api/queries",
+            json={
+                "session_id": "sess_test123",
+                "dataset_id": "test_dataset",
+                "query_text": "Compare LDL by sex",
+                "confirmed": True,
+            },
+        )
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert mock_async_query_service.submit_query.await_args.kwargs.get("confirmed") is True
 
     def test_queries_post_withContext_forwardsContextAndSession(self, test_client, mock_async_query_service):
         """QueryRequest.context and session_id reach the service instead of being dropped."""

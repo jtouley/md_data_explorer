@@ -129,12 +129,10 @@ def test_execute_query_plan_validates_operators(mock_semantic_layer_for_executio
     # Act
     result = mock_semantic_layer_for_execution.execute_query_plan(plan)
 
-    # Assert (Phase 2.2: No blocking, just warnings)
-    assert "warnings" in result
-    warnings_text = " ".join(result["warnings"])
-    assert "operator" in warnings_text.lower() or "unsupported" in warnings_text.lower()
-    # Execution may succeed (invalid filter is skipped with warning)
-    assert result["success"] is True
+    # Invalid operator refuses before execution. Confirm is not offered.
+    assert result["success"] is False
+    assert result["requires_confirmation"] is False
+    assert "run_key" not in result
 
 
 def test_execute_query_plan_validates_type_compatibility(mock_semantic_layer_for_execution):

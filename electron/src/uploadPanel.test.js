@@ -114,4 +114,15 @@ describe('renderUploadArea', () => {
     expect(status).not.toBeNull();
     expect(status.textContent).toBe('Uploading…');
   });
+
+  test('renders Load sample when onLoadSample provided', () => {
+    const container = document.createElement('div');
+    const onLoadSample = vi.fn();
+    renderUploadArea(container, { onFileSelect: vi.fn(), onLoadSample });
+
+    const btn = container.querySelector('[data-testid="load-sample-btn"]');
+    expect(btn).not.toBeNull();
+    btn.click();
+    expect(onLoadSample).toHaveBeenCalledOnce();
+  });
 });

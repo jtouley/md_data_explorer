@@ -359,3 +359,33 @@ class TestDatasetUploadEndpoint:
         assert response.status_code == 500
         data = response.json()
         assert "disk full" in data["detail"].lower()
+
+
+class TestDatasetSampleEndpoint:
+    """Tests for POST /api/datasets/sample."""
+
+    def test_datasets_sample_loads_bundled_cohort(self, test_client, tmp_path):
+        """Sample endpoint registers the demo cohort and returns upload_id."""
+        demo_csv = tmp_path / "sample_cohort.csv"
+        demo_csv.write_text("patient_id,outcome\n1,0\n", encoding="utf-8")
+
+        with (
+            patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls,
+            patch("clinical_analytics.datasets.demo.get_demo_csv_path", return_value=demo_csv),
+            patch(
+                "clinical_analytics.datasets.demo.build_demo_metadata",
+                return_value={"dataset_name": "Demo Sample"},
+            ),
+            patch("clinical_analytics.datasets.demo.DEMO_DATASET_NAME", "Demo Sample"),
+        ):
+            mock_storage = mock_cls.return_value
+            mock_storage.save_upload.return_value = (True, "ok", "upload_sample_1")
+
+            response = test_client.post("/api/datasets/sample")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["upload_id"] == "upload_sample_1"
+        assert data["status"] == "ready"
+        assert data["dataset_name"] == "Demo Sample"
+        mock_storage.save_upload.assert_called_once()
