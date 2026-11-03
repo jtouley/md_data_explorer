@@ -40,6 +40,14 @@ from clinical_analytics.core.metadata_patch import (
 logger = structlog.get_logger(__name__)
 
 
+class PatchNotFoundError(ValueError):
+    """No patch with the requested patch_id exists in the patch log."""
+
+
+class PatchStateError(ValueError):
+    """The patch exists but its latest status does not allow the requested change."""
+
+
 class OverlayStore:
     """
     JSONL-based storage for metadata patches.
@@ -360,7 +368,8 @@ class OverlayStore:
         Append a REVERTED row for an accepted patch (same patch_id, append-only log).
 
         Raises:
-            ValueError: If patch_id is missing or latest state is not ACCEPTED.
+            PatchNotFoundError: If patch_id is not in the patch log.
+            PatchStateError: If the latest row for patch_id is not ACCEPTED.
         """
         patches = self.load_patches(upload_id, version)
         latest_by_id: dict[str, MetadataPatch | ExclusionPatternPatch | RelationshipPatch] = {}
@@ -369,9 +378,9 @@ class OverlayStore:
 
         current = latest_by_id.get(patch_id)
         if current is None:
-            raise ValueError(f"No patch found for patch_id={patch_id!r}")
+            raise PatchNotFoundError(f"No patch found for patch_id={patch_id!r}")
         if current.status != PatchStatus.ACCEPTED:
-            raise ValueError(f"Patch {patch_id!r} is not accepted (latest status={current.status.name})")
+            raise PatchStateError(f"Patch {patch_id!r} is not accepted (latest status={current.status.name})")
 
         reverted = self._create_reverted_patch(current, reverted_by)
         self.append_patch(upload_id, version, reverted)

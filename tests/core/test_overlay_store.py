@@ -437,13 +437,28 @@ class TestOverlayStoreRevert:
 
     def test_revert_accepted_patch_raises_when_not_accepted(self, overlay_store, sample_patch):
         """Cannot revert if latest row for patch_id is not ACCEPTED."""
+        # Arrange
+        from clinical_analytics.core.overlay_store import PatchStateError
+
         upload_id = "upload_rev2"
         version = "v1"
         overlay_store.append_patch(upload_id, version, sample_patch)
         overlay_store.revert_accepted_patch(upload_id, version, sample_patch.patch_id, reverted_by="a")
 
-        with pytest.raises(ValueError, match="not accepted"):
+        # Act / Assert
+        with pytest.raises(PatchStateError, match="not accepted"):
             overlay_store.revert_accepted_patch(upload_id, version, sample_patch.patch_id, reverted_by="b")
+
+    def test_revert_accepted_patch_unknownPatchId_raisesPatchNotFoundError(self, overlay_store, sample_patch):
+        """Reverting a patch_id that was never logged names the missing id."""
+        # Arrange
+        from clinical_analytics.core.overlay_store import PatchNotFoundError
+
+        overlay_store.append_patch("upload_rev3", "v1", sample_patch)
+
+        # Act / Assert
+        with pytest.raises(PatchNotFoundError, match="no_such_patch"):
+            overlay_store.revert_accepted_patch("upload_rev3", "v1", "no_such_patch", reverted_by="a")
 
 
 class TestDeserializePatchImmutability:

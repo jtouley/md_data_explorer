@@ -4,28 +4,32 @@ Tests for Enrichment API routes (ADR011 metadata enrichment).
 Following TDD: Red phase - tests written before implementation.
 """
 
+import json
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import create_autospec
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
 from clinical_analytics.api.main import app
+from clinical_analytics.core.overlay_store import OverlayStore, PatchNotFoundError, PatchStateError
+from clinical_analytics.ui.components.enrichment_integration import EnrichmentService
+
+# Exception text a failing store might carry; it must never reach the HTTP response.
+_INTERNAL_ERROR_TEXT = "/private/overlays/upload_test/v1/pending.json"
 
 
 @pytest.fixture
 def mock_enrichment_service():
-    """Create mock EnrichmentService."""
-    mock = MagicMock()
-    return mock
+    """EnrichmentService mock whose methods enforce the real signatures."""
+    return create_autospec(EnrichmentService, instance=True)
 
 
 @pytest.fixture
 def mock_overlay_store():
-    """Create mock OverlayStore."""
-    mock = MagicMock()
-    return mock
+    """OverlayStore mock whose methods enforce the real signatures."""
+    return create_autospec(OverlayStore, instance=True)
 
 
 @pytest.fixture
@@ -164,6 +168,57 @@ class TestEnrichmentsRevert:
         assert response.status_code == status.HTTP_200_OK
         call_args = mock_enrichment_service.revert_accepted_patch.call_args
         assert call_args.kwargs.get("reverted_by") == "auditor_1"
+
+
+class TestEnrichmentsStoreFailures:
+    """A failing overlay store is a 4xx/5xx with a plain message, never 200 with success=False."""
+
+    @pytest.mark.parametrize(
+        ("action", "service_method"),
+        [("accept", "accept_suggestion"), ("reject", "reject_suggestion"), ("revert", "revert_accepted_patch")],
+    )
+    @pytest.mark.parametrize(
+        "error",
+        [PermissionError(_INTERNAL_ERROR_TEXT), json.JSONDecodeError(_INTERNAL_ERROR_TEXT, "{", 0)],
+        ids=["unwritable", "corrupt"],
+    )
+    def test_enrichments_action_storeFails_returns500WithPlainDetail(
+        self, test_client, mock_enrichment_service, action, service_method, error
+    ):
+        """Disk and corrupt-file errors surface as 500; the exception text is not echoed."""
+        # Arrange
+        getattr(mock_enrichment_service, service_method).side_effect = error
+
+        # Act
+        response = test_client.post(f"/api/datasets/upload_test/enrichments/patch_001/{action}", json={})
+
+        # Assert
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert response.json() == {"detail": "Could not update the enrichment overlay"}
+        assert _INTERNAL_ERROR_TEXT not in response.text
+
+    @pytest.mark.parametrize(
+        ("error", "expected_status", "expected_detail"),
+        [
+            (PatchNotFoundError(_INTERNAL_ERROR_TEXT), status.HTTP_404_NOT_FOUND, "Patch not found"),
+            (PatchStateError(_INTERNAL_ERROR_TEXT), status.HTTP_409_CONFLICT, "Only an accepted patch can be reverted"),
+        ],
+        ids=["missing", "not_accepted"],
+    )
+    def test_enrichments_revert_patchNotRevertable_returnsClientError(
+        self, test_client, mock_enrichment_service, error, expected_status, expected_detail
+    ):
+        """A missing patch is 404 and a patch that is not ACCEPTED is 409."""
+        # Arrange
+        mock_enrichment_service.revert_accepted_patch.side_effect = error
+
+        # Act
+        response = test_client.post("/api/datasets/upload_test/enrichments/patch_001/revert", json={})
+
+        # Assert
+        assert response.status_code == expected_status
+        assert response.json() == {"detail": expected_detail}
+        assert _INTERNAL_ERROR_TEXT not in response.text
 
 
 class TestEnrichmentsHistory:

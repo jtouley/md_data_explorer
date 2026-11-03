@@ -189,7 +189,8 @@ class EnrichmentService:
             reverted_by: Actor performing the revert
 
         Raises:
-            ValueError: If patch is missing or not in ACCEPTED state.
+            PatchNotFoundError: If the patch is not in the patch log.
+            PatchStateError: If the patch is not in ACCEPTED state.
         """
         self.overlay_store.revert_accepted_patch(upload_id, version, patch_id, reverted_by)
         logger.info(

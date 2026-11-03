@@ -297,7 +297,7 @@ const clinicalAPI = {
     );
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data?.message || `Accept failed: ${response.statusText}`);
+      throw new Error(data?.detail || data?.message || `Accept failed: ${response.statusText}`);
     }
     if (data.success === false) {
       throw new Error(data.message || 'Accept failed');
@@ -325,7 +325,7 @@ const clinicalAPI = {
     );
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data?.message || `Reject failed: ${response.statusText}`);
+      throw new Error(data?.detail || data?.message || `Reject failed: ${response.statusText}`);
     }
     if (data.success === false) {
       throw new Error(data.message || 'Reject failed');
@@ -367,7 +367,7 @@ const clinicalAPI = {
     );
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data?.message || `Revert failed: ${response.statusText}`);
+      throw new Error(data?.detail || data?.message || `Revert failed: ${response.statusText}`);
     }
     if (data.success === false) {
       throw new Error(data.message || 'Revert failed');
