@@ -9,7 +9,8 @@
  * - The per-launch API token goes only to that exact page (or the Vite dev server in dev).
  * - The window cannot navigate away from the app or open new windows; the renderer is sandboxed.
  */
-import { app, BrowserWindow, ipcMain, net, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme, net, protocol } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import started from 'electron-squirrel-startup';
@@ -22,6 +23,14 @@ import {
   resolveAppFilePath,
   resolveDevNoAuth,
 } from './apiToken.js';
+import {
+  THEME_GET_CHANNEL,
+  THEME_SET_CHANNEL,
+  WINDOW_BACKGROUND,
+  isThemeSource,
+  parseThemeSetting,
+  serializeThemeSetting,
+} from './theme.js';
 
 // Per-launch API token. scripts/run_app.sh generates it and passes it to both the backend and
 // this process (CLINICAL_ANALYTICS_API_TOKEN); started on its own, main generates one. Throws on
@@ -65,6 +74,47 @@ function registerAppProtocol() {
   });
 }
 
+// ============================================================================
+// Theme (System / Light / Dark): nativeTheme drives prefers-color-scheme in the page.
+// ============================================================================
+
+const settingsPath = () => path.join(app.getPath('userData'), 'settings.json');
+
+/** @returns {string | null} settings file text, or null when there is none yet */
+function readSettingsText() {
+  try {
+    return fs.readFileSync(settingsPath(), 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    console.warn('Could not read settings; using the system theme:', error?.code || error?.message);
+    return null;
+  }
+}
+
+const windowBackground = () =>
+  nativeTheme.shouldUseDarkColors ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light;
+
+function registerThemeHandlers() {
+  const assertTrusted = (event) => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url, devServerUrl)) {
+      throw new Error('Theme change requested by an untrusted page');
+    }
+  };
+  ipcMain.handle(THEME_GET_CHANNEL, (event) => {
+    assertTrusted(event);
+    return { source: nativeTheme.themeSource, dark: nativeTheme.shouldUseDarkColors };
+  });
+  ipcMain.handle(THEME_SET_CHANNEL, (event, source) => {
+    assertTrusted(event);
+    if (!isThemeSource(source)) throw new Error('Unknown theme');
+    nativeTheme.themeSource = source;
+    fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+    fs.writeFileSync(settingsPath(), serializeThemeSetting(readSettingsText(), source), 'utf8');
+    for (const win of BrowserWindow.getAllWindows()) win.setBackgroundColor(windowBackground());
+    return { source, dark: nativeTheme.shouldUseDarkColors };
+  });
+}
+
 /**
  * Keep a window on the app's own page: no navigation elsewhere, no new windows, no webviews.
  * @param {Electron.WebContents} contents
@@ -93,6 +143,8 @@ const createWindow = () => {
     minWidth: 800,
     minHeight: 600,
     title: 'Clinical Analytics',
+    // Matches the page's first frame so the window never flashes the other theme.
+    backgroundColor: windowBackground(),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -130,6 +182,10 @@ app.whenReady().then(() => {
   );
 
   if (!devServerUrl) registerAppProtocol();
+
+  // Before the window exists, so its first paint already uses the saved theme.
+  nativeTheme.themeSource = parseThemeSetting(readSettingsText());
+  registerThemeHandlers();
 
   // Hand the token only to the app's own page, never to a page it was navigated to.
   ipcMain.handle(API_TOKEN_CHANNEL, (event) => {

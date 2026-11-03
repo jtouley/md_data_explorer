@@ -66,7 +66,7 @@ export function renderUploadArea(container, handlers) {
   btn.type = 'button';
   btn.className = 'btn-upload';
   btn.dataset.testid = 'upload-btn';
-  btn.textContent = 'Upload dataset';
+  btn.textContent = 'Upload a file…';
   btn.addEventListener('click', () => input.click());
 
   wrapper.appendChild(input);
@@ -77,7 +77,7 @@ export function renderUploadArea(container, handlers) {
     sampleBtn.type = 'button';
     sampleBtn.className = 'btn-upload btn-load-sample';
     sampleBtn.dataset.testid = 'load-sample-btn';
-    sampleBtn.textContent = 'Load sample';
+    sampleBtn.textContent = 'Use the sample cohort';
     sampleBtn.addEventListener('click', () => handlers.onLoadSample());
     wrapper.appendChild(sampleBtn);
   }

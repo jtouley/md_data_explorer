@@ -106,7 +106,16 @@ test.describe.serial('Native Electron binary harness', () => {
       startedApiLocally = true;
       apiProcess = startProcess(
         'uv',
-        ['run', 'python', '-m', 'clinical_analytics.api.serve', '--host', '127.0.0.1', '--port', '8000'],
+        [
+          'run',
+          'python',
+          '-m',
+          'clinical_analytics.api.serve',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          '8000',
+        ],
         REPO_ROOT,
         'api'
       );
@@ -118,7 +127,16 @@ test.describe.serial('Native Electron binary harness', () => {
       startedRendererLocally = true;
       rendererProcess = startProcess(
         'npx',
-        ['vite', '--config', 'vite.renderer.config.mjs', '--host', 'localhost', '--port', '5173', '--strictPort'],
+        [
+          'vite',
+          '--config',
+          'vite.renderer.config.mjs',
+          '--host',
+          'localhost',
+          '--port',
+          '5173',
+          '--strictPort',
+        ],
         ELECTRON_ROOT,
         'renderer'
       );
@@ -153,7 +171,52 @@ test.describe.serial('Native Electron binary harness', () => {
     await expect(page.locator('main')).toBeVisible();
     await expect(page.getByTestId('session-sidebar')).toBeVisible();
     await expect(page.getByTestId('upload-area')).toBeAttached();
-    await expect(page.locator('#connection-status')).toContainText(/connected/i);
+    await expect(page.locator('#connection-status')).toHaveClass(/status-connected/);
     await app.close();
+  });
+
+  test('theme choice drives nativeTheme, prefers-color-scheme and the saved setting', async () => {
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    const app = await electron.launch({
+      args: ['--no-sandbox', ELECTRON_ROOT],
+      env: { ...env, ELECTRON_DISABLE_SANDBOX: '1' },
+      // Let the page see the real nativeTheme instead of Playwright's emulated light scheme.
+      colorScheme: 'no-override',
+    });
+    const page = await app.firstWindow();
+    await expect(page.locator('main')).toBeVisible();
+    const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+    const settingsFile = require('node:path').join(userData, 'settings.json');
+
+    try {
+      // Act: the renderer's Dark choice goes through preload IPC to main.
+      await page.getByTestId('theme-switch').getByText('Dark').click();
+
+      // Assert: main switched nativeTheme, which the page sees as a dark system preference.
+      await expect
+        .poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource))
+        .toBe('dark');
+      await expect
+        .poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches))
+        .toBe(true);
+      const saved = JSON.parse(require('node:fs').readFileSync(settingsFile, 'utf8'));
+      expect(saved.theme).toBe('dark');
+      await expect
+        .poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor))
+        .toBe('rgb(22, 21, 19)');
+
+      // An untrusted value is refused by the preload bridge.
+      const refused = await page.evaluate(() =>
+        window.appTheme.set('neon').then(
+          () => 'accepted',
+          () => 'refused'
+        )
+      );
+      expect(refused).toBe('refused');
+    } finally {
+      await page.evaluate(() => window.appTheme.set('system'));
+      await app.close();
+    }
   });
 });

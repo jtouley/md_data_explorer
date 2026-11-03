@@ -20,13 +20,14 @@ test.describe('Chat Interface', () => {
     await expect(submitBtn).toBeDisabled();
   });
 
-  test('welcome message displays example queries', async ({ page }) => {
+  test('welcome message says the engine is not reachable (no API in this page)', async ({
+    page,
+  }) => {
     const welcomeMessage = page.locator('.welcome-message');
     await expect(welcomeMessage).toBeVisible();
-
-    const exampleQueries = page.locator('.example-queries');
-    await expect(exampleQueries).toBeVisible();
-    await expect(exampleQueries).toContainText('What is the average age');
+    await expect(welcomeMessage).toContainText('Waiting for the analysis engine.');
+    // Examples are built from a cohort's columns, so none show before one is chosen.
+    await expect(page.locator('.example-queries')).toHaveCount(0);
   });
 
   test('user message appears in chat after DOM injection', async ({ page }) => {
@@ -114,12 +115,14 @@ test.describe('Dataset Selector Integration', () => {
     await expect(datasetSelect).toBeVisible();
 
     const selectedOption = datasetSelect.locator('option:checked');
-    await expect(selectedOption).toHaveText('Select a dataset...');
+    await expect(selectedOption).toHaveText('Choose a cohort…');
   });
 
-  test('refresh button is visible', async ({ page }) => {
+  test('refresh is in the cohort actions menu', async ({ page }) => {
     const refreshBtn = page.locator('#refresh-datasets');
+    await expect(refreshBtn).toBeHidden();
+    await page.getByTestId('dataset-menu-btn').click();
     await expect(refreshBtn).toBeVisible();
-    await expect(refreshBtn).toContainText('⟳');
+    await expect(refreshBtn).toHaveText('Refresh the list');
   });
 });
