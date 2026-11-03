@@ -97,7 +97,7 @@ This plan addresses the critical transition from hardcoded, menu-driven analysis
 
 **Key Innovation: Dictionary-Enhanced Schema Inference**
 Before users see their data, the system now:
-1. Checks for corresponding data dictionary PDF in `data/dictionaries/`
+1. Uses the data dictionary the user supplied with their upload (ZIP contents or a standalone PDF; none ship in the repo)
 2. Extracts column descriptions, types, and valid values using LangChain
 3. Merges PDF metadata with DataFrame-based inference
 4. Presents enriched schema with both statistical analysis + documentation context

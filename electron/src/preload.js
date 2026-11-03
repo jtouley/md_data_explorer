@@ -16,7 +16,7 @@ import {
   verifyBackendEnforcesAuth,
   withAuth,
 } from './apiAuth.js';
-import { THEME_GET_CHANNEL, THEME_SET_CHANNEL, isThemeSource } from './theme.js';
+import { THEME_GET_CHANNEL, THEME_SET_CHANNEL, isThemeSource, themeFromArgv } from './theme.js';
 
 // Backend API configuration
 const API_BASE_URL = import.meta.env.VITE_API_URL || DEFAULT_API_BASE_URL;
@@ -468,6 +468,8 @@ contextBridge.exposeInMainWorld('clinicalAPI', clinicalAPI);
 
 // Appearance: System / Light / Dark, applied by main through nativeTheme and persisted there.
 contextBridge.exposeInMainWorld('appTheme', {
+  /** The saved choice main applied before the window opened (null outside Electron). */
+  initial: themeFromArgv(process.argv),
   /** @returns {Promise<{ source: string, dark: boolean }>} */
   get: () => ipcRenderer.invoke(THEME_GET_CHANNEL),
   /** @param {'system' | 'light' | 'dark'} source */

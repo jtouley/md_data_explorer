@@ -5,6 +5,7 @@ import {
   isThemeSource,
   parseThemeSetting,
   serializeThemeSetting,
+  themeFromArgv,
 } from './theme.js';
 
 describe('isThemeSource', () => {
@@ -71,5 +72,23 @@ describe('serializeThemeSetting', () => {
 
   it('windowBackground_matchesCanvasTokens', () => {
     expect(WINDOW_BACKGROUND).toEqual({ light: '#F7F6F3', dark: '#161513' });
+  });
+});
+
+describe('themeFromArgv', () => {
+  it.each([
+    [['electron', '--ca-theme=dark'], 'dark'],
+    [['--ca-theme=light'], 'light'],
+    [['--ca-theme=system'], 'system'],
+    [['--ca-theme=purple'], null],
+    [['--ca-theme='], null],
+    [['electron'], null],
+    [[], null],
+    [undefined, null],
+  ])('themeFromArgv_case%#_returns_%s', (argv, expected) => {
+    // Arrange / Act
+    const result = themeFromArgv(argv);
+    // Assert
+    expect(result).toBe(expected);
   });
 });

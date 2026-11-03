@@ -315,7 +315,7 @@ function setQueryInputEnabled(enabled) {
     submitBtn.setAttribute('aria-label', 'Stop');
     submitBtn.title = 'Stop';
     submitBtn.innerHTML = icon('stop');
-    inputHintText.textContent = 'Working on your answer. Press Stop to cancel.';
+    inputHintText.textContent = 'Working on your answer. Press Stop to stop waiting.';
     return;
   }
 
@@ -881,6 +881,8 @@ async function handleConfirmPendingQuery(held, card) {
   });
   if (!built.ok) {
     setCardNote(card, built.message);
+    // Nothing was sent: keep "Not what I meant" usable so the question can come back.
+    setCardButtonsDisabled(card, false);
     return;
   }
   const { request } = built;
@@ -888,8 +890,10 @@ async function handleConfirmPendingQuery(held, card) {
 
   const assistantMessageId = addWorkingMessage();
   let outcome = 'error';
+  let sent = false;
   try {
     const response = await submitConfirmation(window.clinicalAPI, request);
+    sent = true;
     outcome = await followQuery(response, assistantMessageId, request.queryText, {
       datasetId: request.datasetId,
       sessionId: request.sessionId,
@@ -903,8 +907,11 @@ async function handleConfirmPendingQuery(held, card) {
 
   if (outcome === 'completed' || outcome === 'held') {
     settleCard(card, 'You approved this plan. The answer is below.');
+  } else if (sent) {
+    // The server accepted the approval, so it may have run: never offer to send it twice.
+    settleCard(card, 'You approved this plan and it was sent. Ask again to see a new answer.');
   } else {
-    // Nothing ran, so the held plan stays confirmable.
+    // The approval never reached the server, so the held plan stays confirmable.
     setCardButtonsDisabled(card, false);
   }
 }

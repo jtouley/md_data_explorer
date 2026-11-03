@@ -15,10 +15,9 @@ DATA_EXTENSIONS = (
     ".duckdb", ".db", ".sqlite", ".sqlite3", ".parquet", ".feather", ".arrow",
     ".sav", ".dta", ".sas7bdat", ".xlsx", ".xls", ".csv", ".tsv",
 )
-# Synthetic fixtures and public data dictionaries only.
+# Synthetic fixtures only. Data dictionaries come with the user's upload and stay local.
 ALLOWLIST = (
     "data/demo/*.csv",
-    "data/dictionaries/*.pdf",
     "tests/fixtures/synthetic/*",
 )
 

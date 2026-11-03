@@ -190,6 +190,11 @@ test.describe.serial('Native Electron binary harness', () => {
     const settingsFile = require('node:path').join(userData, 'settings.json');
 
     try {
+      // Assert: the sandboxed preload received the theme main applied before the window opened,
+      // so the pre-paint script follows settings.json rather than localStorage.
+      const initial = await page.evaluate(() => window.appTheme.initial);
+      expect(initial).toBe(await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource));
+
       // Act: the renderer's Dark choice goes through preload IPC to main.
       await page.getByTestId('theme-switch').getByText('Dark').click();
 
