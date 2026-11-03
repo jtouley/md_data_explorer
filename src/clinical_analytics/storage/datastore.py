@@ -22,6 +22,8 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
+from clinical_analytics.storage.store_format import new_store_config
+
 logger = logging.getLogger(__name__)
 
 # One process-wide registry of open connections to the persistent store. Every connection to
@@ -72,7 +74,10 @@ def open_store_connection(
     """Open a registered connection; close it with close_store_connection (or use store_connection)."""
     key = _store_key(db_path)
     with _store_lock(timeout_s):
-        conn = duckdb.connect(str(key), read_only=read_only)
+        # A new file gets the pinned storage format, so an older DuckDB line can still open it.
+        # Same config on every connection: DuckDB refuses a second in-process connection to a
+        # file with a different config. Existing files keep their own format either way.
+        conn = duckdb.connect(str(key), read_only=read_only, config=new_store_config())
         with _REGISTRY_LOCK:
             _open_store_connections[key] = _open_store_connections.get(key, 0) + 1
     return conn

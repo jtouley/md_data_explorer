@@ -38,6 +38,7 @@ from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.core.ollama_init import initialize_ollama
 from clinical_analytics.storage.dataset_deletion import DatasetDeletionError, resume_pending_compaction
+from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
 
 # Redacting processor chain + INFO default (CLINICAL_ANALYTICS_LOG_LEVEL overrides).
 configure_logging()
@@ -88,6 +89,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Create database tables (in production, use Alembic migrations)
     create_tables()
     logger.info("api_database_ready")
+
+    # Back up the store before a new DuckDB release first opens it, and fail loudly on a store
+    # this DuckDB cannot read (for example, after a rollback). Before any compaction or upload.
+    try:
+        prepared = await asyncio.to_thread(prepare_store_for_engine, uploads_dir().parent)
+        if prepared is not None and prepared.backed_up:
+            logger.info(
+                "api_store_engine_changed",
+                previous_engine=prepared.previous_engine,
+                current_engine=prepared.current_engine,
+                storage_version=prepared.storage_version,
+            )
+    except (StoreFormatError, OSError) as e:
+        # No backup or an unreadable store: do not let this DuckDB write to it. Fail startup.
+        logger.error("api_store_unreadable", error_type=type(e).__name__)
+        raise
 
     # A delete that failed between DROP and the store rewrite leaves a marker: finish it now,
     # so dropped rows do not linger in analytics.duckdb. Off the event loop; never blocks startup.
