@@ -96,6 +96,9 @@ Results
 **See:** [vision/UNIFIED_VISION.md](../vision/UNIFIED_VISION.md) for complete strategic vision and implementation approach.
 
 ### Directory Structure
+
+> **Historical:** this is the original layout. The built-in datasets (`covid_ms`, `sepsis`, `mimic3`) and their `datasets/` modules were removed (`config/datasets.yaml`); data now lives only in the per-user data home, never under `data/` in the repo.
+
 ```
 clinical-analytics-platform/
 ├── pyproject.toml

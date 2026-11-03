@@ -53,7 +53,7 @@ cd electron && npm ci && cd ..
 
 ```bash
 # Terminal 1: the API. On macOS/Linux, `make run` does this and, if Ollama is running, pulls a missing model.
-uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8000
+uv run python -m clinical_analytics.api.serve --port 8000
 
 # Terminal 2: the desktop app (needs the API running)
 cd electron

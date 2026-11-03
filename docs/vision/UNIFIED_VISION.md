@@ -465,7 +465,7 @@ The [MIMIC-IV Demo](https://physionet.org/content/mimic-iv-demo/2.2/hosp/#files-
 **Sepsis includes:**
 - `training/*.psv` - Data files (PSV format, time-series)
 - `physionet_challenge_2019_ccm_manuscript.pdf` - Data dictionary and methodology (PDF format)
-- `LICENSE.txt` - ODbL license
+- `LICENSE.txt` - CC BY 4.0 license
 - `SHA256SUMS.txt` - File integrity checksums
 
 **MIMIC-IV Demo includes:**
