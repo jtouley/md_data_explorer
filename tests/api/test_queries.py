@@ -89,9 +89,12 @@ class TestQuerySubmitEndpoint:
         assert mock_async_query_service.submit_query.await_args.kwargs.get("confirmed") is False
 
     def test_queries_post_confirmed_true_forwards_to_service(self, test_client, mock_async_query_service):
-        """confirmed=true is forwarded so the gate can release a hold."""
+        """confirmed=true and the reviewed plan line are forwarded so the gate can release a hold."""
+        # Arrange
         mock_async_query_service.submit_query = AsyncMock(return_value="qry_confirm")
+        plan_line = "COMPARE_GROUPS · outcome ldl · grouping sex · filters none · test group comparison"
 
+        # Act
         response = test_client.post(
             "/api/queries",
             json={
@@ -99,11 +102,31 @@ class TestQuerySubmitEndpoint:
                 "dataset_id": "test_dataset",
                 "query_text": "Compare LDL by sex",
                 "confirmed": True,
+                "confirm_plan_line": plan_line,
             },
         )
 
+        # Assert
         assert response.status_code == status.HTTP_202_ACCEPTED
-        assert mock_async_query_service.submit_query.await_args.kwargs.get("confirmed") is True
+        kwargs = mock_async_query_service.submit_query.await_args.kwargs
+        assert kwargs.get("confirmed") is True
+        assert kwargs.get("confirm_plan_line") == plan_line
+
+    @pytest.mark.parametrize("plan_line", [None, "", "   "], ids=["missing", "empty", "blank"])
+    def test_queries_post_confirmedWithoutPlanLine_rejected422(self, test_client, mock_async_query_service, plan_line):
+        """A confirmation must name the plan it covers; otherwise it could release any plan."""
+        # Arrange
+        mock_async_query_service.submit_query = AsyncMock(return_value="qry_x")
+        body = {"session_id": "s", "dataset_id": "d", "query_text": "Compare LDL by sex", "confirmed": True}
+        if plan_line is not None:
+            body["confirm_plan_line"] = plan_line
+
+        # Act
+        response = test_client.post("/api/queries", json=body)
+
+        # Assert
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        mock_async_query_service.submit_query.assert_not_called()
 
     def test_queries_post_withContext_forwardsContextAndSession(self, test_client, mock_async_query_service):
         """QueryRequest.context and session_id reach the service instead of being dropped."""

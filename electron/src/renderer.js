@@ -431,10 +431,13 @@ function renderResultCard(result) {
     confirmBtn.dataset.testid = 'confirm-query-btn';
     confirmBtn.textContent = 'Confirm';
     confirmBtn.addEventListener('click', () => {
+      if (state.isProcessing) {
+        // Another answer is still streaming; leave the hold actionable instead of greying it out.
+        appendCardNote(card, 'Wait for the current answer to finish, then confirm.');
+        return;
+      }
       // One decision per held plan: a second click must not run it again.
-      card.querySelectorAll('button').forEach((b) => {
-        b.disabled = true;
-      });
+      setCardButtonsDisabled(card, true);
       void handleConfirmPendingQuery(result, card);
     });
     const rejectBtn = document.createElement('button');
@@ -470,17 +473,30 @@ function renderResultCard(result) {
  * Resubmit a held query with confirmed=true.
  * @param {string} queryText
  */
+function setCardButtonsDisabled(card, disabled) {
+  card.querySelectorAll('button').forEach((b) => {
+    b.disabled = disabled;
+  });
+}
+
+function appendCardNote(card, text) {
+  const note = document.createElement('p');
+  note.className = 'result-rejected';
+  note.textContent = text;
+  card.appendChild(note);
+}
+
 async function handleConfirmPendingQuery(held, card) {
   const queryText = held.pendingQuery || '';
-  if (!queryText || state.isProcessing) {
+  if (!queryText || !held.planLine) {
+    appendCardNote(card, 'This plan cannot be confirmed. Ask the question again.');
     return;
   }
   if (held.datasetId && held.datasetId !== state.currentDatasetId) {
-    const note = document.createElement('p');
-    note.className = 'result-rejected';
-    note.textContent =
-      'This plan was for a different dataset. Ask the question again on the current dataset.';
-    card.appendChild(note);
+    appendCardNote(
+      card,
+      'This plan was for a different dataset. Ask the question again on the current dataset.'
+    );
     return;
   }
   state.isProcessing = true;
@@ -504,7 +520,7 @@ async function handleConfirmPendingQuery(held, card) {
       datasetId,
       queryText,
       true,
-      held.planLine || null
+      held.planLine
     );
     if (response.stream_url || response.query_id) {
       await subscribeToQueryStream(response.query_id, assistantMessageId, queryText, {
@@ -517,6 +533,8 @@ async function handleConfirmPendingQuery(held, card) {
       content: `Sorry, I encountered an error: ${error.message}`,
       isStreaming: false,
     });
+    // Nothing ran, so the held plan stays confirmable.
+    setCardButtonsDisabled(card, false);
   } finally {
     state.isProcessing = false;
     setQueryInputEnabled(!!state.currentDatasetId);

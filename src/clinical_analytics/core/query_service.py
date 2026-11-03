@@ -173,10 +173,12 @@ class QueryService:
 
         # A confirmation covers the plan the user saw. Re-parsing (e.g. via the LLM tier) can
         # yield a different plan; that one must be shown and confirmed on its own.
+        # A confirmation without the plan line it covers releases nothing.
+        shown_plan_line = format_plan_line(query_plan, context)
         plan_changed = False
-        if confirmed and confirm_plan_line is not None and format_plan_line(query_plan) != confirm_plan_line:
+        if confirmed and (not confirm_plan_line or shown_plan_line != confirm_plan_line):
             confirmed = False
-            plan_changed = True
+            plan_changed = bool(confirm_plan_line)
 
         if not validation_result.get("valid", False):
             # Fail closed: an invalid plan is refused here and never reaches execution.
@@ -213,7 +215,7 @@ class QueryService:
                     execution_run_key = None
 
                 if requires_confirmation:
-                    plan_line = format_plan_line(query_plan)
+                    plan_line = shown_plan_line
                     if plan_changed:
                         failure_reason = PLAN_CHANGED_REASON
                 elif execution_result.get("success") is False:

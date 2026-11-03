@@ -9,7 +9,7 @@ Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ============================================================================
 # Session Management Schemas
@@ -66,10 +66,18 @@ class QueryRequest(BaseModel):
     confirm_plan_line: str | None = Field(
         None,
         description=(
-            "The plan line the user confirmed. When set, the hold is released only if the query "
-            "still parses to exactly this plan; otherwise it is held again with the new plan."
+            "The plan line the user confirmed; required when confirmed is true. The hold is "
+            "released only if the query still parses to exactly this plan; otherwise it is "
+            "held again with the new plan."
         ),
     )
+
+    @model_validator(mode="after")
+    def _confirmation_names_its_plan(self) -> "QueryRequest":
+        if self.confirmed and not (self.confirm_plan_line or "").strip():
+            raise ValueError("confirmed=true requires confirm_plan_line: the plan line the user reviewed")
+        return self
+
     context: dict[str, Any] | None = Field(
         None,
         description="Previous conversation context (e.g., previous_intent, previous_variables)",

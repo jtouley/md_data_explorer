@@ -219,7 +219,15 @@ class TestQueryServiceAnalysis:
         layer.execute_query_plan.return_value = execution_result
         layer.format_execution_result.return_value = formatted
         service = QueryService(layer)
-        intent = MagicMock(intent_type="COMPARE_GROUPS", primary_variable="ldl", confidence=0.95, filters=[])
+        intent = MagicMock(
+            intent_type="COMPARE_GROUPS",
+            primary_variable="ldl",
+            confidence=0.95,
+            filters=[],
+            predictor_variables=[],
+            time_variable=None,
+            event_variable=None,
+        )
         service.nl_engine.parse_query = MagicMock(return_value=intent)
         service.nl_engine._intent_to_plan = MagicMock(
             return_value=QueryPlan(intent="COMPARE_GROUPS", metric="ldl", group_by="treatment", confidence=0.95)
@@ -279,34 +287,35 @@ class TestQueryServiceAnalysis:
         assert layer.execute_query_plan.call_args.kwargs["confidence_threshold"] == threshold
 
     @pytest.mark.parametrize(
-        ("confirm_plan_line_matches", "expected_confirmed"),
-        [(True, True), (False, False)],
-        ids=["same_plan_released", "different_plan_held_again"],
+        ("confirm_plan_line", "expected_confirmed", "expected_reason"),
+        [
+            ("SHOWN", True, None),
+            ("COMPARE_GROUPS · outcome hdl · grouping sex", False, "changed"),
+            (None, False, "held"),
+            ("", False, "held"),
+        ],
+        ids=["same_plan_released", "different_plan_held_again", "no_plan_line_not_released", "empty_plan_line"],
     )
     def test_ask_confirmPlanLine_releasesHoldOnlyForTheConfirmedPlan(
-        self, mock_semantic_layer, confirm_plan_line_matches, expected_confirmed
+        self, mock_semantic_layer, confirm_plan_line, expected_confirmed, expected_reason
     ):
-        """Confirm covers the plan the user saw; a re-parse to another plan is held again."""
+        """Confirm covers exactly the plan the user saw; anything else stays held."""
         # Arrange
-        from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
+        from clinical_analytics.core.execution_gate import HOLD_FAILURE_REASON, PLAN_CHANGED_REASON, format_plan_line
 
-        held = {
-            "success": False,
-            "requires_confirmation": True,
-            "failure_reason": "Confirmation required before execution.",
-        }
+        held = {"success": False, "requires_confirmation": True, "failure_reason": HOLD_FAILURE_REASON}
         service, layer = self._service(mock_semantic_layer, held, None)
-        shown = format_plan_line(service.nl_engine._intent_to_plan.return_value)
-        confirm_plan_line = shown if confirm_plan_line_matches else "COMPARE_GROUPS · outcome hdl · grouping sex"
+        plan = service.nl_engine._intent_to_plan.return_value
+        shown = format_plan_line(plan, service._intent_to_context(service.nl_engine.parse_query.return_value, plan))
+        sent = shown if confirm_plan_line == "SHOWN" else confirm_plan_line
 
         # Act
-        result = service.ask(
-            "compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_line=confirm_plan_line
-        )
+        result = service.ask("compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_line=sent)
 
         # Assert
         assert layer.execute_query_plan.call_args.kwargs["confirmed"] is expected_confirmed
-        if not confirm_plan_line_matches:
-            assert result.requires_confirmation is True
+        if expected_reason == "changed":
             assert result.failure_reason == PLAN_CHANGED_REASON
             assert result.plan_line == shown
+        elif expected_reason == "held":
+            assert result.failure_reason == HOLD_FAILURE_REASON

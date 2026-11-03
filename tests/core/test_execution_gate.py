@@ -1,5 +1,7 @@
 """Execution gate for low-confidence QueryPlans. Issue #52."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from clinical_analytics.core.execution_gate import (
@@ -150,6 +152,62 @@ def test_execution_gate_plan_line_includes_intent_outcome_grouping_filters_and_t
     line = format_plan_line(compare_plan)
 
     assert line == ("COMPARE_GROUPS · outcome ldl · grouping sex · filters site IN [A, B] · test group comparison")
+
+
+@pytest.mark.parametrize(
+    ("plan", "context_fields", "expected"),
+    [
+        (
+            QueryPlan(intent="FIND_PREDICTORS", metric="outcome", confidence=0.5),
+            {"predictor_variables": ["age", "diabetes"]},
+            "FIND_PREDICTORS · outcome outcome · grouping none · predictors age, diabetes · filters none"
+            " · test logistic regression",
+        ),
+        (
+            QueryPlan(intent="SURVIVAL", group_by="arm", confidence=0.5),
+            {"time_variable": "days", "event_variable": "death"},
+            "SURVIVAL · outcome none · grouping arm · time days · event death · filters none · test Kaplan–Meier",
+        ),
+        (
+            QueryPlan(
+                intent="COUNT",
+                filters=[FilterSpec(column="ldl", operator=">", value=130, exclude_nulls=False)],
+                scope="filtered",
+                confidence=0.5,
+            ),
+            {},
+            "COUNT · outcome none · grouping none · filters ldl > 130 (missing kept) · scope filtered · test count",
+        ),
+    ],
+    ids=["predictors", "survival_time_event", "nulls_kept_and_scope"],
+)
+def test_format_plan_line_contextInputs_namedSoConfirmationCoversThem(plan, context_fields, expected):
+    """Every input that changes the analysis is in the line a confirmation is bound to."""
+    # Arrange
+    context = SimpleNamespace(
+        predictor_variables=context_fields.get("predictor_variables", []),
+        time_variable=context_fields.get("time_variable"),
+        event_variable=context_fields.get("event_variable"),
+    )
+
+    # Act
+    line = format_plan_line(plan, context)
+
+    # Assert
+    assert line == expected
+
+
+def test_format_plan_line_predictorsChange_lineChanges():
+    """A re-parse that adds covariates must not match the confirmed line."""
+    # Arrange
+    plan = QueryPlan(intent="FIND_PREDICTORS", metric="outcome", confidence=0.5)
+
+    # Act
+    shown = format_plan_line(plan, SimpleNamespace(predictor_variables=["age"]))
+    reparsed = format_plan_line(plan, SimpleNamespace(predictor_variables=["age", "diabetes", "hypertension"]))
+
+    # Assert
+    assert shown != reparsed
 
 
 def test_classify_planned_query_hold_refused_error_and_continue():

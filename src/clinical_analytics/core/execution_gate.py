@@ -1,6 +1,7 @@
 """Decide whether a QueryPlan may execute. Issue #52."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
@@ -75,14 +76,36 @@ def apply_planned_query_result(result: dict, session: dict, dataset_version: str
 def _filter_text(spec: FilterSpec) -> str:
     if isinstance(spec.value, list):
         joined = ", ".join(str(item) for item in spec.value)
-        return f"{spec.column} {spec.operator} [{joined}]"
-    return f"{spec.column} {spec.operator} {spec.value}"
+        text = f"{spec.column} {spec.operator} [{joined}]"
+    else:
+        text = f"{spec.column} {spec.operator} {spec.value}"
+    return text if spec.exclude_nulls else f"{text} (missing kept)"
 
 
-def format_plan_line(plan: QueryPlan) -> str:
-    """One hold line. The model has not run, so the test label comes from intent."""
+def format_plan_line(plan: QueryPlan, context: Any = None) -> str:
+    """One hold line naming everything that changes the analysis.
+
+    It is what the user reviews and what a confirmation is bound to, so it must include every
+    input the analysis uses: predictors and time/event columns come from the analysis context,
+    and filter null-handling and scope from the plan. The model has not run, so the test label
+    comes from the intent.
+    """
     filters = "; ".join(_filter_text(spec) for spec in plan.filters) or "none"
     label = _TEST_LABELS.get(str(plan.intent), "not selected")
     outcome = plan.metric or "none"
     grouping = plan.group_by or "none"
-    return f"{plan.intent} · outcome {outcome} · grouping {grouping} · filters {filters} · test {label}"
+    parts = [f"{plan.intent}", f"outcome {outcome}", f"grouping {grouping}"]
+    predictors = list(getattr(context, "predictor_variables", None) or [])
+    if predictors and plan.intent != "CORRELATIONS":
+        parts.append(f"predictors {', '.join(str(p) for p in predictors)}")
+    elif predictors:
+        parts.append(f"variables {', '.join(str(p) for p in predictors)}")
+    time_col = getattr(context, "time_variable", None)
+    event_col = getattr(context, "event_variable", None)
+    if time_col or event_col:
+        parts.append(f"time {time_col or 'none'} · event {event_col or 'none'}")
+    parts.append(f"filters {filters}")
+    if plan.scope and plan.scope != "all":
+        parts.append(f"scope {plan.scope}")
+    parts.append(f"test {label}")
+    return " · ".join(parts)
