@@ -226,9 +226,10 @@ class OverlayStore:
             with os.fdopen(fd, "w") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp_path, pending_path)
-        except OSError:
+        finally:
+            # Gone after a successful replace; otherwise (OSError, or a value json can't encode)
+            # remove it so failures don't pile up temp files in the overlay directory.
             tmp_path.unlink(missing_ok=True)
-            raise
 
         logger.info(
             "pending_saved",

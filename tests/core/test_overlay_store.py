@@ -558,6 +558,23 @@ class TestPatchDecisionAtomicity:
         assert (overlay_dir / "pending.json").read_bytes() == before
         assert sorted(p.name for p in overlay_dir.iterdir()) == ["pending.json"]
 
+    def test_save_pending_unencodableValue_leavesNoTempFile(self, overlay_store, sample_patch):
+        """A value json can't encode raises, keeps the old pending.json and leaves no temp file."""
+        # Arrange
+        from dataclasses import replace
+
+        overlay_store.save_pending("upload_tmp", "v1", [sample_patch])
+        overlay_dir = overlay_store.get_overlay_path("upload_tmp", "v1")
+        before = (overlay_dir / "pending.json").read_bytes()
+
+        # Act
+        with pytest.raises(TypeError):
+            overlay_store.save_pending("upload_tmp", "v1", [replace(sample_patch, value=object())])
+
+        # Assert
+        assert (overlay_dir / "pending.json").read_bytes() == before
+        assert sorted(p.name for p in overlay_dir.iterdir()) == ["pending.json"]
+
 
 class TestPatchDecisionStaleState:
     """A patch the log has already decided but pending.json still lists (pre-rollback failure)."""

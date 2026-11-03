@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createEnrichmentPanelGate,
   normalizePendingResponse,
   runEnrichmentDecision,
   suggestionToRows,
@@ -158,7 +159,7 @@ describe('runEnrichmentDecision overlapping calls', () => {
     expect(hint).toBe('Only a pending patch can be accepted');
   });
 
-  it('runEnrichmentDecision_queuedCall_startsOnlyAfterEarlierReloadAndMessage', async () => {
+  it('runEnrichmentDecision_queuedCall_startsOnlyAfterEarlierReload', async () => {
     // Arrange
     const events = [];
     let releaseFirstReload;
@@ -196,5 +197,122 @@ describe('runEnrichmentDecision overlapping calls', () => {
     // Assert: the second click is queued, not dropped, and not interleaved
     expect(beforeRelease).toEqual(['call-1']);
     expect(events).toEqual(['call-1', 'reload-1', 'call-2', 'reload-2']);
+  });
+});
+
+describe('runEnrichmentDecision queue robustness', () => {
+  it('runEnrichmentDecision_showMessageThrows_laterDecisionStillRuns', async () => {
+    // Arrange
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const events = [];
+    const broken = runEnrichmentDecision(
+      async () => {
+        throw new Error('server down');
+      },
+      {
+        reload: async () => {},
+        showMessage: () => {
+          throw new Error('hint dead');
+        },
+        fallback: 'x',
+      }
+    );
+
+    // Act
+    const later = runEnrichmentDecision(
+      async () => {
+        events.push('call-2');
+        return { success: true };
+      },
+      { reload: async () => events.push('reload-2'), showMessage: () => {}, fallback: 'x' }
+    );
+
+    // Assert: the caller still sees the failure, but the queue keeps working
+    await expect(broken).rejects.toThrow('hint dead');
+    await later;
+    expect(events).toEqual(['call-2', 'reload-2']);
+  });
+
+  it.each([
+    [{ stale: true, message: 'Only a pending patch can be accepted' }],
+    [{ success: false, message: 'Accept failed on server' }],
+    [{ success: true }],
+  ])('runEnrichmentDecision_datasetChangedBeforeRun_noReloadOrMessage_case%#', async (res) => {
+    // Arrange: the user switches dataset while the decision is queued
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let current = true;
+    const events = [];
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const first = runEnrichmentDecision(
+      async () => {
+        await gate;
+        return { success: true };
+      },
+      { reload: async () => {}, showMessage: () => {}, fallback: 'x' }
+    );
+    const queued = runEnrichmentDecision(
+      async () => {
+        events.push('call');
+        return res;
+      },
+      {
+        reload: async () => events.push('reload'),
+        showMessage: (t) => events.push(`message:${t}`),
+        isCurrent: () => current,
+        fallback: 'x',
+      }
+    );
+
+    // Act
+    current = false;
+    release();
+    await Promise.all([first, queued]);
+
+    // Assert: the decision is still sent, but nothing lands on the other dataset's panel
+    expect(events).toEqual(['call']);
+  });
+});
+
+describe('createEnrichmentPanelGate', () => {
+  it('gate_refreshStartedBeforeMessage_doesNotOverwriteThatHint', () => {
+    // Arrange: decision reload, then a refresh starts, then the decision shows its 409
+    const gate = createEnrichmentPanelGate();
+    const decisionReload = gate.startLoad();
+    const refresh = gate.startLoad();
+
+    // Act
+    gate.noteMessage('suggestions');
+
+    // Assert
+    expect(gate.isLatestLoad(decisionReload)).toBe(false);
+    expect(gate.isLatestLoad(refresh)).toBe(true);
+    expect(gate.mayWriteHint(refresh, 'suggestions')).toBe(false);
+    expect(gate.mayWriteHint(refresh, 'history')).toBe(true);
+  });
+
+  it('gate_loadStartedAfterMessage_writesHint', () => {
+    // Arrange
+    const gate = createEnrichmentPanelGate();
+    gate.startLoad();
+    gate.noteMessage('suggestions');
+
+    // Act
+    const later = gate.startLoad();
+
+    // Assert: a refresh the user starts after reading the message shows fresh text
+    expect(gate.mayWriteHint(later, 'suggestions')).toBe(true);
+  });
+
+  it('gate_noMessages_latestLoadWritesBothHints', () => {
+    // Arrange / Act
+    const gate = createEnrichmentPanelGate();
+    const load = gate.startLoad();
+
+    // Assert
+    expect(gate.mayWriteHint(load, 'suggestions')).toBe(true);
+    expect(gate.mayWriteHint(load, 'history')).toBe(true);
   });
 });
