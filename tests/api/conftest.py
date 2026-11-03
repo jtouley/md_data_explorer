@@ -19,6 +19,28 @@ from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture
+def isolated_data_home(tmp_path, monkeypatch):
+    """Own data home per test, with the session tables created. Returns the data home path.
+
+    xdist workers share the default data home, and its DuckDB file takes one writer. The plain
+    test_client does not run the lifespan that creates the session tables; workers share the
+    session DB, so a parallel worker may win the CREATE race and the retry then no-ops.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from clinical_analytics.api.db.database import create_tables
+    from clinical_analytics.core.data_home import DATA_HOME_ENV
+
+    home = tmp_path / "home"
+    monkeypatch.setenv(DATA_HOME_ENV, str(home))
+    try:
+        create_tables()
+    except OperationalError:
+        create_tables()
+    return home
+
+
+@pytest.fixture
 def test_client():
     """Plain FastAPI test client with no service mocking.
 

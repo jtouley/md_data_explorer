@@ -242,6 +242,17 @@ docs/screenshots/
 data/*
 !data/demo/
 !data/dictionaries/
+# Data contracts, quality reports, lineage and eval golden sets derived from real uploads.
+# Synthetic examples under tests/fixtures/synthetic/ are the only exception.
+*.odcs.yaml
+*.odcs.yml
+*.odps.yaml
+*.odps.yml
+dq/
+lineage/
+eval/golden*
+!tests/eval/golden_questions.yaml
+!tests/fixtures/synthetic/**
 
 # Mutation testing workdir
 mutants/

@@ -6,6 +6,7 @@ An upload leaves data in several places under the data home (``<data home>/data`
   original file named in metadata (``stored_relpath`` / ``stored_filename``)
 * ``uploads/metadata/{id}.json`` and the enrichment overlays ``uploads/metadata/overlays/{id}/``
 * Parquet exports ``parquet/{id}_<table>_<version>.parquet``
+* Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``
 * DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``
 
 Dropping a DuckDB table frees its blocks but leaves the bytes in the file, so after dropping,
@@ -30,6 +31,7 @@ from pathlib import Path
 import duckdb
 import structlog
 
+from clinical_analytics.contracts.config import CONTRACTS_DIRNAME, DQ_DIRNAME
 from clinical_analytics.storage.datastore import StoreInUseError, exclusive_store
 
 logger = structlog.get_logger()
@@ -37,6 +39,7 @@ logger = structlog.get_logger()
 DATASET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,127}$")
 DUCKDB_FILENAME = "analytics.duckdb"
 PARQUET_DIRNAME = "parquet"
+DERIVED_DIRNAMES = (CONTRACTS_DIRNAME, DQ_DIRNAME)
 
 
 class DatasetDeletionError(RuntimeError):
@@ -225,6 +228,9 @@ def purge_dataset_files(dataset_id: str, uploads_root: Path) -> DeletionReport:
             metadata_dir / "overlays" / dataset_id,
         ]:
             _remove(path, uploads_root, report)
+
+        for dirname in DERIVED_DIRNAMES:
+            _remove(data_dir / dirname / dataset_id, data_dir, report)
 
         parquet_dir = data_dir / PARQUET_DIRNAME
         if parquet_dir.is_dir():

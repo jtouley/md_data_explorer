@@ -46,6 +46,31 @@ class TestUserDatasetStorage:
         # Check that CSV file exists with upload_id as filename
         assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()
 
+    def test_saveUpload_syntheticCohort_writesContractReportAndSourceHash(self, upload_storage, load_synthetic_dataset):
+        """Every upload version gets an ODCS contract and a quality report in the data dir."""
+        # Arrange
+        import hashlib
+
+        from clinical_analytics.contracts.store import contract_path, latest_report
+
+        csv_bytes = load_synthetic_dataset("cohort").write_csv().encode("utf-8")
+
+        # Act
+        success, message, upload_id = upload_storage.save_upload(
+            file_bytes=csv_bytes, original_filename="cohort.csv", metadata={"dataset_name": "cohort"}
+        )
+
+        # Assert
+        assert success is True, message
+        metadata = upload_storage.get_upload_metadata(upload_id)
+        data_dir = upload_storage.upload_dir.parent
+        version = metadata["dataset_version"]
+        assert metadata["source_file_sha256"] == hashlib.sha256(csv_bytes).hexdigest()
+        assert contract_path(data_dir, upload_id, version).is_file()
+        report = latest_report(data_dir, upload_id, version)
+        assert report is not None and report.summary == ["ldl: 5.8% missing"]
+        assert metadata["quality"] == {"run_ts": report.run_ts, "failed": 0, "warnings": 1}
+
     @pytest.mark.parametrize("mapped_outcome", ["outcome", "mortality"])
     def test_save_upload_outcome_mapped_to_other_column_with_existing_outcome_succeeds(
         self, upload_storage, mapped_outcome
