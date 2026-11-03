@@ -223,6 +223,12 @@ def accept_suggestion(
             patch_id=patch_id,
             accepted_by=request.accepted_by,
         )
+    except PatchNotFoundError as e:
+        logger.warning("enrichments_accept_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found") from e
+    except PatchStateError as e:
+        logger.warning("enrichments_accept_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending patch can be accepted") from e
     except _OVERLAY_STORE_ERRORS as e:
         logger.error("enrichments_accept_failed", **error_fields(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_STORE_FAILED_DETAIL) from e
@@ -255,6 +261,12 @@ def reject_suggestion(
             patch_id=patch_id,
             reason=request.reason,
         )
+    except PatchNotFoundError as e:
+        logger.warning("enrichments_reject_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found") from e
+    except PatchStateError as e:
+        logger.warning("enrichments_reject_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending patch can be rejected") from e
     except _OVERLAY_STORE_ERRORS as e:
         logger.error("enrichments_reject_failed", **error_fields(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_STORE_FAILED_DETAIL) from e

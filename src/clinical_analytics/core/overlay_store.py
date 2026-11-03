@@ -275,6 +275,10 @@ class OverlayStore:
             version: Dataset version
             patch_id: ID of patch to accept
             accepted_by: User who accepted
+
+        Raises:
+            PatchNotFoundError: If patch_id is neither pending nor in the patch log.
+            PatchStateError: If patch_id was already resolved (accepted, rejected or reverted).
         """
         pending = self.load_pending(upload_id, version)
 
@@ -303,12 +307,7 @@ class OverlayStore:
                 )
                 return
 
-        logger.warning(
-            "patch_not_found_in_pending",
-            upload_id=upload_id,
-            version=version,
-            patch_id=patch_id,
-        )
+        raise self._not_pending_error(upload_id, version, patch_id)
 
     def reject_patch(
         self,
@@ -325,6 +324,10 @@ class OverlayStore:
             version: Dataset version
             patch_id: ID of patch to reject
             reason: Rejection reason
+
+        Raises:
+            PatchNotFoundError: If patch_id is neither pending nor in the patch log.
+            PatchStateError: If patch_id was already resolved (accepted, rejected or reverted).
         """
         pending = self.load_pending(upload_id, version)
 
@@ -350,12 +353,17 @@ class OverlayStore:
                 )
                 return
 
-        logger.warning(
-            "patch_not_found_in_pending",
-            upload_id=upload_id,
-            version=version,
-            patch_id=patch_id,
-        )
+        raise self._not_pending_error(upload_id, version, patch_id)
+
+    def _not_pending_error(self, upload_id: str, version: str, patch_id: str) -> ValueError:
+        """Why a patch_id cannot be accepted or rejected: never seen, or already resolved."""
+        latest = None
+        for p in self.load_patches(upload_id, version):
+            if p.patch_id == patch_id:
+                latest = p
+        if latest is None:
+            return PatchNotFoundError(f"No pending patch found for patch_id={patch_id!r}")
+        return PatchStateError(f"Patch {patch_id!r} is not pending (latest status={latest.status.name})")
 
     def revert_accepted_patch(
         self,

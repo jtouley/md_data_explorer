@@ -417,6 +417,45 @@ class TestPatchAcceptReject:
         assert patches[0].rejected_reason == "Not accurate"
 
 
+class TestPatchAcceptRejectFailures:
+    """accept_patch / reject_patch raise instead of logging and returning for a patch they cannot resolve."""
+
+    @pytest.mark.parametrize("action", ["accept_patch", "reject_patch"])
+    def test_resolve_patch_unknownPatchId_raisesPatchNotFoundError(self, overlay_store, sample_patch, action):
+        """An id that is neither pending nor logged is not found, and nothing is written."""
+        # Arrange
+        from clinical_analytics.core.overlay_store import PatchNotFoundError
+
+        overlay_store.save_pending("upload_missing", "v1", [sample_patch])
+
+        # Act / Assert
+        with pytest.raises(PatchNotFoundError, match="no_such_patch"):
+            getattr(overlay_store, action)("upload_missing", "v1", "no_such_patch", "actor")
+        assert overlay_store.load_patches("upload_missing", "v1") == []
+        assert [p.patch_id for p in overlay_store.load_pending("upload_missing", "v1")] == [sample_patch.patch_id]
+
+    @pytest.mark.parametrize(
+        ("first_action", "expected_status"),
+        [("accept_patch", "ACCEPTED"), ("reject_patch", "REJECTED")],
+        ids=["accepted", "rejected"],
+    )
+    @pytest.mark.parametrize("second_action", ["accept_patch", "reject_patch"])
+    def test_resolve_patch_alreadyResolved_raisesPatchStateError(
+        self, overlay_store, sample_patch, first_action, expected_status, second_action
+    ):
+        """A patch that was already accepted or rejected cannot be accepted or rejected again."""
+        # Arrange
+        from clinical_analytics.core.overlay_store import PatchStateError
+
+        overlay_store.save_pending("upload_resolved", "v1", [sample_patch])
+        getattr(overlay_store, first_action)("upload_resolved", "v1", sample_patch.patch_id, "first")
+
+        # Act / Assert
+        with pytest.raises(PatchStateError, match=f"latest status={expected_status}"):
+            getattr(overlay_store, second_action)("upload_resolved", "v1", sample_patch.patch_id, "second")
+        assert len(overlay_store.load_patches("upload_resolved", "v1")) == 1
+
+
 class TestOverlayStoreRevert:
     """Tests for reverting accepted patches (append-only REVERTED row)."""
 

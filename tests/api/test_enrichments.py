@@ -198,22 +198,36 @@ class TestEnrichmentsStoreFailures:
         assert _INTERNAL_ERROR_TEXT not in response.text
 
     @pytest.mark.parametrize(
-        ("error", "expected_status", "expected_detail"),
+        ("action", "service_method", "conflict_detail"),
         [
-            (PatchNotFoundError(_INTERNAL_ERROR_TEXT), status.HTTP_404_NOT_FOUND, "Patch not found"),
-            (PatchStateError(_INTERNAL_ERROR_TEXT), status.HTTP_409_CONFLICT, "Only an accepted patch can be reverted"),
+            ("accept", "accept_suggestion", "Only a pending patch can be accepted"),
+            ("reject", "reject_suggestion", "Only a pending patch can be rejected"),
+            ("revert", "revert_accepted_patch", "Only an accepted patch can be reverted"),
         ],
-        ids=["missing", "not_accepted"],
+        ids=["accept", "reject", "revert"],
     )
-    def test_enrichments_revert_patchNotRevertable_returnsClientError(
-        self, test_client, mock_enrichment_service, error, expected_status, expected_detail
+    @pytest.mark.parametrize(
+        ("error_cls", "expected_status"),
+        [(PatchNotFoundError, status.HTTP_404_NOT_FOUND), (PatchStateError, status.HTTP_409_CONFLICT)],
+        ids=["missing", "wrong_state"],
+    )
+    def test_enrichments_action_patchNotActionable_returnsClientError(
+        self,
+        test_client,
+        mock_enrichment_service,
+        action,
+        service_method,
+        conflict_detail,
+        error_cls,
+        expected_status,
     ):
-        """A missing patch is 404 and a patch that is not ACCEPTED is 409."""
+        """A missing patch is 404; a patch in the wrong state for the action is 409."""
         # Arrange
-        mock_enrichment_service.revert_accepted_patch.side_effect = error
+        getattr(mock_enrichment_service, service_method).side_effect = error_cls(_INTERNAL_ERROR_TEXT)
+        expected_detail = "Patch not found" if error_cls is PatchNotFoundError else conflict_detail
 
         # Act
-        response = test_client.post("/api/datasets/upload_test/enrichments/patch_001/revert", json={})
+        response = test_client.post(f"/api/datasets/upload_test/enrichments/patch_001/{action}", json={})
 
         # Assert
         assert response.status_code == expected_status
