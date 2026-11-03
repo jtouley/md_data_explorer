@@ -1519,12 +1519,14 @@ class UserDatasetStorage:
         Initialize storage manager.
 
         Args:
-            upload_dir: Base directory for uploads (default: data/uploads/)
+            upload_dir: Base directory for uploads (default: the per-user data home,
+                never the source tree; see core.data_home)
         """
         if upload_dir is None:
-            # Default to data/uploads relative to project root
-            project_root = Path(__file__).parent.parent.parent.parent.parent
-            upload_dir = project_root / "data" / "uploads"
+            from clinical_analytics.core.data_home import uploads_dir, warn_if_legacy_repo_data
+
+            warn_if_legacy_repo_data(Path(__file__).parent.parent.parent.parent.parent)
+            upload_dir = uploads_dir()
 
         self.upload_dir = Path(upload_dir)
         self.raw_dir = self.upload_dir / "raw"

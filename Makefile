@@ -1,4 +1,4 @@
-.PHONY: help mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help check-data mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -340,10 +340,14 @@ mutation-results: ensure-venv ## Summarise surviving mutants from the last mutat
 	$(UV) run mutmut results
 
 
-check-fast: ## Run fast code quality checks (lint, format-check) - no tests
+check-data: ensure-venv ## Fail if git tracks data files (patient data must stay out of the repo)
+	$(PYTHON_RUN) scripts/check_no_data_files.py
+
+check-fast: ## Run fast code quality checks (lint, format-check, tracked-data guard) - no tests
 	@echo "$(GREEN)Running fast code quality checks...$(NC)"
 	@$(MAKE) lint || exit 1
 	@$(MAKE) format-check || exit 1
+	@$(MAKE) check-data || exit 1
 	@echo "$(GREEN)✅ All fast checks passed!$(NC)"
 
 run: run-api ## Start the application (FastAPI backend)

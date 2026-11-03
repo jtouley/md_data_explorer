@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Path as FastAPIPath
 from pydantic import BaseModel, Field
 
+from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.metadata_patch import MetadataPatch
 from clinical_analytics.core.overlay_store import OverlayStore
 from clinical_analytics.ui.components.enrichment_integration import EnrichmentService
@@ -24,7 +25,10 @@ from clinical_analytics.ui.components.enrichment_integration import EnrichmentSe
 router = APIRouter()
 logger = structlog.get_logger()
 
-DEFAULT_OVERLAY_DIR = Path("data/uploads/metadata")
+
+def default_overlay_dir() -> Path:
+    """Overlay base dir: upload metadata in the per-user data home."""
+    return uploads_dir() / "metadata"
 
 
 class PendingSuggestion(BaseModel):
@@ -109,7 +113,7 @@ class AcceptRejectResponse(BaseModel):
 
 def get_overlay_store() -> OverlayStore:
     """Get or create OverlayStore instance."""
-    return OverlayStore(base_dir=DEFAULT_OVERLAY_DIR)
+    return OverlayStore(base_dir=default_overlay_dir())
 
 
 def get_dataset_version(

@@ -2,6 +2,7 @@
 Pytest configuration and fixtures for clinical analytics tests.
 """
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -9,6 +10,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 import yaml
+
+# Runtime data (uploads, DuckDB store, session DB) goes to a throwaway data home, never the
+# developer's real one or the checkout. Set before any clinical_analytics import.
+os.environ.setdefault("CLINICAL_ANALYTICS_DATA_HOME", tempfile.mkdtemp(prefix="ca-test-data-home-"))
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))

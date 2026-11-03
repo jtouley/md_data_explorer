@@ -16,9 +16,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from clinical_analytics.api.models.database import Base
+from clinical_analytics.core.data_home import session_db_path
+
+
+def _default_database_url() -> str:
+    """SQLite file in the per-user data home, never the current working directory."""
+    path = session_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path}"
+
 
 # Database URL from environment or default to SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/clinical_analytics.db")
+DATABASE_URL = os.getenv("DATABASE_URL") or _default_database_url()
 
 # Create engine
 # For SQLite: check_same_thread=False allows multi-threaded access (FastAPI default)

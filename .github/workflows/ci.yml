@@ -26,6 +26,9 @@ jobs:
       - name: Format Check
         run: make format-check
 
+      - name: No tracked data files
+        run: make check-data
+
       - name: Type Check
         run: make type-check
 
