@@ -1,9 +1,13 @@
 """Decide whether a QueryPlan may execute. Issue #52."""
 
+import dataclasses
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
-from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+from clinical_analytics.core.column_parser import parse_column_name
+from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
 
 HOLD_FAILURE_REASON = "Confirmation required before execution."
 PLAN_CHANGED_REASON = (
@@ -82,6 +86,82 @@ def _filter_text(spec: FilterSpec) -> str:
     return text if spec.exclude_nulls else f"{text} (missing kept)"
 
 
+# QueryPlan fields that never change what executes (display text, gating score, cache key).
+# Every other field, present or future, is part of the confirmation hash.
+NON_EXECUTION_PLAN_FIELDS: frozenset[str] = frozenset(
+    {
+        "confidence",
+        "explanation",
+        "run_key",
+        "follow_ups",
+        "follow_up_explanation",
+        "interpretation",
+        "confidence_explanation",
+    }
+)
+_CONTEXT_FIELDS = ("predictor_variables", "time_variable", "event_variable")
+
+
+def _canonical(value: Any) -> Any:
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {field.name: _canonical(getattr(value, field.name)) for field in dataclasses.fields(value)}
+    if isinstance(value, list | tuple):
+        return [_canonical(item) for item in value]
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    return str(value)
+
+
+def executable_plan(plan: QueryPlan, context: Any = None) -> dict[str, Any]:
+    """Every field that affects execution, in canonical form (order of cohort steps kept)."""
+    fields = {
+        field.name: _canonical(getattr(plan, field.name))
+        for field in dataclasses.fields(plan)
+        if field.name not in NON_EXECUTION_PLAN_FIELDS
+    }
+    fields["context"] = {name: _canonical(getattr(context, name, None)) for name in _CONTEXT_FIELDS}
+    return fields
+
+
+def plan_fingerprint(plan: QueryPlan, context: Any = None) -> str:
+    """Hash a confirmation is bound to: sorted canonical JSON of the executable plan."""
+    payload = json.dumps(executable_plan(plan, context), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _value_text(column: str, value: Any) -> str:
+    """Value as stored, with its code label when the column header defines one ("1 (Yes)")."""
+    text = str(value)
+    code = text[:-2] if text.endswith(".0") else text
+    label = (parse_column_name(column).value_mapping or {}).get(code)
+    return f"{text} ({label})" if label else text
+
+
+def _number(value: Any) -> str:
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _step_text(step: CohortStep) -> str:
+    column = step.column
+    if step.op == "eq":
+        return f"{column} = {_value_text(column, step.value)}"
+    if step.op == "gt":
+        return f"{column} > {_number(step.value)}"
+    if step.op == "lt":
+        return f"{column} < {_number(step.value)}"
+    if step.op == "not_null":
+        return f"{column} is recorded"
+    if step.op == "gt_median":
+        return f"{column} above its median among the patients so far"
+    if step.op in {"ge_percent_rank", "ge_quantile"}:
+        quantile = 0.9 if step.quantile is None else step.quantile
+        return f"{column} at or above its {quantile * 100:g}th percentile among the patients so far"
+    return f"{column} {step.op} {step.value}"
+
+
 def format_plan_line(plan: QueryPlan, context: Any = None) -> str:
     """One hold line naming everything that changes the analysis.
 
@@ -105,7 +185,27 @@ def format_plan_line(plan: QueryPlan, context: Any = None) -> str:
     if time_col or event_col:
         parts.append(f"time {time_col or 'none'} · event {event_col or 'none'}")
     parts.append(f"filters {filters}")
+    if plan.cohort_steps:
+        ordered = "; ".join(f"{index}) {_step_text(step)}" for index, step in enumerate(plan.cohort_steps, start=1))
+        parts.append(f"limits in order {ordered}")
+    if plan.proportion_column:
+        population = "patients matching the limits" if plan.cohort_steps or plan.filters else "all patients"
+        parts.append(
+            f"result proportion with {plan.proportion_column} = "
+            f"{_value_text(plan.proportion_column, plan.proportion_value)} among {population}"
+        )
+    if plan.rate_column:
+        parts.append(
+            f"result rate of {plan.rate_column} = {_value_text(plan.rate_column, plan.rate_value)}"
+            f" within each {plan.group_by or 'patient'} group"
+        )
+    if plan.entity_key:
+        parts.append(f"counting distinct {plan.entity_key}")
     if plan.scope and plan.scope != "all":
         parts.append(f"scope {plan.scope}")
+    if plan.requires_filters:
+        parts.append("filters required")
+    if plan.requires_grouping:
+        parts.append("grouping required")
     parts.append(f"test {label}")
     return " · ".join(parts)

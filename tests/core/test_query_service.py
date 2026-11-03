@@ -289,59 +289,56 @@ class TestQueryServiceAnalysis:
         assert layer.execute_query_plan.call_args.kwargs["confidence_threshold"] == threshold
 
     @pytest.mark.parametrize(
-        ("confirm_plan_line", "expected_confirmed", "expected_reason"),
+        ("confirm_plan_hash", "expected"),
         [
-            ("SHOWN", True, None),
-            ("COMPARE_GROUPS · outcome hdl · grouping sex", False, "changed"),
-            (None, False, "held"),
-            ("", False, "held"),
+            ("SHOWN", "released"),
+            ("0" * 64, "changed"),
+            (None, "changed"),
+            ("", "changed"),
         ],
-        ids=["same_plan_released", "different_plan_held_again", "no_plan_line_not_released", "empty_plan_line"],
+        ids=["same_plan_released", "different_plan_held_again", "no_plan_hash_not_released", "empty_plan_hash"],
     )
-    def test_ask_confirmPlanLine_releasesHoldOnlyForTheConfirmedPlan(
-        self, mock_semantic_layer, confirm_plan_line, expected_confirmed, expected_reason
+    def test_ask_confirmPlanHash_releasesHoldOnlyForTheConfirmedPlan(
+        self, mock_semantic_layer, confirm_plan_hash, expected
     ):
-        """Confirm covers exactly the plan the user saw; anything else stays held."""
+        """Confirm covers exactly the executable plan the user saw (by hash); anything else is held again."""
         # Arrange
-        from clinical_analytics.core.execution_gate import HOLD_FAILURE_REASON, PLAN_CHANGED_REASON, format_plan_line
+        from clinical_analytics.core.execution_gate import HOLD_FAILURE_REASON, PLAN_CHANGED_REASON, plan_fingerprint
 
         held = {"success": False, "requires_confirmation": True, "failure_reason": HOLD_FAILURE_REASON}
         service, layer = self._service(mock_semantic_layer, held, None)
         plan = service.nl_engine._intent_to_plan.return_value
-        shown = format_plan_line(plan, service._intent_to_context(service.nl_engine.parse_query.return_value, plan))
-        sent = shown if confirm_plan_line == "SHOWN" else confirm_plan_line
+        shown = plan_fingerprint(plan, service._intent_to_context(service.nl_engine.parse_query.return_value, plan))
+        sent = shown if confirm_plan_hash == "SHOWN" else confirm_plan_hash
 
         # Act
-        result = service.ask("compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_line=sent)
+        result = service.ask("compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_hash=sent)
 
         # Assert
-        if expected_reason == "changed":
-            # A different plan is held before execution (see the high-confidence test below).
+        if expected == "released":
+            assert layer.execute_query_plan.call_args.kwargs["confirmed"] is True
+        else:
             layer.execute_query_plan.assert_not_called()
             assert result.requires_confirmation is True
-        else:
-            assert layer.execute_query_plan.call_args.kwargs["confirmed"] is expected_confirmed
-        if expected_reason == "changed":
             assert result.failure_reason == PLAN_CHANGED_REASON
-            assert result.plan_line == shown
-        elif expected_reason == "held":
-            assert result.failure_reason == HOLD_FAILURE_REASON
+            assert result.plan_hash == shown
 
     @pytest.mark.parametrize("confidence", [0.95, 0.75, 1.0], ids=["high", "at_threshold", "certain"])
     def test_ask_changedPlanAtHighConfidence_staysHeldWithoutExecuting(self, mock_semantic_layer, confidence):
         """A confirmation for one plan never runs a different reparse, however confident."""
         # Arrange
-        from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
+        from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 
         service, layer = self._service(mock_semantic_layer, {"success": True, "run_key": "rk"}, {"type": "comparison"})
         plan = QueryPlan(intent="FIND_PREDICTORS", metric="ldl", group_by="treatment", confidence=confidence)
         service.nl_engine._intent_to_plan.return_value = plan
         shown = format_plan_line(plan, service._intent_to_context(service.nl_engine.parse_query.return_value, plan))
-        confirmed_line = "COMPARE_GROUPS · outcome ldl · grouping treatment"
+        other_plan = QueryPlan(intent="COMPARE_GROUPS", metric="ldl", group_by="treatment", confidence=confidence)
+        confirmed_hash = plan_fingerprint(other_plan, None)
 
         # Act
         result = service.ask(
-            "compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_line=confirmed_line
+            "compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_hash=confirmed_hash
         )
 
         # Assert

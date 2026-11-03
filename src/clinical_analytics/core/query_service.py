@@ -13,7 +13,7 @@ import polars as pl
 
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
-from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
+from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
@@ -66,6 +66,7 @@ class QueryResult:
     requires_confirmation: bool = False  # Low-confidence hold
     failure_reason: str | None = None  # Hold or refuse reason
     plan_line: str | None = None  # One-line plan summary for confirm UI
+    plan_hash: str | None = None  # Canonical hash of the executable plan; a confirmation must return it
 
 
 class QueryService:
@@ -96,6 +97,7 @@ class QueryService:
         conversation_history: list[dict[str, Any]] | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
     ) -> QueryResult:
         """Parse and execute a query on this layer's single DuckDB connection."""
         lock = getattr(self.semantic_layer, "_con_lock", None)
@@ -114,6 +116,7 @@ class QueryService:
                 conversation_history=conversation_history,
                 confirmed=confirmed,
                 confirm_plan_line=confirm_plan_line,
+                confirm_plan_hash=confirm_plan_hash,
             )
 
     def _ask_unlocked(
@@ -125,6 +128,7 @@ class QueryService:
         conversation_history: list[dict[str, Any]] | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
     ) -> QueryResult:
         """
         Parse and execute query, return structured result.
@@ -202,14 +206,15 @@ class QueryService:
         plan_line: str | None = None
         execution_run_key: str | None = run_key
 
-        # A confirmation covers the plan the user saw. Re-parsing (e.g. via the LLM tier) can
-        # yield a different plan; that one must be shown and confirmed on its own.
-        # A confirmation without the plan line it covers releases nothing.
+        # A confirmation covers exactly the executable plan the user reviewed: it is bound to
+        # the canonical plan hash, never to the display line (two plans can share a line).
+        # Re-parsing can yield a different plan; that one is held and shown on its own.
         shown_plan_line = format_plan_line(query_plan, context)
+        plan_hash = plan_fingerprint(query_plan, context)
         plan_changed = False
-        if confirmed and (not confirm_plan_line or shown_plan_line != confirm_plan_line):
+        if confirmed and confirm_plan_hash != plan_hash:
             confirmed = False
-            plan_changed = bool(confirm_plan_line)
+            plan_changed = True
 
         if not validation_result.get("valid", False):
             # Fail closed: an invalid plan is refused here and never reaches execution.
@@ -240,11 +245,12 @@ class QueryService:
                 requires_confirmation=True,
                 failure_reason=PLAN_CHANGED_REASON,
                 plan_line=shown_plan_line,
+                plan_hash=plan_hash,
             )
 
         # Word accounting (all tiers): a plan that leaves a word of the question unused answers
         # a different question. Hold it for review regardless of confidence; only the user's
-        # confirmation of this exact plan releases it.
+        # confirmation of this exact plan (by hash) releases it.
         if not confirmed:
             unused = self._unused_words(normalized_query, query_plan, context)
             if unused:
@@ -258,6 +264,7 @@ class QueryService:
                     requires_confirmation=True,
                     failure_reason=hold_reason(unused),
                     plan_line=shown_plan_line,
+                    plan_hash=plan_hash,
                 )
 
         try:
@@ -314,6 +321,7 @@ class QueryService:
             requires_confirmation=requires_confirmation,
             failure_reason=failure_reason,
             plan_line=plan_line,
+            plan_hash=plan_hash,
         )
 
     def _unused_words(self, question: str, plan: QueryPlan, context: AnalysisContext) -> list[str]:

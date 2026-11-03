@@ -148,9 +148,19 @@ const clinicalAPI = {
    * @param {string} sessionId - Session identifier
    * @param {string} datasetId - Dataset to query
    * @param {string} queryText - Natural language query
+   * @param {boolean} [confirmed] - Release a held plan
+   * @param {string|null} [confirmPlanLine] - The plan line shown (display only)
+   * @param {string|null} [confirmPlanHash] - Hash of the held plan; required to release it
    * @returns {Promise<{query_id: string, status: string, stream_url: string}>}
    */
-  async submitQuery(sessionId, datasetId, queryText, confirmed = false, confirmPlanLine = null) {
+  async submitQuery(
+    sessionId,
+    datasetId,
+    queryText,
+    confirmed = false,
+    confirmPlanLine = null,
+    confirmPlanHash = null
+  ) {
     const response = await apiFetch(`${API_BASE_URL}/api/queries`, {
       method: 'POST',
       headers: {
@@ -162,6 +172,7 @@ const clinicalAPI = {
         query_text: queryText,
         confirmed: Boolean(confirmed),
         confirm_plan_line: confirmPlanLine,
+        confirm_plan_hash: confirmPlanHash,
       }),
     });
     if (!response.ok) {

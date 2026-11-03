@@ -10,6 +10,7 @@
  * @typedef {Object} HeldPlan
  * @property {string} [pendingQuery] the question that produced the hold
  * @property {string} [planLine] the exact plan line shown to the user
+ * @property {string} [planHash] hash of the exact executable plan, from the hold
  * @property {string | null} [datasetId] dataset the plan was held for
  * @property {string | null} [sessionId] session the plan was held in
  */
@@ -20,6 +21,7 @@
  * @property {string} datasetId
  * @property {string} queryText
  * @property {string} planLine
+ * @property {string} planHash
  */
 
 /**
@@ -31,7 +33,8 @@
 export function buildConfirmRequest(held, { currentDatasetId, fallbackSessionId }) {
   const queryText = held?.pendingQuery || '';
   const planLine = held?.planLine || '';
-  if (!queryText || !planLine) {
+  const planHash = typeof held?.planHash === 'string' ? held.planHash.trim() : '';
+  if (!queryText || !planLine || !planHash) {
     return { ok: false, message: 'This plan can no longer be run. Ask the question again.' };
   }
   if (held.datasetId && held.datasetId !== currentDatasetId) {
@@ -51,6 +54,7 @@ export function buildConfirmRequest(held, { currentDatasetId, fallbackSessionId 
       datasetId,
       queryText,
       planLine,
+      planHash,
     },
   };
 }
@@ -67,6 +71,7 @@ export function submitConfirmation(api, request) {
     request.datasetId,
     request.queryText,
     true,
-    request.planLine
+    request.planLine,
+    request.planHash
   );
 }
