@@ -222,14 +222,20 @@ def test_prepareStoreForEngine_unreadableStore_raisesNamingKeptBackup(tmp_path: 
     # Assert
     [backup] = store_backups(db_path)
     assert str(backup) in str(raised.value)
+    assert "copy taken just before the check" in str(raised.value)
     assert not isinstance(raised.value, StoreLockedError)
     assert engine_marker(db_path).read_text().strip() == "2.0.0"
 
 
-def test_prepareStoreForEngine_storeLockedByAnotherProcess_plainMessageAndNoBackup(tmp_path: Path) -> None:
+def test_prepareStoreForEngine_storeLockedByAnotherProcess_plainMessageAndNoCopyMade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Arrange: another program holds DuckDB's file lock.
     db_path = _make_store(tmp_path)
     engine_marker(db_path).write_text("1.4.2\n")
+    copies: list[Path] = []
+    backup = store_format._backup_store
+    monkeypatch.setattr(store_format, "_backup_store", lambda p, prev: copies.extend(backup(p, prev)) or copies)
     holder = subprocess.Popen(
         [
             sys.executable,
@@ -251,7 +257,8 @@ def test_prepareStoreForEngine_storeLockedByAnotherProcess_plainMessageAndNoBack
     finally:
         holder.communicate("", timeout=30)
 
-    # Assert
+    # Assert: the lock is probed before the (possibly large) store is copied.
+    assert copies == []
     assert store_backups(db_path) == []
     assert engine_marker(db_path).read_text().strip() == "1.4.2"
 
@@ -276,6 +283,33 @@ def test_prepareStoreForEngine_copyFailsPartWay_partialBackupRemoved(
     # Assert
     assert store_backups(db_path) == []
     assert engine_marker(db_path).read_text().strip() == "1.4.2"
+
+
+def test_backupStore_twiceInOneSecond_distinctNames(tmp_path: Path) -> None:
+    # Arrange
+    db_path = _make_store(tmp_path)
+
+    # Act
+    first = store_format._backup_store(db_path, "1.4.2")
+    second = store_format._backup_store(db_path, "1.4.2")
+
+    # Assert
+    assert set(first).isdisjoint(second)
+    assert len(store_backups(db_path)) == 2
+
+
+def test_prepareStoreForEngine_noStoreButLeftoverBackup_backupRemoved(tmp_path: Path) -> None:
+    # Arrange: the store was deleted, a copy from a failed check was not.
+    db_path = _make_store(tmp_path)
+    _leave_backup(db_path, "1.4.2-20261101T000000Z")
+    db_path.unlink()
+
+    # Act
+    result = prepare_store_for_engine(tmp_path, engine="2.0.0")
+
+    # Assert
+    assert result is None
+    assert store_backups(db_path) == []
 
 
 @pytest.mark.parametrize("version", ["", "latest", "v1.0", "v1.0.0'; DROP TABLE x; --", None])

@@ -25,13 +25,17 @@ from polars.testing import assert_frame_equal
 SRC_DIR = Path(__file__).resolve().parents[2] / "src" / "clinical_analytics"
 IBIS_GAP_ACTIVE = Version(duckdb.__version__) >= Version("2.0.0") and Version(ibis.__version__) < Version("13")
 
-# Ibis backend/expression methods that end in a removed DuckDB result fetch, on any receiver
-# (``.tables`` and ``to_delta`` / ``to_parquet_dir`` go through list_tables / to_pyarrow_batches),
-# plus the removed fetches themselves (``raw_sql(...).fetch_arrow_table()`` and the like).
+# Ibis backend/expression methods that end in a removed DuckDB result fetch, on any receiver,
+# called or not (``.tables`` and ``to_delta`` / ``to_parquet_dir`` go through list_tables /
+# to_pyarrow_batches), looked up with getattr, plus the removed fetches themselves
+# (``raw_sql(...).fetch_arrow_table()`` and the like). ``.sql`` only counts when called, since
+# plain ``.sql`` attributes are common.
+_BROKEN_NAMES = r"list_tables|list_catalogs|list_databases|to_pyarrow_batches|to_delta|to_parquet_dir|tables"
 BROKEN_IBIS_CALL = re.compile(
-    r"\.(?:sql|list_tables|list_catalogs|list_databases|to_pyarrow_batches|to_delta|to_parquet_dir)\("
-    r"|\.tables\b"
-    r"|\.(?:fetch_arrow_table|fetch_record_batch)\("
+    r"\.\s*sql\s*\("
+    rf"|\.\s*(?:{_BROKEN_NAMES})\b"
+    rf"|getattr\(\s*[^,()]+,\s*[\"'](?:sql|{_BROKEN_NAMES})[\"']"
+    r"|\.\s*(?:fetch_arrow_table|fetch_record_batch)\s*\("
 )
 # Lines that match by name but are not Ibis: raw DuckDB connections, or the app's own attributes.
 # Keyed by path relative to src/clinical_analytics ("*" = any file); values are the exact text.
@@ -56,35 +60,41 @@ def broken_ibis_calls(relpath: str, line: str) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("relpath", "line", "expected"),
+    ("relpath", "line", "n_hits"),
     [
-        ("core/x.py", "names = backend.list_tables()", [".list_tables("]),
-        ("core/x.py", "t = ic.sql('SELECT 1')", [".sql("]),
-        ("core/x.py", "t = ibis.duckdb.connect().sql('SELECT 1')", [".sql("]),
-        ("core/x.py", "rows = con.raw_sql('SELECT 1').fetch_arrow_table()", [".fetch_arrow_table("]),
-        ("core/x.py", "rows = con.con.execute(q).fetch_record_batch()", [".fetch_record_batch("]),
-        ("core/x.py", "for name in con.tables:", [".tables"]),
-        ("core/x.py", "expr.to_delta(path)", [".to_delta("]),
-        ("core/x.py", "expr.to_parquet_dir(path)", [".to_parquet_dir("]),
-        ("core/x.py", "for b in expr.to_pyarrow_batches():", [".to_pyarrow_batches("]),
-        ("core/x.py", "names = con.list_catalogs() + con.list_databases()", [".list_catalogs(", ".list_databases("]),
-        ("core/x.py", "rel = duckdb_con.sql('SELECT 1')", []),
-        ("core/x.py", "cur = self.con.raw_sql('SELECT 1')", []),
-        ("core/x.py", "expr.to_parquet(path)", []),
-        ("core/x.py", "    # con.list_tables() is broken on DuckDB 2.0", []),
-        ("core/x.py", "self.tables_by_name = {}", []),
-        ("storage/datastore.py", "tables = self.list_tables()", []),
-        ("core/x.py", "tables = self.list_tables()", [".list_tables("]),
-        ("core/multi_table_handler.py", "for t in self.tables.items():", []),
-        ("core/semantic.py", "for t in self.tables.items():", [".tables"]),
+        ("core/x.py", "names = backend.list_tables()", 1),
+        ("core/x.py", "t = ic.sql('SELECT 1')", 1),
+        ("core/x.py", "t = ibis.duckdb.connect().sql('SELECT 1')", 1),
+        ("core/x.py", "rows = con.raw_sql('SELECT 1').fetch_arrow_table()", 1),
+        ("core/x.py", "rows = con.con.execute(q).fetch_record_batch()", 1),
+        ("core/x.py", "for name in con.tables:", 1),
+        ("core/x.py", "expr.to_delta(path)", 1),
+        ("core/x.py", "expr.to_parquet_dir(path)", 1),
+        ("core/x.py", "for b in expr.to_pyarrow_batches():", 1),
+        ("core/x.py", "names = con.list_catalogs() + con.list_databases()", 2),
+        ("core/x.py", "rel = duckdb_con.sql('SELECT 1')", 0),
+        ("core/x.py", "cur = self.con.raw_sql('SELECT 1')", 0),
+        ("core/x.py", "expr.to_parquet(path)", 0),
+        ("core/x.py", "    # con.list_tables() is broken on DuckDB 2.0", 0),
+        ("core/x.py", "self.tables_by_name = {}", 0),
+        ("storage/datastore.py", "tables = self.list_tables()", 0),
+        ("core/x.py", "tables = self.list_tables()", 1),
+        ("core/multi_table_handler.py", "for t in self.tables.items():", 0),
+        ("core/semantic.py", "for t in self.tables.items():", 1),
+        ("core/x.py", "t = con.sql ('SELECT 1')", 1),
+        ("core/x.py", "t = con . sql('SELECT 1')", 1),
+        ("core/x.py", "lister = backend.list_tables", 1),
+        ("core/x.py", "run = getattr(con, 'sql')", 1),
+        ("core/x.py", 'names = getattr(backend, "list_tables")()', 1),
+        ("core/x.py", "q = plan.sql_text", 0),
     ],
 )
-def test_brokenIbisCalls_line_matchesIbisMethodsOnAnyReceiver(relpath: str, line: str, expected: list[str]) -> None:
+def test_brokenIbisCalls_line_matchesIbisMethodsOnAnyReceiver(relpath: str, line: str, n_hits: int) -> None:
     # Act
     hits = broken_ibis_calls(relpath, line)
 
     # Assert
-    assert hits == expected
+    assert len(hits) == n_hits, hits
 
 
 def test_src_brokenIbisBackendCalls_noneUsed() -> None:

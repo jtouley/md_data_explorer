@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -122,8 +123,9 @@ def _remove_backups(paths: list[Path], db_path: Path) -> None:
 
 def _backup_store(db_path: Path, previous_engine: str | None) -> list[Path]:
     """Copy store and WAL to backups; on any failure remove what was written and re-raise."""
+    # Random suffix: two starts in the same second must never write (or delete) the same name.
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    label = f"{previous_engine or 'unknown'}-{stamp}"
+    label = f"{previous_engine or 'unknown'}-{stamp}-{secrets.token_hex(4)}"
     written: list[Path] = []
     try:
         for source in (db_path, db_path.with_name(f"{db_path.name}.wal")):
@@ -158,15 +160,32 @@ def _is_lock_error(error: duckdb.Error) -> bool:
     return isinstance(error, duckdb.IOException) and "lock" in str(error).lower()
 
 
+def _locked_error() -> StoreLockedError:
+    return StoreLockedError("The data store is open in another program. Close that program and start the app again.")
+
+
+def _probe_lock(db_path: Path) -> None:
+    """Raise StoreLockedError if another program holds the store, before anything is copied.
+
+    Read-only, so it never changes the file. Other open errors are left to ``_verify_store``,
+    which runs with the copy in place.
+    """
+    try:
+        con = duckdb.connect(str(db_path), read_only=True, config=new_store_config())
+    except duckdb.Error as e:
+        if _is_lock_error(e):
+            raise _locked_error() from e
+        return
+    con.close()
+
+
 def _verify_store(db_path: Path, current: str) -> str:
     """Open the store read-write with the running DuckDB, read its catalog; return its format."""
     try:
         con = duckdb.connect(str(db_path), read_only=False, config=new_store_config())
     except duckdb.Error as e:  # IOException on 1.x; 2.0 raises some header errors as plain Error
         if _is_lock_error(e):
-            raise StoreLockedError(
-                "The data store is open in another program. Close that program and start the app again."
-            ) from e
+            raise _locked_error() from e
         raise StoreFormatError(
             f"DuckDB {current} cannot open the data store (written by a newer DuckDB, or damaged) ({type(e).__name__})"
         ) from e
@@ -190,6 +209,9 @@ def prepare_store_for_engine(data_dir: Path, engine: str | None = None) -> Engin
     current = engine or duckdb.__version__
     db_path = data_dir / STORE_FILENAME
     if not db_path.exists():
+        # No store to restore into: a copy left behind is only a stray copy of patient data.
+        with exclusive_store(db_path):
+            _remove_backups(store_backups(db_path), db_path)
         return None
     marker = engine_marker(db_path)
     previous = marker.read_text(encoding="utf-8").strip() if marker.exists() else ""
@@ -207,10 +229,11 @@ def _prepare_locked(db_path: Path, marker: Path, previous: str | None, current: 
         return EnginePreparation(previous, current, verified=False, storage_version=None)
 
     log = logger.bind(previous_engine=previous, current_engine=current)
+    _probe_lock(db_path)
     backups = _backup_store(db_path, previous)
     # A backup kept by an earlier failed check may predate later writes (for example, by the
     # previous app release): the fresh copy replaces it, so there is never more than one.
-    _remove_backups(leftover, db_path)
+    _remove_backups([p for p in leftover if p not in backups], db_path)
     log.info("store_backed_up_for_engine_check", replaced_backups=len(leftover))
     try:
         storage_version = _verify_store(db_path, current)
@@ -220,9 +243,10 @@ def _prepare_locked(db_path: Path, marker: Path, previous: str | None, current: 
     except StoreFormatError as e:
         names = ", ".join(str(p) for p in backups)
         raise StoreFormatError(
-            f"{e} The store was not changed. A copy taken before this check is kept at: {names}. "
-            "Run the app version you used before, or restore that copy over analytics.duckdb, "
-            "then delete the copy: it holds patient data."
+            f"{e} A copy taken just before the check is kept at: {names}. The check normally leaves "
+            "the store as it was, so start the app version you used before. Copy it back over "
+            "analytics.duckdb only if that version cannot open the store either. Then delete the "
+            "copy: it holds patient data."
         ) from e
     _write_marker(marker, current)
     _remove_backups(backups, db_path)
