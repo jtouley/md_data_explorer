@@ -171,3 +171,43 @@ export async function readSseStream(body, onData) {
   const { events } = parseSseBuffer(`${buffer}${decoder.decode()}\n\n`);
   events.forEach(onData);
 }
+
+/**
+ * Human-readable message from a FastAPI error body. `detail` is a string for HTTPException and a
+ * list of {msg, ...} for request validation (422).
+ * @param {unknown} data - Parsed JSON body (or {} when the body was not JSON)
+ * @param {string} fallback
+ * @returns {string}
+ */
+export function apiErrorMessage(data, fallback) {
+  const detail = data?.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  if (Array.isArray(detail)) {
+    const msgs = detail.map((d) => d?.msg).filter((m) => typeof m === 'string' && m);
+    if (msgs.length) return msgs.join('; ');
+  }
+  if (typeof data?.message === 'string' && data.message) return data.message;
+  return fallback;
+}
+
+/** 404 / 409 on accept/reject/revert: the patch was removed or decided elsewhere. */
+const STALE_DECISION_STATUSES = new Set([404, 409]);
+
+/**
+ * Outcome of an enrichment accept/reject/revert call. A stale patch (404/409) is returned as
+ * { success: false, stale: true, message } so the UI can refresh; other failures throw.
+ * (A plain object, because custom Error fields do not survive contextBridge.)
+ * @param {{ ok: boolean, status: number, statusText?: string }} response
+ * @param {unknown} data - Parsed JSON body
+ * @param {string} verb - "Accept" | "Reject" | "Revert"
+ * @returns {{ success: boolean, message: string, stale?: boolean }}
+ */
+export function enrichmentDecisionResult(response, data, verb) {
+  if (response.ok && data?.success !== false) return data;
+  const fallback = `${verb} failed${response.statusText ? `: ${response.statusText}` : ''}`;
+  const message = apiErrorMessage(data, fallback);
+  if (STALE_DECISION_STATUSES.has(response.status)) {
+    return { success: false, stale: true, message };
+  }
+  throw new Error(message);
+}

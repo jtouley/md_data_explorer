@@ -1269,6 +1269,18 @@ class TestSchemaDriftDetection:
         assert hasattr(SchemaDriftPolicy, "WARN")
         assert hasattr(SchemaDriftPolicy, "ALLOW")
 
+    @pytest.mark.parametrize(
+        "raw_value", ["not_a_policy", "", None, "REJECT"], ids=["unknown", "empty", "null", "member_name"]
+    )
+    def test_schema_drift_policy_valueOutsideEnum_raisesValueError(self, raw_value):
+        """Only the lowercase policy values resolve; anything else is refused."""
+        # Arrange
+        from clinical_analytics.ui.storage.user_datasets import SchemaDriftPolicy
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="is not a valid SchemaDriftPolicy"):
+            SchemaDriftPolicy(raw_value)
+
     def test_detect_schema_drift_same_schema(self, upload_storage):
         """Same schema should not trigger drift detection."""
         from clinical_analytics.ui.storage.user_datasets import detect_schema_drift

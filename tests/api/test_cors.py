@@ -44,6 +44,23 @@ class TestCORSConfiguration:
         # Assert
         assert response.headers.get("access-control-allow-origin") is None
 
+    @pytest.mark.parametrize("origin", ["null", "https://evil.example", "app://other-app"])
+    def test_cors_untrustedOrigin_preflightRefusedWithoutGrant(self, test_client, origin):
+        """A preflight from an origin outside the app:// allowlist is refused and grants nothing."""
+        # Act
+        response = test_client.options(
+            "/api/datasets",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+
+        # Assert
+        assert response.status_code == 400
+        assert "access-control-allow-origin" not in response.headers
+
     @pytest.mark.parametrize("raw", ["null", "app://clinical-analytics,null", "*"])
     def test_corsOrigins_nullOrWildcardConfigured_raisesValueError(self, monkeypatch, raw):
         """A config that would let any file:// page or site call the API is refused at startup."""

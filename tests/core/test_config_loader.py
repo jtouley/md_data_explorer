@@ -17,6 +17,7 @@ import yaml
 # pylint: disable=import-error
 from clinical_analytics.core.config_loader import (
     get_project_root,
+    load_golden_examples_config,
     load_logging_config,
     load_nl_query_config,
     load_ui_config,
@@ -626,3 +627,26 @@ class TestConfigLoaderPatterns:
         assert pattern.search("HOW MANY") is not None
         assert pattern.search("How Many") is not None
         assert pattern.flags & re.IGNORECASE
+
+
+class TestConfigLoaderInvalidYaml:
+    """Malformed YAML fails closed for loaders that otherwise fall back to defaults."""
+
+    @pytest.mark.parametrize(
+        ("loader", "filename"),
+        [
+            (load_ui_config, "ui.yaml"),
+            (load_logging_config, "logging.yaml"),
+            (load_golden_examples_config, "golden_examples.yaml"),
+        ],
+        ids=["ui", "logging", "golden_examples"],
+    )
+    def test_config_loader_invalidYaml_raisesValueError(self, tmp_path, loader, filename):
+        """An unparsable file is a ValueError naming the file, not a silent default."""
+        # Arrange
+        config_file = tmp_path / filename
+        config_file.write_text("invalid: yaml: content: [unclosed")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match=f"Invalid YAML in .*{filename}"):
+            loader(config_path=config_file)

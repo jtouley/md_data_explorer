@@ -163,6 +163,36 @@ class TestPatchStatus:
         assert PatchStatus.REVERTED.value == "reverted"
 
 
+class TestPatchEnumsRejectUnknownValues:
+    """Patch enums are read back from patches.jsonl; a value outside the enum must not load."""
+
+    @pytest.mark.parametrize("enum_name", ["PatchOperation", "SemanticType", "PatchStatus"])
+    @pytest.mark.parametrize("raw_value", ["not_a_member", "", None], ids=["unknown", "empty", "null"])
+    def test_patch_enum_valueOutsideEnum_raisesValueError(self, enum_name, raw_value):
+        """Unknown, empty and null values are refused."""
+        # Arrange
+        from clinical_analytics.core import metadata_patch
+
+        enum_cls = getattr(metadata_patch, enum_name)
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="is not a valid"):
+            enum_cls(raw_value)
+
+    @pytest.mark.parametrize("enum_name", ["PatchOperation", "SemanticType", "PatchStatus"])
+    def test_patch_enum_memberName_raisesValueError(self, enum_name):
+        """The API emits member names (e.g. SET_LABEL); only the lowercase values deserialize."""
+        # Arrange
+        from clinical_analytics.core import metadata_patch
+
+        enum_cls = getattr(metadata_patch, enum_name)
+
+        # Act / Assert
+        for member in enum_cls:
+            with pytest.raises(ValueError, match="is not a valid"):
+                enum_cls(member.name)
+
+
 class TestMetadataPatch:
     """Tests for MetadataPatch frozen dataclass."""
 

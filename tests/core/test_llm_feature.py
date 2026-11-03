@@ -12,6 +12,8 @@ Tests cover:
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from clinical_analytics.core.llm_feature import (
     LLMCallResult,
     LLMFeature,
@@ -53,6 +55,19 @@ class TestLLMFeature:
         # Arrange & Act & Assert
         assert LLMFeature.DBA_VALIDATION.value == "dba_validation"
         assert LLMFeature.VALIDATION_RETRY.value == "validation_retry"
+
+
+class TestLLMFeatureRejectsUnknownValues:
+    """LLMFeature values key logging and config; a value outside the enum must not resolve."""
+
+    @pytest.mark.parametrize(
+        "raw_value", ["not_a_feature", "", None, "PARSE"], ids=["unknown", "empty", "null", "member_name"]
+    )
+    def test_llmfeature_valueOutsideEnum_raisesValueError(self, raw_value):
+        """Unknown, empty, null and upper-case member names are refused."""
+        # Act / Assert
+        with pytest.raises(ValueError, match="is not a valid LLMFeature"):
+            LLMFeature(raw_value)
 
 
 class TestCallLLM:

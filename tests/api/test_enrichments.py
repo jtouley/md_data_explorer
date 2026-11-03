@@ -4,28 +4,32 @@ Tests for Enrichment API routes (ADR011 metadata enrichment).
 Following TDD: Red phase - tests written before implementation.
 """
 
+import json
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import create_autospec
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
 from clinical_analytics.api.main import app
+from clinical_analytics.core.overlay_store import OverlayStore, PatchNotFoundError, PatchStateError
+from clinical_analytics.ui.components.enrichment_integration import EnrichmentService
+
+# Exception text a failing store might carry; it must never reach the HTTP response.
+_INTERNAL_ERROR_TEXT = "/private/overlays/upload_test/v1/pending.json"
 
 
 @pytest.fixture
 def mock_enrichment_service():
-    """Create mock EnrichmentService."""
-    mock = MagicMock()
-    return mock
+    """EnrichmentService mock whose methods enforce the real signatures."""
+    return create_autospec(EnrichmentService, instance=True)
 
 
 @pytest.fixture
 def mock_overlay_store():
-    """Create mock OverlayStore."""
-    mock = MagicMock()
-    return mock
+    """OverlayStore mock whose methods enforce the real signatures."""
+    return create_autospec(OverlayStore, instance=True)
 
 
 @pytest.fixture
@@ -41,6 +45,18 @@ def test_client(mock_enrichment_service, mock_overlay_store):
     app.dependency_overrides[get_overlay_store] = lambda: mock_overlay_store
     app.dependency_overrides[get_dataset_version] = lambda: "v1"
     yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def real_store_client(tmp_path):
+    """Test client wired to a real OverlayStore in tmp_path (real EnrichmentService on top)."""
+    from clinical_analytics.api.routes.enrichments import get_dataset_version, get_overlay_store
+
+    store = OverlayStore(base_dir=tmp_path)
+    app.dependency_overrides[get_overlay_store] = lambda: store
+    app.dependency_overrides[get_dataset_version] = lambda: "v1"
+    yield TestClient(app), store
     app.dependency_overrides.clear()
 
 
@@ -166,6 +182,71 @@ class TestEnrichmentsRevert:
         assert call_args.kwargs.get("reverted_by") == "auditor_1"
 
 
+class TestEnrichmentsStoreFailures:
+    """A failing overlay store is a 4xx/5xx with a plain message, never 200 with success=False."""
+
+    @pytest.mark.parametrize(
+        ("action", "service_method"),
+        [("accept", "accept_suggestion"), ("reject", "reject_suggestion"), ("revert", "revert_accepted_patch")],
+    )
+    @pytest.mark.parametrize(
+        "error",
+        [PermissionError(_INTERNAL_ERROR_TEXT), json.JSONDecodeError(_INTERNAL_ERROR_TEXT, "{", 0)],
+        ids=["unwritable", "corrupt"],
+    )
+    def test_enrichments_action_storeFails_returns500WithPlainDetail(
+        self, test_client, mock_enrichment_service, action, service_method, error
+    ):
+        """Disk and corrupt-file errors surface as 500; the exception text is not echoed."""
+        # Arrange
+        getattr(mock_enrichment_service, service_method).side_effect = error
+
+        # Act
+        response = test_client.post(f"/api/datasets/upload_test/enrichments/patch_001/{action}", json={})
+
+        # Assert
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert response.json() == {"detail": "Could not update the enrichment overlay"}
+        assert _INTERNAL_ERROR_TEXT not in response.text
+
+    @pytest.mark.parametrize(
+        ("action", "service_method", "conflict_detail"),
+        [
+            ("accept", "accept_suggestion", "Only a pending patch can be accepted"),
+            ("reject", "reject_suggestion", "Only a pending patch can be rejected"),
+            ("revert", "revert_accepted_patch", "Only an accepted patch can be reverted"),
+        ],
+        ids=["accept", "reject", "revert"],
+    )
+    @pytest.mark.parametrize(
+        ("error_cls", "expected_status"),
+        [(PatchNotFoundError, status.HTTP_404_NOT_FOUND), (PatchStateError, status.HTTP_409_CONFLICT)],
+        ids=["missing", "wrong_state"],
+    )
+    def test_enrichments_action_patchNotActionable_returnsClientError(
+        self,
+        test_client,
+        mock_enrichment_service,
+        action,
+        service_method,
+        conflict_detail,
+        error_cls,
+        expected_status,
+    ):
+        """A missing patch is 404; a patch in the wrong state for the action is 409."""
+        # Arrange
+        getattr(mock_enrichment_service, service_method).side_effect = error_cls(_INTERNAL_ERROR_TEXT)
+        expected_detail = "Patch not found" if error_cls is PatchNotFoundError else conflict_detail
+
+        # Act
+        response = test_client.post(f"/api/datasets/upload_test/enrichments/patch_001/{action}", json={})
+
+        # Assert
+        assert response.status_code == expected_status
+        assert response.json() == {"detail": expected_detail}
+        assert _INTERNAL_ERROR_TEXT not in response.text
+
+
 class TestEnrichmentsHistory:
     """Tests for GET /api/datasets/{dataset_id}/enrichments/history endpoint."""
 
@@ -224,3 +305,39 @@ class TestEnrichmentsGenerate:
         )
 
         assert response.status_code == status.HTTP_202_ACCEPTED
+
+
+class TestEnrichmentsDecisionsOnRealStore:
+    """End to end on a real OverlayStore: a second decision on one patch is a 409."""
+
+    @pytest.mark.parametrize("second_action", ["accept", "reject"])
+    def test_enrichments_secondDecision_returns409AndKeepsOneLogRow(self, real_store_client, second_action):
+        """The first accept is recorded; any later accept or reject of that patch is refused."""
+        # Arrange
+        from clinical_analytics.core.metadata_patch import MetadataPatch, PatchOperation, PatchStatus
+
+        client, store = real_store_client
+        store.save_pending(
+            "upload_twice",
+            "v1",
+            [
+                MetadataPatch(
+                    patch_id="patch_twice",
+                    operation=PatchOperation.SET_LABEL,
+                    column="age",
+                    value="Patient Age",
+                    status=PatchStatus.PENDING,
+                    created_at=datetime.now(UTC),
+                    provenance="llm",
+                )
+            ],
+        )
+        first = client.post("/api/datasets/upload_twice/enrichments/patch_twice/accept", json={})
+
+        # Act
+        second = client.post(f"/api/datasets/upload_twice/enrichments/patch_twice/{second_action}", json={})
+
+        # Assert
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_409_CONFLICT
+        assert [p.status for p in store.load_patches("upload_twice", "v1")] == [PatchStatus.ACCEPTED]

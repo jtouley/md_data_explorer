@@ -28,6 +28,31 @@ export function suggestionToRows(s) {
   ];
 }
 
+/**
+ * Run an accept/reject/revert call and refresh the panel. A stale patch (resolved or removed
+ * elsewhere) also refreshes, so it disappears, and then shows why.
+ * @param {() => Promise<{ success?: boolean, stale?: boolean, message?: string } | undefined>} call
+ * @param {{ reload: () => Promise<void>, showMessage: (text: string) => void, fallback: string }} opts
+ * @returns {Promise<void>}
+ */
+export async function runEnrichmentDecision(call, { reload, showMessage, fallback }) {
+  try {
+    const res = await call();
+    if (res?.stale) {
+      await reload();
+      showMessage(res.message || fallback);
+      return;
+    }
+    if (res && res.success === false) {
+      throw new Error(res.message || fallback);
+    }
+    await reload();
+  } catch (error) {
+    console.error(`${fallback}:`, error);
+    showMessage(error?.message || fallback);
+  }
+}
+
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text == null ? '' : String(text);

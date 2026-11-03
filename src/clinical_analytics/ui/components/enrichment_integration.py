@@ -139,6 +139,10 @@ class EnrichmentService:
             version: Dataset version
             patch_id: ID of patch to accept
             accepted_by: User accepting the patch
+
+        Raises:
+            PatchNotFoundError: If the patch is neither pending nor logged.
+            PatchStateError: If the patch was already resolved.
         """
         self.overlay_store.accept_patch(upload_id, version, patch_id, accepted_by)
         logger.info(
@@ -163,6 +167,10 @@ class EnrichmentService:
             version: Dataset version
             patch_id: ID of patch to reject
             reason: Rejection reason
+
+        Raises:
+            PatchNotFoundError: If the patch is neither pending nor logged.
+            PatchStateError: If the patch was already resolved.
         """
         self.overlay_store.reject_patch(upload_id, version, patch_id, reason)
         logger.info(
@@ -189,7 +197,8 @@ class EnrichmentService:
             reverted_by: Actor performing the revert
 
         Raises:
-            ValueError: If patch is missing or not in ACCEPTED state.
+            PatchNotFoundError: If the patch is not in the patch log.
+            PatchStateError: If the patch is not in ACCEPTED state.
         """
         self.overlay_store.revert_accepted_patch(upload_id, version, patch_id, reverted_by)
         logger.info(

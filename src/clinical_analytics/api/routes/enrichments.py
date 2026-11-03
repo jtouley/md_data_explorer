@@ -20,11 +20,15 @@ from pydantic import BaseModel, Field
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.metadata_patch import MetadataPatch
-from clinical_analytics.core.overlay_store import OverlayStore
+from clinical_analytics.core.overlay_store import OverlayStore, PatchNotFoundError, PatchStateError
 from clinical_analytics.ui.components.enrichment_integration import EnrichmentService
 
 router = APIRouter()
 logger = structlog.get_logger()
+
+# Overlay files are local JSON: a read/write failure is OSError, a corrupt file is ValueError.
+_OVERLAY_STORE_ERRORS = (OSError, ValueError)
+_STORE_FAILED_DETAIL = "Could not update the enrichment overlay"
 
 
 def default_overlay_dir() -> Path:
@@ -219,16 +223,16 @@ def accept_suggestion(
             patch_id=patch_id,
             accepted_by=request.accepted_by,
         )
-        return AcceptRejectResponse(
-            success=True,
-            message="Suggestion accepted",
-        )
-    except Exception as e:
+    except PatchNotFoundError as e:
         logger.warning("enrichments_accept_failed", **error_fields(e))
-        return AcceptRejectResponse(
-            success=False,
-            message=f"Failed to accept suggestion: {e}",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found") from e
+    except PatchStateError as e:
+        logger.warning("enrichments_accept_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending patch can be accepted") from e
+    except _OVERLAY_STORE_ERRORS as e:
+        logger.error("enrichments_accept_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_STORE_FAILED_DETAIL) from e
+    return AcceptRejectResponse(success=True, message="Suggestion accepted")
 
 
 @router.post(
@@ -257,16 +261,16 @@ def reject_suggestion(
             patch_id=patch_id,
             reason=request.reason,
         )
-        return AcceptRejectResponse(
-            success=True,
-            message="Suggestion rejected",
-        )
-    except Exception as e:
+    except PatchNotFoundError as e:
         logger.warning("enrichments_reject_failed", **error_fields(e))
-        return AcceptRejectResponse(
-            success=False,
-            message=f"Failed to reject suggestion: {e}",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found") from e
+    except PatchStateError as e:
+        logger.warning("enrichments_reject_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a pending patch can be rejected") from e
+    except _OVERLAY_STORE_ERRORS as e:
+        logger.error("enrichments_reject_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_STORE_FAILED_DETAIL) from e
+    return AcceptRejectResponse(success=True, message="Suggestion rejected")
 
 
 @router.post(
@@ -295,16 +299,18 @@ def revert_accepted_suggestion(
             patch_id=patch_id,
             reverted_by=request.reverted_by,
         )
-        return AcceptRejectResponse(
-            success=True,
-            message="Patch reverted",
-        )
-    except ValueError as e:
+    except PatchNotFoundError as e:
         logger.warning("enrichments_revert_failed", **error_fields(e))
-        return AcceptRejectResponse(
-            success=False,
-            message=f"Failed to revert patch: {e}",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patch not found") from e
+    except PatchStateError as e:
+        logger.warning("enrichments_revert_failed", **error_fields(e))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Only an accepted patch can be reverted"
+        ) from e
+    except _OVERLAY_STORE_ERRORS as e:
+        logger.error("enrichments_revert_failed", **error_fields(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_STORE_FAILED_DETAIL) from e
+    return AcceptRejectResponse(success=True, message="Patch reverted")
 
 
 @router.get(
