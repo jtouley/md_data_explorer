@@ -29,13 +29,10 @@ export function suggestionToRows(s) {
 }
 
 /**
- * Run an accept/reject/revert call and refresh the panel. A stale patch (resolved or removed
+ * Run one accept/reject/revert call and refresh the panel. A stale patch (resolved or removed
  * elsewhere) also refreshes, so it disappears, and then shows why.
- * @param {() => Promise<{ success?: boolean, stale?: boolean, message?: string } | undefined>} call
- * @param {{ reload: () => Promise<void>, showMessage: (text: string) => void, fallback: string }} opts
- * @returns {Promise<void>}
  */
-export async function runEnrichmentDecision(call, { reload, showMessage, fallback }) {
+async function runOneEnrichmentDecision(call, { reload, showMessage, fallback }) {
   try {
     const res = await call();
     if (res?.stale) {
@@ -51,6 +48,24 @@ export async function runEnrichmentDecision(call, { reload, showMessage, fallbac
     console.error(`${fallback}:`, error);
     showMessage(error?.message || fallback);
   }
+}
+
+let decisionQueue = Promise.resolve();
+
+/**
+ * Run an accept/reject/revert decision after any earlier one has finished its reload and
+ * message. Without the queue, a double-click's slower success reload overwrote the 409 message
+ * of the second click with the idle text. The second click is queued, not dropped, so its
+ * message is shown.
+ * @param {() => Promise<{ success?: boolean, stale?: boolean, message?: string } | undefined>} call
+ * @param {{ reload: () => Promise<void>, showMessage: (text: string) => void, fallback: string }} opts
+ * @returns {Promise<void>}
+ */
+export function runEnrichmentDecision(call, opts) {
+  const next = decisionQueue.then(() => runOneEnrichmentDecision(call, opts));
+  // runOneEnrichmentDecision never rejects, so the chain cannot get stuck.
+  decisionQueue = next;
+  return next;
 }
 
 function escapeHtml(text) {

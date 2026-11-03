@@ -113,3 +113,88 @@ describe('runEnrichmentDecision', () => {
     expect(events).toEqual(['message:Accept failed']);
   });
 });
+
+describe('runEnrichmentDecision overlapping calls', () => {
+  it('runEnrichmentDecision_doubleClickSlowSuccessThenStale_keepsTheStaleMessage', async () => {
+    // Arrange: one shared hint, like loadEnrichmentPanel writing "No pending suggestions." when a
+    // reload finishes. The first click's reload is slow; the server rejects the second click (409).
+    let hint = '';
+    let releaseFirstReload;
+    const firstReloadGate = new Promise((resolve) => {
+      releaseFirstReload = resolve;
+    });
+    const reloadSlow = async () => {
+      await firstReloadGate;
+      hint = 'No pending suggestions.';
+    };
+    const reloadFast = async () => {
+      hint = 'No pending suggestions.';
+    };
+    const show = (text) => {
+      hint = text;
+    };
+
+    // Act: second click starts before the first click's reload has finished
+    const first = runEnrichmentDecision(async () => ({ success: true }), {
+      reload: reloadSlow,
+      showMessage: show,
+      fallback: 'Accept failed',
+    });
+    const second = runEnrichmentDecision(
+      async () => ({
+        success: false,
+        stale: true,
+        message: 'Only a pending patch can be accepted',
+      }),
+      { reload: reloadFast, showMessage: show, fallback: 'Accept failed' }
+    );
+    // Let the second click run as far as it can (unqueued, it reaches its 409 message here)
+    // before the first click's slow reload lands, as in the reviewer's race.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    releaseFirstReload();
+    await Promise.all([first, second]);
+
+    // Assert: the 409 explanation is the last thing the user sees, not the idle text
+    expect(hint).toBe('Only a pending patch can be accepted');
+  });
+
+  it('runEnrichmentDecision_queuedCall_startsOnlyAfterEarlierReloadAndMessage', async () => {
+    // Arrange
+    const events = [];
+    let releaseFirstReload;
+    const gate = new Promise((resolve) => {
+      releaseFirstReload = resolve;
+    });
+
+    // Act
+    const first = runEnrichmentDecision(
+      async () => {
+        events.push('call-1');
+        return { success: true };
+      },
+      {
+        reload: async () => {
+          await gate;
+          events.push('reload-1');
+        },
+        showMessage: () => events.push('message-1'),
+        fallback: 'x',
+      }
+    );
+    const second = runEnrichmentDecision(
+      async () => {
+        events.push('call-2');
+        return { success: true };
+      },
+      { reload: async () => events.push('reload-2'), showMessage: () => {}, fallback: 'x' }
+    );
+    await Promise.resolve();
+    const beforeRelease = [...events];
+    releaseFirstReload();
+    await Promise.all([first, second]);
+
+    // Assert: the second click is queued, not dropped, and not interleaved
+    expect(beforeRelease).toEqual(['call-1']);
+    expect(events).toEqual(['call-1', 'reload-1', 'call-2', 'reload-2']);
+  });
+});

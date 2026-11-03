@@ -19,6 +19,7 @@ Key Design Decisions:
 
 import json
 import os
+import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -217,10 +218,12 @@ class OverlayStore:
             patch_dict["_patch_type"] = type(patch).__name__
             data.append(patch_dict)
 
-        # Write-then-rename so a failed write leaves the previous pending.json intact.
-        tmp_path = pending_path.with_name(pending_path.name + ".tmp")
+        # Write-then-rename so a failed write leaves the previous pending.json intact. A unique temp
+        # name per call keeps two writers from sharing (and tearing) one temp file.
+        fd, tmp_name = tempfile.mkstemp(prefix="pending.", suffix=".tmp", dir=overlay_path)
+        tmp_path = Path(tmp_name)
         try:
-            with open(tmp_path, "w") as f:
+            with os.fdopen(fd, "w") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp_path, pending_path)
         except OSError:
