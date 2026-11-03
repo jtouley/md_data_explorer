@@ -5,19 +5,40 @@
 const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
 /**
+ * Plain-language data-quality lines from an upload response (already small-cell suppressed).
+ * @param {unknown} quality
+ * @returns {string[]}
+ */
+function qualitySummary(quality) {
+  const lines = quality && typeof quality === 'object' ? quality.summary : null;
+  return Array.isArray(lines) ? lines.filter((l) => typeof l === 'string') : [];
+}
+
+/**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality_summary: string[] }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
-    return { upload_id: '', dataset_name: '', status: 'failed', message: '' };
+    return { upload_id: '', dataset_name: '', status: 'failed', message: '', quality_summary: [] };
   }
   return {
     upload_id: String(raw.upload_id ?? ''),
     dataset_name: String(raw.dataset_name ?? ''),
     status: String(raw.status ?? 'failed'),
     message: String(raw.message ?? ''),
+    quality_summary: qualitySummary(raw.quality),
   };
+}
+
+/**
+ * Status line after a successful upload, with the data-quality notes appended.
+ * @param {string} headline
+ * @param {string[]} qualityLines
+ * @returns {string}
+ */
+export function uploadStatusText(headline, qualityLines) {
+  return qualityLines.length ? `${headline}. Data check: ${qualityLines.join('; ')}` : headline;
 }
 
 /**

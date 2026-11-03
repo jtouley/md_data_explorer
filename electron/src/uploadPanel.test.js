@@ -2,6 +2,7 @@
 import { describe, test, expect, vi } from 'vitest';
 import {
   normalizeUploadResponse,
+  uploadStatusText,
   formatFileSize,
   isAllowedExtension,
   renderUploadArea,
@@ -22,13 +23,36 @@ describe('normalizeUploadResponse', () => {
       dataset_name: '',
       status: 'failed',
       message: '',
+      quality_summary: [],
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
       upload_id: '',
       dataset_name: '',
       status: 'failed',
       message: '',
+      quality_summary: [],
     });
+  });
+});
+
+describe('upload data-quality summary', () => {
+  test.each([
+    [{ quality: { summary: ['ldl: 5.8% missing', 7] } }, ['ldl: 5.8% missing']],
+    [{ quality: null }, []],
+    [{ quality: { summary: 'not a list' } }, []],
+    [{}, []],
+  ])('normalizeUploadResponse keeps only string summary lines (%#)', (raw, expected) => {
+    expect(normalizeUploadResponse(raw).quality_summary).toEqual(expected);
+  });
+
+  test('uploadStatusText appends quality lines', () => {
+    expect(
+      uploadStatusText('✓ A uploaded', ['ldl: 5.8% missing', 'age: <11 values outside 0–122 years'])
+    ).toBe('✓ A uploaded. Data check: ldl: 5.8% missing; age: <11 values outside 0–122 years');
+  });
+
+  test('uploadStatusText leaves the headline alone without quality lines', () => {
+    expect(uploadStatusText('✓ A uploaded', [])).toBe('✓ A uploaded');
   });
 });
 
