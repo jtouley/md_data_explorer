@@ -838,3 +838,99 @@ class TestComputeAnalysisByType:
         # Assert: Error returned
         assert result["type"] == "unknown"
         assert "error" in result
+
+
+class TestComputeMissingColumns:
+    """Absent or unknown columns come back as a renderable error dict, never a Polars exception."""
+
+    @pytest.mark.parametrize(
+        ("compute_fn", "expected_type", "expected_error"),
+        [
+            (compute_comparison_analysis, "comparison", "Missing required columns for comparison"),
+            (compute_predictor_analysis, "predictor", "No outcome variable specified"),
+            (
+                compute_survival_analysis,
+                "survival",
+                "Time and event variables required for survival analysis",
+            ),
+            (
+                compute_relationship_analysis,
+                "relationship",
+                "Need at least 2 variables to examine relationships",
+            ),
+        ],
+        ids=["comparison", "predictor", "survival", "relationship"],
+    )
+    def test_compute_noVariablesInContext_returnsError(
+        self, sample_numeric_df, compute_fn, expected_type, expected_error
+    ):
+        """A context naming none of the columns the analysis needs returns that analysis' error."""
+        # Arrange
+        context = AnalysisContext()
+
+        # Act
+        result = compute_fn(sample_numeric_df, context)
+
+        # Assert
+        assert result["type"] == expected_type
+        assert result["error"] == expected_error
+
+    def test_compute_descriptive_analysis_unknownPrimaryVariable_returnsErrorWithColumns(self, sample_numeric_df):
+        """An unknown primary variable names the variable and lists the real columns."""
+        # Arrange
+        context = AnalysisContext(inferred_intent=AnalysisIntent.DESCRIBE, primary_variable="not_a_column")
+
+        # Act
+        result = compute_descriptive_analysis(sample_numeric_df, context)
+
+        # Assert
+        assert result["error"].startswith("Column 'not_a_column' not found in dataset")
+        assert result["available_columns"] == sample_numeric_df.columns
+
+    def test_compute_relationship_analysis_unknownVariable_returnsErrorNamingIt(self, sample_numeric_df):
+        """A relationship request naming an absent column says which one is missing."""
+        # Arrange
+        context = AnalysisContext(
+            inferred_intent=AnalysisIntent.EXPLORE_RELATIONSHIPS,
+            predictor_variables=["age", "not_a_column"],
+        )
+
+        # Act
+        result = compute_relationship_analysis(sample_numeric_df, context)
+
+        # Assert
+        assert result["type"] == "relationship"
+        assert result["error"].startswith("Variables not found in data: not_a_column")
+
+    @pytest.mark.parametrize(
+        ("intent", "context_fields", "expected_type"),
+        [
+            (
+                AnalysisIntent.COMPARE_GROUPS,
+                {"primary_variable": "age", "grouping_variable": "not_a_column"},
+                "comparison",
+            ),
+            (
+                AnalysisIntent.FIND_PREDICTORS,
+                {"primary_variable": "not_a_column", "predictor_variables": ["age"]},
+                "predictor",
+            ),
+            (AnalysisIntent.EXAMINE_SURVIVAL, {"time_variable": "age", "event_variable": "not_a_column"}, "survival"),
+            (AnalysisIntent.EXPLORE_RELATIONSHIPS, {"predictor_variables": ["age", "not_a_column"]}, "relationship"),
+        ],
+        ids=["comparison", "predictor", "survival", "relationship"],
+    )
+    def test_compute_analysis_by_type_unknownColumn_returnsErrorBeforeSelect(
+        self, sample_numeric_df, intent, context_fields, expected_type
+    ):
+        """The router reports unknown columns instead of letting df.select raise ColumnNotFoundError."""
+        # Arrange
+        context = AnalysisContext(inferred_intent=intent, **context_fields)
+
+        # Act
+        result = compute_analysis_by_type(sample_numeric_df, context)
+
+        # Assert
+        assert result["type"] == expected_type
+        assert result["error"] == "Column(s) not found in dataset: ['not_a_column']"
+        assert result["available_columns"] == sample_numeric_df.columns
