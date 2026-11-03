@@ -154,8 +154,8 @@ test.describe('Integration: health + datasets on init', () => {
     const select = page.locator('#dataset-select');
     const options = select.locator('option');
     await expect(options).toHaveCount(3);
-    await expect(options.nth(1)).toHaveText('Patient Records (1200 rows)');
-    await expect(options.nth(2)).toHaveText('Lab Results (450 rows)');
+    await expect(options.nth(1)).toHaveText('Patient Records');
+    await expect(options.nth(2)).toHaveText('Lab Results');
   });
 
   test('connection status shows connected', async ({ page }) => {
@@ -185,14 +185,25 @@ test.describe('Integration: session sidebar', () => {
     await expect(activeItems).toHaveCount(1);
   });
 
-  test('session items show dataset and message count', async ({ page }) => {
+  test('session items show a title, the cohort name and when', async ({ page }) => {
     await setupWithMockAPI(page);
 
     const labels = page.locator('.session-item-label');
-    await expect(labels.first()).toContainText('Dataset: ds_');
+    await expect(labels.first()).toHaveText('Earlier conversation');
     const meta = page.locator('.session-item-meta');
-    await expect(meta.first()).toContainText('msgs');
+    await expect(meta.first()).toContainText('Patient Records');
     await expect(meta.first()).toContainText('ago');
+    await expect(page.locator('.session-group-label').first()).toHaveText('Today');
+  });
+
+  test('session delete asks in the row, then deletes', async ({ page }) => {
+    await setupWithMockAPI(page);
+
+    await page.locator('.session-item').first().hover();
+    await page.getByTestId('session-delete').first().click();
+    await expect(page.getByTestId('session-delete-cancel')).toBeFocused();
+    await page.getByTestId('session-delete-cancel').click();
+    await expect(page.locator('.session-item--confirming')).toHaveCount(0);
   });
 });
 
@@ -241,6 +252,15 @@ test.describe('Integration: dataset overview panel (P02)', () => {
 
     const panel = page.locator('#dataset-overview');
     await expect(panel).not.toHaveClass(/hidden/);
+    // The overview lives in the cohort details panel, off the chat column.
+    await expect(page.getByTestId('dataset-panel')).toBeHidden();
+    await page.getByTestId('dataset-meta').click();
+    await expect(page.getByTestId('dataset-panel')).toBeVisible();
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId('dataset-meta')).toHaveText('1200 rows · 3 variables');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dataset-panel')).toBeHidden();
+    await expect(page.getByTestId('dataset-meta')).toBeFocused();
     await expect(page.locator('[data-testid="dataset-overview-summary"]')).toContainText(
       '1200 rows'
     );
@@ -313,7 +333,10 @@ test.describe('Integration: error resilience', () => {
     const select = page.locator('#dataset-select');
     const options = select.locator('option');
     await expect(options).toHaveCount(1);
-    await expect(options.first()).toHaveText('Select a dataset...');
+    await expect(options.first()).toHaveText('Choose a cohort…');
+    await expect(page.getByTestId('upload-status')).toHaveText(
+      "Couldn't load the list of cohorts."
+    );
   });
 
   test('enrichment shows error when API throws', async ({ page }) => {
@@ -345,12 +368,14 @@ test.describe('Integration: error resilience', () => {
 });
 
 test.describe('Integration: dataset upload flow', () => {
-  test('upload button is rendered in dataset bar', async ({ page }) => {
+  test('upload is offered in the cohort actions menu', async ({ page }) => {
     await setupWithMockAPI(page);
 
     const uploadBtn = page.locator('[data-testid="upload-btn"]');
+    await expect(uploadBtn).toBeHidden();
+    await page.getByTestId('dataset-menu-btn').click();
     await expect(uploadBtn).toBeVisible();
-    await expect(uploadBtn).toContainText('Upload dataset');
+    await expect(uploadBtn).toHaveText('Upload a file…');
   });
 
   test('upload triggers API call and refreshes dataset list', async ({ page }) => {
@@ -405,7 +430,8 @@ test.describe('Integration: dataset upload flow', () => {
     await page.waitForTimeout(500);
 
     const uploadStatus = page.locator('[data-testid="upload-status"]');
-    await expect(uploadStatus).toContainText('uploaded');
+    await expect(uploadStatus).toHaveText('new_data is ready.');
+    await expect(page.locator('#dataset-select')).toHaveValue('ds_new');
 
     const selectAfter = page.locator('#dataset-select option');
     await expect(selectAfter).toHaveCount(4);
@@ -453,6 +479,8 @@ test.describe('Integration: patch revert flow', () => {
 
     await page.locator('#dataset-select').selectOption('ds_abc');
     await page.waitForTimeout(500);
+    await page.getByTestId('dataset-menu-btn').click();
+    await page.getByTestId('open-dataset-panel').click();
 
     const revertBtn = page.locator('[data-testid="patch-revert"]');
     await expect(revertBtn).toHaveCount(1);

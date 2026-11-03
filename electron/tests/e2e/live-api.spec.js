@@ -125,7 +125,7 @@ test.describe('Live FastAPI integration', () => {
   test('health check marks renderer as connected', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#connection-status')).toHaveClass(/status-connected/);
-    await expect(page.locator('.status-text')).toContainText('Backend connected');
+    await expect(page.locator('.status-text')).toHaveText('Running on this computer');
   });
 
   test('uploading CSV enables query input and selects dataset', async ({ page }) => {
@@ -139,7 +139,7 @@ test.describe('Live FastAPI integration', () => {
       buffer: makeCsvBytes(),
     });
 
-    await expect(page.locator('[data-testid="upload-status"]')).toContainText('uploaded');
+    await expect(page.locator('[data-testid="upload-status"]')).toContainText('is ready');
     await expect(page.locator('#query-input')).toBeEnabled();
 
     const selectedValue = await page.locator('#dataset-select').evaluate((el) => el.value);
@@ -156,7 +156,7 @@ test.describe('Live FastAPI integration', () => {
       buffer: makeCsvBytes(),
     });
 
-    await expect(page.locator('[data-testid="upload-status"]')).toContainText('uploaded');
+    await expect(page.locator('[data-testid="upload-status"]')).toContainText('is ready');
     await expect(page.locator('[data-testid="dataset-overview"]')).not.toHaveClass(/hidden/);
     await expect(page.locator('[data-testid="dataset-overview-summary"]')).toContainText('rows');
 
@@ -173,7 +173,7 @@ test.describe('Live FastAPI integration', () => {
       mimeType: 'text/csv',
       buffer: makeCsvBytes(),
     });
-    await expect(page.locator('[data-testid="upload-status"]')).toContainText('uploaded');
+    await expect(page.locator('[data-testid="upload-status"]')).toContainText('is ready');
 
     await page.getByTestId('new-chat-btn').click();
 
