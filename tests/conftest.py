@@ -2,6 +2,7 @@
 Pytest configuration and fixtures for clinical analytics tests.
 """
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -9,6 +10,15 @@ from pathlib import Path
 import polars as pl
 import pytest
 import yaml
+
+# Runtime data (uploads, DuckDB store, session DB) goes to a throwaway data home, never the
+# developer's real one or the checkout. Set before any clinical_analytics import.
+os.environ.setdefault("CLINICAL_ANALYTICS_DATA_HOME", tempfile.mkdtemp(prefix="ca-test-data-home-"))
+# TestClient sends Host: testserver; the API only accepts loopback hosts otherwise.
+os.environ.setdefault("CLINICAL_ANALYTICS_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver")
+# Tests run the API in explicit dev mode (no token) unless a test sets a token itself.
+os.environ.pop("CLINICAL_ANALYTICS_API_TOKEN", None)
+os.environ["CLINICAL_ANALYTICS_DEV_NO_AUTH"] = "1"
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -423,6 +433,25 @@ def test_data_dir(project_root):
     return project_root / "data" / "raw"
 
 
+@pytest.fixture(scope="session")
+def load_synthetic_dataset(project_root):
+    """Factory: load a committed synthetic cohort from tests/fixtures/synthetic by file stem.
+
+    These files are fully synthetic (scripts/make_synthetic_data.py) and are the only data
+    files allowed in the repo. Use them for golden statistical tests and demos.
+    """
+    synthetic_dir = project_root / "tests" / "fixtures" / "synthetic"
+
+    def _load(name: str) -> pl.DataFrame:
+        path = synthetic_dir / f"{name}.csv"
+        if not path.is_file():
+            available = sorted(p.stem for p in synthetic_dir.glob("*.csv"))
+            raise FileNotFoundError(f"No synthetic dataset '{name}'. Available: {available}")
+        return pl.read_csv(path)
+
+    return _load
+
+
 @pytest.fixture
 def temp_config_file():
     """Create a temporary config file for testing."""
@@ -449,30 +478,6 @@ def temp_config_file():
 
     # Cleanup
     temp_path.unlink()
-
-
-@pytest.fixture(scope="module")
-def ask_questions_page():
-    """
-    Import the Ask Questions page module.
-
-    Uses importlib because the filename contains an emoji.
-    """
-    import importlib.util
-    import sys
-    from pathlib import Path
-
-    # Add src to path
-    project_root = Path(__file__).parent.parent
-    sys.path.insert(0, str(project_root / "src"))
-
-    # Import from the page file (has emoji in name, so use importlib)
-    page_path = project_root / "src" / "clinical_analytics" / "ui" / "pages" / "03_💬_Ask_Questions.py"
-    spec = importlib.util.spec_from_file_location("ask_questions_page", page_path)
-    ask_questions_page = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ask_questions_page)
-
-    return ask_questions_page
 
 
 # ============================================================================
@@ -908,7 +913,7 @@ def sample_context():
     Returns AnalysisContext with DESCRIBE intent and confidence=0.9.
     This is a simple, ready-to-use fixture.
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext(
         inferred_intent=AnalysisIntent.DESCRIBE,
@@ -930,7 +935,7 @@ def low_confidence_context():
     - confidence: 0.4 (below auto-execute threshold)
     - match_suggestions: Dictionary with collision suggestions
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext(
         inferred_intent=AnalysisIntent.COMPARE_GROUPS,
@@ -954,7 +959,7 @@ def high_confidence_context():
     - grouping_variable: "treatment_arm"
     - confidence: 0.9 (above auto-execute threshold)
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext(
         inferred_intent=AnalysisIntent.COMPARE_GROUPS,
@@ -1263,7 +1268,7 @@ def sample_mixed_df():
 @pytest.fixture
 def sample_context_describe():
     """Create AnalysisContext for descriptive analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.DESCRIBE
@@ -1274,7 +1279,7 @@ def sample_context_describe():
 @pytest.fixture
 def sample_context_compare():
     """Create AnalysisContext for comparison analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
@@ -1286,7 +1291,7 @@ def sample_context_compare():
 @pytest.fixture
 def sample_context_predictor():
     """Create AnalysisContext for predictor analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.FIND_PREDICTORS
@@ -1298,7 +1303,7 @@ def sample_context_predictor():
 @pytest.fixture
 def sample_context_survival():
     """Create AnalysisContext for survival analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.EXAMINE_SURVIVAL
@@ -1310,7 +1315,7 @@ def sample_context_survival():
 @pytest.fixture
 def sample_context_relationship():
     """Create AnalysisContext for relationship analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.EXPLORE_RELATIONSHIPS
@@ -1321,7 +1326,7 @@ def sample_context_relationship():
 @pytest.fixture
 def sample_context_count():
     """Create AnalysisContext for count analysis."""
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext()
     context.inferred_intent = AnalysisIntent.COUNT
@@ -1570,12 +1575,13 @@ def discovered_datasets():
         - configs: Dict mapping dataset names to their configs
         - all_datasets: List of all discovered dataset names
     """
-    import logging
+    import structlog
 
     from clinical_analytics.core.mapper import load_dataset_config
     from clinical_analytics.core.registry import DatasetRegistry
 
-    logger = logging.getLogger(__name__)
+    # structlog: the calls below pass key/value fields, which stdlib loggers reject at INFO.
+    logger = structlog.get_logger(__name__)
 
     # Discover once per session
     DatasetRegistry.reset()

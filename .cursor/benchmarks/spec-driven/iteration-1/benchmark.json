@@ -1,0 +1,32 @@
+{
+  "benchmark": "spec-driven-command-quality",
+  "iteration": 1,
+  "timestamp": "2026-03-28T00:00:00Z",
+  "target_file": ".cursor/commands/spec-driven.md",
+  "method": "static-rubric",
+  "rubric": [
+    "meaningful_test_quality_gate",
+    "integration_test_enforcement_gate",
+    "anti_trivial_test_prohibition",
+    "integration_evidence_requirement"
+  ],
+  "before": {
+    "meaningful_test_quality_gate": 0,
+    "integration_test_enforcement_gate": 0,
+    "anti_trivial_test_prohibition": 0,
+    "integration_evidence_requirement": 0,
+    "score": 0,
+    "max_score": 4
+  },
+  "after": {
+    "meaningful_test_quality_gate": 1,
+    "integration_test_enforcement_gate": 1,
+    "anti_trivial_test_prohibition": 1,
+    "integration_evidence_requirement": 1,
+    "score": 4,
+    "max_score": 4
+  },
+  "delta": {
+    "score": 4
+  }
+}

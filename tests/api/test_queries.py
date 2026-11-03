@@ -85,6 +85,71 @@ class TestQuerySubmitEndpoint:
         assert data["status"] == "processing"
         assert "stream_url" in data
         assert "/api/queries/qry_abc123/stream" in data["stream_url"]
+        mock_async_query_service.submit_query.assert_awaited_once()
+        assert mock_async_query_service.submit_query.await_args.kwargs.get("confirmed") is False
+
+    def test_queries_post_confirmed_true_forwards_to_service(self, test_client, mock_async_query_service):
+        """confirmed=true and the reviewed plan line are forwarded so the gate can release a hold."""
+        # Arrange
+        mock_async_query_service.submit_query = AsyncMock(return_value="qry_confirm")
+        plan_line = "COMPARE_GROUPS · outcome ldl · grouping sex · filters none · test group comparison"
+
+        # Act
+        response = test_client.post(
+            "/api/queries",
+            json={
+                "session_id": "sess_test123",
+                "dataset_id": "test_dataset",
+                "query_text": "Compare LDL by sex",
+                "confirmed": True,
+                "confirm_plan_line": plan_line,
+            },
+        )
+
+        # Assert
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        kwargs = mock_async_query_service.submit_query.await_args.kwargs
+        assert kwargs.get("confirmed") is True
+        assert kwargs.get("confirm_plan_line") == plan_line
+
+    @pytest.mark.parametrize("plan_line", [None, "", "   "], ids=["missing", "empty", "blank"])
+    def test_queries_post_confirmedWithoutPlanLine_rejected422(self, test_client, mock_async_query_service, plan_line):
+        """A confirmation must name the plan it covers; otherwise it could release any plan."""
+        # Arrange
+        mock_async_query_service.submit_query = AsyncMock(return_value="qry_x")
+        body = {"session_id": "s", "dataset_id": "d", "query_text": "Compare LDL by sex", "confirmed": True}
+        if plan_line is not None:
+            body["confirm_plan_line"] = plan_line
+
+        # Act
+        response = test_client.post("/api/queries", json=body)
+
+        # Assert
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        mock_async_query_service.submit_query.assert_not_called()
+
+    def test_queries_post_withContext_forwardsContextAndSession(self, test_client, mock_async_query_service):
+        """QueryRequest.context and session_id reach the service instead of being dropped."""
+        # Arrange
+        mock_async_query_service.submit_query = AsyncMock(return_value="qry_ctx")
+        context = {"previous_intent": "COUNT", "previous_group_by": "sex"}
+
+        # Act
+        response = test_client.post(
+            "/api/queries",
+            json={
+                "session_id": "sess_ctx",
+                "dataset_id": "test_dataset",
+                "query_text": "now by site",
+                "context": context,
+            },
+        )
+
+        # Assert
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        kwargs = mock_async_query_service.submit_query.call_args.kwargs
+        assert kwargs["session_id"] == "sess_ctx"
+        assert kwargs["context"] == context
 
     def test_queries_post_invalid_dataset_returns_404(self, test_client, mock_async_query_service):
         """Invalid dataset ID returns 404 error."""
@@ -288,3 +353,45 @@ class TestDataFrameEncoder:
 
         # Assert
         assert parsed == data
+
+
+class TestQueryServiceCache:
+    """get_query_service_for_dataset follows the shared semantic layer cache."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_query_services(self):
+        from clinical_analytics.api.routes import queries
+
+        queries._query_services.clear()
+        yield
+        queries._query_services.clear()
+
+    def _service_for(self, semantic_layer: MagicMock) -> MagicMock:
+        service = MagicMock()
+        service.semantic_layer = semantic_layer
+        return service
+
+    @pytest.mark.parametrize(
+        ("layer_changes", "expected_builds"),
+        [(False, 1), (True, 2)],
+        ids=["same_layer_reuses_service", "replaced_layer_rebuilds_service"],
+    )
+    def test_get_query_service_layerIdentity_rebuildsOnlyWhenLayerChanges(self, layer_changes, expected_builds):
+        # Arrange
+        from clinical_analytics.api.routes import queries
+
+        first_layer, second_layer = MagicMock(), MagicMock()
+        layers = [first_layer, second_layer if layer_changes else first_layer]
+
+        # Act
+        with (
+            patch.object(queries, "get_semantic_layer", side_effect=layers),
+            patch.object(queries, "AsyncQueryService", side_effect=self._service_for) as build,
+        ):
+            first = queries.get_query_service_for_dataset("dataset_1")
+            second = queries.get_query_service_for_dataset("dataset_1")
+
+        # Assert
+        assert build.call_count == expected_builds
+        assert second.semantic_layer is layers[1]
+        assert (first is second) is not layer_changes

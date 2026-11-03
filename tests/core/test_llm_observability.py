@@ -9,7 +9,6 @@ Tests cover:
 - Privacy protection enforcement
 """
 
-import hashlib
 from datetime import datetime
 
 from clinical_analytics.core.llm_observability import (
@@ -18,6 +17,7 @@ from clinical_analytics.core.llm_observability import (
     log_llm_event,
     sanitize_query,
 )
+from clinical_analytics.core.log_redaction import keyed_digest
 
 
 class TestSanitizeQuery:
@@ -49,16 +49,23 @@ class TestSanitizeQuery:
         # Assert
         assert result1["query_hash"] == result2["query_hash"]
 
-    def test_sanitize_query_hash_is_sha256(self):
+    def test_sanitize_query_hash_is_keyed_sha256(self, tmp_path, monkeypatch):
         # Arrange
+        import hashlib
+
         query = "describe age distribution"
+        monkeypatch.setenv("CLINICAL_ANALYTICS_DATA_HOME", str(tmp_path / "install_a"))
 
         # Act
-        result = sanitize_query(query)
+        first_install = sanitize_query(query)["query_hash"]
+        monkeypatch.setenv("CLINICAL_ANALYTICS_DATA_HOME", str(tmp_path / "install_b"))
+        second_install = sanitize_query(query)["query_hash"]
 
-        # Assert
-        expected_hash = hashlib.sha256(query.encode()).hexdigest()
-        assert result["query_hash"] == expected_hash
+        # Assert: keyed per install, so a short query cannot be recovered by hashing guesses.
+        assert first_install != hashlib.sha256(query.encode()).hexdigest()
+        assert first_install != second_install
+        assert second_install == keyed_digest(query)
+        assert len(first_install) == 64
 
     def test_sanitize_query_never_includes_raw_text(self):
         # Arrange
@@ -281,7 +288,8 @@ class TestLogLLMEvent:
 
         # Assert
         # Query should be hashed, not stored as-is
-        expected_hash = hashlib.sha256(query.encode()).hexdigest()
+        # Keyed with the per-install log key, so short queries cannot be recovered by guessing.
+        expected_hash = keyed_digest(query)
         assert event.query_hash == expected_hash
 
     def test_log_llm_event_with_error(self):

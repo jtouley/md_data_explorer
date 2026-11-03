@@ -279,23 +279,13 @@ def test_logistic_regression():
 
 ## Testing UI Components
 
-For Streamlit components, use `streamlit.testing.v1`:
+The desktop UI lives in `electron/`. Renderer units run with Vitest and the end-to-end flows with Playwright:
 
-```python
-from streamlit.testing.v1 import AppTest
-
-
-def test_upload_component():
-    """Test file upload UI component."""
-    at = AppTest.from_file("src/clinical_analytics/ui/components/upload.py")
-    at.run()
-
-    # Simulate file upload
-    at.file_uploader[0].upload("tests/fixtures/test_data.csv")
-
-    assert at.success[0].value == "File uploaded successfully"
-    assert len(at.dataframe) == 1  # Dataset displayed
+```bash
+make test-electron-quality   # Vitest coverage gate + Playwright E2E (renderer and native)
 ```
+
+API routes are tested with FastAPI's `TestClient` under `tests/api/`.
 
 ## Testing Semantic Layer
 

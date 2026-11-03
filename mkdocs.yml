@@ -78,6 +78,7 @@ nav:
       - NL Query Engine: architecture/nl-query-engine.md
   - Security:
       - Threat model & backlog: security/THREAT_MODEL.md
+      - Patient data on this computer: security/LOCAL_DATA_SECURITY.md
   - API Reference:
       - Core: api-reference/core.md
       - Datasets: api-reference/datasets.md

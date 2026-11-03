@@ -10,8 +10,9 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, is_numeric_dtype
+from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
-from clinical_analytics.ui.components.question_engine import AnalysisContext
 
 
 def _normalize_column_name(name: str) -> str:
@@ -187,6 +188,52 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
         return None
 
 
+_MISSING_TOKENS = ("", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?")
+_NUMERIC_TEXT = r"^\s*[<>]?\s*-?\d[\d,]*(\.\d+)?\s*$"
+
+
+class AmbiguousNumberFormatError(ValueError):
+    """Text numbers whose comma could be a decimal or a thousands separator."""
+
+
+def _numeric_text_or_none(series: pl.Series) -> pl.Series | None:
+    """Numbers stored as text, or None when any non-missing value is not a plain number.
+
+    "Grade 2" or "1/2" stay text (categorical). "<20" reads as 20. Missing tokens ("n/a", ".")
+    become null. Commas: "1,8" is a decimal comma and "1,234.5" / "12,345,678" use thousands
+    separators; "1,234" with no other evidence could be either, so it raises
+    AmbiguousNumberFormatError instead of guessing.
+    """
+    cleaned = series.str.strip_chars()
+    is_missing = cleaned.is_null() | cleaned.str.to_lowercase().is_in(list(_MISSING_TOKENS))
+    text = pl.select(pl.when(is_missing).then(None).otherwise(cleaned)).to_series()
+    present = text.drop_nulls()
+    if present.len() == 0 or not present.str.contains(_NUMERIC_TEXT).all():
+        return None
+    bare = text.str.replace(r"^[<>]\s*", "")
+    with_comma = bare.drop_nulls().filter(bare.drop_nulls().str.contains(","))
+    if with_comma.len() == 0:
+        return bare.cast(pl.Float64, strict=False)
+    thousands = r"^-?\d{1,3}(,\d{3})+(\.\d+)?$"
+    if with_comma.str.contains(thousands).all():
+        unambiguous = (
+            with_comma.str.contains(r"\.").any()
+            or with_comma.str.contains(r",\d{3},").any()
+            or bare.drop_nulls().str.contains(r"^-?\d+\.\d+$").any()
+        )
+        if not unambiguous:
+            raise AmbiguousNumberFormatError(
+                f"{series.name} has values like '{with_comma[0]}' where the comma could mean thousands or a "
+                "decimal point. Store the column as numbers, or use a dot for decimals."
+            )
+        return bare.str.replace_all(",", "").cast(pl.Float64, strict=False)
+    if with_comma.str.contains(r"^-?\d+,\d+$").all() and not bare.drop_nulls().str.contains(r"\.").any():
+        return bare.str.replace(",", ".").cast(pl.Float64, strict=False)
+    raise AmbiguousNumberFormatError(
+        f"{series.name} mixes comma formats (e.g. '{with_comma[0]}'), so its numbers cannot be read reliably."
+    )
+
+
 def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compute descriptive analysis using Polars-native operations.
@@ -269,7 +316,8 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
 
         # Use converted series if successful, otherwise original
         analysis_series = numeric_series if numeric_series is not None else series
-        is_numeric = analysis_series.dtype in (pl.Int64, pl.Float64)
+        # Mean/SD only for continuous measures; 0/1 flags and coded categories get frequencies.
+        is_numeric = classify_variable(analysis_series) == "continuous"
 
         non_null_count = row_count - analysis_series.null_count()
 
@@ -297,12 +345,12 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             if len(clean_series) > 0:
                 mean_val = clean_series.mean()
                 median_val = clean_series.median()
-                std_val = clean_series.std() if len(clean_series) > 1 else 0.0
+                std_val = clean_series.std() if len(clean_series) > 1 else None  # SD is undefined for one value
                 min_val = clean_series.min()
                 max_val = clean_series.max()
                 result["mean"] = float(mean_val) if mean_val is not None else 0.0  # type: ignore[arg-type]
                 result["median"] = float(median_val) if median_val is not None else 0.0  # type: ignore[arg-type]
-                result["std"] = float(std_val) if std_val is not None else 0.0  # type: ignore[arg-type]
+                result["std"] = float(std_val) if std_val is not None else None  # type: ignore[arg-type]
                 result["min"] = float(min_val) if min_val is not None else 0.0  # type: ignore[arg-type]
                 result["max"] = float(max_val) if max_val is not None else 0.0  # type: ignore[arg-type]
                 result["is_numeric"] = True
@@ -338,7 +386,7 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
     missing_pct = (null_count / total_cells * 100) if total_cells > 0 else 0.0
 
     # Summary statistics for numeric columns
-    numeric_cols = [col for col in df.columns if df[col].dtype in (pl.Int64, pl.Float64)]
+    numeric_cols = [col for col in df.columns if classify_variable(df[col]) == "continuous"]
     desc_stats_dict = []
     if numeric_cols:
         desc_stats = df.select(numeric_cols).describe()
@@ -411,7 +459,7 @@ def _try_numeric_conversion(series: pl.Series) -> tuple[pl.Series | None, bool]:
 
     Returns (converted_series, success).
     """
-    if series.dtype in (pl.Int64, pl.Float64):
+    if is_numeric_dtype(series.dtype):
         return series, True
 
     if series.dtype != pl.Utf8:
@@ -438,9 +486,16 @@ def _try_numeric_conversion(series: pl.Series) -> tuple[pl.Series | None, bool]:
 
 def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
-    Compute comparison analysis using Polars-native operations.
+    Compare an outcome across groups, choosing the test from what the outcome measures.
 
-    Returns serializable dict (no Polars objects) including headline_answer.
+    - continuous outcome, 2 groups: Welch t-test; the 95% CI uses the same Welch standard
+      error and Welch-Satterthwaite degrees of freedom as the p-value
+    - continuous outcome, >2 groups: one-way ANOVA
+    - binary or categorical outcome: chi-square, or Fisher's exact test for a 2x2 table with
+      an expected count below 5; binary outcomes also report per-group proportions
+
+    Rows missing the outcome or group are excluded and counted (n_excluded).
+    Returns serializable dict (no Polars objects).
     """
     df, _ = _apply_context_filters(df, context)
 
@@ -450,164 +505,126 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     if outcome_col is None or group_col is None:
         return {"type": "comparison", "error": "Missing required columns for comparison"}
 
-    # Clean data
+    n_in_scope = df.height
     analysis_df = df.select([outcome_col, group_col]).drop_nulls()
+    n_used = analysis_df.height
+    n_excluded = n_in_scope - n_used
 
-    if analysis_df.height < 2:
+    if n_used < 2:
         return {"type": "comparison", "error": "Not enough data for comparison"}
 
-    # CRITICAL FIX: Try numeric conversion FIRST, before deciding test type
     outcome_series = analysis_df[outcome_col]
-    numeric_outcome = None
-    outcome_is_numeric = False
-
-    # Check if already numeric
-    if outcome_series.dtype in (pl.Int64, pl.Float64):
-        outcome_is_numeric = True
-        numeric_outcome = outcome_series
-    else:
-        # Try to convert string columns to numeric (handles "<20", "120", etc.)
-        numeric_outcome = _try_convert_to_numeric(outcome_series)
-        if numeric_outcome is not None:
-            outcome_is_numeric = True
-            # Replace outcome column with numeric version
-            analysis_df = analysis_df.with_columns(numeric_outcome.alias(outcome_col))
-
-    # Determine appropriate test
-    outcome_numeric = outcome_is_numeric
+    if outcome_series.dtype == pl.Utf8:
+        try:
+            converted = _numeric_text_or_none(outcome_series)
+        except AmbiguousNumberFormatError as exc:
+            return {"type": "comparison", "error": str(exc)}
+        if converted is not None:
+            # Missing-value tokens ("n/a", ".") became null: exclude and count them.
+            analysis_df = analysis_df.with_columns(converted.alias(outcome_col)).drop_nulls()
+            n_used = analysis_df.height
+            n_excluded = n_in_scope - n_used
+            if n_used < 2:
+                return {"type": "comparison", "error": "Not enough data for comparison"}
+            outcome_series = analysis_df[outcome_col]
+    outcome_kind = classify_variable(outcome_series)
+    if outcome_series.n_unique() < 2:
+        return {
+            "type": "comparison",
+            "error": f"{outcome_col} has only one value in the rows analysed, so there is nothing to compare.",
+        }
 
     groups = analysis_df[group_col].unique().sort().to_list()  # deterministic group order
     n_groups = len(groups)
-
     if n_groups < 2:
         return {"type": "comparison", "error": "Need at least 2 groups for comparison"}
 
-    # Run appropriate test
-    if outcome_numeric:
+    group_sizes = {str(g): int(n) for g, n in analysis_df.group_by(group_col).len().sort(group_col).iter_rows()}
+    base: dict[str, Any] = {
+        "type": "comparison",
+        "outcome_col": outcome_col,
+        "group_col": group_col,
+        "outcome_kind": outcome_kind,
+        "groups": groups,
+        "n_groups": n_groups,
+        "group_sizes": group_sizes,
+        "n_used": n_used,
+        "n_excluded": n_excluded,
+    }
+
+    if outcome_kind == "continuous":
+        values = analysis_df.with_columns(pl.col(outcome_col).cast(pl.Float64))
+        group_data = [values.filter(pl.col(group_col) == g)[outcome_col].to_numpy() for g in groups]
+        group_means = {str(g): float(np.mean(d)) for g, d in zip(groups, group_data, strict=True)}
+        headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
         if n_groups == 2:
-            # T-test
-            group1_data = analysis_df.filter(pl.col(group_col) == groups[0])[outcome_col].to_numpy()
-            group2_data = analysis_df.filter(pl.col(group_col) == groups[1])[outcome_col].to_numpy()
-
-            statistic, p_value = stats.ttest_ind(group1_data, group2_data)
-
-            # Compute means and std for interpretation
-            mean1 = float(np.mean(group1_data))
-            mean2 = float(np.mean(group2_data))
-            std1 = float(np.std(group1_data, ddof=1))
-            std2 = float(np.std(group2_data, ddof=1))
-            n1 = len(group1_data)
-            n2 = len(group2_data)
-
-            mean_diff = mean1 - mean2
-            se_diff = np.sqrt((std1**2 / n1) + (std2**2 / n2))
-            ci_lower = mean_diff - 1.96 * se_diff
-            ci_upper = mean_diff + 1.96 * se_diff
-
-            # Compute headline answer
-            group_means = {str(groups[0]): mean1, str(groups[1]): mean2}
-            headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
-
+            a, b = group_data
+            if min(len(a), len(b)) < 2:
+                return {**base, "error": "Each group needs at least 2 observations for a t-test"}
+            statistic, p_value = stats.ttest_ind(a, b, equal_var=False)
+            var_a, var_b = np.var(a, ddof=1) / len(a), np.var(b, ddof=1) / len(b)
+            se_diff = float(np.sqrt(var_a + var_b))
+            welch_df = float((var_a + var_b) ** 2 / (var_a**2 / (len(a) - 1) + var_b**2 / (len(b) - 1)))
+            mean_diff = float(np.mean(a) - np.mean(b))
+            t_crit = float(stats.t.ppf(0.975, welch_df))
             return {
-                "type": "comparison",
-                "test_type": "t_test",
-                "outcome_col": outcome_col,
-                "group_col": group_col,
-                "groups": groups,
+                **base,
+                "test_type": "welch_t_test",
                 "statistic": float(statistic),
                 "p_value": float(p_value),
-                "group1_mean": mean1,
-                "group2_mean": mean2,
-                "mean_diff": float(mean_diff),
-                "ci_lower": float(ci_lower),
-                "ci_upper": float(ci_upper),
+                "df": welch_df,
+                "group1_mean": float(np.mean(a)),
+                "group2_mean": float(np.mean(b)),
+                "mean_diff": mean_diff,
+                "ci_lower": mean_diff - t_crit * se_diff,
+                "ci_upper": mean_diff + t_crit * se_diff,
                 "group_means": group_means,
                 **headline,
             }
-
-        else:
-            # ANOVA
-            group_data = [analysis_df.filter(pl.col(group_col) == g)[outcome_col].to_numpy() for g in groups]
-            statistic, p_value = stats.f_oneway(*group_data)
-
-            # Group means - compute directly as dict comprehension
-            anova_group_means: dict[str, float] = {}
-            for g in groups:
-                mean_value = analysis_df.filter(pl.col(group_col) == g)[outcome_col].mean()
-                # Handle various return types from .mean() - use numpy conversion for safety
-                if mean_value is not None:
-                    # Convert to numpy scalar first, then float
-                    anova_group_means[str(g)] = float(np.asarray(mean_value).item())
-                else:
-                    anova_group_means[str(g)] = 0.0
-
-            # Compute headline answer
-            headline = _compute_headline_answer(anova_group_means, outcome_col, group_col, "lowest")
-
-            return {
-                "type": "comparison",
-                "test_type": "anova",
-                "outcome_col": outcome_col,
-                "group_col": group_col,
-                "groups": groups,
-                "n_groups": n_groups,
-                "statistic": float(statistic),
-                "p_value": float(p_value),
-                "group_means": anova_group_means,
-                **headline,
-            }
-
-    else:
-        # Chi-square test for categorical outcome
-        # Build contingency table using Polars
-        contingency = (
-            analysis_df.group_by([outcome_col, group_col])
-            .agg(pl.len().alias("count"))
-            .pivot(on=group_col, index=outcome_col, values="count")
-            .fill_null(0)
-        )
-
-        # Convert to numpy for scipy
-        contingency_np = contingency.select([c for c in contingency.columns if c != outcome_col]).to_numpy()
-
-        chi2, p_value, dof, expected = stats.chi2_contingency(contingency_np)
-
-        # Store contingency as dict for serialization
-        contingency_dict = contingency.to_dicts()
-
-        # Try to compute group means if outcome can be converted to numeric
-        # This allows answering "which group had the lowest X" for pseudo-numeric data
-        headline: dict[str, Any] = {}  # type: ignore[no-redef]
-        group_means: dict[str, float] = {}  # type: ignore[no-redef]
-        numeric_outcome, success = _try_numeric_conversion(analysis_df[outcome_col])
-
-        if success and numeric_outcome is not None:
-            # Compute mean per group using the numeric conversion
-            analysis_with_numeric = analysis_df.with_columns(numeric_outcome.alias("_numeric_outcome"))
-
-            for g in groups:
-                group_mean = (
-                    analysis_with_numeric.filter(pl.col(group_col) == g).select("_numeric_outcome").mean().item()
-                )
-                if group_mean is not None:
-                    group_means[str(g)] = float(group_mean)
-
-            if group_means:
-                headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
-
+        statistic, p_value = stats.f_oneway(*group_data)
         return {
-            "type": "comparison",
-            "test_type": "chi_square",
-            "outcome_col": outcome_col,
-            "group_col": group_col,
-            "chi2": float(chi2),
+            **base,
+            "test_type": "anova",
+            "statistic": float(statistic),
             "p_value": float(p_value),
-            "dof": int(dof),
-            "contingency": contingency_dict,
-            "contingency_index_col": outcome_col,
-            "group_means": group_means if group_means else None,
+            "group_means": group_means,
             **headline,
         }
+
+    # Binary or categorical outcome: contingency table (rows = outcome levels, columns = groups).
+    outcome_levels = analysis_df[outcome_col].unique().sort().to_list()
+    table = np.array(
+        [
+            [analysis_df.filter((pl.col(outcome_col) == lvl) & (pl.col(group_col) == g)).height for g in groups]
+            for lvl in outcome_levels
+        ]
+    )
+    contingency = [
+        {outcome_col: str(lvl), **{str(g): int(table[i, j]) for j, g in enumerate(groups)}}
+        for i, lvl in enumerate(outcome_levels)
+    ]
+    expected = stats.contingency.expected_freq(table)
+    result: dict[str, Any] = {
+        **base,
+        "contingency": contingency,
+        "contingency_index_col": outcome_col,
+        "min_expected_count": float(expected.min()),
+    }
+    if outcome_kind == "binary":
+        event = binary_event_level(analysis_df[outcome_col])
+        if event is not None and event in outcome_levels:
+            event_row = outcome_levels.index(event)
+            proportions = {str(g): float(table[event_row, j] / table[:, j].sum()) for j, g in enumerate(groups)}
+            result.update({"event_level": str(event), "group_proportions": proportions})
+    if table.shape == (2, 2) and expected.min() < 5:
+        odds_ratio, p_value = stats.fisher_exact(table)
+        result.update({"test_type": "fisher_exact", "p_value": float(p_value), "odds_ratio": float(odds_ratio)})
+        return result
+    chi2, p_value, dof, _ = stats.chi2_contingency(table)
+    result.update({"test_type": "chi_square", "chi2": float(chi2), "p_value": float(p_value), "dof": int(dof)})
+    if expected.min() < 5:
+        result["warning"] = "Some expected counts are below 5; the chi-square p-value may be unreliable."
+    return result
 
 
 def _format_filter_description(filters: list[FilterSpec] | None) -> str:
@@ -814,7 +831,7 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
     Returns:
         Serializable dict with analysis results
     """
-    from clinical_analytics.ui.components.question_engine import AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisIntent
 
     # DESCRIBE / COUNT resolve fuzzy column names themselves; the others select columns directly,
     # so an unknown name must become a renderable error instead of a ColumnNotFoundError.
@@ -856,63 +873,102 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
 
 
+def _needs_indicators(series: pl.Series) -> bool:
+    kind = classify_variable(series)
+    if series.dtype == pl.Utf8 or kind == "categorical":
+        return True
+    return kind == "binary" and not set(series.drop_nulls().unique().to_list()) <= {0, 1}
+
+
+def _code_text(series: pl.Series) -> pl.Series:
+    """Codes as text for indicator names: 2.0 -> '2' so names match the header's codes."""
+    if series.dtype.is_float() and bool((series.drop_nulls() % 1 == 0).all()):
+        return series.cast(pl.Int64).cast(pl.Utf8)
+    return series.cast(pl.Utf8)
+
+
+def _ambiguous_event_message(column: str, series: pl.Series) -> str:
+    values = ", ".join(str(v) for v in sorted(series.drop_nulls().unique().to_list(), key=str))
+    return (
+        f"Cannot tell which value of {column} is the event (values: {values}). Recode it to 0/1, "
+        f"or name the codes in the column header, e.g. '{column} 1: Yes 2: No'."
+    )
+
+
 def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
-    Compute predictor analysis (logistic regression).
+    Logistic regression of a binary outcome on the named predictors.
+
+    The outcome is recoded explicitly to 0/1 and the modelled event level is reported, so a
+    1/2-coded or text outcome is never fitted on raw codes. Coded categorical predictors
+    (e.g. "1: Normal 2: Osteopenia") enter as indicator variables, not as numbers. Perfect
+    separation is refused rather than reported with meaningless odds ratios.
 
     Returns serializable dict (no Polars objects).
     """
     df, _ = _apply_context_filters(df, context)
 
-    import pandas as pd  # Only for legacy run_logistic_regression
+    import pandas as pd  # PANDAS EXCEPTION: statsmodels formula API needs a pandas frame
+
+    from clinical_analytics.analysis.stats import ModelNotEstimableError, run_logistic_regression
 
     outcome_col = context.primary_variable
     predictors = context.predictor_variables
 
     if outcome_col is None:
         return {"type": "predictor", "error": "No outcome variable specified"}
-
-    # Prepare data
-    analysis_cols = [outcome_col] + predictors
-    analysis_df = df.select(analysis_cols).drop_nulls()
-
-    if analysis_df.height < 10:
-        return {"type": "predictor", "error": "Need at least 10 complete observations"}
-
-    # Check outcome type
-    outcome_data = analysis_df[outcome_col].drop_nulls()
-    n_unique = outcome_data.n_unique()
-
-    if n_unique != 2:
+    if not predictors:
+        # An empty right-hand side would reach the regression as "outcome ~" and fail to parse.
         return {
             "type": "predictor",
-            "error": f"Outcome has {n_unique} unique values. Only binary outcomes are supported.",
+            "error": f"No predictors specified for {outcome_col}. Name them, e.g. 'do age and treatment predict "
+            f"{outcome_col}?'",
         }
 
-    # Convert to pandas for legacy function (PANDAS EXCEPTION)
-    # Future: Refactor run_logistic_regression to use Polars
-    analysis_df_pd = analysis_df.to_pandas()
+    n_in_scope = df.height
+    analysis_df = df.select([outcome_col, *predictors]).drop_nulls()
+    n_used = analysis_df.height
+    base: dict[str, Any] = {
+        "type": "predictor",
+        "outcome_col": outcome_col,
+        "n_used": n_used,
+        "n_excluded": n_in_scope - n_used,
+    }
 
-    # Handle categorical predictors
-    categorical_cols = analysis_df_pd.select_dtypes(include=["object", "category"]).columns.tolist()
-    if outcome_col in categorical_cols:
-        categorical_cols.remove(outcome_col)
+    if n_used < 10:
+        return {**base, "error": "Need at least 10 complete observations"}
 
-    if categorical_cols:
-        analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical_cols, drop_first=True)
-        new_predictors = [c for c in analysis_df_pd.columns if c != outcome_col]
-    else:
-        new_predictors = predictors
+    outcome_series = analysis_df[outcome_col]
+    n_unique = outcome_series.n_unique()
+    if n_unique != 2:
+        return {
+            **base,
+            "error": f"Outcome has {n_unique} unique values. Only binary outcomes are supported.",
+        }
+    event_level = binary_event_level(outcome_series)
+    if event_level is None:
+        return {**base, "error": _ambiguous_event_message(outcome_col, outcome_series)}
+    analysis_df = analysis_df.with_columns(
+        pl.col(outcome_col).eq(pl.lit(event_level)).cast(pl.Int64).alias(outcome_col)
+    )
 
-    # Run logistic regression (legacy function)
-    from clinical_analytics.analysis.stats import run_logistic_regression
+    # Booleans fit as 0/1. Coded categoricals, text, and binary codes other than 0/1 (e.g. 1/2)
+    # become indicator variables named "<column>_<code>", never fitted on raw codes.
+    analysis_df = analysis_df.with_columns(
+        [pl.col(p).cast(pl.Int64) for p in predictors if analysis_df[p].dtype == pl.Boolean]
+    )
+    categorical = [p for p in predictors if _needs_indicators(analysis_df[p])]
+    analysis_df_pd = analysis_df.with_columns([_code_text(analysis_df[c]) for c in categorical]).to_pandas()
+    if categorical:
+        analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical, drop_first=True, dtype=int)
+    model_predictors = [c for c in analysis_df_pd.columns if c != outcome_col]
 
-    model, summary_df = run_logistic_regression(analysis_df_pd, outcome_col, new_predictors)
+    try:
+        _, summary_df = run_logistic_regression(analysis_df_pd, outcome_col, model_predictors)
+    except ModelNotEstimableError as exc:
+        return {**base, "error": str(exc), "event_level": str(event_level)}
 
-    # Convert summary to serializable format
     summary_dict = summary_df.to_dict(orient="index")
-
-    # Extract significant predictors
     significant = summary_df[summary_df["P-Value"] < 0.05]
     significant_predictors = [
         {
@@ -925,10 +981,12 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         for var in significant.index
         if var != "Intercept"
     ]
+    # Strongest = smallest p-value; ties keep model order.
+    significant_predictors.sort(key=lambda row: row["p_value"])
 
     return {
-        "type": "predictor",
-        "outcome_col": outcome_col,
+        **base,
+        "event_level": str(event_level),
         "summary": summary_dict,
         "significant_predictors": significant_predictors,
         "schema": {col: str(dtype) for col, dtype in summary_df.dtypes.items()},
@@ -937,62 +995,84 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
 
 def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
-    Compute survival analysis.
+    Kaplan-Meier survival, overall and by group, with a log-rank test across groups.
+
+    The event column is recoded explicitly to 0/1 (event level reported). Medians are from
+    each group's own fit; the overall median is from an ungrouped fit.
 
     Returns serializable dict (no Polars objects).
     """
     df, _ = _apply_context_filters(df, context)
 
+    from lifelines import KaplanMeierFitter
+
+    from clinical_analytics.analysis.survival import run_kaplan_meier, run_logrank_test
+
     time_col = context.time_variable
     event_col = context.event_variable
+    group_col = context.grouping_variable
 
     if time_col is None or event_col is None:
         return {"type": "survival", "error": "Time and event variables required for survival analysis"}
 
-    # Prepare data
-    analysis_df = df.select([time_col, event_col]).drop_nulls()
-
-    if analysis_df.height < 10:
-        return {"type": "survival", "error": "Need at least 10 complete observations"}
-
-    # Get unique event values
-    unique_vals = sorted(analysis_df[event_col].unique().to_list())
-
-    if len(unique_vals) != 2:
-        return {
-            "type": "survival",
-            "error": f"Event variable must be binary (has {len(unique_vals)} values)",
-            "unique_values": unique_vals,
-        }
-
-    # Convert to pandas for legacy function (PANDAS EXCEPTION)
-    # Future: Refactor run_kaplan_meier to use Polars
-    analysis_df_pd = analysis_df.to_pandas()
-
-    # Run Kaplan-Meier (legacy function)
-    from clinical_analytics.analysis.survival import run_kaplan_meier
-
-    kmf, summary_df = run_kaplan_meier(
-        analysis_df_pd,
-        duration_col=time_col,
-        event_col=event_col,
-        group_col=context.grouping_variable,
-    )
-
-    # Convert summary to serializable format
-    summary_dict = summary_df.to_dict(orient="records")
-
-    # Median survival
-    median_survival = float(kmf.median_survival_time_) if not np.isnan(kmf.median_survival_time_) else None
-
-    return {
+    columns = [time_col, event_col] + ([group_col] if group_col else [])
+    n_in_scope = df.height
+    analysis_df = df.select(columns).drop_nulls()
+    n_used = analysis_df.height
+    base: dict[str, Any] = {
         "type": "survival",
         "time_col": time_col,
         "event_col": event_col,
-        "summary": summary_dict,
+        "group_col": group_col,
+        "n_used": n_used,
+        "n_excluded": n_in_scope - n_used,
+    }
+
+    if n_used < 10:
+        return {**base, "error": "Need at least 10 complete observations"}
+
+    unique_vals = sorted(analysis_df[event_col].unique().to_list(), key=str)
+    if len(unique_vals) != 2:
+        return {
+            **base,
+            "error": f"Event variable must be binary (has {len(unique_vals)} values)",
+            "unique_values": unique_vals,
+        }
+    event_level = binary_event_level(analysis_df[event_col])
+    if event_level is None:
+        return {**base, "error": _ambiguous_event_message(event_col, analysis_df[event_col])}
+    analysis_df = analysis_df.with_columns(pl.col(event_col).eq(pl.lit(event_level)).cast(pl.Int64).alias(event_col))
+    n_events = int(analysis_df[event_col].sum())
+
+    # PANDAS EXCEPTION: lifelines takes pandas inputs
+    analysis_df_pd = analysis_df.to_pandas()
+
+    overall = KaplanMeierFitter().fit(analysis_df_pd[time_col], analysis_df_pd[event_col])
+    median_survival = None if np.isinf(overall.median_survival_time_) else float(overall.median_survival_time_)
+    _, summary_df = run_kaplan_meier(analysis_df_pd, duration_col=time_col, event_col=event_col, group_col=group_col)
+
+    result: dict[str, Any] = {
+        **base,
+        "event_level": str(event_level),
+        "n_events": n_events,
+        "summary": summary_df.to_dict(orient="records"),
         "median_survival": median_survival,
         "unique_values": unique_vals,
     }
+    if group_col:
+        group_medians: dict[str, float | None] = {}
+        group_sizes: dict[str, int] = {}
+        for group, rows in analysis_df_pd.groupby(group_col, sort=True):
+            fit = KaplanMeierFitter().fit(rows[time_col], rows[event_col])
+            group_medians[str(group)] = (
+                None if np.isinf(fit.median_survival_time_) else float(fit.median_survival_time_)
+            )
+            group_sizes[str(group)] = len(rows)
+        result.update({"group_medians": group_medians, "group_sizes": group_sizes})
+        if len(group_sizes) >= 2:
+            logrank = run_logrank_test(analysis_df_pd, time_col, event_col, group_col)
+            result.update({"logrank_p_value": logrank["p_value"], "logrank_statistic": logrank["test_statistic"]})
+    return result
 
 
 def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:

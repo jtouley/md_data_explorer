@@ -27,7 +27,3 @@ LOG_LEVEL: str = _config["log_level"]
 
 # Upload settings
 MAX_UPLOAD_SIZE_MB: int = _config["max_upload_size_mb"]
-
-# Page names (centralized to avoid brittle string references)
-# These are the actual Streamlit page file paths
-ASK_QUESTIONS_PAGE: str = _config["ask_questions_page"]

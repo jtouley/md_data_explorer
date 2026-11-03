@@ -40,15 +40,6 @@ def skip_if_ollama_unavailable(ollama_manager):
         pytest.skip(f"Ollama not ready - {ollama_manager.get_setup_instructions()}")
 
 
-def test_ollama_manager_status(ollama_manager):
-    """Verify OllamaManager status reporting."""
-    status = ollama_manager.get_status()
-    assert isinstance(status, dict)
-    assert "installed" in status
-    assert "running" in status
-    assert "ready" in status
-
-
 def test_ollama_client_real_connection(ollama_client, skip_if_ollama_unavailable):
     """Verify real OllamaClient can connect to local Ollama service."""
     assert ollama_client.is_available() is True

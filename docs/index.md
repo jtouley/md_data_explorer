@@ -9,21 +9,22 @@ The Clinical Analytics Platform enables clinicians and researchers to analyze cl
 ### Key Features
 
 - **Question-Driven Analysis**: Ask questions in plain English instead of clicking through menus
-- **Automatic Schema Inference**: Upload any CSV/Excel file - we detect patient IDs, outcomes, and time variables automatically
+- **Automatic Schema Inference**: Upload a CSV, Excel or SPSS file - we detect patient IDs, outcomes, and time variables automatically
 - **Semantic Layer**: Config-driven analysis that understands your data structure
-- **Multi-Table Support**: Handle complex datasets like MIMIC-IV with automatic relationship detection
 - **Statistical Analysis**: Descriptive statistics, group comparisons, survival analysis, risk prediction, and correlations
 
 ## Quick Start (from source)
 
 ```bash
-git clone <repo-url> && cd md_data_explorer
-make install-dev
-make run              # Streamlit UI (http://localhost:8501)
-# Optional: make run-api in another terminal for FastAPI; Electron shell lives under electron/
+git clone https://github.com/jtouley/md_data_explorer.git && cd md_data_explorer
+make install-dev                      # uv sync --extra dev --group dev
+cd electron && npm ci && cd ..
+./scripts/run_app.sh                  # macOS/Linux: API on http://127.0.0.1:8000 + desktop app
 ```
 
-PyPI install (`pip install clinical-analytics` / `clinical-analytics serve`) is not documented as the primary workflow for this repository; contributors should use **uv** and **make** targets. See [Getting started: Installation](getting-started/installation.md).
+Then click **Load sample** and ask `compare outcome by diabetes`. Windows and two-terminal setup: [Installation](getting-started/installation.md).
+
+**Privacy:** the app runs locally after setup and stores data in a per-user data home outside the repo; it is not a compliance certification. See [Where your data lives](getting-started/installation.md#where-your-data-lives).
 
 **Roadmap (all plans):** [Master plan](implementation/MASTER_PLAN.md) · **Architecture (as-built):** [As-built architecture (2025-03)](architecture/AS_BUILT_ARCHITECTURE.md) · **Electron migration:** [Omnibus spec](specs/omnibus_electron_streamlit_cutover.md) · **Security backlog:** [Threat model](security/THREAT_MODEL.md)
 
@@ -48,7 +49,7 @@ The platform combines:
 - **[Getting Started](getting-started/installation.md)**: Installation and initial setup
 - **[User Guide](user-guide/question-driven-analysis.md)**: How to use the platform
 - **[Architecture](architecture/overview.md)**: System design and components
-- **[As-built architecture](architecture/AS_BUILT_ARCHITECTURE.md)**: Streamlit, FastAPI, Electron, and verification commands
+- **[As-built architecture](architecture/AS_BUILT_ARCHITECTURE.md)**: wiring and verification commands (written before Streamlit was removed; partly stale)
 - **[Threat model](security/THREAT_MODEL.md)**: Security assumptions and `docs/todos/` index
 - **[API Reference](api-reference/core.md)**: Developer documentation
 - **[Development](development/contributing.md)**: Contributing guidelines

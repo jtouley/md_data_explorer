@@ -6,7 +6,7 @@ privacy-preserving query sanitization.
 
 Key principles:
 - NEVER log raw query text (privacy protection)
-- Log only query_hash (SHA256) and pattern_tags (controlled vocabulary)
+- Log only query_hash (HMAC-SHA256 with a per-install key) and pattern_tags (controlled vocabulary)
 - Required fields for ALL LLM events (enables downstream metrics)
 - Sanitization enforced by code, not good intentions
 
@@ -26,12 +26,13 @@ Required fields for all LLM events:
 - error_message: str | None (sanitized, no PII)
 """
 
-import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime
 
 import structlog
+
+from clinical_analytics.core.log_redaction import keyed_digest
 
 logger = structlog.get_logger()
 
@@ -87,7 +88,7 @@ def sanitize_query(query: str) -> dict[str, str | list[str] | int]:
 
     Returns:
         Dict with:
-            - query_hash: SHA256 hex digest (64 chars)
+            - query_hash: HMAC-SHA256 hex digest (64 chars, per-install key)
             - pattern_tags: List of pattern tags from controlled vocabulary
             - token_count: Number of tokens (approximate)
 
@@ -101,7 +102,7 @@ def sanitize_query(query: str) -> dict[str, str | list[str] | int]:
         True
     """
     # Generate deterministic hash
-    query_hash = hashlib.sha256(query.encode()).hexdigest()
+    query_hash = keyed_digest(query)  # keyed: a short query cannot be found by hashing guesses
 
     # Extract pattern tags
     pattern_tags = extract_pattern_tags(query)

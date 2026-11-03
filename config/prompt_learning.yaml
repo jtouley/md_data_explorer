@@ -165,6 +165,6 @@ prompt_template: |
 # Logging configuration
 logging:
   enabled: true
-  log_dir: "/tmp/nl_query_learning"
+  # log_dir: unset = <data home>/data/nl_query_learning (never a shared temp directory; logs hold query text)
   log_level: "INFO"
   log_failures_only: false

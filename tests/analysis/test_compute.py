@@ -19,7 +19,7 @@ from clinical_analytics.analysis.compute import (
     compute_relationship_analysis,
     compute_survival_analysis,
 )
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
 # All fixtures moved to conftest.py - use shared fixtures
 # sample_numeric_df, sample_categorical_df, sample_mixed_df
@@ -212,6 +212,15 @@ class TestComputeComparisonAnalysis:
         assert "p_value" in result
         assert "statistic" in result
 
+    def test_compute_comparison_analysis_twoGroups_reportsGroupSizes(self, sample_mixed_df, sample_context_compare):
+        """The claim reports n, so the t-test result carries per-group sizes."""
+        # Act
+        result = compute_comparison_analysis(sample_mixed_df, sample_context_compare)
+
+        # Assert
+        assert result["test_type"] == "welch_t_test"
+        assert result["group_sizes"] == {"A": 3, "B": 2}
+
     def test_compute_comparison_analysis_t_test_for_two_groups(self):
         """Test that compute_comparison_analysis uses t-test for two numeric groups."""
         # Arrange: Two groups with clear difference
@@ -229,8 +238,8 @@ class TestComputeComparisonAnalysis:
         # Act
         result = compute_comparison_analysis(df, context)
 
-        # Assert: T-test performed
-        assert result["test_type"] == "t_test"
+        # Assert: Welch t-test performed (unequal variances are not assumed away)
+        assert result["test_type"] == "welch_t_test"
         assert "mean_diff" in result
         assert "ci_lower" in result
         assert "ci_upper" in result
@@ -260,12 +269,12 @@ class TestComputeComparisonAnalysis:
         assert "group_means" in result
 
     def test_compute_comparison_analysis_chi_square_for_categorical(self):
-        """Test that compute_comparison_analysis uses chi-square for categorical outcome."""
-        # Arrange: Categorical outcome
+        """Chi-square for a categorical outcome when every expected count is at least 5."""
+        # Arrange: 2x2 with cells 12/8 and 6/14 (all expected counts >= 9)
         df = pl.DataFrame(
             {
-                "outcome": ["Yes", "Yes", "No", "No", "Yes", "No", "Yes", "No"],
-                "group": ["A", "A", "A", "A", "B", "B", "B", "B"],
+                "outcome": ["Yes"] * 12 + ["No"] * 8 + ["Yes"] * 6 + ["No"] * 14,
+                "group": ["A"] * 20 + ["B"] * 20,
             }
         )
         context = AnalysisContext()
@@ -352,16 +361,16 @@ class TestComputeComparisonAnalysis:
             assert 70 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 70) < 1 for m in means)
             assert 175 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 175) < 1 for m in means)
 
-        # Verify test type is numeric (t-test or ANOVA)
-        assert result["test_type"] in ["t_test", "anova"]
+        # Verify test type is numeric (Welch t-test or ANOVA)
+        assert result["test_type"] in ["welch_t_test", "anova"]
 
     def test_comparison_analysis_with_european_comma_format(self):
         """Test European comma format conversion (e.g., '1,234.5')."""
-        # Arrange: European comma format
+        # Arrange: European comma format, two values per group (a t-test needs n >= 2 per group)
         df = pl.DataFrame(
             {
-                "Treatment": ["A", "B"],
-                "Score": ["1,234.5", "2,345.6"],
+                "Treatment": ["A", "A", "B", "B"],
+                "Score": ["1,234.5", "1,234.5", "2,345.6", "2,345.6"],
             }
         )
 
@@ -374,7 +383,7 @@ class TestComputeComparisonAnalysis:
         result = compute_comparison_analysis(df, context)
 
         # Assert: Verify conversion and mean computation
-        assert result["test_type"] in ["t_test", "anova"]
+        assert result["test_type"] in ["welch_t_test", "anova"]
         if "group_means" in result:
             assert result["group_means"]["A"] == pytest.approx(1234.5, rel=0.01)
             assert result["group_means"]["B"] == pytest.approx(2345.6, rel=0.01)
@@ -429,7 +438,8 @@ class TestComputePredictorAnalysis:
             {
                 "outcome": [0, 0, 0, 1, 1, 1, 0, 1, 0, 1],
                 "age": [25, 30, 35, 40, 45, 50, 55, 60, 65, 70],
-                "score": [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+                # Not a linear function of age (collinear predictors cannot be estimated separately)
+                "score": [40, 10, 70, 20, 90, 30, 60, 100, 50, 80],
             }
         )
 
@@ -479,6 +489,20 @@ class TestComputePredictorAnalysis:
         # Assert: Error returned
         assert result["type"] == "predictor"
         assert "error" in result
+
+    def test_compute_predictor_analysis_noPredictors_returnsActionableError(
+        self, sample_mixed_df, sample_context_predictor
+    ):
+        """An empty predictor list must not reach the regression as 'outcome ~'."""
+        # Arrange
+        sample_context_predictor.predictor_variables = []
+
+        # Act
+        result = compute_predictor_analysis(sample_mixed_df, sample_context_predictor)
+
+        # Assert
+        assert result["type"] == "predictor"
+        assert result["error"].startswith(f"No predictors specified for {sample_context_predictor.primary_variable}")
 
 
 class TestComputeSurvivalAnalysis:

@@ -42,8 +42,10 @@ module.exports = defineConfig({
       timeout: 120000,
     },
     {
-      command: 'uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8000',
+      command: 'uv run python -m clinical_analytics.api.serve --host 127.0.0.1 --port 8000',
       cwd: repoRoot,
+      // E2E runs the API in explicit dev mode (no per-launch token); never use with real data.
+      env: { ...process.env, CLINICAL_ANALYTICS_DEV_NO_AUTH: '1' },
       url: 'http://127.0.0.1:8000/health',
       reuseExistingServer: true,
       timeout: 120000,

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -11,7 +10,7 @@ from fastapi.testclient import TestClient
 from clinical_analytics.api.main import app
 from clinical_analytics.api.routes import enrichments as enrichment_routes
 from clinical_analytics.api.routes.enrichments import (
-    DEFAULT_OVERLAY_DIR,
+    default_overlay_dir,
     get_enrichment_service,
     get_overlay_store,
 )
@@ -30,10 +29,11 @@ def test_preview_pandas_execute_frame_is_a_table() -> None:
     assert preview["result"]["table"]["rows"] == [{"mean": 174.5}]
 
 
-def test_default_overlay_dir_matches_store_contract() -> None:
-    store = OverlayStore(base_dir=DEFAULT_OVERLAY_DIR)
+def test_default_overlay_dir_matches_store_contract(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CLINICAL_ANALYTICS_DATA_HOME", str(tmp_path))
+    store = OverlayStore(base_dir=default_overlay_dir())
     path = store.get_overlay_path("upl", "deadbeefdeadbeef")
-    assert path == Path("data/uploads/metadata/overlays/upl/deadbeefdeadbeef")
+    assert path == tmp_path / "data" / "uploads" / "metadata" / "overlays" / "upl" / "deadbeefdeadbeef"
     assert "overlays/overlays" not in path.as_posix()
 
 

@@ -9,16 +9,25 @@ Production: PostgreSQL (scalable, persistent)
 
 import os
 from collections.abc import Generator
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from clinical_analytics.api.models.database import Base
+from clinical_analytics.core.data_home import session_db_path
+
+
+def _default_database_url() -> str:
+    """SQLite file in the per-user data home, never the current working directory."""
+    path = session_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{path}"
+
 
 # Database URL from environment or default to SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/clinical_analytics.db")
+DATABASE_URL = os.getenv("DATABASE_URL") or _default_database_url()
 
 # Create engine
 # For SQLite: check_same_thread=False allows multi-threaded access (FastAPI default)
@@ -32,6 +41,17 @@ engine = create_engine(
 )
 
 # Session factory
+if DATABASE_URL.startswith("sqlite"):
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_secure_delete(dbapi_connection: Any, _record: Any) -> None:
+        # Deleted sessions hold clinicians' questions: zero their pages instead of leaving the
+        # bytes in free space inside the file.
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA secure_delete=ON")
+        cursor.close()
+
+
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
@@ -46,6 +66,24 @@ def create_tables() -> None:
     In production, use Alembic migrations instead.
     """
     Base.metadata.create_all(bind=engine)
+    vacuum_if_free_pages(engine)
+
+
+def vacuum_if_free_pages(target: Engine) -> bool:
+    """Rewrite a SQLite file that has free pages.
+
+    Pages freed before secure_delete was turned on can still hold deleted sessions' questions.
+    With secure_delete on, later deletes zero their pages, so after one VACUUM the free list stays
+    clean and this is a cheap no-op on later startups.
+    """
+    if target.dialect.name != "sqlite":
+        return False
+    with target.connect() as conn:
+        free_pages = conn.exec_driver_sql("PRAGMA freelist_count").scalar() or 0
+        if not free_pages:
+            return False
+        conn.exec_driver_sql("VACUUM")
+    return True
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src http://localhost:8000 http://127.0.0.1:8000;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:8000;">
   <title>Clinical Analytics</title>
 </head>
 <body>
@@ -51,8 +51,36 @@
         <button id="refresh-datasets" class="btn-icon" title="Refresh datasets">
           ⟳
         </button>
+        <button
+          id="delete-dataset"
+          class="btn-delete-dataset"
+          type="button"
+          data-testid="delete-dataset-btn"
+          disabled
+        >
+          Delete dataset
+        </button>
         <div id="upload-area" class="upload-area-inline" data-testid="upload-area"></div>
       </div>
+
+      <div id="dataset-delete-area" class="dataset-delete-area hidden"></div>
+
+      <section id="dataset-overview" class="dataset-overview hidden" data-testid="dataset-overview">
+        <div class="dataset-overview-header">
+          <h2 class="dataset-overview-title">Dataset overview</h2>
+          <p
+            id="dataset-overview-summary"
+            class="dataset-overview-summary"
+            data-testid="dataset-overview-summary"
+          ></p>
+        </div>
+        <div class="dataset-preview-wrapper">
+          <table class="dataset-preview-table" data-testid="dataset-preview-table">
+            <thead id="dataset-preview-head"></thead>
+            <tbody id="dataset-preview-body"></tbody>
+          </table>
+        </div>
+      </section>
 
       <section
         id="enrichment-section"
@@ -95,6 +123,7 @@
       <!-- Query Input Area -->
       <div class="input-area">
         <form id="query-form" class="query-form">
+          <label for="query-input" class="visually-hidden">Question about the selected dataset</label>
           <textarea
             id="query-input"
             class="query-input"
@@ -102,14 +131,15 @@
             rows="1"
             disabled
           ></textarea>
-          <button type="submit" id="submit-btn" class="btn-submit" disabled>
-            <span class="submit-icon">→</span>
+          <button type="submit" id="submit-btn" class="btn-submit" aria-label="Ask" disabled>
+            <span class="submit-icon" aria-hidden="true">→</span>
           </button>
         </form>
         <div class="input-hint">
           <span id="input-hint-text">Select a dataset to start asking questions</span>
         </div>
       </div>
+      <div id="sr-status" class="visually-hidden" role="status" aria-live="polite"></div>
     </main>
     </div><!-- /.app-body -->
   </div>

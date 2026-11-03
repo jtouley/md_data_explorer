@@ -1,0 +1,10 @@
+{
+  "benchmark": "test-quality-loop",
+  "iteration": "iteration-2",
+  "eval": "eval-3",
+  "variant": "with_skill",
+  "run": 1,
+  "started_at": "2026-03-24T00:26:28.000Z",
+  "ended_at": "2026-03-24T00:27:10.218Z",
+  "duration_ms": 42218
+}

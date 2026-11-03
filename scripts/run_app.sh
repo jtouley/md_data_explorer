@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Clinical Analytics Platform - Streamlit Launcher
-# This script automatically installs dependencies and runs the Streamlit application
+# Clinical Analytics Platform - Desktop Launcher
+# This script installs dependencies, manages Ollama, starts the FastAPI backend,
+# and opens the Electron desktop app (or leaves the API running if Node is absent)
 # Designed for easy use by doctors - everything is automated!
 
 # Don't exit on error - we want to handle installation failures gracefully
@@ -21,12 +22,18 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 # Global variables for cleanup
 OLLAMA_PID=""
+API_PID=""
 STOP_OLLAMA_ON_EXIT="${STOP_OLLAMA_ON_EXIT:-true}"
 
 # Cleanup function - called on script exit
 cleanup() {
     echo ""
     echo -e "${YELLOW}🛑 Shutting down...${NC}"
+
+    if [ -n "$API_PID" ]; then
+        echo -e "${YELLOW}   Stopping FastAPI backend (PID: $API_PID)...${NC}"
+        kill "$API_PID" 2>/dev/null || true
+    fi
 
     # Stop Ollama if we started it AND flag is set
     if [ -n "$OLLAMA_PID" ] && [ "$STOP_OLLAMA_ON_EXIT" = "true" ]; then
@@ -97,6 +104,13 @@ install_homebrew() {
 install_ollama() {
     if command_exists ollama; then
         return 0
+    fi
+
+    # Only macOS installs through Homebrew; elsewhere never run a remote installer for the user.
+    if [ "$(uname -s)" != "Darwin" ]; then
+        echo -e "${YELLOW}🤖 Ollama not found. Install it from https://ollama.com/download, then re-run.${NC}"
+        echo -e "${CYAN}   Simple questions still work without it.${NC}"
+        return 1
     fi
 
     echo -e "${YELLOW}🤖 Ollama not found. Installing via Homebrew...${NC}"
@@ -192,68 +206,24 @@ cd "$PROJECT_ROOT"
 echo -e "${YELLOW}📋 Checking environment...${NC}"
 if [ ! -d ".venv" ]; then
     echo -e "${RED}❌ Virtual environment not found!${NC}"
-    echo -e "${YELLOW}   Please run: ${GREEN}uv sync${NC}"
+    echo -e "${YELLOW}   Please run: ${GREEN}make install-dev${NC}"
     exit 1
 fi
 echo -e "${GREEN}✓ Virtual environment found${NC}"
 
-# Check for data files
+# Runtime data (uploads, DuckDB, session DB) lives in the per-user data home, never in the
+# checkout. Report where it is so users know where patient data is stored.
 echo ""
-echo -e "${YELLOW}📂 Checking for datasets...${NC}"
-if [ -f "data/covid_ms/covid_ms_data.csv" ]; then
-    echo -e "${GREEN}✓ COVID-MS dataset available${NC}"
+echo -e "${YELLOW}💾 Checking data home...${NC}"
+DATA_HOME=$(uv run --no-sync python -c "from clinical_analytics.core.data_home import data_home; print(data_home())" 2>/dev/null || true)
+if [ -n "$DATA_HOME" ]; then
+    echo -e "${GREEN}✓ Data is stored in: ${DATA_HOME}${NC}"
+    echo -e "${CYAN}  (set CLINICAL_ANALYTICS_DATA_HOME to change it; never copy patient files into this repo)${NC}"
 else
-    echo -e "${YELLOW}⚠ COVID-MS dataset not found (will skip in UI)${NC}"
+    echo -e "${YELLOW}⚠ Could not resolve the data home; run 'make install-dev' first${NC}"
 fi
-
-if [ -d "data/sepsis" ]; then
-    echo -e "${GREEN}✓ Sepsis dataset directory found${NC}"
-else
-    echo -e "${YELLOW}⚠ Sepsis dataset not found (will skip in UI)${NC}"
-fi
-
-# Check persistent storage (DuckDB and user uploads)
-echo ""
-echo -e "${YELLOW}💾 Checking persistent storage...${NC}"
-
-# Ensure data directory exists
-mkdir -p "$PROJECT_ROOT/data"
-mkdir -p "$PROJECT_ROOT/data/uploads/raw"
-mkdir -p "$PROJECT_ROOT/data/uploads/metadata"
-mkdir -p "$PROJECT_ROOT/data/parquet"
-
-# Check persistent DuckDB
-DB_PATH="$PROJECT_ROOT/data/analytics.duckdb"
-if [ -f "$DB_PATH" ]; then
-    # Get database size
-    DB_SIZE=$(du -h "$DB_PATH" 2>/dev/null | cut -f1 || echo "unknown")
-    echo -e "${GREEN}✓ Persistent DuckDB found (${DB_SIZE})${NC}"
-else
-    echo -e "${YELLOW}⚠ Persistent DuckDB not found (will be created on first upload)${NC}"
-fi
-
-# Check user uploads
-UPLOADS_DIR="$PROJECT_ROOT/data/uploads"
-METADATA_DIR="$UPLOADS_DIR/metadata"
-if [ -d "$METADATA_DIR" ]; then
-    # Count metadata files (each represents an upload)
-    UPLOAD_COUNT=$(find "$METADATA_DIR" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$UPLOAD_COUNT" -gt 0 ]; then
-        echo -e "${GREEN}✓ Found ${UPLOAD_COUNT} user upload(s)${NC}"
-    else
-        echo -e "${CYAN}ℹ No user uploads yet${NC}"
-    fi
-else
-    echo -e "${CYAN}ℹ Uploads directory ready (no uploads yet)${NC}"
-fi
-
-# Check Parquet exports
-PARQUET_DIR="$PROJECT_ROOT/data/parquet"
-if [ -d "$PARQUET_DIR" ]; then
-    PARQUET_COUNT=$(find "$PARQUET_DIR" -name "*.parquet" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$PARQUET_COUNT" -gt 0 ]; then
-        echo -e "${GREEN}✓ Found ${PARQUET_COUNT} Parquet export(s)${NC}"
-    fi
+if [ -d "$PROJECT_ROOT/data/uploads/metadata" ] && [ -n "$(find "$PROJECT_ROOT/data/uploads/metadata" -name '*.json' 2>/dev/null | head -1)" ]; then
+    echo -e "${RED}⚠ Found uploads inside the repo (data/uploads). Move them to the data home and delete them here.${NC}"
 fi
 
 echo -e "${CYAN}   Storage directories ready${NC}"
@@ -313,19 +283,67 @@ echo -e "   • Logistic regression analysis"
 echo -e "   • CSV/JSON data export"
 echo -e "   • 44+ automated tests passing"
 
-# Activate virtual environment and run streamlit
+# Start the FastAPI backend, then the Electron desktop app
+API_URL="http://127.0.0.1:8000"
 echo ""
-echo -e "${GREEN}🎬 Starting Streamlit application...${NC}"
-echo -e "${YELLOW}   The app will open in your browser at:${NC} ${GREEN}http://localhost:8501${NC}"
-echo ""
-echo -e "${YELLOW}   Press Ctrl+C to stop the server${NC}"
-echo ""
-
-# Re-enable exit on error for the actual app run
-set -e
-
-# Run streamlit with the app (verbose mode for debugging)
+echo -e "${GREEN}🎬 Starting FastAPI backend at ${API_URL} ...${NC}"
 source .venv/bin/activate
-streamlit run src/clinical_analytics/ui/app.py \
-    --logger.level=info \
-    --server.fileWatcherType=poll
+# Refuse to start if something already answers on the port: the app would talk to it instead.
+# Check IPv6 loopback too: a listener on [::1]:8000 could otherwise sit in front of the backend
+# for any client that resolves "localhost" to ::1.
+if curl -s --max-time 2 "${API_URL}/health" > /dev/null 2>&1 || curl -s -g --max-time 2 "http://[::1]:8000/health" > /dev/null 2>&1; then
+    echo -e "${RED}✗ Another program is already using ${API_URL}.${NC}"
+    echo -e "${YELLOW}   Close it (or the other copy of this app) and run this script again.${NC}"
+    exit 1
+fi
+# Per-launch API token: the backend rejects requests without it (except /health), and the
+# Electron app gets the same value from this environment. A new one is made every launch.
+CLINICAL_ANALYTICS_API_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+if [ -z "$CLINICAL_ANALYTICS_API_TOKEN" ]; then
+    echo -e "${RED}✗ Could not generate the API token${NC}"
+    exit 1
+fi
+export CLINICAL_ANALYTICS_API_TOKEN
+# Ollama was already handled above, so the API's own auto-init stays off here.
+# serve.py runs uvicorn with log_config=None so its access/error logs go through redaction.
+python -m clinical_analytics.api.serve --host 127.0.0.1 --port 8000 --log-level info &
+API_PID=$!
+
+for _ in $(seq 1 60); do
+    if curl -s "${API_URL}/health" > /dev/null 2>&1; then
+        break
+    fi
+    if ! kill -0 "$API_PID" 2>/dev/null; then
+        echo -e "${RED}✗ FastAPI backend exited during startup (see log above)${NC}"
+        exit 1
+    fi
+    sleep 1
+done
+if ! curl -s "${API_URL}/health" > /dev/null 2>&1; then
+    echo -e "${RED}✗ FastAPI backend did not become healthy within 60s${NC}"
+    exit 1
+fi
+# The answer must come from the backend started above, and it must know this launch's token.
+if ! kill -0 "$API_PID" 2>/dev/null; then
+    echo -e "${RED}✗ FastAPI backend exited during startup; another program may hold the port${NC}"
+    exit 1
+fi
+if ! python -m clinical_analytics.api.security verify-health "${API_URL}"; then
+    echo -e "${RED}✗ The server on ${API_URL} is not this launch's backend; not opening the app${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ FastAPI backend ready${NC}"
+
+echo -e "${YELLOW}   Press Ctrl+C to stop${NC}"
+echo ""
+
+if command -v npm >/dev/null 2>&1 && [ -d electron/node_modules ]; then
+    echo -e "${GREEN}🖥  Opening the desktop app (Electron)...${NC}"
+    npm --prefix electron start
+else
+    echo -e "${YELLOW}⚠ Electron dependencies not installed - desktop window not opened.${NC}"
+    echo -e "${CYAN}   Install once with: cd electron && npm ci   then re-run this script.${NC}"
+    echo -e "${CYAN}   The API stays up at ${API_URL} but requires this launch's token.${NC}"
+    echo -e "${CYAN}   For direct API access during development use: make run-api (no token, dev mode).${NC}"
+    wait "$API_PID"
+fi

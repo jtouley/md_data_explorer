@@ -26,6 +26,9 @@ jobs:
       - name: Format Check
         run: make format-check
 
+      - name: No tracked data files
+        run: make check-data
+
       - name: Type Check
         run: make type-check
 
@@ -47,7 +50,9 @@ jobs:
         run: make test-fast
 
   electron-playwright:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which Playwright 1.57 cannot install Chromium on.
+    # Move back to ubuntu-latest when @playwright/test is upgraded to a release that supports it.
+    runs-on: ubuntu-24.04
     needs: quality
     steps:
       - uses: actions/checkout@v4

@@ -2,14 +2,84 @@
  * Electron main process.
  *
  * Handles window creation, lifecycle events, and backend communication.
+ *
+ * Security (docs/security/LOCAL_DATA_SECURITY.md):
+ * - The packaged page is served from the privileged app:// scheme, so it has an exact origin the
+ *   API allows by name (file:// pages send Origin "null", which must never be allowed).
+ * - The per-launch API token goes only to that exact page (or the Vite dev server in dev).
+ * - The window cannot navigate away from the app or open new windows; the renderer is sandboxed.
  */
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain, net, protocol } from 'electron';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import started from 'electron-squirrel-startup';
+import {
+  API_TOKEN_CHANNEL,
+  APP_ENTRY_URL,
+  APP_SCHEME,
+  isTrustedRendererUrl,
+  resolveApiToken,
+  resolveAppFilePath,
+  resolveDevNoAuth,
+} from './apiToken.js';
+
+// Per-launch API token. scripts/run_app.sh generates it and passes it to both the backend and
+// this process (CLINICAL_ANALYTICS_API_TOKEN); started on its own, main generates one. Throws on
+// a weak launcher token.
+const { token: apiToken, source: apiTokenSource } = resolveApiToken(process.env);
+// Explicit developer opt-out: only then may the preload use a backend that does not check tokens.
+const devNoAuth = resolveDevNoAuth(process.env);
+
+const devServerUrl =
+  typeof MAIN_WINDOW_VITE_DEV_SERVER_URL === 'string' && MAIN_WINDOW_VITE_DEV_SERVER_URL
+    ? MAIN_WINDOW_VITE_DEV_SERVER_URL
+    : undefined;
+
+// Must run before the app is ready. standard + secure gives app:// a real origin and lets the page
+// use fetch/CORS like an https page.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
+}
+
+/** Serve the renderer build under app://clinical-analytics/ (no path outside it). */
+function registerAppProtocol() {
+  const rendererRoot = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}`);
+  protocol.handle(APP_SCHEME, (request) => {
+    const file = resolveAppFilePath(request.url, rendererRoot);
+    if (!file) return new Response('Not found', { status: 404 });
+    return net.fetch(pathToFileURL(file).toString());
+  });
+}
+
+/**
+ * Keep a window on the app's own page: no navigation elsewhere, no new windows, no webviews.
+ * @param {Electron.WebContents} contents
+ */
+function lockDownWebContents(contents) {
+  const blockUntrusted = (event, url) => {
+    if (!isTrustedRendererUrl(url, devServerUrl)) {
+      event.preventDefault();
+      console.warn('Blocked navigation away from the app');
+    }
+  };
+  contents.on('will-navigate', blockUntrusted);
+  contents.on('will-redirect', blockUntrusted);
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-attach-webview', (event) => event.preventDefault());
 }
 
 /**
@@ -26,18 +96,17 @@ const createWindow = () => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false, // Required for preload contextBridge
+      sandbox: true, // preload uses only contextBridge + ipcRenderer (bundled, no Node APIs)
+      webviewTag: false,
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  lockDownWebContents(mainWindow.webContents);
 
-  // Load the index.html of the app.
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl);
   } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
-    );
+    mainWindow.loadURL(APP_ENTRY_URL);
   }
 
   // Open DevTools only when explicitly requested (Cmd+Option+I / Ctrl+Shift+I)
@@ -54,7 +123,21 @@ const createWindow = () => {
 // Create window when app is ready
 app.whenReady().then(() => {
   console.log('🚀 Clinical Analytics Electron app starting...');
-  console.log('📡 Backend API URL: http://localhost:8000');
+  console.log('📡 Backend API URL: http://127.0.0.1:8000');
+  console.log(
+    `🔑 API token: ${apiTokenSource === 'env' ? 'from launcher' : 'generated (backend must use the same one)'}` +
+      (devNoAuth ? ' — dev mode: an unauthenticated backend is accepted' : '')
+  );
+
+  if (!devServerUrl) registerAppProtocol();
+
+  // Hand the token only to the app's own page, never to a page it was navigated to.
+  ipcMain.handle(API_TOKEN_CHANNEL, (event) => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url, devServerUrl)) {
+      throw new Error('API token requested by an untrusted page');
+    }
+    return { token: apiToken, devNoAuth };
+  });
 
   createWindow();
 
@@ -75,5 +158,5 @@ app.on('window-all-closed', () => {
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught exception:', error);
+  console.error('Uncaught exception:', error?.message || error);
 });

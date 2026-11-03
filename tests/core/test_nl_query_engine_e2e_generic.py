@@ -8,8 +8,8 @@ These tests are generic and extensible - they test patterns, not specific datase
 
 from unittest.mock import patch
 
+from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
-from clinical_analytics.ui.components.question_engine import AnalysisContext, QuestionEngine
 
 
 class TestE2EQueryParsingAndExecution:
@@ -72,48 +72,6 @@ class TestE2EQueryParsingAndExecution:
             assert any("variables_extracted_post_parse" in str(call) for call in log_info_calls) or any(
                 "query_parse_success" in str(call) for call in log_info_calls
             ), "Should log variable extraction or parse success"
-
-    def test_e2e_query_converts_to_analysis_context(self, mock_semantic_layer):
-        """Test that parsed query converts to AnalysisContext with all required fields."""
-        # Arrange: Create generic semantic layer
-        grouping_col = "Treatment Group"
-        metric_col = "Outcome Score"
-        mock = mock_semantic_layer(
-            columns={
-                "treatment": grouping_col,
-                "treatment_group": grouping_col,
-                "outcome": metric_col,
-                "outcome_score": metric_col,
-            }
-        )
-        mock.get_available_dimensions.return_value = {grouping_col: ["Control", "Intervention"]}
-        mock.get_data_quality_warnings.return_value = []
-
-        query = f"which {grouping_col} had the lowest {metric_col}"
-
-        # Act: Full flow through QuestionEngine
-        with patch("streamlit.text_input", return_value=query):
-            with patch("streamlit.markdown"):
-                with patch("streamlit.expander"):
-                    with patch("streamlit.radio", return_value="Yes, that's correct"):
-                        with patch("clinical_analytics.core.nl_query_config.ENABLE_PROGRESSIVE_FEEDBACK", False):
-                            with patch("clinical_analytics.core.nl_query_config.ENABLE_CLARIFYING_QUESTIONS", False):
-                                with patch("streamlit.spinner"):
-                                    context = QuestionEngine.ask_free_form_question(mock)
-
-                                    # Assert: Context should be complete
-                                    assert context is not None, "Should return AnalysisContext"
-                                    assert context.inferred_intent.value == "compare_groups", (
-                                        "Should be COMPARE_GROUPS intent"
-                                    )
-                                    assert context.primary_variable is not None, "Primary variable should be set"
-                                    assert context.grouping_variable is not None, "Grouping variable should be set"
-                                    assert context.confidence >= 0.75, (
-                                        f"Confidence {context.confidence} should be >= 0.75"
-                                    )
-                                    assert context.is_complete_for_intent(), (
-                                        "Context should be complete for COMPARE_GROUPS analysis"
-                                    )
 
     def test_e2e_query_logging_throughout_process(self, mock_semantic_layer):
         """Test that logging happens at all key steps during query parsing."""

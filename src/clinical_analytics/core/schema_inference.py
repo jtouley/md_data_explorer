@@ -22,6 +22,9 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
+import structlog
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -596,7 +599,7 @@ class SchemaInferenceEngine:
                 try:
                     from langchain_community.document_loaders import PyPDFLoader
                 except ImportError:
-                    print("Warning: LangChain not installed. Install with: uv add langchain langchain-community")
+                    logger.warning("langchain_not_installed", hint="uv add langchain langchain-community")
                     return None
 
                 try:
@@ -604,14 +607,14 @@ class SchemaInferenceEngine:
                     pages = loader.load()
                     full_text = "\n".join([page.page_content for page in pages])
                 except Exception as e:
-                    print(f"Error loading PDF: {e}")
+                    logger.warning("pdf_load_failed", error_type=type(e).__name__)
                     return None
             else:
                 # Text file - read directly
                 try:
                     full_text = source.read_text(encoding="utf-8")
                 except Exception as e:
-                    print(f"Error reading text file: {e}")
+                    logger.warning("text_file_read_failed", error_type=type(e).__name__)
                     return None
         else:
             return None
@@ -674,7 +677,7 @@ class SchemaInferenceEngine:
             return metadata if metadata.column_descriptions else None
 
         except Exception as e:
-            print(f"Error parsing dictionary text: {e}")
+            logger.warning("dictionary_text_parse_failed", error_type=type(e).__name__)
             return None
 
     def parse_dictionary_pdf(self, pdf_path: Path) -> DictionaryMetadata | None:
@@ -700,7 +703,7 @@ class SchemaInferenceEngine:
         try:
             from langchain_community.document_loaders import PyPDFLoader
         except ImportError:
-            print("Warning: LangChain not installed. Install with: uv add langchain langchain-community")
+            logger.warning("langchain_not_installed", hint="uv add langchain langchain-community")
             return None
 
         if not pdf_path.exists():
@@ -771,7 +774,7 @@ class SchemaInferenceEngine:
             return metadata if metadata.column_descriptions else None
 
         except Exception as e:
-            print(f"Error parsing PDF dictionary: {e}")
+            logger.warning("pdf_dictionary_parse_failed", error_type=type(e).__name__)
             return None
 
     def infer_schema_with_dictionary(self, df: pl.DataFrame, dictionary_path: Path | None = None) -> InferredSchema:

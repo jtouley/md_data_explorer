@@ -31,8 +31,8 @@ pre-commit install
 ### Running the Application
 
 ```bash
-# Start the Streamlit app
-streamlit run src/clinical_analytics/ui/app.py
+# Start the API (then: cd electron && npm start)
+make run
 
 # Run tests
 pytest tests/

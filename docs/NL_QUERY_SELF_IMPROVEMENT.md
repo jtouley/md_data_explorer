@@ -120,7 +120,7 @@ STEP 2: IF YES → This is a REFINEMENT
 Each iteration creates a JSON log file:
 
 ```
-/tmp/nl_query_learning/
+<data home>/data/nl_query_learning/   (override with --log-dir; overlay: NL_PROMPT_OVERLAY_PATH)
 ├── iteration_01.json
 ├── iteration_02.json
 └── iteration_03.json

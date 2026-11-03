@@ -15,9 +15,9 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
 
 
 def test_describe_uses_base_view_outcome_not_cohort_alias() -> None:

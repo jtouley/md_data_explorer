@@ -35,7 +35,7 @@ def generate_session_id() -> str:
 
 
 @router.post("/sessions", response_model=schemas.SessionResponse, status_code=status.HTTP_201_CREATED)
-async def create_session(
+def create_session(
     request: schemas.SessionCreate,
     db: Annotated[Session, Depends(get_db)],
 ) -> schemas.SessionResponse:
@@ -98,7 +98,7 @@ async def create_session(
 
 
 @router.get("/sessions/{session_id}", response_model=schemas.SessionResponse)
-async def get_session(
+def get_session(
     session_id: Annotated[str, Path(..., description="Session ID to retrieve")],
     db: Annotated[Session, Depends(get_db)],
 ) -> schemas.SessionResponse:
@@ -153,7 +153,7 @@ async def get_session(
 
 
 @router.get("/sessions", response_model=schemas.SessionListResponse)
-async def list_sessions(
+def list_sessions(
     db: Annotated[Session, Depends(get_db)],
     dataset_id: Annotated[str | None, Query(description="Filter by dataset ID")] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="Max sessions to return")] = 50,
@@ -222,7 +222,7 @@ async def list_sessions(
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_session(
+def delete_session(
     session_id: Annotated[str, Path(..., description="Session ID to delete")],
     db: Annotated[Session, Depends(get_db)],
 ) -> None:

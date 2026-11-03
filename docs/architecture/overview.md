@@ -4,6 +4,8 @@
 **Date:** 2025-12-24
 **Status:** 🎯 Current Architecture + Strategic Direction
 
+For **ports, clients (Streamlit / FastAPI / Electron), and reviewer entry points**, see [As-built architecture (2025-03)](AS_BUILT_ARCHITECTURE.md) and [Module boundaries](ARCHITECTURE_BOUNDARIES.md).
+
 ---
 
 ## 🏗️ System Architecture

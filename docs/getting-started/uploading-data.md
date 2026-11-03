@@ -2,9 +2,13 @@
 
 ## Supported Formats
 
+The desktop app's **Upload dataset** button accepts one file at a time (`ALLOWED_UPLOAD_EXTENSIONS` in `src/clinical_analytics/api/routes/datasets.py`):
+
 - **CSV files** (.csv)
 - **Excel files** (.xlsx, .xls)
-- **ZIP archives** (multiple tables)
+- **SPSS files** (.sav)
+
+To try the app without your own data, click **Load sample** instead. It loads a synthetic sample cohort that ships with the repository (`data/demo/sample_cohort.csv`, no real patients).
 
 ## Data Requirements
 
@@ -56,42 +60,9 @@ Columns with:
 - **Categorical**: <20 unique values or string type
 - **Continuous**: Numeric with >20 unique values
 
-## Upload Types
+## Multi-table datasets
 
-You can upload data in two ways - both work the same way:
-
-### Single File Upload
-
-Upload one CSV or Excel file:
-
-1. **Upload your file**: CSV, Excel, or SPSS format
-2. **Automatic detection**: The platform finds patient IDs, outcomes, and time variables automatically
-3. **Ready to analyze**: Start asking questions immediately
-
-### Multiple Files Upload
-
-For complex datasets with multiple related tables (like MIMIC-IV):
-
-1. **Create a ZIP file** containing all your CSV files
-2. **Upload the ZIP**: The platform automatically detects how tables relate to each other
-3. **Review connections**: Check that the platform correctly identified relationships between tables
-4. **Adjust if needed**: Manually specify connections if auto-detection missed something
-
-### Example: MIMIC-IV
-
-```
-mimic-iv/
-├── patients.csv        (patient_id, gender, age)
-├── admissions.csv      (patient_id, admission_time)
-└── diagnoses.csv       (patient_id, icd_code)
-```
-
-The platform automatically:
-
-1. Finds the patient ID column in each table
-2. Connects tables that share patient IDs
-3. Combines all tables into a single view for analysis
-4. Saves everything so you can analyze it later
+ZIP uploads of several related tables (for example MIMIC-IV extracts) exist in the storage layer but are **not available in the desktop app**: the upload endpoint rejects `.zip`. Join the tables into one file before uploading.
 
 ## Manual Schema Override
 
@@ -102,24 +73,24 @@ If the platform doesn't automatically detect your patient ID, outcomes, or time 
 **Important for your workflow:** Once you upload data, it's saved on your computer. You don't need to re-upload it every time.
 
 - ✅ **Data persists**: Your uploaded datasets are saved and available when you restart the app
-- ✅ **No re-uploading**: Close the browser or restart your computer - your data is still there
+- ✅ **No re-uploading**: Close the app or restart your computer - your data is still there
 - ✅ **Work across sessions**: Upload once, analyze multiple times over days or weeks
-- ✅ **Local storage only**: All data stays on your computer (never sent to external servers)
+- ✅ **Local storage**: Data is kept in a per-user data home on your computer (see below)
 
 **What this means for you:**
 - Upload your dataset once
 - Close the app and come back later - your data is still available
-- Refresh the page - your data doesn't disappear
 - Your analysis history is preserved (coming soon)
 
 ## Data Privacy
 
-**Your data stays on your computer.** The platform runs entirely locally:
+The app runs locally after setup. It is **not a compliance certification**; check your institution's rules before using it with patient data.
 
-- ✅ **Never leaves your computer**: All data processing happens on your machine
-- ✅ **No cloud storage**: Your patient data is never uploaded to external servers
-- ✅ **HIPAA-friendly**: Local-only storage avoids cloud vendor complications
-- ⚠️ **Optional LLM fallback**: If enabled, only anonymized metadata (no patient data) is sent for complex queries
+- **Where data is stored:** a per-user data home outside the repository - macOS `~/Library/Application Support/ClinicalAnalytics`, Windows `%LOCALAPPDATA%\ClinicalAnalytics`, Linux `$XDG_DATA_HOME/clinical-analytics`. Set `CLINICAL_ANALYTICS_DATA_HOME` to change it. See [Installation](installation.md#where-your-data-lives).
+- **Encryption:** the app does not encrypt files at rest. Turn on FileVault (macOS), BitLocker (Windows) or full-disk encryption (Linux).
+- **LLM:** questions the pattern matcher cannot handle go to Ollama at `OLLAMA_BASE_URL` (default `http://localhost:11434`). Prompts can include column names, category labels and summary results, so keep Ollama on your own machine; never point `OLLAMA_BASE_URL` at a remote server.
+- **Small counts:** patient counts from 1 to 10 are shown as `<11` in answers.
+- **Never copy patient files into the repository.** `make check-data` fails if git tracks data files.
 
 ## Troubleshooting
 
@@ -139,15 +110,6 @@ If the platform doesn't automatically detect your patient ID, outcomes, or time 
 - Your outcome columns should be binary (0/1 or Yes/No)
 - If your outcomes are text (like "died"/"alive"), convert them to 0/1 in Excel before uploading
 - Make sure outcome column names contain words like "mortality", "death", "readmission", etc.
-
-### "Failed to join tables"
-
-**Problem:** When uploading multiple tables, the platform can't connect them together.
-
-**Solution:**
-- Make sure all tables have a matching patient ID column (same column name, same values)
-- Check that patient IDs in child tables actually exist in the main patient table
-- Column names are case-sensitive - "Patient_ID" and "patient_id" are treated as different
 
 ## Next Steps
 

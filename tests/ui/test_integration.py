@@ -145,6 +145,10 @@ class TestUIDatasetIntegration:
         # Assert: At least one dataset was tested
         assert tested_count > 0, "No datasets available for testing"
 
+    # test_patient_level_granularity_supported moved to its canonical home:
+    # tests/core/test_dataset_interface.py (dataset-interface contract tests,
+    # not UI-pattern tests — this was an exact duplicate).
+
     @pytest.mark.parametrize("dataset_name", get_sample_datasets())
     @pytest.mark.slow
     @pytest.mark.integration

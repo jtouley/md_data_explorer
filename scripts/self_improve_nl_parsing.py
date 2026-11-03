@@ -19,6 +19,7 @@ import yaml
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from clinical_analytics.core.data_home import nl_learning_dir
 from clinical_analytics.core.eval_harness import EvalHarness
 from clinical_analytics.core.prompt_optimizer import PromptOptimizer
 
@@ -182,8 +183,8 @@ def main():
     parser.add_argument(
         "--log-dir",
         type=Path,
-        default=Path("/tmp/nl_query_learning"),
-        help="Directory for iteration logs",
+        default=nl_learning_dir(),
+        help="Directory for iteration logs (default: <data home>/data/nl_query_learning)",
     )
     args = parser.parse_args()
 
@@ -270,7 +271,7 @@ def main():
             )
 
         # Write overlay atomically (Fix #3)
-        overlay_path = Path(os.getenv("NL_PROMPT_OVERLAY_PATH", "/tmp/nl_query_learning/prompt_overlay.txt"))
+        overlay_path = Path(os.getenv("NL_PROMPT_OVERLAY_PATH") or nl_learning_dir() / "prompt_overlay.txt")
         write_prompt_overlay(prompt_additions, overlay_path)
 
         # Log iteration

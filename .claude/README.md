@@ -9,8 +9,8 @@ This directory contains Claude Code configuration for enforcing quality standard
 ├── settings.json              # Hook configuration
 ├── agents/
 │   ├── code-reviewer.md       # Code review checklist agent (project-native)
-│   ├── _volt-repo-context.md  # Shared stack summary for volt-* agents
-│   └── volt-*.md              # Scrubbed subagents (VoltAgent-derived, repo-tuned)
+│   ├── _mdde-repo-context.md  # Shared stack summary for mdde-* agents
+│   └── mdde-*.md              # Scrubbed subagents (VoltAgent-derived, repo-tuned)
 ├── commands/
 │   ├── code-quality.md        # Quality check command
 │   └── pr-review.md           # PR review command
@@ -42,27 +42,27 @@ Comprehensive code review checklist covering:
 - Polars best practices
 - Style compliance
 
-### volt-* agents (scrubbed from VoltAgent / awesome-claude-code-subagents)
+### mdde-* agents (scrubbed from VoltAgent / awesome-claude-code-subagents)
 
 These are **short, md_data_explorer–specific** prompts derived from the VoltAgent subagent collection: boilerplate JSON “context manager” protocols, generic web-framework advice, and pandas-first data guidance were removed or replaced with Polars, DuckDB/Ibis, `uv`, and `make test-*` conventions.
 
 | Agent | Use when |
 |-------|-----------|
-| `volt-python-pro` | Core Python, Polars, typing, project tooling |
-| `volt-typescript-pro` | Electron/renderer TypeScript, strict IPC typing |
-| `volt-electron-pro` | Electron security, packaging, desktop shell |
-| `volt-data-engineer` | Pipelines, ingestion, semantic layer, data quality |
-| `volt-sql-duckdb` | DuckDB SQL, explain plans, Ibis SQL review |
-| `volt-llm-architect` | NL query / LLM features, safety, evaluation |
-| `volt-qa-expert` | Test strategy, risk-based quality, markers/slow tests |
-| `volt-test-automator` | pytest, fixtures, `assert_frame_equal` |
-| `volt-performance-engineer` | Profiling Polars/DuckDB/UI hot paths |
-| `volt-frontend-developer` | Streamlit + future Electron UI |
-| `volt-fullstack-developer` | End-to-end slices across UI and analytics core |
-| `volt-debugger` | Systematic root-cause and repro |
-| `volt-documentation-engineer` | Docs and onboarding aligned with Makefile |
+| `mdde-python` | Core Python, Polars, typing, project tooling |
+| `mdde-typescript` | Electron/renderer TypeScript, strict IPC typing |
+| `mdde-electron` | Electron security, packaging, desktop shell |
+| `mdde-data` | Pipelines, ingestion, semantic layer, data quality |
+| `mdde-sql` | DuckDB SQL, explain plans, Ibis SQL review |
+| `mdde-llm` | NL query / LLM features, safety, evaluation |
+| `mdde-qa` | Test strategy, risk-based quality, markers/slow tests |
+| `mdde-testing` | pytest, fixtures, `assert_frame_equal` |
+| `mdde-performance` | Profiling Polars/DuckDB/UI hot paths |
+| `mdde-frontend` | Streamlit + future Electron UI |
+| `mdde-fullstack` | End-to-end slices across UI and analytics core |
+| `mdde-debug` | Systematic root-cause and repro |
+| `mdde-docs` | Docs and onboarding aligned with Makefile |
 
-All `volt-*` agents point at **`agents/_volt-repo-context.md`** for shared stack rules.
+All `mdde-*` agents point at **`agents/_mdde-repo-context.md`** for shared stack rules.
 
 Upstream ideas: [VoltAgent/awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents) (Apache-2.0). This repo’s files are adapted prompts, not a copy of the full upstream set.
 
@@ -70,11 +70,11 @@ Upstream ideas: [VoltAgent/awesome-claude-code-subagents](https://github.com/Vol
 
 Cursor loads **Agent Skills** from `~/.cursor/skills/<name>/SKILL.md` (global).
 
-- **`volt-*` + `volt-mdde-context`:** generated from `.claude/agents/volt-*.md` and `_volt-repo-context.md` into `~/.cursor/skills/`.
-- **Packaged skills:** any subdirectory of `.cursor/skills/` that contains `SKILL.md` (e.g. **ship-feature-spec-pr**) is copied to `~/.cursor/skills/` on sync.
+- **`mdde-*` + `mdde-context`:** generated from `.claude/agents/mdde-*.md` and `_mdde-repo-context.md` into `~/.cursor/skills/`.
+- **Packaged skills:** **`~/.cursor/skills/<name>/` is canonical**; optional mirror under `.cursor/skills/<name>/`. **`make cursor-packaged-skills`** diffs/validates; override **`CURSOR_PACKAGED_ARGS`** for pull, push, or promote — see **`.cursor/skills/README.md`**.
 - **`mcp-workbench.md`:** versioned at `.claude/skills-references/mcp-workbench.md` and copied to `~/.cursor/skills/references/` on sync.
 
-Regenerate global skills after editing agents, packaged skills under `.cursor/skills/`, or the MCP reference:
+Regenerate global **mdde-*** / MCP reference after editing agents or `.claude/skills-references/mcp-workbench.md`. Edit packaged skills under `~/.cursor/skills/` (or pull a mirror into `.cursor/skills/` first):
 
 ```bash
 make sync-cursor-skills

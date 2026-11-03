@@ -129,7 +129,7 @@ class TestAnalysisContextQueryPlan:
     def test_analysiscontext_has_query_plan_field(self):
         """Test that AnalysisContext has query_plan field."""
         # Arrange
-        from clinical_analytics.ui.components.question_engine import AnalysisContext
+        from clinical_analytics.core.analysis_types import AnalysisContext
 
         # Act
         context = AnalysisContext()
@@ -141,7 +141,7 @@ class TestAnalysisContextQueryPlan:
     def test_queryplan_can_be_assigned_to_analysiscontext(self, mock_semantic_layer):
         """Test that QueryPlan can be assigned to AnalysisContext."""
         # Arrange
-        from clinical_analytics.ui.components.question_engine import AnalysisContext
+        from clinical_analytics.core.analysis_types import AnalysisContext
 
         engine = NLQueryEngine(mock_semantic_layer)
         intent = QueryIntent(intent_type="COUNT", confidence=0.9)

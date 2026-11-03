@@ -1,13 +1,15 @@
 """Pytest plugin for performance tracking."""
 
-import logging
 import time
 from datetime import datetime
 from pathlib import Path
 
+import structlog
+
 from performance.storage import load_performance_data, save_performance_data
 
-logger = logging.getLogger(__name__)
+# structlog: calls pass key/value fields, which stdlib loggers reject once INFO is enabled.
+logger = structlog.get_logger(__name__)
 
 # Global state for tracking
 _tracking_enabled = False

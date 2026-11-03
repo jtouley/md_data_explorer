@@ -52,7 +52,8 @@ patterns:
 
   # CORRELATIONS patterns
   CORRELATIONS:
-    - pattern: "\\b(correlat|relationship|relate|associat)\\b"
+    # Stems take any suffix: "correlated", "correlation", "associated", "association"
+    - pattern: "\\b(correlat\\w*|relationships?|relate[sd]?|associat\\w*)\\b"
       groups: {}
       confidence: 0.9
 

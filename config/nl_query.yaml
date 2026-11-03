@@ -14,6 +14,10 @@ clarifying_questions_threshold: 0.5  # Below this, ask clarifying questions
 # because semantic match is the minimum confidence for auto-execution
 auto_execute_confidence_threshold: 0.75
 
+# Patient counts from 1 to (this - 1) are shown as "<N" in claims and tables, so small
+# cells cannot identify individuals. 11 follows common clinical data-use agreements.
+small_cell_threshold: 11
+
 # Performance/timeout settings
 tier_timeout_seconds: 5.0  # Fail fast if any tier takes too long
 enable_parallel_tier_matching: false  # Future optimization (not implemented yet)

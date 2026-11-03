@@ -1,0 +1,31 @@
+{
+  "expectations": [
+    {
+      "text": "The plan distinguishes faster tests (unit/integration) from browser E2E responsibilities",
+      "passed": true,
+      "evidence": "§1 Layering table splits pytest vs Playwright concerns (with_skill playwright plan.md)."
+    },
+    {
+      "text": "The plan mentions explicit readiness waits or stable selectors rather than arbitrary sleeps as the default",
+      "passed": true,
+      "evidence": "§4 Flake guardrails: health, frame, locator visibility; avoid arbitrary sleep (with_skill plan.md)."
+    },
+    {
+      "text": "The plan references loading or following a Playwright / webapp-testing style workflow (by name or equivalent: server lifecycle, headless CI)",
+      "passed": true,
+      "evidence": "Explicit webapp-testing skill and with_server.py pattern; sync_playwright (with_skill plan.md §Context, §3)."
+    },
+    {
+      "text": "The plan keeps E2E count intentionally small and high-value",
+      "passed": true,
+      "evidence": "Vertical slice rule and 'One vertical slice first' before NL-query browser flows (with_skill plan.md §1, §Suggested first slice)."
+    },
+    {
+      "text": "The plan mentions deterministic test data or fixtures rather than manual-only setup",
+      "passed": true,
+      "evidence": "Data setup via API/filesystem fixtures before goto; env isolation under tmp_path (with_skill plan.md §1 table, §3)."
+    }
+  ],
+  "summary": {"passed": 5, "failed": 0, "total": 5, "pass_rate": 1.0},
+  "timing": {"total_duration_seconds": 0.0}
+}

@@ -21,6 +21,8 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.core.execution_gate import evaluate_execution_gate
+from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
 from clinical_analytics.core.schema import UnifiedCohort
 
@@ -191,7 +193,6 @@ def _log_ibis_sql_and_optional_explain(ibis_table: Any, duckdb_con: Any) -> None
         max_chars = 8000
 
     truncated = len(sql) > max_chars
-    preview = sql[:max_chars] if truncated else sql
     sql_chars = len(sql)
 
     explain_ms: float | None = None
@@ -209,7 +210,8 @@ def _log_ibis_sql_and_optional_explain(ibis_table: Any, duckdb_con: Any) -> None
         int(truncated),
         "" if explain_ms is None else int(explain_ms),
     )
-    logger.debug("mdde_sql_debug sql_preview=%s", preview)
+    # The SQL text carries filter values, so only its hash is logged (see log_redaction).
+    logger.debug("mdde_sql_debug sql_hash=%s", stable_hash(sql))
 
 
 def _safe_identifier(name: str, max_len: int = 50) -> str:
@@ -744,7 +746,7 @@ class SemanticLayer:
                 sql = query.compile()
             except Exception as e:
                 sql = f"<failed to compile SQL: {e}>"
-            logger.info("Generated SQL for %s:\n%s", dataset_name, sql)
+            logger.info("Generated SQL for %s: sql_chars=%d sql_hash=%s", dataset_name, len(sql), stable_hash(sql))
 
         # Execute query (this is where SQL actually runs)
         result = query.execute()
@@ -987,7 +989,7 @@ class SemanticLayer:
                         label = metric_def.get("label", metric_name)
                         aggs.append(metric_expr.name(label))
                     except ValueError as e:
-                        print(f"Warning: {e}, skipping metric '{metric_name}'")
+                        logger.warning("Skipping metric '%s': %s", metric_name, type(e).__name__)
 
             if dimensions:
                 # Group by dimensions (validate they exist in config)
@@ -997,7 +999,7 @@ class SemanticLayer:
                     if dim in available_dims and dim in view.columns:
                         group_cols.append(dim)
                     else:
-                        print(f"Warning: Dimension '{dim}' not found, skipping")
+                        logger.warning("Dimension '%s' not found, skipping", dim)
 
                 if aggs:
                     result = view.group_by(group_cols).aggregate(aggs)
@@ -1015,7 +1017,8 @@ class SemanticLayer:
 
         if show_sql:
             sql = result.compile()
-            print(f"Generated SQL:\n{sql}\n")
+            # SQL carries filter values: log its size and hash only.
+            logger.info("Generated SQL: sql_chars=%d sql_hash=%s", len(str(sql)), stable_hash(str(sql)))
 
         return result.execute()
 
@@ -1651,34 +1654,34 @@ class SemanticLayer:
             return False
 
     def execute_query_plan(
-        self, plan: "QueryPlan", confidence_threshold: float = 0.75, query_text: str | None = None
+        self,
+        plan: "QueryPlan",
+        confidence_threshold: float = 0.75,
+        query_text: str | None = None,
+        confirmed: bool = False,
     ) -> dict[str, Any]:
         """
-        Execute a QueryPlan with warnings for observability (ADR003 Phase 3 + Phase 2.2).
+        Execute a QueryPlan with pre-execution gate + warnings (ADR003 + issue #52).
 
-        Phase 2.1: Added warnings infrastructure for observability.
-        Phase 2.2: Removed gating logic - always execute, collect warnings only.
-        Phase 2.5.1: Returns step information for progressive thinking indicator (core layer).
-
-        This method no longer blocks execution. Instead, it:
-        - Collects warnings for low confidence, incompleteness, validation issues
-        - Always attempts execution
-        - Returns success=False only for actual execution errors
-        - Returns step information for UI rendering (Phase 2.5.1)
+        Incomplete/invalid plans refuse without a run_key. Complete plans below the
+        confidence threshold hold for confirmation unless ``confirmed=True``.
 
         Args:
             plan: QueryPlan to execute
-            confidence_threshold: Minimum confidence for warning threshold (default: 0.75)
+            confidence_threshold: Minimum confidence for auto-execute (default: 0.75)
             query_text: Optional query text for run_key generation
+            confirmed: When True, release a low-confidence hold
 
         Returns:
             dict with keys:
             - "success": bool - Whether execution succeeded
             - "result": pd.DataFrame | None - Query results if successful
-            - "run_key": str - Deterministic run key for idempotency
+            - "run_key": str - Deterministic run key for idempotency (omitted on hold/refuse)
+            - "requires_confirmation": bool - Present when held for confirmation
+            - "failure_reason": str - Present when held or refused
             - "warnings": list[str] - Warnings collected during execution
-            - "steps": list[dict] - Step information for progressive thinking indicator (Phase 2.5.1)
-            - "chart_spec": dict | None - Chart specification for visualization (Phase 3.3)
+            - "steps": list[dict] - Step information for progressive thinking indicator
+            - "chart_spec": dict | None - Chart specification for visualization
         """
         # Phase 3.2: Log execution start for contract enforcement and observability
         logger.debug(
@@ -1748,11 +1751,29 @@ class SemanticLayer:
             warning_msg = f"Incomplete plan: {completeness_error}"
             warnings.append(warning_msg)
 
-        # Step 4: Validation Check (warning only, no blocking)
+        # Step 4: Validation Check (warning only when gate allows)
         validation_result = self._validate_query_plan(plan)
         if not validation_result["valid"]:
             warning_msg = f"Validation failed: {validation_result['error']}"
             warnings.append(warning_msg)
+
+        decision = evaluate_execution_gate(
+            plan,
+            threshold=confidence_threshold,
+            confirmed=confirmed,
+            is_complete=is_complete,
+            completeness_error=completeness_error or "",
+            validation_valid=bool(validation_result["valid"]),
+            validation_error=str(validation_result.get("error") or ""),
+        )
+        if not decision.allow:
+            return {
+                "success": False,
+                "requires_confirmation": decision.requires_confirmation,
+                "failure_reason": decision.failure_reason,
+                "warnings": warnings,
+                "result": None,
+            }
 
         # Step 5: Validating plan (Phase 2.5.1)
         steps.append(
@@ -1766,7 +1787,7 @@ class SemanticLayer:
             }
         )
 
-        # Step 6: Generate run_key (always generate)
+        # Step 6: Generate run_key (only after gate allows)
         run_key = self._generate_run_key(plan, query_text)
 
         # Phase 3.3: Generate chart_spec from QueryPlan (deterministic, tied to plan)
@@ -1978,9 +1999,8 @@ class SemanticLayer:
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
         if plan.intent == "COUNT":
-            # COUNT requires entity_key OR grouping_variable
-            if not plan.entity_key and not plan.group_by:
-                return False, "COUNT intent requires entity_key or grouping_variable"
+            # A COUNT with neither entity_key nor group_by is a row count ("how many patients?").
+            pass
         elif plan.intent == "DESCRIBE":
             # DESCRIBE requires metric (primary_variable)
             if not plan.metric:
@@ -2027,12 +2047,8 @@ class SemanticLayer:
                     "valid": False,
                     "error": "scope='filtered' requires filters, but no filters provided.",
                 }
-            # Require entity_key or group_by for COUNT
-            if not plan.entity_key and not plan.group_by:
-                return {
-                    "valid": False,
-                    "error": "COUNT intent requires entity_key or group_by. Please specify what to count.",
-                }
+            # A COUNT with neither entity_key nor group_by is a row count.
+            # Completeness still warns; execution is allowed.
 
         # Breakdown validation
         if plan.group_by:

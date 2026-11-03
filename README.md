@@ -1,191 +1,116 @@
 # Clinical Analytics Platform
 
-A multi-dataset clinical analytics platform for processing and analyzing clinical research data from various sources.
+Ask questions about your own clinical dataset in plain English ("compare outcome by diabetes") and get the right statistical analysis back, on your own computer, without writing code.
 
-## Overview
+You upload a CSV, Excel or SPSS file; the app detects patient IDs, outcomes and variable types, picks the analysis (descriptive statistics, group comparisons, survival, regression, correlations) and explains the result. It is a desktop app (Electron) talking to a local Python server (FastAPI) on `127.0.0.1:8000`.
 
-This platform provides a unified interface for loading, processing, and analyzing clinical datasets including:
+## Where your data lives & privacy
 
-- **COVID-MS Dataset**: COVID-19 and multiple sclerosis patient data
-- **Sepsis Dataset**: Sepsis patient cohort data
-- **MIMIC-III** (future): Medical Information Mart for Intensive Care
+The app runs locally after setup. It is **not a compliance certification**: whether you may use it with a given dataset is up to your institution's rules.
 
-The platform harmonizes data from different sources into a unified schema, enabling consistent statistical analysis across datasets.
+- **Your data is stored outside this repository**, in a per-user data home (`src/clinical_analytics/core/data_home.py`):
 
-## Features
+  | OS | Default data home |
+  |----|-------------------|
+  | macOS | `~/Library/Application Support/ClinicalAnalytics` |
+  | Windows | `%LOCALAPPDATA%\ClinicalAnalytics` |
+  | Linux | `$XDG_DATA_HOME/clinical-analytics` (default `~/.local/share/clinical-analytics`) |
 
-- **Extensible Architecture**: Abstract base classes support both file-based (CSV/PSV) and SQL-based (DuckDB/Postgres) backends
-- **Unified Schema**: Standardized cohort representation across different data sources
-- **Statistical Analysis**: Built-in support for logistic regression and other statistical methods
-- **Interactive UI**: Streamlit-based interface for dataset selection and visualization
-- **Agent Orchestration**: Taskmaster-based workflow management
-- **Polars-Optimized**: Fast data loading and transformation (5-10x faster than pandas)
+  Uploads, the analytics database, chat sessions and NL prompt-learning files all go under `<data home>/data/`. Set `CLINICAL_ANALYTICS_DATA_HOME` to use another folder. Set `DATABASE_URL` only if you want chat sessions in a different database (default: SQLite at `<data home>/data/clinical_analytics.db`).
+- **Encrypt the disk.** Data at rest is not encrypted by the app; turn on FileVault (macOS) or BitLocker (Windows), or full-disk encryption on Linux.
+- **Never copy patient files into this repo.** `make check-data` (also part of `make check-fast` and CI) fails if git tracks data files.
+- **The LLM is local.** Harder questions are sent to [Ollama](https://ollama.com) at `OLLAMA_BASE_URL` (default `http://localhost:11434`). Prompts can include column names, category labels and summary results. **Do not point `OLLAMA_BASE_URL` at a remote host** - that would send them off your machine. Without Ollama, simpler questions still work through pattern and embedding matching.
+- **Setup needs the internet; daily use does not.** Installing downloads Python and Node packages, and the first run downloads models: an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`, from `config/ollama.yaml`) and the `all-MiniLM-L6-v2` sentence-transformers model from Hugging Face.
+- **Small counts are suppressed.** Patient counts from 1 to 10 are shown as `<11` in answers (`small_cell_threshold` in `core/config_loader.py`).
 
----
+## Prerequisites
 
-## 📚 User Guide for Non-Technical Users
+- [uv](https://docs.astral.sh/uv/) (it installs a Python between 3.11 and 3.13 for you; `pyproject.toml` requires `>=3.11,<3.14`)
+- Node.js 20 and npm (the version CI uses, `.github/workflows/ci.yml`)
+- `make` (macOS/Linux; see Windows below)
+- Optional: [Ollama](https://ollama.com/download) for questions the pattern matcher cannot handle
 
-### Quick Start
+## Install
 
-#### Step 1: Launch the Application
+```bash
+git clone https://github.com/jtouley/md_data_explorer.git
+cd md_data_explorer
+make install-dev          # uv sync --extra dev --group dev
+cd electron && npm ci && cd ..
+```
 
-**On Mac/Linux:**
+## Launch
+
+**macOS:** one command starts Ollama (installing it with Homebrew if missing), the API and the desktop window:
+
 ```bash
 ./scripts/run_app.sh
 ```
 
-**On Windows:**
+**Linux:** the same script works, but it will not install Ollama for you. Install Ollama from <https://ollama.com/download> first (or skip it), then run `./scripts/run_app.sh`.
+
+**Any OS, two terminals** (this is the Windows path; `run_app.sh` is a bash script):
+
 ```bash
-bash scripts/run_app.sh
+# Terminal 1: the API. On macOS/Linux, `make run` does this and, if Ollama is running, pulls a missing model.
+uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8000
+
+# Terminal 2: the desktop app (needs the API running)
+cd electron
+npm start
 ```
 
-Or if you have the terminal open:
-```bash
-streamlit run src/clinical_analytics/ui/app.py
-```
+On Windows without `make`, install with `uv sync --extra dev --group dev` instead of `make install-dev`, and start Ollama yourself (`ollama serve`, then `ollama pull llama3.1:8b`).
 
-#### Step 2: The application will automatically open in your web browser
+## Your first question
 
-If it doesn't open automatically, look for a message in the terminal like:
-```
-Local URL: http://localhost:8501
-```
+1. In the desktop app, click **Load sample**. This loads a synthetic sample cohort that ships with the repo (`data/demo/sample_cohort.csv`: patient ID, age, sex, diabetes, hypertension and a binary outcome). It contains no real patients.
+2. Ask: `compare outcome by diabetes`
+3. Then try `what predicts outcome`.
 
-Copy and paste that URL into your web browser.
+When you are ready, use **Upload dataset** for your own `.csv`, `.xlsx`, `.xls` or `.sav` file. See [Uploading data](docs/getting-started/uploading-data.md).
 
-### Understanding the Interface
-
-#### 📊 Main Screen
-
-1. **Sidebar (Left)**: This is where you select which dataset to analyze
-   - **COVID-MS**: COVID-19 and Multiple Sclerosis patient data
-   - **Sepsis**: Intensive care unit sepsis data
-   - **MIMIC-III**: Coming soon!
-
-2. **Main Area (Center)**: Shows your data and results
-   - **Dataset Overview**: Summary statistics (number of patients, outcome rates, etc.)
-   - **Data Preview**: First few rows of your data
-   - **Analysis Section**: Where you run statistical analyses
-
-#### 🔍 Running an Analysis
-
-1. **Select Predictor Variables**: Choose which factors you want to analyze
-   - Example: age_group, sex, comorbidities
-   - You can select multiple variables by clicking on them
-
-2. **Click "Run Logistic Regression"**: This button starts the statistical analysis
-   - The analysis shows which factors are associated with the outcome
-   - Results include odds ratios and p-values
-
-3. **View Results**:
-   - **Odds Ratio**: How much a factor increases/decreases risk
-     - > 1.0 = increased risk
-     - < 1.0 = decreased risk
-   - **P-Value**: Statistical significance (< 0.05 is usually significant)
-   - **Confidence Intervals**: Range of plausible values
-
-#### 💾 Export Results (Coming Soon)
-
-Click the "Export Results" button to download your analysis results as:
-- CSV file (for Excel)
-- JSON file (for programmers)
-- PDF report (for presentations)
-
-### Common Questions
-
-**Q: The app won't start. What should I do?**
-A: Make sure you have:
-1. Installed dependencies: `uv sync`
-2. Activated the virtual environment
-3. Python 3.11+ installed
-
-**Q: I see "Data not available" for a dataset. What does that mean?**
-A: The data files for that dataset are not in the `data/raw/` folder. You need to download them first.
-
-**Q: What does "Validation passed with warnings" mean?**
-A: It means the platform works correctly, but some optional datasets aren't available (usually Sepsis data).
-
-**Q: How do I interpret the results?**
-A:
-- Look at the **Odds Ratio** column - this tells you the effect size
-- Check the **P-Value** - values < 0.05 are statistically significant
-- Read the **Confidence Intervals** - narrow intervals mean more precise estimates
-
-**Q: Can I use my own data?**
-A: Yes! You can add custom datasets by:
-1. Creating a new folder in `data/raw/your_dataset/`
-2. Implementing a new dataset class following the examples in `src/clinical_analytics/datasets/`
-3. Adding it to the UI dropdown
-
-### Troubleshooting
+## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| "Port 8501 is already in use" | Another Streamlit app is running. Close it or use `streamlit run --server.port 8502 src/clinical_analytics/ui/app.py` |
-| "Module not found" error | Run `uv sync` to install dependencies |
-| Data not loading | Check that CSV/PSV files are in `data/raw/` folder |
-| Regression fails | Make sure you have at least 10 data points with no missing values |
-| Browser doesn't open | Manually go to http://localhost:8501 |
+| Port 8000 in use | Stop the other process. The desktop app only talks to `127.0.0.1:8000`. |
+| `Module not found` | `make install-dev` |
+| Desktop window shows no data | Check the API is up: `http://127.0.0.1:8000/health` |
+| Complex questions are not understood | Start Ollama; `http://127.0.0.1:8000/health` shows `ollama_reachable` and `ollama_default_model_available` |
 
-### Getting Help
-
-- **Validation Issues**: Run `python scripts/validate_platform.py` to diagnose problems
-- **Technical Documentation**: See `docs/specs/` for detailed specifications
-- **Implementation Status**: See `docs/specs/IMPLEMENTATION_STATUS.md`
-
----
-
-## Installation
-
-This project uses [uv](https://github.com/astral-sh/uv) for dependency management:
+## Developers
 
 ```bash
-uv sync
+make install-dev          # Python deps incl. dev tools
+make test-fast            # Fast tests (matches CI test job)
+make check-fast           # Lint, format check, tracked-data guard (no tests)
+make check                # Lint, format check, type check, tests
+make format && make lint-fix
+make run                  # API at http://127.0.0.1:8000 with --reload (alias of run-api)
 ```
 
-## Project Structure
+Run tests through `make` targets, not `pytest` directly. Extra pytest flags: `make test-ui-serial PYTEST_ARGS='-k foo -xvs'`. See [tests/AGENTS.md](tests/AGENTS.md) and [docs/development/testing.md](docs/development/testing.md). API docs (OpenAPI): `http://127.0.0.1:8000/api/docs`.
+
+Architecture: [As-built architecture](docs/architecture/AS_BUILT_ARCHITECTURE.md) · [Module boundaries](docs/architecture/ARCHITECTURE_BOUNDARIES.md) · [Threat model](docs/security/THREAT_MODEL.md) · [Docs index](docs/index.md)
 
 ```
 src/clinical_analytics/
-├── core/           # Core abstractions and schemas
-├── datasets/       # Dataset-specific implementations
-├── analysis/       # Statistical analysis modules
-└── ui/            # Streamlit user interface
+├── api/            # FastAPI app and routes
+├── core/           # Semantic layer, NL engine, schemas, query service, data home
+├── datasets/       # Uploaded-dataset definitions, registry, bundled sample cohort
+├── analysis/       # Statistical methods
+├── ui/             # Upload storage and enrichment helpers (no UI framework)
+└── storage/        # Shared storage utilities
+electron/           # Desktop shell (Vite + Electron)
+tests/              # Pytest suites (see tests/AGENTS.md)
 ```
 
-## Usage
+## Project history
 
-Run the Streamlit application:
-
-```bash
-./scripts/run_app.sh
-```
-
-## Development
-
-Install development dependencies:
-
-```bash
-uv sync --extra dev
-```
-
-Run tests:
-
-```bash
-pytest
-```
-
-## Requirements
-
-- Python 3.11+
-- pandas
-- duckdb
-- streamlit
-- statsmodels
+- The Streamlit UI was removed in favour of Electron + FastAPI: see the [omnibus spec](docs/specs/omnibus_electron_streamlit_cutover.md).
+- The built-in COVID-MS, Sepsis and MIMIC-III dataset loaders from older docs are gone. The only bundled data is the synthetic sample cohort above; everything else is data you upload. Details: [dataset registry](docs/architecture/dataset-registry.md), [implementation status (historical)](docs/specs/IMPLEMENTATION_STATUS.md).
 
 ## License
 
-This software is licensed under the [MIT License](LICENSE).
-
-Dataset files and user-uploaded content remain under their own licenses and
-terms; the application license does not relicense those materials.
+[MIT](LICENSE). Dataset files and user-uploaded content remain under their own licenses and terms; the application license does not relicense those materials.

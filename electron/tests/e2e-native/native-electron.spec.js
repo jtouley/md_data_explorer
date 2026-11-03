@@ -4,6 +4,9 @@ const { spawn, execFileSync } = require('node:child_process');
 const REPO_ROOT = require('node:path').resolve(__dirname, '..', '..', '..');
 const ELECTRON_ROOT = require('node:path').resolve(REPO_ROOT, 'electron');
 const API_URL = 'http://127.0.0.1:8000/health';
+
+// The harness starts a dev-mode API (no token); the app must be told it may use one.
+process.env.CLINICAL_ANALYTICS_DEV_NO_AUTH = '1';
 const RENDERER_URL = 'http://localhost:5173';
 
 let apiProcess;
@@ -103,7 +106,7 @@ test.describe.serial('Native Electron binary harness', () => {
       startedApiLocally = true;
       apiProcess = startProcess(
         'uv',
-        ['run', 'uvicorn', 'clinical_analytics.api.main:app', '--host', '127.0.0.1', '--port', '8000'],
+        ['run', 'python', '-m', 'clinical_analytics.api.serve', '--host', '127.0.0.1', '--port', '8000'],
         REPO_ROOT,
         'api'
       );

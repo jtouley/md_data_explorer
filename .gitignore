@@ -212,6 +212,8 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .cursor/plans/
+# DuckDB spillover cache for .cursor/skills/read-memories
+.cursor/read-memories/
 
 # Marimo
 marimo/_static/
@@ -225,32 +227,21 @@ __marimo__/
 .DS_Store
 
 # Project Specific
-# Ignore raw data files to avoid committing large datasets
-data/raw/*
-!data/raw/.gitkeep
-
 .context/
 docs/screenshots/
-data/raw/
-data/parquet/
-data/uploads/
-data/uploads/raw/
-data/uploads/metadata/
-data/uploads/parquet/
-data/uploads/raw/
-data/uploads/metadata/
-data/uploads/parquet/
-data/uploads/raw/
-data/uploads/metadata/
-data/uploads/parquet/
 .vscode/settings.json
 
-# Mutation testing workdir
-mutants/
-
-# Runtime data stores can hold patient-level data: never track them
+# Runtime and patient data never belong in git. The app stores it in the per-user
+# data home (src/clinical_analytics/core/data_home.py); scripts/check_no_data_files.py
+# fails CI if any of it is tracked.
 *.duckdb
 *.duckdb.wal
 *.sqlite
 *.sqlite3
 *.parquet
+data/*
+!data/demo/
+!data/dictionaries/
+
+# Mutation testing workdir
+mutants/

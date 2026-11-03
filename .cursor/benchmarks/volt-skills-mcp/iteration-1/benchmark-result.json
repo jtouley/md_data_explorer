@@ -1,0 +1,80 @@
+{
+  "benchmark": "mdde-skills-mcp-structure",
+  "passed": 18,
+  "total": 18,
+  "pass_rate": 1.0,
+  "rows": [
+    {
+      "artifact": "references/mcp-workbench.md exists",
+      "ok": true
+    },
+    {
+      "artifact": "_mdde-repo-context.md \u2192 MCP workbench",
+      "ok": true
+    },
+    {
+      "artifact": "read-memories/SKILL.md \u2192 MCP",
+      "ok": true
+    },
+    {
+      "artifact": "plan-to-pr/SKILL.md \u2192 MCP",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-data/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-debug/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-docs/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-electron/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-frontend/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-fullstack/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-llm/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-context/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-performance/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-python/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-qa/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-sql/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-testing/SKILL.md",
+      "ok": true
+    },
+    {
+      "artifact": "~/.cursor/skills/mdde-typescript/SKILL.md",
+      "ok": true
+    }
+  ]
+}

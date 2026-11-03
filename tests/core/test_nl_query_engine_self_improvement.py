@@ -12,35 +12,25 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 
 class TestPromptOverlayPath:
     """Test overlay path resolution with env var support."""
 
-    @pytest.mark.serial  # Uses shared /tmp/ path - must run serially
-    def test_overlay_path_defaults_to_tmp_directory(self, mock_semantic_layer, tmp_path):
-        """Test that overlay path defaults to /tmp/nl_query_learning/ when no env var set."""
-        # Arrange: Create engine without NL_PROMPT_OVERLAY_PATH env var
+    def test_overlay_path_noEnvVar_defaultsUnderDataHome(self, mock_semantic_layer, tmp_path, monkeypatch):
+        """Overlay is read into the LLM prompt, so it must live in the per-user data home, not /tmp."""
+        # Arrange
+        from clinical_analytics.core.data_home import DATA_HOME_ENV
         from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-        with patch.dict(os.environ, {}, clear=False):
-            # Remove env var if it exists
-            os.environ.pop("NL_PROMPT_OVERLAY_PATH", None)
+        monkeypatch.delenv("NL_PROMPT_OVERLAY_PATH", raising=False)
+        monkeypatch.setenv(DATA_HOME_ENV, str(tmp_path))
+        engine = NLQueryEngine(mock_semantic_layer)
 
-            engine = NLQueryEngine(mock_semantic_layer)
+        # Act
+        overlay_path = engine._prompt_overlay_path()
 
-            # Act: Get overlay path
-            overlay_path = engine._prompt_overlay_path()
-
-            # Assert: Path defaults to /tmp/nl_query_learning/prompt_overlay.txt
-            # (Note: In production this uses /tmp/, but we verify the structure)
-            assert overlay_path == Path("/tmp/nl_query_learning/prompt_overlay.txt")
-            assert str(overlay_path).startswith("/tmp/")
-            assert "prompt_overlay.txt" in str(overlay_path)
-            # Verify it's the expected default structure (not checking exact path to avoid parallel collisions)
-            assert overlay_path.parent.name == "nl_query_learning"
-            assert overlay_path.name == "prompt_overlay.txt"
+        # Assert
+        assert overlay_path == tmp_path.resolve() / "data" / "nl_query_learning" / "prompt_overlay.txt"
 
     def test_overlay_path_respects_env_var_override(self, mock_semantic_layer):
         """Test that NL_PROMPT_OVERLAY_PATH env var overrides default path."""

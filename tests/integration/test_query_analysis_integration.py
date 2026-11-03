@@ -56,7 +56,7 @@ def test_integration_query_to_analysis_descriptiveStats(real_storage, sample_csv
     result_pl = pl.from_pandas(result_pd)
 
     # Create AnalysisContext (required by compute_descriptive_analysis)
-    from clinical_analytics.ui.components.question_engine import AnalysisContext, AnalysisIntent
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
     context = AnalysisContext(
         inferred_intent=AnalysisIntent.DESCRIBE,
