@@ -33,6 +33,15 @@ def nl_engine(mock_semantic_layer):
     return NLQueryEngine(mock_semantic_layer)
 
 
+def _assert_question_redacted(call_kwargs: dict, query: str) -> None:
+    """Log fields carry a hash and length of the question, never its text (fitness review S2)."""
+    assert "query" not in call_kwargs
+    assert "query_hash" in call_kwargs
+    assert call_kwargs["query_len"] == len(query)
+    if query:
+        assert all(query not in str(value) for value in call_kwargs.values())
+
+
 @pytest.mark.slow
 class TestStructuredLogging:
     """Test structured logging with standardized fields."""
@@ -53,10 +62,9 @@ class TestStructuredLogging:
             assert len(start_calls) > 0, "query_parse_start should be logged"
 
             call_kwargs = start_calls[0][1]
-            assert "query" in call_kwargs
+            _assert_question_redacted(call_kwargs, query)
             assert "dataset_id" in call_kwargs
             assert "upload_id" in call_kwargs
-            assert call_kwargs["query"] == query
             assert call_kwargs["dataset_id"] == dataset_id
             assert call_kwargs["upload_id"] == upload_id
 
@@ -76,7 +84,7 @@ class TestStructuredLogging:
             assert len(success_calls) > 0, "query_parse_success should be logged"
 
             call_kwargs = success_calls[0][1]
-            assert "query" in call_kwargs
+            _assert_question_redacted(call_kwargs, query)
             assert "intent" in call_kwargs
             assert "confidence" in call_kwargs
             assert "matched_vars" in call_kwargs
@@ -104,7 +112,7 @@ class TestStructuredLogging:
 
             call_kwargs = error_calls[0][1]
             assert "error_type" in call_kwargs
-            assert "query" in call_kwargs
+            _assert_question_redacted(call_kwargs, query)
             assert "dataset_id" in call_kwargs
             assert "upload_id" in call_kwargs
             assert call_kwargs["error_type"] == "empty_query"
@@ -128,7 +136,7 @@ class TestStructuredLogging:
 
                 call_kwargs = warning_calls[0][1]
                 assert "error_type" in call_kwargs
-                assert "query" in call_kwargs
+                _assert_question_redacted(call_kwargs, query)
                 assert "dataset_id" in call_kwargs
                 assert "upload_id" in call_kwargs
                 assert call_kwargs["error_type"] == "no_intent_found"
@@ -151,8 +159,7 @@ class TestStructuredLogging:
             if failed_calls:
                 call_kwargs = failed_calls[0][1]
                 assert "error_type" in call_kwargs
-                assert "error" in call_kwargs
-                assert "query" in call_kwargs
+                _assert_question_redacted(call_kwargs, query)
                 assert call_kwargs["error_type"] == "semantic_matching_exception"
 
     def test_get_matched_variables_extracts_all_variables(self, nl_engine):
@@ -215,4 +222,4 @@ class TestStructuredLogging:
             call_kwargs = start_calls[0][1]
             assert call_kwargs["dataset_id"] is None
             assert call_kwargs["upload_id"] is None
-            assert call_kwargs["query"] == query
+            _assert_question_redacted(call_kwargs, query)
