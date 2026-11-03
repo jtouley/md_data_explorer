@@ -242,7 +242,15 @@ data/uploads/metadata/
 data/uploads/parquet/
 data/uploads/raw/
 data/uploads/metadata/
-data/uploads/parquet/.vscode/settings.json
+data/uploads/parquet/
+.vscode/settings.json
 
 # Mutation testing workdir
 mutants/
+
+# Runtime data stores can hold patient-level data: never track them
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.parquet
