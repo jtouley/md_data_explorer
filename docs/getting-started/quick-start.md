@@ -11,7 +11,7 @@ Assumes you have done the [Installation](installation.md) steps.
    On Windows (or if you prefer two terminals), start the API and then the desktop app:
 
    ```bash
-   uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8000
+   uv run python -m clinical_analytics.api.serve --port 8000
    cd electron && npm start        # second terminal
    ```
 

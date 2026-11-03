@@ -207,7 +207,8 @@ def prepare_store_for_engine(data_dir: Path, engine: str | None = None) -> Engin
     from clinical_analytics.storage.datastore import exclusive_store  # datastore imports this module
 
     current = engine or duckdb.__version__
-    db_path = data_dir / STORE_FILENAME
+    # Resolved like open_store_connection, so the marker it writes is the one read here.
+    db_path = (data_dir / STORE_FILENAME).resolve()
     if not db_path.exists():
         # No store to restore into: a copy left behind is only a stray copy of patient data.
         with exclusive_store(db_path):

@@ -2342,7 +2342,11 @@ class SemanticLayer:
 
     def _detect_categorical_encoding(self, column: Any) -> bool:
         """
-        Detect if column is categorical (encoded as '1: Yes 2: No' or limited distinct values).
+        Detect if column is categorical: low-cardinality text labelled like '1: Yes 2: No'.
+
+        Whole-number columns with few distinct values (pain 0-10, length of stay, 0/1 outcomes)
+        stay numeric so DESCRIBE reports mean, median and std. A metadata-based categorical rule
+        is a separate change.
 
         Args:
             column: Ibis column expression or column name

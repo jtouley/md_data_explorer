@@ -23,6 +23,7 @@ import uvicorn
 
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
+from clinical_analytics.storage.datastore import StoreInUseError
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
 
 APP_IMPORT_PATH = "clinical_analytics.api.main:app"
@@ -46,6 +47,8 @@ def check_store() -> str | None:
         prepare_store_for_engine(uploads_dir().parent)
     except StoreFormatError as e:
         return str(e)
+    except StoreInUseError:
+        return "The data store is in use by this app. Close every Clinical Analytics window and start it again."
     except OSError as e:
         return f"Could not check the data store before starting ({e.strerror or type(e).__name__})."
     return None

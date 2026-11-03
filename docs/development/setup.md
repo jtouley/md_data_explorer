@@ -238,7 +238,7 @@ pip install --upgrade duckdb
 
 ```bash
 # API-only on another port (the desktop app expects 8000)
-uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8001
+uv run python -m clinical_analytics.api.serve --port 8001
 ```
 
 ### Test Failures
