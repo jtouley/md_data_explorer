@@ -125,6 +125,80 @@ def test_attachCohort_peeledSteps_buildCountWithSteps() -> None:
     assert attached.cohort_steps == [CohortStep("eq", "gender", "Male")]
 
 
+def test_attachCohort_builtIntent_usesConfiguredPatternConfidence() -> None:
+    # Arrange
+    from clinical_analytics.core.nl_query_config import TIER_1_PATTERN_MATCH_THRESHOLD
+
+    peeled = PeelResult(residual="how many patients?", steps=[CohortStep("eq", "gender", "Male")])
+
+    # Act
+    attached = attach_cohort(None, peeled)
+
+    # Assert
+    assert attached.confidence == TIER_1_PATTERN_MATCH_THRESHOLD
+
+
+def test_attachCohort_correlation_setsPredictorVariables() -> None:
+    # Arrange
+    peeled = _peel("what is the correlation between age and ldl?")
+
+    # Act
+    attached = attach_cohort(None, peeled)
+
+    # Assert
+    assert attached.intent_type == "CORRELATIONS"
+    assert sorted(attached.predictor_variables) == ["age", "ldl"]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("remove male patients", id="remove"),
+        pytest.param("exclude the placebo group", id="exclude"),
+        pytest.param("how many patients without placebo?", id="without"),
+        pytest.param("don't want female patients", id="dont_want"),
+    ],
+)
+def test_peelCohort_negatedValue_isNeverBoundAsEquality(query: str) -> None:
+    # Arrange / Act
+    peeled = _peel(query)
+
+    # Assert
+    assert [step for step in peeled.steps if step.op == "eq"] == []
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_code"),
+    [
+        pytest.param("how many patients on statin?", 1, id="affirmative_yes_code"),
+        pytest.param("how many patients not on statin?", 2, id="not_no_code"),
+        pytest.param("how many patients excluding statin users?", 2, id="excluding_no_code"),
+    ],
+)
+def test_peelCohort_codedYesNoColumn_polarityFollowsNegation(query: str, expected_code: int) -> None:
+    # Arrange / Act
+    peeled = _peel(query)
+
+    # Assert
+    assert peeled.steps == [CohortStep("eq", "Statin use 1: Yes 2: No", expected_code)]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("remove control group", id="refinement"),
+        pytest.param("how many patients", id="plain_count"),
+        pytest.param("tell me about the weather", id="unrelated"),
+    ],
+)
+def test_peelCohort_nothingPeeled_residualIsTheQuestionAsAsked(query: str) -> None:
+    # Arrange / Act
+    peeled = _peel(query)
+
+    # Assert
+    assert peeled.residual == query
+
+
 _LAYER_DATA = {"patient_id": [1, 2, 3, 4], "age": [40, 50, 60, 70], "ldl": [100.0, 120.0, 140.0, 160.0]}
 
 
@@ -181,3 +255,16 @@ def test_executeQueryPlan_supportedStep_stillAnswers(make_semantic_layer) -> Non
 
     # Assert
     assert result["success"] is True
+
+
+def test_peelCohort_columnNameInsideStoredValue_isNotAValueFilter() -> None:
+    # Arrange
+    columns = ["patient_id", "Current Regimen"]
+    values: dict[str, list[Any]] = {"patient_id": ["a"], "Current Regimen": ["regimen_1", "regimen_2"]}
+
+    # Act
+    peeled = peel_cohort("what was the most common Current Regimen", columns, lambda column: values[column])
+
+    # Assert
+    assert peeled.steps == []
+    assert peeled.residual == "what was the most common Current Regimen"

@@ -25,7 +25,6 @@ HARD_REFUSED_IDS: frozenset[str] = frozenset(
         "cohort-analytical-021",
         "cohort-analytical-022",
         "cohort-analytical-023",
-        "cohort-analytical-025",
         "cohort-provider-001",
         "cohort-provider-004",
         "cohort-provider-005",

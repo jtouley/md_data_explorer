@@ -32,6 +32,13 @@ _COMPARE_SPLIT = re.compile(
 )
 # Trailing "by <group>": that column is the grouping, never a filter on itself.
 _BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
+# Words that turn "<value>" into "everyone except <value>". Binding the value as an
+# equality would answer for exactly the patients the question excludes.
+_NEGATION = re.compile(
+    r"\b(?:not|remove|removing|exclude|excluding|without|except|drop|omit|other than|get rid of|"
+    r"don'?t want|do not want|no longer)\b",
+    re.IGNORECASE,
+)
 _SEX_WORDS = {"sex", "gender", "woman", "women", "man", "men", "female", "male"}
 _STOP = {
     "the",
@@ -175,6 +182,9 @@ def peel_cohort(
             bound_columns.add(grouping_column)
 
     for column, value, at in value_hits:
+        if _negated(lowered, at):
+            # Leave exclusions to the parser's != / NOT_IN filters; never bind them as ==.
+            continue
         if (
             column in bound_columns
             or (comparing and _is_group(column))
@@ -184,6 +194,10 @@ def peel_cohort(
         overlap = _tokens(str(value)) & _tokens(lowered)
         foreign = name_tokens - _tokens(column)
         if overlap and overlap <= foreign:
+            continue
+        if overlap and overlap <= _tokens(column):
+            # "most common Current Regimen" names the column; "regimen" inside the
+            # stored value "regimen_1" is not a request to filter to that value.
             continue
         steps.append((0, CohortStep("eq", column, value)))
         bound_columns.add(column)
@@ -262,7 +276,9 @@ def peel_cohort(
     visible = text
     for span in hidden:
         visible = re.sub(re.escape(span), " ", visible, count=1, flags=re.IGNORECASE)
-    residual = _cleanup(_drop_tokens(visible, (consumed | _bound_tokens(ordered, columns)) - keep))
+    dropped = (consumed | _bound_tokens(ordered, columns)) - keep
+    # Nothing peeled: the downstream tiers must see the question exactly as asked.
+    residual = text if not hidden and not dropped else _cleanup(_drop_tokens(visible, dropped))
     if rate_column or proportion_column:
         residual = "how many patients?"
     return PeelResult(
@@ -285,15 +301,21 @@ def attach_cohort(intent: Any, peeled: PeelResult) -> Any:
     nothing understood stays unparsed (or low confidence) so it is refused or
     confirmed, never answered as a count of every patient.
     """
+    from clinical_analytics.core.nl_query_config import TIER_1_PATTERN_MATCH_THRESHOLD
+
+    # The peel is a pattern-tier parse: it gets the configured pattern threshold,
+    # never a hand-picked higher confidence (pattern confidence is uncalibrated).
+    pattern_confidence = TIER_1_PATTERN_MATCH_THRESHOLD
     has_structure = bool(peeled.steps or peeled.proportion_column or peeled.rate_column or peeled.force_intent)
-    if (intent is None or intent.confidence < 0.9) and not has_structure:
+    weak = intent is None or intent.confidence < pattern_confidence
+    if weak and not has_structure:
         return intent
-    if intent is None or intent.confidence < 0.9:
+    if weak:
         from clinical_analytics.core.nl_query_engine import QueryIntent
 
         intent = QueryIntent(
             intent_type=peeled.force_intent or "COUNT",
-            confidence=0.95,
+            confidence=pattern_confidence,
             parsing_tier="pattern_match",
         )
     if intent is None:
@@ -311,7 +333,10 @@ def attach_cohort(intent: Any, peeled: PeelResult) -> Any:
     if peeled.locked_group:
         intent.locked_group = peeled.locked_group
         intent.grouping_variable = peeled.locked_group
-    if peeled.force_intent and intent.confidence < 0.9:
+    if peeled.force_intent == "CORRELATIONS" and peeled.locked_metric and peeled.locked_group:
+        # The relationship analysis reads predictor_variables, not metric/group.
+        intent.predictor_variables = [peeled.locked_metric, peeled.locked_group]
+    if peeled.force_intent and intent.confidence < pattern_confidence:
         intent.intent_type = peeled.force_intent
     return intent
 
@@ -459,9 +484,12 @@ def _binary_polarity(
     yes, no = _yes_no_values(column, values)
     if yes is None or no is None:
         return None
-    window = text[max(0, at - 48) : at]
-    want_yes = re.search(r"\bnot\b", window) is None
-    return yes if want_yes else no
+    return no if _negated(text, at) else yes
+
+
+def _negated(text: str, at: int) -> bool:
+    """True when a negation word sits in the few words before position ``at``."""
+    return _NEGATION.search(text[max(0, at - 48) : at]) is not None
 
 
 def _yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:

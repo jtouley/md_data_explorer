@@ -432,6 +432,9 @@ class NLQueryEngine:
             peel_cohort,
         )
 
+        # Outcome logs identify the user's question, not the residual left after the
+        # cohort peel, so parse outcomes can be joined across tiers and runs.
+        self._question_hash: str | None = _stable_hash(query)
         columns = list(self.semantic_layer.get_base_view().columns)
         peeled = peel_cohort(query, columns, lambda column: self._distinct_values(column))
         self._pending_cohort: PeelResult | None = peeled
@@ -494,7 +497,7 @@ class NLQueryEngine:
                         "parse_outcome",
                         tier="tier1",
                         success=True,
-                        query_hash=_stable_hash(query),
+                        query_hash=self._outcome_hash(query),
                     )
                     intent = pattern_intent
                     break  # First tier success, stop trying others
@@ -528,7 +531,7 @@ class NLQueryEngine:
                         "parse_outcome",
                         tier="tier2",
                         success=True,
-                        query_hash=_stable_hash(query),
+                        query_hash=self._outcome_hash(query),
                     )
                     intent = semantic_intent
                     break  # First tier success, stop trying others
@@ -539,7 +542,7 @@ class NLQueryEngine:
                     "parse_outcome",
                     tier="tier3",
                     llm_called=True,
-                    query_hash=_stable_hash(query),
+                    query_hash=self._outcome_hash(query),
                 )
                 llm_intent = self._llm_parse(query, conversation_history=conversation_history)
                 tier_results["llm"] = llm_intent
@@ -898,8 +901,14 @@ class NLQueryEngine:
         if pending is not None:
             intent = attach_cohort(intent, pending)
             self._pending_cohort = None
+        self._question_hash = None
 
         return intent
+
+    def _outcome_hash(self, query: str) -> str:
+        """Hash of the question being parsed (the original text while parse_query runs)."""
+        question_hash = getattr(self, "_question_hash", None)
+        return question_hash if question_hash is not None else _stable_hash(query)
 
     def _get_matched_variables(self, intent: QueryIntent) -> list[str]:
         """Extract matched variables from intent for logging."""
@@ -1875,7 +1884,7 @@ Filter extraction (ADR009 Phase 5):
                     "parse_outcome",
                     tier="tier3",
                     json_parse_success=json_parse_success,
-                    query_hash=_stable_hash(query),
+                    query_hash=self._outcome_hash(query),
                 )
 
             # Phase 5.1: Validate using QueryPlan.from_dict() (raises on invalid schema)
@@ -1905,7 +1914,7 @@ Filter extraction (ADR009 Phase 5):
                         tier="tier3",
                         schema_validate_success=True,
                         final_returned_from_tier3=True,
-                        query_hash=_stable_hash(query),
+                        query_hash=self._outcome_hash(query),
                     )
 
                 return intent
@@ -1930,7 +1939,7 @@ Filter extraction (ADR009 Phase 5):
                             tier="tier3",
                             schema_validate_success=False,
                             final_returned_from_tier3=False,
-                            query_hash=_stable_hash(query),
+                            query_hash=self._outcome_hash(query),
                         )
                     return None
 
@@ -1958,7 +1967,7 @@ Filter extraction (ADR009 Phase 5):
                         tier="tier3",
                         schema_validate_success=True,
                         final_returned_from_tier3=True,
-                        query_hash=_stable_hash(query),
+                        query_hash=self._outcome_hash(query),
                     )
 
                 return intent
@@ -1972,7 +1981,7 @@ Filter extraction (ADR009 Phase 5):
                     "parse_outcome",
                     tier="tier3",
                     json_parse_success=json_parse_success,
-                    query_hash=_stable_hash(query),
+                    query_hash=self._outcome_hash(query),
                 )
 
             logger.warning(
@@ -2263,7 +2272,7 @@ Fix the errors and return a corrected query intent as JSON.
                 "parse_outcome",
                 tier="tier3",
                 llm_http_success=llm_http_success,
-                query_hash=_stable_hash(query),
+                query_hash=self._outcome_hash(query),
             )
 
             if not llm_http_success:
