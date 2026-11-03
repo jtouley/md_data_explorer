@@ -433,6 +433,8 @@ export function isPValueColumn(name) {
  */
 export function formatNumber(value, opts = {}) {
   if (!Number.isFinite(value)) return String(value);
+  // A p-value is never shown as 0 (scipy returns 0.0 for very large effects); check before the integer path.
+  if (opts.pValue && value === 0) return `<${P_FLOOR}`;
   if (Number.isInteger(value)) return String(value);
   const clean = Number(value.toPrecision(12));
   if (opts.pValue) {
@@ -730,7 +732,7 @@ const ENGINE_MESSAGES = [
 
 /** Words that only make sense to the people who built the engine. */
 const ENGINE_JARGON =
-  /\bLLM\b|\b[A-Z]{3,}_[A-Z_]+\b|\b(primary_variable|group_by|grouping_variable|entity_key)\b|\bintent\b|QueryPlan|\bscope=|Traceback|Exception|\bvalidation should\b/;
+  /\bLLM\b|\b[A-Z]{3,}_[A-Z_]+\b|\b(primary_variable|group_by|grouping_variable|entity_key)\b|\bintent requires\b|\b[A-Z]+_?[A-Z]*\s+intent\b|QueryPlan|\bscope=|Traceback|Exception|\b\w+Error:|NoneType|\bactive version schema\b|\bvalidation should\b/;
 
 const GENERIC_ENGINE_MESSAGE =
   'The analysis couldn’t use this question as written. Ask again, naming the columns you mean.';

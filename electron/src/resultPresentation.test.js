@@ -435,7 +435,7 @@ describe('formatNumber', () => {
     [0.0412, { pValue: true }, '0.041'],
     [0.12, { pValue: true, decimals: 1 }, '0.120'],
     [0.001, { pValue: true }, '0.001'],
-    [0, { pValue: true }, '0'],
+    [0, { pValue: true }, '<0.001'],
     [1, { pValue: true }, '1'],
   ])('formatNumber_%s_%o_is_%s', (value, opts, expected) => {
     // Arrange / Act
@@ -729,5 +729,49 @@ describe('buildExampleQuestions', () => {
     const result = buildExampleQuestions(columns, rows, schema);
     // Assert
     expect(result).toEqual([]);
+  });
+});
+
+describe('re-audit follow-ups', () => {
+  it.each([
+    [0, '<0.001'],
+    [0.0, '<0.001'],
+    [1, '1'],
+  ])('formatNumber_pValue_%s_isNeverShownAsZero', (value, expected) => {
+    // Arrange: scipy returns 0.0 for very large effects
+
+    // Act
+    const text = formatNumber(value, { pValue: true });
+
+    // Assert
+    expect(text).toBe(expected);
+  });
+
+  it('plainFailureMessage_realRefusalMentioningIntentToTreat_isKeptAsWritten', () => {
+    // Arrange: a product refusal, not engine jargon
+    const reason =
+      'Patients in the intent-to-treat population could not be listed individually; ask for a count instead.';
+
+    // Act
+    const text = plainFailureMessage(reason);
+
+    // Assert
+    expect(text).toBe(reason);
+  });
+
+  it.each([
+    ["KeyError: 'group_sizes'"],
+    ['polars.exceptions.ColumnNotFoundError: ldl'],
+    ['Unexpected NoneType for plan.metric'],
+    ["Metric column 'x' not in active version schema"],
+    ['DESCRIBE intent needs a metric'],
+  ])('plainFailureMessage_engineText_%s_isNotShownRaw', (raw) => {
+    // Arrange: raw engine/exception text from the reviewer's probes
+
+    // Act
+    const text = plainFailureMessage(raw);
+
+    // Assert
+    expect(text).not.toBe(raw);
   });
 });
