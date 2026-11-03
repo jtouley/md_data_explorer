@@ -17,7 +17,7 @@ Clinical datasets from PhysioNet and similar sources follow a consistent structu
 3. **License Files** - Usage terms and conditions
 4. **Checksums** - File integrity verification
 
-**Note:** Data dictionaries are supplied by the user with their own upload (a PDF, Markdown or text file inside the ZIP, a standalone PDF uploaded alongside the data, or added later to an existing upload). Their extracted text is stored as `doc_context` in the upload's metadata in the per-user data home and stays local; the repo ships no dictionaries.
+**Note:** For how dictionaries are supplied today, see [Data Dictionaries](#data-dictionaries) under Platform Integration.
 
 ---
 
@@ -67,7 +67,7 @@ sepsis/
 │   ├── p000002.psv
 │   └── ...                        # Multiple PSV files (one per patient)
 ├── physionet_challenge_2019_ccm_manuscript.pdf  # Data dictionary & methodology
-├── LICENSE.txt                     # ODbL (Open Database License)
+├── LICENSE.txt                     # CC BY 4.0 License
 └── SHA256SUMS.txt                  # File integrity checksums
 ```
 
@@ -185,7 +185,7 @@ Users working with different datasets see:
 
 Data dictionaries are supplied by the user with their own upload (a PDF, Markdown or text file inside the ZIP, a standalone PDF uploaded alongside the data, or added later to an existing upload). Their extracted text is stored as `doc_context` in the upload's metadata in the per-user data home and stays local; the repo ships no dictionaries.
 
-The PDF dictionaries for the removed built-in datasets (COVID-MS, Sepsis, VAP) were previously kept
+The PDF dictionaries for the removed built-in datasets (COVID-MS, Sepsis) were previously kept
 in `data/dictionaries/`; that folder has been removed and is git-ignored.
 
 ### Current Implementation
@@ -197,7 +197,7 @@ in `data/dictionaries/`; that folder has been removed and is git-ignored.
 - ✅ Data dictionaries can be included in ZIP uploads for RAG context
 
 **Reference Data Dictionaries:**
-- The original PhysioNet project pages (COVID-MS, Sepsis, VAP) remain good examples of comprehensive documentation
+- The original PhysioNet project pages (COVID-MS, Sepsis) remain good examples of comprehensive documentation
 
 ### Future Enhancement: Auto-Parsing
 
@@ -245,7 +245,7 @@ my_dict = parse_data_dictionary("my_dictionary.pdf")
 | **Documentation** | README.txt | PDF manuscript | README.md + PDF |
 | **Structure** | Flat table | Time-series → aggregated | Normalized relational |
 | **Data Dictionary** | In README.txt | In PDF manuscript | Comprehensive in README.md |
-| **License** | CC BY 4.0 | ODbL (Open Database License) | PhysioNet Credentialed Health Data |
+| **License** | CC BY 4.0 | CC BY 4.0 ([PhysioNet](https://physionet.org/content/challenge-2019/1.0.0/)) | PhysioNet Credentialed Health Data |
 | **Checksums** | SHA256SUMS.txt | SHA256SUMS.txt | Included in distribution |
 
 **Common Patterns:**
