@@ -73,13 +73,24 @@ class TestPatternMatchConfigDriven:
         assert result.intent_type == "SURVIVAL"
         assert result.confidence == 0.9
 
-    def test_pattern_match_correlations_keyword_returns_correlations_intent(self, mock_semantic_for_pattern):
-        """Test that correlation patterns return CORRELATIONS intent from config."""
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "what is the relationship between age and bmi",
+            "is age correlated with bmi?",
+            "correlation between age and bmi",
+            "is age associated with bmi",
+            "how is age related to bmi",
+        ],
+        ids=["relationship", "correlated", "correlation", "associated", "related"],
+    )
+    def test_pattern_match_correlations_keyword_returns_correlations_intent(self, mock_semantic_for_pattern, query):
+        """Correlation stems match with any suffix ('correlated', 'associated', ...)."""
         # Arrange
         engine = NLQueryEngine(mock_semantic_for_pattern)
 
         # Act
-        result = engine._pattern_match("what is the relationship between age and bmi")
+        result = engine._pattern_match(query)
 
         # Assert
         assert result is not None
@@ -113,6 +124,30 @@ class TestPatternMatchConfigDriven:
         assert result.intent_type == "FIND_PREDICTORS"
         assert result.primary_variable == "outcome"
         assert result.confidence == 0.95
+
+    @pytest.mark.parametrize(
+        ("query", "expected_predictors"),
+        [
+            ("what predicts outcome", []),
+            ("do age and treatment predict outcome?", ["age", "treatment"]),
+            ("does bmi predict outcome", ["BMI"]),
+        ],
+        ids=["no_predictors_named", "two_predictors", "one_predictor"],
+    )
+    def test_pattern_match_find_predictors_namedVariables_becomePredictors(
+        self, mock_semantic_for_pattern, query, expected_predictors
+    ):
+        """Variables named besides the outcome reach the regression as predictors."""
+        # Arrange
+        engine = NLQueryEngine(mock_semantic_for_pattern)
+
+        # Act
+        result = engine._pattern_match(query)
+
+        # Assert
+        assert result.intent_type == "FIND_PREDICTORS"
+        assert result.primary_variable == "outcome"
+        assert sorted(result.predictor_variables) == sorted(expected_predictors)
 
     def test_pattern_match_describe_average_extracts_variable(self, mock_semantic_for_pattern):
         """Test that 'average X' pattern extracts variable for DESCRIBE."""

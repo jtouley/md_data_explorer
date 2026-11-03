@@ -14,7 +14,6 @@ Example:
     'COMPARE_GROUPS'
 """
 
-import hashlib
 import json
 import os
 import re
@@ -26,6 +25,8 @@ from typing import Any
 import structlog
 
 from clinical_analytics.core.config_loader import load_patterns_config
+from clinical_analytics.core.data_home import nl_learning_dir
+from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 logger = structlog.get_logger()
@@ -41,6 +42,22 @@ VALID_INTENT_TYPES = [
 ]
 
 
+# Former default overlay directory; world-writable, so never read from it.
+LEGACY_OVERLAY_DIR = Path("/tmp/nl_query_learning")
+
+
+def is_legacy_learning_dir(path: Path) -> bool:
+    """True for /tmp/nl_query_learning however it is spelled (symlinks, /private/tmp on macOS)."""
+    candidate = path.expanduser().resolve()
+    legacy = LEGACY_OVERLAY_DIR.resolve()
+    return candidate == legacy or candidate.is_relative_to(legacy)
+
+
+def default_learning_dir() -> Path:
+    """Where prompt-learning files live: the per-user data home, never a shared temp dir."""
+    return nl_learning_dir()
+
+
 def _stable_hash(s: str) -> str:
     """
     Stable hash for metrics (SHA256, not Python's randomized hash()).
@@ -51,7 +68,7 @@ def _stable_hash(s: str) -> str:
     Returns:
         First 12 chars of SHA256 hex digest
     """
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:12]
+    return stable_hash(s)
 
 
 @dataclass(frozen=True)
@@ -225,30 +242,23 @@ class NLQueryEngine:
 
     def _prompt_overlay_path(self) -> Path:
         """
-        Get overlay file path (configurable via env var or config/paths.yaml).
+        Get overlay file path.
 
         Precedence:
         1. NL_PROMPT_OVERLAY_PATH env var (explicit override)
-        2. config/paths.yaml prompt_overlay_dir + prompt_overlay.txt
-        3. Hardcoded default: /tmp/nl_query_learning/prompt_overlay.txt
+        2. <data home>/data/nl_query_learning/prompt_overlay.txt
+
+        The old default, /tmp/nl_query_learning, is world-writable: any local user could plant an
+        overlay that is appended to the LLM's system prompt. An overlay path pointing there is
+        mapped to the data home.
 
         Returns:
             Path to overlay file
         """
-        # Prefer explicit override
         p = os.getenv("NL_PROMPT_OVERLAY_PATH")
-        if p:
+        if p and not is_legacy_learning_dir(Path(p)):
             return Path(p)
-
-        # Use config-driven path from paths.yaml
-        try:
-            from clinical_analytics.core.config_loader import load_paths_config
-
-            paths = load_paths_config()
-            return paths["prompt_overlay_dir"] / "prompt_overlay.txt"
-        except Exception:
-            # Fallback to hardcoded default if config loading fails
-            return Path("/tmp/nl_query_learning/prompt_overlay.txt")
+        return nl_learning_dir() / "prompt_overlay.txt"
 
     def _load_prompt_overlay(self) -> str:
         """
@@ -403,7 +413,8 @@ class NLQueryEngine:
             logger.error(
                 "query_parse_failed",
                 error_type="empty_query",
-                query=query,
+                query_hash=_stable_hash(query),
+                query_len=len(query),
                 dataset_id=dataset_id,
                 upload_id=upload_id,
             )
@@ -419,7 +430,8 @@ class NLQueryEngine:
 
         # Log query parsing start
         log_context = {
-            "query": query,
+            "query_hash": _stable_hash(query),
+            "query_len": len(query),
             "dataset_id": dataset_id,
             "upload_id": upload_id,
         }
@@ -653,7 +665,8 @@ class NLQueryEngine:
             logger.warning(
                 "query_parse_failed",
                 error_type="no_intent_found",
-                query=query,
+                query_hash=_stable_hash(query),
+                query_len=len(query),
                 dataset_id=dataset_id,
                 upload_id=upload_id,
             )
@@ -799,13 +812,18 @@ class NLQueryEngine:
                         valid_regex_filters.append(f)
                     else:
                         invalid_count += 1
-                        logger.debug("regex_filter_validation_failed", filter=f, error=error_msg)
+                        logger.debug(
+                            "regex_filter_validation_failed",
+                            filter_column=f.column,
+                            filter_operator=f.operator,
+                        )
 
                 if invalid_count > 0:
                     intent.confidence = max(0.6, intent.confidence - 0.1 * invalid_count)
                     logger.debug(
                         "regex_filters_invalidated",
-                        query=query,
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                         invalid_count=invalid_count,
                         valid_count=len(valid_regex_filters),
                         confidence=intent.confidence,
@@ -833,7 +851,8 @@ class NLQueryEngine:
             if intent.filters:
                 logger.debug(
                     "filters_extracted_in_parse",
-                    query=query,
+                    query_hash=_stable_hash(query),
+                    query_len=len(query),
                     filter_count=len(intent.filters),
                     intent_type=intent.intent_type,
                 )
@@ -847,14 +866,16 @@ class NLQueryEngine:
                     intent.grouping_variable = grouping_var
                     logger.info(
                         "grouping_extracted_from_compound",
-                        query=query,
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                         grouping_variable=grouping_var,
                         intent_type=intent.intent_type,
                     )
                 else:
                     logger.debug(
                         "grouping_extraction_failed",
-                        query=query,
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                         intent_type=intent.intent_type,
                     )
 
@@ -983,10 +1004,18 @@ class NLQueryEngine:
                     grouping_var=grouping_var,
                 )
 
+                # The FIND_PREDICTORS pattern captures only the outcome; every other variable the
+                # question names ("do age and treatment predict outcome?") is a predictor.
+                predictor_vars: list[str] = []
+                if intent_type == "FIND_PREDICTORS" and primary_var:
+                    mentioned, _ = self._extract_variables_from_query(query_lower)
+                    predictor_vars = [v for v in mentioned if v != primary_var]
+
                 return QueryIntent(
                     intent_type=intent_type,
                     primary_variable=primary_var,
                     grouping_variable=grouping_var,
+                    predictor_variables=predictor_vars,
                     confidence=confidence,
                 )
 
@@ -1248,7 +1277,8 @@ class NLQueryEngine:
                     if requires_context and not has_context:
                         logger.debug(
                             "semantic_match_golden_example_context_mismatch",
-                            query=query[:50],
+                            query_hash=_stable_hash(query),
+                            query_len=len(query),
                             matched_example=golden_ex["query"],
                             similarity=float(best_golden_score),
                             reason="golden_example_requires_context_but_none_provided",
@@ -1260,7 +1290,8 @@ class NLQueryEngine:
                     golden_ex = self._golden_examples[best_golden_idx]
                     logger.debug(
                         "semantic_match_golden_example",
-                        query=query[:50],
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                         matched_example=golden_ex["query"],
                         similarity=float(best_golden_score),
                         intent=golden_ex["expected_intent"],
@@ -1348,7 +1379,8 @@ class NLQueryEngine:
                 "semantic_match_failed",
                 error_type="semantic_matching_exception",
                 error=str(e),
-                query=query,
+                query_hash=_stable_hash(query),
+                query_len=len(query),
             )
             pass
 
@@ -1864,14 +1896,13 @@ Filter extraction (ADR009 Phase 5):
                     "llm_queryplan_validation_failed_trying_legacy_format",
                     error=str(validation_error),
                     error_type=type(validation_error).__name__,
-                    response=response[:200] if len(response) > 200 else response,
                     response_length=len(response),
                     parsed_data_keys=list(data.keys()) if isinstance(data, dict) else None,
                 )
 
                 # Legacy format fallback
                 if "intent_type" not in data:
-                    logger.warning("llm_response_missing_required_fields", response=response[:100])
+                    logger.warning("llm_response_missing_required_fields", response_len=len(response))
                     # Granular instrumentation: tier3 schema_validate_success (failed)
                     if query:
                         logger.info(
@@ -1928,7 +1959,6 @@ Filter extraction (ADR009 Phase 5):
                 "llm_response_parse_failed",
                 error=str(e),
                 error_type=type(e).__name__,
-                response=response[:200] if len(response) > 200 else response,
                 response_length=len(response),
             )
             return None
@@ -1938,7 +1968,6 @@ Filter extraction (ADR009 Phase 5):
                 "llm_response_parse_failed",
                 error=str(e),
                 error_type=type(e).__name__,
-                response=response[:200] if len(response) > 200 else response,
                 response_length=len(response),
             )
             return None
@@ -2032,7 +2061,7 @@ Validate this query intent for type safety. Return JSON:
                     warnings=tuple(result_data.get("warnings", [])),
                 )
             except json.JSONDecodeError:
-                logger.warning("dba_validation_json_parse_failed", response=response[:200])
+                logger.warning("dba_validation_json_parse_failed", response_len=len(response))
                 result = ValidationResult(is_valid=True, errors=(), warnings=("Validation response parse failed",))
 
             # Log observability
@@ -2158,7 +2187,9 @@ Fix the errors and return a corrected query intent as JSON.
 
             # Step 2: Check if Ollama is available
             if client is None or not client.is_available():
-                logger.info("ollama_not_available_fallback_to_stub", query=query)
+                logger.info(
+                    "ollama_not_available_fallback_to_stub", query_hash=_stable_hash(query), query_len=len(query)
+                )
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
             # Step 3: Build RAG context
@@ -2194,14 +2225,13 @@ Fix the errors and return a corrected query intent as JSON.
             if conversation_history:
                 logger.info(
                     "llm_refinement_parsing_started",
-                    query=query,
+                    query_hash=_stable_hash(query),
+                    query_len=len(query),
                     conversation_history_count=len(conversation_history),
-                    previous_query=conversation_history[-1].get("query") if conversation_history else None,
+                    previous_query_hash=_stable_hash(str(conversation_history[-1].get("query") or "")),
                     previous_intent=conversation_history[-1].get("intent") if conversation_history else None,
                     previous_group_by=conversation_history[-1].get("group_by") if conversation_history else None,
-                    previous_filters=conversation_history[-1].get("filters_applied", [])
-                    if conversation_history
-                    else [],
+                    previous_filters_count=len(conversation_history[-1].get("filters_applied") or []),
                 )
 
             # Step 5: Call Ollama with JSON mode
@@ -2217,13 +2247,16 @@ Fix the errors and return a corrected query intent as JSON.
             )
 
             if not llm_http_success:
-                logger.info("ollama_generate_failed_fallback_to_stub", query=query)
+                logger.info(
+                    "ollama_generate_failed_fallback_to_stub", query_hash=_stable_hash(query), query_len=len(query)
+                )
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
             # Log raw LLM response for debugging
             logger.debug(
                 "llm_raw_response_received",
-                query=query,
+                query_hash=_stable_hash(query),
+                query_len=len(query),
                 response_length=len(response),
                 response_preview=response[:200] if len(response) > 200 else response,
                 has_conversation_history=bool(conversation_history),
@@ -2245,7 +2278,8 @@ Fix the errors and return a corrected query intent as JSON.
                         intent.intent_type = previous_intent
                         logger.info(
                             "refinement_intent_corrected",
-                            query=query,
+                            query_hash=_stable_hash(query),
+                            query_len=len(query),
                             llm_intent=intent.intent_type,
                             corrected_intent=previous_intent,
                         )
@@ -2254,7 +2288,8 @@ Fix the errors and return a corrected query intent as JSON.
                         intent.grouping_variable = previous_group_by
                         logger.info(
                             "refinement_group_by_preserved",
-                            query=query,
+                            query_hash=_stable_hash(query),
+                            query_len=len(query),
                             previous_group_by=previous_group_by,
                         )
                     # Preserve previous metric if LLM didn't set it
@@ -2262,13 +2297,15 @@ Fix the errors and return a corrected query intent as JSON.
                         intent.primary_variable = previous_metric
                         logger.info(
                             "refinement_metric_preserved",
-                            query=query,
+                            query_hash=_stable_hash(query),
+                            query_len=len(query),
                             previous_metric=previous_metric,
                         )
 
                 logger.info(
                     "llm_refinement_parsing_completed",
-                    query=query,
+                    query_hash=_stable_hash(query),
+                    query_len=len(query),
                     extracted_intent=intent.intent_type,
                     extracted_group_by=intent.grouping_variable,
                     extracted_filters_count=len(intent.filters),
@@ -2279,20 +2316,21 @@ Fix the errors and return a corrected query intent as JSON.
                     group_by_matches_previous=intent.grouping_variable == previous_group_by
                     if previous_group_by
                     else None,
-                    filters_extracted=[
-                        {"column": f.column, "operator": f.operator, "value": f.value} for f in intent.filters
-                    ],
+                    extracted_filter_columns=[f.column for f in intent.filters],
                 )
 
             if intent is None:
-                logger.info("llm_parse_extraction_failed_fallback_to_stub", query=query)
+                logger.info(
+                    "llm_parse_extraction_failed_fallback_to_stub", query_hash=_stable_hash(query), query_len=len(query)
+                )
                 # Try fallback refinement handler if conversation history exists
                 if conversation_history and len(conversation_history) > 0:
                     fallback_intent = self._handle_refinement_fallback(query, conversation_history)
                     if fallback_intent:
                         logger.info(
                             "refinement_fallback_handler_success",
-                            query=query,
+                            query_hash=_stable_hash(query),
+                            query_len=len(query),
                             intent_type=fallback_intent.intent_type,
                             confidence=fallback_intent.confidence,
                         )
@@ -2355,7 +2393,8 @@ Fix the errors and return a corrected query intent as JSON.
                     logger.info(
                         "dba_validation_failed_retrying",
                         errors=dba_result.errors,
-                        query=query,
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                     )
                     corrected_intent = self._retry_with_dba_feedback_llm(
                         query, list(dba_result.errors), conversation_history
@@ -2364,7 +2403,8 @@ Fix the errors and return a corrected query intent as JSON.
             else:
                 logger.debug(
                     "multi_layer_validation_skipped",
-                    query=query,
+                    query_hash=_stable_hash(query),
+                    query_len=len(query),
                     reason="enable_multi_layer_validation=False",
                 )
 
@@ -2374,7 +2414,8 @@ Fix the errors and return a corrected query intent as JSON.
                     "llm_parse_low_confidence_fallback_to_stub",
                     confidence=intent.confidence,
                     threshold=TIER_3_MIN_CONFIDENCE,
-                    query=query,
+                    query_hash=_stable_hash(query),
+                    query_len=len(query),
                 )
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
@@ -2383,7 +2424,8 @@ Fix the errors and return a corrected query intent as JSON.
                 "llm_parse_success",
                 intent_type=intent.intent_type,
                 confidence=intent.confidence,
-                query=query,
+                query_hash=_stable_hash(query),
+                query_len=len(query),
             )
             return intent
 
@@ -2394,7 +2436,8 @@ Fix the errors and return a corrected query intent as JSON.
                 "llm_parse_exception_fallback_to_stub",
                 error_type=type(e).__name__,
                 error=str(e),
-                query=query,
+                query_hash=_stable_hash(query),
+                query_len=len(query),
             )
             return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
 
@@ -3273,9 +3316,10 @@ Fix the errors and return a corrected query intent as JSON.
 
         logger.debug(
             "filters_extracted",
-            query=query,
+            query_hash=_stable_hash(query),
+            query_len=len(query),
             filter_count=len(deduplicated_filters),
-            filters=[{"column": f.column, "operator": f.operator, "value": f.value} for f in deduplicated_filters],
+            filter_columns=[f.column for f in deduplicated_filters],
         )
 
         return deduplicated_filters
@@ -3323,7 +3367,8 @@ Fix the errors and return a corrected query intent as JSON.
                 if column_name and conf > 0.5:
                     logger.debug(
                         "grouping_extracted_broken_down",
-                        query=query,
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                         group_phrase=group_phrase,
                         column_name=column_name,
                         confidence=conf,
@@ -3335,7 +3380,8 @@ Fix the errors and return a corrected query intent as JSON.
                     if column_name:
                         logger.debug(
                             "grouping_extracted_broken_down_partial",
-                            query=query,
+                            query_hash=_stable_hash(query),
+                            query_len=len(query),
                             group_phrase=group_phrase,
                             column_name=column_name,
                         )
@@ -3392,7 +3438,8 @@ Fix the errors and return a corrected query intent as JSON.
                 if column_name:
                     logger.debug(
                         "grouping_extracted",
-                        query=query,
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                         group_phrase=group_phrase,
                         column_name=column_name,
                         confidence=0.7,
@@ -3409,7 +3456,8 @@ Fix the errors and return a corrected query intent as JSON.
             if column_name and conf > 0.5:
                 logger.debug(
                     "grouping_extracted_fallback",
-                    query=query,
+                    query_hash=_stable_hash(query),
+                    query_len=len(query),
                     group_phrase=group_phrase,
                     column_name=column_name,
                     confidence=conf,
@@ -3421,7 +3469,8 @@ Fix the errors and return a corrected query intent as JSON.
                 if column_name:
                     logger.debug(
                         "grouping_extracted_fallback_partial",
-                        query=query,
+                        query_hash=_stable_hash(query),
+                        query_len=len(query),
                         group_phrase=group_phrase,
                         column_name=column_name,
                     )

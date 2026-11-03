@@ -241,7 +241,7 @@ class ColumnMapper:
                             f"{type(e).__name__}: {str(e)}"
                         )
                         filter_type = type(filter_value[0]) if filter_value else "empty"
-                        logger.error(f"Filter values: {filter_value[:10]}... (type: {filter_type})")
+                        logger.error(f"Filter values: {len(filter_value)} values (type: {filter_type})")
                         raise
 
             elif filter_type == "range":

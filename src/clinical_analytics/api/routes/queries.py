@@ -6,6 +6,7 @@ Endpoints:
 - GET /api/queries/{query_id}/stream - SSE stream for real-time updates
 """
 
+import asyncio
 import json
 from typing import Annotated, Any
 
@@ -14,10 +15,11 @@ import structlog
 from fastapi import APIRouter, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 
+from clinical_analytics.api.dependencies import get_semantic_layer
 from clinical_analytics.api.models.schemas import QueryRequest, QueryResponse, QueryResult
-from clinical_analytics.api.services.query_service import AsyncQueryService
+from clinical_analytics.api.services.query_service import UNEXPECTED_FAILURE_MESSAGE, AsyncQueryService
+from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -32,64 +34,36 @@ class DataFrameEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-# Cache for dataset semantic layers (keyed by dataset_id)
-_semantic_layers: dict[str, SemanticLayer] = {}
+# Cache for dataset query services (keyed by dataset_id). Semantic layer
+# caching itself lives in api.dependencies.get_semantic_layer — shared with
+# any other route that needs a per-dataset SemanticLayer, rather than each
+# route keeping its own divergent cache.
 _query_services: dict[str, AsyncQueryService] = {}
 
 
-def get_semantic_layer_for_dataset(dataset_id: str) -> SemanticLayer:
-    """Get or create SemanticLayer for a specific dataset.
+def get_query_service_for_dataset(dataset_id: str) -> AsyncQueryService:
+    """Get or create AsyncQueryService for a specific dataset.
 
-    Uses the same pattern as the Streamlit UI:
-    1. UploadedDatasetFactory.create_dataset(upload_id)
-    2. dataset.load()
-    3. dataset.get_semantic_layer()
-
-    Args:
-        dataset_id: Dataset identifier (upload_id for uploaded datasets)
-
-    Returns:
-        SemanticLayer configured for the dataset
+    The service is rebuilt whenever the shared semantic layer cache hands back a different
+    instance (e.g. after invalidate_semantic_layer_cache), so it never queries a stale layer.
 
     Raises:
-        ValueError: If dataset not found
+        HTTPException: 404 if the dataset doesn't exist (raised by get_semantic_layer).
     """
-    if dataset_id in _semantic_layers:
-        logger.debug("semantic_layer_cache_hit", dataset_id=dataset_id)
-        return _semantic_layers[dataset_id]
+    semantic_layer: SemanticLayer = get_semantic_layer(dataset_id)
+    cached = _query_services.get(dataset_id)
+    if cached is not None and cached.semantic_layer is semantic_layer:
+        return cached
 
-    logger.info("semantic_layer_loading", dataset_id=dataset_id)
-
-    try:
-        dataset = UploadedDatasetFactory.create_dataset(dataset_id)
-        dataset.load()
-        semantic_layer: SemanticLayer = dataset.get_semantic_layer()
-
-        _semantic_layers[dataset_id] = semantic_layer
-        logger.info("semantic_layer_loaded", dataset_id=dataset_id, dataset_name=dataset.name)
-        return semantic_layer
-
-    except ValueError as e:
-        logger.error("dataset_not_found", dataset_id=dataset_id, error=str(e))
-        raise
-    except FileNotFoundError as e:
-        logger.error("dataset_file_not_found", dataset_id=dataset_id, error=str(e))
-        raise ValueError(f"Dataset file not found: {e}") from e
-    except Exception as e:
-        logger.error("semantic_layer_init_failed", dataset_id=dataset_id, error=str(e))
-        raise ValueError(f"Failed to load dataset '{dataset_id}': {e}") from e
-
-
-def get_query_service_for_dataset(dataset_id: str) -> AsyncQueryService:
-    """Get or create AsyncQueryService for a specific dataset."""
-    if dataset_id in _query_services:
-        return _query_services[dataset_id]
-
-    semantic_layer = get_semantic_layer_for_dataset(dataset_id)
     service = AsyncQueryService(semantic_layer)
     _query_services[dataset_id] = service
     logger.info("query_service_created", dataset_id=dataset_id)
     return service
+
+
+def forget_query_service(dataset_id: str) -> bool:
+    """Drop a dataset's query service and with it every in-memory result, event and history."""
+    return _query_services.pop(dataset_id, None) is not None
 
 
 # ============================================================================
@@ -137,12 +111,16 @@ async def submit_query(
     )
 
     try:
-        query_service = get_query_service_for_dataset(request.dataset_id)
+        # Building a semantic layer reads the store (and may wait for its lock): not on the loop.
+        query_service = await asyncio.to_thread(get_query_service_for_dataset, request.dataset_id)
 
         query_id = await query_service.submit_query(
             query=request.query_text,
             dataset_id=request.dataset_id,
             session_id=request.session_id,
+            context=request.context,
+            confirmed=request.confirmed,
+            confirm_plan_line=request.confirm_plan_line,
         )
 
         return QueryResponse(
@@ -229,6 +207,10 @@ async def get_query_result(
         follow_up_suggestions=result.follow_ups,
         error=result.error,
         execution_time_ms=None,
+        claim=result.claim,
+        requires_confirmation=result.requires_confirmation,
+        failure_reason=result.failure_reason,
+        plan_line=result.plan_line,
     )
 
 
@@ -255,8 +237,8 @@ async def generate_sse_events(
             yield data_line
 
     except Exception as e:
-        logger.error("sse_stream_error", query_id=query_id, error=str(e))
-        error_data = {"event": "query_failed", "error": str(e)}
+        logger.error("sse_stream_error", query_id=query_id, **error_fields(e))
+        error_data = {"event": "query_failed", "error": UNEXPECTED_FAILURE_MESSAGE}
         yield f"data: {json.dumps(error_data)}\n\n"
 
 

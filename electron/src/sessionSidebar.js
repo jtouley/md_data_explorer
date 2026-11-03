@@ -94,6 +94,7 @@ export function renderSessionList(container, sessions, activeSessionId, handlers
     delBtn.className = 'btn-session-delete';
     delBtn.textContent = '✕';
     delBtn.title = 'Delete session';
+    delBtn.setAttribute('aria-label', 'Delete session');
     delBtn.dataset.testid = 'session-delete';
     delBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -103,6 +104,15 @@ export function renderSessionList(container, sessions, activeSessionId, handlers
 
     li.addEventListener('click', () => {
       handlers.onSelect(String(s.session_id));
+    });
+    // Keyboard: the row is focusable and opens on Enter or Space.
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+    li.addEventListener('keydown', (e) => {
+      if (e.target === li && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        handlers.onSelect(String(s.session_id));
+      }
     });
 
     container.appendChild(li);

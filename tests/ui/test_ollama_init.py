@@ -17,7 +17,7 @@ class TestOllamaAutoDownload:
     def test_ensure_models_downloaded_auto_downloads_when_missing(self):
         """Test that missing models are automatically downloaded."""
         # Arrange: Mock manager with no models available
-        with patch("clinical_analytics.ui.ollama_init.get_ollama_manager") as mock_manager_fn:
+        with patch("clinical_analytics.core.ollama_init.get_ollama_manager") as mock_manager_fn:
             mock_manager = MagicMock()
             mock_manager_fn.return_value = mock_manager
 
@@ -33,11 +33,11 @@ class TestOllamaAutoDownload:
             mock_manager.default_model = "llama3.1:8b"
 
             # Mock subprocess to prevent actual download
-            with patch("clinical_analytics.ui.ollama_init.subprocess.run") as mock_run:
+            with patch("clinical_analytics.core.ollama_init.subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
 
                 # Act: Call ensure_models_downloaded
-                from clinical_analytics.ui.ollama_init import ensure_models_downloaded
+                from clinical_analytics.core.ollama_init import ensure_models_downloaded
 
                 ensure_models_downloaded()
 
@@ -51,7 +51,7 @@ class TestOllamaAutoDownload:
     def test_ensure_models_downloaded_returns_ready_when_models_exist(self):
         """Test that no download occurs when models already exist."""
         # Arrange: Mock manager with models already available
-        with patch("clinical_analytics.ui.ollama_init.get_ollama_manager") as mock_manager_fn:
+        with patch("clinical_analytics.core.ollama_init.get_ollama_manager") as mock_manager_fn:
             mock_manager = MagicMock()
             mock_manager_fn.return_value = mock_manager
 
@@ -63,9 +63,9 @@ class TestOllamaAutoDownload:
                 "default_model": "llama3.1:8b",
             }
 
-            with patch("clinical_analytics.ui.ollama_init.subprocess.run") as mock_run:
+            with patch("clinical_analytics.core.ollama_init.subprocess.run") as mock_run:
                 # Act
-                from clinical_analytics.ui.ollama_init import ensure_models_downloaded
+                from clinical_analytics.core.ollama_init import ensure_models_downloaded
 
                 result = ensure_models_downloaded()
 
@@ -76,7 +76,7 @@ class TestOllamaAutoDownload:
     def test_ensure_models_downloaded_tries_fallback_on_default_failure(self):
         """Test that fallback model is tried if default fails."""
         # Arrange
-        with patch("clinical_analytics.ui.ollama_init.get_ollama_manager") as mock_manager_fn:
+        with patch("clinical_analytics.core.ollama_init.get_ollama_manager") as mock_manager_fn:
             mock_manager = MagicMock()
             mock_manager_fn.return_value = mock_manager
 
@@ -91,7 +91,7 @@ class TestOllamaAutoDownload:
             mock_manager.default_model = "llama3.1:8b"
             mock_manager.fallback_model = "llama3.2:3b"
 
-            with patch("clinical_analytics.ui.ollama_init.subprocess.run") as mock_run:
+            with patch("clinical_analytics.core.ollama_init.subprocess.run") as mock_run:
                 # First call raises exception (default fails), second succeeds (fallback)
                 from subprocess import CalledProcessError
 
@@ -101,7 +101,7 @@ class TestOllamaAutoDownload:
                 ]
 
                 # Act
-                from clinical_analytics.ui.ollama_init import ensure_models_downloaded
+                from clinical_analytics.core.ollama_init import ensure_models_downloaded
 
                 ensure_models_downloaded()
 
@@ -116,9 +116,9 @@ class TestOllamaInitializationStatus:
         """Test that initialization shows helpful message during download."""
         # Arrange: subprocess is patched so the test never runs a real `ollama pull` (multi-GB download)
         with (
-            patch("clinical_analytics.ui.ollama_init.get_ollama_manager") as mock_manager_fn,
+            patch("clinical_analytics.core.ollama_init.get_ollama_manager") as mock_manager_fn,
             patch(
-                "clinical_analytics.ui.ollama_init.subprocess.run",
+                "clinical_analytics.core.ollama_init.subprocess.run",
                 side_effect=subprocess.CalledProcessError(1, ["ollama", "pull"]),
             ),
         ):
@@ -135,22 +135,48 @@ class TestOllamaInitializationStatus:
             mock_manager.default_model = "llama3.1:8b"
             mock_manager.fallback_model = "llama3.2:3b"
 
-            # Missing CLI must not crash startup; the status message still explains the gap.
-            with patch("clinical_analytics.ui.ollama_init.subprocess.run") as mock_run:
+            # Act
+            from clinical_analytics.core.ollama_init import initialize_ollama
+
+            result = initialize_ollama()
+
+            # Assert: Should indicate models need to be downloaded
+            assert not result["ready"]
+            assert "download" in result["message"].lower() or "model" in result["message"].lower()
+
+    def test_initialize_ollama_missing_cli_does_not_crash_startup(self):
+        """Missing CLI must not crash startup; the status message still explains the gap."""
+        # Arrange
+        with patch("clinical_analytics.core.ollama_init.get_ollama_manager") as mock_manager_fn:
+            mock_manager = MagicMock()
+            mock_manager_fn.return_value = mock_manager
+
+            mock_manager.get_status.return_value = {
+                "installed": True,
+                "running": True,
+                "ready": False,
+                "available_models": [],
+                "default_model": "llama3.1:8b",
+            }
+            mock_manager.default_model = "llama3.1:8b"
+            mock_manager.fallback_model = "llama3.2:3b"
+
+            with patch("clinical_analytics.core.ollama_init.subprocess.run") as mock_run:
                 mock_run.side_effect = FileNotFoundError(2, "No such file or directory", "ollama")
 
-                from clinical_analytics.ui.ollama_init import initialize_ollama
+                # Act
+                from clinical_analytics.core.ollama_init import initialize_ollama
 
                 result = initialize_ollama()
 
-            # Assert: Should indicate models need to be downloaded
+            # Assert: Should indicate models need to be downloaded, not crash
             assert not result["ready"]
             assert "download" in result["message"].lower() or "model" in result["message"].lower()
 
     def test_initialize_ollama_returns_ready_when_models_available(self):
         """Test that initialization returns ready status when models exist."""
         # Arrange
-        with patch("clinical_analytics.ui.ollama_init.get_ollama_manager") as mock_manager_fn:
+        with patch("clinical_analytics.core.ollama_init.get_ollama_manager") as mock_manager_fn:
             mock_manager = MagicMock()
             mock_manager_fn.return_value = mock_manager
 
@@ -162,7 +188,7 @@ class TestOllamaInitializationStatus:
             }
 
             # Act
-            from clinical_analytics.ui.ollama_init import initialize_ollama
+            from clinical_analytics.core.ollama_init import initialize_ollama
 
             result = initialize_ollama()
 

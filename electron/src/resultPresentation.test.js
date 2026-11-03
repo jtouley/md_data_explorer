@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCompletionMessage,
+  buildConfirmationHoldPresentation,
   buildQueryCompletedPresentation,
   extractTableFromResultPreview,
   normalizeIntentType,
@@ -134,8 +135,107 @@ describe('buildQueryCompletedPresentation', () => {
   });
 });
 
+describe('buildQueryCompletedPresentation with API claim', () => {
+  const claimPreview = {
+    analysis_type: 'comparison',
+    claim:
+      'Mean ldl was 16.14 lower in drug than in placebo (95% CI -18.83 to -13.44; t-test p<0.001; n=300).',
+    table: {
+      columns: ['treatment', 'mean ldl', 'n'],
+      rows: [
+        { treatment: 'drug', 'mean ldl': 113.96, n: 160 },
+        { treatment: 'placebo', 'mean ldl': 130.09, n: 140 },
+      ],
+    },
+    row_count: 2,
+  };
+
+  it('leads with the claim and keeps the statistics table', () => {
+    const pres = buildQueryCompletedPresentation('compare_groups', claimPreview);
+    expect(pres.content).toBe('Group comparison');
+    expect(pres.result.summary).toBe(claimPreview.claim);
+    expect(pres.result.table).toEqual(claimPreview.table);
+  });
+
+  it('falls back to a generic heading for an unknown intent', () => {
+    const pres = buildQueryCompletedPresentation('mystery', {
+      claim: 'Total count: 3.',
+      table: null,
+    });
+    expect(pres.content).toBe('Analysis complete.');
+    expect(pres.result.summary).toBe('Total count: 3.');
+  });
+
+  it('ignores an empty claim and uses the row-count message', () => {
+    const pres = buildQueryCompletedPresentation('count', {
+      claim: '',
+      table: { columns: ['n'], rows: [{ n: 1 }] },
+    });
+    expect(pres.content).toBe('Counts: 1 row (preview)');
+  });
+});
+
 describe('buildCompletionMessage', () => {
   it('uses row count when table present', () => {
     expect(buildCompletionMessage('describe', 5, true)).toMatch(/5 rows/);
+  });
+});
+
+describe('buildQueryCompletedPresentation claim-first', () => {
+  it('prefers claim arg over preview and attaches claim on result', () => {
+    const claim = 'Mean ldl was 5.0 higher in Female than Male.';
+    const pres = buildQueryCompletedPresentation(
+      'compare_groups',
+      { table: { columns: ['g'], rows: [{ g: 1 }] }, row_count: 1 },
+      claim
+    );
+    expect(pres.content).toBe('Group comparison');
+    expect(pres.result?.summary).toBe(claim);
+    expect(pres.result?.claim).toBe(claim);
+  });
+});
+
+describe('buildConfirmationHoldPresentation', () => {
+  it('surfaces plan line and pending query for Confirm', () => {
+    const hold = buildConfirmationHoldPresentation(
+      {
+        plan_line:
+          'COMPARE_GROUPS · outcome ldl · grouping sex · filters none · test group comparison',
+        failure_reason: 'Confirmation required before execution.',
+        confidence: 0.4,
+      },
+      'compare ldl by sex'
+    );
+    expect(hold.result.awaitingConfirmation).toBe(true);
+    expect(hold.result.pendingQuery).toBe('compare ldl by sex');
+    expect(hold.result.planLine).toContain('COMPARE_GROUPS');
+    expect(hold.content).toContain('Confirmation required');
+  });
+
+  it('keeps the plan line out of the message text so it renders once', () => {
+    const hold = buildConfirmationHoldPresentation(
+      {
+        plan_line: 'DESCRIBE · outcome age',
+        failure_reason: 'Confirmation required before execution.',
+      },
+      'average age'
+    );
+    expect(hold.content).toBe('Confirmation required before execution.');
+    expect(hold.content).not.toContain('DESCRIBE');
+  });
+
+  it('records the dataset and session the plan was held for', () => {
+    const hold = buildConfirmationHoldPresentation({ plan_line: 'p' }, 'q', {
+      datasetId: 'ds_a',
+      sessionId: 'sess_1',
+    });
+    expect(hold.result.datasetId).toBe('ds_a');
+    expect(hold.result.sessionId).toBe('sess_1');
+  });
+
+  it('leaves the binding empty when none is given', () => {
+    const hold = buildConfirmationHoldPresentation({ plan_line: 'p' }, 'q');
+    expect(hold.result.datasetId).toBeNull();
+    expect(hold.result.sessionId).toBeNull();
   });
 });

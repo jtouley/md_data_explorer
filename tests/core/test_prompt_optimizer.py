@@ -464,3 +464,49 @@ def test_optimizer_analyze_failures_with_none_intent_filters_none_values(sample_
     fix_text = invalid_patterns[0].suggested_fix
     assert "FILTER_OUT" in fix_text
     assert "None" not in fix_text  # None should be filtered out
+
+
+@pytest.mark.parametrize("configured", [None, "/tmp/nl_query_learning", "/tmp/nl_query_learning/sub", "symlink"])
+def test_promptOptimizer_logDirUnsetOrLegacyTmp_usesDataHome(sample_learning_config, tmp_path, monkeypatch, configured):
+    """Learning logs hold failed questions; shared /tmp (however spelled) is never used."""
+    # Arrange
+    from clinical_analytics.core import nl_query_engine
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("CLINICAL_ANALYTICS_DATA_HOME", str(home))
+    if configured == "symlink":
+        legacy = tmp_path / "legacy_tmp" / "nl_query_learning"
+        legacy.mkdir(parents=True)
+        monkeypatch.setattr(nl_query_engine, "LEGACY_OVERLAY_DIR", legacy)
+        link = tmp_path / "link"
+        link.symlink_to(legacy, target_is_directory=True)
+        configured = str(link)
+    sample_learning_config.logging_config = {} if configured is None else {"log_dir": configured}
+
+    # Act
+    optimizer = PromptOptimizer(config=sample_learning_config)
+
+    # Assert
+    assert optimizer.log_dir == home.resolve() / "data" / "nl_query_learning"
+    assert optimizer.log_dir.is_dir()
+
+
+def test_overlayPath_envVarPointsAtLegacyTmpViaSymlink_mappedToDataHome(mock_semantic_layer, tmp_path, monkeypatch):
+    """/private/tmp on macOS, or any symlink to the legacy dir, is still the legacy dir."""
+    # Arrange
+    from clinical_analytics.core import nl_query_engine
+
+    legacy = tmp_path / "private_tmp" / "nl_query_learning"
+    legacy.mkdir(parents=True)
+    link = tmp_path / "tmp_link"
+    link.symlink_to(legacy, target_is_directory=True)
+    monkeypatch.setattr(nl_query_engine, "LEGACY_OVERLAY_DIR", legacy)
+    monkeypatch.setenv("CLINICAL_ANALYTICS_DATA_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("NL_PROMPT_OVERLAY_PATH", str(link / "prompt_overlay.txt"))
+    engine = nl_query_engine.NLQueryEngine(mock_semantic_layer)
+
+    # Act
+    overlay = engine._prompt_overlay_path()
+
+    # Assert
+    assert overlay == (tmp_path / "home").resolve() / "data" / "nl_query_learning" / "prompt_overlay.txt"

@@ -7,7 +7,7 @@
 ## Assumptions (default)
 
 - Operator runs the app on a **workstation or controlled network** they administer.
-- **No authentication** is enforced by default on Streamlit or local FastAPI (see todo 003).
+- Local FastAPI requires a per-launch bearer token and a loopback `Host` when started through `scripts/run_app.sh`; `make run-api` is unauthenticated dev mode. Streamlit has no authentication (see todo 003 and [LOCAL_DATA_SECURITY.md](LOCAL_DATA_SECURITY.md)).
 - **CORS and bind addresses** are developer-friendly; harden before any network exposure.
 
 ## Risk register (summary)
@@ -29,7 +29,7 @@ Detailed write-ups remain in `docs/todos/` for history and acceptance criteria.
 
 ## Electron-specific notes
 
-- Preload bridges the renderer to **local HTTP** (`VITE_API_URL`, often `http://localhost:8000`). Treat preload surface area as **security-sensitive** (expose only required IPC).
+- Preload bridges the renderer to **local HTTP** (`VITE_API_URL`, default `http://127.0.0.1:8000`; never `localhost`, which may resolve to `::1`). Treat preload surface area as **security-sensitive** (expose only required IPC).
 - Main process settings (for example `contextIsolation`, `sandbox`) are product decisions; document changes in an ADR when you change them.
 
 ## Tracking

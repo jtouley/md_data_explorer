@@ -15,11 +15,11 @@ class TestVectorizedOperations:
 
     def test_odds_ratio_calculation_uses_vectorized_operations(self):
         """Test that odds ratio calculation uses np.exp directly, not apply(lambda)."""
-        # Arrange: Create test data with good separation
+        # Arrange: Overlapping (non-separable) data so the odds ratio is finite
         df = pd.DataFrame(
             {
-                "outcome": [0, 0, 0, 1, 1, 1],
-                "predictor": [1, 2, 3, 4, 5, 6],  # Good separation
+                "outcome": [0, 0, 1, 0, 1, 0, 1, 1, 0, 1],
+                "predictor": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
             }
         )
 

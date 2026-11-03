@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Path as FastAPIPath
 from pydantic import BaseModel, Field
 
+from clinical_analytics.core.data_home import uploads_dir
+from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.metadata_patch import MetadataPatch
 from clinical_analytics.core.overlay_store import OverlayStore
 from clinical_analytics.ui.components.enrichment_integration import EnrichmentService
@@ -24,7 +26,10 @@ from clinical_analytics.ui.components.enrichment_integration import EnrichmentSe
 router = APIRouter()
 logger = structlog.get_logger()
 
-DEFAULT_OVERLAY_DIR = Path("data/uploads/metadata")
+
+def default_overlay_dir() -> Path:
+    """Overlay base dir: upload metadata in the per-user data home."""
+    return uploads_dir() / "metadata"
 
 
 class PendingSuggestion(BaseModel):
@@ -109,7 +114,7 @@ class AcceptRejectResponse(BaseModel):
 
 def get_overlay_store() -> OverlayStore:
     """Get or create OverlayStore instance."""
-    return OverlayStore(base_dir=DEFAULT_OVERLAY_DIR)
+    return OverlayStore(base_dir=default_overlay_dir())
 
 
 def get_dataset_version(
@@ -167,7 +172,7 @@ def _patch_to_history_item(patch: MetadataPatch) -> PatchHistoryItem:
     "/datasets/{dataset_id}/enrichments/pending",
     response_model=PendingResponse,
 )
-async def get_pending_suggestions(
+def get_pending_suggestions(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     enrichment_service: Annotated[EnrichmentService, Depends(get_enrichment_service)],
     dataset_version: Annotated[str, Depends(get_dataset_version)],
@@ -192,7 +197,7 @@ async def get_pending_suggestions(
     "/datasets/{dataset_id}/enrichments/{patch_id}/accept",
     response_model=AcceptRejectResponse,
 )
-async def accept_suggestion(
+def accept_suggestion(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     patch_id: Annotated[str, FastAPIPath(..., description="Patch ID")],
     request: AcceptRequest,
@@ -219,7 +224,7 @@ async def accept_suggestion(
             message="Suggestion accepted",
         )
     except Exception as e:
-        logger.warning("enrichments_accept_failed", error=str(e))
+        logger.warning("enrichments_accept_failed", **error_fields(e))
         return AcceptRejectResponse(
             success=False,
             message=f"Failed to accept suggestion: {e}",
@@ -230,7 +235,7 @@ async def accept_suggestion(
     "/datasets/{dataset_id}/enrichments/{patch_id}/reject",
     response_model=AcceptRejectResponse,
 )
-async def reject_suggestion(
+def reject_suggestion(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     patch_id: Annotated[str, FastAPIPath(..., description="Patch ID")],
     request: RejectRequest,
@@ -257,7 +262,7 @@ async def reject_suggestion(
             message="Suggestion rejected",
         )
     except Exception as e:
-        logger.warning("enrichments_reject_failed", error=str(e))
+        logger.warning("enrichments_reject_failed", **error_fields(e))
         return AcceptRejectResponse(
             success=False,
             message=f"Failed to reject suggestion: {e}",
@@ -268,7 +273,7 @@ async def reject_suggestion(
     "/datasets/{dataset_id}/enrichments/{patch_id}/revert",
     response_model=AcceptRejectResponse,
 )
-async def revert_accepted_suggestion(
+def revert_accepted_suggestion(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     patch_id: Annotated[str, FastAPIPath(..., description="Patch ID")],
     request: RevertRequest,
@@ -295,7 +300,7 @@ async def revert_accepted_suggestion(
             message="Patch reverted",
         )
     except ValueError as e:
-        logger.warning("enrichments_revert_failed", error=str(e))
+        logger.warning("enrichments_revert_failed", **error_fields(e))
         return AcceptRejectResponse(
             success=False,
             message=f"Failed to revert patch: {e}",
@@ -306,7 +311,7 @@ async def revert_accepted_suggestion(
     "/datasets/{dataset_id}/enrichments/history",
     response_model=PatchHistoryResponse,
 )
-async def get_patch_history(
+def get_patch_history(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     overlay_store: Annotated[OverlayStore, Depends(get_overlay_store)],
     dataset_version: Annotated[str, Depends(get_dataset_version)],
@@ -332,7 +337,7 @@ async def get_patch_history(
     response_model=GenerateResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def generate_suggestions(
+def generate_suggestions(
     dataset_id: Annotated[str, FastAPIPath(..., description="Dataset ID")],
     request: GenerateRequest,
     enrichment_service: Annotated[EnrichmentService, Depends(get_enrichment_service)],

@@ -13,12 +13,101 @@ Deferred to Phase 5+: Table deduplication, storage optimization, compression.
 
 import logging
 import re
+import threading
+import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import duckdb
 import polars as pl
 
 logger = logging.getLogger(__name__)
+
+# One process-wide registry of open connections to the persistent store. Every connection to
+# analytics.duckdb goes through open_store_connection so a purge (which rewrites and swaps the
+# file) can refuse to run while any connection is open: writes through a connection to the old
+# file would otherwise be lost silently. _STORE_LOCK is held by a purge for the whole rewrite,
+# so opening a connection waits for it, but only up to STORE_LOCK_TIMEOUT_S; then the caller
+# gets StoreBusyError (a plain "try again" for the user) instead of hanging. Closing only takes
+# the small registry lock, so a close (or a garbage-collection finalizer) never waits on a purge.
+STORE_LOCK_TIMEOUT_S = 15.0
+_STORE_LOCK = threading.RLock()
+_REGISTRY_LOCK = threading.Lock()
+_open_store_connections: dict[Path, int] = {}
+
+STORE_BUSY_MESSAGE = "The data store is busy (a dataset is being deleted). Try again in a moment."
+
+
+class StoreInUseError(RuntimeError):
+    """The persistent store has open connections, so it cannot be rewritten now."""
+
+
+class StoreBusyError(StoreInUseError):
+    """The store lock could not be taken in time (a purge or another rewrite is running)."""
+
+
+def _store_key(db_path: Path | str) -> Path:
+    return Path(db_path).resolve()
+
+
+@contextmanager
+def _store_lock(timeout_s: float | None) -> Iterator[None]:
+    if not _STORE_LOCK.acquire(timeout=STORE_LOCK_TIMEOUT_S if timeout_s is None else timeout_s):
+        raise StoreBusyError(STORE_BUSY_MESSAGE)
+    try:
+        yield
+    finally:
+        _STORE_LOCK.release()
+
+
+def open_connection_count(db_path: Path | str) -> int:
+    with _REGISTRY_LOCK:
+        return _open_store_connections.get(_store_key(db_path), 0)
+
+
+def open_store_connection(
+    db_path: Path | str, read_only: bool = False, timeout_s: float | None = None
+) -> duckdb.DuckDBPyConnection:
+    """Open a registered connection; close it with close_store_connection (or use store_connection)."""
+    key = _store_key(db_path)
+    with _store_lock(timeout_s):
+        conn = duckdb.connect(str(key), read_only=read_only)
+        with _REGISTRY_LOCK:
+            _open_store_connections[key] = _open_store_connections.get(key, 0) + 1
+    return conn
+
+
+def close_store_connection(db_path: Path | str, conn: duckdb.DuckDBPyConnection) -> None:
+    key = _store_key(db_path)
+    try:
+        conn.close()
+    finally:
+        with _REGISTRY_LOCK:
+            remaining = _open_store_connections.get(key, 0) - 1
+            if remaining > 0:
+                _open_store_connections[key] = remaining
+            else:
+                _open_store_connections.pop(key, None)
+
+
+@contextmanager
+def store_connection(db_path: Path | str, read_only: bool = False) -> Iterator[duckdb.DuckDBPyConnection]:
+    conn = open_store_connection(db_path, read_only=read_only)
+    try:
+        yield conn
+    finally:
+        close_store_connection(db_path, conn)
+
+
+@contextmanager
+def exclusive_store(db_path: Path | str, timeout_s: float | None = None) -> Iterator[None]:
+    """Hold the store lock with no other registered connection open (raises StoreInUseError)."""
+    with _store_lock(timeout_s):
+        count = open_connection_count(db_path)
+        if count > 0:
+            raise StoreInUseError(f"{count} connection(s) to the data store are open")
+        yield
 
 
 def _sanitize_table_name(name: str) -> str:
@@ -72,9 +161,12 @@ class DataStore:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create persistent connection
-        self.conn = duckdb.connect(str(self.db_path))
-        logger.info(f"Initialized DataStore with persistent DuckDB at {self.db_path}")
+        # Create persistent connection (registered, so a purge cannot swap the file under it).
+        # The finalizer releases the registration even if a caller forgets close(), once the
+        # object is garbage-collected, so a leaked DataStore cannot block deletes forever.
+        self.conn = open_store_connection(self.db_path)
+        self._finalizer = weakref.finalize(self, close_store_connection, self.db_path, self.conn)
+        logger.info("Initialized DataStore with the persistent DuckDB store")
 
     def save_table(
         self,
@@ -208,7 +300,8 @@ class DataStore:
                     # Now we have: {upload_id}_{sanitized_table_name}
                     # Upload_id format: user_upload_YYYYMMDD_HHMMSS_8charhash
                     # Use regex to match the complete upload_id pattern
-                    upload_id_pattern = r"^user_upload_\d{8}_\d{6}_[a-f0-9]{8}"
+                    # Current ids: user_upload_<uuid4 hex>; older ids: user_upload_<date>_<time>_<hash>
+                    upload_id_pattern = r"^user_upload_(?:[a-f0-9]{32}|\d{8}_\d{6}_[a-f0-9]{8})"
                     match = re.match(upload_id_pattern, without_version)
                     if match:
                         upload_id = match.group(0)
@@ -270,7 +363,7 @@ class DataStore:
         # Export using DuckDB's COPY TO (efficient, uses compression)
         self.conn.execute(f"COPY {qualified_name} TO '{parquet_path}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
 
-        logger.info(f"Exported table '{qualified_name}' to Parquet: {parquet_path}")
+        logger.info(f"Exported table '{qualified_name}' to Parquet")
         return parquet_path
 
     @staticmethod
@@ -295,11 +388,18 @@ class DataStore:
 
         # Use pl.scan_parquet() for true lazy IO (deferred read)
         lazy_df = pl.scan_parquet(parquet_path)
-        logger.debug(f"Loaded Parquet file as LazyFrame: {parquet_path}")
+        logger.debug(f"Loaded Parquet file as LazyFrame: {Path(parquet_path).name}")
         return lazy_df
 
     def close(self) -> None:
-        """Close DuckDB connection."""
-        if self.conn:
-            self.conn.close()
-            logger.debug(f"Closed DuckDB connection to {self.db_path}")
+        """Close DuckDB connection (idempotent)."""
+        if self._finalizer.alive:
+            self._finalizer()
+            logger.debug("Closed DuckDB connection to the data store")
+        self.conn = None  # type: ignore[assignment]
+
+    def __enter__(self) -> "DataStore":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()

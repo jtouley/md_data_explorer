@@ -27,6 +27,9 @@ CLARIFYING_QUESTIONS_THRESHOLD: float = _config["clarifying_questions_threshold"
 # because semantic match is the minimum confidence for auto-execution
 AUTO_EXECUTE_CONFIDENCE_THRESHOLD: float = _config["auto_execute_confidence_threshold"]
 
+# Small-cell suppression for displayed patient counts
+SMALL_CELL_THRESHOLD: int = int(_config["small_cell_threshold"])
+
 # Performance/timeout settings
 TIER_TIMEOUT_SECONDS: float = _config["tier_timeout_seconds"]
 ENABLE_PARALLEL_TIER_MATCHING: bool = _config["enable_parallel_tier_matching"]

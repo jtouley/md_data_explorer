@@ -14,6 +14,7 @@ from typing import Any
 import structlog
 
 from clinical_analytics.core.llm_feature import LLMFeature, call_llm
+from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.nl_query_config import LLM_TIMEOUT_FILTER_EXTRACTION_S, LLM_TIMEOUT_MAX_S
 from clinical_analytics.core.query_plan import FilterSpec
 
@@ -215,7 +216,8 @@ Return JSON with "filters" array. Use EXACT column names from the list above."""
     if result.error or result.payload is None:
         logger.debug(
             "filter_extraction_llm_failed",
-            query=query[:100],  # Truncate for logging
+            query_hash=stable_hash(query),
+            query_len=len(query),
             error=result.error,
             timed_out=result.timed_out,
         )
@@ -223,13 +225,14 @@ Return JSON with "filters" array. Use EXACT column names from the list above."""
 
     # Extract filters from payload
     if not isinstance(result.payload, dict):
-        logger.warning("filter_extraction_invalid_payload_type", query=query[:100])
+        logger.warning("filter_extraction_invalid_payload_type", query_hash=stable_hash(query), query_len=len(query))
         return [], 0.0, []
     filters_data = result.payload.get("filters", [])
     if not isinstance(filters_data, list):
         logger.warning(
             "filter_extraction_invalid_payload",
-            query=query[:100],
+            query_hash=stable_hash(query),
+            query_len=len(query),
             payload_type=type(filters_data).__name__,
         )
         return [], 0.0, []
@@ -265,9 +268,9 @@ Return JSON with "filters" array. Use EXACT column names from the list above."""
     if validation_failures:
         logger.warning(
             "filter_extraction_validation_failures",
-            query=query[:100],
+            query_hash=stable_hash(query),
+            query_len=len(query),
             failure_count=len(validation_failures),
-            failures=validation_failures,
         )
         # Reduce confidence: -0.1 per invalid filter
         # confidence_delta is already negative (accumulated from -0.1 per failure)
@@ -283,7 +286,8 @@ Return JSON with "filters" array. Use EXACT column names from the list above."""
 
     logger.debug(
         "filter_extraction_completed",
-        query=query[:100],
+        query_hash=stable_hash(query),
+        query_len=len(query),
         valid_count=len(valid_filters),
         invalid_count=len(validation_failures),
         confidence_delta=confidence_delta,

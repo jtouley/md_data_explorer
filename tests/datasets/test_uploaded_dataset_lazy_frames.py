@@ -64,42 +64,83 @@ def create_upload(upload_storage, sample_upload_df, sample_upload_metadata):
 class TestGetUploadDataLazy:
     """Tests for get_upload_data() with lazy parameter."""
 
-    def test_get_upload_data_lazy_true_returns_lazy_frame(self, upload_storage, create_upload, sample_upload_df):
-        """Test that lazy=True returns Polars LazyFrame."""
+    @pytest.mark.parametrize(
+        "lazy_kwargs", [{"lazy": True}, {"lazy": False}, {}], ids=["lazy_true", "lazy_false", "default"]
+    )
+    def test_get_upload_data_anyLazyFlag_returnsLazyFrame(
+        self, upload_storage, create_upload, sample_upload_df, lazy_kwargs
+    ):
+        """The lazy flag is kept for compatibility only; every path returns a LazyFrame."""
         # Arrange
         upload_id = create_upload("test_lazy_upload")
 
         # Act
-        result = upload_storage.get_upload_data(upload_id, lazy=True)
+        result = upload_storage.get_upload_data(upload_id, **lazy_kwargs)
 
         # Assert
         assert isinstance(result, pl.LazyFrame), f"Expected LazyFrame, got {type(result)}"
-        collected = result.collect()
-        plt.assert_frame_equal(collected, sample_upload_df)
+        plt.assert_frame_equal(result.collect(), sample_upload_df)
 
-    def test_get_upload_data_lazy_false_returns_pandas_dataframe(self, upload_storage, create_upload):
-        """Test that lazy=False returns pandas DataFrame for backward compatibility."""
-        # Arrange
-        upload_id = create_upload("test_eager_upload")
+
+class TestGetUploadDataSource:
+    """Which file get_upload_data() reads, and legacy migration under concurrent reads."""
+
+    @pytest.mark.parametrize(
+        ("tables", "expect_parquet"),
+        [(["only_table"], True), (["first_table", "second_table"], False)],
+        ids=["single_table_prefers_parquet", "multi_table_reads_unified_cohort"],
+    )
+    def test_get_upload_data_parquetPresent_readsUnifiedCohortUnlessSingleTable(
+        self, upload_storage, create_upload, sample_upload_df, tmp_path, tables, expect_parquet
+    ):
+        # Arrange: the parquet holds a different frame than the unified-cohort CSV
+        source_table = sample_upload_df.head(1)
+        parquet_path = tmp_path / f"{tables[0]}.parquet"
+        source_table.write_parquet(parquet_path)
+        (upload_storage.raw_dir / "test_source_upload_tables").mkdir()
+        upload_id = create_upload(
+            "test_source_upload",
+            metadata_overrides={
+                "tables": tables,
+                "migrated_to_v2": True,
+                "parquet_paths": {tables[0]: str(parquet_path)},
+            },
+        )
 
         # Act
-        result = upload_storage.get_upload_data(upload_id, lazy=False)
+        result = upload_storage.get_upload_data(upload_id).collect()
 
         # Assert
-        assert isinstance(result, pd.DataFrame), f"Expected pandas DataFrame, got {type(result)}"
-        assert list(result.columns) == ["patient_id", "outcome", "age"]
-        assert len(result) == 3
+        expected = source_table if expect_parquet else sample_upload_df
+        plt.assert_frame_equal(result, expected, check_dtypes=False)
 
-    def test_get_upload_data_default_lazy_true(self, upload_storage, create_upload):
-        """Test that default behavior is lazy=True."""
+    def test_get_upload_data_concurrentLegacyReads_migrateOnce(self, upload_storage, create_upload, monkeypatch):
         # Arrange
-        upload_id = create_upload("test_default_lazy")
+        import threading
+        import time
+
+        from clinical_analytics.ui.storage import user_datasets
+
+        upload_id = create_upload("test_concurrent_legacy")
+        calls: list[str] = []
+
+        def slow_migrate(storage, migrated_id, metadata):
+            calls.append(migrated_id)
+            time.sleep(0.2)  # widen the race window
+            metadata_path = storage.metadata_dir / f"{migrated_id}.json"
+            metadata_path.write_text(json.dumps({**metadata, "migrated_to_v2": True}))
+
+        monkeypatch.setattr(user_datasets, "_migrate_legacy_upload", slow_migrate)
+        threads = [threading.Thread(target=upload_storage.get_upload_data, args=(upload_id,)) for _ in range(4)]
 
         # Act
-        result = upload_storage.get_upload_data(upload_id)
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
 
         # Assert
-        assert isinstance(result, pl.LazyFrame), "Default should be LazyFrame"
+        assert calls == [upload_id]
 
 
 class TestUploadedDatasetLoadLazy:

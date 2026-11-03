@@ -75,8 +75,13 @@ class PromptOptimizer:
         log_dir: Path | None = None,
     ):
         self.config = config or LearningConfig.load()
-        self.log_dir = log_dir or Path(self.config.logging_config.get("log_dir", "/tmp/nl_query_learning"))
-        self.log_dir.mkdir(exist_ok=True)
+        # Learning logs hold failed questions: keep them in the data home, never in shared /tmp.
+        from clinical_analytics.core.nl_query_engine import default_learning_dir, is_legacy_learning_dir
+
+        configured = self.config.logging_config.get("log_dir")
+        chosen = log_dir or (Path(configured) if configured else default_learning_dir())
+        self.log_dir = default_learning_dir() if is_legacy_learning_dir(chosen) else chosen
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         self.iteration = 0
 
     def analyze_failures(self, test_results: list[dict[str, Any]]) -> list[FailurePattern]:

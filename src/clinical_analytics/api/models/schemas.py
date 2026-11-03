@@ -9,7 +9,7 @@ Reference: docs/architecture/LIGHTWEIGHT_UI_ARCHITECTURE.md
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ============================================================================
 # Session Management Schemas
@@ -59,6 +59,25 @@ class QueryRequest(BaseModel):
     session_id: str = Field(..., description="Session ID for conversation context")
     dataset_id: str = Field(..., description="Dataset to query")
     query_text: str = Field(..., min_length=1, description="Natural language query")
+    confirmed: bool = Field(
+        False,
+        description="When true, release a low-confidence execution hold for this query",
+    )
+    confirm_plan_line: str | None = Field(
+        None,
+        description=(
+            "The plan line the user confirmed; required when confirmed is true. The hold is "
+            "released only if the query still parses to exactly this plan; otherwise it is "
+            "held again with the new plan."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _confirmation_names_its_plan(self) -> "QueryRequest":
+        if self.confirmed and not (self.confirm_plan_line or "").strip():
+            raise ValueError("confirmed=true requires confirm_plan_line: the plan line the user reviewed")
+        return self
+
     context: dict[str, Any] | None = Field(
         None,
         description="Previous conversation context (e.g., previous_intent, previous_variables)",
@@ -85,13 +104,19 @@ class QueryResult(BaseModel):
         ...,
         description="Detected intent (DESCRIBE, COMPARE_GROUPS, FIND_PREDICTORS, etc.)",
     )
-    status: Literal["pending", "processing", "completed", "failed"] = Field(..., description="Query status")
+    status: Literal["pending", "processing", "completed", "failed", "awaiting_confirmation"] = Field(
+        ..., description="Query status"
+    )
     confidence: float | None = Field(None, ge=0.0, le=1.0, description="Confidence score for intent detection")
     result_data: dict[str, Any] | None = Field(None, description="Query result data (structure varies by intent)")
     interpretation: str | None = Field(None, description="LLM-generated interpretation of results")
     follow_up_suggestions: list[str] = Field(default_factory=list, description="Suggested follow-up questions")
     error: str | None = Field(None, description="Error message if query failed")
     execution_time_ms: int | None = Field(None, description="Query execution time in milliseconds")
+    claim: str | None = Field(None, description="Plain-language claim sentence for the result")
+    requires_confirmation: bool = Field(False, description="True when execution is held for confirmation")
+    failure_reason: str | None = Field(None, description="Hold or refuse reason from the execution gate")
+    plan_line: str | None = Field(None, description="One-line plan summary shown on confirmation hold")
 
 
 # ============================================================================
@@ -222,6 +247,7 @@ class SSEEvent(BaseModel):
         "query_progress",
         "query_completed",
         "query_failed",
+        "query_awaiting_confirmation",
         "interpretation_ready",
         "stream_end",
     ] = Field(..., description="Event type")

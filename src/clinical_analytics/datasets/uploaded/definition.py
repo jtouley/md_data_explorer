@@ -194,6 +194,7 @@ class UploadedDataset(ClinicalDataset):
                 inferred_schema = convert_schema(
                     variable_mapping_val,
                     data_for_schema,
+                    self._validated_synthetic_id_metadata,
                 )
 
             supported = (
@@ -509,13 +510,13 @@ class UploadedDataset(ClinicalDataset):
         inferred_schema = safe_get(self.metadata, "inferred_schema")
         if inferred_schema:
             config = self._build_config_from_inferred_schema(inferred_schema)
-            upload_type = "multi-table"
+            schema_source = "inferred_schema"
         else:
             # Check for variable_mapping (single-table path)
             variable_mapping = self.metadata.get("variable_mapping")
             if variable_mapping:
                 config = self._build_config_from_variable_mapping(variable_mapping)
-                upload_type = "single-table"
+                schema_source = "variable_mapping"
             else:
                 # Explicit error: raise instead of silent return
                 raise ValueError(
@@ -531,8 +532,8 @@ class UploadedDataset(ClinicalDataset):
         try:
             from clinical_analytics.core.semantic import SemanticLayer, _safe_identifier
 
-            logger.info(f"Initializing semantic layer for {upload_type} upload: {self.upload_id}")
-            logger.info(f"Built semantic layer config from {upload_type} schema")
+            logger.info(f"Initializing semantic layer for upload: {self.upload_id}")
+            logger.info(f"Built semantic layer config from {schema_source}")
 
             workspace_root = self.storage.upload_dir.parent.parent
 
@@ -570,10 +571,10 @@ class UploadedDataset(ClinicalDataset):
             # This avoids ATTACH conflicts when multiple SemanticLayers exist
             persistent_con = None
             if use_persistent_duckdb:
-                logger.info(f"Loading tables from persistent DuckDB: {db_path}")
-                import duckdb
+                logger.info("Loading tables from the persistent DuckDB store")
+                from clinical_analytics.storage.datastore import open_store_connection
 
-                persistent_con = duckdb.connect(str(db_path), read_only=True)
+                persistent_con = open_store_connection(db_path, read_only=True)
 
             for table_name in table_names:  # Use metadata list, not directory listing
                 safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
@@ -617,21 +618,28 @@ class UploadedDataset(ClinicalDataset):
                     f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS SELECT * FROM read_csv_auto(?)",
                     [abs_path],
                 )
-                logger.info(f"Registered table '{safe_table_name}' from CSV (fallback): {abs_path}")
+                logger.info(f"Registered table '{safe_table_name}' from CSV (fallback)")
 
             # Close persistent connection if opened
             if persistent_con is not None:
-                persistent_con.close()
+                from clinical_analytics.storage.datastore import close_store_connection
 
-            logger.info(f"Created semantic layer for uploaded dataset '{self.name}' with {len(table_names)} tables")
+                close_store_connection(db_path, persistent_con)
+                persistent_con = None
+
+            logger.info(f"Created semantic layer for upload {self.upload_id} with {len(table_names)} tables")
         except Exception as e:
             # Close persistent connection on error
             if "persistent_con" in locals() and persistent_con is not None:
-                persistent_con.close()
-            logger.warning(f"Failed to create semantic layer: {e}")
-            import traceback
+                from clinical_analytics.storage.datastore import close_store_connection
 
-            logger.debug(traceback.format_exc())
+                close_store_connection(db_path, persistent_con)
+            from clinical_analytics.storage.datastore import StoreBusyError
+
+            if isinstance(e, StoreBusyError):
+                raise  # the API turns this into a plain "try again" (503), not a broken dataset
+            # Type only: exception text can quote cell values; the traceback is redacted by the handler.
+            logger.warning(f"Failed to create semantic layer: {type(e).__name__}", exc_info=True)
             # Leave self.semantic as None (class attribute default)
 
     def _build_config_from_inferred_schema(self, inferred_schema: dict[str, Any]) -> dict[str, Any]:
@@ -878,6 +886,6 @@ class UploadedDatasetFactory:
             try:
                 datasets[upload_id] = UploadedDataset(upload_id=upload_id)
             except Exception as e:
-                logger.warning(f"Failed to load upload {upload_id}: {e}")
+                logger.warning(f"Failed to load upload {upload_id}: {type(e).__name__}")
 
         return datasets

@@ -5,19 +5,10 @@ Electron UI Migration:
 - Phase 8: POST /api/datasets/upload — multipart file upload
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def test_client():
-    """Create FastAPI test client."""
-    from clinical_analytics.api.main import app
-
-    return TestClient(app)
 
 
 @pytest.fixture
@@ -132,14 +123,10 @@ class TestDatasetDetailEndpoint:
 class TestDatasetPreviewEndpoint:
     """Tests for GET /api/datasets/{dataset_id}/preview endpoint."""
 
-    def test_datasets_preview_returns_rows(self, test_client, tmp_path):
+    def test_datasets_preview_returns_rows(self, test_client):
         """Preview endpoint returns sample rows."""
-        # Arrange: Create mock storage with CSV file
+        # Arrange
         upload_id = "preview_test_001"
-        upload_dir = tmp_path / "uploads"
-        upload_dir.mkdir(parents=True)
-
-        # Create unified cohort CSV directly
         df = pl.DataFrame(
             {
                 "patient_id": ["P001", "P002", "P003"],
@@ -147,17 +134,14 @@ class TestDatasetPreviewEndpoint:
                 "outcome": [0, 1, 0],
             }
         )
-        csv_path = upload_dir / f"{upload_id}_unified_cohort.csv"
-        df.write_csv(csv_path)
 
-        # Mock storage to return metadata and use our upload_dir
         with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_storage_cls:
             mock_storage = mock_storage_cls.return_value
             mock_storage.get_upload_metadata.return_value = {
                 "upload_id": upload_id,
                 "dataset_name": "Preview Test",
             }
-            mock_storage.upload_dir = upload_dir
+            mock_storage.get_upload_data.return_value = df.lazy()
 
             # Act
             response = test_client.get(f"/api/datasets/{upload_id}/preview")
@@ -170,12 +154,10 @@ class TestDatasetPreviewEndpoint:
             assert data["total_rows"] == 3
             assert "patient_id" in data["columns"]
 
-    def test_datasets_preview_respects_limit(self, test_client, tmp_path):
+    def test_datasets_preview_respects_limit(self, test_client):
         """Preview endpoint respects limit parameter."""
-        # Arrange: Create dataset with many rows
+        # Arrange
         upload_id = "limit_test_001"
-        upload_dir = tmp_path / "uploads"
-        upload_dir.mkdir(parents=True)
 
         df = pl.DataFrame(
             {
@@ -183,8 +165,6 @@ class TestDatasetPreviewEndpoint:
                 "age": [25 + i for i in range(100)],
             }
         )
-        csv_path = upload_dir / f"{upload_id}_unified_cohort.csv"
-        df.write_csv(csv_path)
 
         with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_storage_cls:
             mock_storage = mock_storage_cls.return_value
@@ -192,7 +172,7 @@ class TestDatasetPreviewEndpoint:
                 "upload_id": upload_id,
                 "dataset_name": "Limit Test",
             }
-            mock_storage.upload_dir = upload_dir
+            mock_storage.get_upload_data.return_value = df.lazy()
 
             # Act
             response = test_client.get(f"/api/datasets/{upload_id}/preview?limit=5")
@@ -215,6 +195,29 @@ class TestDatasetPreviewEndpoint:
 
             # Assert
             assert response.status_code == 404
+
+    def test_datasets_preview_uses_storage_loader_for_uploaded_data(self, test_client):
+        """Preview endpoint uses storage.get_upload_data instead of legacy unified CSV path."""
+        upload_id = "storage_loader_001"
+
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_storage_cls:
+            mock_storage = mock_storage_cls.return_value
+            mock_storage.get_upload_metadata.return_value = {
+                "upload_id": upload_id,
+                "dataset_name": "Storage Loader Test",
+            }
+            mock_storage.get_upload_data.return_value = pl.DataFrame(
+                {"patient_id": ["P001", "P002"], "age": [33, 44]}
+            ).lazy()
+
+            response = test_client.get(f"/api/datasets/{upload_id}/preview?limit=1")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["dataset_id"] == upload_id
+            assert data["total_rows"] == 2
+            assert len(data["rows"]) == 1
+            assert data["columns"] == ["patient_id", "age"]
 
 
 # ============================================================================
@@ -260,6 +263,27 @@ class TestDatasetUploadEndpoint:
         assert data["status"] == "ready"
         assert data["dataset_name"] == "Patient Data"
         mock_storage.save_upload.assert_called_once()
+
+    def test_datasets_upload_success_invalidatesCachedSemanticLayer(self, test_client):
+        """A save that reuses an upload_id must not keep serving the previous upload's layer."""
+        # Arrange
+        from clinical_analytics.api import dependencies
+
+        stale_layer = MagicMock()
+        dependencies._semantic_layer_cache["upload_reused"] = stale_layer
+
+        with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
+            mock_cls.return_value.save_upload.return_value = (True, "Upload successful", "upload_reused")
+
+            # Act
+            response = test_client.post(
+                "/api/datasets/upload",
+                files={"file": ("patients.csv", self._make_csv(), "text/csv")},
+            )
+
+        # Assert
+        assert response.status_code == 200
+        assert "upload_reused" not in dependencies._semantic_layer_cache
 
     def test_datasets_upload_xlsx_creates_dataset(self, test_client):
         """Uploading a valid Excel file creates a dataset."""
@@ -335,3 +359,55 @@ class TestDatasetUploadEndpoint:
         assert response.status_code == 500
         data = response.json()
         assert "disk full" in data["detail"].lower()
+
+
+class TestDatasetSampleEndpoint:
+    """Tests for POST /api/datasets/sample."""
+
+    def test_datasets_sample_loads_bundled_cohort(self, test_client, tmp_path):
+        """Sample endpoint registers the demo cohort and returns upload_id."""
+        demo_csv = tmp_path / "sample_cohort.csv"
+        demo_csv.write_text("patient_id,outcome\n1,0\n", encoding="utf-8")
+
+        with (
+            patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls,
+            patch("clinical_analytics.datasets.demo.get_demo_csv_path", return_value=demo_csv),
+            patch(
+                "clinical_analytics.datasets.demo.build_demo_metadata",
+                return_value={"dataset_name": "Demo Sample"},
+            ),
+            patch("clinical_analytics.datasets.demo.DEMO_DATASET_NAME", "Demo Sample"),
+        ):
+            mock_storage = mock_cls.return_value
+            mock_storage.save_upload.return_value = (True, "ok", "upload_sample_1")
+
+            response = test_client.post("/api/datasets/sample")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["upload_id"] == "upload_sample_1"
+        assert data["status"] == "ready"
+        assert data["dataset_name"] == "Demo Sample"
+        mock_storage.save_upload.assert_called_once()
+
+    def test_datasets_sample_reload_invalidatesCachedSemanticLayer(self, test_client, tmp_path):
+        """Reloading the sample overwrites the same upload_id, so its cached layer must go."""
+        # Arrange
+        from clinical_analytics.api import dependencies
+
+        demo_csv = tmp_path / "sample_cohort.csv"
+        demo_csv.write_text("patient_id,outcome\n1,0\n", encoding="utf-8")
+        dependencies._semantic_layer_cache["upload_sample_1"] = MagicMock()
+
+        with (
+            patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls,
+            patch("clinical_analytics.datasets.demo.get_demo_csv_path", return_value=demo_csv),
+        ):
+            mock_cls.return_value.save_upload.return_value = (True, "ok", "upload_sample_1")
+
+            # Act
+            response = test_client.post("/api/datasets/sample")
+
+        # Assert
+        assert response.status_code == 200
+        assert "upload_sample_1" not in dependencies._semantic_layer_cache

@@ -1,0 +1,303 @@
+{
+  "metadata": {
+    "skill_name": "<skill-name>",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-03-23T20:18:24Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The plan names concrete discovery steps for test entrypoints (e.g. Makefile, CI, tests docs) before deep debugging",
+          "passed": true,
+          "evidence": "Phase 0 lists Makefile, CI workflow(s), tests/AGENTS.md, pyproject.toml/pytest.ini before later phases (plan.md \u00a7Phase 0)."
+        },
+        {
+          "text": "The plan includes explicit stop criteria or iteration cap (scope, target bar, or max cycles)",
+          "passed": true,
+          "evidence": "Opening table: scope, target bar, iteration cap max 3, secondary bar (plan.md \u00a7Agreed scope)."
+        },
+        {
+          "text": "The plan describes delegating parallel reviews or workstreams (not only serial reading)",
+          "passed": true,
+          "evidence": "Phase 2 table tracks A\u2013D with parallel readonly reviewers and merge rule (plan.md \u00a7Phase 2)."
+        },
+        {
+          "text": "The plan requires one consolidated quality report artifact (not only ad-hoc chat)",
+          "passed": true,
+          "evidence": "Phase 3: 'One Markdown document is the system of record'; references health-and-quality-report template (plan.md \u00a7Phase 3)."
+        },
+        {
+          "text": "The plan rejects lowering pass thresholds or weakening flaky assertions as the fix; prefers root-cause or skip with TODO",
+          "passed": true,
+          "evidence": "Phase 4 and Anti-patterns: 'Do not weaken assertions or accept partial pass rates'; skip with TODO (plan.md \u00a7Phase 4, \u00a7Anti-patterns)."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The plan distinguishes faster tests (unit/integration) from browser E2E responsibilities",
+          "passed": true,
+          "evidence": "\u00a71 Layering table splits pytest vs Playwright concerns (with_skill playwright plan.md)."
+        },
+        {
+          "text": "The plan mentions explicit readiness waits or stable selectors rather than arbitrary sleeps as the default",
+          "passed": true,
+          "evidence": "\u00a74 Flake guardrails: health, frame, locator visibility; avoid arbitrary sleep (with_skill plan.md)."
+        },
+        {
+          "text": "The plan references loading or following a Playwright / webapp-testing style workflow (by name or equivalent: server lifecycle, headless CI)",
+          "passed": true,
+          "evidence": "Explicit webapp-testing skill and with_server.py pattern; sync_playwright (with_skill plan.md \u00a7Context, \u00a73)."
+        },
+        {
+          "text": "The plan keeps E2E count intentionally small and high-value",
+          "passed": true,
+          "evidence": "Vertical slice rule and 'One vertical slice first' before NL-query browser flows (with_skill plan.md \u00a71, \u00a7Suggested first slice)."
+        },
+        {
+          "text": "The plan mentions deterministic test data or fixtures rather than manual-only setup",
+          "passed": true,
+          "evidence": "Data setup via API/filesystem fixtures before goto; env isolation under tmp_path (with_skill plan.md \u00a71 table, \u00a73)."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The response rejects accepting a fixed fraction of successes as the production-quality fix",
+          "passed": true,
+          "evidence": "'Do not adopt a lowered success threshold' and explains CI would hide regressions (with_skill response.md)."
+        },
+        {
+          "text": "The response proposes investigating root cause (concurrency, pooling, timing, resource limits) or proper isolation",
+          "passed": true,
+          "evidence": "Steps: quantify, isolate bottleneck, fix pool/serialization (with_skill response.md \u00a7Next engineering steps)."
+        },
+        {
+          "text": "The response allows explicit skip with concrete TODO only as an interim measure\u2014not weakening the assertion in place",
+          "passed": true,
+          "evidence": "pytest.mark.skip with TODO; 'Do not merge a permanent \u22655/10 assertion' (with_skill response.md)."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The plan names concrete discovery steps for test entrypoints (e.g. Makefile, CI, tests docs) before deep debugging",
+          "passed": true,
+          "evidence": "\u00a71 Orient lists Makefile, pytest config, CI wiring, Streamlit boundary (without_skill plan.md)."
+        },
+        {
+          "text": "The plan includes explicit stop criteria or iteration cap (scope, target bar, or max cycles)",
+          "passed": true,
+          "evidence": "\u00a76\u20137 define done criteria and 'Iteration cap: 3 full triage cycles' (without_skill plan.md)."
+        },
+        {
+          "text": "The plan describes delegating parallel reviews or workstreams (not only serial reading)",
+          "passed": true,
+          "evidence": "\u00a73 Parallelize expert review with workstreams A\u2013C (without_skill plan.md)."
+        },
+        {
+          "text": "The plan requires one consolidated quality report artifact (not only ad-hoc chat)",
+          "passed": true,
+          "evidence": "\u00a74 Consolidate one report with fixed outline and integrator owner (without_skill plan.md)."
+        },
+        {
+          "text": "The plan rejects lowering pass thresholds or weakening flaky assertions as the fix; prefers root-cause or skip with TODO",
+          "passed": true,
+          "evidence": "\u00a74 and \u00a75 reference avoiding silent weakening; \u00a75 Polars/assertion norms (without_skill plan.md)."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 5,
+        "failed": 0,
+        "total": 5,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The plan distinguishes faster tests (unit/integration) from browser E2E responsibilities",
+          "passed": true,
+          "evidence": "\u00a71 Layering: Keep in pytest vs Keep in Playwright (without_skill playwright plan.md)."
+        },
+        {
+          "text": "The plan mentions explicit readiness waits or stable selectors rather than arbitrary sleeps as the default",
+          "passed": true,
+          "evidence": "\u00a72 Flake guardrails: expect().to_be_visible(), avoid networkidle for Streamlit (without_skill plan.md)."
+        },
+        {
+          "text": "The plan references loading or following a Playwright / webapp-testing style workflow (by name or equivalent: server lifecycle, headless CI)",
+          "passed": true,
+          "evidence": "\u00a73 'webapp-testing skill' and Makefile/URL override pattern (without_skill plan.md)."
+        },
+        {
+          "text": "The plan keeps E2E count intentionally small and high-value",
+          "passed": true,
+          "evidence": "\u00a74 minimal vertical slice: home loads + navigate (without_skill plan.md)."
+        },
+        {
+          "text": "The plan mentions deterministic test data or fixtures rather than manual-only setup",
+          "passed": true,
+          "evidence": "pytest fixtures, seeding via API/fixture-driven (without_skill plan.md \u00a71)."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "The response rejects accepting a fixed fraction of successes as the production-quality fix",
+          "passed": true,
+          "evidence": "'Do not change the assertion to at least 5 of 10 succeed' (without_skill response.md)."
+        },
+        {
+          "text": "The response proposes investigating root cause (concurrency, pooling, timing, resource limits) or proper isolation",
+          "passed": true,
+          "evidence": "Characterize failures, bisect, fix root cause with pooling/serialization (without_skill response.md \u00a7steps)."
+        },
+        {
+          "text": "The response allows explicit skip with concrete TODO only as an interim measure\u2014not weakening the assertion in place",
+          "passed": true,
+          "evidence": "Explicit skip/quarantine with TODO vs partial-success assertion (without_skill response.md step 4)."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.00",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": []
+}

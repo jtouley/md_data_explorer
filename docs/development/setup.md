@@ -78,13 +78,14 @@ Settings (`.vscode/settings.json`):
 
 ## Running the Application
 
-### Streamlit UI
+### Desktop app (FastAPI + Electron)
 
 ```bash
-streamlit run src/clinical_analytics/ui/app.py
+make run                            # FastAPI backend on http://127.0.0.1:8000
+cd electron && npm ci && npm start  # Electron desktop app (separate terminal)
 ```
 
-Opens at `http://localhost:8501`
+API docs at `http://127.0.0.1:8000/api/docs`
 
 ### CLI (if implemented)
 
@@ -233,11 +234,11 @@ pip install -e .
 pip install --upgrade duckdb
 ```
 
-### Streamlit Port Conflicts
+### API Port Conflicts
 
 ```bash
-# Use different port
-streamlit run src/clinical_analytics/ui/app.py --server.port 8502
+# API-only on another port (the desktop app expects 8000)
+uv run uvicorn clinical_analytics.api.main:app --host 127.0.0.1 --port 8001
 ```
 
 ### Test Failures
@@ -290,18 +291,9 @@ def analyze_large_dataset(df):
 
 ## Debugging
 
-### Streamlit Debugging
+### API Debugging
 
-```python
-import streamlit as st
-
-# Add debug info
-st.write("Debug:", variable)
-
-# Use expander for verbose output
-with st.expander("Debug Info"):
-    st.json(debug_dict)
-```
+Run `make run-api` and use `http://127.0.0.1:8000/api/docs` to call routes directly. Logs are structured (`structlog`); bind context with `logger.bind(dataset_id=...)`.
 
 ### Pytest Debugging
 
@@ -322,11 +314,11 @@ Add `.vscode/launch.json`:
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: Streamlit",
+      "name": "Python: FastAPI",
       "type": "python",
       "request": "launch",
-      "module": "streamlit",
-      "args": ["run", "src/clinical_analytics/ui/app.py"]
+      "module": "uvicorn",
+      "args": ["clinical_analytics.api.main:app", "--host", "127.0.0.1", "--port", "8000"]
     },
     {
       "name": "Python: Pytest",

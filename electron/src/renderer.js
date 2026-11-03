@@ -7,7 +7,11 @@
 import './index.css';
 import { normalizePendingResponse, renderEnrichmentCards } from './enrichmentPanel.js';
 import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
-import { buildQueryCompletedPresentation } from './resultPresentation.js';
+import {
+  buildConfirmationHoldPresentation,
+  buildQueryCompletedPresentation,
+} from './resultPresentation.js';
+import { closeDatasetDeleteConfirm, renderDatasetDeleteConfirm } from './datasetDeletePanel.js';
 import { normalizeSessionListResponse, renderSessionList } from './sessionSidebar.js';
 import { normalizeUploadResponse, renderUploadArea } from './uploadPanel.js';
 
@@ -22,6 +26,12 @@ const elements = {
   llmBannerText: document.getElementById('llm-banner-text'),
   datasetSelect: document.getElementById('dataset-select'),
   refreshDatasetsBtn: document.getElementById('refresh-datasets'),
+  deleteDatasetBtn: document.getElementById('delete-dataset'),
+  datasetDeleteArea: document.getElementById('dataset-delete-area'),
+  datasetOverview: document.getElementById('dataset-overview'),
+  datasetOverviewSummary: document.getElementById('dataset-overview-summary'),
+  datasetPreviewHead: document.getElementById('dataset-preview-head'),
+  datasetPreviewBody: document.getElementById('dataset-preview-body'),
   chatContainer: document.getElementById('chat-container'),
   queryForm: document.getElementById('query-form'),
   queryInput: document.getElementById('query-input'),
@@ -153,6 +163,34 @@ function updateConnectionStatus(status, message) {
  * Enable or disable query input based on dataset selection.
  * @param {boolean} enabled
  */
+/**
+ * Thinking indicator with the current stage text (or a hidden label for screen readers).
+ * @param {string} [stage]
+ */
+function thinkingHtml(stage) {
+  const text = stage ? escapeHtml(stage) : '';
+  return `
+      <div class="thinking-dots" data-testid="thinking-indicator">
+        <span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>
+        ${text ? `<span class="thinking-stage">${text}</span>` : '<span class="visually-hidden">Analysing…</span>'}
+      </div>
+    `;
+}
+
+/**
+ * Announce a status change to screen readers via the persistent live region.
+ * @param {string} text
+ */
+function announce(text) {
+  const region = document.getElementById('sr-status');
+  if (!region) return;
+  region.textContent = '';
+  // A fresh text node after clearing makes repeated messages announce again.
+  window.setTimeout(() => {
+    region.textContent = text;
+  }, 50);
+}
+
 function setQueryInputEnabled(enabled) {
   const { queryInput, submitBtn, inputHintText } = elements;
 
@@ -162,7 +200,7 @@ function setQueryInputEnabled(enabled) {
   if (state.isProcessing) {
     inputHintText.textContent = 'Processing your question...';
   } else if (enabled) {
-    inputHintText.textContent = 'Press Enter to submit or click the arrow';
+    inputHintText.textContent = 'Press Enter to ask; Shift+Enter for a new line';
     queryInput.focus();
   } else {
     inputHintText.textContent = 'Select a dataset to start asking questions';
@@ -186,6 +224,83 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+/**
+ * Render dataset preview table.
+ * @param {string[]} columns
+ * @param {Record<string, unknown>[]} rows
+ */
+function renderDatasetPreview(columns, rows) {
+  const { datasetPreviewHead, datasetPreviewBody } = elements;
+  if (!datasetPreviewHead || !datasetPreviewBody) return;
+
+  datasetPreviewHead.innerHTML = '';
+  datasetPreviewBody.innerHTML = '';
+
+  const headerRow = document.createElement('tr');
+  columns.forEach((column) => {
+    const th = document.createElement('th');
+    th.textContent = column;
+    headerRow.appendChild(th);
+  });
+  datasetPreviewHead.appendChild(headerRow);
+
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    columns.forEach((column) => {
+      const td = document.createElement('td');
+      const value = row?.[column];
+      td.textContent =
+        value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      tr.appendChild(td);
+    });
+    datasetPreviewBody.appendChild(tr);
+  });
+}
+
+/**
+ * Load dataset summary + preview panel (P02 parity).
+ */
+async function loadDatasetOverview() {
+  const { datasetOverview, datasetOverviewSummary } = elements;
+  if (!datasetOverview || !datasetOverviewSummary) return;
+
+  if (!state.currentDatasetId) {
+    datasetOverview.classList.add('hidden');
+    datasetOverviewSummary.textContent = '';
+    renderDatasetPreview([], []);
+    return;
+  }
+
+  if (
+    typeof window.clinicalAPI?.getDataset !== 'function' ||
+    typeof window.clinicalAPI?.previewDataset !== 'function'
+  ) {
+    datasetOverview.classList.add('hidden');
+    return;
+  }
+
+  datasetOverview.classList.remove('hidden');
+  datasetOverviewSummary.textContent = 'Loading dataset overview...';
+
+  try {
+    const [detail, preview] = await Promise.all([
+      window.clinicalAPI.getDataset(state.currentDatasetId),
+      window.clinicalAPI.previewDataset(state.currentDatasetId, 10),
+    ]);
+
+    const table =
+      Array.isArray(detail?.tables) && detail.tables.length > 0 ? detail.tables[0] : null;
+    const rowCount = table?.row_count ?? preview?.total_rows ?? 0;
+    const columnCount = Array.isArray(preview?.columns) ? preview.columns.length : 0;
+
+    datasetOverviewSummary.textContent = `${rowCount} rows • ${columnCount} columns`;
+    renderDatasetPreview(preview?.columns || [], preview?.rows || []);
+  } catch (error) {
+    datasetOverviewSummary.textContent = `Could not load dataset overview: ${error.message}`;
+    renderDatasetPreview([], []);
+  }
 }
 
 /**
@@ -246,11 +361,7 @@ function renderMessage(message) {
 
   if (message.isStreaming) {
     // Show thinking indicator
-    contentDiv.innerHTML = `
-      <div class="thinking-dots" data-testid="thinking-indicator">
-        <span></span><span></span><span></span>
-      </div>
-    `;
+    contentDiv.innerHTML = thinkingHtml(message.content);
   } else {
     contentDiv.innerHTML = escapeHtml(message.content);
 
@@ -277,11 +388,7 @@ function rerenderMessage(message) {
   if (!contentDiv) return;
 
   if (message.isStreaming) {
-    contentDiv.innerHTML = `
-      <div class="thinking-dots" data-testid="thinking-indicator">
-        <span></span><span></span><span></span>
-      </div>
-    `;
+    contentDiv.innerHTML = thinkingHtml(message.content);
   } else {
     contentDiv.innerHTML = escapeHtml(message.content);
 
@@ -306,6 +413,14 @@ function renderResultCard(result) {
     card.setAttribute('data-intent', result.intentType);
   }
 
+  if (result.claim) {
+    const claimEl = document.createElement('p');
+    claimEl.className = 'result-claim';
+    claimEl.setAttribute('data-testid', 'result-claim');
+    claimEl.textContent = `Claim: ${result.claim}`;
+    card.appendChild(claimEl);
+  }
+
   if (result.title) {
     const titleEl = document.createElement('div');
     titleEl.className = 'result-card-title';
@@ -314,11 +429,57 @@ function renderResultCard(result) {
     card.appendChild(titleEl);
   }
 
-  if (result.summary) {
+  if (result.summary && result.summary !== result.claim) {
     const summary = document.createElement('p');
     summary.className = 'result-summary';
     summary.textContent = result.summary;
     card.appendChild(summary);
+  }
+
+  if (result.awaitingConfirmation) {
+    card.classList.add('result-card-confirm');
+    card.setAttribute('data-testid', 'result-confirm-card');
+    if (result.planLine) {
+      const planEl = document.createElement('p');
+      planEl.className = 'result-plan-line';
+      planEl.setAttribute('data-testid', 'result-plan-line');
+      planEl.textContent = result.planLine;
+      card.appendChild(planEl);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'result-confirm-actions';
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'btn-confirm';
+    confirmBtn.dataset.testid = 'confirm-query-btn';
+    confirmBtn.textContent = 'Confirm';
+    confirmBtn.addEventListener('click', () => {
+      if (state.isProcessing) {
+        // Another answer is still streaming; leave the hold actionable instead of greying it out.
+        appendCardNote(card, 'Wait for the current answer to finish, then confirm.');
+        return;
+      }
+      // One decision per held plan: a second click must not run it again.
+      setCardButtonsDisabled(card, true);
+      void handleConfirmPendingQuery(result, card);
+    });
+    const rejectBtn = document.createElement('button');
+    rejectBtn.type = 'button';
+    rejectBtn.className = 'btn-reject';
+    rejectBtn.dataset.testid = 'reject-query-btn';
+    rejectBtn.textContent = 'Reject';
+    rejectBtn.addEventListener('click', () => {
+      card.querySelectorAll('button').forEach((b) => {
+        b.disabled = true;
+      });
+      const note = document.createElement('p');
+      note.className = 'result-rejected';
+      note.textContent = 'Query rejected — not executed.';
+      card.appendChild(note);
+    });
+    actions.appendChild(confirmBtn);
+    actions.appendChild(rejectBtn);
+    card.appendChild(actions);
   }
 
   if (result.table) {
@@ -329,6 +490,78 @@ function renderResultCard(result) {
   }
 
   return card;
+}
+
+/**
+ * Resubmit a held query with confirmed=true.
+ * @param {string} queryText
+ */
+function setCardButtonsDisabled(card, disabled) {
+  card.querySelectorAll('button').forEach((b) => {
+    b.disabled = disabled;
+  });
+}
+
+function appendCardNote(card, text) {
+  const note = document.createElement('p');
+  note.className = 'result-rejected';
+  note.textContent = text;
+  card.appendChild(note);
+}
+
+async function handleConfirmPendingQuery(held, card) {
+  const queryText = held.pendingQuery || '';
+  if (!queryText || !held.planLine) {
+    appendCardNote(card, 'This plan cannot be confirmed. Ask the question again.');
+    return;
+  }
+  if (held.datasetId && held.datasetId !== state.currentDatasetId) {
+    appendCardNote(
+      card,
+      'This plan was for a different dataset. Ask the question again on the current dataset.'
+    );
+    return;
+  }
+  state.isProcessing = true;
+  setQueryInputEnabled(true);
+
+  const assistantMessageId = generateMessageId();
+  addMessage({
+    id: assistantMessageId,
+    role: 'assistant',
+    content: '',
+    isStreaming: true,
+    timestamp: new Date(),
+  });
+
+  try {
+    const sessionId = held.sessionId || state.sessionId;
+    const datasetId = held.datasetId || state.currentDatasetId;
+    // Send the plan the user saw: the backend releases the hold only for that exact plan.
+    const response = await window.clinicalAPI.submitQuery(
+      sessionId,
+      datasetId,
+      queryText,
+      true,
+      held.planLine
+    );
+    if (response.stream_url || response.query_id) {
+      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText, {
+        datasetId,
+        sessionId,
+      });
+    }
+  } catch (error) {
+    updateMessage(assistantMessageId, {
+      content: `Sorry, I encountered an error: ${error.message}`,
+      isStreaming: false,
+    });
+    // Nothing ran, so the held plan stays confirmable.
+    setCardButtonsDisabled(card, false);
+  } finally {
+    state.isProcessing = false;
+    setQueryInputEnabled(!!state.currentDatasetId);
+  }
 }
 
 /**
@@ -659,7 +892,9 @@ function handleSessionSelect(sessionId, sessions) {
       datasetSelect.value = session.dataset_id;
       state.currentDatasetId = session.dataset_id;
       setQueryInputEnabled(true);
+      if (elements.deleteDatasetBtn) elements.deleteDatasetBtn.disabled = false;
       void loadEnrichmentPanel();
+      void loadDatasetOverview();
     }
   }
 
@@ -669,6 +904,8 @@ function handleSessionSelect(sessionId, sessions) {
 
 async function handleSessionDelete(sessionId) {
   if (typeof window.clinicalAPI?.deleteSession !== 'function') return;
+  if (!window.confirm('Delete this session? Its questions and answers cannot be recovered.'))
+    return;
   try {
     await window.clinicalAPI.deleteSession(sessionId);
     if (sessionId === state.sessionId) {
@@ -738,16 +975,65 @@ function resetChatUI() {
 function handleDatasetChange(event) {
   const datasetId = event.target.value;
   state.currentDatasetId = datasetId;
+  if (elements.deleteDatasetBtn) elements.deleteDatasetBtn.disabled = !datasetId;
+  if (elements.datasetDeleteArea) closeDatasetDeleteConfirm(elements.datasetDeleteArea);
 
   if (datasetId) {
     setQueryInputEnabled(true);
     console.log(`📊 Selected dataset: ${datasetId}`);
+    void loadDatasetOverview();
     void loadEnrichmentPanel();
     void loadSessionList();
   } else {
     setQueryInputEnabled(false);
+    void loadDatasetOverview();
     void loadEnrichmentPanel();
   }
+}
+
+/**
+ * Ask for confirmation in the page, then delete the selected dataset.
+ */
+function handleDeleteDatasetClick() {
+  const { datasetSelect, datasetDeleteArea, deleteDatasetBtn } = elements;
+  const datasetId = state.currentDatasetId;
+  if (!datasetId || !datasetDeleteArea) return;
+  const option = datasetSelect.selectedOptions[0];
+  const datasetName = option ? option.textContent.replace(/\s*\(\d+ rows\)$/, '') : datasetId;
+
+  const close = () => {
+    closeDatasetDeleteConfirm(datasetDeleteArea);
+    deleteDatasetBtn?.focus();
+  };
+  const panel = renderDatasetDeleteConfirm(datasetDeleteArea, {
+    datasetName,
+    onCancel: close,
+    onConfirm: async () => {
+      panel.setBusy(true);
+      try {
+        await window.clinicalAPI.deleteDataset(datasetId);
+      } catch (error) {
+        console.error('Delete dataset failed:', error?.message);
+        panel.setBusy(false);
+        panel.setError(`Could not delete the dataset: ${error?.message || 'unknown error'}`);
+        return;
+      }
+      closeDatasetDeleteConfirm(datasetDeleteArea);
+      if (state.activeStream) {
+        state.activeStream.close();
+        state.activeStream = null;
+      }
+      datasetSelect.value = '';
+      handleDatasetChange({ target: datasetSelect });
+      // The chat on screen belonged to the deleted dataset.
+      state.sessionId = generateSessionId();
+      resetChatUI();
+      await loadDatasets();
+      await loadSessionList();
+      announce(`Deleted ${datasetName} and its sessions from this computer.`);
+      datasetSelect.focus();
+    },
+  });
 }
 
 /**
@@ -807,10 +1093,11 @@ async function handleQuerySubmit(event) {
   };
   addMessage(assistantMessage);
 
+  // Never log the question text or results: they can identify patients (docs/security).
   console.log('📝 Query submitted:', {
     sessionId: state.sessionId,
     datasetId: state.currentDatasetId,
-    query: queryText,
+    queryLength: queryText.length,
   });
 
   try {
@@ -818,14 +1105,18 @@ async function handleQuerySubmit(event) {
     const response = await window.clinicalAPI.submitQuery(
       state.sessionId,
       state.currentDatasetId,
-      queryText
+      queryText,
+      false
     );
 
-    console.log('📡 Query submitted, got response:', response);
+    console.log('📡 Query accepted:', response?.query_id);
 
     // Start SSE stream if stream URL provided
     if (response.stream_url || response.query_id) {
-      await subscribeToQueryStream(response.query_id, assistantMessageId);
+      await subscribeToQueryStream(response.query_id, assistantMessageId, queryText, {
+        datasetId: state.currentDatasetId,
+        sessionId: state.sessionId,
+      });
     } else {
       // Fallback: use direct result if available
       updateMessage(assistantMessageId, {
@@ -837,9 +1128,15 @@ async function handleQuerySubmit(event) {
   } catch (error) {
     console.error('❌ Query failed:', error);
     updateMessage(assistantMessageId, {
-      content: `Sorry, I encountered an error: ${error.message}`,
+      content: `The question could not be answered: ${error.message}`,
       isStreaming: false,
     });
+    // Give the question back so it can be edited rather than retyped.
+    if (!queryInput.value) {
+      queryInput.value = queryText;
+      handleQueryInputChange();
+    }
+    announce('The question could not be answered.');
   } finally {
     state.isProcessing = false;
     setQueryInputEnabled(!!state.currentDatasetId);
@@ -850,15 +1147,22 @@ async function handleQuerySubmit(event) {
  * Subscribe to SSE stream for query results.
  * @param {string} queryId
  * @param {string} assistantMessageId
+ * @param {string} [pendingQuery]
+ * @param {{ datasetId?: string | null, sessionId?: string | null }} [binding] dataset/session the query ran on
  */
-async function subscribeToQueryStream(queryId, assistantMessageId) {
+async function subscribeToQueryStream(
+  queryId,
+  assistantMessageId,
+  pendingQuery = '',
+  binding = {}
+) {
   return new Promise((resolve, reject) => {
     let contentBuffer = '';
     let resolved = false;
     let cleanupFn = null;
 
     const handleEvent = ({ event: eventType, data }) => {
-      console.log('📨 SSE event:', eventType, data);
+      console.log('📨 SSE event:', eventType);
 
       switch (eventType) {
         case 'query_started':
@@ -876,13 +1180,18 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
           break;
 
         case 'query_completed': {
-          const pres = buildQueryCompletedPresentation(data.intent_type, data.result_preview || {});
+          const pres = buildQueryCompletedPresentation(
+            data.intent_type,
+            data.result_preview || {},
+            data.claim
+          );
 
           updateMessage(assistantMessageId, {
             content: pres.content,
             result: pres.result,
             isStreaming: false,
           });
+          announce('Answer ready.');
 
           // Close stream
           if (cleanupFn) cleanupFn();
@@ -891,9 +1200,23 @@ async function subscribeToQueryStream(queryId, assistantMessageId) {
           break;
         }
 
+        case 'query_awaiting_confirmation': {
+          const hold = buildConfirmationHoldPresentation(data, pendingQuery, binding);
+          updateMessage(assistantMessageId, {
+            content: hold.content,
+            result: hold.result,
+            isStreaming: false,
+          });
+          announce('The plan needs your confirmation before it runs.');
+          if (cleanupFn) cleanupFn();
+          resolved = true;
+          resolve();
+          break;
+        }
+
         case 'query_failed':
           updateMessage(assistantMessageId, {
-            content: `Error: ${data.error || 'Unknown error'}`,
+            content: `Error: ${data.error || data.failure_reason || 'Unknown error'}`,
             isStreaming: false,
           });
           if (cleanupFn) cleanupFn();
@@ -971,7 +1294,49 @@ function initUploadArea() {
 
   renderUploadArea(uploadArea, {
     onFileSelect: (file) => handleFileUpload(file),
+    onLoadSample: () => void handleLoadSample(),
   });
+}
+
+async function handleLoadSample() {
+  const { uploadArea } = elements;
+  if (!uploadArea) return;
+  if (typeof window.clinicalAPI?.loadSampleDataset !== 'function') return;
+
+  renderUploadArea(uploadArea, {
+    onFileSelect: (f) => handleFileUpload(f),
+    onLoadSample: () => void handleLoadSample(),
+    statusText: 'Loading sample…',
+  });
+
+  try {
+    const raw = await window.clinicalAPI.loadSampleDataset();
+    const result = normalizeUploadResponse(raw);
+    if (result.status === 'ready' && result.upload_id) {
+      renderUploadArea(uploadArea, {
+        onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
+        statusText: `✓ ${result.dataset_name || 'Sample'} loaded`,
+      });
+      await loadDatasets();
+      elements.datasetSelect.value = result.upload_id;
+      elements.datasetSelect.dispatchEvent(new Event('change'));
+      void loadDatasetOverview();
+    } else {
+      renderUploadArea(uploadArea, {
+        onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
+        statusText: `✗ Sample load failed: ${result.message}`,
+      });
+    }
+  } catch (error) {
+    console.error('Sample load failed:', error);
+    renderUploadArea(uploadArea, {
+      onFileSelect: (f) => handleFileUpload(f),
+      onLoadSample: () => void handleLoadSample(),
+      statusText: `✗ ${error.message}`,
+    });
+  }
 }
 
 async function handleFileUpload(file) {
@@ -981,6 +1346,7 @@ async function handleFileUpload(file) {
 
   renderUploadArea(uploadArea, {
     onFileSelect: (f) => handleFileUpload(f),
+    onLoadSample: () => void handleLoadSample(),
     statusText: `Uploading ${file.name}…`,
   });
 
@@ -991,16 +1357,19 @@ async function handleFileUpload(file) {
     if (result.status === 'ready') {
       renderUploadArea(uploadArea, {
         onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
         statusText: `✓ ${result.dataset_name || file.name} uploaded`,
       });
       await loadDatasets();
       if (result.upload_id) {
         elements.datasetSelect.value = result.upload_id;
         elements.datasetSelect.dispatchEvent(new Event('change'));
+        void loadDatasetOverview();
       }
     } else {
       renderUploadArea(uploadArea, {
         onFileSelect: (f) => handleFileUpload(f),
+        onLoadSample: () => void handleLoadSample(),
         statusText: `✗ Upload failed: ${result.message}`,
       });
     }
@@ -1008,6 +1377,7 @@ async function handleFileUpload(file) {
     console.error('Upload failed:', error);
     renderUploadArea(uploadArea, {
       onFileSelect: (f) => handleFileUpload(f),
+      onLoadSample: () => void handleLoadSample(),
       statusText: `✗ ${error.message}`,
     });
   }
@@ -1026,12 +1396,19 @@ async function init() {
   // Set up event listeners
   elements.datasetSelect.addEventListener('change', handleDatasetChange);
   elements.refreshDatasetsBtn.addEventListener('click', handleRefreshDatasets);
+  elements.deleteDatasetBtn?.addEventListener('click', handleDeleteDatasetClick);
   if (elements.refreshEnrichmentsBtn) {
     elements.refreshEnrichmentsBtn.addEventListener('click', () => {
       void loadEnrichmentPanel();
     });
   }
   elements.queryForm.addEventListener('submit', handleQuerySubmit);
+  elements.queryInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      elements.queryForm.requestSubmit();
+    }
+  });
   elements.queryInput.addEventListener('input', handleQueryInputChange);
 
   if (elements.newChatBtn) {

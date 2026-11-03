@@ -279,3 +279,208 @@ class TestAsyncQueryServiceSerialization:
         assert "table" in json_str
         assert "columns" in json_str
         assert "level1" in result
+
+
+class TestAsyncQueryServiceAnalysisPayload:
+    """Completed queries return the claim and statistics table, not the cohort rows."""
+
+    @pytest.mark.asyncio
+    async def test_submit_query_withAnalysis_returnsClaimFirstPayload(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        analysis = {
+            "type": "count",
+            "total_count": 50,
+            "grouped_by": "sex",
+            "group_counts": [{"sex": "F", "count": 30}, {"sex": "M", "count": 20}],
+            "chart_spec": {"type": "bar", "x": "sex"},
+        }
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result={"success": True, "result": "raw cohort rows"},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis=analysis,
+        )
+
+        # Act
+        query_id = await async_query_service.submit_query(query="how many by sex?", dataset_id="ds")
+        events = [event async for event in async_query_service.stream_events(query_id)]
+        stored = await async_query_service.get_result(query_id)
+
+        # Assert
+        assert stored.result["claim"] == "50 total across 2 sex groups."
+        assert stored.result["analysis_type"] == "count"
+        assert stored.result["table"]["rows"] == [{"sex": "F", "count": 30}, {"sex": "M", "count": 20}]
+        assert stored.result["analysis"]["total_count"] == 50
+        assert "raw cohort rows" not in str(stored.result)
+        completed = next(e for e in events if e.event == "query_completed")
+        preview = completed.data["result_preview"]
+        assert preview["claim"] == stored.result["claim"]
+        assert "analysis" not in preview
+
+    @pytest.mark.asyncio
+    async def test_execute_query_withoutAnalysis_fallsBackToSerializedResult(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result={"test": "data"},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+        )
+
+        # Act
+        result = await async_query_service.execute_query(query="anything", dataset_id="ds")
+
+        # Assert
+        assert result.result == {"test": "data"}
+
+
+class TestAsyncQueryServiceConversation:
+    """session_id selects conversation history for the parser; it is never the upload id."""
+
+    @staticmethod
+    def _completed(plan):
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        return CoreQueryResult(
+            plan=plan, issues=[], result=None, confidence=0.9, run_key="rk", context=None, analysis=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_query_secondTurn_receivesFirstTurnAsHistory(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+
+        first_plan = QueryPlan(
+            intent="COUNT",
+            group_by="sex",
+            confidence=0.9,
+            filters=[FilterSpec(column="age", operator=">", value=50)],
+        )
+        mock_core_query_service.ask.return_value = self._completed(first_plan)
+
+        # Act
+        await async_query_service.execute_query(query="count by sex", dataset_id="ds", session_id="sess_1")
+        await async_query_service.execute_query(query="now by site", dataset_id="ds", session_id="sess_1")
+        await async_query_service.execute_query(query="how many?", dataset_id="ds", session_id="sess_other")
+
+        # Assert
+        first, second, other = mock_core_query_service.ask.call_args_list
+        assert first.kwargs["conversation_history"] == []
+        assert second.kwargs["conversation_history"][0] == {
+            "query": "count by sex",
+            "intent": "COUNT",
+            "metric": None,
+            "group_by": "sex",
+            "filters_applied": [{"column": "age", "operator": ">", "value": 50, "exclude_nulls": True}],
+        }
+        assert other.kwargs["conversation_history"] == []
+        assert all("upload_id" not in call.kwargs for call in mock_core_query_service.ask.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_submit_query_contextWithoutHistory_usedAsPreviousTurn(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange
+        mock_core_query_service.ask.return_value = self._completed(None)
+
+        # Act
+        query_id = await async_query_service.submit_query(
+            query="now by site",
+            dataset_id="ds",
+            session_id="sess_new",
+            context={"previous_intent": "COUNT", "previous_group_by": "sex"},
+        )
+        _ = [event async for event in async_query_service.stream_events(query_id)]
+
+        # Assert
+        history = mock_core_query_service.ask.call_args.kwargs["conversation_history"]
+        assert [(turn["intent"], turn["group_by"]) for turn in history] == [("COUNT", "sex")]
+
+    def test_record_turn_manyTurns_keepsMostRecentTwenty(self, async_query_service):
+        # Arrange
+        from clinical_analytics.api.services.query_service import MAX_CONVERSATION_TURNS
+        from clinical_analytics.core.query_plan import QueryPlan
+
+        result = self._completed(QueryPlan(intent="DESCRIBE", metric="age", confidence=0.9))
+
+        # Act
+        for i in range(MAX_CONVERSATION_TURNS + 5):
+            async_query_service._record_turn("sess", f"q{i}", result)
+
+        # Assert
+        history = async_query_service.conversation_history("sess")
+        assert len(history) == MAX_CONVERSATION_TURNS
+        assert history[0]["query"] == "q5"
+
+
+class TestContextToTurn:
+    @pytest.mark.parametrize(
+        ("context", "expected"),
+        [
+            (None, None),
+            ({}, None),
+            ({"unrelated": 1}, None),
+            (
+                {"intent": "COUNT", "group_by": "sex", "query": "count by sex"},
+                {"query": "count by sex", "intent": "COUNT", "metric": None, "group_by": "sex", "filters_applied": []},
+            ),
+            (
+                {"previous_intent": "COMPARE_GROUPS", "previous_variables": ["ldl", "treatment"]},
+                {
+                    "query": None,
+                    "intent": "COMPARE_GROUPS",
+                    "metric": "ldl",
+                    "group_by": "treatment",
+                    "filters_applied": [],
+                },
+            ),
+        ],
+        ids=["none", "empty", "unrelated_keys", "history_shaped", "previous_variables"],
+    )
+    def test_context_to_turn_shapes_mappedToHistoryEntry(self, context, expected):
+        # Arrange
+        from clinical_analytics.api.services.query_service import context_to_turn
+
+        # Act / Assert
+        assert context_to_turn(context) == expected
+
+
+class TestAsyncQueryServiceHeldTurns:
+    @pytest.mark.asyncio
+    async def test_execute_query_heldPlan_notRecordedAsTurn(self, async_query_service, mock_core_query_service):
+        """A held plan has not run, so the next question must not refine it."""
+        # Arrange
+        from clinical_analytics.core.query_plan import QueryPlan
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=QueryPlan(intent="DESCRIBE", metric="age", confidence=0.5),
+            issues=[],
+            result=None,
+            confidence=0.5,
+            run_key=None,
+            context=None,
+            requires_confirmation=True,
+            failure_reason="Confirmation required before execution.",
+        )
+
+        # Act
+        await async_query_service.execute_query(query="average age", dataset_id="ds", session_id="sess")
+
+        # Assert
+        assert async_query_service.conversation_history("sess") == []

@@ -48,7 +48,7 @@ class QueryLogger:
         """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"QueryLogger initialized with log directory: {self.log_dir}")
+        logger.info("QueryLogger initialized")
 
     def log_query(
         self,

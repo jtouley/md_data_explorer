@@ -18,27 +18,14 @@ from clinical_analytics.ui.storage.user_datasets import UploadSecurityValidator
 class TestFileTypeValidation:
     """Test file type validation."""
 
-    def test_valid_csv(self):
-        """CSV files should be accepted."""
-        valid, error = UploadSecurityValidator.validate_file_type("data.csv")
-        assert valid is True
-        assert error == ""
-
-    def test_valid_excel_xlsx(self):
-        """Excel .xlsx files should be accepted."""
-        valid, error = UploadSecurityValidator.validate_file_type("data.xlsx")
-        assert valid is True
-        assert error == ""
-
-    def test_valid_excel_xls(self):
-        """Excel .xls files should be accepted."""
-        valid, error = UploadSecurityValidator.validate_file_type("data.xls")
-        assert valid is True
-        assert error == ""
-
-    def test_valid_spss(self):
-        """SPSS .sav files should be accepted."""
-        valid, error = UploadSecurityValidator.validate_file_type("data.sav")
+    @pytest.mark.parametrize(
+        "filename",
+        ["data.csv", "data.xlsx", "data.xls", "data.sav"],
+        ids=["csv", "excel_xlsx", "excel_xls", "spss"],
+    )
+    def test_valid_file_types_accepted(self, filename):
+        """CSV, Excel (.xlsx/.xls), and SPSS (.sav) files should be accepted."""
+        valid, error = UploadSecurityValidator.validate_file_type(filename)
         assert valid is True
         assert error == ""
 

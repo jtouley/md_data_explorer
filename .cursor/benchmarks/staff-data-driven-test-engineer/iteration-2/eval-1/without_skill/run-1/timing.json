@@ -1,0 +1,12 @@
+{
+  "benchmark": "test-quality-loop",
+  "iteration": "iteration-2",
+  "eval": "eval-1",
+  "variant": "without_skill",
+  "run": "run-1",
+  "skill_loaded": false,
+  "started_at": "2026-03-23T00:00:00Z",
+  "ended_at": "2026-03-23T00:00:00Z",
+  "duration_ms": 0,
+  "notes": "Synthetic timing placeholder for benchmark harness; wall clock not instrumented in this run."
+}

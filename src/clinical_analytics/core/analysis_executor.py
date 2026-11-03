@@ -15,6 +15,7 @@ import structlog
 
 from clinical_analytics.core.analysis_result import AnalysisResult
 from clinical_analytics.core.error_translation import translate_error_with_llm
+from clinical_analytics.core.log_redaction import text_fingerprint
 from clinical_analytics.core.result_cache import CachedResult, ResultCache
 from clinical_analytics.core.result_interpretation import interpret_result_with_llm
 from clinical_analytics.core.state_store import StateStore
@@ -136,7 +137,7 @@ class AnalysisExecutor:
         if "error" in result.payload:
             return result
 
-        logger.debug("generating_interpretation", query=query_text)
+        logger.debug("generating_interpretation", **text_fingerprint(query_text))
         interpretation = interpret_result_with_llm(result.payload, query_text)
         return replace(result, llm_interpretation=interpretation)
 

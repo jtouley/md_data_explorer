@@ -292,7 +292,7 @@ class MultiTableHandler:
                         logger.warning(f"Failed to cast columns in {table_name}: {failed_casts}")
 
                 except Exception as e:
-                    logger.error(f"Batch cast failed for {table_name}: {type(e).__name__}: {str(e)}")
+                    logger.error(f"Batch cast failed for {table_name}: {type(e).__name__}")
                     # Try one by one if batch fails
                     for col in cols_to_cast:
                         try:
