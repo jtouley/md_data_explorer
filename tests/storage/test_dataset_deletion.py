@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import duckdb
@@ -19,9 +20,15 @@ from clinical_analytics.storage.dataset_deletion import (
 from clinical_analytics.storage.datastore import (
     DataStore,
     StoreBusyError,
+    close_store_connection,
     exclusive_store,
     open_connection_count,
     open_store_connection,
+)
+from clinical_analytics.storage.store_format import (
+    STORE_STORAGE_VERSION,
+    current_storage_version,
+    store_backups,
 )
 
 
@@ -281,3 +288,44 @@ def test_resumePendingCompaction_markerLeftByCrash_rewritesAndClearsMarker(tmp_p
     assert again is False
     assert not _store_has(tmp_path, b"crash-sentinel-")
     assert "keepme_notes_v1" in _duckdb_tables(tmp_path)
+
+
+def _storage_version(data_dir: Path) -> str:
+    con = duckdb.connect(str(data_dir / "analytics.duckdb"), read_only=True)
+    try:
+        return current_storage_version(con)
+    finally:
+        con.close()
+
+
+def test_purgeDatasetFiles_compaction_keepsStoreStorageVersion(tmp_path: Path) -> None:
+    # Arrange: a store in the pinned format; the rewrite must not move it to a newer format.
+    close_store_connection(tmp_path / "analytics.duckdb", open_store_connection(tmp_path / "analytics.duckdb"))
+    _seed(tmp_path, "dsx")
+    _seed(tmp_path, "dsx_2")
+    before = _storage_version(tmp_path)
+
+    # Act
+    purge_dataset_files("dsx", tmp_path / "uploads")
+
+    # Assert
+    assert before == STORE_STORAGE_VERSION
+    assert _storage_version(tmp_path) == before
+
+
+def test_purgeDatasetFiles_preUpgradeBackupPresent_backupRemoved(tmp_path: Path) -> None:
+    # Arrange: a backup kept by a failed engine check holds the dataset's rows too.
+    _seed(tmp_path, "dsx")
+    _seed_sentinel(tmp_path, "backup-sentinel-")
+    db_path = tmp_path / "analytics.duckdb"
+    shutil.copy2(db_path, db_path.with_name("analytics.duckdb.backup-1.4.2-20261101T000000Z"))
+    backups = store_backups(tmp_path / "analytics.duckdb")
+    assert backups and any(b"backup-sentinel-" in p.read_bytes() for p in backups)
+
+    # Act
+    report = purge_dataset_files("dsx", tmp_path / "uploads")
+
+    # Assert
+    assert store_backups(tmp_path / "analytics.duckdb") == []
+    assert set(backups) <= set(report.removed_paths)
+    assert not _store_has(tmp_path, b"backup-sentinel-")
