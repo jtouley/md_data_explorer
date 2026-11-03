@@ -486,10 +486,10 @@ The [MIMIC-IV Demo](https://physionet.org/content/mimic-iv-demo/2.2/hosp/#files-
 - Relationship inference from data dictionary
 - RAG context for NL query understanding (Phase 3)
 
-**Centralized Data Dictionaries:**
-- All data dictionary PDFs are centralized in `data/dictionaries/` for easy access
-- This location is used for NL query implementation and RAG context generation
-- Original documentation remains in `data/raw/{dataset}/` alongside data files
+**Data Dictionaries:**
+- Supplied by the user with their own upload (inside the ZIP, as a standalone PDF, or added to an existing upload)
+- Extracted text is stored as `doc_context` in the upload's metadata in the per-user data home, stays local, and feeds NL query understanding and RAG context
+- The repo ships no data dictionaries
 
 ### How to Leverage
 

@@ -241,7 +241,6 @@ docs/screenshots/
 *.parquet
 data/*
 !data/demo/
-!data/dictionaries/
 
 # Mutation testing workdir
 mutants/
