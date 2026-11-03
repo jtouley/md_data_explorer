@@ -108,7 +108,7 @@ test.describe('Conversation states', () => {
     const planFont = await card
       .locator('.plan-list')
       .evaluate((n) => parseFloat(getComputedStyle(n).fontSize));
-    expect(planFont).toBeGreaterThanOrEqual(15);
+    expect(planFont).toBe(16);
   });
 
   test('held plan: Not what I meant runs nothing and gives the question back', async ({ page }) => {

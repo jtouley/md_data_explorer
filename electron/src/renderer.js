@@ -867,7 +867,20 @@ function renderWelcome(mode) {
   const welcome = el('div', `welcome-message welcome-message--${mode}`);
   welcome.dataset.testid = 'welcome-message';
 
-  if (mode === 'no-dataset') {
+  if (
+    mode === 'no-dataset' &&
+    !state.connected &&
+    elements.connectionStatus?.classList.contains('status-error')
+  ) {
+    welcome.append(
+      el('h2', 'welcome-title', 'Waiting for the analysis engine.'),
+      el(
+        'p',
+        'welcome-text',
+        'It runs on this computer. When it can be reached, your cohorts appear in the sidebar.'
+      )
+    );
+  } else if (mode === 'no-dataset') {
     welcome.append(
       el('h2', 'welcome-title', 'Choose a cohort to begin.'),
       el(
@@ -1978,6 +1991,8 @@ async function connect() {
     await loadSessionList();
   }
   setQueryInputEnabled(!!state.currentDatasetId);
+  // The empty state depends on the connection (and its upload buttons on the API).
+  if (!state.currentDatasetId && state.messages.length === 0) renderWelcome('no-dataset');
 }
 
 function bindEvents() {
@@ -2072,8 +2087,6 @@ async function init() {
   initUploadArea();
 
   await connect();
-  // The empty state's upload buttons depend on the API being there.
-  if (!state.currentDatasetId && state.messages.length === 0) renderWelcome('no-dataset');
 
   console.log('Initialization complete');
 }

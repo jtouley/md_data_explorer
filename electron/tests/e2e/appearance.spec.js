@@ -132,6 +132,9 @@ test.describe('Appearance', () => {
 
     // Assert offline
     await expect(page.getByTestId('offline-banner')).toBeVisible();
+    await expect(page.getByTestId('welcome-message')).toContainText(
+      'Waiting for the analysis engine.'
+    );
     await expect(page.locator('#connection-status')).toHaveClass(/status-error/);
 
     // Act
@@ -141,5 +144,6 @@ test.describe('Appearance', () => {
     // Assert
     await expect(page.getByTestId('offline-banner')).toBeHidden();
     await expect(page.locator('.status-text')).toHaveText('Running on this computer');
+    await expect(page.getByTestId('welcome-message')).toContainText('Choose a cohort to begin.');
   });
 });

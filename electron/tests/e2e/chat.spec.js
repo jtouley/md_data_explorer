@@ -20,10 +20,12 @@ test.describe('Chat Interface', () => {
     await expect(submitBtn).toBeDisabled();
   });
 
-  test('welcome message asks the user to choose a cohort', async ({ page }) => {
+  test('welcome message says the engine is not reachable (no API in this page)', async ({
+    page,
+  }) => {
     const welcomeMessage = page.locator('.welcome-message');
     await expect(welcomeMessage).toBeVisible();
-    await expect(welcomeMessage).toContainText('Choose a cohort to begin.');
+    await expect(welcomeMessage).toContainText('Waiting for the analysis engine.');
     // Examples are built from a cohort's columns, so none show before one is chosen.
     await expect(page.locator('.example-queries')).toHaveCount(0);
   });
