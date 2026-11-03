@@ -109,7 +109,7 @@ function installMock({ answerClaim, planLine, refusal, engineFailure, wideColumn
           ms,
           'query_awaiting_confirmation',
           {
-            plan_line: planLine,
+            plan_line: window.__holdPlanLine ?? planLine,
             failure_reason: "I couldn't place the word 'recently', so it is not in the plan.",
             confidence: 0.6,
           },
