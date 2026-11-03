@@ -2434,6 +2434,10 @@ class SemanticLayer:
             return view.filter(view[column].cast("float64") > float(step.value))
         if step.op == "lt":
             return view.filter(view[column].cast("float64") < float(step.value))
+        if step.op == "ge":
+            return view.filter(view[column].cast("float64") >= float(step.value))
+        if step.op == "le":
+            return view.filter(view[column].cast("float64") <= float(step.value))
         if step.op == "not_null":
             return view.filter(view[column].notnull())
         if step.op == "gt_median":
@@ -2509,7 +2513,7 @@ class SemanticLayer:
             # COUNT: Use entity_key or group_by
             if plan.group_by:
                 # Count by group
-                result = view.group_by(plan.group_by).aggregate(_.count().name("count"))
+                result = view.group_by(plan.group_by).aggregate(_.count().name("count")).order_by(plan.group_by)
             elif plan.entity_key:
                 # Count distinct entities
                 result = view.select(plan.entity_key).distinct().count()
@@ -2520,13 +2524,13 @@ class SemanticLayer:
             # DESCRIBE: Type-aware aggregation
             if plan.metric and plan.group_by:
                 metric_col = view[plan.metric]
-                result = view.group_by(plan.group_by).aggregate(metric_col.mean().name("mean"))
+                result = view.group_by(plan.group_by).aggregate(metric_col.mean().name("mean")).order_by(plan.group_by)
             elif plan.metric:
                 # Detect if categorical or numeric
                 is_categorical = self._detect_categorical_encoding(view[plan.metric])
                 if is_categorical:
                     # Frequency table
-                    result = view.group_by(plan.metric).aggregate(_.count().name("count"))
+                    result = view.group_by(plan.metric).aggregate(_.count().name("count")).order_by(plan.metric)
                 else:
                     # Descriptive statistics
                     metric_col = view[plan.metric]
@@ -2550,11 +2554,16 @@ class SemanticLayer:
                     f"SELECT {group}, {metric}, count(*) AS n FROM _cohort_in GROUP BY 1, 2",
                 )
             metric_col = view[plan.metric]
-            result = view.group_by(plan.group_by).aggregate(
-                [
-                    metric_col.mean().name("mean"),
-                    _.count().name("n"),
-                ]
+            # Ordered by group: the same plan returns the same rows in the same order.
+            result = (
+                view.group_by(plan.group_by)
+                .aggregate(
+                    [
+                        metric_col.mean().name("mean"),
+                        _.count().name("n"),
+                    ]
+                )
+                .order_by(plan.group_by)
             )
         else:
             # Other intents: return base view for now

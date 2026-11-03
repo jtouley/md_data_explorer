@@ -17,6 +17,19 @@ from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.query_plan import CohortStep
 
 _OVER = re.compile(r"\b(?:over|above|older than)\s+(\d+(?:\.\d+)?)\b", re.IGNORECASE)
+# Comparisons: "<direction> N" and "N <direction>" ("65+", "65 or older", "at least 65").
+_PRE_COMPARE = re.compile(
+    r"\b(?P<dir>over|above|exceeding|under|below|older than|younger than|more than|greater than|higher than|"
+    r"less than|fewer than|lower than|at least|at most)\s+(?P<num>\d+(?:\.\d+)?)\b",
+    re.IGNORECASE,
+)
+_POST_COMPARE = re.compile(
+    r"\b(?P<num>\d+(?:\.\d+)?)\s*(?P<dir>\+|(?:or|and) (?:more|older|over|above|greater|higher|less|fewer|younger|"
+    r"under|below|lower)\b(?! than))",
+    re.IGNORECASE,
+)
+_PRE_OPS = {"at least": "ge", "at most": "le"}
+_LOWER_WORDS = ("under", "below", "younger", "less", "fewer", "lower")
 _DECILE = re.compile(
     r"\b(?:top|highest|oldest) decile(?: of ([a-z0-9 ]+?))?(?=[?]|,|$)",
     re.IGNORECASE,
@@ -32,6 +45,8 @@ _COMPARE_SPLIT = re.compile(
 )
 # Trailing "by <group>": that column is the grouping, never a filter on itself.
 _BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
+# "in each site", "per site": the same grouping as "by site".
+_EACH_GROUP = re.compile(r"\b(?:each|per)\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
 # Words that turn "<value>" into "everyone except <value>". Binding the value as an
 # equality would answer for exactly the patients the question excludes.
 _NEGATION = re.compile(
@@ -139,15 +154,17 @@ def peel_cohort(
     steps: list[tuple[int, CohortStep]] = []
 
     age = _best_column(columns, {"age"})
-    over = _OVER.search(text)
-    if over:
+    for match, op in _comparisons(lowered):
         # The number belongs to the column the question names before it ("bmi over 30");
-        # age only when the words say so. Unknown owner: leave it unbound so the plan holds.
-        named = _over_owner(lowered, over, columns, values_for)
+        # age only when the words say so. Unknown owner or a negated comparison: leave it
+        # unbound, so the plan holds instead of guessing.
+        if _negated(lowered, match.start()):
+            continue
+        named = _number_owner(lowered, match, columns, values_for)
         if named:
-            steps.append((0, CohortStep("gt", named, float(over.group(1)))))
-            consumed |= _tokens(named) | _tokens(over.group(0))
-            hidden.append(over.group(0))
+            steps.append((0, CohortStep(op, named, float(match.group("num")))))  # type: ignore[arg-type]
+            consumed |= _tokens(named) | _tokens(match.group(0))
+            hidden.append(match.group(0))
 
     decile = _DECILE.search(text)
     if decile:
@@ -190,7 +207,7 @@ def peel_cohort(
     counting = re.search(r"\bhow many\b", lowered) is not None or rating
     mentioned = _mentioned(lowered, columns, _tokens(lowered) - consumed)
     bound_columns = {step.column for _phase, step in steps}
-    by_group = _BY_GROUP.search(lowered)
+    by_group = _BY_GROUP.search(lowered) or _EACH_GROUP.search(lowered)
     if by_group:
         grouping_column = _best_column(columns, _tokens(by_group.group("group")))
         if grouping_column:
@@ -283,6 +300,9 @@ def peel_cohort(
         if group:
             locked_group = group
         force_intent = "COMPARE_GROUPS"
+    elif _EACH_GROUP.search(lowered) and not rating:
+        each = _EACH_GROUP.search(lowered)
+        locked_group = _best_column(columns, _tokens(each.group("group"))) if each else None
     elif rate_column and _best_column(columns, {"sex", "gender"}):
         locked_group = _best_column(columns, {"sex", "gender"})
 
@@ -457,10 +477,16 @@ def _value_hits(
         # named: "North East" over "North"). Two values tied on both is ambiguous: bind
         # neither, so the unbound word holds the plan. Never decide by value order.
         found_values: list[tuple[int, int, int, Any]] = []
-        for value in values_for(column):
-            if value is None or isinstance(value, bool):
-                continue
-            label = str(value).strip().lower()
+        stored = values_for(column)
+        candidates: list[tuple[str, Any]] = [
+            (str(value).strip().lower(), value) for value in stored if value is not None and not isinstance(value, bool)
+        ]
+        # Coded columns name their values in the header ("DEXA result 1: Normal 2: Osteopenia").
+        for code, code_label in (parse_column_name(column).value_mapping or {}).items():
+            code_value = _code_value(stored, code)
+            if code_value is not None:
+                candidates.append((code_label.strip().lower(), code_value))
+        for label, value in candidates:
             if not label or label.isdigit():
                 continue
             found = _label_at(text, tokens, label)
@@ -620,25 +646,45 @@ def _score(column: str, tokens: set[str]) -> int:
 def _tokens(text: str, digits: bool = False) -> set[str]:
     """Content words. ``digits=True`` keeps numbers, so stored values "Type 1" and "Type 2" differ."""
     parts = re.findall(r"[a-z0-9]+", text.lower())
-    return {
+    words = {
         part
         for part in parts
         if part not in _STOP and (digits or not part.isdigit()) and (len(part) > 1 or (digits and part.isdigit()))
     }
+    # Plurals name the same column or value ("statins", "smokers", "females").
+    words |= {word[:-1] for word in words if len(word) > 4 and word.endswith("s") and not word.endswith("ss")}
+    return words - _STOP
 
 
-def _over_owner(
+def _comparisons(lowered: str) -> list[tuple[re.Match[str], str]]:
+    """Every "<direction> N" / "N <direction>" in the question, with its operator."""
+    found: list[tuple[re.Match[str], str]] = []
+    for match in _PRE_COMPARE.finditer(lowered):
+        direction = match.group("dir").lower()
+        op = _PRE_OPS.get(direction) or ("lt" if direction.startswith(_LOWER_WORDS) else "gt")
+        found.append((match, op))
+    taken = {match.start("num") for match, _op in found}
+    for match in _POST_COMPARE.finditer(lowered):
+        if match.start("num") in taken:
+            continue
+        direction = match.group("dir").lower()
+        found.append((match, "le" if any(word in direction for word in _LOWER_WORDS) else "ge"))
+    found.sort(key=lambda item: item[0].start())
+    return found
+
+
+def _number_owner(
     lowered: str,
-    over: re.Match[str],
+    match: re.Match[str],
     columns: list[str],
     values_for: Callable[[str], list[Any]],
 ) -> str | None:
     """Column the compared number belongs to (shared rule with the word-accounting gate)."""
-    from clinical_analytics.core.word_accounting import _is_measure, number_owner, tokenize
+    from clinical_analytics.core.word_accounting import _is_measure, number_owner, numeric_ranges, tokenize
 
-    tokens = tokenize(lowered[: over.end()])
+    tokens = tokenize(lowered[: match.end("num")])
     numeric = {column for column in columns if _is_measure(values_for(column))}
-    return number_owner(tokens, len(tokens) - 1, columns, numeric)
+    return number_owner(tokens, len(tokens) - 1, columns, numeric, ranges=numeric_ranges(columns, values_for))
 
 
 def _is_group(column: str) -> bool:

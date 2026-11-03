@@ -186,7 +186,13 @@ def test_peelCohort_storedValues_bindMostSpecificAndNeverATie(
     [
         pytest.param("how many patients with ldl over 130?", [CohortStep("gt", "ldl", 130.0)], id="named_measure"),
         pytest.param("how many patients over 65?", [CohortStep("gt", "age", 65.0)], id="subject_means_age"),
-        pytest.param("what is the average ldl in patients over 30?", [], id="ambiguous_owner_unbound"),
+        # A measure named before "patients over N": N inside that measure's observed range
+        # could be either, so nothing binds; outside it, N can only be an age.
+        pytest.param("what is the average ldl in patients over 120?", [], id="in_measure_range_unbound"),
+        pytest.param(
+            "what is the average ldl in patients over 30?", [CohortStep("gt", "age", 30.0)], id="out_of_range_is_age"
+        ),
+        pytest.param("how many patients aged 65 or older?", [], id="ge_is_not_gt"),
     ],
 )
 def test_peelCohort_overNumber_bindsItsOwnerOrNothing(query: str, expected: list[CohortStep]) -> None:
@@ -195,6 +201,80 @@ def test_peelCohort_overNumber_bindsItsOwnerOrNothing(query: str, expected: list
 
     # Assert
     assert [step for step in peeled.steps if step.op == "gt"] == expected
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        pytest.param("how many patients aged 65 or older?", CohortStep("ge", "age", 65.0), id="or_older"),
+        pytest.param("how many patients 65+?", CohortStep("ge", "age", 65.0), id="plus"),
+        pytest.param("how many patients at least 65?", CohortStep("ge", "age", 65.0), id="at_least"),
+        pytest.param("how many patients with ldl under 120?", CohortStep("lt", "ldl", 120.0), id="under_named"),
+        pytest.param("how many patients 65 or younger?", CohortStep("le", "age", 65.0), id="or_younger"),
+    ],
+)
+def test_peelCohort_comparisonForms_bindOperatorOnNamedColumn(query: str, expected: CohortStep) -> None:
+    # Arrange / Act
+    peeled = _peel(query)
+
+    # Assert
+    assert peeled.steps == [expected]
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        pytest.param(["patient_id", "Age (years)"], id="age_years_label"),
+        pytest.param(["patient_id", "age_years"], id="snake"),
+    ],
+)
+def test_peelCohort_ageByMeaning_bindsAgeColumn(columns: list[str]) -> None:
+    # Arrange
+    values: dict[str, list[Any]] = {columns[0]: ["a"], columns[1]: [30, 50, 70]}
+
+    # Act
+    peeled = peel_cohort("how many patients over 65?", columns, lambda column: values[column])
+
+    # Assert
+    assert peeled.steps == [CohortStep("gt", columns[1], 65.0)]
+
+
+@pytest.mark.parametrize(
+    ("query", "column", "value"),
+    [
+        pytest.param("how many patients taking statins?", "Statin use 1: Yes 2: No", 1, id="plural_column"),
+        pytest.param("how many females?", "gender", "Female", id="plural_value"),
+    ],
+)
+def test_peelCohort_plurals_bindLikeSingular(query: str, column: str, value: Any) -> None:
+    # Arrange / Act
+    peeled = _peel(query)
+
+    # Assert
+    assert peeled.steps == [CohortStep("eq", column, value)]
+
+
+def test_peelCohort_codedHeaderLabel_bindsItsCode() -> None:
+    # Arrange
+    dexa = "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis"
+    values: dict[str, list[Any]] = {"patient_id": ["a"], dexa: [1, 2, 3]}
+
+    # Act
+    peeled = peel_cohort("how many patients with osteopenia?", ["patient_id", dexa], lambda column: values[column])
+
+    # Assert
+    assert peeled.steps == [CohortStep("eq", dexa, 2)]
+
+
+def test_peelCohort_eachSite_locksGrouping() -> None:
+    # Arrange
+    values: dict[str, list[Any]] = {"patient_id": ["a"], "site": ["North", "South"]}
+
+    # Act
+    peeled = peel_cohort("how many patients in each site?", ["patient_id", "site"], lambda column: values[column])
+
+    # Assert
+    assert peeled.locked_group == "site"
 
 
 def test_attachCohort_correlation_setsPredictorVariables() -> None:

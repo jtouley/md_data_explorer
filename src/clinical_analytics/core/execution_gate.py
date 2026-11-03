@@ -152,6 +152,10 @@ def _step_text(step: CohortStep) -> str:
         return f"{column} > {_number(step.value)}"
     if step.op == "lt":
         return f"{column} < {_number(step.value)}"
+    if step.op == "ge":
+        return f"{column} ≥ {_number(step.value)}"
+    if step.op == "le":
+        return f"{column} ≤ {_number(step.value)}"
     if step.op == "not_null":
         return f"{column} is recorded"
     if step.op == "gt_median":

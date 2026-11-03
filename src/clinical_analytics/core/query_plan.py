@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 # Cohort ops the semantic layer can execute. Anything else must refuse, not be skipped.
-SUPPORTED_COHORT_OPS: frozenset[str] = frozenset({"eq", "gt", "lt", "not_null", "gt_median", "ge_percent_rank"})
+SUPPORTED_COHORT_OPS: frozenset[str] = frozenset(
+    {"eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"}
+)
 
 
 class CohortStepError(ValueError):
@@ -31,7 +33,7 @@ class CohortStep:
     which is the SQL equivalent of a CTE cutoff.
     """
 
-    op: Literal["eq", "gt", "lt", "not_null", "gt_median", "ge_quantile", "ge_percent_rank"]
+    op: Literal["eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_quantile", "ge_percent_rank"]
     column: str
     value: str | int | float | None = None
     quantile: float | None = None

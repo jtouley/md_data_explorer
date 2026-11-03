@@ -61,7 +61,7 @@ BETWEEN_WORDS: frozenset[str] = frozenset({"between"})
 RATE_WORDS: frozenset[str] = frozenset(
     {"proportion", "percent", "percentage", "share", "rate", "fraction", "likely", "__rate__"}
 )
-BY_WORDS: frozenset[str] = frozenset({"by"})
+BY_WORDS: frozenset[str] = frozenset({"by", "each", "per"})
 CUTOFF_WORDS: frozenset[str] = frozenset({"top", "decile", "highest", "oldest"})
 DIRECTION_OPS: dict[str, str] = {
     "over": "gt",
@@ -86,9 +86,9 @@ LOGIC_WORDS: frozenset[str] = (
 _PHRASES: tuple[tuple[str, str], ...] = (
     (r"n't\b", " not"),
     (r"(\d)\s*\+", r"\1 __ge__ "),
-    (r"\b(?:or|and) (?:more|older|over|above|greater|higher)\b", " __ge__ "),
+    (r"\b(?:or|and) (?:more|older|over|above|greater|higher)\b(?! than)", " __ge__ "),
     (r"\bat least\b", " __ge__ "),
-    (r"\b(?:or|and) (?:less|fewer|younger|under|below|lower)\b", " __le__ "),
+    (r"\b(?:or|and) (?:less|fewer|younger|under|below|lower)\b(?! than)", " __le__ "),
     (r"\bat most\b", " __le__ "),
     (r"\b(?:more|less) likely\b", " __rate__ "),
     (r"\bother than\b", " __neg__ "),
@@ -160,20 +160,45 @@ def stem_match(word: str, target: str) -> bool:
     return common >= 5 and common >= 0.75 * shorter
 
 
+_AGE_UNITS = {"years", "year", "yrs", "yr", "y", "at", "baseline", "in", "current"}
+
+
+def age_column(columns: list[str]) -> str | None:
+    """The age column by meaning: "age", "Age (years)", "age_years", "age at baseline"."""
+    for column in columns:
+        parts = name_tokens(column)
+        if "age" in parts and set(parts) - {"age"} <= _AGE_UNITS:
+            return column
+    return None
+
+
+def numeric_ranges(columns: list[str], values_for: Callable[[str], list[Any]]) -> dict[str, tuple[float, float]]:
+    """Observed (min, max) of each measured column."""
+    ranges: dict[str, tuple[float, float]] = {}
+    for column in columns:
+        values = values_for(column)
+        if _is_measure(values):
+            numbers = [float(value) for value in values if value is not None]
+            ranges[column] = (min(numbers), max(numbers))
+    return ranges
+
+
 def number_owner(
     tokens: list[str],
     number_at: int,
     columns: list[str],
     numeric_columns: set[str],
     alias_index: dict[str, str] | None = None,
+    ranges: dict[str, tuple[float, float]] | None = None,
 ) -> str | None:
     """Column a compared number belongs to, or None when the question does not say.
 
     The nearest content word before the comparison names the column ("bmi over 30" is bmi).
     Age is used only when the words say age ("older than", "aged"), or the number follows a
-    subject ("patients over 65") and no other measured column is named before it.
+    subject ("patients over 65") and either no other measure is named before it, or the
+    number is outside the observed range of every measure named before it.
     """
-    age = next((column for column in columns if name_tokens(column) == ["age"]), None)
+    age = age_column(columns)
     start = number_at - 1
     if start >= 0 and tokens[start] in DIRECTION_OPS and tokens[start] not in _POSTFIX:
         if tokens[start] in _AGE_WORDS:
@@ -190,10 +215,22 @@ def number_owner(
             return named
         break
     before = tokens[:number_at]
-    for word in before:
-        named = _column_for_word(word, columns, alias_index)
-        if named is not None and named in numeric_columns and named != age:
-            return None
+    measures = {
+        named
+        for named in (_column_for_word(word, columns, alias_index) for word in before)
+        if named is not None and named in numeric_columns and named != age
+    }
+    if not measures:
+        return age
+    if ranges is None:
+        return None
+    try:
+        number = float(tokens[number_at])
+    except ValueError:
+        return None
+    inside = [column for column in measures if column in ranges and ranges[column][0] <= number <= ranges[column][1]]
+    if inside or any(column not in ranges for column in measures):
+        return None
     return age
 
 
@@ -204,10 +241,18 @@ def _column_for_word(word: str, columns: list[str], alias_index: dict[str, str] 
         if " " not in alias and stem_match(word, alias):
             return column
     for column in columns:
-        parts = [part for part in name_tokens(column) if not part.isdigit()]
-        if parts and len(parts) <= 2 and any(stem_match(word, part) for part in parts):
+        if _names_column(word, column):
             return column
     return None
+
+
+def _names_column(word: str, column: str) -> bool:
+    """The word is the column's name: short names on any word; longer ones ("LDL mg/dL",
+    "Smoker 1: Yes 2: No") on their leading word, the measure rather than a unit or label."""
+    parts = [part for part in name_tokens(column) if not part.isdigit()]
+    if not parts:
+        return False
+    return stem_match(word, parts[0]) or (len(parts) <= 2 and any(stem_match(word, part) for part in parts))
 
 
 def unused_words(
@@ -227,6 +272,7 @@ def unused_words(
     group_by = getattr(plan, "group_by", None)
     referenced = _referenced_columns(plan, context)
     numeric_columns = {column for column in columns if _is_measure(values_for(column))}
+    ranges = numeric_ranges(columns, values_for)
 
     # Column names, as a whole phrase ("statin use 1 yes 2 no") or by alias/stem.
     for column in referenced:
@@ -275,7 +321,8 @@ def unused_words(
             for at in hits:
                 used[at] = True
 
-    namer = _ColumnNamer(columns, values_for, alias_index)
+    # The plan's own columns are always nameable, even if a caller's column list omits one.
+    namer = _ColumnNamer([*columns, *sorted(referenced - set(columns))], values_for, alias_index)
 
     # Numbers: bound to a comparison of the same direction on the column they belong to.
     metric = getattr(plan, "metric", None)
@@ -286,7 +333,7 @@ def unused_words(
         direction_at = _direction_at(tokens, at)
         if direction_at is None:
             continue
-        owner = number_owner(tokens, at, columns, numeric_columns, alias_index)
+        owner = number_owner(tokens, at, columns, numeric_columns, alias_index, ranges)
         op = DIRECTION_OPS[tokens[direction_at]]
         # "median ldl over 70": when the only mention of the summarised measure is also the
         # number's owner, the cutoff could equally mean age. Ambiguous: the number stays unused.
@@ -294,6 +341,10 @@ def unused_words(
         if owner is not None and not summarised and _has_comparison(filters, steps, owner, op, float(word)):
             used[at] = True
             used[direction_at] = True
+            # "aged 65 or older": the age word is part of the bound comparison.
+            lead = min(at, direction_at) - 1
+            if lead >= 0 and tokens[lead] in {"aged", "age"} and owner == age_column(columns):
+                used[lead] = True
 
     # Fixed vocabulary and intent words.
     stat_ok = bool(metric) and intent in {"DESCRIBE", "COMPARE_GROUPS"}
@@ -330,7 +381,7 @@ class _ColumnNamer:
     def columns_named(self, word: str) -> set[str]:
         if word in LOGIC_WORDS or word in FUNCTION_WORDS or word in SUBJECT_WORDS or word in LINK_WORDS:
             return set()
-        named = {column for column in self._columns if _column_for_word(word, [column], self._alias_index) == column}
+        named = {column for column in self._columns if _names_column(word, column)}
         for alias, column in (self._alias_index or {}).items():
             if " " not in alias and stem_match(word, alias):
                 named.add(column)

@@ -16,17 +16,13 @@ from clinical_analytics.eval.headless import ask, classify
 
 # Hard questions the system currently holds or refuses. Pinned so a lost answer fails
 # loudly; remove an id when it starts being answered correctly. Causes: 0/1 outcome columns
-# with no yes/no labels (no polarity is guessed); "<measure> for patients over N", where N
-# could belong to the measure (the word-accounting gate holds it); and residuals that did
-# not parse, which are held at confidence 0.0 rather than given a confidence.
+# with no yes/no labels (no polarity is guessed); "median ldl over 70", where the cutoff could
+# be on the measure or on age; and residuals that did not parse, which are held at confidence
+# 0.0 rather than given a confidence.
 HARD_NOT_ANSWERED_IDS: frozenset[str] = frozenset(
     {
         "cohort-analytical-003",
         "cohort-analytical-005",
-        "cohort-analytical-014",
-        "cohort-analytical-015",
-        "cohort-analytical-016",
-        "cohort-analytical-017",
         "cohort-analytical-020",
         "cohort-analytical-021",
         "cohort-analytical-022",
