@@ -106,6 +106,14 @@ tables. The footnote says what is true for both: "Hidden to protect privacy: cou
 are not shown, and some other cells are hidden so those counts can't be worked out from totals."
 We never write "<5"; the threshold is 11.
 
+**Data check (cohort details) uses one label only.** Its report (`contracts/quality.py`) shows
+every suppressed count the same way, as "some … ; count hidden to protect privacy", never "<11":
+with a visible row total, two labels would tell a reader that the non-"<11" hidden counts are 11
+or more, and a column's missing + bad + valid counts would then pin a small one. A hidden count
+there only means "at least 1" (zero is shown as 0). Its footnote: "Hidden to protect privacy:
+counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be
+worked out from the totals. A hidden count is never zero."
+
 ### Session titles
 
 All audits ask for sessions titled by their first question. The API does not persist messages
@@ -290,6 +298,8 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Working | Processing… / Stage: planning | Reading your question… / Running the analysis… |
 | Claim | Claim: {claim} + title twice | {headline} / {stats line} / {caveats}; title once as caption |
 | Hidden cell | suppressed | hidden† / <11† + footnote |
+| Upload ready + data check | ✓ x uploaded | "{name} is ready." + "Data check found N things to review in cohort details." / "Data check found nothing to flag." / "Data check could not run." |
+| Cohort details: data check | (none) | Section "Data check": the API's lines as a list (suppressed counts read "some …; count hidden to protect privacy"), the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions." |
 | Hold heading | (none) | Check this plan before it runs |
 | Confirm / Reject | Confirm / Reject | Run this analysis / Not what I meant |
 | Rejected | Query rejected — not executed. | Not run. Rephrase your question below. |

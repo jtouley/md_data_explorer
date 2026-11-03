@@ -7,7 +7,7 @@
 export const DATA_CHECK_STILL_USABLE = 'You can still ask questions.';
 export const DATA_CHECK_NOTHING_FLAGGED = 'Nothing flagged.';
 export const DATA_CHECK_PRIVACY_HINT =
-  "Hidden to protect privacy: counts from 1 to 10 are not shown, and some other counts are hidden so those counts can't be worked out from totals.";
+  "Hidden to protect privacy: counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be worked out from the totals. A hidden count is never zero.";
 export const DATA_CHECK_LOADING = 'Checking…';
 
 const MORE_LINE = /^…and (\d+) more$/;

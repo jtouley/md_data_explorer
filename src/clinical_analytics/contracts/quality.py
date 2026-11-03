@@ -14,13 +14,16 @@ with the reason, never skipped silently. NaN in a float column counts as missing
 range.
 
 Reports carry counts already suppressed, so the file on disk and the API response are safe to show
-as they are. The row count is visible, so each column is a partition of it:
-``[missing, bad, rest]`` for every bad-value check (codebook, range, duplicates; ``rest`` is never
-shown but can be worked out when the others are), or ``[missing, rest]`` when there is none. A
-count of 1..10 anywhere in a line (``rest`` included) shows as "<11", and further cells are
-hidden ("hidden", same rule as ``suppress_count_matrix``) until each line has at least two
-hidden cells summing to 11 or more, so no visible combination recovers a small count. Hidden
-cells lose their percent.
+as they are. Every suppressed count shows the one label "hidden" (never "<11"), which says only
+"at least 1"; zero is shown as 0. Each column is a partition of the visible row count, one line
+per bad-value check: ``[missing, bad, rest]`` (bad = not in the codebook, out of range or
+repeated; ``rest`` is never shown but can be worked out when the others are), or
+``[missing, rest]``. Counts of 1..10 are hidden, and more cells are hidden until, for every
+small count (``rest`` included), a reader who knows the shown numbers, the row count and that
+each hidden count is at least 1 must still allow it to be 11 or more. When even hiding every
+count of a column cannot achieve that (tiny tables), the row count and every non-zero count are
+hidden. Hidden counts lose their percent. Pass/warning statuses still say which side of a
+threshold a hidden count is on (e.g. missingness above 5%); that coarse bound is accepted.
 """
 
 from __future__ import annotations
@@ -36,7 +39,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import QualityCheckError
-from clinical_analytics.core.result_presentation import suppress_count
 
 logger = structlog.get_logger()
 
@@ -68,7 +70,7 @@ class QualityCheckResult(BaseModel):
     severity: str = Field(..., description="error or warning")
     status: CheckStatus
     count: int | str | None = Field(
-        None, description="Rows affected; '<11' when 1..10, 'hidden' when hiding it protects a small count"
+        None, description="Rows affected; 'hidden' (at least 1) when suppressed; None if not run"
     )
     percent: float | None = Field(None, description="Share of rows (1 decimal); None when suppressed")
     message: str = Field(..., description="Plain-language result")
@@ -84,7 +86,7 @@ class QualityReport(BaseModel):
     dataset_version: str
     contract_version: str
     run_ts: str = Field(..., description="UTC run time, ISO 8601")
-    row_count: int | str = Field(..., description="Rows checked (suppressed when 1..10)")
+    row_count: int | str = Field(..., description="Rows checked; 'hidden' when suppressed")
     passed: int
     warnings: int
     failed: int
@@ -295,7 +297,11 @@ def _passes(rule: dict[str, Any], observed: float) -> bool:
 def _message(check: CompiledCheck, count: int, shown: int | str, percent: float | None) -> str:
     name = check.display or "Table"
     if check.metric == "rowCount":
-        return f"{shown} rows" if count >= config.MIN_ROW_COUNT else f"{shown} rows: most counts will be hidden"
+        if shown != config.COUNT_HIDDEN:
+            return f"{shown} rows"
+        if count < config.MIN_ROW_COUNT:
+            return "Too few rows: every count is hidden to protect privacy"
+        return "Row count hidden to protect privacy"
     if count == 0:
         return f"{name}: no problems found"
     hidden = shown == config.COUNT_HIDDEN
@@ -316,7 +322,10 @@ def _message(check: CompiledCheck, count: int, shown: int | str, percent: float 
     return f"{name}: {amount} rows flagged{note}"
 
 
-def _lines(checks: list[CompiledCheck], raw: dict[str, int]) -> tuple[dict[str, str], dict[str, int], list[list[str]]]:
+Line: TypeAlias = tuple[str | None, str | None, str]  # (missing, bad, rest); rest is never shown
+
+
+def _lines(checks: list[CompiledCheck], raw: dict[str, int]) -> tuple[dict[str, str], dict[str, int], list[Line]]:
     """Cells and lines of the disclosure model (see the module docstring).
 
     Returns: check id -> cell, cell -> count, and the lines (each sums to the row count).
@@ -334,69 +343,95 @@ def _lines(checks: list[CompiledCheck], raw: dict[str, int]) -> tuple[dict[str, 
         else:
             cell_of[c.id] = c.id
         value[cell_of[c.id]] = raw[c.id]
-    lines: list[list[str]] = []
+    lines: list[Line] = []
     for c in runnable:
         if c.metric == "nullValues":
             continue
         m = missing_cell.get(c.column) if c.column is not None else None
-        cells = [m, c.id] if m is not None else [c.id]
         rest = f"{c.id}::rest"
-        value[rest] = rows - sum(value[k] for k in cells)
-        lines.append([*cells, rest])
-    # Missing counts not already in a line above: [missing, rest].
+        value[rest] = rows - (value[m] if m else 0) - value[c.id]
+        lines.append((m, c.id, rest))
+    in_line = {cell for line in lines for cell in line if cell}
     for c in runnable:
         cell = cell_of[c.id]
-        in_line = any(cell in line for line in lines)
-        if c.metric == "nullValues" and not in_line:
+        if c.metric == "nullValues" and cell not in in_line:
             rest = f"{cell}::rest"
             value[rest] = rows - value[cell]
-            lines.append([cell, rest])
+            lines.append((cell, None, rest))
+            in_line |= {cell, rest}
     return cell_of, value, lines
 
 
-def _hidden_cells(value: dict[str, int], lines: list[list[str]]) -> set[str]:
-    """Primary (1..10) plus complementary cells, until every line with a hidden cell has two or
-    more hidden cells summing to the threshold. Never-shown ``rest`` cells are hidden first."""
+def _max_feasible(cell: str, rows: int, value: dict[str, int], hidden: set[str], lines: list[Line]) -> int:
+    """Largest value a reader could not rule out for ``cell`` (hidden counts >= 1, rest >= 0)."""
+
+    def low(c: str | None) -> int:
+        return 0 if c is None else (1 if c in hidden else value[c])
+
+    if cell.endswith("::rest"):
+        m, bad, _ = next(line for line in lines if line[2] == cell)
+        is_open = (m in hidden) or (bad in hidden)
+        return rows - low(m) - low(bad) if is_open else value[cell]
+    if cell not in hidden:
+        return value[cell]
+    as_missing = [line for line in lines if line[0] == cell]
+    if as_missing:
+        return min(rows - low(bad) for _, bad, _ in as_missing)
+    m = next(line[0] for line in lines if line[1] == cell)
+    return rows - low(m)
+
+
+def _neighbours(cell: str, lines: list[Line]) -> list[str]:
+    """Shown cells in the lines that constrain ``cell``."""
+    out: list[str] = []
+    for m, bad, rest in lines:
+        if cell in (m, bad, rest):
+            out.extend(c for c in (m, bad) if c is not None and c != cell)
+    return out
+
+
+def _hidden_cells(rows: int, value: dict[str, int], lines: list[Line]) -> tuple[set[str], bool]:
+    """Shown cells to hide, and whether the row count must be hidden too (see module docstring)."""
     limit = config.MIN_CELL_SIZE
-    hidden = {k for k, v in value.items() if 0 < v < limit}
-    changed = bool(hidden)
-    while changed:
-        changed = False
-        for line in lines:
-            line_hidden = [k for k in line if k in hidden]
-            if not line_hidden:
-                continue
-            while len(line_hidden) < 2 or sum(value[k] for k in line_hidden) < limit:
-                candidates = sorted(
-                    (k for k in line if k not in hidden and value[k] > 0),
-                    key=lambda k: (not k.endswith("::rest"), value[k]),
-                )
-                if not candidates:
-                    break
-                hidden.add(candidates[0])
-                line_hidden.append(candidates[0])
-                changed = True
-    return hidden
+    shown_cells = {c for line in lines for c in line[:2] if c is not None}
+    everything = ({c for c in shown_cells if value[c] > 0}, True)
+    if 0 < rows < limit:
+        return everything
+    hidden = {c for c in shown_cells if 0 < value[c] < limit}
+    small = [c for c, v in value.items() if 0 < v < limit]
+    while True:
+        weak = next((c for c in small if _max_feasible(c, rows, value, hidden, lines) < limit), None)
+        if weak is None:
+            return hidden, False
+        candidates = sorted(
+            {c for c in _neighbours(weak, lines) if c not in hidden and value[c] > 0}, key=lambda c: value[c]
+        )
+        if not candidates:
+            return everything
+        hidden.add(candidates[0])
 
 
-def _shown_counts(checks: list[CompiledCheck], raw: dict[str, int]) -> dict[str, tuple[int | str, float | None]]:
-    """Count and percent as shown, for every runnable check."""
+def _shown_counts(
+    checks: list[CompiledCheck], raw: dict[str, int]
+) -> tuple[dict[str, tuple[int | str, float | None]], int | str]:
+    """Count and percent as shown for every runnable check, and the row count as shown."""
     rows = raw[ROWS_KEY]
     cell_of, value, lines = _lines(checks, raw)
-    hidden = _hidden_cells(value, lines)
+    hidden, rows_hidden = _hidden_cells(rows, value, lines)
+    shown_rows: int | str = config.COUNT_HIDDEN if rows_hidden else rows
     shown: dict[str, tuple[int | str, float | None]] = {}
     for c in checks:
         if c.expr is None:
             continue
         count = raw[c.id]
         if c.metric == "rowCount":
-            shown[c.id] = (suppress_count(count, config.MIN_CELL_SIZE), None)
+            shown[c.id] = (shown_rows, None)
         elif cell_of[c.id] in hidden:
-            small = 0 < count < config.MIN_CELL_SIZE
-            shown[c.id] = (suppress_count(count, config.MIN_CELL_SIZE) if small else config.COUNT_HIDDEN, None)
+            shown[c.id] = (config.COUNT_HIDDEN, None)
         else:
-            shown[c.id] = (count, round(100.0 * count / rows, 1) if rows else None)
-    return shown
+            percent = round(100.0 * count / rows, 1) if rows and not rows_hidden else None
+            shown[c.id] = (count, percent)
+    return shown, shown_rows
 
 
 def _result(
@@ -447,7 +482,7 @@ def run_quality(lf: pl.LazyFrame, contract: OpenDataContractStandard, run_at: da
     """Check ``lf`` against ``contract`` (one collect) and build the suppressed report."""
     checks = compile_contract(contract, lf.collect_schema())
     raw = measure(lf, checks)
-    shown_counts = _shown_counts(checks, raw)
+    shown_counts, shown_rows = _shown_counts(checks, raw)
     results = [_result(c, raw, shown_counts) for c in checks]
     ts = (run_at or datetime.now(UTC)).astimezone(UTC)
     report = QualityReport(
@@ -455,7 +490,7 @@ def run_quality(lf: pl.LazyFrame, contract: OpenDataContractStandard, run_at: da
         dataset_version=str(_custom_value(contract, "datasetVersion") or ""),
         contract_version=contract.version or "",
         run_ts=ts.isoformat().replace("+00:00", "Z"),
-        row_count=suppress_count(raw[ROWS_KEY], config.MIN_CELL_SIZE),
+        row_count=shown_rows,
         passed=sum(r.status == "passed" for r in results),
         warnings=sum(r.status == "warning" for r in results),
         failed=sum(r.status == "failed" for r in results),
