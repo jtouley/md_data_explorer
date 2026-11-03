@@ -283,3 +283,266 @@ export function buildConfirmationHoldPresentation(data, pendingQuery, binding = 
     },
   };
 }
+
+// ============================================================================
+// Answer anatomy (docs/app/DESIGN.md): headline, stats line, caveats.
+// These helpers only re-arrange the API's text; they never change a word or a number.
+// ============================================================================
+
+/** Counts from 1 to SMALL_CELL_THRESHOLD - 1 are hidden by the API (never write "<5"). */
+export const SMALL_CELL_THRESHOLD = 11;
+
+/** The API's marker for every hidden cell (primary and secondary alike, by design). */
+export const HIDDEN_CELL_MARKER = 'suppressed';
+
+export const HIDDEN_CELL_FOOTNOTE =
+  `Hidden to protect privacy: counts from 1 to ${SMALL_CELL_THRESHOLD - 1} are not shown, ` +
+  "and some other cells are hidden so those counts can't be worked out from totals.";
+
+const STATS_TOKEN =
+  /(\bp\s*[<=>]|\bn\s*=|\bCI\b|\bOR\b|\br\s*=|\bSD\b|\bmedian\b|\bexcluded\b|log-rank|t-test|chi-square|ANOVA|Fisher)/;
+
+/**
+ * Index just past the first sentence (a '.' at paren depth 0 followed by a space and a capital,
+ * or the end of the text).
+ * @param {string} text
+ * @returns {number}
+ */
+function firstSentenceEnd(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '(') depth += 1;
+    else if (ch === ')' && depth > 0) depth -= 1;
+    else if (ch === '.' && depth === 0) {
+      if (i === text.length - 1) return i + 1;
+      if (text[i + 1] === ' ' && /[A-Z]/.test(text[i + 2] || '')) return i + 1;
+    }
+  }
+  return text.length;
+}
+
+/**
+ * Last top-level parenthetical in `sentence` that carries statistics.
+ * @param {string} sentence
+ * @returns {{ start: number, end: number, inner: string } | null}
+ */
+function findStatsGroup(sentence) {
+  let depth = 0;
+  let start = -1;
+  let found = null;
+  for (let i = 0; i < sentence.length; i += 1) {
+    const ch = sentence[i];
+    if (ch === '(') {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (ch === ')' && depth > 0) {
+      depth -= 1;
+      if (depth === 0) {
+        const inner = sentence.slice(start + 1, i);
+        if (STATS_TOKEN.test(inner)) found = { start, end: i, inner };
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Numbers in a text, sorted (used to prove a split kept every number).
+ * @param {string} text
+ * @returns {string[]}
+ */
+export function numbersIn(text) {
+  return (String(text).match(/\d+(?:\.\d+)?/g) || []).sort();
+}
+
+/**
+ * Split an API claim into a headline sentence, its statistics and the remaining caveats.
+ * Falls back to the whole claim as the headline if any number would be lost.
+ * @param {string | null | undefined} claim
+ * @returns {{ headline: string, stats: string[], notes: string }}
+ */
+export function splitClaim(claim) {
+  const text = typeof claim === 'string' ? claim.trim() : '';
+  if (!text) return { headline: '', stats: [], notes: '' };
+
+  const cut = firstSentenceEnd(text);
+  const sentence = text.slice(0, cut);
+  const notes = text.slice(cut).trim();
+  const group = findStatsGroup(sentence);
+
+  let headline = sentence;
+  let stats = [];
+  if (group) {
+    const before = sentence.slice(0, group.start).trimEnd();
+    const after = sentence.slice(group.end + 1);
+    headline = `${before}${after}`.trim();
+    stats = group.inner
+      .split(';')
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+
+  const kept = numbersIn([headline, ...stats, notes].join(' '));
+  const original = numbersIn(text);
+  if (kept.length !== original.length || kept.some((n, i) => n !== original[i])) {
+    return { headline: text, stats: [], notes: '' };
+  }
+  return { headline, stats, notes };
+}
+
+/**
+ * How a table cell should be shown.
+ * @param {unknown} value
+ * @returns {{ kind: 'empty' | 'hidden' | 'small' | 'number' | 'text', text: string }}
+ */
+export function classifyCell(value) {
+  if (value === null || value === undefined || value === '') return { kind: 'empty', text: '' };
+  if (typeof value === 'number') {
+    return Number.isFinite(value)
+      ? { kind: 'number', text: String(value) }
+      : { kind: 'text', text: String(value) };
+  }
+  if (typeof value === 'object') return { kind: 'text', text: JSON.stringify(value) };
+  const s = String(value).trim();
+  if (s.toLowerCase() === HIDDEN_CELL_MARKER) return { kind: 'hidden', text: 'hidden' };
+  if (/^<\s*\d+$/.test(s)) return { kind: 'small', text: s.replace(/\s+/g, '') };
+  if (/^[-+]?\d[\d,]*(\.\d+)?%?$/.test(s)) return { kind: 'number', text: s };
+  return { kind: 'text', text: s };
+}
+
+/**
+ * A column is numeric (right-aligned) when every non-empty cell is a number or a hidden count.
+ * @param {unknown[][]} rows
+ * @param {number} index
+ * @returns {boolean}
+ */
+export function isNumericColumn(rows, index) {
+  let seen = false;
+  for (const row of rows) {
+    const { kind } = classifyCell(row[index]);
+    if (kind === 'empty') continue;
+    if (kind === 'text') return false;
+    seen = true;
+  }
+  return seen;
+}
+
+const INTENT_LABELS = {
+  COMPARE_GROUPS: 'Compare groups',
+  DESCRIBE: 'Describe',
+  FIND_PREDICTORS: 'Find risk factors',
+  CORRELATIONS: 'Correlations',
+  COUNT: 'Count',
+  SURVIVAL: 'Survival analysis',
+};
+
+const PLAN_KEYS = {
+  outcome: 'Outcome',
+  grouping: 'Compared across',
+  predictors: 'Predictors',
+  variables: 'Variables',
+  time: 'Time',
+  event: 'Event',
+  filters: 'Patients included',
+  scope: 'Scope',
+  test: 'Test',
+};
+
+/**
+ * Readable form of the API's one-line plan ("COMPARE_GROUPS · outcome ldl · …").
+ * Display only: Confirm always sends the original line unchanged.
+ * @param {string | null | undefined} planLine
+ * @returns {{ analysis: string, items: { label: string, value: string }[] }}
+ */
+export function parsePlanLine(planLine) {
+  const parts = String(planLine || '')
+    .split(' · ')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return { analysis: '', items: [] };
+  const [first, ...rest] = parts;
+  const analysis =
+    INTENT_LABELS[first] ||
+    first.charAt(0).toUpperCase() + first.slice(1).toLowerCase().replace(/_/g, ' ');
+  const items = rest.map((part) => {
+    const space = part.indexOf(' ');
+    const key = space > 0 ? part.slice(0, space) : part;
+    const raw = space > 0 ? part.slice(space + 1) : '';
+    const label = PLAN_KEYS[key];
+    if (!label) return { label: '', value: part };
+    if (raw === 'none') return { label, value: key === 'filters' ? 'All patients' : 'None' };
+    return { label, value: raw };
+  });
+  return { analysis, items };
+}
+
+/**
+ * A failed query is either a refusal (the product declining, with a reason) or an error.
+ * @param {Record<string, unknown> | null | undefined} data query_failed payload
+ * @returns {{ kind: 'refused' | 'error', message: string }}
+ */
+export function describeQueryFailure(data) {
+  const d = asRecord(data);
+  const pick = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  const reason = pick(d.failure_reason) || pick(d.error);
+  if (d.error_type || !reason) {
+    return { kind: 'error', message: reason || 'The analysis stopped before it could answer.' };
+  }
+  return { kind: 'refused', message: reason };
+}
+
+/**
+ * Plain-language progress text for a query_progress event.
+ * @param {Record<string, unknown> | null | undefined} data
+ * @returns {string}
+ */
+export function stageLabel(data) {
+  const d = asRecord(data);
+  const stage = typeof d.stage === 'string' ? d.stage.toLowerCase() : '';
+  if (/pars|read/.test(stage)) return 'Reading your question';
+  if (/plan/.test(stage)) return 'Choosing the columns and the test';
+  if (/exec|run/.test(stage)) return 'Running the analysis';
+  return typeof d.message === 'string' ? d.message : '';
+}
+
+const ID_COLUMN = /(^|_)(id|mrn|uuid)$|^id_/i;
+
+/**
+ * Up to three example questions built from the cohort's own columns.
+ * @param {string[]} columns
+ * @param {Record<string, unknown>[]} rows preview rows
+ * @param {Record<string, string>} [schema] column → type from the dataset detail
+ * @returns {string[]}
+ */
+export function buildExampleQuestions(columns, rows, schema = {}) {
+  const usable = (Array.isArray(columns) ? columns : []).filter(
+    (c) => typeof c === 'string' && c && !ID_COLUMN.test(c)
+  );
+  const sample = Array.isArray(rows) ? rows : [];
+  const numeric = [];
+  const groups = [];
+  for (const col of usable) {
+    const type = String(schema?.[col] ?? '').toLowerCase();
+    const values = sample
+      .map((r) => r?.[col])
+      .filter((v) => v !== null && v !== undefined && v !== '');
+    const distinct = new Set(values.map(String)).size;
+    const allNumbers = values.length > 0 && values.every((v) => typeof v === 'number');
+    if (
+      /categor|binary|bool/.test(type) ||
+      (!type && !allNumbers && distinct > 0 && distinct <= 6)
+    ) {
+      groups.push(col);
+    } else if (/numer|contin|float|int/.test(type) || (!type && allNumbers && distinct > 5)) {
+      numeric.push(col);
+    }
+  }
+  const out = [];
+  if (numeric[0]) out.push(`What is the average ${numeric[0]}?`);
+  if (numeric.length && groups[0]) {
+    out.push(`Compare ${numeric[1] || numeric[0]} between ${groups[0]} groups`);
+  }
+  if (groups.length) out.push(`How many patients are in each ${groups[1] || groups[0]} group?`);
+  return out.slice(0, 3);
+}

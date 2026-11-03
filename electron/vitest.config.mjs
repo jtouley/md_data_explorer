@@ -8,7 +8,16 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       reportsDirectory: './coverage',
-      include: ['src/enrichmentPanel.js', 'src/patchHistoryPanel.js', 'src/resultPresentation.js', 'src/sessionSidebar.js', 'src/uploadPanel.js'],
+      include: [
+        'src/confirmHold.js',
+        'src/enrichmentPanel.js',
+        'src/icons.js',
+        'src/patchHistoryPanel.js',
+        'src/resultPresentation.js',
+        'src/sessionSidebar.js',
+        'src/theme.js',
+        'src/uploadPanel.js',
+      ],
       exclude: ['src/**/*.test.js'],
       thresholds: {
         lines: 70,

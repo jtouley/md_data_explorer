@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  HIDDEN_CELL_FOOTNOTE,
+  SMALL_CELL_THRESHOLD,
   buildCompletionMessage,
   buildConfirmationHoldPresentation,
+  buildExampleQuestions,
   buildQueryCompletedPresentation,
+  classifyCell,
+  describeQueryFailure,
   extractTableFromResultPreview,
+  isNumericColumn,
   normalizeIntentType,
+  numbersIn,
+  parsePlanLine,
   resultTitleForIntent,
+  splitClaim,
+  stageLabel,
 } from './resultPresentation.js';
 
 describe('normalizeIntentType', () => {
@@ -237,5 +247,294 @@ describe('buildConfirmationHoldPresentation', () => {
     const hold = buildConfirmationHoldPresentation({ plan_line: 'p' }, 'q');
     expect(hold.result.datasetId).toBeNull();
     expect(hold.result.sessionId).toBeNull();
+  });
+});
+
+// Claims below are copied from tests/core/test_result_presentation.py (the API's exact output).
+const API_CLAIMS = {
+  tTest:
+    'Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; t-test p<0.001; n=300). ' +
+    'Unadjusted comparison by treatment.',
+  notSignificant:
+    'Mean ldl was 2.50 higher in drug than placebo, not statistically significant (t-test p=0.200; n=300). ' +
+    'Unadjusted comparison by treatment.',
+  anova: 'Mean ldl differed across 3 site groups (ANOVA p=0.030). Unadjusted.',
+  predictor:
+    'age had the strongest evidence of association with outcome (OR 1.05; 95% CI 1.02 to 1.08; p=0.001). ' +
+    'Logistic regression of outcome on age; unadjusted.',
+  noPredictor:
+    'No predictor reached p<0.05 for outcome. Logistic regression of outcome on hdl; unadjusted.',
+  correlation: 'The strongest correlation was moderate: age and ldl (r=-0.42; n=250).',
+  describe: 'Mean ldl was 121.49 (SD 14.40; median 121.50; n=300).',
+  smallExclusion:
+    'Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; Welch t-test p<0.001; ' +
+    'n=280; <11 excluded for missing data). Unadjusted comparison by treatment.',
+  count: 'Total count: 400.',
+};
+
+describe('splitClaim', () => {
+  it.each([
+    [
+      'tTest',
+      'Mean ldl was 16.14 higher in placebo than drug.',
+      ['95% CI 13.44 to 18.83', 't-test p<0.001', 'n=300'],
+      'Unadjusted comparison by treatment.',
+    ],
+    [
+      'notSignificant',
+      'Mean ldl was 2.50 higher in drug than placebo, not statistically significant.',
+      ['t-test p=0.200', 'n=300'],
+      'Unadjusted comparison by treatment.',
+    ],
+    ['anova', 'Mean ldl differed across 3 site groups.', ['ANOVA p=0.030'], 'Unadjusted.'],
+    [
+      'predictor',
+      'age had the strongest evidence of association with outcome.',
+      ['OR 1.05', '95% CI 1.02 to 1.08', 'p=0.001'],
+      'Logistic regression of outcome on age; unadjusted.',
+    ],
+    [
+      'noPredictor',
+      'No predictor reached p<0.05 for outcome.',
+      [],
+      'Logistic regression of outcome on hdl; unadjusted.',
+    ],
+    [
+      'correlation',
+      'The strongest correlation was moderate: age and ldl.',
+      ['r=-0.42', 'n=250'],
+      '',
+    ],
+    ['describe', 'Mean ldl was 121.49.', ['SD 14.40', 'median 121.50', 'n=300'], ''],
+    [
+      'smallExclusion',
+      'Mean ldl was 16.14 higher in placebo than drug.',
+      ['95% CI 13.44 to 18.83', 'Welch t-test p<0.001', 'n=280', '<11 excluded for missing data'],
+      'Unadjusted comparison by treatment.',
+    ],
+    ['count', 'Total count: 400.', [], ''],
+  ])('splitClaim_%s_headlineStatsNotes', (key, headline, stats, notes) => {
+    // Arrange
+    const claim = API_CLAIMS[key];
+    // Act
+    const result = splitClaim(claim);
+    // Assert
+    expect(result).toEqual({ headline, stats, notes });
+  });
+
+  it.each(Object.keys(API_CLAIMS))('splitClaim_%s_keepsEveryNumber', (key) => {
+    // Arrange
+    const claim = API_CLAIMS[key];
+    // Act
+    const { headline, stats, notes } = splitClaim(claim);
+    // Assert
+    expect(numbersIn([headline, ...stats, notes].join(' '))).toEqual(numbersIn(claim));
+  });
+
+  it.each([
+    ['', { headline: '', stats: [], notes: '' }],
+    [null, { headline: '', stats: [], notes: '' }],
+    [undefined, { headline: '', stats: [], notes: '' }],
+    ['   ', { headline: '', stats: [], notes: '' }],
+  ])('splitClaim_empty_%s_returnsEmptyParts', (claim, expected) => {
+    // Arrange / Act
+    const result = splitClaim(claim);
+    // Assert
+    expect(result).toEqual(expected);
+  });
+
+  it('splitClaim_parenthesisWithoutStats_staysInHeadline', () => {
+    // Arrange
+    const claim =
+      'Median time to death (days) by arm: A 12.0, B not shown (fewer than 11 patients) (log-rank p=0.040; n=200).';
+    // Act
+    const { headline, stats } = splitClaim(claim);
+    // Assert
+    expect(headline).toBe(
+      'Median time to death (days) by arm: A 12.0, B not shown (fewer than 11 patients).'
+    );
+    expect(stats).toEqual(['log-rank p=0.040', 'n=200']);
+  });
+
+  it('splitClaim_unbalancedParenthesis_neverDropsText', () => {
+    // Arrange
+    const claim = 'Mean x was 3 (n=10; p=0.2';
+    // Act
+    const { headline, stats, notes } = splitClaim(claim);
+    // Assert
+    expect([headline, ...stats, notes].join(' ')).toContain('n=10; p=0.2');
+  });
+});
+
+describe('classifyCell', () => {
+  it.each([
+    [null, 'empty', ''],
+    [undefined, 'empty', ''],
+    ['', 'empty', ''],
+    [0, 'number', '0'],
+    [12.5, 'number', '12.5'],
+    [Number.NaN, 'text', 'NaN'],
+    ['suppressed', 'hidden', 'hidden'],
+    ['Suppressed', 'hidden', 'hidden'],
+    ['<11', 'small', '<11'],
+    ['< 11', 'small', '<11'],
+    ['1,234', 'number', '1,234'],
+    ['31%', 'number', '31%'],
+    ['-0.42', 'number', '-0.42'],
+    ['placebo', 'text', 'placebo'],
+    [{ a: 1 }, 'text', '{"a":1}'],
+  ])('classifyCell_%s_is_%s', (value, kind, text) => {
+    // Arrange / Act
+    const result = classifyCell(value);
+    // Assert
+    expect(result).toEqual({ kind, text });
+  });
+
+  it('hiddenCellFootnote_usesThreshold11_neverFive', () => {
+    // Arrange / Act / Assert
+    expect(SMALL_CELL_THRESHOLD).toBe(11);
+    expect(HIDDEN_CELL_FOOTNOTE).toContain('from 1 to 10');
+    expect(HIDDEN_CELL_FOOTNOTE).not.toMatch(/<\s*5|fewer than 5/);
+  });
+});
+
+describe('isNumericColumn', () => {
+  it.each([
+    [[[1], [2]], 0, true],
+    [[['suppressed'], [3]], 0, true],
+    [[['<11'], ['suppressed']], 0, true],
+    [[[''], [null]], 0, false],
+    [[['drug'], [3]], 0, false],
+    [[], 0, false],
+  ])('isNumericColumn_case%#', (rows, index, expected) => {
+    // Arrange / Act
+    const result = isNumericColumn(rows, index);
+    // Assert
+    expect(result).toBe(expected);
+  });
+});
+
+describe('parsePlanLine', () => {
+  it('parsePlanLine_fullApiLine_readableLabels', () => {
+    // Arrange
+    const line =
+      'COMPARE_GROUPS · outcome ldl · grouping treatment · filters age > 65 · test Welch t-test';
+    // Act
+    const result = parsePlanLine(line);
+    // Assert
+    expect(result).toEqual({
+      analysis: 'Compare groups',
+      items: [
+        { label: 'Outcome', value: 'ldl' },
+        { label: 'Compared across', value: 'treatment' },
+        { label: 'Patients included', value: 'age > 65' },
+        { label: 'Test', value: 'Welch t-test' },
+      ],
+    });
+  });
+
+  it.each([
+    ['filters none', { label: 'Patients included', value: 'All patients' }],
+    ['grouping none', { label: 'Compared across', value: 'None' }],
+    ['time days', { label: 'Time', value: 'days' }],
+    ['event died', { label: 'Event', value: 'died' }],
+    ['weird part', { label: '', value: 'weird part' }],
+  ])('parsePlanLine_part_%s', (part, expected) => {
+    // Arrange / Act
+    const { items } = parsePlanLine(`DESCRIBE · ${part}`);
+    // Assert
+    expect(items).toEqual([expected]);
+  });
+
+  it.each([
+    ['', ''],
+    [null, ''],
+    ['NEW_INTENT', 'New intent'],
+  ])('parsePlanLine_intent_%s', (line, analysis) => {
+    // Arrange / Act
+    const result = parsePlanLine(line);
+    // Assert
+    expect(result.analysis).toBe(analysis);
+  });
+});
+
+describe('describeQueryFailure', () => {
+  it.each([
+    [{ failure_reason: 'No date column for 2019.' }, 'refused', 'No date column for 2019.'],
+    [
+      { error: 'This would list individual patients.' },
+      'refused',
+      'This would list individual patients.',
+    ],
+    [
+      { error: 'Something went wrong.', error_type: 'ValueError' },
+      'error',
+      'Something went wrong.',
+    ],
+    [{}, 'error', 'The analysis stopped before it could answer.'],
+    [null, 'error', 'The analysis stopped before it could answer.'],
+    [{ failure_reason: '   ', error: 'Fallback' }, 'refused', 'Fallback'],
+  ])('describeQueryFailure_case%#', (data, kind, message) => {
+    // Arrange / Act
+    const result = describeQueryFailure(data);
+    // Assert
+    expect(result).toEqual({ kind, message });
+  });
+});
+
+describe('stageLabel', () => {
+  it.each([
+    [{ stage: 'parsing', message: 'Analyzing query...' }, 'Reading your question'],
+    [{ stage: 'plan' }, 'Choosing the columns and the test'],
+    [{ stage: 'executing', message: 'Running analysis...' }, 'Running the analysis'],
+    [{ stage: 'other', message: 'Custom' }, 'Custom'],
+    [{}, ''],
+    [null, ''],
+  ])('stageLabel_case%#', (data, expected) => {
+    // Arrange / Act
+    const result = stageLabel(data);
+    // Assert
+    expect(result).toBe(expected);
+  });
+});
+
+describe('buildExampleQuestions', () => {
+  it('buildExampleQuestions_schema_usesNumericAndGroupColumns', () => {
+    // Arrange
+    const columns = ['patient_id', 'age', 'sex', 'mortality'];
+    const schema = { patient_id: 'id', age: 'numeric', sex: 'categorical', mortality: 'binary' };
+    // Act
+    const result = buildExampleQuestions(columns, [], schema);
+    // Assert
+    expect(result).toEqual([
+      'What is the average age?',
+      'Compare age between sex groups',
+      'How many patients are in each mortality group?',
+    ]);
+  });
+
+  it('buildExampleQuestions_noSchema_infersFromPreviewRows', () => {
+    // Arrange
+    const rows = [1, 2, 3, 4, 5, 6].map((i) => ({
+      id: i,
+      ldl: 100 + i,
+      arm: i % 2 ? 'drug' : 'placebo',
+    }));
+    // Act
+    const result = buildExampleQuestions(['id', 'ldl', 'arm'], rows);
+    // Assert
+    expect(result[0]).toBe('What is the average ldl?');
+    expect(result.join(' ')).not.toContain(' id');
+  });
+
+  it.each([
+    [[], [], {}],
+    [null, null, undefined],
+    [['patient_id'], [{ patient_id: 'S1' }], {}],
+  ])('buildExampleQuestions_nothingUsable_returnsEmpty_case%#', (columns, rows, schema) => {
+    // Arrange / Act
+    const result = buildExampleQuestions(columns, rows, schema);
+    // Assert
+    expect(result).toEqual([]);
   });
 });

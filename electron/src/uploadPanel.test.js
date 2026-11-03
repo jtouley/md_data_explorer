@@ -125,4 +125,18 @@ describe('renderUploadArea', () => {
     btn.click();
     expect(onLoadSample).toHaveBeenCalledOnce();
   });
+
+  test('renderUploadArea_labels_plainLanguageActions', () => {
+    // Arrange
+    const container = document.createElement('div');
+    // Act
+    renderUploadArea(container, { onFileSelect: vi.fn(), onLoadSample: vi.fn() });
+    // Assert
+    expect(container.querySelector('[data-testid="upload-btn"]').textContent).toBe(
+      'Upload a file…'
+    );
+    expect(container.querySelector('[data-testid="load-sample-btn"]').textContent).toBe(
+      'Use the sample cohort'
+    );
+  });
 });

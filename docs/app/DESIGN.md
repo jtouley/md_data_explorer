@@ -254,7 +254,8 @@ Choreography:
 - **Sidebar** (top to bottom): app name; cohort switcher (native `<select>`, so keyboard and
   screen readers work as before) with a ⋯ button opening a small menu: Upload a file, Use the
   sample cohort, Preview and details, Refresh the list, Delete this cohort; a meta line
-  "400 patients · 14 variables"; a primary "New question" button; past conversations grouped by
+  "400 rows · 14 variables" (rows, not "patients": a file can hold several rows per patient,
+  and the meta line must not claim what it has not checked); a "New question" button; past conversations grouped by
   Today / Yesterday / Previous 7 days / Older; footer with the on-this-computer status and the
   theme switch.
 - **Main**: the chat column and the docked composer only. An offline banner appears only when
@@ -265,8 +266,8 @@ Choreography:
 
 ## Copy deck
 
-Plain clinical language; "cohort" for the uploaded dataset, "patients" for rows when the data is
-patient-level, no internal ids on screen.
+Plain clinical language; "cohort" for the uploaded dataset, "rows" for rows (the API's own claims
+say "patients" where it has counted patients), no internal ids on screen.
 
 | Where | Before | After |
 |---|---|---|
@@ -276,14 +277,14 @@ patient-level, no internal ids on screen.
 | LLM banner, not reachable | Local LLM (Ollama) is not reachable at … Tier-3 NL fallback … | Some questions need the local language model, which isn't running. Simple questions still work. |
 | LLM banner, model missing | Ollama is running but the default model "…" was not found … | The local language model "{model}" isn't installed, so some questions won't work. Simple questions still work. |
 | Sidebar heading | SESSIONS / + New | (date groups) / New question |
-| Session row | Dataset: ds_cohort · 6 msgs · 5m ago | {first question} or "Earlier conversation" · {cohort} · 5 min ago |
-| Session delete | ✕ + window.confirm | Icon button "Delete conversation", in-row confirm "Delete this conversation? It can't be recovered." Delete / Keep |
+| Session row | Dataset: ds_cohort · 6 msgs · 5m ago | {first question} or "Earlier conversation" / {cohort} · 5 min ago (the message count was dropped: the API always reports 0) |
+| Session delete | ✕ + window.confirm | Icon button "Delete conversation: {title}", in-row confirm "Delete this conversation? It can't be recovered." Keep / Delete (focus on Keep; Escape keeps) |
 | Dataset select placeholder | Select a dataset... | Choose a cohort… |
-| Dataset meta | 400 rows • 14 columns | 400 patients · 14 variables |
+| Dataset meta | 400 rows • 14 columns | 400 rows · 14 variables (sidebar; opens the details panel) |
 | Upload | Upload dataset / Load sample / ✓ x uploaded / ✗ Upload failed: | Upload a file… / Use the sample cohort / "{name} is ready." / "Couldn't upload {file}: {reason}" |
 | Delete | Delete dataset | Delete this cohort… (menu) |
 | Welcome | 📊 Welcome to Clinical Analytics … "Try asking:" | No cohort: "Choose a cohort to begin." With cohort: "What would you like to know about {cohort}?" |
-| Placeholder | Ask a question about your data... | Ask about {cohort} ({n} patients)… |
+| Placeholder | Ask a question about your data... | Ask about {cohort}… |
 | Hint | Press Enter to ask; Shift+Enter for a new line | Enter to ask · Shift+Enter for a new line |
 | Hint (none) | Select a dataset to start asking questions | Choose a cohort to begin. |
 | Working | Processing… / Stage: planning | Reading your question… / Running the analysis… |

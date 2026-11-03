@@ -3,145 +3,181 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src http://127.0.0.1:8000;">
   <title>Clinical Analytics</title>
+  <script>
+    // Apply an explicit Light/Dark choice before first paint (System needs nothing: CSS follows
+    // prefers-color-scheme, which Electron's nativeTheme also drives).
+    try {
+      var savedTheme = window.localStorage.getItem('ca-theme');
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        document.documentElement.setAttribute('data-theme', savedTheme);
+      }
+    } catch (e) {
+      /* storage unavailable: follow the system theme */
+    }
+  </script>
 </head>
 <body>
-  <!-- App Container -->
   <div class="app-container">
-    <!-- Header -->
-    <header class="app-header">
-      <div class="header-brand">
-        <span class="brand-icon">◉</span>
-        <h1>Clinical Analytics</h1>
-      </div>
-      <div class="header-status">
-        <span id="connection-status" class="status-indicator status-checking">
-          <span class="status-dot"></span>
-          <span class="status-text">Checking connection...</span>
-        </span>
-      </div>
-    </header>
+    <!-- Sidebar: cohort, new question, conversations, appearance -->
+    <aside id="session-sidebar" class="sidebar" data-testid="session-sidebar" aria-label="Cohort and conversations">
+      <div class="sidebar-top">
+        <p class="brand-name">Clinical Analytics</p>
 
-    <div id="llm-banner" class="llm-banner hidden" role="status" aria-live="polite">
-      <span id="llm-banner-text" class="llm-banner-text"></span>
-    </div>
-
-    <!-- Body (sidebar + main) -->
-    <div class="app-body">
-      <!-- Session Sidebar -->
-      <aside id="session-sidebar" class="session-sidebar" data-testid="session-sidebar">
-        <div class="sidebar-header">
-          <h2 class="sidebar-title">Sessions</h2>
-          <button type="button" id="new-chat-btn" class="btn-new-chat" data-testid="new-chat-btn" title="New chat">
-            + New
-          </button>
-        </div>
-        <ul id="session-list" class="session-list" data-testid="session-list"></ul>
-      </aside>
-
-      <!-- Main Content Area -->
-      <main class="app-main">
-      <!-- Dataset Selector Bar -->
-      <div class="dataset-bar">
-        <label for="dataset-select" class="dataset-label">Dataset:</label>
-        <select id="dataset-select" class="dataset-select">
-          <option value="">Select a dataset...</option>
-        </select>
-        <button id="refresh-datasets" class="btn-icon" title="Refresh datasets">
-          ⟳
-        </button>
-        <button
-          id="delete-dataset"
-          class="btn-delete-dataset"
-          type="button"
-          data-testid="delete-dataset-btn"
-          disabled
-        >
-          Delete dataset
-        </button>
-        <div id="upload-area" class="upload-area-inline" data-testid="upload-area"></div>
-      </div>
-
-      <div id="dataset-delete-area" class="dataset-delete-area hidden"></div>
-
-      <section id="dataset-overview" class="dataset-overview hidden" data-testid="dataset-overview">
-        <div class="dataset-overview-header">
-          <h2 class="dataset-overview-title">Dataset overview</h2>
-          <p
-            id="dataset-overview-summary"
-            class="dataset-overview-summary"
-            data-testid="dataset-overview-summary"
-          ></p>
-        </div>
-        <div class="dataset-preview-wrapper">
-          <table class="dataset-preview-table" data-testid="dataset-preview-table">
-            <thead id="dataset-preview-head"></thead>
-            <tbody id="dataset-preview-body"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section
-        id="enrichment-section"
-        class="enrichment-section hidden"
-        aria-label="Metadata enrichments"
-      >
-        <div class="enrichment-toolbar">
-          <h2 class="enrichment-heading">Metadata enrichments</h2>
-          <button type="button" id="refresh-enrichments" class="btn-enrichment-refresh">
-            Refresh
-          </button>
-        </div>
-        <p id="enrichment-hint" class="enrichment-hint" data-testid="enrichment-hint"></p>
-        <div id="enrichment-list" class="enrichment-list" data-testid="enrichment-list"></div>
-
-        <div class="enrichment-subblock">
-          <h3 class="enrichment-subheading">Patch history</h3>
-          <p id="patch-history-hint" class="enrichment-subhint" data-testid="patch-history-hint"></p>
-          <div id="patch-history-body" class="patch-history-body" data-testid="patch-history-body"></div>
-        </div>
-      </section>
-
-      <!-- Chat Messages Container -->
-      <div id="chat-container" class="chat-container">
-        <div class="welcome-message">
-          <div class="welcome-icon">📊</div>
-          <h2>Welcome to Clinical Analytics</h2>
-          <p>Select a dataset above and ask questions in natural language.</p>
-          <div class="example-queries">
-            <p class="examples-title">Try asking:</p>
-            <ul>
-              <li>"What is the average age of patients?"</li>
-              <li>"Compare outcomes between treatment groups"</li>
-              <li>"Show me the distribution of diagnoses"</li>
-            </ul>
+        <div class="cohort">
+          <label for="dataset-select" class="cohort-label">Cohort</label>
+          <div class="cohort-row">
+            <select id="dataset-select" class="dataset-select">
+              <option value="">Choose a cohort…</option>
+            </select>
+            <button
+              type="button"
+              id="dataset-menu-btn"
+              class="btn-icon"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="dataset-menu"
+              aria-label="Cohort actions"
+              title="Cohort actions"
+              data-testid="dataset-menu-btn"
+            ></button>
           </div>
+          <div id="dataset-menu" class="menu hidden" role="group" aria-label="Cohort actions" data-testid="dataset-menu">
+            <div id="upload-area" class="menu-upload" data-testid="upload-area"></div>
+            <button type="button" id="open-dataset-panel" class="menu-item" data-testid="open-dataset-panel" disabled>
+              Preview and details
+            </button>
+            <button type="button" id="refresh-datasets" class="menu-item" title="Refresh the list of cohorts">
+              Refresh the list
+            </button>
+            <button
+              type="button"
+              id="delete-dataset"
+              class="menu-item menu-item--danger"
+              data-testid="delete-dataset-btn"
+              disabled
+            >
+              Delete this cohort…
+            </button>
+          </div>
+          <button type="button" id="dataset-meta" class="cohort-meta hidden" data-testid="dataset-meta"></button>
+          <p id="dataset-status" class="cohort-status" role="status" aria-live="polite" data-testid="upload-status"></p>
+          <div id="dataset-delete-area" class="dataset-delete-area hidden"></div>
         </div>
+
+        <button type="button" id="new-chat-btn" class="btn-new-chat" data-testid="new-chat-btn" disabled>
+          <span class="btn-new-chat-icon" aria-hidden="true"></span>
+          <span>New question</span>
+        </button>
       </div>
 
-      <!-- Query Input Area -->
+      <nav class="sessions" aria-label="Conversations">
+        <ul id="session-list" class="session-list" data-testid="session-list"></ul>
+      </nav>
+
+      <div class="sidebar-footer">
+        <span id="connection-status" class="status-indicator status-checking">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text">Connecting…</span>
+        </span>
+        <div class="theme-switch" role="radiogroup" aria-label="Appearance" data-testid="theme-switch">
+          <label class="theme-option" title="Follow the system">
+            <input type="radio" name="theme" value="system" checked>
+            <span class="theme-option-icon" data-icon="monitor" aria-hidden="true"></span>
+            <span class="theme-option-text">System</span>
+          </label>
+          <label class="theme-option" title="Light">
+            <input type="radio" name="theme" value="light">
+            <span class="theme-option-icon" data-icon="sun" aria-hidden="true"></span>
+            <span class="theme-option-text">Light</span>
+          </label>
+          <label class="theme-option" title="Dark">
+            <input type="radio" name="theme" value="dark">
+            <span class="theme-option-icon" data-icon="moon" aria-hidden="true"></span>
+            <span class="theme-option-text">Dark</span>
+          </label>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main: the conversation and the composer, nothing else -->
+    <main class="app-main">
+      <div id="offline-banner" class="banner banner--error hidden" role="alert" data-testid="offline-banner">
+        <span class="banner-icon" data-icon="alert" aria-hidden="true"></span>
+        <span class="banner-text">Can't reach the analysis engine on this computer.</span>
+        <button type="button" id="retry-connection" class="btn btn-secondary btn-sm">Try again</button>
+      </div>
+      <div id="llm-banner" class="banner llm-banner hidden" role="status" aria-live="polite">
+        <span class="banner-icon" data-icon="info" aria-hidden="true"></span>
+        <span id="llm-banner-text" class="banner-text llm-banner-text"></span>
+      </div>
+
+      <div id="chat-container" class="chat-container" data-testid="chat-container" tabindex="-1"></div>
+
       <div class="input-area">
         <form id="query-form" class="query-form">
-          <label for="query-input" class="visually-hidden">Question about the selected dataset</label>
+          <label for="query-input" class="visually-hidden">Question about the selected cohort</label>
           <textarea
             id="query-input"
             class="query-input"
-            placeholder="Ask a question about your data..."
+            placeholder="Choose a cohort to begin"
             rows="1"
             disabled
           ></textarea>
-          <button type="submit" id="submit-btn" class="btn-submit" aria-label="Ask" disabled>
-            <span class="submit-icon" aria-hidden="true">→</span>
-          </button>
+          <button type="submit" id="submit-btn" class="btn-submit" aria-label="Ask" title="Ask" disabled></button>
         </form>
-        <div class="input-hint">
-          <span id="input-hint-text">Select a dataset to start asking questions</span>
-        </div>
+        <p class="input-hint">
+          <span id="input-hint-text">Choose a cohort to begin.</span>
+        </p>
       </div>
       <div id="sr-status" class="visually-hidden" role="status" aria-live="polite"></div>
     </main>
-    </div><!-- /.app-body -->
+
+    <!-- Cohort details: preview, column suggestions, change history (off the chat column) -->
+    <aside
+      id="dataset-panel"
+      class="dataset-panel hidden"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="dataset-panel-title"
+      data-testid="dataset-panel"
+    >
+      <header class="dataset-panel-header">
+        <h2 id="dataset-panel-title" class="dataset-panel-title">Cohort details</h2>
+        <button type="button" id="close-dataset-panel" class="btn-icon" aria-label="Close cohort details" title="Close"></button>
+      </header>
+      <div class="dataset-panel-body">
+        <section id="dataset-overview" class="dataset-overview hidden" data-testid="dataset-overview" aria-labelledby="dataset-overview-title">
+          <div class="panel-section-header">
+            <h3 id="dataset-overview-title" class="panel-section-title">First rows</h3>
+            <p id="dataset-overview-summary" class="dataset-overview-summary" data-testid="dataset-overview-summary"></p>
+          </div>
+          <div class="dataset-preview-wrapper">
+            <table class="dataset-preview-table" data-testid="dataset-preview-table">
+              <thead id="dataset-preview-head"></thead>
+              <tbody id="dataset-preview-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="enrichment-section" class="enrichment-section hidden" aria-label="Column suggestions">
+          <div class="panel-section-header">
+            <h3 class="panel-section-title">Column suggestions</h3>
+            <button type="button" id="refresh-enrichments" class="btn btn-secondary btn-sm">Refresh</button>
+          </div>
+          <p id="enrichment-hint" class="panel-hint" data-testid="enrichment-hint"></p>
+          <div id="enrichment-list" class="enrichment-list" data-testid="enrichment-list"></div>
+
+          <div class="panel-subsection">
+            <h3 class="panel-section-title">Change history</h3>
+            <p id="patch-history-hint" class="panel-hint" data-testid="patch-history-hint"></p>
+            <div id="patch-history-body" class="patch-history-body" data-testid="patch-history-body"></div>
+          </div>
+        </section>
+      </div>
+    </aside>
   </div>
 
   <script type="module" src="/src/renderer.js"></script>
