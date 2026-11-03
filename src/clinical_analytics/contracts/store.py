@@ -8,7 +8,10 @@ Layout under the data directory (``<data home>/data``, the parent of ``uploads/`
 A contract is immutable: it is written to a temporary file and hard-linked into place, which
 fails if the target exists, so two concurrent uploads of the same content cannot interleave and
 a finished contract is never rewritten. File systems without hard links (exFAT, many SMB shares)
-fall back to an exclusive create (``open(path, "x")``) plus fsync: still never overwritten.
+fall back to publishing the fsynced temporary file with a rename, under a per-version lock and
+only if the target does not exist: the target is never partial and never overwritten. That lock
+is per process (the app runs one API process); two processes writing the same new version on such
+a file system could both pass the existence check.
 Reports are written to a temporary file and renamed.
 """
 
@@ -17,6 +20,8 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+import threading
+import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -74,17 +79,27 @@ def _write_temp(directory: Path, text: str) -> Path:
     return Path(tmp)
 
 
-def _create_exclusive(path: Path, text: str) -> None:
-    """Create ``path`` with ``text``; FileExistsError if it exists. A partial file is removed."""
-    with open(path, "x", encoding="utf-8") as f:
-        try:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        except OSError:
-            f.close()
-            path.unlink(missing_ok=True)
-            raise
+# Per-version publish locks for file systems without hard links; entries go when unused.
+_publish_locks: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
+_publish_locks_guard = threading.Lock()
+
+
+def _publish_lock(path: Path) -> threading.Lock:
+    with _publish_locks_guard:
+        lock = _publish_locks.get(str(path))
+        if lock is None:
+            lock = threading.Lock()
+            _publish_locks[str(path)] = lock
+        return lock
+
+
+def _publish_by_rename(tmp: Path, path: Path) -> None:
+    """Move the complete, fsynced ``tmp`` to ``path``; FileExistsError if ``path`` exists."""
+    lock = _publish_lock(path)
+    with lock:
+        if path.exists():
+            raise FileExistsError(path.name)
+        os.replace(tmp, path)
 
 
 def write_contract(data_dir: Path, upload_id: str, dataset_version: str, contract: OpenDataContractStandard) -> bool:
@@ -109,7 +124,7 @@ def write_contract(data_dir: Path, upload_id: str, dataset_version: str, contrac
         except OSError as e:
             log.info("contract_link_unsupported", errno=e.errno)
             try:
-                _create_exclusive(path, text)
+                _publish_by_rename(tmp, path)
             except FileExistsError:
                 log.info("contract_exists_kept")
                 return False

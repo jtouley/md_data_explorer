@@ -32,6 +32,10 @@ MIN_CELL_SIZE: Final = SMALL_CELL_THRESHOLD
 # the proportions of missing data are below approximately 5%"; above that, the doctor should know.
 MISSINGNESS_WARN_PERCENT: Final = 5.0
 
+# A count hidden so that a small count cannot be worked out from the visible ones (secondary
+# suppression), shown instead of a number. Small counts themselves show as "<11".
+COUNT_HIDDEN: Final = "hidden"
+
 # Fewer rows than the small-cell threshold: every count would be suppressed.
 MIN_ROW_COUNT: Final = MIN_CELL_SIZE
 

@@ -14,9 +14,13 @@ with the reason, never skipped silently. NaN in a float column counts as missing
 range.
 
 Reports carry counts already suppressed, so the file on disk and the API response are safe to show
-as they are. The row count is visible, so a count and its complement (rows - count) form a line
-with a known total: if either is 1..10 both are hidden (``suppress_count_matrix``), shown as
-"<11" or "all but <11", and the percent is dropped with them.
+as they are. The row count is visible, so each column is a partition of it:
+``[missing, bad, rest]`` for every bad-value check (codebook, range, duplicates; ``rest`` is never
+shown but can be worked out when the others are), or ``[missing, rest]`` when there is none. A
+count of 1..10 anywhere in a line (``rest`` included) shows as "<11", and further cells are
+hidden ("hidden", same rule as ``suppress_count_matrix``) until each line has at least two
+hidden cells summing to 11 or more, so no visible combination recovers a small count. Hidden
+cells lose their percent.
 """
 
 from __future__ import annotations
@@ -32,12 +36,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import QualityCheckError
-from clinical_analytics.core.result_presentation import suppress_count, suppress_count_matrix
+from clinical_analytics.core.result_presentation import suppress_count
 
 logger = structlog.get_logger()
 
 CheckStatus: TypeAlias = Literal["passed", "warning", "failed", "not_run"]
-COMPLEMENT_HIDDEN_PREFIX = "all but "
+HIDDEN_NOTE = "count hidden to protect privacy"
 ROWS_KEY = "__rows"
 RANGE_METRIC = "range"
 _OPERATORS = (
@@ -64,7 +68,7 @@ class QualityCheckResult(BaseModel):
     severity: str = Field(..., description="error or warning")
     status: CheckStatus
     count: int | str | None = Field(
-        None, description="Rows affected; '<11' or 'all but <11' when it or rows - it is 1..10; None if not run"
+        None, description="Rows affected; '<11' when 1..10, 'hidden' when hiding it protects a small count"
     )
     percent: float | None = Field(None, description="Share of rows (1 decimal); None when suppressed")
     message: str = Field(..., description="Plain-language result")
@@ -168,7 +172,8 @@ def _compile_property_rule(rule: DataQuality, prop: SchemaProperty, schema: pl.S
         if typed is None:
             return _not_run(base, "codebook values do not match the column type")
         detail = ", ".join(str(v) for v in valid)
-        return CompiledCheck(**base, expr=(col.is_not_null() & ~col.is_in(typed.implode())).sum(), detail=detail)
+        present = col.is_not_null() & col.is_not_nan() if schema[column].is_float() else col.is_not_null()
+        return CompiledCheck(**base, expr=(present & ~col.is_in(typed.implode())).sum(), detail=detail)
     return _not_run(base, f"metric '{metric}' is not supported")
 
 
@@ -293,34 +298,110 @@ def _message(check: CompiledCheck, count: int, shown: int | str, percent: float 
         return f"{shown} rows" if count >= config.MIN_ROW_COUNT else f"{shown} rows: most counts will be hidden"
     if count == 0:
         return f"{name}: no problems found"
+    hidden = shown == config.COUNT_HIDDEN
+    amount = "some" if hidden else shown
+    note = f"; {HIDDEN_NOTE}" if hidden else ""
     if check.metric == "nullValues":
-        if check.percent:
-            return f"{name}: {percent:.1f}% missing" if percent is not None else f"{name}: {shown} values missing"
-        return f"{name}: {shown} rows have no value"
+        if check.percent and percent is not None:
+            return f"{name}: {percent:.1f}% missing"
+        return (
+            f"{name}: {amount} values missing{note}" if check.percent else f"{name}: {amount} rows have no value{note}"
+        )
     if check.metric == "duplicateValues":
-        return f"{name}: {shown} repeated values"
+        return f"{name}: {amount} repeated values{note}"
     if check.metric == "invalidValues":
-        return f"{name}: {shown} values are not in the codebook ({check.detail})"
+        return f"{name}: {amount} values are not in the codebook ({check.detail}){note}"
     if check.metric == RANGE_METRIC:
-        return f"{name}: {shown} values outside {check.detail}"
-    return f"{name}: {shown} rows flagged"
+        return f"{name}: {amount} values outside {check.detail}{note}"
+    return f"{name}: {amount} rows flagged{note}"
 
 
-def _shown(check: CompiledCheck, count: int, rows: int) -> tuple[int | str, float | None]:
-    """Count and percent as shown. The row count is visible, so ``[count, rows - count]`` is a line
-    with a known total: when either cell is 1..10, both are hidden (primary + complementary)."""
-    if check.metric == "rowCount":
-        return suppress_count(count, config.MIN_CELL_SIZE), None
-    hidden = suppress_count_matrix([[count, rows - count]], config.MIN_CELL_SIZE)
-    if (0, 0) not in hidden:
-        return count, (round(100.0 * count / rows, 1) if rows else None)
-    small = suppress_count(count, config.MIN_CELL_SIZE)
-    if small != count:
-        return small, None
-    return f"{COMPLEMENT_HIDDEN_PREFIX}<{config.MIN_CELL_SIZE}", None
+def _lines(checks: list[CompiledCheck], raw: dict[str, int]) -> tuple[dict[str, str], dict[str, int], list[list[str]]]:
+    """Cells and lines of the disclosure model (see the module docstring).
+
+    Returns: check id -> cell, cell -> count, and the lines (each sums to the row count).
+    """
+    rows = raw[ROWS_KEY]
+    runnable = [c for c in checks if c.expr is not None and c.metric != "rowCount"]
+    cell_of: dict[str, str] = {}
+    value: dict[str, int] = {}
+    missing_cell: dict[str, str] = {}
+    for c in runnable:
+        if c.metric == "nullValues" and c.column is not None:
+            canonical = missing_cell.setdefault(c.column, c.id)
+            same = canonical != c.id and raw[canonical] == raw[c.id]
+            cell_of[c.id] = canonical if same else c.id
+        else:
+            cell_of[c.id] = c.id
+        value[cell_of[c.id]] = raw[c.id]
+    lines: list[list[str]] = []
+    for c in runnable:
+        if c.metric == "nullValues":
+            continue
+        m = missing_cell.get(c.column) if c.column is not None else None
+        cells = [m, c.id] if m is not None else [c.id]
+        rest = f"{c.id}::rest"
+        value[rest] = rows - sum(value[k] for k in cells)
+        lines.append([*cells, rest])
+    # Missing counts not already in a line above: [missing, rest].
+    for c in runnable:
+        cell = cell_of[c.id]
+        in_line = any(cell in line for line in lines)
+        if c.metric == "nullValues" and not in_line:
+            rest = f"{cell}::rest"
+            value[rest] = rows - value[cell]
+            lines.append([cell, rest])
+    return cell_of, value, lines
 
 
-def _result(check: CompiledCheck, raw: dict[str, int]) -> QualityCheckResult:
+def _hidden_cells(value: dict[str, int], lines: list[list[str]]) -> set[str]:
+    """Primary (1..10) plus complementary cells, until every line with a hidden cell has two or
+    more hidden cells summing to the threshold. Never-shown ``rest`` cells are hidden first."""
+    limit = config.MIN_CELL_SIZE
+    hidden = {k for k, v in value.items() if 0 < v < limit}
+    changed = bool(hidden)
+    while changed:
+        changed = False
+        for line in lines:
+            line_hidden = [k for k in line if k in hidden]
+            if not line_hidden:
+                continue
+            while len(line_hidden) < 2 or sum(value[k] for k in line_hidden) < limit:
+                candidates = sorted(
+                    (k for k in line if k not in hidden and value[k] > 0),
+                    key=lambda k: (not k.endswith("::rest"), value[k]),
+                )
+                if not candidates:
+                    break
+                hidden.add(candidates[0])
+                line_hidden.append(candidates[0])
+                changed = True
+    return hidden
+
+
+def _shown_counts(checks: list[CompiledCheck], raw: dict[str, int]) -> dict[str, tuple[int | str, float | None]]:
+    """Count and percent as shown, for every runnable check."""
+    rows = raw[ROWS_KEY]
+    cell_of, value, lines = _lines(checks, raw)
+    hidden = _hidden_cells(value, lines)
+    shown: dict[str, tuple[int | str, float | None]] = {}
+    for c in checks:
+        if c.expr is None:
+            continue
+        count = raw[c.id]
+        if c.metric == "rowCount":
+            shown[c.id] = (suppress_count(count, config.MIN_CELL_SIZE), None)
+        elif cell_of[c.id] in hidden:
+            small = 0 < count < config.MIN_CELL_SIZE
+            shown[c.id] = (suppress_count(count, config.MIN_CELL_SIZE) if small else config.COUNT_HIDDEN, None)
+        else:
+            shown[c.id] = (count, round(100.0 * count / rows, 1) if rows else None)
+    return shown
+
+
+def _result(
+    check: CompiledCheck, raw: dict[str, int], shown_counts: dict[str, tuple[int | str, float | None]]
+) -> QualityCheckResult:
     common: dict[str, Any] = {
         "id": check.id,
         "column": check.display,
@@ -335,7 +416,7 @@ def _result(check: CompiledCheck, raw: dict[str, int]) -> QualityCheckResult:
     count, rows = raw[check.id], raw[ROWS_KEY]
     observed: float = (100.0 * count / rows if rows else 0.0) if check.percent else count
     passed = _passes(check.rule, observed)
-    shown, percent = _shown(check, count, rows)
+    shown, percent = shown_counts[check.id]
     status: CheckStatus = "passed" if passed else ("failed" if check.severity == "error" else "warning")
     return QualityCheckResult(
         **common, status=status, count=shown, percent=percent, message=_message(check, count, shown, percent)
@@ -366,7 +447,8 @@ def run_quality(lf: pl.LazyFrame, contract: OpenDataContractStandard, run_at: da
     """Check ``lf`` against ``contract`` (one collect) and build the suppressed report."""
     checks = compile_contract(contract, lf.collect_schema())
     raw = measure(lf, checks)
-    results = [_result(c, raw) for c in checks]
+    shown_counts = _shown_counts(checks, raw)
+    results = [_result(c, raw, shown_counts) for c in checks]
     ts = (run_at or datetime.now(UTC)).astimezone(UTC)
     report = QualityReport(
         upload_id=str(_custom_value(contract, "uploadId") or contract.id),

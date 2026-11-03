@@ -8,9 +8,10 @@ from typing import Any
 
 import polars as pl
 import structlog
+from open_data_contract_standard.model import OpenDataContractStandard
 
 from clinical_analytics.contracts.builder import ContractInputs, build_contract
-from clinical_analytics.contracts.errors import ContractError
+from clinical_analytics.contracts.errors import ContractDamagedError, ContractError, ContractValidationError
 from clinical_analytics.contracts.quality import QualityNotRun, QualityReport, run_quality
 from clinical_analytics.contracts.store import contract_path, read_contract, write_contract, write_report
 from clinical_analytics.core.log_redaction import error_fields
@@ -23,6 +24,8 @@ from clinical_analytics.core.metadata_patch import (
 )
 
 logger = structlog.get_logger()
+
+DAMAGED_CONTRACT_REASON = "the saved data contract for this version is damaged"
 
 Patch = MetadataPatch | ExclusionPatternPatch | RelationshipPatch
 
@@ -46,6 +49,22 @@ def _resolve(df: pl.DataFrame, patches: list[Patch]) -> ResolvedDatasetMetadata:
     return resolve_metadata(SchemaInferenceEngine().infer_schema(df), patches)
 
 
+def read_saved_contract(path: Path) -> OpenDataContractStandard:
+    """The version's saved contract, which must hold a schema object to check against.
+
+    Raises:
+        ContractDamagedError: empty, truncated, not ODCS, or without a schema object.
+        ContractStoreError: the file cannot be read.
+    """
+    try:
+        contract = read_contract(path)
+    except ContractValidationError as e:
+        raise ContractDamagedError(f"Saved contract {path.name} is damaged") from e
+    if not contract.schema_:
+        raise ContractDamagedError(f"Saved contract {path.name} has no schema object")
+    return contract
+
+
 def check_upload(
     data_dir: Path,
     df: pl.DataFrame,
@@ -67,7 +86,7 @@ def check_upload(
     log = logger.bind(upload_id=upload_id, dataset_version=dataset_version)
     path = contract_path(data_dir, upload_id, dataset_version)
     if path.exists():
-        contract = read_contract(path)
+        contract = read_saved_contract(path)
     else:
         patches: list[Patch] = []
         if overlay_dir is not None:
@@ -86,7 +105,7 @@ def check_upload(
         )
         contract = build_contract(df, inputs)
         if not write_contract(data_dir, upload_id, dataset_version, contract):
-            contract = read_contract(path)  # another writer won; its contract is the version's
+            contract = read_saved_contract(path)  # another writer won; its contract is the version's
     report = run_quality(df.lazy(), contract, run_at=run_at)
     write_report(data_dir, report)
     log.info("upload_checked", failed=report.failed, warnings=report.warnings)
@@ -116,6 +135,11 @@ def check_upload_or_log(
             metadata=metadata,
             overlay_dir=overlay_dir,
         )
+    except ContractDamagedError as e:
+        logger.error(
+            "upload_check_contract_damaged", upload_id=upload_id, dataset_version=dataset_version, **error_fields(e)
+        )
+        return QualityNotRun(reason=DAMAGED_CONTRACT_REASON)
     except (ContractError, OSError, ValueError, pl.exceptions.PolarsError) as e:
         logger.error("upload_check_failed", upload_id=upload_id, dataset_version=dataset_version, **error_fields(e))
         return QualityNotRun(reason=f"the check failed ({type(e).__name__})")

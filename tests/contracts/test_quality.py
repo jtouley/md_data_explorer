@@ -101,7 +101,7 @@ def test_runQuality_cleanSyntheticCohort_onlyLdlMissingnessFlagged(load_syntheti
         ([100.0] * 20, 0, 0.0, "passed"),
         ([None] * 1 + [100.0] * 19, "<11", None, "passed"),
         ([None] * 10 + [100.0] * 10, "<11", None, "warning"),
-        ([None] * 11 + [100.0] * 9, "all but <11", None, "warning"),
+        ([None] * 11 + [100.0] * 9, config.COUNT_HIDDEN, None, "warning"),
         ([None] * 11 + [100.0] * 11, 11, 50.0, "warning"),
         ([None] * 20, 20, 100.0, "warning"),
     ],
@@ -334,8 +334,8 @@ def test_runQuality_manyFindings_summaryCappedWithRemainder(make_contract):
 @pytest.mark.parametrize(
     ("n_missing", "expected_count", "expected_percent"),
     [
-        (395, "all but <11", None),
-        (390, "all but <11", None),
+        (395, config.COUNT_HIDDEN, None),
+        (390, config.COUNT_HIDDEN, None),
         (389, 389, 97.2),
         (400, 400, 100.0),
         (5, "<11", None),
@@ -413,3 +413,123 @@ def test_runQuality_plausibilityColumnLoadedAsText_rangeReportedNotRun(make_cont
     # Assert
     assert checks[f"{column}_range"].status == "not_run"
     assert checks[f"{column}_range"].message.endswith("(column is not numeric)")
+
+
+_HIDDEN = config.COUNT_HIDDEN
+
+
+def _column_cohort(n_missing: int, n_bad: int, rows: int = 400) -> pl.DataFrame:
+    """``rows`` patients; the Statin column and BMI each: missing, then bad (code 7 / BMI 500), then valid."""
+    n_valid = rows - n_missing - n_bad
+    return pl.DataFrame(
+        {
+            "patient_id": [f"P{i}" for i in range(rows)],
+            STATIN: pl.Series([None] * n_missing + [7] * n_bad + [1] * n_valid, dtype=pl.Int64),
+            "bmi": pl.Series([None] * n_missing + [500.0] * n_bad + [25.0] * n_valid, dtype=pl.Float64),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("n_missing", "n_bad", "expected_missing", "expected_bad"),
+    [
+        (380, 15, 380, _HIDDEN),
+        (380, 12, 380, _HIDDEN),
+        (380, 10, 380, "<11"),
+        (379, 11, 379, _HIDDEN),
+        (378, 11, 378, 11),
+        (380, 9, 380, "<11"),
+    ],
+    ids=[
+        "reviewer_statin_5_valid",
+        "reviewer_bmi_8_in_range",
+        "valid_10_and_bad_10",
+        "valid_10_boundary_bad_hidden",
+        "valid_11_boundary_all_shown",
+        "bad_small_valid_11",
+    ],
+)
+def test_runQuality_missingPlusBadOnOneColumn_validCountNotRecoverable(
+    make_contract, n_missing, n_bad, expected_missing, expected_bad
+):
+    # Arrange: missing + bad + valid = 400 rows; a visible missing and bad count would give valid.
+    df = _column_cohort(n_missing, n_bad)
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    checks = _by_id(report)
+    for bad_id in ("statin_use_invalid", "bmi_range"):
+        assert (checks["statin_use_missing"].count, checks[bad_id].count) == (expected_missing, expected_bad)
+        assert (checks[bad_id].percent is None) is (expected_bad != n_bad)
+    text = report.model_dump_json()
+    n_valid = 400 - n_missing - n_bad
+    if expected_bad != n_bad:
+        assert f" {n_bad} " not in " ".join(report.summary) and f'"count":{n_bad}' not in text.replace(" ", "")
+    if n_valid < config.MIN_CELL_SIZE:
+        assert isinstance(checks["statin_use_invalid"].count, str) or isinstance(
+            checks["statin_use_missing"].count, str
+        )
+
+
+def _determined(equations: list[dict[str, int]], unknown: list[str], target: str) -> bool:
+    """Whether ``target`` is fixed by the linear equations over the unknown cells (rank test)."""
+    import numpy as np
+
+    if target not in unknown:
+        return True
+    a = np.array([[eq.get(u, 0) for u in unknown] for eq in equations], dtype=float)
+    e = np.array([[1.0 if u == target else 0.0 for u in unknown]])
+    if a.size == 0:
+        return False
+    return np.linalg.matrix_rank(np.vstack([a, e])) == np.linalg.matrix_rank(a)
+
+
+def test_runQuality_randomSmallTables_noShownCombinationRecoversHiddenSmallCount(make_contract):
+    # Arrange: seeded random cohorts; every column is a partition of the (visible) row total.
+    import random
+
+    rng = random.Random(20261103)
+    for trial in range(150):
+        rows = rng.randint(11, 45)
+        ids = [f"P{rng.randint(0, rows)}" for _ in range(rows)]
+        statin = [rng.choice([None, 1, 2, 7]) for _ in range(rows)]
+        bmi = [rng.choice([None, float("nan"), 25.0, 500.0, 5.0]) for _ in range(rows)]
+        df = pl.DataFrame({"patient_id": ids, STATIN: pl.Series(statin, dtype=pl.Int64), "bmi": bmi})
+        truth = {
+            "id_m": df["patient_id"].null_count(),
+            "id_d": df["patient_id"].drop_nulls().len() - df["patient_id"].drop_nulls().n_unique(),
+            "st_m": df[STATIN].null_count(),
+            "st_i": df.filter(pl.col(STATIN).is_not_null() & ~pl.col(STATIN).is_in([1, 2])).height,
+            "bmi_m": df.filter(pl.col("bmi").is_null() | pl.col("bmi").is_nan()).height,
+            "bmi_o": df.filter(pl.col("bmi").is_not_nan() & ~pl.col("bmi").is_between(10, 90)).height,
+        }
+        lines = [("id_m", "id_d", "id_rest"), ("st_m", "st_i", "st_rest"), ("bmi_m", "bmi_o", "bmi_rest")]
+        for m, bad, rest in lines:
+            truth[rest] = rows - truth[m] - truth[bad]
+        shown_ids = {
+            "id_m": "patient_id_not_null",
+            "id_d": "patient_id_no_duplicates",
+            "st_m": "statin_use_missing",
+            "st_i": "statin_use_invalid",
+            "bmi_m": "bmi_missing",
+            "bmi_o": "bmi_range",
+        }
+
+        # Act
+        checks = _by_id(run_quality(df.lazy(), make_contract(df)))
+
+        # Assert
+        assert all(checks[c].count == truth[k] or isinstance(checks[c].count, str) for k, c in shown_ids.items())
+        known = {k: truth[k] for k, c in shown_ids.items() if not isinstance(checks[c].count, str)}
+        unknown = [k for k in truth if k not in known]
+        equations = []
+        for line in lines:  # sum(line) = rows, known cells moved to the right-hand side
+            equations.append({k: 1 for k in line if k in unknown})
+        for k, value in truth.items():
+            if 0 < value < config.MIN_CELL_SIZE:
+                assert not _determined(equations, unknown, k), (trial, k, value, known)
+        for k, c in shown_ids.items():
+            if isinstance(checks[c].count, str):
+                assert checks[c].percent is None, (trial, k)

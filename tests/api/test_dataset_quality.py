@@ -94,7 +94,7 @@ def test_getDatasetQuality_corruptContract_returns500WithoutDetailLeak(test_clie
 
     # Assert
     assert response.status_code == 500
-    assert response.json()["detail"] == "Could not check this dataset's quality (ContractValidationError)."
+    assert response.json()["detail"] == "The saved data contract for this cohort is damaged."
 
 
 def test_uploadDataset_qualityCheckFails_responseSaysNotRun(test_client: TestClient, monkeypatch):
@@ -203,3 +203,19 @@ def test_getDatasetQuality_deletionMarkedWhileWaitingForLock_rejected409(test_cl
     # Assert
     assert result["get"] == 409
     assert not (isolated_data_home / "data" / "dq" / upload_id).exists()
+
+
+def test_datasetFilesLock_released_entryNotKeptForever():
+    # Arrange
+    import gc
+
+    from clinical_analytics.api.dependencies import _dataset_files_locks, dataset_files_lock
+
+    # Act
+    with dataset_files_lock("ds_lock_probe"):
+        held = "ds_lock_probe" in _dataset_files_locks
+    gc.collect()
+
+    # Assert: a desktop session touching many cohorts does not grow the lock map without bound.
+    assert held is True
+    assert "ds_lock_probe" not in _dataset_files_locks

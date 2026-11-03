@@ -28,7 +28,7 @@ from clinical_analytics.api.dependencies import (
 )
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
-from clinical_analytics.contracts.errors import ContractError
+from clinical_analytics.contracts.errors import ContractDamagedError, ContractError
 from clinical_analytics.contracts.quality import QualityNotRun, QualityReport
 from clinical_analytics.contracts.service import check_upload
 from clinical_analytics.contracts.store import latest_report
@@ -362,6 +362,9 @@ def get_dataset_quality(dataset_id: str) -> QualityReport:
         report = latest_report(data_dir, dataset_id, version)
         if report is None:
             report = _backfill_quality(storage, dataset_id, version)
+    except ContractDamagedError as e:
+        log.error("dataset_quality_contract_damaged", **error_fields(e))
+        raise HTTPException(status_code=500, detail="The saved data contract for this cohort is damaged.") from e
     except (ContractError, OSError, pl.exceptions.PolarsError) as e:
         log.error("dataset_quality_failed", **error_fields(e))
         raise HTTPException(

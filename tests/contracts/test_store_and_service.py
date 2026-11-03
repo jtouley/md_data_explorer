@@ -13,6 +13,7 @@ import pytest
 from clinical_analytics.contracts.errors import ContractStoreError, ContractValidationError
 from clinical_analytics.contracts.quality import QualityNotRun, run_quality
 from clinical_analytics.contracts.service import (
+    DAMAGED_CONTRACT_REASON,
     accepted_patch_ids,
     check_upload,
     check_upload_or_log,
@@ -247,3 +248,73 @@ def test_writeContract_fallbackTargetAppearsConcurrently_keepsOtherWritersFile(
     # Assert
     assert written is False
     assert path.read_text(encoding="utf-8") == "other writer"
+
+
+def test_writeContract_fallbackInterruptedMidWrite_targetAbsentOrComplete(
+    tmp_path: Path, monkeypatch, load_synthetic_dataset, make_contract
+):
+    # Arrange: no hard links, and the process dies half-way through writing at the target path.
+    def no_link(src, dst):
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    real_open = open
+
+    class _DiesMidWrite:
+        def __init__(self, f):
+            self._f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._f.close()
+
+        def write(self, text):
+            self._f.write(text[: len(text) // 2])
+            self._f.flush()
+            raise KeyboardInterrupt
+
+        def __getattr__(self, name):
+            return getattr(self._f, name)
+
+    def dying_open(file, mode="r", *args, **kwargs):
+        return (
+            _DiesMidWrite(real_open(file, mode, *args, **kwargs))
+            if "x" in mode
+            else real_open(file, mode, *args, **kwargs)
+        )
+
+    monkeypatch.setattr("clinical_analytics.contracts.store.os.link", no_link)
+    monkeypatch.setattr("clinical_analytics.contracts.store.open", dying_open, raising=False)
+    contract = make_contract(load_synthetic_dataset("cohort"))
+    path = contract_path(tmp_path, "u1", "v1")
+
+    # Act
+    try:
+        write_contract(tmp_path, "u1", "v1", contract)
+    except KeyboardInterrupt:
+        pass
+
+    # Assert: never a partial contract at the published path.
+    assert not path.exists() or read_contract(path) == contract
+
+
+@pytest.mark.parametrize(
+    "text", ["", "apiVersion: v3.2.0\nkind: DataCon", "{bad: [yaml"], ids=["empty", "truncated", "bad"]
+)
+def test_checkUploadOrLog_damagedExistingContract_reportsDamagedNotGenericFailure(
+    tmp_path: Path, load_synthetic_dataset, text
+):
+    # Arrange
+    path = contract_path(tmp_path, "u1", "v1")
+    path.parent.mkdir(parents=True)
+    path.write_text(text, encoding="utf-8")
+
+    # Act
+    result = check_upload_or_log(
+        tmp_path, load_synthetic_dataset("cohort"), upload_id="u1", dataset_version="v1", metadata=_META
+    )
+
+    # Assert
+    assert isinstance(result, QualityNotRun)
+    assert result.reason == DAMAGED_CONTRACT_REASON

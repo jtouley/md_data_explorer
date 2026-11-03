@@ -202,3 +202,24 @@ def test_contentViolations_trackedRepoFiles_noFalsePositives():
 
     # Assert
     assert result == []
+
+
+_REPORT_JSON = '{"status": "ran", "upload_id": "u1", "row_count": 400, "summary": ["ldl: 5.8% missing"], "checks": []}'
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "flagged"),
+    [
+        ("exports/run.json", _REPORT_JSON, True),
+        ("notes/report.yaml", "row_count: 400\nsummary: [a]\nchecks: []\n", True),
+        ("tests/fixtures/synthetic/dq/run.json", _REPORT_JSON, False),
+        ("electron/fixture.json", '{"summary": "text", "checks": 3}', False),
+    ],
+    ids=["report_json_outside_dq", "report_yaml", "synthetic_fixture", "other_shape"],
+)
+def test_contentViolations_qualityReportShape_flaggedOutsideSyntheticFixtures(path, text, flagged):
+    # Act
+    result = check_no_data_files.content_violations([path], lambda _p: text)
+
+    # Assert
+    assert (result == [path]) is flagged

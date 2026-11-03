@@ -9,7 +9,7 @@ Data contracts describe a real upload (column names, codebooks, a hash of the so
 ``*.odcs.yaml`` / ``*.odcs.json`` (and ODPS) files, data files (JSON, YAML, Parquet, ...) under a
 ``dq/`` or ``lineage/`` directory and eval golden sets are allowed only under
 ``tests/fixtures/synthetic/``. Source code and docs in such directories (a ``lineage`` package)
-are fine. By content: any tracked YAML or JSON shaped like an ODCS contract (``apiVersion`` v3.x
+are fine. By content: any tracked YAML or JSON shaped like an ODCS contract or a quality report (``apiVersion`` v3.x
 with ``kind: DataContract``, or a ``schema`` list with ``physicalName``) is allowed only under
 ``tests/fixtures/synthetic/`` and tagged ``synthetic``, whatever its file name; any tracked YAML
 that records a ``sourceFileSha256`` custom property must also be tagged ``synthetic``.
@@ -37,6 +37,9 @@ DERIVED_DIRS = ("dq", "lineage")
 DERIVED_DATA_SUFFIXES = (".json", ".jsonl", ".ndjson", ".yaml", ".yml", ".txt", *DATA_EXTENSIONS)
 SYNTHETIC_DIR = "tests/fixtures/synthetic/"
 ODCS_KIND = "DataContract"
+# Keys every stored quality report has (contracts.quality.QualityReport); counts are suppressed,
+# but column names, codebooks and missingness still describe a real upload.
+REPORT_KEYS = frozenset({"row_count", "summary", "checks"})
 ODCS_API_PREFIX = "v3."
 EVAL_GOLDEN = re.compile(r"(^|/)eval/golden[^/]*")
 YAML_SUFFIXES = (".yaml", ".yml")
@@ -111,10 +114,22 @@ def _documents(path: str, text: str) -> list[object] | None:
         return None
 
 
+def _report_shaped(document: object) -> bool:
+    """A stored data-quality report, wherever it was copied to."""
+    return (
+        isinstance(document, dict)
+        and REPORT_KEYS <= document.keys()
+        and isinstance(document.get("summary"), list)
+        and isinstance(document.get("checks"), list)
+    )
+
+
 def _flagged(path: str, document: object) -> bool:
     if _records_source_hash(document) and not _tagged_synthetic(document):
         return True
     in_fixtures = path.startswith(SYNTHETIC_DIR)
+    if _report_shaped(document) and not in_fixtures:
+        return True
     return _odcs_shaped(document) and not (in_fixtures and _tagged_synthetic(document))
 
 
@@ -122,7 +137,8 @@ def content_violations(paths: list[str], read_text: Callable[[str], str | None])
     """YAML/JSON contracts and source-hash records that are not tagged synthetic fixtures.
 
     * any document recording a source-file hash without a ``synthetic`` tag (anywhere);
-    * any ODCS-shaped document outside ``tests/fixtures/synthetic/`` or without the tag.
+    * any ODCS-shaped document outside ``tests/fixtures/synthetic/`` or without the tag;
+* any data-quality report (``row_count`` + ``summary`` + ``checks`` lists) outside the fixtures.
 
     A YAML file that mentions the hash property but cannot be parsed is flagged: it cannot be
     shown safe. Unparseable JSON is left alone (it cannot be loaded as a contract either).
@@ -133,7 +149,8 @@ def content_violations(paths: list[str], read_text: Callable[[str], str | None])
         if not lower.endswith(YAML_SUFFIXES + JSON_SUFFIXES):
             continue
         text = read_text(path)
-        if text is None or not (SOURCE_HASH_PROPERTY in text or "physicalName" in text or ODCS_KIND in text):
+        markers = (SOURCE_HASH_PROPERTY, "physicalName", ODCS_KIND, "row_count")
+        if text is None or not any(marker in text for marker in markers):
             continue
         documents = _documents(path, text)
         if documents is None:
