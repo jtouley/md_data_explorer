@@ -5,7 +5,11 @@
  * and chat message management.
  */
 import './index.css';
-import { normalizePendingResponse, renderEnrichmentCards } from './enrichmentPanel.js';
+import {
+  normalizePendingResponse,
+  renderEnrichmentCards,
+  runEnrichmentDecision,
+} from './enrichmentPanel.js';
 import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
 import {
   buildConfirmationHoldPresentation,
@@ -780,18 +784,16 @@ async function loadEnrichmentPanel() {
 async function handleEnrichmentAccept(patchId) {
   const { enrichmentHint } = elements;
   if (!state.currentDatasetId) return;
-  try {
-    const res = await window.clinicalAPI.acceptEnrichment(state.currentDatasetId, patchId);
-    if (res && res.success === false) {
-      throw new Error(res.message || 'Accept failed');
+  await runEnrichmentDecision(
+    () => window.clinicalAPI.acceptEnrichment(state.currentDatasetId, patchId),
+    {
+      reload: loadEnrichmentPanel,
+      showMessage: (text) => {
+        if (enrichmentHint) enrichmentHint.textContent = text;
+      },
+      fallback: 'Accept failed',
     }
-    await loadEnrichmentPanel();
-  } catch (error) {
-    console.error('Accept enrichment failed:', error);
-    if (enrichmentHint) {
-      enrichmentHint.textContent = error.message || 'Accept failed';
-    }
-  }
+  );
 }
 
 /**
@@ -800,18 +802,16 @@ async function handleEnrichmentAccept(patchId) {
 async function handleEnrichmentReject(patchId) {
   const { enrichmentHint } = elements;
   if (!state.currentDatasetId) return;
-  try {
-    const res = await window.clinicalAPI.rejectEnrichment(state.currentDatasetId, patchId);
-    if (res && res.success === false) {
-      throw new Error(res.message || 'Reject failed');
+  await runEnrichmentDecision(
+    () => window.clinicalAPI.rejectEnrichment(state.currentDatasetId, patchId),
+    {
+      reload: loadEnrichmentPanel,
+      showMessage: (text) => {
+        if (enrichmentHint) enrichmentHint.textContent = text;
+      },
+      fallback: 'Reject failed',
     }
-    await loadEnrichmentPanel();
-  } catch (error) {
-    console.error('Reject enrichment failed:', error);
-    if (enrichmentHint) {
-      enrichmentHint.textContent = error.message || 'Reject failed';
-    }
-  }
+  );
 }
 
 /**
@@ -824,18 +824,16 @@ async function handlePatchRevert(patchId) {
     if (patchHistoryHint) patchHistoryHint.textContent = 'Revert API not available.';
     return;
   }
-  try {
-    const res = await window.clinicalAPI.revertEnrichmentPatch(state.currentDatasetId, patchId);
-    if (res && res.success === false) {
-      throw new Error(res.message || 'Revert failed');
+  await runEnrichmentDecision(
+    () => window.clinicalAPI.revertEnrichmentPatch(state.currentDatasetId, patchId),
+    {
+      reload: loadEnrichmentPanel,
+      showMessage: (text) => {
+        if (patchHistoryHint) patchHistoryHint.textContent = text;
+      },
+      fallback: 'Revert failed',
     }
-    await loadEnrichmentPanel();
-  } catch (error) {
-    console.error('Revert patch failed:', error);
-    if (patchHistoryHint) {
-      patchHistoryHint.textContent = error.message || 'Revert failed';
-    }
-  }
+  );
 }
 
 // ============================================================================

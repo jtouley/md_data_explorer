@@ -3,6 +3,8 @@ import { webcrypto } from 'node:crypto';
 import {
   DEFAULT_API_BASE_URL,
   MAX_STREAM_RECONNECTS,
+  apiErrorMessage,
+  enrichmentDecisionResult,
   createReplayFilter,
   decideAfterDrop,
   tokenProof,
@@ -247,5 +249,73 @@ describe('API address', () => {
     // Assert
     expect(preload).not.toMatch(/localhost:8000/);
     expect(csp.trim()).toBe('http://127.0.0.1:8000');
+  });
+});
+
+describe('apiErrorMessage', () => {
+  test.each([
+    ['string detail', { detail: 'Patch not found' }, 'Patch not found'],
+    [
+      'validation detail list',
+      { detail: [{ msg: 'Input should be a valid string' }, { msg: 'Field required' }] },
+      'Input should be a valid string; Field required',
+    ],
+    ['legacy message', { message: 'old style' }, 'old style'],
+    ['empty detail list', { detail: [] }, 'fallback'],
+    ['list without msg', { detail: [{ loc: ['body'] }] }, 'fallback'],
+    ['non-JSON body', {}, 'fallback'],
+    ['null body', null, 'fallback'],
+  ])('%s', (_name, data, expected) => {
+    expect(apiErrorMessage(data, 'fallback')).toBe(expected);
+  });
+});
+
+describe('enrichmentDecisionResult', () => {
+  test('returns the body on success', () => {
+    const body = { success: true, message: 'Suggestion accepted' };
+    expect(enrichmentDecisionResult({ ok: true, status: 200 }, body, 'Accept')).toBe(body);
+  });
+
+  test.each([404, 409])('marks %i as stale instead of throwing', (status) => {
+    const result = enrichmentDecisionResult(
+      { ok: false, status, statusText: 'x' },
+      { detail: 'Only a pending patch can be accepted' },
+      'Accept'
+    );
+    expect(result).toEqual({
+      success: false,
+      stale: true,
+      message: 'Only a pending patch can be accepted',
+    });
+  });
+
+  test('throws the joined validation messages for 422', () => {
+    expect(() =>
+      enrichmentDecisionResult(
+        { ok: false, status: 422, statusText: 'Unprocessable Entity' },
+        { detail: [{ msg: 'Input should be a valid string' }] },
+        'Reject'
+      )
+    ).toThrow('Input should be a valid string');
+  });
+
+  test('throws with the status text when a 500 has no body', () => {
+    expect(() =>
+      enrichmentDecisionResult(
+        { ok: false, status: 500, statusText: 'Internal Server Error' },
+        {},
+        'Revert'
+      )
+    ).toThrow('Revert failed: Internal Server Error');
+  });
+
+  test('throws when a 200 body reports success false', () => {
+    expect(() =>
+      enrichmentDecisionResult(
+        { ok: true, status: 200 },
+        { success: false, message: 'nope' },
+        'Accept'
+      )
+    ).toThrow('nope');
   });
 });

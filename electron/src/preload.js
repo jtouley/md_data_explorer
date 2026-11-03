@@ -11,6 +11,7 @@ import {
   INSECURE_BACKEND_MESSAGE,
   createReplayFilter,
   decideAfterDrop,
+  enrichmentDecisionResult,
   readSseStream,
   verifyBackendEnforcesAuth,
   withAuth,
@@ -282,7 +283,7 @@ const clinicalAPI = {
    * @param {string} datasetId
    * @param {string} patchId
    * @param {string} [acceptedBy]
-   * @returns {Promise<{ success: boolean, message: string }>}
+   * @returns {Promise<{ success: boolean, message: string, stale?: boolean }>}
    */
   async acceptEnrichment(datasetId, patchId, acceptedBy = 'electron_user') {
     const encD = encodeURIComponent(datasetId);
@@ -296,13 +297,7 @@ const clinicalAPI = {
       }
     );
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.detail || data?.message || `Accept failed: ${response.statusText}`);
-    }
-    if (data.success === false) {
-      throw new Error(data.message || 'Accept failed');
-    }
-    return data;
+    return enrichmentDecisionResult(response, data, 'Accept');
   },
 
   /**
@@ -310,7 +305,7 @@ const clinicalAPI = {
    * @param {string} datasetId
    * @param {string} patchId
    * @param {string} [reason]
-   * @returns {Promise<{ success: boolean, message: string }>}
+   * @returns {Promise<{ success: boolean, message: string, stale?: boolean }>}
    */
   async rejectEnrichment(datasetId, patchId, reason = 'Rejected in Electron') {
     const encD = encodeURIComponent(datasetId);
@@ -324,13 +319,7 @@ const clinicalAPI = {
       }
     );
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.detail || data?.message || `Reject failed: ${response.statusText}`);
-    }
-    if (data.success === false) {
-      throw new Error(data.message || 'Reject failed');
-    }
-    return data;
+    return enrichmentDecisionResult(response, data, 'Reject');
   },
 
   /**
@@ -352,7 +341,7 @@ const clinicalAPI = {
    * @param {string} datasetId
    * @param {string} patchId
    * @param {string} [revertedBy]
-   * @returns {Promise<{ success: boolean, message: string }>}
+   * @returns {Promise<{ success: boolean, message: string, stale?: boolean }>}
    */
   async revertEnrichmentPatch(datasetId, patchId, revertedBy = 'electron_user') {
     const encD = encodeURIComponent(datasetId);
@@ -366,13 +355,7 @@ const clinicalAPI = {
       }
     );
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data?.detail || data?.message || `Revert failed: ${response.statusText}`);
-    }
-    if (data.success === false) {
-      throw new Error(data.message || 'Revert failed');
-    }
-    return data;
+    return enrichmentDecisionResult(response, data, 'Revert');
   },
 
   /**

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   normalizePendingResponse,
+  runEnrichmentDecision,
   suggestionToRows,
 } from './enrichmentPanel.js';
 
@@ -57,5 +58,58 @@ describe('suggestionToRows', () => {
       model_id: 'z',
     });
     expect(rows).toContainEqual(['Current', 'old']);
+  });
+});
+
+describe('runEnrichmentDecision', () => {
+  function harness() {
+    const events = [];
+    return {
+      events,
+      opts: {
+        reload: vi.fn(async () => {
+          events.push('reload');
+        }),
+        showMessage: vi.fn((text) => {
+          events.push(`message:${text}`);
+        }),
+        fallback: 'Accept failed',
+      },
+    };
+  }
+
+  it('reloads the panel after a successful decision', async () => {
+    const { events, opts } = harness();
+    await runEnrichmentDecision(async () => ({ success: true, message: 'ok' }), opts);
+    expect(events).toEqual(['reload']);
+  });
+
+  it('reloads and then explains when the patch was resolved elsewhere (404/409)', async () => {
+    const { events, opts } = harness();
+    await runEnrichmentDecision(
+      async () => ({
+        success: false,
+        stale: true,
+        message: 'Only a pending patch can be accepted',
+      }),
+      opts
+    );
+    expect(events).toEqual(['reload', 'message:Only a pending patch can be accepted']);
+  });
+
+  it('shows the error without reloading when the call throws', async () => {
+    const { events, opts } = harness();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runEnrichmentDecision(async () => {
+      throw new Error('Could not update the enrichment overlay');
+    }, opts);
+    expect(events).toEqual(['message:Could not update the enrichment overlay']);
+  });
+
+  it('treats success false as a failure without reloading', async () => {
+    const { events, opts } = harness();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runEnrichmentDecision(async () => ({ success: false }), opts);
+    expect(events).toEqual(['message:Accept failed']);
   });
 });
