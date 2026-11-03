@@ -105,6 +105,9 @@ would be false for secondary cells; rendering "—" reads as "missing" or "zero"
 tables. The footnote says what is true for both: "Hidden to protect privacy: counts from 1 to 10
 are not shown, and some other cells are hidden so those counts can't be worked out from totals."
 We never write "<5"; the threshold is 11.
+Only the API's exact tokens mean hidden: the lowercase `suppressed` and `<11` (built from the
+threshold). Any other text, such as an age band "<65" or a category spelled "Suppressed", is a
+label and is shown as written, with no † and no footnote.
 
 ### Session titles
 
@@ -231,7 +234,7 @@ Choreography:
 | Error | Danger-tinted notice | Alert icon + "Something went wrong" | API message or a plain fallback; question restored |
 | Loading | Dots + stage text | — | "Reading your question", "Running the analysis", "· 4 s" after 3 s |
 | Streaming | Send becomes Stop; composer stays editable | Stop icon | Enter while busy: "Wait for this answer, or press Stop." |
-| Stopped | Muted note | "Stopped" | "Stopped waiting for this answer." |
+| Stopped | Muted note | "Stopped" | "Stopped waiting for this answer." After an approved plan was sent, its card settles ("You approved this plan and it was sent.") and is never offered again. |
 | Empty (no cohort) | Centred | — | "Choose a cohort to begin." + Upload / Use the sample cohort |
 | Empty (cohort chosen) | Centred serif greeting + chips | — | "What would you like to know about {cohort}?" + three questions built from its columns (fill the box, never auto-send) |
 | Offline | Banner at the top of the main column; empty state explains | Alert icon | "Can't reach the analysis engine on this computer." + Try again; empty state "Waiting for the analysis engine." |
@@ -245,6 +248,9 @@ Choreography:
   the choice to `settings.json` in the app's user-data folder. Main reads it before the window is
   created and sets the window `backgroundColor` to match, so the first frame is already the right
   theme. Only the app's own page may call it, and only these three values are accepted.
+  Main also passes the saved choice to preload (`--ca-theme=<source>`), exposed as
+  `appTheme.initial`, and the `<head>` script uses it first, so a stale `localStorage` copy can
+  never paint the other theme.
 - Browser (Vite, Playwright): an inline script in `<head>` reads `localStorage` (wrapped in
   `try`) and sets `data-theme` before first paint; the stylesheet does the rest.
 - Theme change cross-fades background and text colours for 200 ms (none under reduced motion).

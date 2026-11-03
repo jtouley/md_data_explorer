@@ -398,7 +398,7 @@ describe('classifyCell', () => {
     [12.5, 'number', '12.50'],
     [Number.NaN, 'text', 'NaN'],
     ['suppressed', 'hidden', 'hidden'],
-    ['Suppressed', 'hidden', 'hidden'],
+    ['Suppressed', 'text', 'Suppressed'],
     ['<11', 'small', '<11'],
     ['< 11', 'small', '<11'],
     ['1,234', 'number', '1,234'],
@@ -411,6 +411,39 @@ describe('classifyCell', () => {
     const result = classifyCell(value);
     // Assert
     expect(result).toEqual({ kind, text });
+  });
+
+  it.each([
+    ['<65', '<65'],
+    ['<18', '<18'],
+    ['<5', '<5'],
+    ['< 10', '< 10'],
+    ['<110', '<110'],
+    ['<12', '<12'],
+  ])('classifyCell_inequalityLabel_%s_staysText', (value, text) => {
+    // Arrange / Act
+    const result = classifyCell(value);
+    // Assert: only the API's own threshold token means "hidden"
+    expect(result).toEqual({ kind: 'text', text });
+  });
+
+  it('classifyCell_thresholdToken_isBuiltFromThreshold', () => {
+    // Arrange
+    const token = `<${SMALL_CELL_THRESHOLD}`;
+    // Act / Assert: the token tracks the threshold; one below it is a label
+    expect(classifyCell(token)).toEqual({ kind: 'small', text: token });
+    expect(classifyCell(`<${SMALL_CELL_THRESHOLD - 1}`).kind).toBe('text');
+  });
+
+  it.each([
+    ['0', '<0.001'],
+    ['1', '1'],
+    [' 0 ', '<0.001'],
+  ])('classifyCell_pValueIntegerString_%s_isFormatted', (value, text) => {
+    // Arrange / Act
+    const result = classifyCell(value, { pValue: true });
+    // Assert: a stringified p of 0 is never shown as 0
+    expect(result).toEqual({ kind: 'number', text });
   });
 
   it('hiddenCellFootnote_usesThreshold11_neverFive', () => {
@@ -506,6 +539,7 @@ describe('isNumericColumn', () => {
     [[[1], [2]], 0, true],
     [[['suppressed'], [3]], 0, true],
     [[['<11'], ['suppressed']], 0, true],
+    [[['<65'], ['<18']], 0, false],
     [[[''], [null]], 0, false],
     [[['drug'], [3]], 0, false],
     [[], 0, false],

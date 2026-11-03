@@ -127,6 +127,33 @@ test.describe('Conversation states', () => {
     expect(submits).toBe(1);
   });
 
+  test('stop after Run this analysis never offers to send the same plan again', async ({
+    page,
+  }) => {
+    // Arrange: a held plan whose approved answer streams slowly
+    await ask(page, 'Compare LDL by treatment in older patients seen recently');
+    const card = page.getByTestId('result-confirm-card');
+    await expect(card).toContainText('Check this plan before it runs');
+    await page.evaluate(() => {
+      window.__streamMs = 5000;
+    });
+
+    // Act: approve, then stop waiting
+    await card.getByTestId('confirm-query-btn').click();
+    const submit = page.locator('#submit-btn');
+    await expect(submit).toHaveAttribute('aria-label', 'Stop');
+    await submit.click();
+
+    // Assert: the approval was sent once and the card cannot send it again
+    await expect(page.getByTestId('stopped-notice')).toBeVisible();
+    await expect(card).toContainText('You approved this plan and it was sent.');
+    await expect(card.getByTestId('confirm-query-btn')).toHaveCount(0);
+    const confirmed = await page.evaluate(
+      () => window.__calls.filter((c) => c[0] === 'submitQuery' && c[4] === true).length
+    );
+    expect(confirmed).toBe(1);
+  });
+
   test('refusal is a calm notice (not an error) and the question comes back', async ({ page }) => {
     // Act
     await ask(page, 'Show me the patients over 75 with diabetes');

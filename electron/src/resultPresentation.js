@@ -294,6 +294,27 @@ export const SMALL_CELL_THRESHOLD = 11;
 
 /** The API's marker for every hidden cell (primary and secondary alike, by design). */
 export const HIDDEN_CELL_MARKER = 'suppressed';
+/** The API's own small-cell token (`suppress_count` writes exactly this). */
+export const SMALL_CELL_TOKEN = `<${SMALL_CELL_THRESHOLD}`;
+
+/**
+ * Only the API's exact tokens mean "hidden": a category label such as "<65" or "<5" is data.
+ * @param {string} s trimmed cell text
+ * @returns {boolean}
+ */
+export function isSmallCellToken(s) {
+  const m = /^<\s*(\d+)$/.exec(s);
+  return m !== null && Number(m[1]) === SMALL_CELL_THRESHOLD;
+}
+
+/**
+ * The API writes the lowercase marker; "Suppressed" as a real category label stays text.
+ * @param {string} s trimmed cell text
+ * @returns {boolean}
+ */
+export function isHiddenCellMarker(s) {
+  return s === HIDDEN_CELL_MARKER;
+}
 
 export const HIDDEN_CELL_FOOTNOTE =
   `Hidden to protect privacy: counts from 1 to ${SMALL_CELL_THRESHOLD - 1} are not shown, ` +
@@ -463,9 +484,12 @@ export function classifyCell(value, format = {}) {
   }
   if (typeof value === 'object') return { kind: 'text', text: JSON.stringify(value) };
   const s = String(value).trim();
-  if (s.toLowerCase() === HIDDEN_CELL_MARKER) return { kind: 'hidden', text: 'hidden' };
-  if (/^<\s*\d+$/.test(s)) return { kind: 'small', text: s.replace(/\s+/g, '') };
+  if (isHiddenCellMarker(s)) return { kind: 'hidden', text: 'hidden' };
+  if (isSmallCellToken(s)) return { kind: 'small', text: SMALL_CELL_TOKEN };
   if (/^[-+]?\d+\.\d+$/.test(s)) return { kind: 'number', text: formatNumber(Number(s), format) };
+  if (format.pValue && /^[-+]?\d+$/.test(s)) {
+    return { kind: 'number', text: formatNumber(Number(s), format) };
+  }
   if (/^[-+]?\d[\d,]*(\.\d+)?%?$/.test(s)) return { kind: 'number', text: s };
   return { kind: 'text', text: s };
 }

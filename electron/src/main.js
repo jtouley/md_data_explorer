@@ -27,6 +27,7 @@ import {
   THEME_GET_CHANNEL,
   THEME_SET_CHANNEL,
   WINDOW_BACKGROUND,
+  THEME_ARG_PREFIX,
   isThemeSource,
   parseThemeSetting,
   serializeThemeSetting,
@@ -151,6 +152,8 @@ const createWindow = () => {
       sandbox: true, // preload uses only contextBridge + ipcRenderer (bundled, no Node APIs)
       webviewTag: false,
       preload: path.join(__dirname, 'preload.js'),
+      // The saved theme (settings.json), so the page's first paint matches nativeTheme.
+      additionalArguments: [`${THEME_ARG_PREFIX}${nativeTheme.themeSource}`],
     },
   });
   lockDownWebContents(mainWindow.webContents);

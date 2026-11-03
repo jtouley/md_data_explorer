@@ -8,9 +8,10 @@
   <title>Clinical Analytics</title>
   <script>
     // Apply an explicit Light/Dark choice before first paint (System needs nothing: CSS follows
-    // prefers-color-scheme, which Electron's nativeTheme also drives).
+    // prefers-color-scheme, which Electron's nativeTheme also drives). In Electron the saved
+    // choice main already applied (settings.json, via preload) wins over a stale localStorage.
     try {
-      var savedTheme = window.localStorage.getItem('ca-theme');
+      var savedTheme = (window.appTheme && window.appTheme.initial) || window.localStorage.getItem('ca-theme');
       if (savedTheme === 'light' || savedTheme === 'dark') {
         document.documentElement.setAttribute('data-theme', savedTheme);
       }
