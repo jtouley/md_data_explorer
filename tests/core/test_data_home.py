@@ -59,3 +59,49 @@ class TestDataHome:
         assert storage.upload_dir == tmp_path.resolve() / "data" / "uploads"
         assert storage.raw_dir.is_dir()
         assert not storage.upload_dir.is_relative_to(REPO_ROOT)
+
+
+def _make_storage() -> object:
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    return UserDatasetStorage()
+
+
+def _make_db_url() -> object:
+    from clinical_analytics.api.db.database import _default_database_url
+
+    return _default_database_url()
+
+
+def _make_log_key() -> object:
+    from clinical_analytics.core import log_redaction
+
+    log_redaction._log_keys.clear()
+    return log_redaction.log_hash_key()
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "getuid"), reason="POSIX permissions")
+@pytest.mark.parametrize(
+    ("creator", "existing_mode"),
+    [
+        (_make_storage, None),
+        (_make_db_url, None),
+        (_make_log_key, None),
+        (_make_storage, 0o755),
+        (_make_storage, 0o700),
+    ],
+    ids=["uploads_fresh", "session_db_fresh", "log_key_fresh", "uploads_existing_open", "uploads_existing_private"],
+)
+def test_dataHome_firstWriter_createsOwnerOnlyDirectory(tmp_path, monkeypatch, creator, existing_mode):
+    # Arrange
+    home = tmp_path / "nested" / "home"
+    if existing_mode is not None:
+        home.mkdir(parents=True)
+        home.chmod(existing_mode)
+    monkeypatch.setenv(data_home.DATA_HOME_ENV, str(home))
+
+    # Act
+    creator()
+
+    # Assert
+    assert home.stat().st_mode & 0o777 == 0o700

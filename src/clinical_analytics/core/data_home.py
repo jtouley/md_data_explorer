@@ -40,6 +40,26 @@ def data_home() -> Path:
     return Path(override).expanduser().resolve() if override else _platform_data_dir()
 
 
+DATA_HOME_MODE = 0o700
+
+
+def ensure_data_home() -> Path:
+    """Create the data home owner-only (0700) and tighten one this user owns that is wider.
+
+    Everything below inherits the protection: other local accounts cannot traverse into it,
+    whatever the mode of the user's home directory. ``mkdir(mode=...)`` applies only to the
+    last path component, so parents keep the default mode; the data home itself is the guard.
+    """
+    home = data_home()
+    home.mkdir(mode=DATA_HOME_MODE, parents=True, exist_ok=True)
+    if hasattr(os, "getuid"):  # POSIX; Windows uses the per-user LOCALAPPDATA ACLs
+        st = home.stat()
+        if st.st_uid == os.getuid() and st.st_mode & 0o077:
+            home.chmod(DATA_HOME_MODE)
+            logger.info("data_home_permissions_tightened", mode=oct(DATA_HOME_MODE))
+    return home
+
+
 def uploads_dir() -> Path:
     """Directory for uploaded datasets (raw files, metadata, overlays)."""
     return data_home() / "data" / "uploads"

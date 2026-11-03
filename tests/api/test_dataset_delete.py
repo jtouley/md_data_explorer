@@ -249,3 +249,45 @@ def test_vacuumIfFreePages_rowsDeletedBeforeSecureDelete_bytesGone(tmp_path: Pat
     assert vacuumed is True
     assert again is False
     assert b"pangolin-question-" not in (tmp_path / "old.db").read_bytes()
+
+
+def _owned_paths(root: Path, dataset_id: str) -> set[str]:
+    """Relative paths under root whose name mentions the dataset id."""
+    return {str(p.relative_to(root)) for p in root.rglob("*") if dataset_id in str(p.relative_to(root))}
+
+
+def test_deleteDataset_storeConnectionHeld_returns409AndChangesNothing(test_client: TestClient) -> None:
+    # Arrange: a real registered connection to the store, as an in-flight query would hold.
+    from clinical_analytics.storage.datastore import close_store_connection, open_store_connection
+
+    marker = f"wombatosis{secrets.token_hex(4)}"
+    dataset_id = _upload(test_client, marker)
+    session_id = test_client.post("/api/sessions", json={"dataset_id": dataset_id}).json()["session_id"]
+    with SessionLocal() as db:
+        db.add(db_models.Message(message_id=f"m_{marker}", session_id=session_id, role="user", content=marker))
+        db.commit()
+    overlay = default_overlay_dir() / "overlays" / dataset_id / "v1"
+    overlay.mkdir(parents=True)
+    (overlay / "patches.jsonl").write_text('{"column": "diagnosis"}\n')
+    before = _owned_paths(data_home(), dataset_id)
+    assert any(p.endswith(".csv") for p in before), before
+    assert any(p.endswith(".parquet") for p in before), before
+    assert any(p.endswith(f"{dataset_id}.json") for p in before), before
+    assert any("overlays" in p for p in before), before
+    store = data_home() / "data" / "analytics.duckdb"
+    held = open_store_connection(store)
+
+    # Act
+    try:
+        response = test_client.delete(f"/api/datasets/{dataset_id}")
+    finally:
+        close_store_connection(store, held)
+
+    # Assert
+    assert response.status_code == 409, response.text
+    assert _owned_paths(data_home(), dataset_id) == before
+    with SessionLocal() as db:
+        assert db.get(db_models.Session, session_id) is not None
+        assert db.get(db_models.Message, f"m_{marker}") is not None
+    assert dataset_id.encode() in store.read_bytes()
+    assert test_client.get(f"/api/datasets/{dataset_id}").status_code == 200

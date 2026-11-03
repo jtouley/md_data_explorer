@@ -25,7 +25,7 @@ from clinical_analytics.api.dependencies import (
 )
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
-from clinical_analytics.core.log_redaction import error_fields
+from clinical_analytics.core.log_redaction import error_fields, text_fingerprint
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.storage.dataset_deletion import (
     DatasetDeletionError,
@@ -346,11 +346,14 @@ async def upload_dataset(
         file: Multipart file upload
         dataset_name: Optional human-readable name (defaults to filename stem)
     """
-    log = logger.bind(filename=file.filename)
-    log.info("dataset_upload_requested")
-
     filename = file.filename or "upload"
     ext = Path(filename).suffix.lower()
+    # A file name can name a patient: log its keyed hash, length and extension, never the text.
+    log = logger.bind(
+        **text_fingerprint(filename, prefix="filename"),
+        filename_ext=ext if ext in ALLOWED_UPLOAD_EXTENSIONS else "other",
+    )
+    log.info("dataset_upload_requested")
 
     if ext not in ALLOWED_UPLOAD_EXTENSIONS:
         raise HTTPException(
@@ -401,8 +404,9 @@ def delete_dataset(dataset_id: str, db: Annotated[Session, Depends(get_db)]) -> 
     """Delete a dataset: raw file, metadata, DuckDB tables, Parquet exports, enrichment overlays,
     its sessions and messages, and in-memory query results.
 
-    Order: in-memory state, then sessions, then files with metadata last, so a failure leaves the
-    dataset listed and the delete can simply be retried.
+    Order: in-memory state, then the purge (store lock, DuckDB tables, files, metadata last),
+    then sessions and messages. A busy store (409) or a failed purge leaves the dataset listed
+    with its sessions, so the delete can simply be retried.
     """
     try:
         validate_dataset_id(dataset_id)
@@ -420,24 +424,25 @@ def delete_dataset(dataset_id: str, db: Annotated[Session, Depends(get_db)]) -> 
     with dataset_deletion_guard(dataset_id):
         forget_query_service(dataset_id)
 
-        sessions = db.query(db_models.Session).filter(db_models.Session.dataset_id == dataset_id).all()
-        for db_session in sessions:
-            db.delete(db_session)  # cascades to messages
-        db.commit()
-
         try:
             report = purge_dataset_files(dataset_id, storage.upload_dir)
         except DatasetStoreBusyError as e:
-            log.warning("dataset_delete_store_busy", deleted_sessions=len(sessions))
+            log.warning("dataset_delete_store_busy")
             raise HTTPException(status_code=409, detail=str(e)) from e
         except DatasetDeletionError as e:
-            log.error("dataset_delete_failed", deleted_sessions=len(sessions), error_type=type(e).__name__)
+            log.error("dataset_delete_failed", error_type=type(e).__name__)
             # Messages name files, never absolute paths (see storage.dataset_deletion).
             raise HTTPException(status_code=500, detail=f"Dataset only partly deleted, try again: {e}") from e
         finally:
             # Anything rebuilt despite the guard (a request already past it) is dropped again.
             invalidate_semantic_layer_cache(dataset_id)
             forget_query_service(dataset_id)
+
+        # Sessions go only once the data is gone: a 409 or a failed purge keeps the chat.
+        sessions = db.query(db_models.Session).filter(db_models.Session.dataset_id == dataset_id).all()
+        for db_session in sessions:
+            db.delete(db_session)  # cascades to messages
+        db.commit()
 
     log.info(
         "dataset_delete_completed",

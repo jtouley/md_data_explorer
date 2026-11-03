@@ -87,3 +87,46 @@ class TestDemoDataset:
         meta = upload_storage.get_upload_metadata(id2)
         assert meta is not None
         assert meta["dataset_name"] == DEMO_DATASET_NAME
+
+
+def _user_csv() -> bytes:
+    """Synthetic user cohort, distinct from the bundled sample."""
+    return (
+        pl.DataFrame(
+            {
+                "patient_id": [f"U{i:03d}" for i in range(150)],
+                "ldl": [100 + i for i in range(150)],
+                "arm": ["a" if i % 2 else "b" for i in range(150)],
+            }
+        )
+        .write_csv()
+        .encode()
+    )
+
+
+@pytest.mark.parametrize("sample_loads", [1, 2], ids=["first_load", "reload"])
+def test_loadSampleDataset_userDatasetHasDemoName_userDatasetUntouchedAndDemoSeparate(
+    upload_storage, sample_loads: int
+):
+    """Only the demo is created or replaced; a clinician's dataset with the same name is not."""
+    # Arrange
+    ok, message, user_id = upload_storage.save_upload(
+        file_bytes=_user_csv(),
+        original_filename="mine.csv",
+        metadata={"dataset_name": DEMO_DATASET_NAME},
+    )
+    assert ok is True, message
+    user_meta_before = upload_storage.get_upload_metadata(user_id)
+
+    # Act
+    demo_ids = [load_sample_dataset(upload_storage, overwrite=True) for _ in range(sample_loads)]
+
+    # Assert
+    assert all(success for success, _, _ in demo_ids)
+    ids = {upload_id for _, _, upload_id in demo_ids}
+    assert len(ids) == 1, "reloading the sample reuses the demo's own id"
+    demo_id = ids.pop()
+    assert demo_id != user_id
+    assert upload_storage.get_upload_metadata(user_id) == user_meta_before
+    assert upload_storage.get_upload_metadata(demo_id)["is_demo"] is True
+    assert set(upload_storage.get_upload_data(user_id).collect_schema().names()) == {"patient_id", "ldl", "arm"}

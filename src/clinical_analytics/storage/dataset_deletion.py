@@ -12,8 +12,10 @@ Dropping a DuckDB table frees its blocks but leaves the bytes in the file, so af
 the store is rewritten into a fresh file (``COPY FROM DATABASE``) and swapped in. A durable
 ``analytics.duckdb.needs-compaction`` marker covers the window between DROP and swap. Metadata
 is removed last, only after the swap, so a failure part-way leaves the dataset listed and the
-delete can be retried; running it twice is safe. The purge holds the store lock and refuses to
-run while any registered connection to the store is open (see ``storage.datastore``).
+delete can be retried; running it twice is safe. The purge takes the store lock before it
+touches anything and refuses to run while any registered connection to the store is open (see
+``storage.datastore``); on a busy store nothing is removed. Order under the lock: DuckDB tables
+(and the rewrite), then files, then metadata.
 
 Sessions and in-memory query results are API state and are removed by the API route.
 """
@@ -216,26 +218,36 @@ def purge_dataset_files(dataset_id: str, uploads_root: Path) -> DeletionReport:
     report = DeletionReport(dataset_id=dataset_id)
     log = logger.bind(dataset_id=dataset_id)
 
+    db_path = data_dir / DUCKDB_FILENAME
     try:
-        for path in [
-            *_stored_original(metadata_path, raw_dir),
-            raw_dir / f"{dataset_id}.csv",
-            raw_dir / f"{dataset_id}_tables",
-            raw_dir / dataset_id,
-            metadata_dir / "overlays" / dataset_id,
-        ]:
-            _remove(path, uploads_root, report)
+        # The store lock comes first: a busy store must refuse before anything is removed, so
+        # DatasetStoreBusyError really means nothing changed. The lock is re-entrant, so
+        # _purge_duckdb takes it again without waiting.
+        with exclusive_store(db_path):
+            # Validated before anything is dropped: a bad stored path refuses the whole delete.
+            stored_originals = _stored_original(metadata_path, raw_dir)
+            _purge_duckdb(db_path, dataset_id, other_ids, report)
 
-        parquet_dir = data_dir / PARQUET_DIRNAME
-        if parquet_dir.is_dir():
-            for parquet in sorted(parquet_dir.glob(f"{dataset_id}_*")):
-                if _owned_by(parquet.name, dataset_id, other_ids):
-                    _remove(parquet, data_dir, report)
+            for path in [
+                *stored_originals,
+                raw_dir / f"{dataset_id}.csv",
+                raw_dir / f"{dataset_id}_tables",
+                raw_dir / dataset_id,
+                metadata_dir / "overlays" / dataset_id,
+            ]:
+                _remove(path, uploads_root, report)
 
-        _purge_duckdb(data_dir / DUCKDB_FILENAME, dataset_id, other_ids, report)
+            parquet_dir = data_dir / PARQUET_DIRNAME
+            if parquet_dir.is_dir():
+                for parquet in sorted(parquet_dir.glob(f"{dataset_id}_*")):
+                    if _owned_by(parquet.name, dataset_id, other_ids):
+                        _remove(parquet, data_dir, report)
 
-        # Last: while metadata exists the dataset stays listed, so a failed delete can be retried.
-        _remove(metadata_path, uploads_root, report)
+            # Last: while metadata exists the dataset stays listed, so a failed delete can be retried.
+            _remove(metadata_path, uploads_root, report)
+    except StoreInUseError as e:
+        log.warning("dataset_purge_store_busy")
+        raise DatasetStoreBusyError(f"The data store is in use ({e}); try again in a moment") from e
     except OSError as e:
         log.error("dataset_purge_failed", error_type=type(e).__name__, removed=len(report.removed_paths))
         reason = e.strerror or type(e).__name__

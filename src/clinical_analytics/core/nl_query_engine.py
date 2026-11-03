@@ -230,12 +230,10 @@ class NLQueryEngine:
                 embedding_shape=self._golden_embeddings.shape,
             )
         except Exception as e:
-            import traceback
-
             logger.warning(
                 "golden_examples_load_failed",
-                error=str(e),
-                traceback=traceback.format_exc(),
+                error_type=type(e).__name__,
+                exc_info=True,
             )
             self._golden_embeddings = None
             self._golden_examples = None
@@ -2258,7 +2256,6 @@ Fix the errors and return a corrected query intent as JSON.
                 query_hash=_stable_hash(query),
                 query_len=len(query),
                 response_length=len(response),
-                response_preview=response[:200] if len(response) > 200 else response,
                 has_conversation_history=bool(conversation_history),
             )
 

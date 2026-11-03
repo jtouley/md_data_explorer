@@ -11,6 +11,7 @@ import pytest
 from clinical_analytics.storage import dataset_deletion as deletion_mod
 from clinical_analytics.storage.dataset_deletion import (
     DatasetDeletionError,
+    DatasetStoreBusyError,
     InvalidDatasetIdError,
     compaction_marker,
     purge_dataset_files,
@@ -281,3 +282,21 @@ def test_resumePendingCompaction_markerLeftByCrash_rewritesAndClearsMarker(tmp_p
     assert again is False
     assert not _store_has(tmp_path, b"crash-sentinel-")
     assert "keepme_notes_v1" in _duckdb_tables(tmp_path)
+
+
+def test_purgeDatasetFiles_storeConnectionOpen_keepsRawParquetAndOverlayFiles(tmp_path: Path) -> None:
+    # Arrange
+    _seed(tmp_path, "dsx")
+    before = _names_under(tmp_path)
+    store = DataStore(tmp_path / "analytics.duckdb")
+
+    # Act
+    try:
+        with pytest.raises(DatasetStoreBusyError):
+            purge_dataset_files("dsx", tmp_path / "uploads")
+    finally:
+        store.close()
+
+    # Assert
+    assert sorted(_names_under(tmp_path)) == sorted(before)
+    assert "dsx_patients_v1" in _duckdb_tables(tmp_path)

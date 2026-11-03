@@ -37,7 +37,12 @@ from clinical_analytics.api.security import (
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.core.ollama_init import initialize_ollama
-from clinical_analytics.storage.dataset_deletion import DatasetDeletionError, resume_pending_compaction
+from clinical_analytics.storage.dataset_deletion import (
+    DUCKDB_FILENAME,
+    DatasetDeletionError,
+    compaction_marker,
+    resume_pending_compaction,
+)
 
 # Redacting processor chain + INFO default (CLINICAL_ANALYTICS_LOG_LEVEL overrides).
 configure_logging()
@@ -45,6 +50,16 @@ logger = structlog.get_logger()
 
 # Opt-in so tests and bare uvicorn runs never start downloads; `make run-api` sets it.
 OLLAMA_AUTOINIT_ENV = "CLINICAL_ANALYTICS_OLLAMA_AUTOINIT"
+
+
+STORE_RECOVERY_DOC = "docs/security/LOCAL_DATA_SECURITY.md (Recovering from a pending store rewrite)"
+
+
+class StoreCompactionPendingError(RuntimeError):
+    """A delete left dropped-table bytes in the store and the rewrite still cannot finish.
+
+    The API refuses to start rather than serve queries from that file.
+    """
 
 
 def _ollama_autoinit_enabled() -> bool:
@@ -90,12 +105,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("api_database_ready")
 
     # A delete that failed between DROP and the store rewrite leaves a marker: finish it now,
-    # so dropped rows do not linger in analytics.duckdb. Off the event loop; never blocks startup.
+    # so dropped rows do not linger in analytics.duckdb. If it cannot finish, the API does not
+    # start: serving would read the file that still holds a deleted dataset's bytes.
+    data_dir = uploads_dir().parent
     try:
-        if await asyncio.to_thread(resume_pending_compaction, uploads_dir().parent):
+        if await asyncio.to_thread(resume_pending_compaction, data_dir):
             logger.info("api_store_compaction_resumed")
     except DatasetDeletionError as e:
-        logger.warning("api_store_compaction_pending", error_type=type(e).__name__)
+        marker = compaction_marker(data_dir / DUCKDB_FILENAME)
+        logger.error(
+            "api_store_compaction_failed",
+            error_type=type(e).__name__,
+            cause_type=type(e.__cause__).__name__ if e.__cause__ else None,
+            marker=marker.name,
+            recovery=f"API not started; see {STORE_RECOVERY_DOC}",
+        )
+        raise StoreCompactionPendingError(
+            f"A deleted dataset is still in the data store ({marker.name} is present) and the "
+            f"store rewrite failed ({type(e.__cause__ or e).__name__}). The API will not start "
+            f"until it succeeds; see {STORE_RECOVERY_DOC}."
+        ) from e
 
     if _ollama_autoinit_enabled():
         _initialize_ollama_in_background()

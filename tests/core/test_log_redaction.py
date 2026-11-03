@@ -353,3 +353,74 @@ def test_loadOrCreateKey_noHardLinks_fallsBackToRename(tmp_path: Any, monkeypatc
     assert len(key) == 32
     assert path.read_bytes() == key
     assert [p.name for p in tmp_path.iterdir()] == [LOG_KEY_FILENAME]
+
+
+CLINICAL_PHRASE = "".join(["HIV-associated ", "nephropathy in ward 7"])
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["raw_preview", "response_preview", "body_preview", "preview"],
+    ids=["raw_preview", "response_preview", "any_suffix", "bare_preview"],
+)
+def test_redactSensitiveFields_previewKey_replacedByHashAndSize(key: str) -> None:
+    # Arrange
+    event = {"event": "x", key: CLINICAL_PHRASE, "nested": {key: CLINICAL_PHRASE}}
+
+    # Act
+    out = redact_sensitive_fields(None, "warning", event)
+
+    # Assert
+    assert CLINICAL_PHRASE not in repr(out)
+    assert out[f"{key}_redacted"] is True
+    assert out[f"{key}_size"] == len(CLINICAL_PHRASE)
+
+
+@pytest.mark.parametrize("traceback_value", ["rendered", "", None], ids=["rendered", "empty", "none"])
+def test_redactSensitiveFields_tracebackKey_keepsFramesDropsMessage(traceback_value: str | None) -> None:
+    # Arrange
+    import traceback as tb
+
+    text: str | None = traceback_value
+    if traceback_value == "rendered":
+        try:
+            raise ValueError(CLINICAL_PHRASE)
+        except ValueError:
+            text = tb.format_exc()
+    event = {"event": "x", "traceback": text}
+
+    # Act
+    out = redact_sensitive_fields(None, "warning", event)
+
+    # Assert
+    assert CLINICAL_PHRASE not in repr(out)
+    if traceback_value == "rendered":
+        assert "ValueError: [message redacted]" in out["traceback"]
+        assert 'File "' in out["traceback"]
+
+
+def test_parseJsonResponse_malformedClinicalText_renderedWarningOmitsPhrase(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Arrange
+    from clinical_analytics.core.llm_json import parse_json_response
+
+    previous = structlog.get_config()
+    configure_logging(logging.INFO)
+    malformed = '{"intent": "COUNT", "explanation": "' + CLINICAL_PHRASE
+
+    # Act
+    try:
+        parsed = parse_json_response(malformed)
+        err = capsys.readouterr().err
+    finally:
+        root = logging.getLogger()
+        for handler in [h for h in root.handlers if type(h).__name__ == "_RedactingHandler"]:
+            root.removeHandler(handler)
+        structlog.configure(**previous)
+
+    # Assert
+    assert parsed is None
+    assert "llm_json_parse_failed" in err
+    assert "nephropathy" not in err
+    assert "HIV" not in err
