@@ -66,9 +66,9 @@ def parse_json_response(raw: str | None) -> dict[str, Any] | list[Any] | None:
     except json.JSONDecodeError as e:
         logger.warning(
             "llm_json_parse_failed",
-            error=str(e),
+            error_type=type(e).__name__,
+            error_pos=e.pos,
             raw_length=len(raw),
-            raw_preview=raw[:100] if len(raw) > 100 else raw,
         )
         return None
     except Exception as e:

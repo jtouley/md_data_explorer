@@ -26,7 +26,7 @@ import structlog
 
 from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.data_home import nl_learning_dir
-from clinical_analytics.core.log_redaction import stable_hash
+from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 logger = structlog.get_logger()
@@ -230,12 +230,10 @@ class NLQueryEngine:
                 embedding_shape=self._golden_embeddings.shape,
             )
         except Exception as e:
-            import traceback
-
             logger.warning(
                 "golden_examples_load_failed",
-                error=str(e),
-                traceback=traceback.format_exc(),
+                error_type=type(e).__name__,
+                exc_info=True,
             )
             self._golden_embeddings = None
             self._golden_examples = None
@@ -1082,7 +1080,7 @@ class NLQueryEngine:
             if matched_var:
                 logger.debug(
                     "pattern_match_what_is_average",
-                    variable_term=variable_term,
+                    **text_fingerprint(variable_term, prefix="variable_term"),
                     matched_var=matched_var,
                     confidence=var_conf,
                 )
@@ -1113,7 +1111,7 @@ class NLQueryEngine:
 
                 logger.debug(
                     "pattern_match_average_with_variable",
-                    variable_term=variable_term,
+                    **text_fingerprint(variable_term, prefix="variable_term"),
                     matched_var=matched_var,
                     confidence=var_conf,
                     grouping=group_var,
@@ -1127,7 +1125,7 @@ class NLQueryEngine:
             else:
                 logger.debug(
                     "pattern_match_average_no_variable_match",
-                    variable_term=variable_term,
+                    **text_fingerprint(variable_term, prefix="variable_term"),
                     reason="fuzzy_match_failed_but_pattern_matched",
                 )
                 return QueryIntent(intent_type="DESCRIBE", confidence=0.85)
@@ -1147,7 +1145,7 @@ class NLQueryEngine:
             if matched_var:
                 logger.debug(
                     "pattern_match_describe_with_variable",
-                    variable_term=variable_term,
+                    **text_fingerprint(variable_term, prefix="variable_term"),
                     matched_var=matched_var,
                     confidence=var_conf,
                 )
@@ -1174,8 +1172,8 @@ class NLQueryEngine:
             if primary_var and group_var:
                 logger.debug(
                     "pattern_match_compare_across",
-                    primary_term=primary_term,
-                    group_term=group_term,
+                    **text_fingerprint(primary_term, prefix="primary_term"),
+                    **text_fingerprint(group_term, prefix="group_term"),
                     primary_var=primary_var,
                     group_var=group_var,
                 )
@@ -1200,8 +1198,8 @@ class NLQueryEngine:
 
             logger.debug(
                 "pattern_match_which_x_had_y",
-                group_term=group_term,
-                primary_term=primary_term,
+                **text_fingerprint(group_term, prefix="group_term"),
+                **text_fingerprint(primary_term, prefix="primary_term"),
                 group_var=group_var,
                 primary_var=primary_var,
                 group_conf=group_conf,
@@ -1218,8 +1216,8 @@ class NLQueryEngine:
             elif group_term or primary_term:
                 logger.info(
                     "pattern_match_partial",
-                    group_term=group_term,
-                    primary_term=primary_term,
+                    **text_fingerprint(group_term, prefix="group_term"),
+                    **text_fingerprint(primary_term, prefix="primary_term"),
                     reason="fuzzy_match_failed_but_terms_extracted",
                 )
                 return QueryIntent(
@@ -2258,7 +2256,6 @@ Fix the errors and return a corrected query intent as JSON.
                 query_hash=_stable_hash(query),
                 query_len=len(query),
                 response_length=len(response),
-                response_preview=response[:200] if len(response) > 200 else response,
                 has_conversation_history=bool(conversation_history),
             )
 
@@ -3369,7 +3366,7 @@ Fix the errors and return a corrected query intent as JSON.
                         "grouping_extracted_broken_down",
                         query_hash=_stable_hash(query),
                         query_len=len(query),
-                        group_phrase=group_phrase,
+                        **text_fingerprint(group_phrase, prefix="group_phrase"),
                         column_name=column_name,
                         confidence=conf,
                     )
@@ -3382,7 +3379,7 @@ Fix the errors and return a corrected query intent as JSON.
                             "grouping_extracted_broken_down_partial",
                             query_hash=_stable_hash(query),
                             query_len=len(query),
-                            group_phrase=group_phrase,
+                            **text_fingerprint(group_phrase, prefix="group_phrase"),
                             column_name=column_name,
                         )
                         return column_name
@@ -3440,7 +3437,7 @@ Fix the errors and return a corrected query intent as JSON.
                         "grouping_extracted",
                         query_hash=_stable_hash(query),
                         query_len=len(query),
-                        group_phrase=group_phrase,
+                        **text_fingerprint(group_phrase, prefix="group_phrase"),
                         column_name=column_name,
                         confidence=0.7,
                     )
@@ -3458,7 +3455,7 @@ Fix the errors and return a corrected query intent as JSON.
                     "grouping_extracted_fallback",
                     query_hash=_stable_hash(query),
                     query_len=len(query),
-                    group_phrase=group_phrase,
+                    **text_fingerprint(group_phrase, prefix="group_phrase"),
                     column_name=column_name,
                     confidence=conf,
                 )
@@ -3471,7 +3468,7 @@ Fix the errors and return a corrected query intent as JSON.
                         "grouping_extracted_fallback_partial",
                         query_hash=_stable_hash(query),
                         query_len=len(query),
-                        group_phrase=group_phrase,
+                        **text_fingerprint(group_phrase, prefix="group_phrase"),
                         column_name=column_name,
                     )
                     return column_name
@@ -3553,7 +3550,7 @@ Fix the errors and return a corrected query intent as JSON.
         if canonical and confidence > 0.5:
             logger.debug(
                 "variable_resolved",
-                original=variable,
+                **text_fingerprint(variable, prefix="original"),
                 canonical=canonical,
                 confidence=confidence,
             )

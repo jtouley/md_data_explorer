@@ -244,3 +244,97 @@ data/*
 
 # Mutation testing workdir
 mutants/
+
+# ============================================================================================
+# Local-only artifacts. None of these may be committed; scripts/check_no_data_files.py
+# (make check-data, run in CI) also fails on any of them added with `git add -f`.
+# Data-bearing paths are allowlists: ignore everything, then re-include the synthetic kit
+# written by scripts/make_synthetic_data.py (see tests/fixtures/synthetic/README.md).
+# ============================================================================================
+
+# --- Data home pointed inside the checkout (core/data_home.py) --------------------------------
+# CLINICAL_ANALYTICS_DATA_HOME or XDG_DATA_HOME set to a repo path puts <home>/data/... here.
+ClinicalAnalytics/
+clinical-analytics/
+**/data/uploads/
+**/data/parquet/
+**/data/nl_query_learning/
+**/data/query_logs/
+# Per-install log redaction key (core/log_redaction.py: <data home>/.log-key)
+.log-key
+
+# --- DuckDB store and session DB sidecars (storage/store_format.py, storage/dataset_deletion.py)
+# analytics.duckdb.wal, .engine marker, .backup-*, .needs-compaction; SQLite journals.
+*.duckdb.*
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-*
+*.sqlite3-*
+
+# --- Enrichment overlays and metadata patches (core/overlay_store.py) --------------------------
+**/overlays/
+pending.json
+resolved.json
+patches.jsonl
+
+# --- Logs, prompt-optimizer output, embedding caches ------------------------------------------
+# storage/query_logger.py ({upload_id}_queries.jsonl), core/prompt_optimizer.py
+# (iteration_NN.json in nl_learning_dir), core/nl_query_engine.py (prompt_overlay.txt).
+*.jsonl
+*.ndjson
+prompt_overlay.txt
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.joblib
+*.faiss
+
+# --- Golden sets mined from real data -----------------------------------------------------------
+# tests/eval/maintain_golden_questions.py --output, PR #60-style tests/eval/golden/*.yaml.
+# Only the hand-written sets and the synthetic kit are tracked.
+golden_questions.json
+**/golden/
+*golden*.yaml
+*golden*.yml
+*golden*.json
+!tests/eval/golden_questions.yaml
+!config/golden_examples.yaml
+!tests/fixtures/synthetic/**
+
+# --- Settings, env and local overrides ----------------------------------------------------------
+# Electron settings.json lives in app.getPath('userData') (electron/src/main.js); never copy it here.
+settings.json
+!.claude/settings.json
+.claude/settings.local.json
+*.local.*
+.env.*
+!.env.example
+
+# --- Test, coverage and build output ------------------------------------------------------------
+test-results/
+playwright-report/
+blob-report/
+node_modules/
+.vite/
+electron/out/
+
+# --- Data files anywhere, except the synthetic kit -------------------------------------------
+# Last on purpose: it re-ignores any other CSV a broader `!` above (or in feat/data-contracts)
+# would let through, e.g. a real extract dropped into tests/fixtures/synthetic/.
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.sav
+*.dta
+*.sas7bdat
+*.feather
+*.arrow
+data/demo/*
+!data/demo/sample_cohort.csv
+!tests/fixtures/synthetic/cohort.csv
+!tests/fixtures/synthetic/separation.csv
+!tests/fixtures/synthetic/sparse_cells.csv
+!tests/fixtures/synthetic/unequal_groups.csv

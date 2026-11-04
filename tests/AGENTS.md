@@ -127,10 +127,12 @@ Every test follows **Arrange-Act-Assert** with clear separation:
 ```python
 def test_customer_aggregation_sums_transactions():
     # Arrange: Set up test data and dependencies
-    transactions = pl.DataFrame({
-        "customer_id": ["A", "A", "B"],
-        "amount": [100, 200, 50],
-    })
+    transactions = pl.DataFrame(
+        {
+            "customer_id": ["A", "A", "B"],
+            "amount": [100, 200, 50],
+        }
+    )
 
     # Act: Execute the unit under test
     result = aggregate_by_customer(transactions)
@@ -162,25 +164,31 @@ def test_filter_extraction_llm_simple_query_returns_filters():
     """Test that LLM filter extraction returns filters for simple query."""
     ...
 
+
 def test_filter_extraction_llm_function_exists_returns_callable():
     """Test that filter extraction LLM function exists and is callable."""
     ...
+
 
 def test_compute_descriptive_analysis_serializable_dict_returns_expected_keys():
     """Test that compute_descriptive_analysis returns dict with expected keys."""
     ...
 
+
 def test_upload_security_validator_file_type_csv_returns_valid():
     """Test that file type validation returns valid for CSV files."""
     ...
+
 
 def test_deduplication_with_null_keys_preserves_first_occurrence():
     """Test deduplication when keys contain null values."""
     ...
 
+
 def test_schema_validation_missing_required_column_raises_valueerror():
     """Test schema validation fails when required column is missing."""
     ...
+
 
 def test_incremental_load_overlapping_dates_merges_correctly():
     """Test incremental load merges data when dates overlap."""
@@ -348,6 +356,7 @@ from tests.integration.diagnostic_helpers import (
     dump_storage_state,
 )
 
+
 def test_integration_upload_to_storage(real_storage, sample_csv_file):
     """Test upload with diagnostics on failure."""
     success, message, upload_id = real_storage.save_upload(...)
@@ -440,20 +449,27 @@ See [tests/PERFORMANCE.md](./PERFORMANCE.md) for detailed performance optimizati
 @pytest.fixture
 def sample_cohort():
     """Standard cohort fixture used across all tests."""
-    return pl.DataFrame({
-        "patient_id": [1, 2, 3, 4, 5],
-        "outcome": [0, 1, 0, 1, 0],
-        "age": [45, 62, 38, 71, 55],
-    })
+    return pl.DataFrame(
+        {
+            "patient_id": [1, 2, 3, 4, 5],
+            "outcome": [0, 1, 0, 1, 0],
+            "age": [45, 62, 38, 71, 55],
+        }
+    )
+
 
 @pytest.fixture
 def make_cohort():
     """Factory fixture for creating custom cohorts."""
+
     def _make(num_patients=5, outcome_rate=0.5):
-        return pl.DataFrame({
-            "patient_id": list(range(1, num_patients + 1)),
-            "outcome": [1 if i < num_patients * outcome_rate else 0 for i in range(num_patients)],
-        })
+        return pl.DataFrame(
+            {
+                "patient_id": list(range(1, num_patients + 1)),
+                "outcome": [1 if i < num_patients * outcome_rate else 0 for i in range(num_patients)],
+            }
+        )
+
     return _make
 ```
 
@@ -465,6 +481,7 @@ def test_analysis_with_standard_cohort(sample_cohort):
     """Test using standard cohort fixture."""
     result = analyze(sample_cohort)
     assert result is not None
+
 
 def test_analysis_with_custom_cohort(make_cohort):
     """Test using factory fixture for variation."""
@@ -593,10 +610,12 @@ def spark_session():
     # Only created once per test run
     ...
 
+
 # Module scope: Shared across tests in one file (e.g., reference data)
 @pytest.fixture(scope="module")
 def reference_data():
     return pl.read_parquet("tests/fixtures/reference.parquet")
+
 
 # Function scope (default): Fresh per test, use for mutable state
 @pytest.fixture
@@ -614,6 +633,7 @@ Use factory pattern for creating variations:
 @pytest.fixture
 def make_transaction():
     """Factory fixture for creating test transactions."""
+
     def _make(
         customer_id: str = "CUST001",
         amount: float = 100.0,
@@ -626,7 +646,9 @@ def make_transaction():
             "status": status,
             "timestamp": timestamp or datetime.now(),
         }
+
     return _make
+
 
 def test_refund_calculation(make_transaction):
     txn = make_transaction(amount=500.0, status="refunded")
@@ -641,6 +663,7 @@ def test_refund_calculation(make_transaction):
 def file_format(request):
     """Parametrized fixture for testing multiple file formats."""
     return request.param
+
 
 def test_file_reader_supports_format(file_format):
     """Test runs three times: csv, parquet, json."""
@@ -712,14 +735,17 @@ def test_first(tmp_path):
 ### Use pytest.mark.parametrize for Variations
 
 ```python
-@pytest.mark.parametrize("input_status,expected_output", [
-    ("active", True),
-    ("inactive", False),
-    ("pending", False),
-    ("ACTIVE", True),  # Case insensitivity
-    (None, False),     # Null handling
-    ("", False),       # Empty string
-])
+@pytest.mark.parametrize(
+    "input_status,expected_output",
+    [
+        ("active", True),
+        ("inactive", False),
+        ("pending", False),
+        ("ACTIVE", True),  # Case insensitivity
+        (None, False),  # Null handling
+        ("", False),  # Empty string
+    ],
+)
 def test_is_active_customer(input_status, expected_output):
     result = is_active_customer(input_status)
     assert result == expected_output
@@ -728,11 +754,14 @@ def test_is_active_customer(input_status, expected_output):
 ### IDs for Readable Output
 
 ```python
-@pytest.mark.parametrize("date_str,expected", [
-    pytest.param("2024-01-15", date(2024, 1, 15), id="iso_format"),
-    pytest.param("01/15/2024", date(2024, 1, 15), id="us_format"),
-    pytest.param("15-Jan-2024", date(2024, 1, 15), id="abbrev_month"),
-])
+@pytest.mark.parametrize(
+    "date_str,expected",
+    [
+        pytest.param("2024-01-15", date(2024, 1, 15), id="iso_format"),
+        pytest.param("01/15/2024", date(2024, 1, 15), id="us_format"),
+        pytest.param("15-Jan-2024", date(2024, 1, 15), id="abbrev_month"),
+    ],
+)
 def test_parse_date(date_str, expected):
     assert parse_date(date_str) == expected
 ```
@@ -758,6 +787,7 @@ def test_validation_rejects_negative_amounts():
 
     with pytest.raises(ValueError, match="Negative amounts not allowed"):
         validate_transactions(invalid_df)
+
 
 def test_missing_required_column_error_message():
     incomplete_df = pl.DataFrame({"id": [1, 2]})  # Missing 'amount'
@@ -812,11 +842,14 @@ def test_pipeline_is_idempotent(test_database):
 ```python
 @pytest.fixture
 def df_with_nulls():
-    return pl.DataFrame({
-        "id": [1, 2, 3, 4],
-        "value": [100, None, 300, None],
-        "category": ["A", None, "A", "B"],
-    })
+    return pl.DataFrame(
+        {
+            "id": [1, 2, 3, 4],
+            "value": [100, None, 300, None],
+            "category": ["A", None, "A", "B"],
+        }
+    )
+
 
 def test_aggregation_handles_null_values(df_with_nulls):
     result = aggregate_by_category(df_with_nulls)
@@ -837,12 +870,14 @@ def test_aggregation_handles_null_values(df_with_nulls):
 ```python
 import polars.testing as plt
 
+
 # ✅ CORRECT: Use Polars testing assertions for DataFrames
 def test_transformation_produces_correct_output():
     input_df = pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
     result = transform(input_df)
     expected = pl.DataFrame({"id": [1, 2, 3], "value": [20, 40, 60]})
     plt.assert_frame_equal(result, expected)
+
 
 # ❌ WRONG: Never use list comparisons for DataFrame equality
 def test_transformation_produces_correct_output():
@@ -852,8 +887,10 @@ def test_transformation_produces_correct_output():
     assert result["value"].to_list() == expected["value"].to_list()  # NO!
     # This misses schema differences, type mismatches, null handling, etc.
 
+
 # ❌ WRONG: Never use pandas assertions (pandas is prohibited)
 import pandas.testing as pdt
+
 pdt.assert_frame_equal(result, expected)  # NO! Pandas is prohibited in new code.
 
 # ❌ WRONG: Never use len() instead of df.height
@@ -882,7 +919,7 @@ assert len(result) == len(expected)  # NO! Use: assert result.height == expected
 ```python
 # CORRECT: Use Polars attributes
 df.height  # NOT len(df)
-df.width   # NOT len(df.columns)
+df.width  # NOT len(df.columns)
 df.schema  # NOT df.dtypes
 df.to_dicts()  # NOT df.to_dict(orient="records")
 ```
@@ -901,6 +938,7 @@ df.to_dicts()  # NOT df.to_dict(orient="records")
 def sample_cohort():  # Duplicate!
     return pl.DataFrame({...})
 
+
 # tests/test_compute.py
 @pytest.fixture
 def sample_cohort():  # Duplicate!
@@ -915,9 +953,9 @@ def sample_cohort():  # Duplicate!
 def sample_cohort():
     return pl.DataFrame({...})
 
+
 # tests/test_analysis.py - Use shared fixture
-def test_analysis(sample_cohort):
-    ...
+def test_analysis(sample_cohort): ...
 ```
 
 ### 2. Duplicate Imports
@@ -966,6 +1004,7 @@ def test_analysis():
 def sample_data():
     return pl.DataFrame({"id": [1, 2, 3], "value": [10, 20, 30]})
 
+
 # test_analysis.py
 def test_analysis(sample_data):
     result = analyze(sample_data)
@@ -979,8 +1018,10 @@ def test_analysis(sample_data):
 ```python
 GLOBAL_STATE = []
 
+
 def test_first():
     GLOBAL_STATE.append(1)  # Affects other tests!
+
 
 def test_second():
     assert len(GLOBAL_STATE) == 0  # Fails if test_first ran first
@@ -993,13 +1034,12 @@ def test_second():
 ```python
 # tests/test_a.py
 @patch("streamlit.session_state", {"key": "value"})
-def test_a():
-    ...
+def test_a(): ...
+
 
 # tests/test_b.py
 @patch("streamlit.session_state", {"key": "value"})
-def test_b():
-    ...
+def test_b(): ...
 ```
 
 **CORRECT**:
@@ -1011,9 +1051,9 @@ def mock_session_state():
     with patch("streamlit.session_state", {"key": "value"}):
         yield
 
+
 # test_a.py and test_b.py
-def test_a(mock_session_state):
-    ...
+def test_a(mock_session_state): ...
 ```
 
 ---
@@ -1207,14 +1247,17 @@ Use this checklist before committing test code:
 def sample_cohort():
     return pl.DataFrame({"patient_id": [1, 2, 3], "outcome": [0, 1, 0]})
 
+
 def test_analysis_function_a(sample_cohort):
     result = analyze_a(sample_cohort)
     assert result is not None
+
 
 # tests/test_compute.py
 @pytest.fixture
 def sample_cohort():  # DUPLICATE!
     return pl.DataFrame({"patient_id": [1, 2, 3], "outcome": [0, 1, 0]})
+
 
 def test_compute_function_b(sample_cohort):
     result = compute_b(sample_cohort)
@@ -1230,10 +1273,12 @@ def sample_cohort():
     """Standard cohort fixture used across all tests."""
     return pl.DataFrame({"patient_id": [1, 2, 3], "outcome": [0, 1, 0]})
 
+
 # tests/test_analysis.py
 def test_analysis_function_a(sample_cohort):
     result = analyze_a(sample_cohort)
     assert result is not None
+
 
 # tests/test_compute.py
 def test_compute_function_b(sample_cohort):
@@ -1248,15 +1293,19 @@ def test_compute_function_b(sample_cohort):
 @pytest.fixture
 def make_cohort():
     """Factory fixture for creating custom cohorts with different sizes."""
+
     def _make(num_patients=5, outcome_rate=0.5):
-        outcomes = [1 if i < num_patients * outcome_rate else 0
-                   for i in range(num_patients)]
-        return pl.DataFrame({
-            "patient_id": list(range(1, num_patients + 1)),
-            "outcome": outcomes,
-            "age": [30 + i for i in range(num_patients)],
-        })
+        outcomes = [1 if i < num_patients * outcome_rate else 0 for i in range(num_patients)]
+        return pl.DataFrame(
+            {
+                "patient_id": list(range(1, num_patients + 1)),
+                "outcome": outcomes,
+                "age": [30 + i for i in range(num_patients)],
+            }
+        )
+
     return _make
+
 
 # test_analysis.py
 def test_small_cohort_analysis(make_cohort):
@@ -1264,6 +1313,7 @@ def test_small_cohort_analysis(make_cohort):
     cohort = make_cohort(num_patients=5)
     result = analyze(cohort)
     assert len(result) == 5
+
 
 def test_large_cohort_analysis(make_cohort):
     """Test with large cohort (1000 patients)."""
@@ -1278,11 +1328,13 @@ def test_large_cohort_analysis(make_cohort):
 def test_deduplication_preserves_first_occurrence_when_duplicates_exist():
     """Test that deduplication keeps first occurrence when duplicates exist."""
     # Arrange: Create DataFrame with duplicates
-    df = pl.DataFrame({
-        "id": [1, 1, 2, 2, 3],
-        "timestamp": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03", "2024-01-01"],
-        "value": [100, 200, 300, 400, 500],
-    })
+    df = pl.DataFrame(
+        {
+            "id": [1, 1, 2, 2, 3],
+            "timestamp": ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-03", "2024-01-01"],
+            "value": [100, 200, 300, 400, 500],
+        }
+    )
 
     # Act: Deduplicate by 'id', keeping first occurrence
     result = deduplicate_by_key(df, key="id", keep="first")
@@ -1298,12 +1350,15 @@ def test_deduplication_preserves_first_occurrence_when_duplicates_exist():
 ### Example 4: Parametrization with IDs
 
 ```python
-@pytest.mark.parametrize("input_val,expected", [
-    pytest.param(0, "inactive", id="zero_is_inactive"),
-    pytest.param(1, "active", id="one_is_active"),
-    pytest.param(None, "unknown", id="null_is_unknown"),
-    pytest.param("1", "active", id="string_one_is_active"),
-])
+@pytest.mark.parametrize(
+    "input_val,expected",
+    [
+        pytest.param(0, "inactive", id="zero_is_inactive"),
+        pytest.param(1, "active", id="one_is_active"),
+        pytest.param(None, "unknown", id="null_is_unknown"),
+        pytest.param("1", "active", id="string_one_is_active"),
+    ],
+)
 def test_status_mapping_handles_various_inputs(input_val, expected):
     """Test that status mapping handles various input types."""
     result = map_status(input_val)
@@ -1316,10 +1371,12 @@ def test_status_mapping_handles_various_inputs(input_val, expected):
 def test_schema_validation_missing_required_column_raises_valueerror():
     """Test that schema validation raises ValueError when required column is missing."""
     # Arrange: DataFrame missing 'outcome' column
-    df = pl.DataFrame({
-        "patient_id": [1, 2, 3],
-        "age": [30, 40, 50],
-    })
+    df = pl.DataFrame(
+        {
+            "patient_id": [1, 2, 3],
+            "age": [30, 40, 50],
+        }
+    )
     required_columns = ["patient_id", "outcome", "age"]
 
     # Act & Assert: Expect ValueError with specific message
@@ -1370,7 +1427,7 @@ def test_my_feature(tmp_path):
 ```python
 # CORRECT - REQUIRED
 def test_my_feature(make_semantic_layer):
-    semantic = make_semantic_layer(dataset_name="test", data={"patient_id": [1,2,3]})
+    semantic = make_semantic_layer(dataset_name="test", data={"patient_id": [1, 2, 3]})
 ```
 
 ### ❌ VIOLATION: Creating duplicate fixture
@@ -1407,10 +1464,12 @@ make test-core
 ```python
 # WRONG - Will be REJECTED
 import pandas.testing as pdt
+
 pdt.assert_frame_equal(result, expected)
 
 # CORRECT - REQUIRED
 import polars.testing as plt
+
 plt.assert_frame_equal(result, expected)
 ```
 
