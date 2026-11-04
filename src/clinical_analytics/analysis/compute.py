@@ -222,7 +222,11 @@ def _constant_groups(groups: list[Any], group_data: list[np.ndarray]) -> list[st
     ]
 
 
-_MISSING_TOKENS = ("", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?")
+# "inf" is a non-finite value, missing like NaN, not a category label.
+_MISSING_TOKENS = (
+    "", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?", "inf", "+inf", "-inf", "infinity",
+    "+infinity", "-infinity",
+)  # fmt: skip
 _NUMERIC_TEXT = r"^\s*[<>]?\s*-?\d[\d,]*(\.\d+)?\s*$"
 
 
@@ -538,9 +542,12 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     group's values do not vary (its p-value is a numerical limit and its interval undefined),
     and an ANOVA with a group under 2 patients or no variation within any group (F is inf or NaN).
 
-    Fisher's odds ratio is the odds of the event level in groups[1] over groups[0] (groups in
-    sorted order, groups[0] the reference, as in the logistic model's indicators). It does not
-    depend on what the non-event level is called, and is omitted when the event level is unknown.
+    Fisher's odds ratio is the odds of the event level in groups[1] over groups[0], with groups
+    in sorted order and groups[0] the reference. For a text group column that is the same
+    reference the logistic model's indicators use; a numeric predictor is fitted as a slope
+    there, so the two are not directly comparable. The ratio does not depend on what the
+    non-event level is called, is None for a zero cell, and is omitted when the event level is
+    unknown.
     Returns serializable dict (no Polars objects).
     """
     df, _ = _apply_context_filters(df, context)

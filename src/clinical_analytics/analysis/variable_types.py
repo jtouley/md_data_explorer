@@ -115,11 +115,16 @@ def code_key(level: object) -> str:
 
 
 def classify_variable(series: pl.Series) -> VariableKind:
-    """Continuous, binary or categorical, from values and header (never from storage width)."""
+    """Continuous, binary or categorical, from values and header (never from storage width).
+
+    A header code list counts only when every value is one of its codes: ages 21.5 and 44.0
+    under "Age at visit 1: years, visit 2: months" are measurements, not codes 1 and 2.
+    """
     values = series.drop_nulls()
     distinct = values.unique().to_list()
     numeric = is_numeric_dtype(series.dtype)
-    coded = header_has_code_labels(series.name)
+    labels = code_labels(series.name)
+    coded = bool(labels) and all(code_key(value) in labels for value in distinct)
     if len(distinct) <= 2:
         # Two measured values (e.g. 1234.5 and 2345.6) are still a measurement; only 0/1 and
         # 1/2 codes, coded headers, and two-level text are binary.

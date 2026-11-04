@@ -321,3 +321,25 @@ def test_binary_event_level_signedTextOrStatedCensorCode_resolvesEvent(series, e
 
     # Assert
     assert level == expected
+
+
+@pytest.mark.parametrize(
+    ("series", "expected"),
+    [
+        (pl.Series("Age at visit 1: years, visit 2: months", [21.5, 44.0, 63.2, 30.1, 55.0]), "continuous"),
+        (pl.Series("Age at visit 1: years, follow-up 2: years", [21.5, 44.0, 63.2, 30.1, 55.0]), "continuous"),
+        (pl.Series("Age 1: years 2: months", [21.0, 44.0, 63.0, 30.0, 55.0]), "continuous"),
+        (pl.Series("DEXA 1: Normal 2: Osteopenia 3: Osteoporosis 4: Severe", [1, 2, 3, 4, 1]), "categorical"),
+        (pl.Series("DEXA 1: Normal 2: Osteopenia 3: Osteoporosis 4: Severe", [1.0, 2.0, 4.0, None]), "categorical"),
+        (pl.Series("Pain 1: Mild, moderate 2: Severe", [1, 2, 2]), "binary"),
+    ],
+    ids=["visit_months", "follow_up_years", "whole_number_ages", "coded_ints", "coded_floats_null", "coded_binary"],
+)
+def test_classify_variable_headerCodebook_appliesOnlyWhenValuesAreCodes(series, expected):
+    # Arrange: series from parametrize
+
+    # Act
+    kind = classify_variable(series)
+
+    # Assert
+    assert kind == expected

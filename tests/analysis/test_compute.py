@@ -1221,3 +1221,17 @@ class TestComputeNonFiniteEffectEstimates:
         assert (result["summary"]["age"]["Odds Ratio"], result["summary"]["age"]["CI Upper"]) == (None, None)
         top = result["significant_predictors"][0]
         assert (top["odds_ratio"], top["ci_upper"], top["p_value"]) == (None, None, 0.001)
+
+
+@pytest.mark.parametrize("token", ["inf", "-inf", "Infinity"], ids=["inf", "neg_inf", "infinity_word"])
+def test_compute_comparison_infTextInNumericOutcome_excludedAsMissing(token, sample_context_compare):
+    # Arrange: 20 numbers stored as text plus one "inf"
+    values = [str(v) for v in range(100, 120)] + [token]
+    df = pl.DataFrame({"score": values, "category": ["A", "B"] * 10 + ["A"]})
+
+    # Act
+    result = compute_comparison_analysis(df, sample_context_compare)
+
+    # Assert
+    assert result["test_type"] == "welch_t_test"
+    assert (result["n_used"], result["n_excluded"]) == (20, 1)
