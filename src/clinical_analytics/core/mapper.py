@@ -11,6 +11,7 @@ from typing import Any
 import polars as pl
 import yaml  # type: ignore[import-untyped]
 
+from clinical_analytics.core.resources import config_file
 from clinical_analytics.core.schema import DataQualityError, UnifiedCohort
 
 
@@ -45,7 +46,7 @@ class ColumnMapper:
             ColumnMapper instance
         """
         if config_path is None:
-            config_path = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
+            config_path = config_file("datasets.yaml")
 
         with open(config_path) as f:
             all_configs = yaml.safe_load(f)
@@ -497,7 +498,7 @@ def load_dataset_config(dataset_name: str, config_path: Path | None = None) -> d
         Dataset configuration dictionary
     """
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
+        config_path = config_file("datasets.yaml")
 
     with open(config_path) as f:
         all_configs = yaml.safe_load(f)
@@ -522,7 +523,7 @@ def get_global_config(config_path: Path | None = None) -> dict:
         Global configuration dictionary
     """
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
+        config_path = config_file("datasets.yaml")
 
     with open(config_path) as f:
         all_configs = yaml.safe_load(f)

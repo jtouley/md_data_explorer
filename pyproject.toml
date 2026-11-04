@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Multi-dataset clinical analytics platform"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "LICENSES/*.txt"]
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "Jason Touleyrou", email = "jtouley@gmail.com" }]
 dependencies = [
@@ -22,7 +22,12 @@ dependencies = [
     "openpyxl>=3.1.0",  # Excel file support
     "pyreadstat>=1.2.0",  # SPSS file support
     "pymupdf>=1.23.0",  # PDF text extraction
-    "sentence-transformers>=5.2.0",
+    # Embeddings for semantic matching: the all-MiniLM-L6-v2 ONNX export run with ONNX Runtime
+    # (core/embeddings.py). No torch: the model is bundled at build time (make fetch-embedding-model).
+    # Pinned: newest release >= 2 weeks old with macOS 13 arm64 + x86_64 wheels for cp311-cp313
+    # (1.24+ dropped Intel macOS and needs macOS 14). Supported minimum: macOS 13.
+    "onnxruntime==1.23.2",
+    "tokenizers>=0.22.1,<0.24",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
     "langchain>=1.2.0",
@@ -56,6 +61,10 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# The embedding model is gitignored (fetched by `make fetch-embedding-model`) but must ship.
+artifacts = ["src/clinical_analytics/resources/models/**"]
 
 [tool.ruff]
 line-length = 120
@@ -150,7 +159,7 @@ dev = [
 # are excluded for the same reason they are excluded from coverage: they run at import time.
 source_paths = ["src/clinical_analytics/"]
 do_not_mutate = ["src/clinical_analytics/ui/pages/*", "*/__init__.py"]
-also_copy = ["config/", "scripts/", "docs/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
+also_copy = ["scripts/", "docs/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Each mutant pays ~15s of pytest collection; the 1s default budget misclassifies most as timeouts.
 timeout_constant = 60

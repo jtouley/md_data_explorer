@@ -3,8 +3,9 @@
 Single source of truth for confidence thresholds and parsing parameters.
 These are domain config, not code - adjust without code changes.
 
-Configuration is loaded from config/nl_query.yaml via config_loader.
-Ollama configuration values are also in config/nl_query.yaml (loaded from config/ollama.yaml during migration).
+Configuration is loaded from resources/config/nl_query.yaml via config_loader.
+Ollama configuration values are also in resources/config/nl_query.yaml
+(loaded from resources/config/ollama.yaml during migration).
 Environment variables take precedence over YAML config.
 """
 
@@ -15,7 +16,7 @@ from clinical_analytics.core.config_loader import load_nl_query_config
 logger = logging.getLogger(__name__)
 
 # Load configuration from YAML via config_loader
-# This loads from config/nl_query.yaml with environment variable overrides
+# This loads from resources/config/nl_query.yaml with environment variable overrides
 _config = load_nl_query_config()
 
 # Confidence thresholds for tier matching

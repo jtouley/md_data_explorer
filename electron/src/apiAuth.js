@@ -12,6 +12,26 @@
  */
 export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
 
+/** Argument main passes to the preload with the sidecar backend's address (its port varies). */
+export const API_BASE_URL_ARG_PREFIX = '--clinical-api-base-url=';
+
+/**
+ * The backend address main passed on the command line, or null. Only http://127.0.0.1:<port> is
+ * accepted, so the renderer can never be pointed anywhere but the loopback backend.
+ * @param {string[] | undefined} argv
+ * @returns {string | null}
+ */
+export function apiBaseUrlFromArgv(argv) {
+  const arg = (argv || []).find(
+    (a) => typeof a === 'string' && a.startsWith(API_BASE_URL_ARG_PREFIX)
+  );
+  if (!arg) return null;
+  const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(arg.slice(API_BASE_URL_ARG_PREFIX.length));
+  if (!match) return null;
+  const port = Number(match[1]);
+  return port >= 1 && port <= 65535 ? `http://127.0.0.1:${port}` : null;
+}
+
 /** IPC channel on which main hands { token, devNoAuth } to the preload script. */
 export const API_TOKEN_CHANNEL = 'clinical-api:token';
 

@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from clinical_analytics.datasets.demo import get_demo_csv_path
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "headless_preview.py"
-DEMO_CSV = PROJECT_ROOT / "data" / "demo" / "sample_cohort.csv"
+DEMO_CSV = get_demo_csv_path()
 
 
 @pytest.mark.integration

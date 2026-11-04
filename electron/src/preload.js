@@ -9,6 +9,7 @@ import {
   API_TOKEN_CHANNEL,
   DEFAULT_API_BASE_URL,
   INSECURE_BACKEND_MESSAGE,
+  apiBaseUrlFromArgv,
   createReplayFilter,
   decideAfterDrop,
   enrichmentDecisionResult,
@@ -18,8 +19,10 @@ import {
 } from './apiAuth.js';
 import { THEME_GET_CHANNEL, THEME_SET_CHANNEL, isThemeSource, themeFromArgv } from './theme.js';
 
-// Backend API configuration
-const API_BASE_URL = import.meta.env.VITE_API_URL || DEFAULT_API_BASE_URL;
+// Backend API address: the port of the backend main started (it picks a free one), else the
+// dev-flow override or the default.
+const API_BASE_URL =
+  apiBaseUrlFromArgv(process.argv) || import.meta.env.VITE_API_URL || DEFAULT_API_BASE_URL;
 
 // { token, devNoAuth } from main. Kept in this context, never on window.
 let configPromise = null;

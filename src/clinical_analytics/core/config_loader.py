@@ -17,38 +17,9 @@ from typing import Any
 
 import yaml  # type: ignore
 
+from clinical_analytics.core.resources import shipped_config_dir
+
 logger = logging.getLogger(__name__)
-
-
-def get_project_root() -> Path:
-    """
-    Get project root directory.
-
-    Uses pattern: config_loader.py → core/ → clinical_analytics/ → src/ → project_root
-    This matches the existing codebase pattern in nl_query_config.py.
-
-    Validates that the config/ directory exists to ensure correct project root detection.
-
-    Returns:
-        Path to project root directory
-
-    Raises:
-        ValueError: If config/ directory is not found at the detected project root
-    """
-    current_file = Path(__file__)
-    # Go up 4 levels: config_loader.py → core/ → clinical_analytics/ → src/ → project_root
-    project_root = current_file.parent.parent.parent.parent
-
-    # Validate that config/ directory exists
-    config_dir = project_root / "config"
-    if not config_dir.is_dir():
-        raise ValueError(
-            f"Project root detection failed: config/ directory not found at {config_dir}. "
-            f"Detected project root: {project_root}. "
-            f"If project structure has changed, update get_project_root() in config_loader.py"
-        )
-
-    return project_root
 
 
 def _coerce_type(value: Any, target_type: type) -> Any:
@@ -283,8 +254,7 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
 
     # Determine config file path
     if config_path is None:
-        project_root = get_project_root()
-        config_path = project_root / "config" / "nl_query.yaml"
+        config_path = shipped_config_dir() / "nl_query.yaml"
 
     # Load YAML if file exists
     config = defaults.copy()
@@ -396,8 +366,7 @@ def load_ui_config(config_path: Path | None = None) -> dict[str, Any]:
 
     # Determine config file path
     if config_path is None:
-        project_root = get_project_root()
-        config_path = project_root / "config" / "ui.yaml"
+        config_path = shipped_config_dir() / "ui.yaml"
 
     # Load YAML if file exists
     config = defaults.copy()
@@ -494,8 +463,7 @@ def load_logging_config(config_path: Path | None = None) -> dict[str, Any]:
 
     # Determine config file path
     if config_path is None:
-        project_root = get_project_root()
-        config_path = project_root / "config" / "logging.yaml"
+        config_path = shipped_config_dir() / "logging.yaml"
 
     # Load YAML if file exists
     config = defaults.copy()
@@ -584,8 +552,7 @@ def load_patterns_config(config_path: Path | None = None) -> dict[str, list[dict
     """
     # Determine config file path
     if config_path is None:
-        project_root = get_project_root()
-        config_path = project_root / "config" / "nl_query_patterns.yaml"
+        config_path = shipped_config_dir() / "nl_query_patterns.yaml"
 
     # Load YAML if file exists
     if not config_path.exists():
@@ -643,8 +610,7 @@ def load_golden_examples_config(config_path: Path | None = None) -> dict[str, An
     """
     # Determine config file path
     if config_path is None:
-        project_root = get_project_root()
-        config_path = project_root / "config" / "golden_examples.yaml"
+        config_path = shipped_config_dir() / "golden_examples.yaml"
 
     # Load YAML if file exists
     if not config_path.exists():
@@ -687,8 +653,7 @@ def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     # Determine config file path
     if config_path is None:
-        project_root = get_project_root()
-        config_path = project_root / "config" / "validation.yaml"
+        config_path = shipped_config_dir() / "validation.yaml"
 
     # Validation config is required - raise if missing
     if not config_path.exists():

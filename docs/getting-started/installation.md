@@ -2,12 +2,13 @@
 
 ## Prerequisites
 
+- macOS 13 (Ventura) or later on Apple silicon or Intel; Windows 10/11 x64; Linux x86_64/aarch64 with glibc 2.28+. These are the platforms ONNX Runtime 1.23.2, the embedding runtime, ships wheels for (macOS 12 has none for Python 3.13). See `docs/development/packaging.md`.
 - [uv](https://docs.astral.sh/uv/) - installs a supported Python for you (`pyproject.toml` requires `>=3.11,<3.14`)
 - Node.js 20 and npm, for the Electron desktop app (CI uses Node 20)
 - `make` on macOS/Linux
 - Optional: [Ollama](https://ollama.com/download), a local LLM used for questions the pattern matcher cannot handle
 
-Setup needs internet access: it downloads Python and Node packages, and the first run downloads an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`) and the `all-MiniLM-L6-v2` embedding model from Hugging Face. After that the app runs locally.
+Setup needs internet access: it downloads Python and Node packages, `make fetch-embedding-model` fetches the `all-MiniLM-L6-v2` ONNX embedding model (pinned, SHA-256 checked; bundled with the app, never downloaded at runtime), and the first run downloads an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`). After that the app runs locally.
 
 ## Install from source
 

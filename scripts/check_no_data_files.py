@@ -46,7 +46,7 @@ DATA_EXTENSIONS = (
 )
 # Synthetic fixtures only. Data dictionaries come with the user's upload and stay local.
 ALLOWLIST = (
-    "data/demo/*.csv",
+    "src/clinical_analytics/resources/demo/*.csv",  # synthetic demo cohort shipped with the app
     "tests/fixtures/synthetic/*",
 )
 
@@ -88,16 +88,16 @@ Reason: TypeAlias = Literal[
 # kit directory that is not listed here was not generated, so it may be real.
 SYNTHETIC_KIT = frozenset(
     {
-        "data/demo/sample_cohort.csv",
+        "src/clinical_analytics/resources/demo/sample_cohort.csv",
         "tests/fixtures/synthetic/cohort.csv",
         "tests/fixtures/synthetic/separation.csv",
         "tests/fixtures/synthetic/sparse_cells.csv",
         "tests/fixtures/synthetic/unequal_groups.csv",
     }
 )
-KIT_DIRS = ("data/demo/", "tests/fixtures/synthetic/")
+KIT_DIRS = ("src/clinical_analytics/resources/demo/", "tests/fixtures/synthetic/")
 # Hand-written golden sets: questions and expected intents, no rows and no aggregates.
-GOLDEN_ALLOWLIST = frozenset({"tests/eval/golden_questions.yaml", "config/golden_examples.yaml"})
+GOLDEN_ALLOWLIST = frozenset({"tests/eval/golden_questions.yaml", "src/clinical_analytics/resources/config/golden_examples.yaml"})
 GOLDEN_DATA_SUFFIXES = (".yaml", ".yml", ".json", ".jsonl", ".csv", ".parquet")
 # Project-wide Claude Code permissions; personal overrides go in settings.local.json.
 SETTINGS_ALLOWLIST = frozenset({".claude/settings.json"})

@@ -9,6 +9,8 @@ export default defineConfig({
       reporter: ['text', 'html'],
       reportsDirectory: './coverage',
       include: [
+        'src/backendSidecar.js',
+        'src/startupWindow.js',
         'src/confirmHold.js',
         'src/enrichmentPanel.js',
         'src/icons.js',

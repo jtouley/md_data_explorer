@@ -240,7 +240,9 @@ docs/screenshots/
 *.sqlite3
 *.parquet
 data/*
-!data/demo/
+
+# Embedding model fetched at build time (make fetch-embedding-model); shipped in the wheel, never in git
+src/clinical_analytics/resources/models/
 
 # Mutation testing workdir
 mutants/
@@ -321,7 +323,7 @@ golden_questions.json
 *golden*.yml
 *golden*.json
 !tests/eval/golden_questions.yaml
-!config/golden_examples.yaml
+!src/clinical_analytics/resources/config/golden_examples.yaml
 !tests/fixtures/synthetic/**
 
 # --- Settings, env and local overrides ----------------------------------------------------------
@@ -353,8 +355,8 @@ electron/out/
 *.sas7bdat
 *.feather
 *.arrow
-data/demo/*
-!data/demo/sample_cohort.csv
+src/clinical_analytics/resources/demo/*
+!src/clinical_analytics/resources/demo/sample_cohort.csv
 !tests/fixtures/synthetic/cohort.csv
 !tests/fixtures/synthetic/separation.csv
 !tests/fixtures/synthetic/sparse_cells.csv

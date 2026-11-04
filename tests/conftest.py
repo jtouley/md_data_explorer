@@ -337,34 +337,26 @@ def mock_llm_calls(request):
 @pytest.fixture(scope="session")
 def cached_sentence_transformer():
     """
-    Session-scoped fixture to cache SentenceTransformer model.
+    Session-scoped bundled sentence encoder (ONNX all-MiniLM-L6-v2, see core.embeddings).
 
-    Loads the model once per test session and reuses it across all tests.
-    This provides 2-5 second speedup per test that uses semantic matching.
-
-    The model is loaded lazily on first use in NLQueryEngine._semantic_match(),
-    but this fixture pre-loads it once for the entire test session.
+    Loaded once per test session and reused. The model is a build artifact, never downloaded at
+    runtime: if it is missing the tests that need it fail with the command that fetches it.
     """
-    from sentence_transformers import SentenceTransformer
+    from clinical_analytics.core.embeddings import EmbeddingModelMissingError, OnnxSentenceEncoder
 
-    # Use same model name as NLQueryEngine default
-    model_name = "all-MiniLM-L6-v2"
     try:
-        encoder = SentenceTransformer(model_name)
-    except OSError as e:
-        # Model is downloaded from huggingface.co on first use; offline/sandboxed runs cannot fetch it.
-        # Skipping (session-scoped, so evaluated once) keeps the rest of the suite runnable offline.
-        pytest.skip(f"SentenceTransformer model '{model_name}' unavailable (not cached, no network): {e}")
+        encoder = OnnxSentenceEncoder()
+    except EmbeddingModelMissingError as e:
+        pytest.fail(str(e))
 
     yield encoder
 
-    # Cleanup (if needed)
     del encoder
 
 
 @pytest.fixture
 def mock_encoder():
-    """Mock SentenceTransformer encoder for fast unit tests (10-50x speedup)."""
+    """Mock sentence encoder for fast unit tests (no model load)."""
     from unittest.mock import MagicMock, patch
 
     import numpy as np
@@ -384,15 +376,14 @@ def mock_encoder():
 
     mock.encode = MagicMock(side_effect=mock_encode)
 
-    with patch("clinical_analytics.core.nl_query_engine.SentenceTransformer", mock, create=True):
-        with patch("sentence_transformers.SentenceTransformer", return_value=mock):
-            yield mock
+    with patch("clinical_analytics.core.embeddings.OnnxSentenceEncoder", return_value=mock):
+        yield mock
 
 
 @pytest.fixture
 def nl_query_engine_with_cached_model(make_semantic_layer, cached_sentence_transformer):
     """
-    Factory fixture that creates NLQueryEngine with pre-loaded SentenceTransformer.
+    Factory fixture that creates NLQueryEngine with the pre-loaded bundled encoder.
 
     This avoids reloading the model for each test, providing 2-5s speedup per test.
 

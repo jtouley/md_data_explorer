@@ -86,3 +86,50 @@ def test_main_pendingCompactionCannotFinish_oneLineExit2NoServer(
     assert str(tmp_path / "data") in stderr_lines[0]
     assert compaction_marker(store).exists()
     run.assert_not_called()
+
+
+def test_main_embeddingModelMissing_plainMessageExit2NoServer(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Arrange: point the model directory at an empty folder (as in a build that skipped the fetch)
+    monkeypatch.setenv("CLINICAL_ANALYTICS_EMBEDDING_MODEL_DIR", str(tmp_path))
+    with (
+        patch.object(serve, "prepare_store_for_engine", return_value=None),
+        patch.object(serve.uvicorn, "run") as run,
+        pytest.raises(SystemExit) as exited,
+    ):
+        # Act
+        serve.main([])
+
+    # Assert
+    err = capsys.readouterr().err
+    assert exited.value.code == serve.STORE_CHECK_FAILED_EXIT
+    assert "embedding model" in err and "make fetch-embedding-model" in err
+    assert "Traceback" not in err and len(err.strip().splitlines()) == 1
+    run.assert_not_called()
+
+
+def test_main_embeddingModelDamaged_plainMessageExit2NoServer(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Arrange: right file names, wrong bytes
+    from clinical_analytics.core import embeddings
+
+    for name in embeddings.RUNTIME_FILES:
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_bytes(b"not the pinned model")
+    monkeypatch.setenv("CLINICAL_ANALYTICS_EMBEDDING_MODEL_DIR", str(tmp_path))
+    with (
+        patch.object(serve, "prepare_store_for_engine", return_value=None),
+        patch.object(serve.uvicorn, "run") as run,
+        pytest.raises(SystemExit) as exited,
+    ):
+        # Act
+        serve.main([])
+
+    # Assert
+    err = capsys.readouterr().err
+    assert exited.value.code == serve.STORE_CHECK_FAILED_EXIT
+    assert "does not match its pinned SHA-256" in err
+    assert len(err.strip().splitlines()) == 1
+    run.assert_not_called()
