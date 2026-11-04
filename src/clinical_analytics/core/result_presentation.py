@@ -9,7 +9,7 @@ the same answer. A clause whose inputs are missing is left out rather than guess
 from __future__ import annotations
 
 import math
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from typing import Any, TypedDict
 
@@ -109,8 +109,8 @@ def _complementary(cells: dict[Any, Any], hidden: set[Any], limit: int) -> set[A
 
 
 def _suppress_lines(
-    cells: Mapping[Hashable, Any],
-    lines: Sequence[Sequence[Hashable]],
+    cells: Mapping[Any, Any],
+    lines: Sequence[Sequence[Any]],
     threshold: int | None = None,
     hidden: set[Any] | None = None,
 ) -> set[Any]:
@@ -164,7 +164,7 @@ N_EXCLUDED = ("n", "excluded")
 
 
 def suppress_with_exclusions(
-    analysis: Mapping[str, Any], parts: Mapping[Hashable, Any], lines: Sequence[Sequence[Hashable]] = ()
+    analysis: Mapping[str, Any], parts: Mapping[Any, Any], lines: Sequence[Sequence[Any]] = ()
 ) -> set[Any]:
     """Hidden cells of one answer: its count cells (``parts``) plus n_used and n_excluded.
 
@@ -425,13 +425,13 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
         hidden = suppress_with_exclusions(analysis, sizes)
         n_clause = _n_clause(analysis, hidden)
         small = {g for g in group_medians if g in hidden}
-        parts = ", ".join(
+        medians_text = ", ".join(
             f"{display_level(group_col, g)} {'not shown' if g in small else _median_text(m)}"
             for g, m in group_medians.items()
         )
         logrank = _num(analysis.get("logrank_p_value"))
         claim = _with_details(
-            f"Median time to {event} ({time_col}) by {group_col}: {parts}",
+            f"Median time to {event} ({time_col}) by {group_col}: {medians_text}",
             [f"log-rank {_fmt_p(logrank)}" if logrank is not None else None, n_clause],
         )
         claim += ". Unadjusted."
@@ -448,7 +448,9 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
         return {"claim": claim, "table": _table(rows)}
     n_used, n_events = analysis.get("n_used"), analysis.get("n_events")
     counted = isinstance(n_used, int) and isinstance(n_events, int)
-    parts = {"events": n_events, "censored": n_used - n_events} if counted else {}
+    parts: dict[str, Any] = {}
+    if isinstance(n_used, int) and isinstance(n_events, int):
+        parts = {"events": n_events, "censored": n_used - n_events}
     hidden = suppress_with_exclusions(analysis, parts)
     n_clause = _n_clause(analysis, hidden)
     median = _num(analysis.get("median_survival"))
@@ -480,7 +482,7 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
     if col:
         name = short_name(col)
         if analysis.get("is_numeric"):
-            stats = {k: _num(analysis.get(k)) for k in ("mean", "median", "std", "min", "max")}
+            stats: dict[str, Any] = {k: _num(analysis.get(k)) for k in ("mean", "median", "std", "min", "max")}
             n = analysis.get("non_null_count")
             # The table hides a small n, so the claim says "n hidden" rather than mixing in "<11".
             shown_n = suppress_counts([n])[0]
@@ -529,7 +531,7 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
             rows = [dict(r) for r in group_counts]
         for row in rows:
             row[group_col] = display_level(group_col, row.get(group_col))
-        if _is_count(total) and 0 < int(total) < _limit(None):
+        if _is_count(total) and isinstance(total, int | np.integer) and 0 < int(total) < _limit(None):
             # Every group is then small, and k groups of at least 1 with a total under the
             # threshold can pin each one (10 groups -> all 1), so the groups are not listed.
             return {"claim": f"Total count: {suppress_count(total)}.", "table": None}

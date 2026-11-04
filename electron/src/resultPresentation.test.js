@@ -275,7 +275,6 @@ const API_CLAIMS = {
   smallExclusion:
     'Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; Welch t-test p<0.001; ' +
     'n hidden; some excluded for missing data). Unadjusted comparison by treatment.',
-  hiddenN: 'Median time to event=1 was 400.0 (days) (n hidden).',
   hiddenTopCount: 'Most common smoker: no (count hidden).',
   hiddenSurvivalMedian:
     'Median time to event=1 (days) is not shown because n is hidden (n hidden; some excluded for missing data).',
@@ -323,7 +322,6 @@ describe('splitClaim', () => {
       ['95% CI 13.44 to 18.83', 'Welch t-test p<0.001', 'n hidden', 'some excluded for missing data'],
       'Unadjusted comparison by treatment.',
     ],
-    ['hiddenN', 'Median time to event=1 was 400.0 (days).', ['n hidden'], ''],
     ['hiddenTopCount', 'Most common smoker: no (count hidden).', [], ''],
     [
       'hiddenSurvivalMedian',
