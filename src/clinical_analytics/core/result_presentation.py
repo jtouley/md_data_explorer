@@ -452,7 +452,14 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
     hidden = suppress_with_exclusions(analysis, parts)
     n_clause = _n_clause(analysis, hidden)
     median = _num(analysis.get("median_survival"))
-    if median is not None:
+    # With n hidden the median may be one patient's time (and whether it was reached hints at
+    # their events); hide it whenever n is hidden, as for groups, so showing it never tells a
+    # large n apart from a small one.
+    n_hidden = N_USED in hidden
+    if n_hidden:
+        claim = _with_details(f"Median time to {event} ({time_col}) is not shown because n is hidden", [n_clause])
+        claim += "."
+    elif median is not None:
         claim = _with_details(f"Median time to {event} was {_fmt(median, 1)} ({time_col})", [n_clause]) + "."
     else:
         claim = _with_details(f"Median time to {event} was not reached during follow-up ({time_col})", [n_clause]) + "."
@@ -463,7 +470,7 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
     row = {
         "n": _mask(n_used) if N_USED in hidden else n_used,
         **{k: _mask(v) if k in hidden else v for k, v in parts.items()},
-        f"median {time_col}": median,
+        f"median {time_col}": _mask(median) if n_hidden else median,
     }
     return {"claim": claim, "table": _table([row])}
 
@@ -478,7 +485,12 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
             # The table hides a small n, so the claim says "n hidden" rather than mixing in "<11".
             shown_n = suppress_counts([n])[0]
             claim = None
-            if stats["mean"] is not None:
+            if shown_n == SECONDARY_SUPPRESSED:
+                # With n from 1 to 10, min/max/median are patients' values and the mean of one
+                # patient is that value: show none of the statistics, only that n is hidden.
+                stats = {k: _mask(v) for k, v in stats.items()}
+                claim = f"Statistics for {name} are not shown because n is hidden (n hidden)."
+            elif stats["mean"] is not None:
                 claim = _with_details(
                     f"Mean {name} was {_fmt(stats['mean'])}",
                     [

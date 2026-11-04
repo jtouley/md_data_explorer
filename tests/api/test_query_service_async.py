@@ -4,6 +4,7 @@ Tests for AsyncQueryService - async wrapper around core QueryService.
 Following TDD: Red phase - tests written before implementation.
 """
 
+import json
 import re
 from collections.abc import Iterator
 from typing import Any
@@ -568,3 +569,46 @@ class TestQueryResultSmallCells:
         assert body["result_data"]["claim"].startswith("The distribution of died differed by arm")
         leaked = sorted({n for n in _numbers_in(body) if n in forbidden or round(n, 4) in forbidden})
         assert leaked == [], f"GET body {body} shows {leaked}"
+
+    @pytest.mark.asyncio
+    async def test_get_query_result_heldQuery_bodyHasNoRawResult(self, async_query_service, mock_core_query_service):
+        # Arrange: a held query whose execution result carries raw rows and analysis keys
+        from fastapi.testclient import TestClient
+
+        from clinical_analytics.api.main import app
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        raw = {
+            "success": False,
+            "requires_confirmation": True,
+            "result": pl.DataFrame({"arm": ["A", "B"], "died": [7, 3]}),
+            "contingency": [{"died": "dead", "A": 7, "B": 3}],
+            "group_proportions": {"A": 0.7, "B": 0.3},
+        }
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result=raw,
+            confidence=0.6,
+            run_key=None,
+            context=None,
+            requires_confirmation=True,
+            plan_line="Compare died by arm",
+        )
+        query_id = await async_query_service.submit_query(query="death by arm?", dataset_id="ds")
+        _ = [event async for event in async_query_service.stream_events(query_id)]
+        stored = await async_query_service.get_result(query_id)
+
+        async def found(_query_id: str) -> tuple[Any, Any]:
+            return async_query_service, stored
+
+        # Act
+        with patch("clinical_analytics.api.routes.queries.find_query_result", side_effect=found):
+            body = TestClient(app).get(f"/api/queries/{query_id}").json()
+
+        # Assert: the plan line is there to confirm; no raw keys or values anywhere
+        assert body["status"] == "awaiting_confirmation"
+        assert body["plan_line"] == "Compare died by arm"
+        text = json.dumps(body)
+        assert not any(key in text for key in ('"result"', '"contingency"', '"group_proportions"', '"died"'))
+        assert not {7.0, 3.0, 0.7, 0.3} & set(_numbers_in(body)), body

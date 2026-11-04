@@ -809,3 +809,51 @@ class TestSmallGroupStatistics:
         rows = presentation["table"]["rows"]
         assert [row["mean ldl"] for row in rows] == expected_means
         assert all((row["n"] == SECONDARY_SUPPRESSED) == (row["mean ldl"] == SECONDARY_SUPPRESSED) for row in rows)
+
+
+class TestHiddenNStatistics:
+    """With n hidden, no statistic that can be one patient's value is shown."""
+
+    @pytest.mark.parametrize(
+        ("n", "shown"),
+        [(1, False), (10, False), (11, True), (300, True)],
+        ids=["one_patient", "just_below", "threshold", "large"],
+    )
+    def test_present_descriptive_hiddenN_hidesEveryStatistic(self, n, shown):
+        # Arrange: min/max of a handful of patients are their values; a mean of one is too
+        analysis = {
+            "type": "descriptive",
+            "focused_variable": "ldl",
+            "is_numeric": True,
+            "mean": 121.49,
+            "median": 121.5,
+            "std": 14.4,
+            "min": 83.0,
+            "max": 159.0,
+            "non_null_count": n,
+        }
+
+        # Act
+        answer = json.dumps(present_analysis(analysis))
+
+        # Assert
+        values = ("121.49", "121.5", "14.4", "83.0", "159.0")
+        assert all((value in answer) == shown for value in values), answer
+        if not shown:
+            assert "Statistics for ldl are not shown because n is hidden (n hidden)." in answer
+
+    @pytest.mark.parametrize(
+        ("n_used", "n_events", "n_excluded", "shown"),
+        [(1, 1, 0, False), (10, 5, 0, False), (11, 1, 1, False), (11, 5, 0, True), (60, 20, 11, True)],
+        ids=["one_patient", "just_below", "exclusion_hides_n", "threshold", "large"],
+    )
+    def test_present_survival_ungroupedHiddenN_hidesMedian(self, n_used, n_events, n_excluded, shown):
+        # Arrange: a median of one patient is that patient's time
+        analysis = _survival_summary((n_events, n_used - n_events, n_excluded))
+
+        # Act
+        presentation = present_analysis(analysis)
+
+        # Assert: with n=11 and 1 excluded (row count 12) a shown median would mark n as >= 11
+        assert ("400.0" in json.dumps(presentation)) == shown
+        assert presentation["table"]["rows"][0]["median days"] == (400.0 if shown else SECONDARY_SUPPRESSED)

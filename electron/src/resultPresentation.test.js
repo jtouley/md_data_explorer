@@ -277,6 +277,9 @@ const API_CLAIMS = {
     'n hidden; some excluded for missing data). Unadjusted comparison by treatment.',
   hiddenN: 'Median time to event=1 was 400.0 (days) (n hidden).',
   hiddenTopCount: 'Most common smoker: no (count hidden).',
+  hiddenSurvivalMedian:
+    'Median time to event=1 (days) is not shown because n is hidden (n hidden; some excluded for missing data).',
+  hiddenDescriptive: 'Statistics for ldl are not shown because n is hidden (n hidden).',
   count: 'Total count: 400.',
 };
 
@@ -322,6 +325,13 @@ describe('splitClaim', () => {
     ],
     ['hiddenN', 'Median time to event=1 was 400.0 (days).', ['n hidden'], ''],
     ['hiddenTopCount', 'Most common smoker: no (count hidden).', [], ''],
+    [
+      'hiddenSurvivalMedian',
+      'Median time to event=1 (days) is not shown because n is hidden.',
+      ['n hidden', 'some excluded for missing data'],
+      '',
+    ],
+    ['hiddenDescriptive', 'Statistics for ldl are not shown because n is hidden.', ['n hidden'], ''],
     ['count', 'Total count: 400.', [], ''],
   ])('splitClaim_%s_headlineStatsNotes', (key, headline, stats, notes) => {
     // Arrange

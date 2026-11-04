@@ -204,7 +204,8 @@ class AsyncQueryService:
 
         if result.requires_confirmation:
             self._queries[query_id].status = "awaiting_confirmation"
-            self._queries[query_id].result = self._serialize_result(result.result)
+            # Same presented-only builder as a completed query: never the execution result.
+            self._queries[query_id].result = self._analysis_payload(result)
             self._emit_event(
                 query_id,
                 "query_awaiting_confirmation",
