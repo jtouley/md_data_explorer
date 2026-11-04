@@ -1939,6 +1939,10 @@ class SemanticLayer:
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
+        if query_plan.filters:
+            # The app shows the dataset's row count, so the rows a filter removed are a count
+            # the reader can work out; the presenter suppresses it like the other counts.
+            formatted["dataset_row_count"] = int(self.get_base_view().count().execute())
         return formatted
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:

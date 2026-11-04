@@ -15,6 +15,13 @@ from typing import Any, TypedDict
 
 import numpy as np
 
+from clinical_analytics.analysis.sample_floors import (
+    MIN_COMPARISON_N,
+    MIN_CORRELATION_N,
+    MIN_GROUP_N,
+    MIN_REGRESSION_N,
+    MIN_SURVIVAL_N,
+)
 from clinical_analytics.analysis.variable_types import display_level, header_has_code_labels, short_name
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 
@@ -89,12 +96,48 @@ def _is_count(value: Any) -> bool:
     return isinstance(value, int | np.integer) and not isinstance(value, bool)
 
 
-def _complementary(cells: dict[Any, Any], hidden: set[Any], limit: int) -> set[Any]:
+def _as_count(value: Any) -> int:
+    """A patient count as int; anything that is not a count (None, NaN, text) counts as 0."""
+    return int(value) if _is_count(value) else 0
+
+
+def _single_value(values: list[int], floors: list[int], cap: int, limit: int) -> bool:
+    """Whether some hidden cell of a line has only one value a reader who knows the method sees.
+
+    The hidden cells sum to sum(values) (the line total minus the visible cells). Each is small
+    (floor..limit-1) or a complement (limit..cap): complements are taken smallest first, so they
+    are below every cell still visible, and ``cap`` is that bound. At least one hidden cell is
+    small. ``floors`` are what the reader knows each cell is at least (an analysis floor, or 1).
+    """
+    total = sum(values)
+    for i, floor in enumerate(floors):
+        others = floors[:i] + floors[i + 1 :]
+        small_other = any(f < limit for f in others)
+        found = 0
+        for x in range(floor, cap + 1):
+            rest = total - x
+            top = len(others) * cap
+            if x >= limit:  # this cell is a complement, so another one is small
+                top = top - cap + limit - 1 if small_other else -1
+            found += sum(others) <= rest <= top
+            if found > 1:
+                break
+        if found < 2:
+            return True
+    return False
+
+
+def _complementary(
+    cells: dict[Any, Any], hidden: set[Any], limit: int, floors: Mapping[Any, int] | None = None
+) -> set[Any]:
     """Extra cells to hide in a line whose total is visible.
 
     The hidden cells of a line are recoverable as total minus the rest, so a line needs at least
-    two hidden cells whose sum is at least the threshold ([100, 1, 1] would reveal 1 and 1).
-    Hide the smallest visible non-zero cells until that holds or none are left.
+    two hidden cells whose sum is at least the threshold ([100, 1, 1] would reveal 1 and 1), and
+    no hidden cell may have only one value a reader could give it ([31: 11, 10, 10] would reveal
+    10 and 10; a floor of 10 on n with n + filtered = 11 would reveal n=10). Hide the smallest
+    visible non-zero cells until that holds or none are left; a tie hides every cell of that
+    value, so the order of equal cells reveals nothing.
     """
     line_hidden = {k for k in cells if k in hidden}
     if not line_hidden:
@@ -103,8 +146,19 @@ def _complementary(cells: dict[Any, Any], hidden: set[Any], limit: int) -> set[A
     visible = sorted(
         (k for k, v in cells.items() if k not in hidden and _is_count(v) and int(v) > 0), key=lambda k: int(cells[k])
     )
-    while visible and (len(line_hidden | extra) < 2 or sum(int(cells[k]) for k in line_hidden | extra) < limit):
-        extra.add(visible.pop(0))
+
+    def exposed() -> bool:
+        keys = [k for k in line_hidden | extra if _is_count(cells[k])]
+        values = [int(cells[k]) for k in keys]
+        if len(values) < 2 or sum(values) < limit:
+            return True
+        cap = int(cells[visible[0]]) - 1 if visible else sum(values)
+        return _single_value(values, [max(1, (floors or {}).get(k, 1)) for k in keys], cap, limit)
+
+    while visible and exposed():
+        smallest = int(cells[visible[0]])
+        while visible and int(cells[visible[0]]) == smallest:
+            extra.add(visible.pop(0))
     return extra
 
 
@@ -113,6 +167,7 @@ def _suppress_lines(
     lines: Sequence[Sequence[Any]],
     threshold: int | None = None,
     hidden: set[Any] | None = None,
+    floors: Mapping[Any, int] | None = None,
 ) -> set[Any]:
     """Cells to hide when each line's total is known (primary + secondary).
 
@@ -125,7 +180,7 @@ def _suppress_lines(
     while changed:
         changed = False
         for line in lines:
-            extra = _complementary({k: cells[k] for k in line}, hidden, limit) - hidden
+            extra = _complementary({k: cells[k] for k in line}, hidden, limit, floors) - hidden
             if extra:
                 hidden |= extra
                 changed = True
@@ -161,40 +216,82 @@ def _event_phrase(column: str, level: Any) -> str:
 # Cell keys for the n clause; tuples so they never collide with a group name or a table cell.
 N_USED = ("n", "used")
 N_EXCLUDED = ("n", "excluded")
+N_FILTERED = ("n", "filtered")  # rows the question's filters removed; never displayed
+
+
+def _filtered_out(analysis: Mapping[str, Any], in_scope: int) -> int:
+    """Rows outside the filtered cohort: the dataset row count (sent when filters apply) - in_scope."""
+    rows = analysis.get("dataset_row_count")
+    return _as_count(rows) - in_scope if _is_count(rows) else 0
 
 
 def suppress_with_exclusions(
-    analysis: Mapping[str, Any], parts: Mapping[Any, Any], lines: Sequence[Sequence[Any]] = ()
+    analysis: Mapping[str, Any],
+    parts: Mapping[Any, Any],
+    lines: Sequence[Sequence[Any]] = (),
+    *,
+    floor: int = 0,
 ) -> set[Any]:
-    """Hidden cells of one answer: its count cells (``parts``) plus n_used and n_excluded.
+    """Hidden cells of one answer: its count cells (``parts``) plus n_used, n_excluded and the
+    rows the filters removed.
 
-    n_used + n_excluded is the dataset row count, which the app shows, and the parts (group
-    sizes, table cells) add up to n_used. So [n_used, n_excluded] and [*parts, n_excluded] are
-    lines with a visible total: either both n counts are shown or both are hidden, and a hidden
-    n_excluded hides a part too. ``lines`` are further lines among the parts (rows, columns).
-    The parts are first suppressed against n_used as their total, so an exclusion count that
-    could stay visible is not used as their complement.
+    n_used + n_excluded + filtered-out is the dataset row count, which the app shows, so the
+    three are a line with a visible total; the filtered-out cell is never displayed but is
+    suppressed like the others. The parts (group sizes, table cells) add up to n_used and are
+    first suppressed against it; ``lines`` are further lines among the parts (rows, columns).
+    When n_used is hidden every part is hidden, zeros included: a visible part beside a hidden
+    n tells a reader which cells the algorithm saw as small. ``floor`` is the smallest n_used
+    the analysis runs on; a reader knows it, so when the row count leaves n_used only two
+    possible values (floor and floor + 1) n is always hidden, even with nothing excluded.
     """
+    n_used, excluded = analysis.get("n_used"), analysis.get("n_excluded")
     hidden = _suppress_lines(parts, [*lines, list(parts)])
-    cells = {**parts, N_USED: analysis.get("n_used"), N_EXCLUDED: analysis.get("n_excluded")}
-    return _suppress_lines(cells, [*lines, [N_USED, N_EXCLUDED], [*parts, N_EXCLUDED]], hidden=hidden)
+    in_scope = sum(_as_count(v) for v in (n_used, excluded))
+    filtered = _filtered_out(analysis, in_scope)
+    cells = {**parts, N_USED: n_used, N_EXCLUDED: excluded, N_FILTERED: filtered}
+    hidden = _suppress_lines(cells, [*lines, [N_USED, N_EXCLUDED, N_FILTERED]], hidden=hidden, floors={N_USED: floor})
+    if _is_count(n_used) and in_scope + filtered - floor <= 1:
+        hidden |= {N_USED, N_EXCLUDED, N_FILTERED}
+    if N_USED in hidden:
+        hidden |= set(parts)
+    return hidden
 
 
-def _n_clause(analysis: Mapping[str, Any], hidden: set[Any] | None = None) -> str | None:
-    """'n=377; 23 excluded for missing data', or 'n hidden; some excluded for missing data'.
+def _n_clause(analysis: Mapping[str, Any], hidden: set[Any]) -> str | None:
+    """'n=377; 23 excluded for missing data', 'n=377; some excluded for missing data' or 'n hidden'.
 
-    ``hidden`` comes from ``suppress_with_exclusions`` over the answer's count cells.
+    ``hidden`` comes from ``suppress_with_exclusions``. With n hidden the clause does not say
+    whether any rows were excluded: that would split the hidden answers into "n small" and
+    "exclusions small", and the analysis floor can pin n inside the first.
     """
     n_used = analysis.get("n_used")
     if not isinstance(n_used, int):
         return None
-    if hidden is None:
-        hidden = suppress_with_exclusions(analysis, {})
     excluded = analysis.get("n_excluded")
-    has_excluded = isinstance(excluded, int) and excluded > 0
-    if N_USED in hidden or N_EXCLUDED in hidden:
-        return "n hidden; some excluded for missing data" if has_excluded else "n hidden"
-    return f"n={n_used}; {excluded} excluded for missing data" if has_excluded else f"n={n_used}"
+    if N_USED in hidden:
+        n_text = "n hidden"
+        if N_EXCLUDED in hidden or not (isinstance(excluded, int) and excluded > 0):
+            return n_text
+        return f"{n_text}; {excluded} excluded for missing data"
+    if N_EXCLUDED in hidden:
+        return f"n={n_used}; some excluded for missing data"
+    if isinstance(excluded, int) and excluded > 0:
+        return f"n={n_used}; {excluded} excluded for missing data"
+    return f"n={n_used}"
+
+
+def _overall_statistics_shown(n: Any, n_hidden: bool, rows: int, floor: int) -> bool:
+    """Whether statistics of one whole sample (a mean, a median) may be shown.
+
+    Never for n below the threshold: they can be one patient's values. With n hidden for
+    another reason (a small exclusion count) they are shown only if that does not narrow n:
+    both kinds of hidden n must still leave at least two values (floor at most threshold - 2,
+    and a row count of at least threshold + 2).
+    """
+    limit = _limit(None)
+    if not (_is_count(n) and int(n) >= limit):
+        return False
+    return not n_hidden or (floor <= limit - 2 and rows >= limit + 2)
 
 
 def _with_details(claim: str, details: list[str | None]) -> str:
@@ -252,7 +349,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
 
     if test_type in ("welch_t_test", "t_test", "anova"):
         sizes = {str(g): group_sizes.get(str(g)) for g in group_means}
-        hidden = suppress_with_exclusions(analysis, sizes)
+        hidden = suppress_with_exclusions(analysis, sizes, floor=MIN_GROUP_N * max(len(sizes), 1))
         n_clause = _n_clause(analysis, hidden)
         # A mean of a handful of patients is close to their values (one patient: that value),
         # so a group's mean is hidden with its size, as the Kaplan-Meier median is. Hiding only
@@ -304,7 +401,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     cells = {(i, j): row.get(g) for i, row in enumerate(contingency) for j, g in enumerate(groups)}
     lines = [[(i, j) for j in range(len(groups))] for i in range(len(contingency))]
     lines += [[(i, j) for i in range(len(contingency))] for j in range(len(groups))]
-    hidden = suppress_with_exclusions(analysis, cells, lines)
+    hidden = suppress_with_exclusions(analysis, cells, lines, floor=MIN_COMPARISON_N)
     n_clause = _n_clause(analysis, hidden)
     small_groups = any(_is_count(n) and 0 < int(n) < _limit(None) for n in group_sizes.values())
     withheld = bool(hidden & cells.keys()) or small_groups
@@ -361,7 +458,7 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
     significant = sorted(analysis.get("significant_predictors") or [], key=lambda s: _num(s.get("p_value")) or 1.0)
     predictors = ", ".join(str(r["variable"]) for r in rows)
     model = f"Logistic regression of {event}" + (f" on {predictors}" if predictors else "")
-    n_clause = _n_clause(analysis)
+    n_clause = _n_clause(analysis, suppress_with_exclusions(analysis, {}, floor=MIN_REGRESSION_N))
     if significant:
         top = significant[0]
         odds, lo, hi, p = (_num(top.get(k)) for k in ("odds_ratio", "ci_lower", "ci_upper", "p_value"))
@@ -390,7 +487,9 @@ def _present_relationship(analysis: Mapping[str, Any]) -> Presentation:
         if c.get("var1") != c.get("var2")
     ]
     pairs.sort(key=lambda r: abs(r["r"]) if r["r"] is not None else -1.0, reverse=True)
-    n = analysis.get("n_observations")
+    # n_observations + its exclusions (+ filtered-out rows) is the row count, as for n_used
+    sample = {**analysis, "n_used": analysis.get("n_observations")}
+    n_clause = _n_clause(sample, suppress_with_exclusions(sample, {}, floor=MIN_CORRELATION_N))
     claim = None
     if pairs and pairs[0]["r"] is not None:
         top = pairs[0]
@@ -398,7 +497,7 @@ def _present_relationship(analysis: Mapping[str, Any]) -> Presentation:
         strength = "strong" if abs(r) >= 0.5 else "moderate" if abs(r) >= 0.3 else "weak"
         claim = _with_details(
             f"The strongest correlation was {strength}: {top['variable 1']} and {top['variable 2']}",
-            [f"r={_fmt(r)}", f"n={suppress_count(n)}" if isinstance(n, int) else None],
+            [f"r={_fmt(r)}", n_clause],
         )
         claim += "."
     return {"claim": claim, "table": _table(pairs)}
@@ -422,7 +521,7 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
         # group whose size is hidden: showing only the complements' medians would tell the small
         # groups (fewer than the threshold) apart from the complements (at least the threshold).
         sizes = {g: group_sizes.get(g) for g in group_medians}
-        hidden = suppress_with_exclusions(analysis, sizes)
+        hidden = suppress_with_exclusions(analysis, sizes, floor=MIN_SURVIVAL_N)
         n_clause = _n_clause(analysis, hidden)
         small = {g for g in group_medians if g in hidden}
         medians_text = ", ".join(
@@ -451,14 +550,17 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
     parts: dict[str, Any] = {}
     if isinstance(n_used, int) and isinstance(n_events, int):
         parts = {"events": n_events, "censored": n_used - n_events}
-    hidden = suppress_with_exclusions(analysis, parts)
+    hidden = suppress_with_exclusions(analysis, parts, floor=MIN_SURVIVAL_N)
     n_clause = _n_clause(analysis, hidden)
     median = _num(analysis.get("median_survival"))
-    # With n hidden the median may be one patient's time (and whether it was reached hints at
-    # their events); hide it whenever n is hidden, as for groups, so showing it never tells a
-    # large n apart from a small one.
+    # With n small the median may be one patient's time (and whether it was reached hints at
+    # their events). The survival floor (10) makes a small n exactly 10, so the median is
+    # hidden whenever n is hidden: showing it would tell that n apart from a large one.
     n_hidden = N_USED in hidden
-    if n_hidden:
+    rows_total = _as_count(n_used) + _as_count(analysis.get("n_excluded"))
+    rows_total += _filtered_out(analysis, rows_total)
+    median_hidden = not _overall_statistics_shown(n_used, n_hidden, rows_total, MIN_SURVIVAL_N)
+    if median_hidden and counted:
         claim = _with_details(f"Median time to {event} ({time_col}) is not shown because n is hidden", [n_clause])
         claim += "."
     elif median is not None:
@@ -472,7 +574,7 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
     row = {
         "n": _mask(n_used) if N_USED in hidden else n_used,
         **{k: _mask(v) if k in hidden else v for k, v in parts.items()},
-        f"median {time_col}": _mask(median) if n_hidden else median,
+        f"median {time_col}": _mask(median) if median_hidden else median,
     }
     return {"claim": claim, "table": _table([row])}
 
@@ -484,10 +586,14 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
         if analysis.get("is_numeric"):
             stats: dict[str, Any] = {k: _num(analysis.get(k)) for k in ("mean", "median", "std", "min", "max")}
             n = analysis.get("non_null_count")
-            # The table hides a small n, so the claim says "n hidden" rather than mixing in "<11".
-            shown_n = suppress_counts([n])[0]
+            # n + missing (+ filtered-out rows) is the row count: "n=95" of 100 rows says 5 missing.
+            sample = {**analysis, "n_used": n, "n_excluded": analysis.get("null_count")}
+            n_hidden = N_USED in suppress_with_exclusions(sample, {})
+            rows_total = _as_count(n) + _as_count(analysis.get("null_count"))
+            rows_total += _filtered_out(analysis, rows_total)
+            shown_n = _mask(n) if n_hidden else n
             claim = None
-            if shown_n == SECONDARY_SUPPRESSED:
+            if n_hidden and not _overall_statistics_shown(n, n_hidden, rows_total, 0):
                 # With n from 1 to 10, min/max/median are patients' values and the mean of one
                 # patient is that value: show none of the statistics, only that n is hidden.
                 stats = {k: _mask(v) for k, v in stats.items()}
@@ -506,7 +612,18 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
             return {"claim": claim, "table": _table([row])}
         counts = list(analysis.get("value_counts") or [])
         rows = [{name: display_level(col, r.get(col)), "count": r.get("count")} for r in counts]
-        table = _table(rows, count_columns=("count",))
+        # The listed levels (value_counts().head(10)), the levels cut from the list and the
+        # filtered-out rows add up to the dataset row count; the last two are never displayed.
+        listed = {i: r.get("count") for i, r in enumerate(rows)}
+        row_count = analysis.get("row_count")
+        listed_total = sum(_as_count(v) for v in listed.values())
+        rest = _as_count(row_count) - listed_total if _is_count(row_count) else 0
+        cells: dict[Any, Any] = {**listed, "rest": rest, N_FILTERED: _filtered_out(analysis, listed_total + rest)}
+        hidden = _suppress_lines(cells, [list(cells)])
+        for i, row in enumerate(rows):
+            if i in hidden:
+                row["count"] = _mask(row["count"])
+        table = _table(rows)
         claim = None
         if rows and table:
             # Quote the top count as the table shows it: it may be the complement of a small cell.
@@ -531,15 +648,34 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
             rows = [dict(r) for r in group_counts]
         for row in rows:
             row[group_col] = display_level(group_col, row.get(group_col))
-        if _is_count(total) and isinstance(total, int | np.integer) and 0 < int(total) < _limit(None):
-            # Every group is then small, and k groups of at least 1 with a total under the
-            # threshold can pin each one (10 groups -> all 1), so the groups are not listed.
-            return {"claim": f"Total count: {suppress_count(total)}.", "table": None}
+        if _total_hidden(analysis, total):
+            # Every group is then small (or the filtered-out rows are), and k groups of at least
+            # 1 with a total under the threshold can pin each one (10 groups -> all 1), so the
+            # groups are not listed.
+            return {"claim": _hidden_total_claim(analysis, total), "table": None}
         noun = "group" if len(rows) == 1 else "groups"
         claim = f"{total} total across {len(rows)} {group_col} {noun}." if total is not None else None
         return {"claim": claim, "table": _table(rows, count_columns=("count",))}
-    claim = f"Total count: {suppress_count(total)}." if total is not None else None
+    if _total_hidden(analysis, total):
+        return {"claim": _hidden_total_claim(analysis, total), "table": None}
+    claim = f"Total count: {total}." if total is not None else None
     return {"claim": claim, "table": None}
+
+
+def _total_hidden(analysis: Mapping[str, Any], total: Any) -> bool:
+    """A count total is hidden when it, or the rows the filters removed, is from 1 to 10."""
+    if not _is_count(total):
+        return False
+    cells = {"total": total, N_FILTERED: _filtered_out(analysis, _as_count(total))}
+    return "total" in _suppress_lines(cells, [list(cells)])
+
+
+def _hidden_total_claim(analysis: Mapping[str, Any], total: Any) -> str:
+    # Without filters the total is the row count the app already shows. With filters one wording
+    # covers "total small" and "filtered-out rows small", so the claim does not say which.
+    if _is_count(analysis.get("dataset_row_count")):
+        return "Total count hidden."
+    return f"Total count: {suppress_count(total)}."
 
 
 _PRESENTERS = {
