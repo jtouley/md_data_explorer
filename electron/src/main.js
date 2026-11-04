@@ -23,6 +23,7 @@ import {
   resolveAppFilePath,
   resolveDevNoAuth,
 } from './apiToken.js';
+import { lockDownWebContents } from './webContentsGuard.js';
 import {
   THEME_GET_CHANNEL,
   THEME_SET_CHANNEL,
@@ -117,23 +118,6 @@ function registerThemeHandlers() {
 }
 
 /**
- * Keep a window on the app's own page: no navigation elsewhere, no new windows, no webviews.
- * @param {Electron.WebContents} contents
- */
-function lockDownWebContents(contents) {
-  const blockUntrusted = (event, url) => {
-    if (!isTrustedRendererUrl(url, devServerUrl)) {
-      event.preventDefault();
-      console.warn('Blocked navigation away from the app');
-    }
-  };
-  contents.on('will-navigate', blockUntrusted);
-  contents.on('will-redirect', blockUntrusted);
-  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  contents.on('will-attach-webview', (event) => event.preventDefault());
-}
-
-/**
  * Create the main application window.
  * @returns {BrowserWindow} The created window
  */
@@ -156,7 +140,7 @@ const createWindow = () => {
       additionalArguments: [`${THEME_ARG_PREFIX}${nativeTheme.themeSource}`],
     },
   });
-  lockDownWebContents(mainWindow.webContents);
+  lockDownWebContents(mainWindow.webContents, devServerUrl);
 
   if (devServerUrl) {
     mainWindow.loadURL(devServerUrl);

@@ -27,7 +27,19 @@ def get_demo_csv_path(project_root: Path | None = None) -> Path:
     return root / _DEMO_RELATIVE_PATH
 
 
-def build_demo_metadata() -> dict[str, Any]:
+DEMO_CLASH_SUFFIX = " (sample)"
+
+
+def demo_display_name(storage: UserDatasetStorage) -> str:
+    """The sample's display name: marked as the sample when a user dataset already has the plain name."""
+    clash = any(
+        meta.get("dataset_name") == DEMO_DATASET_NAME and meta.get("is_demo") is not True
+        for meta in storage.list_uploads()
+    )
+    return f"{DEMO_DATASET_NAME}{DEMO_CLASH_SUFFIX}" if clash else DEMO_DATASET_NAME
+
+
+def build_demo_metadata(display_name: str = DEMO_DATASET_NAME) -> dict[str, Any]:
     """
     Build upload metadata that skips the mapping wizard.
 
@@ -59,7 +71,7 @@ def build_demo_metadata() -> dict[str, Any]:
         },
     }
     return {
-        "dataset_name": DEMO_DATASET_NAME,
+        "dataset_name": display_name,
         "description": "Bundled synthetic clinical cohort for first-run demos.",
         "is_demo": True,
         "variable_mapping": {
@@ -102,6 +114,6 @@ def load_sample_dataset(
     return storage.save_upload(
         file_bytes=file_bytes,
         original_filename=path.name,
-        metadata=build_demo_metadata(),
+        metadata=build_demo_metadata(demo_display_name(storage)),
         overwrite=overwrite,
     )

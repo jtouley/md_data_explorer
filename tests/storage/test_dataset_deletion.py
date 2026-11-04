@@ -12,6 +12,7 @@ import pytest
 from clinical_analytics.storage import dataset_deletion as deletion_mod
 from clinical_analytics.storage.dataset_deletion import (
     DatasetDeletionError,
+    DatasetStoreBusyError,
     InvalidDatasetIdError,
     compaction_marker,
     purge_dataset_files,
@@ -290,6 +291,24 @@ def test_resumePendingCompaction_markerLeftByCrash_rewritesAndClearsMarker(tmp_p
     assert "keepme_notes_v1" in _duckdb_tables(tmp_path)
 
 
+def test_purgeDatasetFiles_storeConnectionOpen_keepsRawParquetAndOverlayFiles(tmp_path: Path) -> None:
+    # Arrange
+    _seed(tmp_path, "dsx")
+    before = _names_under(tmp_path)
+    store = DataStore(tmp_path / "analytics.duckdb")
+
+    # Act
+    try:
+        with pytest.raises(DatasetStoreBusyError):
+            purge_dataset_files("dsx", tmp_path / "uploads")
+    finally:
+        store.close()
+
+    # Assert
+    assert sorted(_names_under(tmp_path)) == sorted(before)
+    assert "dsx_patients_v1" in _duckdb_tables(tmp_path)
+
+
 def _storage_version(data_dir: Path) -> str:
     con = duckdb.connect(str(data_dir / "analytics.duckdb"), read_only=True)
     try:
@@ -329,3 +348,31 @@ def test_purgeDatasetFiles_preUpgradeBackupPresent_backupRemoved(tmp_path: Path)
     assert store_backups(tmp_path / "analytics.duckdb") == []
     assert set(backups) <= set(report.removed_paths)
     assert not _store_has(tmp_path, b"backup-sentinel-")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [OSError(28, "No space left on device"), PermissionError(13, "Permission denied")],
+    ids=["disk_full", "permission"],
+)
+def test_purgeDatasetFiles_swapFails_errorNamesTheSwapStepAndKeepsFiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: OSError
+) -> None:
+    # Arrange
+    _seed(tmp_path, "dsx")
+
+    def failing_replace(src: Path, dst: Path) -> None:
+        raise failure
+
+    monkeypatch.setattr(deletion_mod.os, "replace", failing_replace)
+
+    # Act
+    with pytest.raises(DatasetDeletionError) as raised:
+        purge_dataset_files("dsx", tmp_path / "uploads")
+
+    # Assert
+    assert "swap the rewritten data store" in str(raised.value)
+    assert failure.strerror in str(raised.value)
+    assert (tmp_path / "uploads" / "raw" / "dsx.csv").exists()
+    assert (tmp_path / "uploads" / "metadata" / "dsx.json").exists()
+    assert not (tmp_path / "analytics.duckdb.compact").exists()
