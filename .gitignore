@@ -278,6 +278,27 @@ pending.json
 resolved.json
 patches.jsonl
 
+# --- Data contracts, quality reports and lineage (contracts/store.py) --------------------------
+# <data home>/data/contracts/<upload_id>/<version>.odcs.yaml and
+# <data home>/data/dq/<upload_id>/<version>/<run>.json. Code in a lineage/ or dq/ package stays
+# tracked; only data-like files there are ignored. The one tracked contract is the synthetic
+# example scripts/make_synthetic_contract.py writes.
+**/data/contracts/
+**/data/dq/
+*.odcs.yaml
+*.odcs.yml
+*.odcs.json
+*.odps.yaml
+*.odps.yml
+*.odps.json
+**/dq/**/*.json
+**/dq/**/*.yaml
+**/dq/**/*.parquet
+**/lineage/**/*.json
+**/lineage/**/*.yaml
+**/lineage/**/*.parquet
+!tests/fixtures/synthetic/contracts/cohort.odcs.yaml
+
 # --- Logs, prompt-optimizer output, embedding caches ------------------------------------------
 # storage/query_logger.py ({upload_id}_queries.jsonl), core/prompt_optimizer.py
 # (iteration_NN.json in nl_learning_dir), core/nl_query_engine.py (prompt_overlay.txt).
