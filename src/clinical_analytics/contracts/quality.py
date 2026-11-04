@@ -129,6 +129,7 @@ class CompiledCheck:
     not_run_reason: str | None = None
     percent: bool = False
     detail: str = ""
+    columns: tuple[str, ...] = ()  # physical columns a table-level check reads
 
 
 def _display(prop: SchemaProperty) -> str:
@@ -245,7 +246,7 @@ def _compile_object_rule(rule: DataQuality, props: dict[str, SchemaProperty], in
         if not names or missing:
             return _not_run(base, "duplicate check names no known columns")
         cols = [props[n].physicalName or n for n in names]
-        return CompiledCheck(**base, expr=pl.len() - pl.struct(cols).n_unique())
+        return CompiledCheck(**base, expr=pl.len() - pl.struct(cols).n_unique(), columns=tuple(cols))
     return _not_run(base, f"metric '{metric}' is not supported at table level")
 
 
@@ -272,7 +273,7 @@ def compile_contract(contract: OpenDataContractStandard, schema: pl.Schema) -> l
 
 
 def _one_bad_value_check_per_column(checks: list[CompiledCheck]) -> list[CompiledCheck]:
-    """Run at most one bad-value check (codebook, range, duplicates) per column.
+    """Run at most one bad-value check (codebook, range, duplicates) per column, table-level ones included.
 
     The disclosure model treats each column as one partition ``[missing, bad, rest]``. Two
     overlapping bad-value counts on one column (out-of-range values are never codes) would let a
@@ -280,7 +281,7 @@ def _one_bad_value_check_per_column(checks: list[CompiledCheck]) -> list[Compile
     """
     counted: set[str] = set()
     out: list[CompiledCheck] = []
-    for c in checks:
+    for c in checks:  # column checks claim their column first
         column = c.column
         if c.expr is not None and column is not None and c.metric in _BAD_VALUE_METRICS:
             if column in counted:
@@ -288,6 +289,14 @@ def _one_bad_value_check_per_column(checks: list[CompiledCheck]) -> list[Compile
             else:
                 counted.add(column)
         out.append(c)
+    # A table-level check (e.g. duplicates over a composite key) counts toward every column it
+    # names: next to "patient_id: 12 repeated", "Table: 11 repeated" would give 1 by subtraction.
+    for i, c in enumerate(out):
+        if c.expr is not None and c.column is None and c.metric in _BAD_VALUE_METRICS:
+            if counted & set(c.columns):
+                out[i] = replace(c, expr=None, not_run_reason=config.OVERLAPPING_CHECK_REASON)
+            else:
+                counted |= set(c.columns)
     return out
 
 

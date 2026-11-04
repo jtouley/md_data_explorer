@@ -883,3 +883,41 @@ def test_runQuality_tinyTable_rowCountShownEveryColumnCountHidden(make_contract,
             assert (check.count, check.percent, check.status) == (config.COUNT_HIDDEN, None, config.HIDDEN_STATUS)
             assert check.message.endswith(config.TOO_FEW_ROWS_NOTE)
     assert report.summary == [f"{rows} rows: {config.TOO_FEW_ROWS_NOTE}"]
+
+
+def test_compileContract_tableDuplicateOverlapsColumnDuplicate_tableCheckNotRun():
+    # Arrange: hand-written composite-key check on (patient_id, visit) next to patient_id's own.
+    # "patient_id: 12 repeated" beside "Table: 11 repeated" would give exactly 1 by subtraction.
+    rule = {
+        "id": "pair",
+        "metric": "duplicateValues",
+        "mustBe": 0,
+        "arguments": {"properties": ["patient_id", "visit"]},
+    }
+    props = [
+        {"name": "patient_id", "quality": [{"id": "pid_dup", "metric": "duplicateValues", "mustBe": 0}]},
+        {"name": "visit"},
+    ]
+    df = pl.DataFrame({"patient_id": ["a", "a", "b"], "visit": [1, 2, 1]})
+
+    # Act
+    checks = {c.id: c for c in compile_contract(_contract_with([rule], props), df.collect_schema())}
+
+    # Assert
+    assert checks["pid_dup"].expr is not None
+    assert checks["pair"].expr is None
+    assert checks["pair"].not_run_reason == config.OVERLAPPING_CHECK_REASON
+
+
+def test_compileContract_tableDuplicateOnUncheckedColumns_stillRuns():
+    # Arrange
+    rule = {"id": "pair", "metric": "duplicateValues", "mustBe": 0, "arguments": {"properties": ["a", "b"]}}
+    df = pl.DataFrame({"a": [1, 1], "b": ["x", "x"]})
+
+    # Act
+    checks = {
+        c.id: c for c in compile_contract(_contract_with([rule], [{"name": "a"}, {"name": "b"}]), df.collect_schema())
+    }
+
+    # Assert
+    assert checks["pair"].expr is not None
