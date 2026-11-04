@@ -86,6 +86,7 @@ LOGIC_WORDS: frozenset[str] = (
 _PHRASES: tuple[tuple[str, str], ...] = (
     (r"n't\b", " not"),
     (r"(\d)\s*\+", r"\1 __ge__ "),
+    (r"(\d)\s+plus\b", r"\1 __ge__ "),
     (r"\b(?:or|and) (?:more|older|over|above|greater|higher)\b(?! than)", " __ge__ "),
     (r"\bat least\b", " __ge__ "),
     (r"\b(?:or|and) (?:less|fewer|younger|under|below|lower)\b(?! than)", " __le__ "),
@@ -565,3 +566,207 @@ def _is_measure(values: list[Any]) -> bool:
     if len(present) <= 2:
         return False
     return all(isinstance(value, int | float) and not isinstance(value, bool) for value in present)
+
+
+# ============================================================================
+# Reverse accounting: every plan element must be asked for by the question.
+# ============================================================================
+
+# Words that say the question is about age without naming the column.
+_AGE_JUSTIFY = frozenset({"age", "aged", "old", "older", "oldest", "younger", "youngest", "elderly"}) | {
+    "__gt_age__",
+    "__lt_age__",
+}
+_STEP_SYMBOL = {"eq": "=", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
+_FILTER_OP = {">": "gt", "<": "lt", ">=": "ge", "<=": "le"}
+_NUMBER_TOKEN = re.compile(r"\d+(?:\.\d+)?")
+
+
+def unjustified_reason(elements: list[str]) -> str:
+    """One plain sentence naming the plan elements the question did not ask for."""
+    named = elements[0] if len(elements) == 1 else f"{', '.join(elements[:-1])} and {elements[-1]}"
+    return f"The plan uses {named}, which your question doesn't ask for."
+
+
+def unjustified_elements(
+    question: str,
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    alias_index: dict[str, str] | None = None,
+    context: Any = None,
+) -> list[str]:
+    """Plan elements no word of the question justifies, as plan-line text, in plan order.
+
+    The forward check (unused_words) asks whether every word is used; this asks whether every
+    element was asked for. A measure, grouping, filter column, value and operator each need a
+    word of the question: the column's name, an alias, a word of a stored value or its
+    codebook label, the number itself with a comparison word of the same direction, or a
+    negation word for an exclusion. Anything else was added by the parser and is not run
+    without the user's confirmation.
+    """
+    check = _Justifier(question, plan, columns, values_for, alias_index)
+    missing: list[str] = []
+    intent = str(getattr(plan, "intent", "") or "")
+    metric = getattr(plan, "metric", None)
+    if metric and intent != "COUNT" and not check.column_named(str(metric)):
+        missing.append(f"outcome {metric}")
+    group_by = getattr(plan, "group_by", None)
+    if group_by and not (check.column_named(str(group_by)) or check.any_value_named(str(group_by))):
+        missing.append(f"grouping {group_by}")
+    for spec in getattr(plan, "filters", []) or []:
+        if not check.filter_justified(spec):
+            missing.append(_describe(spec.column, "=" if spec.operator == "==" else spec.operator, spec.value))
+    for step in getattr(plan, "cohort_steps", []) or []:
+        if not check.step_justified(step):
+            missing.append(_describe(step.column, _STEP_SYMBOL.get(step.op, step.op), step.value))
+    for column_attr, value_attr in (("proportion_column", "proportion_value"), ("rate_column", "rate_value")):
+        share_column = getattr(plan, column_attr, None)
+        if share_column and not check.equality_justified(str(share_column), [getattr(plan, value_attr, None)]):
+            missing.append(_describe(str(share_column), "=", getattr(plan, value_attr, None)))
+    for predictor in getattr(context, "predictor_variables", None) or []:
+        if predictor and predictor not in {metric, group_by} and not check.column_named(str(predictor)):
+            missing.append(f"predictor {predictor}")
+    return missing
+
+
+def _describe(column: str, symbol: str, value: Any) -> str:
+    if value is None:
+        return f"{column} {symbol}".strip()
+    values = value if isinstance(value, list) else [value]
+    text = " or ".join(_number_text(item) for item in values)
+    return f"{column} {symbol} {text}"
+
+
+def _number_text(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+class _Justifier:
+    """Answers "did the question ask for this?" for one question and its dataset."""
+
+    def __init__(
+        self,
+        question: str,
+        plan: Any,
+        columns: list[str],
+        values_for: Callable[[str], list[Any]],
+        alias_index: dict[str, str] | None,
+    ) -> None:
+        self.tokens = tokenize(question)
+        self.columns = columns
+        self.values_for = values_for
+        self.alias_index = alias_index
+        self.age = age_column(columns)
+        referenced = _referenced_columns(plan, None)
+        self.all_columns = [*columns, *sorted(referenced - set(columns))]
+        self.numeric = {column for column in self.all_columns if _is_measure(values_for(column))}
+        self.ranges = numeric_ranges(self.all_columns, values_for)
+
+    def column_named(self, column: str) -> bool:
+        if column == self.age and any(token in _AGE_JUSTIFY for token in self.tokens):
+            return True
+        if any(_column_for_word(token, [column], self.alias_index) == column for token in self.tokens):
+            return True
+        phrases = [name_tokens(column), name_tokens(parse_column_name(column).display_name)]
+        phrases += [alias.split() for alias, target in (self.alias_index or {}).items() if target == column]
+        return any(_contains(self.tokens, phrase) for phrase in phrases if phrase)
+
+    def any_value_named(self, column: str) -> bool:
+        words = _value_words(column, self.values_for(column))
+        return any(_names_value(token, words) for token in self.tokens if token not in FUNCTION_WORDS)
+
+    def value_named(self, column: str, value: Any) -> bool:
+        """The question names this stored value: every word of its label, or its code label."""
+        if value is None:
+            return False
+        if isinstance(value, bool) or self._is_polarity(column, value):
+            # Yes/no columns are bound by naming the column ("diabetics", "statin users").
+            return self.column_named(column)
+        label = str(value).strip().lower()
+        code = label[:-2] if label.endswith(".0") else label
+        code_label = (parse_column_name(column).value_mapping or {}).get(code)
+        if code_label and self._words_named(name_tokens(code_label.lower())):
+            return True
+        if _NUMBER_TOKEN.fullmatch(label):
+            return self.column_named(column) and self._bare_number_present(float(label))
+        inflections = _SEX_INFLECTIONS.get(label, set())
+        if inflections & set(self.tokens):
+            return True
+        return self._words_named([word for word in name_tokens(label) if word not in LOGIC_WORDS])
+
+    def equality_justified(self, column: str, values: list[Any]) -> bool:
+        if not values or not all(self.value_named(column, value) for value in values):
+            return False
+        # A stored text value names its own column ("placebo"); a number needs the column named.
+        return True
+
+    def filter_justified(self, spec: Any) -> bool:
+        values = spec.value if isinstance(spec.value, list) else [spec.value]
+        if spec.operator in {"==", "IN"}:
+            return self.equality_justified(spec.column, values)
+        if spec.operator in {"!=", "NOT_IN"}:
+            negated = any(token in NEGATION_WORDS for token in self.tokens)
+            return negated and self.equality_justified(spec.column, values)
+        if spec.operator in _FILTER_OP:
+            return self.comparison_justified(spec.column, _FILTER_OP[spec.operator], spec.value)
+        return False
+
+    def step_justified(self, step: Any) -> bool:
+        if step.op == "eq":
+            return self.equality_justified(step.column, [step.value])
+        if step.op in {"gt", "lt", "ge", "le"}:
+            return self.comparison_justified(step.column, step.op, step.value)
+        if step.op in {"gt_median", "ge_percent_rank"}:
+            cutoff = any(token in CUTOFF_WORDS or token in {"median", "older", "higher"} for token in self.tokens)
+            return cutoff and self.column_named(step.column)
+        return self.column_named(step.column)
+
+    def comparison_justified(self, column: str, op: str, value: Any) -> bool:
+        """The number is in the question, with a comparison word of the same direction, on this column."""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return False
+        between = "between" in self.tokens
+        for at, token in enumerate(self.tokens):
+            if not _NUMBER_TOKEN.fullmatch(token) or float(token) != number:
+                continue
+            ops = {
+                DIRECTION_OPS[self.tokens[near]]
+                for near in (at - 1, at + 1)
+                if 0 <= near < len(self.tokens) and self.tokens[near] in DIRECTION_OPS
+            }
+            if not (op in ops or (between and op in {"ge", "le", "gt", "lt"})):
+                continue
+            owner = number_owner(self.tokens, at, self.columns, self.numeric, self.alias_index, self.ranges)
+            if owner == column or self.column_named(column):
+                return True
+        return False
+
+    def _bare_number_present(self, number: float) -> bool:
+        """The number is in the question with no comparison word on either side ("creatinine 2.2")."""
+        for at, token in enumerate(self.tokens):
+            if not _NUMBER_TOKEN.fullmatch(token) or float(token) != number:
+                continue
+            if not any(
+                0 <= near < len(self.tokens) and self.tokens[near] in DIRECTION_OPS for near in (at - 1, at + 1)
+            ):
+                return True
+        return False
+
+    def _words_named(self, words: list[str]) -> bool:
+        return bool(words) and all(any(stem_match(token, word) for token in self.tokens) for word in words)
+
+    def _is_polarity(self, column: str, value: Any) -> bool:
+        from clinical_analytics.core.cohort_constraints import yes_no_values
+
+        yes, no = yes_no_values(column, self.values_for(column))
+        return value is not None and str(value) in {str(yes), str(no)} and yes is not None
+
+
+def _contains(tokens: list[str], phrase: list[str]) -> bool:
+    size = len(phrase)
+    return any(tokens[start : start + size] == phrase for start in range(len(tokens) - size + 1))

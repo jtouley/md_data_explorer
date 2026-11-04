@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from clinical_analytics.core.query_plan import QueryPlan
+from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 from clinical_analytics.core.query_service import QueryResult, QueryService
 
 
@@ -350,3 +350,26 @@ class TestQueryServiceAnalysis:
         assert result.run_key is None
         layer.execute_query_plan.assert_not_called()
         layer.format_execution_result.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("extra", "element"),
+        [
+            pytest.param(FilterSpec("Creatinine", "==", 2.2), "Creatinine = 2.2", id="unasked_equality"),
+            pytest.param(FilterSpec("age", ">", 65), "age > 65", id="unasked_comparison"),
+        ],
+    )
+    def test_ask_planAddsUnaskedFilter_holdsWithoutExecuting(self, mock_semantic_layer, extra, element):
+        """Every question word is used, but the plan adds a limit nobody asked for: hold it."""
+        # Arrange
+        service, layer = self._service(mock_semantic_layer, {"success": True, "run_key": "rk"}, {"type": "comparison"})
+        plan = QueryPlan(intent="COMPARE_GROUPS", metric="ldl", group_by="treatment", filters=[extra], confidence=0.95)
+        service.nl_engine._intent_to_plan.return_value = plan
+
+        # Act
+        result = service.ask("compare ldl by treatment", dataset_id="ds")
+
+        # Assert
+        assert result.requires_confirmation is True
+        assert result.failure_reason == f"The plan uses {element}, which your question doesn't ask for."
+        assert result.plan_line is not None
+        layer.execute_query_plan.assert_not_called()

@@ -24,11 +24,12 @@ _PRE_COMPARE = re.compile(
     re.IGNORECASE,
 )
 _POST_COMPARE = re.compile(
-    r"\b(?P<num>\d+(?:\.\d+)?)\s*(?P<dir>\+|(?:or|and) (?:more|older|over|above|greater|higher|less|fewer|younger|"
+    r"\b(?P<num>\d+(?:\.\d+)?)\s*(?P<dir>\+|plus\b|(?:or|and) (?:more|older|over|above|greater|higher|less|fewer|younger|"
     r"under|below|lower)\b(?! than))",
     re.IGNORECASE,
 )
 _PRE_OPS = {"at least": "ge", "at most": "le"}
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 _LOWER_WORDS = ("under", "below", "younger", "less", "fewer", "lower")
 _DECILE = re.compile(
     r"\b(?:top|highest|oldest) decile(?: of ([a-z0-9 ]+?))?(?=[?]|,|$)",
@@ -487,7 +488,10 @@ def _value_hits(
             if code_value is not None:
                 candidates.append((code_label.strip().lower(), code_value))
         for label, value in candidates:
-            if not label or label.isdigit():
+            # A stored number is never named by a word: "2.2" splits into the token "2", which
+            # would bind "type 2 diabetes" to Creatinine = 2.2. Numbers bind only through an
+            # explicit comparison.
+            if not label or _NUMBER.fullmatch(label):
                 continue
             found = _label_at(text, tokens, label)
             if found is None:
