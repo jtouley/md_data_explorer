@@ -9,8 +9,9 @@ exception text, bypassing the redacting handler from ``core.log_redaction``. Eve
 
 Before uvicorn starts, the data store is checked against the running DuckDB
 (``storage.store_format.prepare_store_for_engine``). If it cannot be used (open in another
-program, unreadable, or no room for the check's copy), one plain line goes to stderr and the
-process exits with ``STORE_CHECK_FAILED_EXIT``, instead of a uvicorn lifespan traceback.
+program, unreadable, or no room for the check's copy), or a store rewrite left pending by a
+failed delete cannot finish, one plain line goes to stderr and the process exits with
+``STORE_CHECK_FAILED_EXIT``, instead of a uvicorn lifespan traceback.
 """
 
 from __future__ import annotations
@@ -21,8 +22,9 @@ from collections.abc import Sequence
 
 import uvicorn
 
-from clinical_analytics.core.data_home import uploads_dir
+from clinical_analytics.core.data_home import DataHomeOwnershipError, ensure_data_home, uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
+from clinical_analytics.storage.dataset_deletion import StoreCompactionPendingError, finish_pending_compaction
 from clinical_analytics.storage.datastore import StoreInUseError
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
 
@@ -43,9 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def check_store() -> str | None:
     """Run the startup store check; return a one-line reason if the API must not start."""
+    data_dir = uploads_dir().parent
     try:
-        prepare_store_for_engine(uploads_dir().parent)
-    except StoreFormatError as e:
+        ensure_data_home()
+        prepare_store_for_engine(data_dir)
+        # A rewrite left pending by a failed delete must finish before anything reads the store.
+        finish_pending_compaction(data_dir)
+    except (StoreFormatError, StoreCompactionPendingError, DataHomeOwnershipError) as e:
         return str(e)
     except StoreInUseError:
         return "The data store is in use by this app. Close every Clinical Analytics window and start it again."

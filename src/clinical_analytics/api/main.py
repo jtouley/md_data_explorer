@@ -37,7 +37,7 @@ from clinical_analytics.api.security import (
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.core.ollama_init import initialize_ollama
-from clinical_analytics.storage.dataset_deletion import DatasetDeletionError, resume_pending_compaction
+from clinical_analytics.storage.dataset_deletion import finish_pending_compaction
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
 
 # Redacting processor chain + INFO default (CLINICAL_ANALYTICS_LOG_LEVEL overrides).
@@ -108,12 +108,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         raise
 
     # A delete that failed between DROP and the store rewrite leaves a marker: finish it now,
-    # so dropped rows do not linger in analytics.duckdb. Off the event loop; never blocks startup.
-    try:
-        if await asyncio.to_thread(resume_pending_compaction, uploads_dir().parent):
-            logger.info("api_store_compaction_resumed")
-    except DatasetDeletionError as e:
-        logger.warning("api_store_compaction_pending", error_type=type(e).__name__)
+    # so dropped rows do not linger in analytics.duckdb. If it cannot finish, the API does not
+    # start (StoreCompactionPendingError): serving would read the file that still holds a
+    # deleted dataset's bytes. serve.py runs the same step first and exits 2 with one line.
+    if await asyncio.to_thread(finish_pending_compaction, uploads_dir().parent):
+        logger.info("api_store_compaction_resumed")
 
     if _ollama_autoinit_enabled():
         _initialize_ollama_in_background()

@@ -264,6 +264,52 @@ class TestDatasetUploadEndpoint:
         assert data["dataset_name"] == "Patient Data"
         mock_storage.save_upload.assert_called_once()
 
+    @pytest.mark.parametrize(
+        ("filename", "expected_ext", "succeeds"),
+        [
+            ("Jane Q Doe 1961-04-02.csv", ".csv", True),
+            ("labs.Jane Q Doe", "other", False),
+        ],
+        ids=["allowed_extension", "name_in_extension"],
+    )
+    def test_datasets_upload_patientNamedFile_logsNeitherNameNorStem(
+        self, test_client, filename, expected_ext, succeeds
+    ):
+        """A file name can carry a patient name: log lines get its hash, length and extension only."""
+        # Arrange
+        import logging
+
+        import structlog
+        from structlog.testing import LogCapture
+
+        previous = structlog.get_config()
+        capture = LogCapture()
+        structlog.configure(
+            processors=[structlog.contextvars.merge_contextvars, capture],
+            wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
+            cache_logger_on_first_use=False,
+        )
+
+        # Act
+        try:
+            with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
+                mock_cls.return_value.save_upload.return_value = (True, "ok", "upload_abc123")
+                response = test_client.post(
+                    "/api/datasets/upload",
+                    files={"file": (filename, self._make_csv(), "text/csv")},
+                    data={"dataset_name": "Cohort"},
+                )
+        finally:
+            structlog.configure(**previous)
+
+        # Assert
+        assert (response.status_code == 200) is succeeds
+        requested = [e for e in capture.entries if e["event"] == "dataset_upload_requested"]
+        assert requested, capture.entries
+        assert "Doe" not in repr(capture.entries)
+        assert requested[0]["filename_len"] == len(filename)
+        assert requested[0]["filename_ext"] == expected_ext
+
     def test_datasets_upload_success_invalidatesCachedSemanticLayer(self, test_client):
         """A save that reuses an upload_id must not keep serving the previous upload's layer."""
         # Arrange
