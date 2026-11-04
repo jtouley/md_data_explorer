@@ -4,8 +4,12 @@ Tests for AsyncQueryService - async wrapper around core QueryService.
 Following TDD: Red phase - tests written before implementation.
 """
 
+import re
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
+import polars as pl
 import pytest
 
 from clinical_analytics.api.services.query_service import AsyncQueryService
@@ -317,7 +321,7 @@ class TestAsyncQueryServiceAnalysisPayload:
         assert stored.result["claim"] == "50 total across 2 sex groups."
         assert stored.result["analysis_type"] == "count"
         assert stored.result["table"]["rows"] == [{"sex": "F", "count": 30}, {"sex": "M", "count": 20}]
-        assert stored.result["analysis"]["total_count"] == 50
+        assert "analysis" not in stored.result
         assert "raw cohort rows" not in str(stored.result)
         completed = next(e for e in events if e.event == "query_completed")
         preview = completed.data["result_preview"]
@@ -325,9 +329,7 @@ class TestAsyncQueryServiceAnalysisPayload:
         assert "analysis" not in preview
 
     @pytest.mark.asyncio
-    async def test_execute_query_withoutAnalysis_fallsBackToSerializedResult(
-        self, async_query_service, mock_core_query_service
-    ):
+    async def test_execute_query_withoutAnalysis_returnsNoRawRows(self, async_query_service, mock_core_query_service):
         # Arrange
         from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
 
@@ -343,8 +345,8 @@ class TestAsyncQueryServiceAnalysisPayload:
         # Act
         result = await async_query_service.execute_query(query="anything", dataset_id="ds")
 
-        # Assert
-        assert result.result == {"test": "data"}
+        # Assert: execution rows are never returned in place of a presented answer
+        assert result.result is None
 
 
 class TestAsyncQueryServiceConversation:
@@ -484,3 +486,85 @@ class TestAsyncQueryServiceHeldTurns:
 
         # Assert
         assert async_query_service.conversation_history("sess") == []
+
+
+def _numbers_in(value: Any) -> Iterator[float]:
+    """Every number in a JSON body: leaves, dict keys and numbers written inside strings.
+
+    The random query id is skipped; its hex digits are not data.
+    """
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "query_id":
+                continue
+            yield from _numbers_in(key)
+            yield from _numbers_in(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _numbers_in(item)
+    elif isinstance(value, bool) or value is None:
+        return
+    elif isinstance(value, int | float):
+        yield float(value)
+    elif isinstance(value, str):
+        yield from (float(n) for n in re.findall(r"\d+(?:\.\d+)?", value))
+
+
+class TestQueryResultSmallCells:
+    """GET /api/queries/{id} returns the presented answer only, never the raw counts."""
+
+    @pytest.mark.asyncio
+    async def test_get_query_result_sparseFisher_bodyHasNoRecoverableSmallCount(
+        self, async_query_service, mock_core_query_service
+    ):
+        # Arrange: sparse 2x2 (A: 15 alive / 1 dead, B: 1 alive / 3 dead); every cell is hidden
+        from fastapi.testclient import TestClient
+
+        from clinical_analytics.api.main import app
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        contingency = [{"died": "alive", "A": 15, "B": 1}, {"died": "dead", "A": 1, "B": 3}]
+        sizes = {"A": 16, "B": 4}
+        proportions = {"A": 1 / 16, "B": 3 / 4}
+        analysis = {
+            "type": "comparison",
+            "test_type": "fisher_exact",
+            "outcome_col": "died",
+            "group_col": "arm",
+            "groups": ["A", "B"],
+            "group_sizes": sizes,
+            "contingency": contingency,
+            "event_level": "dead",
+            "group_proportions": proportions,
+            "odds_ratio": 45.0,
+            "p_value": 0.0198,
+            "n_used": 20,
+            "n_excluded": 0,
+            "summary": [{"timeline": 3.0, "at_risk": 4, "observed": 1}],
+        }
+        raw_rows = pl.DataFrame({"arm": ["A", "B"], "died": [1, 3]})
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result={"success": True, "result": raw_rows},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis=analysis,
+        )
+        stored = await async_query_service.execute_query(query="death by arm?", dataset_id="ds")
+        # cell counts, group sizes, proportions (and their complements) and the odds ratio
+        forbidden = {15.0, 1.0, 3.0, 16.0, 4.0, 45.0}
+        forbidden |= {round(v, 4) for p in proportions.values() for v in (p, 1 - p, 100 * p, 100 * (1 - p))}
+
+        async def found(_query_id: str) -> tuple[Any, Any]:
+            return async_query_service, stored
+
+        # Act
+        with patch("clinical_analytics.api.routes.queries.find_query_result", side_effect=found):
+            body = TestClient(app).get(f"/api/queries/{stored.query_id}").json()
+
+        # Assert: walk the whole body (confidence 0.9 and the p-value are allowed)
+        assert body["result_data"]["claim"].startswith("The distribution of died differed by arm")
+        leaked = sorted({n for n in _numbers_in(body) if n in forbidden or round(n, 4) in forbidden})
+        assert leaked == [], f"GET body {body} shows {leaked}"

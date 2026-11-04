@@ -104,6 +104,10 @@ told apart (`result_presentation.py`, `_mask`). Rendering every hidden cell as "
 would be false for secondary cells; rendering "—" reads as "missing" or "zero" in clinical
 tables. The footnote says what is true for both: "Hidden to protect privacy: counts from 1 to 10
 are not shown, and some other cells are hidden so those counts can't be worked out from totals."
+Within one answer the API uses one marker: when the table hides a count, the claim does not write
+"<11" for it either, and says "n hidden; some excluded for missing data" (n and the exclusions
+add up to the dataset's row count, so both are hidden when either is small) or "count hidden".
+"<11" appears only when it is the answer's sole hidden count, e.g. "Total count: <11."
 We never write "<5"; the threshold is 11.
 Only the API's exact tokens mean hidden: the lowercase `suppressed` and `<11` (built from the
 threshold). Any other text, such as an age band "<65" or a category spelled "Suppressed", is a
