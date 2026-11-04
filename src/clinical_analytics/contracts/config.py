@@ -41,12 +41,16 @@ HIDDEN_STATUS: Final = "review"
 # label for small counts would tell a reader the rest are 11 or more.
 COUNT_HIDDEN: Final = "hidden"
 
-# Tables of 1..MAX_ROWS_ALL_HIDDEN rows show no non-zero count and no row count. The cut-off is
-# fixed (not "when a column cannot be protected"), so a hidden row count reveals only that the
-# table is this small. From MIN_CELL_SIZE + 2 rows up, hiding a column's non-zero counts always
-# leaves every small count able to be MIN_CELL_SIZE or more (rows - 2 >= 11: one hidden
-# neighbour >= 1, and >= 1 distinct value when duplicates are counted).
-MAX_ROWS_ALL_HIDDEN: Final = MIN_CELL_SIZE + 1
+# Tables of 1..MAX_ROWS_NO_COUNTS rows report no column counts (zeros included) and say "too few
+# rows to report counts"; the row count is still shown, as it is in the overview and /preview.
+# The cut-off is fixed, so applying it reveals nothing beyond the row count. From
+# MIN_CELL_SIZE + 2 rows up, hiding a column's non-zero counts always leaves every small count
+# able to be MIN_CELL_SIZE or more (rows - 2 >= 11: one hidden neighbour >= 1, and >= 1 distinct
+# value when duplicates are counted).
+MAX_ROWS_NO_COUNTS: Final = MIN_CELL_SIZE + 1
+
+OVERLAPPING_CHECK_REASON: Final = "another check already counts problem values in this column"
+TOO_FEW_ROWS_NOTE: Final = "too few rows to report counts"
 
 # Fewer rows than the small-cell threshold: every count would be suppressed.
 MIN_ROW_COUNT: Final = MIN_CELL_SIZE

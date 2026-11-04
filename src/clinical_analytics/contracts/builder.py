@@ -247,7 +247,8 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
             prop["transformDescription"] = "Codebook decoded from the column header"
 
     bounds = find_plausibility_range(column)
-    if bounds is not None and not is_id:
+    # Codes are not measurements ("Age 1: young 2: old"): a coded column gets no range check.
+    if bounds is not None and not is_id and "enum" not in prop:
         limits = {"minimum": bounds.minimum, "maximum": bounds.maximum}
         if dtype.is_numeric():
             prop["logicalTypeOptions"] = limits

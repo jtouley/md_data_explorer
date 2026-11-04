@@ -116,7 +116,12 @@ or more, and a column's missing + bad + valid counts would then pin a small one.
 there only means "at least 1" (zero is shown as 0). A check whose count is hidden always has the
 status "review", whatever the value (a pass/warning would say which side of a threshold it is on:
 1 of 20 missing "passed" at 5% meant exactly 1), so the summary and "N things to review" depend
-only on shown numbers. Tables of 1–12 rows hide the row count and every non-zero count. Its footnote: "Hidden to protect privacy:
+only on shown numbers. When any count in a column is 1–10, all of that column's non-zero counts
+are hidden together (hiding only some would let a reader work out which was smaller). A column
+gets one problem-value check at most: a coded column whose name looks like "age" or "BMI" gets
+its codebook check, not a range (codes are not measurements). The row count is always shown, as
+in the meta line and the first-rows overview; tables of 1–12 rows show it but hide every column
+count, zeros included, with the line "{N} rows: too few rows to report counts". Its footnote: "Hidden to protect privacy:
 counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be
 worked out from the totals. A hidden count is never zero."
 

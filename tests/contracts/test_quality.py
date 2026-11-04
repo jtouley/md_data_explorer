@@ -131,12 +131,12 @@ def test_runQuality_missingCounts_suppressedBelowMinCell(
     ("rows", "expected_status", "expected_row_count"),
     [
         (0, "warning", 0),
-        (5, config.HIDDEN_STATUS, config.COUNT_HIDDEN),
-        (10, config.HIDDEN_STATUS, config.COUNT_HIDDEN),
-        (12, config.HIDDEN_STATUS, config.COUNT_HIDDEN),
-        (13, "passed", 13),
+        (5, "warning", 5),
+        (10, "warning", 10),
+        (11, "passed", 11),
+        (12, "passed", 12),
     ],
-    ids=["empty", "small", "boundary_10", "boundary_12_all_hidden", "boundary_13_shown"],
+    ids=["empty", "small", "boundary_10", "boundary_11", "tiny_12_row_count_still_shown"],
 )
 def test_runQuality_rowCount_warnsBelowSmallCellThreshold(make_contract, rows, expected_status, expected_row_count):
     # Arrange
@@ -379,16 +379,16 @@ def test_runQuality_missingNearlyAll_complementSuppressed(make_contract, n_missi
 
 
 def test_runQuality_nanBmi_countedMissingNotOutOfRange(make_contract):
-    # Arrange: 30 rows, 12 NaN BMI and one 95 (above the 90 bound).
-    bmi = [float("nan")] * 12 + [95.0] + [25.0] * 17
-    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(30)], "bmi": bmi})
+    # Arrange: 40 rows: 12 NaN BMI, 11 at 95 (above the 90 bound), 17 normal; no count is small.
+    bmi = [float("nan")] * 12 + [95.0] * 11 + [25.0] * 17
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(40)], "bmi": bmi})
 
     # Act
     checks = _by_id(run_quality(df.lazy(), make_contract(df)))
 
-    # Assert
-    assert (checks["bmi_missing"].count, checks["bmi_missing"].percent) == (12, 40.0)
-    assert (checks["bmi_range"].count, checks["bmi_range"].status) == (config.COUNT_HIDDEN, config.HIDDEN_STATUS)
+    # Assert: NaN counted as missing (12), not as out of range (11 = only the 95s).
+    assert (checks["bmi_missing"].count, checks["bmi_missing"].percent) == (12, 30.0)
+    assert (checks["bmi_range"].count, checks["bmi_range"].status) == (11, "warning")
     assert "90" in checks["bmi_range"].message
 
 
@@ -439,12 +439,12 @@ def _column_cohort(n_missing: int, n_bad: int, rows: int = 400) -> pl.DataFrame:
 @pytest.mark.parametrize(
     ("n_missing", "n_bad", "expected_missing", "expected_bad"),
     [
-        (380, 15, 380, _HIDDEN),
-        (380, 12, 380, _HIDDEN),
-        (380, 10, 380, config.COUNT_HIDDEN),
-        (379, 11, 379, _HIDDEN),
+        (380, 15, _HIDDEN, _HIDDEN),
+        (380, 12, _HIDDEN, _HIDDEN),
+        (380, 10, _HIDDEN, _HIDDEN),
+        (379, 11, _HIDDEN, _HIDDEN),
         (378, 11, 378, 11),
-        (380, 9, 380, config.COUNT_HIDDEN),
+        (380, 9, _HIDDEN, _HIDDEN),
     ],
     ids=[
         "reviewer_statin_5_valid",
@@ -515,7 +515,8 @@ def _feasible_values(
                 return range(count, count + 1)
             if count == "<11":
                 return range(1, _LIMIT)
-            return range(_LIMIT if small_label else 1, total + 1)
+            floor = _LIMIT if small_label else (0 if total <= config.MAX_ROWS_NO_COUNTS else 1)
+            return range(floor, total + 1)
         return range(0, total + 1)  # never-shown rest cell
 
     if report.row_count == "<11":
@@ -561,9 +562,9 @@ def _assert_small_cells_robust(report: Any, truth: dict[str, int], lines, shown_
         if 0 < value < _LIMIT:
             options = feasible[cell]
             assert value in options, (label, cell)
-            if not isinstance(report.row_count, str):
+            if rows > config.MAX_ROWS_NO_COUNTS:
                 assert max(options) >= _LIMIT, (label, cell, value, sorted(options)[:12])
-            else:  # tiny table, row count hidden: at minimum never a single value
+            else:  # tiny table: every column count hidden; at minimum never a single value
                 assert len(options) > 1, (label, cell, value, sorted(options))
 
 
@@ -727,9 +728,9 @@ def _assert_reader_cannot_pin(df: pl.DataFrame, contract: Any, columns: dict[str
         for options, value, name in [*zip(seen, truths, cells), (rests, rows - sum(truths), f"{label} rest")]:
             assert value in options, (label, name)
             if 0 < value < _LIMIT:
-                if not isinstance(report.row_count, str):
+                if rows > config.MAX_ROWS_NO_COUNTS:
                     assert max(options) >= _LIMIT, (label, name, value, sorted(options))
-                else:  # tiny table, row count hidden: at minimum never a single value
+                else:  # tiny table: every column count hidden; at minimum never a single value
                     assert len(options) > 1, (label, name, value, sorted(options))
 
 
@@ -781,3 +782,104 @@ def test_runQuality_randomSmallTables_fullReportBruteForceNoSmallCountPinned(mak
                 "bmi": (("bmi_missing", "bmi_range"), "plain"),
             },
         )
+
+
+_CODED_AGE = "Age 1: young 2: old"
+
+
+def _coded_age_contract(make_contract: Any, with_range: bool) -> tuple[pl.DataFrame, OpenDataContractStandard]:
+    """A coded column whose short name is a plausibility alias; optionally a hand-written range too."""
+    df = pl.DataFrame({"patient_id": ["a", "b"], _CODED_AGE: [1, 2]})
+    contract = make_contract(df, created_at=FIXED_TS)
+    if with_range:
+        prop = next(p for p in contract.schema_[0].properties if p.physicalName == _CODED_AGE)
+        prop.logicalTypeOptions = {"minimum": 0, "maximum": 122}
+    return df, contract
+
+
+def test_buildContract_codedColumnNamedLikeAge_noRangeCheck(make_contract):
+    # Act: codes are not measurements, so "Age 1: young 2: old" gets its codebook check only.
+    df, contract = _coded_age_contract(make_contract, with_range=False)
+    ids = [c.id for c in compile_contract(contract, df.collect_schema())]
+
+    # Assert
+    assert "age_invalid" in ids
+    assert "age_range" not in ids
+
+
+def test_compileContract_secondBadValueCheckOnOneColumn_reportedNotRun(make_contract):
+    # Arrange: a hand-written contract asking for both a codebook and a range on one column.
+    df, contract = _coded_age_contract(make_contract, with_range=True)
+
+    # Act
+    checks = {c.id: c for c in compile_contract(contract, df.collect_schema())}
+
+    # Assert: one bad-value count per column keeps [missing, bad, rest] an exact partition.
+    assert checks["age_invalid"].expr is not None
+    assert checks["age_range"].expr is None
+    assert checks["age_range"].not_run_reason == config.OVERLAPPING_CHECK_REASON
+
+
+@pytest.mark.parametrize("with_range", [False, True], ids=["builder_contract", "hand_written_range"])
+def test_reportFromCounts_codedAgeJointCells_bruteForceNothingPinned(make_contract, with_range):
+    # Arrange: every (missing, invalid, out-of-range) with out-of-range a subset of invalid
+    # (a value outside 0-122 is never a code). Readers know that subset relation.
+    from collections import defaultdict
+
+    from clinical_analytics.contracts.quality import report_from_counts
+
+    df, contract = _coded_age_contract(make_contract, with_range)
+    checks = compile_contract(contract, df.collect_schema())
+    failures = []
+    for rows in (13, 14, 17, 20, 24):
+        groups: dict[str, list[tuple[int, int, int]]] = defaultdict(list)
+        for m in range(rows + 1):
+            for inv in range(rows - m + 1):
+                for rng in range(inv + 1):
+                    raw = {c.id: 0 for c in checks if c.expr is not None}
+                    raw.update(
+                        {"row_count_min": rows, "age_missing": m, "age_invalid": inv, "age_range": rng, ROWS_KEY: rows}
+                    )
+                    # Act
+                    report = report_from_counts(contract, checks, raw, run_at=FIXED_TS)
+                    groups[report.model_dump_json(exclude={"run_ts"})].append((m, inv, rng))
+
+        # Assert: every joint cell that is 1..10 could still be 11 or more for a reader.
+        for group in groups.values():
+
+            def cells(m: int, inv: int, rng: int, rows: int = rows) -> dict[str, int]:
+                return {
+                    "missing": m,
+                    "invalid": inv,
+                    "out_of_range": rng,
+                    "valid_code": rows - m - inv,
+                    "in_range": rows - m - rng,
+                    "in_range_not_code": inv - rng,
+                }
+
+            options: dict[str, set[int]] = defaultdict(set)
+            for candidate in group:
+                for name, value in cells(*candidate).items():
+                    options[name].add(value)
+            for candidate in group:
+                for name, value in cells(*candidate).items():
+                    if 0 < value < _LIMIT and max(options[name]) < _LIMIT:
+                        failures.append((rows, candidate, name, value, sorted(options[name])))
+    assert failures == [], failures[:5]
+
+
+@pytest.mark.parametrize("rows", [1, 5, 10, 11, 12])
+def test_runQuality_tinyTable_rowCountShownEveryColumnCountHidden(make_contract, rows):
+    # Arrange: the row count is shown elsewhere (overview line, /preview), so it is known here too.
+    df = _column_cohort(0, 1, rows=rows)
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert: zeros hidden as well, one fixed message, nothing that depends on a hidden value.
+    assert report.row_count == rows
+    for check in report.checks:
+        if check.metric != "rowCount":
+            assert (check.count, check.percent, check.status) == (config.COUNT_HIDDEN, None, config.HIDDEN_STATUS)
+            assert check.message.endswith(config.TOO_FEW_ROWS_NOTE)
+    assert report.summary == [f"{rows} rows: {config.TOO_FEW_ROWS_NOTE}"]
