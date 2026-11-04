@@ -52,3 +52,24 @@ def test_main_storeCheckPasses_startsUvicorn() -> None:
     # Assert
     prepare.assert_called_once()
     assert run.call_args.kwargs["port"] == 8123
+
+
+def test_main_embeddingModelMissing_plainMessageExit2NoServer(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # Arrange: point the model directory at an empty folder (as in a build that skipped the fetch)
+    monkeypatch.setenv("CLINICAL_ANALYTICS_EMBEDDING_MODEL_DIR", str(tmp_path))
+    with (
+        patch.object(serve, "prepare_store_for_engine", return_value=None),
+        patch.object(serve.uvicorn, "run") as run,
+        pytest.raises(SystemExit) as exited,
+    ):
+        # Act
+        serve.main([])
+
+    # Assert
+    err = capsys.readouterr().err
+    assert exited.value.code == serve.STORE_CHECK_FAILED_EXIT
+    assert "embedding model" in err and "make fetch-embedding-model" in err
+    assert "Traceback" not in err and len(err.strip().splitlines()) == 1
+    run.assert_not_called()

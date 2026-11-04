@@ -7,7 +7,7 @@
 - `make` on macOS/Linux
 - Optional: [Ollama](https://ollama.com/download), a local LLM used for questions the pattern matcher cannot handle
 
-Setup needs internet access: it downloads Python and Node packages, and the first run downloads an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`) and the `all-MiniLM-L6-v2` embedding model from Hugging Face. After that the app runs locally.
+Setup needs internet access: it downloads Python and Node packages, `make fetch-embedding-model` fetches the `all-MiniLM-L6-v2` ONNX embedding model (pinned, SHA-256 checked; bundled with the app, never downloaded at runtime), and the first run downloads an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`). After that the app runs locally.
 
 ## Install from source
 

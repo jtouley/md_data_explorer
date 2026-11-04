@@ -241,5 +241,8 @@ docs/screenshots/
 *.parquet
 data/*
 
+# Embedding model fetched at build time (make fetch-embedding-model); shipped in the wheel, never in git
+src/clinical_analytics/resources/models/
+
 # Mutation testing workdir
 mutants/

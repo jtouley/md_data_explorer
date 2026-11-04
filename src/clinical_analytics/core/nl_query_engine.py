@@ -140,7 +140,7 @@ class NLQueryEngine:
 
     Args:
         semantic_layer: SemanticLayer instance for metadata access
-        embedding_model: sentence-transformers model name (default: all-MiniLM-L6-v2)
+        embedding_model: embedding model name; only the bundled all-MiniLM-L6-v2 is supported
 
     Example:
         >>> engine = NLQueryEngine(semantic_layer)
@@ -155,8 +155,12 @@ class NLQueryEngine:
 
         Args:
             semantic_layer: SemanticLayer instance for metadata access
-            embedding_model: sentence-transformers model name
+            embedding_model: embedding model name (must be the bundled model, see core.embeddings)
         """
+        from clinical_analytics.core.embeddings import MODEL_NAME
+
+        if embedding_model != MODEL_NAME:
+            raise ValueError(f"Only the bundled embedding model {MODEL_NAME!r} is available, got {embedding_model!r}")
         self.semantic_layer = semantic_layer
         self.embedding_model_name = embedding_model
         self.encoder = None  # Lazy load
@@ -179,6 +183,17 @@ class NLQueryEngine:
 
         # Load golden examples for Tier 2 semantic matching
         self._load_golden_examples()
+
+    def _load_encoder(self) -> Any:
+        """The bundled ONNX sentence encoder. Never downloads; a missing model is logged loudly."""
+        from clinical_analytics.core.embeddings import EmbeddingModelMissingError, OnnxSentenceEncoder
+
+        try:
+            return OnnxSentenceEncoder()
+        except EmbeddingModelMissingError as e:
+            # serve.py refuses to start without the model; here (library use) semantic matching is off.
+            logger.error("embedding_model_missing", error=str(e), effect="semantic matching disabled")
+            raise
 
     def _load_golden_examples(self) -> None:
         """
@@ -210,10 +225,7 @@ class NLQueryEngine:
 
             # Lazy load encoder if needed
             if self.encoder is None:
-                from sentence_transformers import SentenceTransformer
-
-                encoder_obj = SentenceTransformer(self.embedding_model_name)
-                self.encoder = encoder_obj  # type: ignore[assignment]
+                self.encoder = self._load_encoder()  # type: ignore[assignment]
 
             if self.encoder is None:
                 logger.warning("golden_examples_encoder_unavailable")
@@ -1246,10 +1258,7 @@ class NLQueryEngine:
         try:
             # Lazy load encoder
             if self.encoder is None:
-                from sentence_transformers import SentenceTransformer
-
-                encoder_obj = SentenceTransformer(self.embedding_model_name)
-                self.encoder = encoder_obj  # type: ignore[assignment]
+                self.encoder = self._load_encoder()  # type: ignore[assignment]
 
             if self.encoder is None:
                 return None

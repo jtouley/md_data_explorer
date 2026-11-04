@@ -10,7 +10,8 @@ exception text, bypassing the redacting handler from ``core.log_redaction``. Eve
 Before uvicorn starts, the data store is checked against the running DuckDB
 (``storage.store_format.prepare_store_for_engine``). If it cannot be used (open in another
 program, unreadable, or no room for the check's copy), one plain line goes to stderr and the
-process exits with ``STORE_CHECK_FAILED_EXIT``, instead of a uvicorn lifespan traceback.
+process exits with ``STORE_CHECK_FAILED_EXIT``, instead of a uvicorn lifespan traceback. The same
+happens when the bundled embedding model is missing (``core.embeddings``; it is never downloaded).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from collections.abc import Sequence
 import uvicorn
 
 from clinical_analytics.core.data_home import uploads_dir
+from clinical_analytics.core.embeddings import EmbeddingModelMissingError, check_embedding_model
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.storage.datastore import StoreInUseError
 from clinical_analytics.storage.store_format import StoreFormatError, prepare_store_for_engine
@@ -54,10 +56,19 @@ def check_store() -> str | None:
     return None
 
 
+def check_bundled_model() -> str | None:
+    """Return a one-line reason if the bundled embedding model is missing (never downloaded)."""
+    try:
+        check_embedding_model()
+    except EmbeddingModelMissingError as e:
+        return str(e)
+    return None
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     configure_logging()
-    reason = check_store()
+    reason = check_bundled_model() or check_store()
     if reason is not None:
         print(f"Clinical Analytics cannot start: {' '.join(reason.split())}", file=sys.stderr)
         sys.exit(STORE_CHECK_FAILED_EXIT)

@@ -235,7 +235,7 @@ def test_load():
 
 **Characteristics:**
 - ✅ Use `mock_llm_calls` fixture to mock LLM calls (prevents 30s HTTP timeouts)
-- ✅ Use `nl_query_engine_with_cached_model` for fast SentenceTransformer access (2-5s speedup)
+- ✅ Use `nl_query_engine_with_cached_model` for the session-cached bundled ONNX encoder (no per-test model load)
 - ✅ Use test doubles (mocks, stubs, fakes) for external dependencies
 - ✅ Run fast (<1s per test)
 - ✅ No `@pytest.mark.integration` or `@pytest.mark.slow` markers

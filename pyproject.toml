@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Multi-dataset clinical analytics platform"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "LICENSES/*.txt"]
 requires-python = ">=3.11,<3.14"
 authors = [{ name = "Jason Touleyrou", email = "jtouley@gmail.com" }]
 dependencies = [
@@ -22,7 +22,10 @@ dependencies = [
     "openpyxl>=3.1.0",  # Excel file support
     "pyreadstat>=1.2.0",  # SPSS file support
     "pymupdf>=1.23.0",  # PDF text extraction
-    "sentence-transformers>=5.2.0",
+    # Embeddings for semantic matching: the all-MiniLM-L6-v2 ONNX export run with ONNX Runtime
+    # (core/embeddings.py). No torch: the model is bundled at build time (make fetch-embedding-model).
+    "onnxruntime>=1.20.0",
+    "tokenizers>=0.21.0",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
     "langchain>=1.2.0",
@@ -55,6 +58,10 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# The embedding model is gitignored (fetched by `make fetch-embedding-model`) but must ship.
+artifacts = ["src/clinical_analytics/resources/models/**"]
 
 [tool.ruff]
 line-length = 120

@@ -58,6 +58,8 @@ class SmokeResult:
     new_files_in_install: list[str] = field(default_factory=list)
     data_home_files: int = 0
     startup_seconds: float = 0.0
+    embedding_model_loaded: bool = False
+    golden_examples_embedded: bool = False
     server_log_tail: str = ""
 
 
@@ -238,6 +240,9 @@ def drive(python: Path, work: Path, offline: bool) -> SmokeResult:
             proc.kill()
             proc.wait()
         result.server_log_tail = "\n".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-25:])
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        result.embedding_model_loaded = "embedding_model_loaded" in log_text
+        result.golden_examples_embedded = "golden_examples_loaded" in log_text
 
     result.new_files_in_install = sorted(_snapshot(package_dir) - before)
     result.data_home_files = sum(1 for p in xdg.rglob("*") if p.is_file())

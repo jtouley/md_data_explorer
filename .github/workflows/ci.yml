@@ -46,6 +46,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --group dev
 
+      - name: Fetch bundled embedding model (pinned, SHA-256 checked)
+        run: make fetch-embedding-model
+
       - name: Fast test suite
         run: make test-fast
 
@@ -64,6 +67,9 @@ jobs:
 
       - name: Install Python dependencies
         run: uv sync --extra dev --group dev
+
+      - name: Fetch bundled embedding model (pinned, SHA-256 checked)
+        run: make fetch-embedding-model
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -99,6 +105,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --extra dev --group dev
+
+      - name: Fetch bundled embedding model (pinned, SHA-256 checked)
+        run: make fetch-embedding-model
 
       - name: Run Coverage Check
         run: make test-cov-check

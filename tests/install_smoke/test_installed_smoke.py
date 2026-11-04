@@ -28,6 +28,8 @@ def test_installed_wheel_unrelatedCwdOffline_servesHealthUploadAndQuery(tmp_path
     assert result.health_status == 200, result.server_log_tail
     assert result.upload_status == 200, result.server_log_tail
     assert result.query_status == "completed", result.server_log_tail
+    assert result.embedding_model_loaded, "bundled ONNX embedding model did not load offline"
+    assert result.golden_examples_embedded, result.server_log_tail
     assert result.new_files_in_install == [], "the app wrote into its install location"
     assert result.data_home_files > 0, "runtime data did not go to the temp data home"
     if _unshare_available():
