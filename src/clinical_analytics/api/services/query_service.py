@@ -204,7 +204,8 @@ class AsyncQueryService:
 
         if result.requires_confirmation:
             self._queries[query_id].status = "awaiting_confirmation"
-            self._queries[query_id].result = self._serialize_result(result.result)
+            # Same presented-only builder as a completed query: never the execution result.
+            self._queries[query_id].result = self._analysis_payload(result)
             self._emit_event(
                 query_id,
                 "query_awaiting_confirmation",
@@ -332,12 +333,15 @@ class AsyncQueryService:
         self._events.setdefault(query_id, []).append(event)
 
     def _analysis_payload(self, result: CoreQueryResult) -> dict[str, Any] | None:
-        """Claim, statistics table and full analysis for a completed query.
+        """Claim and small-cell-suppressed statistics table for a completed query.
 
-        Falls back to the raw execution rows only when no analysis was produced.
+        This is everything stored and returned (SSE preview and GET result_data). The raw
+        analysis dict (contingency counts, proportions, Kaplan-Meier steps) and the execution
+        rows never leave the API: they carry the counts the presented table hides. With no
+        analysis there is nothing presented, so nothing is returned.
         """
         if result.analysis is None:
-            return self._serialize_result(result.result)
+            return None
         presentation = present_analysis(result.analysis)
         table = presentation["table"]
         return {
@@ -345,8 +349,8 @@ class AsyncQueryService:
             "claim": presentation["claim"],
             "table": table,
             "row_count": len(table["rows"]) if table else 0,
+            # Plan-derived (chart type and column names), no data values.
             "chart_spec": to_json_safe(result.analysis.get("chart_spec")),
-            "analysis": to_json_safe(result.analysis),
         }
 
     def _preview_of(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:

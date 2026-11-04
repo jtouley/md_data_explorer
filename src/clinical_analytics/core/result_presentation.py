@@ -9,7 +9,7 @@ the same answer. A clause whose inputs are missing is left out rather than guess
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from typing import Any, TypedDict
 
@@ -108,25 +108,36 @@ def _complementary(cells: dict[Any, Any], hidden: set[Any], limit: int) -> set[A
     return extra
 
 
-def suppress_count_matrix(rows: list[list[Any]], threshold: int | None = None) -> set[tuple[int, int]]:
-    """Cells to hide in a table whose row and column totals are known (primary + secondary).
+def _suppress_lines(
+    cells: Mapping[Any, Any],
+    lines: Sequence[Sequence[Any]],
+    threshold: int | None = None,
+    hidden: set[Any] | None = None,
+) -> set[Any]:
+    """Cells to hide when each line's total is known (primary + secondary).
 
-    Primary: counts from 1 to threshold-1. Secondary: repeat across rows and columns until no
-    row or column has exactly one hidden cell.
+    Primary: counts from 1 to threshold-1 (plus any cells already in ``hidden``). Secondary:
+    repeat over the lines until none has a hidden cell that its total and the rest reveal.
     """
     limit = _limit(threshold)
-    hidden = {(i, j) for i, row in enumerate(rows) for j, v in enumerate(row) if _is_count(v) and 0 < int(v) < limit}
+    hidden = set(hidden or ()) | {k for k, v in cells.items() if _is_count(v) and 0 < int(v) < limit}
     changed = bool(hidden)
     while changed:
         changed = False
-        lines = [{(i, j): v for j, v in enumerate(row)} for i, row in enumerate(rows)]
-        lines += [{(i, j): rows[i][j] for i in range(len(rows))} for j in range(len(rows[0]) if rows else 0)]
         for line in lines:
-            extra = _complementary(line, hidden, limit) - hidden
+            extra = _complementary({k: cells[k] for k in line}, hidden, limit) - hidden
             if extra:
                 hidden |= extra
                 changed = True
     return hidden
+
+
+def suppress_count_matrix(rows: list[list[Any]], threshold: int | None = None) -> set[tuple[int, int]]:
+    """Cells to hide in a table whose row and column totals are known (primary + secondary)."""
+    cells = {(i, j): v for i, row in enumerate(rows) for j, v in enumerate(row)}
+    lines = [[(i, j) for j in range(len(row))] for i, row in enumerate(rows)]
+    lines += [[(i, j) for i in range(len(rows))] for j in range(len(rows[0]) if rows else 0)]
+    return _suppress_lines(cells, lines, threshold)
 
 
 def _mask(value: Any, threshold: int | None = None) -> str:
@@ -147,16 +158,43 @@ def _event_phrase(column: str, level: Any) -> str:
     return label if label.startswith(f"{name}=") else f"{name} = {label}"
 
 
-def _n_clause(analysis: Mapping[str, Any]) -> str | None:
-    """'n=377; 23 excluded for missing data', with small counts suppressed."""
+# Cell keys for the n clause; tuples so they never collide with a group name or a table cell.
+N_USED = ("n", "used")
+N_EXCLUDED = ("n", "excluded")
+
+
+def suppress_with_exclusions(
+    analysis: Mapping[str, Any], parts: Mapping[Any, Any], lines: Sequence[Sequence[Any]] = ()
+) -> set[Any]:
+    """Hidden cells of one answer: its count cells (``parts``) plus n_used and n_excluded.
+
+    n_used + n_excluded is the dataset row count, which the app shows, and the parts (group
+    sizes, table cells) add up to n_used. So [n_used, n_excluded] and [*parts, n_excluded] are
+    lines with a visible total: either both n counts are shown or both are hidden, and a hidden
+    n_excluded hides a part too. ``lines`` are further lines among the parts (rows, columns).
+    The parts are first suppressed against n_used as their total, so an exclusion count that
+    could stay visible is not used as their complement.
+    """
+    hidden = _suppress_lines(parts, [*lines, list(parts)])
+    cells = {**parts, N_USED: analysis.get("n_used"), N_EXCLUDED: analysis.get("n_excluded")}
+    return _suppress_lines(cells, [*lines, [N_USED, N_EXCLUDED], [*parts, N_EXCLUDED]], hidden=hidden)
+
+
+def _n_clause(analysis: Mapping[str, Any], hidden: set[Any] | None = None) -> str | None:
+    """'n=377; 23 excluded for missing data', or 'n hidden; some excluded for missing data'.
+
+    ``hidden`` comes from ``suppress_with_exclusions`` over the answer's count cells.
+    """
     n_used = analysis.get("n_used")
     if not isinstance(n_used, int):
         return None
-    clause = f"n={suppress_count(n_used)}"
+    if hidden is None:
+        hidden = suppress_with_exclusions(analysis, {})
     excluded = analysis.get("n_excluded")
-    if isinstance(excluded, int) and excluded > 0:
-        clause += f"; {suppress_count(excluded)} excluded for missing data"
-    return clause
+    has_excluded = isinstance(excluded, int) and excluded > 0
+    if N_USED in hidden or N_EXCLUDED in hidden:
+        return "n hidden; some excluded for missing data" if has_excluded else "n hidden"
+    return f"n={n_used}; {excluded} excluded for missing data" if has_excluded else f"n={n_used}"
 
 
 def _with_details(claim: str, details: list[str | None]) -> str:
@@ -210,14 +248,25 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     groups = [str(g) for g in analysis.get("groups") or []]
     label = {g: display_level(group_col, g) for g in groups}
     outcome_name = short_name(outcome)
-    n_clause = _n_clause(analysis)
     p_clause = f"{test} {_fmt_p(p)}" if p is not None else None
 
-    if test_type in ("welch_t_test", "t_test"):
+    if test_type in ("welch_t_test", "t_test", "anova"):
+        sizes = {str(g): group_sizes.get(str(g)) for g in group_means}
+        hidden = suppress_with_exclusions(analysis, sizes)
+        n_clause = _n_clause(analysis, hidden)
+        # A mean of a handful of patients is close to their values (one patient: that value),
+        # so a group's mean is hidden with its size, as the Kaplan-Meier median is. Hiding only
+        # the small groups' means would mark the complements as the large groups.
         rows = [
-            {group_col: label.get(str(g), str(g)), f"mean {outcome_name}": _num(m), "n": group_sizes.get(str(g))}
+            {
+                group_col: label.get(str(g), str(g)),
+                f"mean {outcome_name}": _mask(m) if str(g) in hidden else _num(m),
+                "n": _mask(sizes[str(g)]) if str(g) in hidden else sizes[str(g)],
+            }
             for g, m in group_means.items()
         ]
+
+    if test_type in ("welch_t_test", "t_test"):
         diff = _num(analysis.get("mean_diff"))
         lo, hi = _num(analysis.get("ci_lower")), _num(analysis.get("ci_upper"))
         claim: str | None = None
@@ -237,13 +286,9 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
                 claim += ", not statistically significant"
             claim = _with_details(claim, [ci_clause, p_clause, n_clause])
             claim += f". Unadjusted comparison by {group_col}."
-        return {"claim": claim, "table": _table(rows, count_columns=("n",))}
+        return {"claim": claim, "table": _table(rows)}
 
     if test_type == "anova":
-        rows = [
-            {group_col: label.get(str(g), str(g)), f"mean {outcome_name}": _num(m), "n": group_sizes.get(str(g))}
-            for g, m in group_means.items()
-        ]
         claim = None
         if p is not None:
             verb = "differed" if p < 0.05 else "did not differ significantly"
@@ -252,13 +297,17 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
                 f"Mean {outcome_name} {verb} across {n_groups} {group_col} groups", [p_clause, n_clause]
             )
             claim += ". Unadjusted."
-        return {"claim": claim, "table": _table(rows, count_columns=("n",))}
+        return {"claim": claim, "table": _table(rows)}
 
     # chi-square / Fisher on a contingency table (rows = outcome levels, columns = groups)
     contingency = [dict(row) for row in analysis.get("contingency") or []]
-    hidden = suppress_count_matrix([[row.get(g) for g in groups] for row in contingency])
+    cells = {(i, j): row.get(g) for i, row in enumerate(contingency) for j, g in enumerate(groups)}
+    lines = [[(i, j) for j in range(len(groups))] for i in range(len(contingency))]
+    lines += [[(i, j) for i in range(len(contingency))] for j in range(len(groups))]
+    hidden = suppress_with_exclusions(analysis, cells, lines)
+    n_clause = _n_clause(analysis, hidden)
     small_groups = any(_is_count(n) and 0 < int(n) < _limit(None) for n in group_sizes.values())
-    withheld = bool(hidden) or small_groups
+    withheld = bool(hidden & cells.keys()) or small_groups
     proportions = analysis.get("group_proportions") or {}
     event_level = analysis.get("event_level")
     claim = None
@@ -359,7 +408,6 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
     time_col = analysis.get("time_col") or "time"
     event_col = analysis.get("event_col") or "event"
     group_col = analysis.get("group_col")
-    n_clause = _n_clause(analysis)
     event_level = analysis.get("event_level")
     event = _event_phrase(event_col, event_level) if event_level is not None else short_name(event_col)
     group_medians = analysis.get("group_medians") or {}
@@ -370,41 +418,62 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
             m = _num(value)
             return f"{_fmt(m, 1)}" if m is not None else "not reached"
 
-        limit = _limit(None)
-        # A median of a handful of patients is one patient's time.
-        small = {g for g in group_medians if isinstance(group_sizes.get(g), int) and group_sizes[g] < limit}
-        hidden_text = f"not shown (fewer than {limit} patients)"
-        parts = ", ".join(
-            f"{display_level(group_col, g)} {hidden_text if g in small else _median_text(m)}"
+        # A median of a handful of patients is one patient's time. Hide the median of every
+        # group whose size is hidden: showing only the complements' medians would tell the small
+        # groups (fewer than the threshold) apart from the complements (at least the threshold).
+        sizes = {g: group_sizes.get(g) for g in group_medians}
+        hidden = suppress_with_exclusions(analysis, sizes)
+        n_clause = _n_clause(analysis, hidden)
+        small = {g for g in group_medians if g in hidden}
+        medians_text = ", ".join(
+            f"{display_level(group_col, g)} {'not shown' if g in small else _median_text(m)}"
             for g, m in group_medians.items()
         )
         logrank = _num(analysis.get("logrank_p_value"))
         claim = _with_details(
-            f"Median time to {event} ({time_col}) by {group_col}: {parts}",
+            f"Median time to {event} ({time_col}) by {group_col}: {medians_text}",
             [f"log-rank {_fmt_p(logrank)}" if logrank is not None else None, n_clause],
         )
         claim += ". Unadjusted."
+        if small:
+            claim += " Medians are not shown for groups whose size is hidden to protect privacy."
         rows = [
             {
                 group_col: display_level(group_col, g),
-                "n": group_sizes.get(g),
+                "n": _mask(sizes[g]) if g in small else sizes[g],
                 f"median {time_col}": SECONDARY_SUPPRESSED if g in small else _num(m),
             }
             for g, m in group_medians.items()
         ]
-        return {"claim": claim, "table": _table(rows, count_columns=("n",))}
+        return {"claim": claim, "table": _table(rows)}
+    n_used, n_events = analysis.get("n_used"), analysis.get("n_events")
+    counted = isinstance(n_used, int) and isinstance(n_events, int)
+    parts: dict[str, Any] = {}
+    if isinstance(n_used, int) and isinstance(n_events, int):
+        parts = {"events": n_events, "censored": n_used - n_events}
+    hidden = suppress_with_exclusions(analysis, parts)
+    n_clause = _n_clause(analysis, hidden)
     median = _num(analysis.get("median_survival"))
-    if median is not None:
+    # With n hidden the median may be one patient's time (and whether it was reached hints at
+    # their events); hide it whenever n is hidden, as for groups, so showing it never tells a
+    # large n apart from a small one.
+    n_hidden = N_USED in hidden
+    if n_hidden:
+        claim = _with_details(f"Median time to {event} ({time_col}) is not shown because n is hidden", [n_clause])
+        claim += "."
+    elif median is not None:
         claim = _with_details(f"Median time to {event} was {_fmt(median, 1)} ({time_col})", [n_clause]) + "."
     else:
         claim = _with_details(f"Median time to {event} was not reached during follow-up ({time_col})", [n_clause]) + "."
     # Summary only: the Kaplan-Meier step table lists individual event times and its steps reveal
     # counts in small risk sets.
-    n_used, n_events = analysis.get("n_used"), analysis.get("n_events")
-    if not (isinstance(n_used, int) and isinstance(n_events, int)):
+    if not counted:
         return {"claim": claim, "table": None}
-    events, censored = suppress_counts([n_events, n_used - n_events])
-    row = {"n": suppress_count(n_used), "events": events, "censored": censored, f"median {time_col}": median}
+    row = {
+        "n": _mask(n_used) if N_USED in hidden else n_used,
+        **{k: _mask(v) if k in hidden else v for k, v in parts.items()},
+        f"median {time_col}": _mask(median) if n_hidden else median,
+    }
     return {"claim": claim, "table": _table([row])}
 
 
@@ -413,28 +482,38 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
     if col:
         name = short_name(col)
         if analysis.get("is_numeric"):
-            stats = {k: _num(analysis.get(k)) for k in ("mean", "median", "std", "min", "max")}
+            stats: dict[str, Any] = {k: _num(analysis.get(k)) for k in ("mean", "median", "std", "min", "max")}
             n = analysis.get("non_null_count")
+            # The table hides a small n, so the claim says "n hidden" rather than mixing in "<11".
+            shown_n = suppress_counts([n])[0]
             claim = None
-            if stats["mean"] is not None:
+            if shown_n == SECONDARY_SUPPRESSED:
+                # With n from 1 to 10, min/max/median are patients' values and the mean of one
+                # patient is that value: show none of the statistics, only that n is hidden.
+                stats = {k: _mask(v) for k, v in stats.items()}
+                claim = f"Statistics for {name} are not shown because n is hidden (n hidden)."
+            elif stats["mean"] is not None:
                 claim = _with_details(
                     f"Mean {name} was {_fmt(stats['mean'])}",
                     [
                         f"SD {_fmt(stats['std'])}" if stats["std"] is not None else None,
                         f"median {_fmt(stats['median'])}" if stats["median"] is not None else None,
-                        f"n={suppress_count(n)}" if isinstance(n, int) else None,
+                        ("n hidden" if shown_n == SECONDARY_SUPPRESSED else f"n={n}") if isinstance(n, int) else None,
                     ],
                 )
                 claim += "."
-            row: dict[str, Any] = {"variable": name, "n": n, **stats}
-            return {"claim": claim, "table": _table([row], count_columns=("n",))}
+            row: dict[str, Any] = {"variable": name, "n": shown_n, **stats}
+            return {"claim": claim, "table": _table([row])}
         counts = list(analysis.get("value_counts") or [])
         rows = [{name: display_level(col, r.get(col)), "count": r.get("count")} for r in counts]
+        table = _table(rows, count_columns=("count",))
         claim = None
-        if rows:
-            top = rows[0]
-            claim = f"Most common {name}: {top[name]} ({suppress_count(top['count'])} patients)."
-        return {"claim": claim, "table": _table(rows, count_columns=("count",))}
+        if rows and table:
+            # Quote the top count as the table shows it: it may be the complement of a small cell.
+            shown = table["rows"][0]["count"]
+            count_text = "count hidden" if shown == SECONDARY_SUPPRESSED else f"{shown} patients"
+            claim = f"Most common {name}: {rows[0][name]} ({count_text})."
+        return {"claim": claim, "table": table}
     rows_n = analysis.get("row_count")
     cols = analysis.get("column_count")
     claim = f"The dataset has {rows_n} rows and {cols} columns." if rows_n is not None and cols is not None else None
@@ -452,8 +531,12 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
             rows = [dict(r) for r in group_counts]
         for row in rows:
             row[group_col] = display_level(group_col, row.get(group_col))
+        if _is_count(total) and isinstance(total, int | np.integer) and 0 < int(total) < _limit(None):
+            # Every group is then small, and k groups of at least 1 with a total under the
+            # threshold can pin each one (10 groups -> all 1), so the groups are not listed.
+            return {"claim": f"Total count: {suppress_count(total)}.", "table": None}
         noun = "group" if len(rows) == 1 else "groups"
-        claim = f"{suppress_count(total)} total across {len(rows)} {group_col} {noun}." if total is not None else None
+        claim = f"{total} total across {len(rows)} {group_col} {noun}." if total is not None else None
         return {"claim": claim, "table": _table(rows, count_columns=("count",))}
     claim = f"Total count: {suppress_count(total)}." if total is not None else None
     return {"claim": claim, "table": None}
