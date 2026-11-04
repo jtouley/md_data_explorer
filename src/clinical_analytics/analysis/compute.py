@@ -204,6 +204,15 @@ def _drop_missing(df: pl.DataFrame) -> pl.DataFrame:
 _CONSTANT_REL_TOL = 1e-9
 
 
+def _finite_or_none(value: float) -> float | None:
+    """An effect estimate, or None when it is inf/NaN (zero cell, overflow): never a non-finite number."""
+    number = float(value)
+    return number if np.isfinite(number) else None
+
+
+_EFFECT_COLUMNS = ("Odds Ratio", "CI Lower", "CI Upper")
+
+
 def _constant_groups(groups: list[Any], group_data: list[np.ndarray]) -> list[str]:
     """Groups whose values do not vary beyond float noise (range <= tolerance x magnitude)."""
     return [
@@ -682,7 +691,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             odds_ratio, _ = stats.fisher_exact(oriented)
             result.update(
                 {
-                    "odds_ratio": float(odds_ratio),
+                    "odds_ratio": _finite_or_none(odds_ratio),  # None for a zero cell (inf)
                     "odds_ratio_group": str(groups[1]),
                     "odds_ratio_reference": str(groups[0]),
                 }
@@ -1036,15 +1045,18 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
     except ModelNotEstimableError as exc:
         return {**base, "error": str(exc), "event_level": code_key(event_level)}
 
-    summary_dict = summary_df.to_dict(orient="index")
+    summary_dict = {
+        var: {col: (_finite_or_none(val) if col in _EFFECT_COLUMNS else val) for col, val in row.items()}
+        for var, row in summary_df.to_dict(orient="index").items()
+    }
     significant = summary_df[summary_df["P-Value"] < 0.05]
     significant_predictors = [
         {
             "variable": var,
-            "odds_ratio": float(summary_df.loc[var, "Odds Ratio"]),
+            "odds_ratio": _finite_or_none(summary_df.loc[var, "Odds Ratio"]),
             "p_value": float(summary_df.loc[var, "P-Value"]),
-            "ci_lower": float(summary_df.loc[var, "CI Lower"]),
-            "ci_upper": float(summary_df.loc[var, "CI Upper"]),
+            "ci_lower": _finite_or_none(summary_df.loc[var, "CI Lower"]),
+            "ci_upper": _finite_or_none(summary_df.loc[var, "CI Upper"]),
         }
         for var in significant.index
         if var != "Intercept"

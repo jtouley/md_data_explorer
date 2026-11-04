@@ -1169,3 +1169,55 @@ class TestComputeDegenerateGroupsReview:
         # Assert
         assert result["event_level"] == "1"
         assert result["odds_ratio"] == pytest.approx(64.0)
+
+
+class TestComputeNonFiniteEffectEstimates:
+    """Effect estimates are a finite number or None in the payload; p-values are kept."""
+
+    @pytest.mark.parametrize(
+        ("dead_a", "dead_b", "expected_or"),
+        [
+            (0, 8, None),  # no event in the reference group A: OR is inf
+            (1, 9, None),  # every patient in B has the event: OR is inf
+            (8, 0, 0.0),  # no event in B: OR is 0, which is finite
+        ],
+        ids=["zero_event_reference", "zero_non_event_group", "zero_event_group"],
+    )
+    def test_compute_comparison_fisherZeroCell_reportsNoneNotInf(
+        self, dead_a, dead_b, expected_or, sample_context_compare
+    ):
+        # Arrange: 9 patients per group
+        outcome = ["dead"] * dead_a + ["alive"] * (9 - dead_a) + ["dead"] * dead_b + ["alive"] * (9 - dead_b)
+        df = pl.DataFrame({"score": outcome, "category": ["A"] * 9 + ["B"] * 9})
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert result["test_type"] == "fisher_exact"
+        assert result["odds_ratio"] == expected_or
+        assert np.isfinite(result["p_value"])
+
+    @pytest.mark.parametrize("bad", [float("inf"), float("nan")], ids=["inf", "nan"])
+    def test_compute_predictor_nonFiniteOddsRatioOrCi_reportsNone(self, bad, sample_context_predictor, monkeypatch):
+        # Arrange: a fit whose CI overflowed. PANDAS EXCEPTION: run_logistic_regression returns pandas.
+        import pandas as pd
+
+        from clinical_analytics.analysis import stats as stats_module
+
+        summary = pd.DataFrame(
+            {"Odds Ratio": [1.0, bad], "CI Lower": [0.5, 2.0], "CI Upper": [2.0, bad], "P-Value": [0.5, 0.001]},
+            index=["Intercept", "age"],
+        )
+        monkeypatch.setattr(stats_module, "run_logistic_regression", lambda *_args, **_kwargs: (None, summary))
+        rng = np.random.default_rng(4)
+        df = pl.DataFrame({"outcome": rng.integers(0, 2, 40), "age": rng.normal(50.0, 9.0, 40)})
+        sample_context_predictor.predictor_variables = ["age"]
+
+        # Act
+        result = compute_predictor_analysis(df, sample_context_predictor)
+
+        # Assert
+        assert (result["summary"]["age"]["Odds Ratio"], result["summary"]["age"]["CI Upper"]) == (None, None)
+        top = result["significant_predictors"][0]
+        assert (top["odds_ratio"], top["ci_upper"], top["p_value"]) == (None, None, 0.001)
