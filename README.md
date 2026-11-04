@@ -20,7 +20,7 @@ The app runs locally after setup. It is **not a compliance certification**: whet
 - **Encrypt the disk.** Data at rest is not encrypted by the app; turn on FileVault (macOS) or BitLocker (Windows), or full-disk encryption on Linux.
 - **Never copy patient files into this repo.** `make check-data` (also part of `make check-fast` and CI) fails if git tracks data files.
 - **The LLM is local.** Harder questions are sent to [Ollama](https://ollama.com) at `OLLAMA_BASE_URL` (default `http://localhost:11434`). Prompts can include column names, category labels and summary results. **Do not point `OLLAMA_BASE_URL` at a remote host** - that would send them off your machine. Without Ollama, simpler questions still work through pattern and embedding matching.
-- **Setup needs the internet; daily use does not.** Installing downloads Python and Node packages, and the first run downloads models: an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`, from `config/ollama.yaml`) and the `all-MiniLM-L6-v2` sentence-transformers model from Hugging Face.
+- **Setup needs the internet; daily use does not.** Installing downloads Python and Node packages, and the first run downloads models: an Ollama model (`llama3.1:8b`, fallback `llama3.2:3b`, from `src/clinical_analytics/resources/config/ollama.yaml`) and the `all-MiniLM-L6-v2` sentence-transformers model from Hugging Face.
 - **Small counts are suppressed.** Patient counts from 1 to 10 are shown as `<11` in answers (`small_cell_threshold` in `core/config_loader.py`).
 
 ## Prerequisites
@@ -64,7 +64,7 @@ On Windows without `make`, install with `uv sync --extra dev --group dev` instea
 
 ## Your first question
 
-1. In the desktop app, click **Load sample**. This loads a synthetic sample cohort that ships with the repo (`data/demo/sample_cohort.csv`: patient ID, age, sex, diabetes, hypertension and a binary outcome). It contains no real patients.
+1. In the desktop app, click **Load sample**. This loads a synthetic sample cohort that ships with the app (`src/clinical_analytics/resources/demo/sample_cohort.csv`: patient ID, age, sex, diabetes, hypertension and a binary outcome). It contains no real patients.
 2. Ask: `compare outcome by diabetes`
 3. Then try `what predicts outcome`.
 

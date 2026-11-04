@@ -148,7 +148,7 @@ dev = [
 # are excluded for the same reason they are excluded from coverage: they run at import time.
 source_paths = ["src/clinical_analytics/"]
 do_not_mutate = ["src/clinical_analytics/ui/pages/*", "*/__init__.py"]
-also_copy = ["config/", "scripts/", "docs/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
+also_copy = ["scripts/", "docs/", "Makefile", "README.md", "AGENT.md", "taskmaster.yaml", ".coveragerc", ".cursor/", ".claude/"]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Each mutant pays ~15s of pytest collection; the 1s default budget misclassifies most as timeouts.
 timeout_constant = 60

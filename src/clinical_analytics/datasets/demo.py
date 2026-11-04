@@ -5,26 +5,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from clinical_analytics.core.resources import demo_file
+
 if TYPE_CHECKING:
     from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
 DEMO_DATASET_NAME = "Sample Clinical Cohort"
 DEMO_CSV_NAME = "sample_cohort.csv"
-_DEMO_RELATIVE_PATH = Path("data") / "demo" / DEMO_CSV_NAME
 
 # Predictor columns shipped with the bundled CSV (excluding id/outcome).
 DEMO_PREDICTORS = ("age", "sex", "diabetes", "hypertension")
 
 
-def get_project_root() -> Path:
-    """Return repository root (parent of ``src/``)."""
-    return Path(__file__).resolve().parents[3]
-
-
-def get_demo_csv_path(project_root: Path | None = None) -> Path:
-    """Absolute path to the bundled sample cohort CSV."""
-    root = project_root or get_project_root()
-    return root / _DEMO_RELATIVE_PATH
+def get_demo_csv_path() -> Path:
+    """Absolute path to the bundled sample cohort CSV (shipped inside the package)."""
+    return demo_file(DEMO_CSV_NAME)
 
 
 def build_demo_metadata() -> dict[str, Any]:
@@ -95,7 +90,8 @@ def load_sample_dataset(
     path = csv_path if csv_path is not None else get_demo_csv_path()
     if not path.exists():
         raise FileNotFoundError(
-            f"Bundled sample cohort CSV not found at {path}. Expected data/demo/sample_cohort.csv in the project tree."
+            f"Bundled sample cohort CSV not found at {path}. "
+            "The installed package is incomplete (clinical_analytics/resources/demo)."
         )
 
     file_bytes = path.read_bytes()

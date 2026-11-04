@@ -1,4 +1,4 @@
-.PHONY: help check-data mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help smoke-installed check-data mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -180,6 +180,10 @@ test-ui-serial: ensure-venv ## Run UI module tests serially (for debugging)
 test-api: ensure-venv ## Run all API tests (unit + integration)
 	@echo "$(GREEN)Running all API tests...$(NC)"
 	$(PYTEST) $(TEST_DIR)/api -v --tb=short $(PYTEST_ARGS)
+
+smoke-installed: ensure-venv ## Build the wheel, install it outside the repo and drive the API offline (slow)
+	@echo "$(GREEN)Running installed-wheel smoke test...$(NC)"
+	$(PYTEST) $(TEST_DIR)/install_smoke -v --tb=short -m "slow" $(PYTEST_ARGS)
 
 test-api-integration: ensure-venv ## Run API integration tests (with real server)
 	@echo "$(GREEN)Running API integration tests...$(NC)"

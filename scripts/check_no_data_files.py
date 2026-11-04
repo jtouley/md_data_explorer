@@ -17,7 +17,7 @@ DATA_EXTENSIONS = (
 )
 # Synthetic fixtures only. Data dictionaries come with the user's upload and stay local.
 ALLOWLIST = (
-    "data/demo/*.csv",
+    "src/clinical_analytics/resources/demo/*.csv",  # synthetic demo cohort shipped with the app
     "tests/fixtures/synthetic/*",
 )
 

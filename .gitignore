@@ -240,7 +240,6 @@ docs/screenshots/
 *.sqlite3
 *.parquet
 data/*
-!data/demo/
 
 # Mutation testing workdir
 mutants/
