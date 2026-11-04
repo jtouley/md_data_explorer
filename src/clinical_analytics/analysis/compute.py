@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
-from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, is_numeric_dtype
+from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, code_key, is_numeric_dtype
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
 
@@ -188,7 +188,45 @@ def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
         return None
 
 
-_MISSING_TOKENS = ("", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?")
+def _drop_missing(df: pl.DataFrame) -> pl.DataFrame:
+    """Rows with no null and no NaN/inf in any column.
+
+    Polars drop_nulls keeps NaN, and a NaN outcome turns every mean and p-value into NaN while
+    n_excluded stays 0. Callers count the dropped rows as excluded.
+    """
+    finite = [pl.col(name).is_finite() for name, dtype in df.schema.items() if dtype.is_float()]
+    complete = df.drop_nulls()
+    return complete.filter(pl.all_horizontal(finite)) if finite else complete
+
+
+# Spread at or below this fraction of the values' magnitude is float noise, not variation:
+# 0.1 + 0.2 and 0.3 differ by ~1e-16 relative and must count as one constant value.
+_CONSTANT_REL_TOL = 1e-9
+
+
+def _finite_or_none(value: float) -> float | None:
+    """An effect estimate, or None when it is inf/NaN (zero cell, overflow): never a non-finite number."""
+    number = float(value)
+    return number if np.isfinite(number) else None
+
+
+_EFFECT_COLUMNS = ("Odds Ratio", "CI Lower", "CI Upper")
+
+
+def _constant_groups(groups: list[Any], group_data: list[np.ndarray]) -> list[str]:
+    """Groups whose values do not vary beyond float noise (range <= tolerance x magnitude)."""
+    return [
+        str(g)
+        for g, d in zip(groups, group_data, strict=True)
+        if float(np.ptp(d)) <= _CONSTANT_REL_TOL * float(np.max(np.abs(d)))
+    ]
+
+
+# "inf" is a non-finite value, missing like NaN, not a category label.
+_MISSING_TOKENS = (
+    "", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?", "inf", "+inf", "-inf", "infinity",
+    "+infinity", "-infinity",
+)  # fmt: skip
 _NUMERIC_TEXT = r"^\s*[<>]?\s*-?\d[\d,]*(\.\d+)?\s*$"
 
 
@@ -319,15 +357,20 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
         # Mean/SD only for continuous measures; 0/1 flags and coded categories get frequencies.
         is_numeric = classify_variable(analysis_series) == "continuous"
 
-        non_null_count = row_count - analysis_series.null_count()
+        # NaN/inf are missing too: the mean below is over the finite values, and the counts match it.
+        if is_numeric_dtype(analysis_series.dtype):
+            non_null_count = _drop_missing(analysis_series.to_frame()).height
+        else:
+            non_null_count = row_count - analysis_series.null_count()
+        missing_count = row_count - non_null_count
 
         result = {
             "type": "descriptive",
             "focused_variable": col,
             "row_count": row_count,
             "non_null_count": non_null_count,
-            "null_count": analysis_series.null_count(),
-            "null_pct": (analysis_series.null_count() / row_count * 100) if row_count > 0 else 0.0,
+            "null_count": missing_count,
+            "null_pct": (missing_count / row_count * 100) if row_count > 0 else 0.0,
             "original_count": original_count,
             "filtered_count": filtered_count,
             "filters_applied": filters_applied,
@@ -341,8 +384,8 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
         # Compute stats based on dtype
         if is_numeric:
             # Numeric variable - compute mean, median, std, min, max
-            clean_series = analysis_series.drop_nulls()
-            if len(clean_series) > 0:
+            clean_series = _drop_missing(analysis_series.to_frame()).to_series()
+            if clean_series.len() > 0:
                 mean_val = clean_series.mean()
                 median_val = clean_series.median()
                 std_val = clean_series.std() if len(clean_series) > 1 else None  # SD is undefined for one value
@@ -494,7 +537,17 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     - binary or categorical outcome: chi-square, or Fisher's exact test for a 2x2 table with
       an expected count below 5; binary outcomes also report per-group proportions
 
-    Rows missing the outcome or group are excluded and counted (n_excluded).
+    Rows missing the outcome or group (null, NaN or infinite) are excluded and counted
+    (n_excluded). Refused with an error, never reported as a result: a Welch test where either
+    group's values do not vary (its p-value is a numerical limit and its interval undefined),
+    and an ANOVA with a group under 2 patients or no variation within any group (F is inf or NaN).
+
+    Fisher's odds ratio is the odds of the event level in groups[1] over groups[0], with groups
+    in sorted order and groups[0] the reference. For a text group column that is the same
+    reference the logistic model's indicators use; a numeric predictor is fitted as a slope
+    there, so the two are not directly comparable. The ratio does not depend on what the
+    non-event level is called, is None for a zero cell, and is omitted when the event level is
+    unknown.
     Returns serializable dict (no Polars objects).
     """
     df, _ = _apply_context_filters(df, context)
@@ -506,7 +559,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         return {"type": "comparison", "error": "Missing required columns for comparison"}
 
     n_in_scope = df.height
-    analysis_df = df.select([outcome_col, group_col]).drop_nulls()
+    analysis_df = _drop_missing(df.select([outcome_col, group_col]))
     n_used = analysis_df.height
     n_excluded = n_in_scope - n_used
 
@@ -521,7 +574,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             return {"type": "comparison", "error": str(exc)}
         if converted is not None:
             # Missing-value tokens ("n/a", ".") became null: exclude and count them.
-            analysis_df = analysis_df.with_columns(converted.alias(outcome_col)).drop_nulls()
+            analysis_df = _drop_missing(analysis_df.with_columns(converted.alias(outcome_col)))
             n_used = analysis_df.height
             n_excluded = n_in_scope - n_used
             if n_used < 2:
@@ -561,6 +614,14 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             a, b = group_data
             if min(len(a), len(b)) < 2:
                 return {**base, "error": "Each group needs at least 2 observations for a t-test"}
+            constant = _constant_groups(groups, group_data)
+            if constant:
+                # Zero within-group variance: scipy returns p=0 with t=inf and the Welch df is NaN.
+                return {
+                    **base,
+                    "error": f"{outcome_col} values do not vary within a group ({', '.join(constant)}), so a "
+                    "t-test p-value and confidence interval cannot be calculated.",
+                }
             statistic, p_value = stats.ttest_ind(a, b, equal_var=False)
             var_a, var_b = np.var(a, ddof=1) / len(a), np.var(b, ddof=1) / len(b)
             se_diff = float(np.sqrt(var_a + var_b))
@@ -580,6 +641,16 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "ci_upper": mean_diff + t_crit * se_diff,
                 "group_means": group_means,
                 **headline,
+            }
+        small = [str(g) for g, d in zip(groups, group_data, strict=True) if len(d) < 2]
+        if small:
+            return {**base, "error": f"Each group needs at least 2 observations for ANOVA ({', '.join(small)})"}
+        if len(_constant_groups(groups, group_data)) == n_groups:
+            # No within-group variation: scipy returns F=inf and p=0.
+            return {
+                **base,
+                "error": f"{outcome_col} values do not vary within any {group_col} group, so an ANOVA p-value "
+                "cannot be calculated.",
             }
         statistic, p_value = stats.f_oneway(*group_data)
         return {
@@ -610,15 +681,28 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         "contingency_index_col": outcome_col,
         "min_expected_count": float(expected.min()),
     }
+    event_row: int | None = None
     if outcome_kind == "binary":
         event = binary_event_level(analysis_df[outcome_col])
         if event is not None and event in outcome_levels:
             event_row = outcome_levels.index(event)
             proportions = {str(g): float(table[event_row, j] / table[:, j].sum()) for j, g in enumerate(groups)}
-            result.update({"event_level": str(event), "group_proportions": proportions})
+            result.update({"event_level": code_key(event), "group_proportions": proportions})
     if table.shape == (2, 2) and expected.min() < 5:
-        odds_ratio, p_value = stats.fisher_exact(table)
-        result.update({"test_type": "fisher_exact", "p_value": float(p_value), "odds_ratio": float(odds_ratio)})
+        _, p_value = stats.fisher_exact(table)  # two-sided p does not depend on row or column order
+        result.update({"test_type": "fisher_exact", "p_value": float(p_value)})
+        if event_row is not None:
+            # Rows: event, non-event. Columns: groups[1], groups[0]. scipy's (a*d)/(b*c) is then
+            # the odds of the event in groups[1] relative to groups[0].
+            oriented = table[[event_row, 1 - event_row]][:, [1, 0]]
+            odds_ratio, _ = stats.fisher_exact(oriented)
+            result.update(
+                {
+                    "odds_ratio": _finite_or_none(odds_ratio),  # None for a zero cell (inf)
+                    "odds_ratio_group": str(groups[1]),
+                    "odds_ratio_reference": str(groups[0]),
+                }
+            )
         return result
     chi2, p_value, dof, _ = stats.chi2_contingency(table)
     result.update({"test_type": "chi_square", "chi2": float(chi2), "p_value": float(p_value), "dof": int(dof)})
@@ -926,7 +1010,7 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         }
 
     n_in_scope = df.height
-    analysis_df = df.select([outcome_col, *predictors]).drop_nulls()
+    analysis_df = _drop_missing(df.select([outcome_col, *predictors]))
     n_used = analysis_df.height
     base: dict[str, Any] = {
         "type": "predictor",
@@ -966,17 +1050,20 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
     try:
         _, summary_df = run_logistic_regression(analysis_df_pd, outcome_col, model_predictors)
     except ModelNotEstimableError as exc:
-        return {**base, "error": str(exc), "event_level": str(event_level)}
+        return {**base, "error": str(exc), "event_level": code_key(event_level)}
 
-    summary_dict = summary_df.to_dict(orient="index")
+    summary_dict = {
+        var: {col: (_finite_or_none(val) if col in _EFFECT_COLUMNS else val) for col, val in row.items()}
+        for var, row in summary_df.to_dict(orient="index").items()
+    }
     significant = summary_df[summary_df["P-Value"] < 0.05]
     significant_predictors = [
         {
             "variable": var,
-            "odds_ratio": float(summary_df.loc[var, "Odds Ratio"]),
+            "odds_ratio": _finite_or_none(summary_df.loc[var, "Odds Ratio"]),
             "p_value": float(summary_df.loc[var, "P-Value"]),
-            "ci_lower": float(summary_df.loc[var, "CI Lower"]),
-            "ci_upper": float(summary_df.loc[var, "CI Upper"]),
+            "ci_lower": _finite_or_none(summary_df.loc[var, "CI Lower"]),
+            "ci_upper": _finite_or_none(summary_df.loc[var, "CI Upper"]),
         }
         for var in significant.index
         if var != "Intercept"
@@ -986,7 +1073,7 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
 
     return {
         **base,
-        "event_level": str(event_level),
+        "event_level": code_key(event_level),
         "summary": summary_dict,
         "significant_predictors": significant_predictors,
         "schema": {col: str(dtype) for col, dtype in summary_df.dtypes.items()},
@@ -1017,7 +1104,7 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
 
     columns = [time_col, event_col] + ([group_col] if group_col else [])
     n_in_scope = df.height
-    analysis_df = df.select(columns).drop_nulls()
+    analysis_df = _drop_missing(df.select(columns))
     n_used = analysis_df.height
     base: dict[str, Any] = {
         "type": "survival",
@@ -1053,7 +1140,7 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
 
     result: dict[str, Any] = {
         **base,
-        "event_level": str(event_level),
+        "event_level": code_key(event_level),
         "n_events": n_events,
         "summary": summary_df.to_dict(orient="records"),
         "median_survival": median_survival,
@@ -1174,7 +1261,7 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
         }
 
     # Calculate correlations using only numeric variables
-    analysis_df = df.select(numeric_variables).drop_nulls()
+    analysis_df = _drop_missing(df.select(numeric_variables))
 
     if analysis_df.height < 3:
         return {"type": "relationship", "error": "Need at least 3 observations with complete data"}
