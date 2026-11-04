@@ -3,7 +3,7 @@
 Reproduces ``SentenceTransformer("all-MiniLM-L6-v2").encode()`` exactly in structure:
 BERT tokenisation (max 256 tokens, longest-first truncation, pad to the longest in the batch),
 the official ONNX export of the same weights, mean pooling over the attention mask, then L2
-normalisation (the model's Normalize module). tests/core/test_embeddings_equivalence.py checks
+normalisation (the model's Normalize module). tests/core/test_embeddings.py checks
 cosine >= 0.999 against recorded torch outputs and identical golden-example top-k.
 
 The model is shipped with the app (``clinical_analytics/resources/models``), fetched once at
@@ -14,6 +14,8 @@ revision with SHA-256 checks. It is never downloaded at runtime: a missing model
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -57,6 +59,10 @@ class EmbeddingModelMissingError(FileNotFoundError):
     """The bundled embedding model is not where the app expects it."""
 
 
+class EmbeddingModelIntegrityError(EmbeddingModelMissingError):
+    """A bundled model file is present but its SHA-256 is not the pinned one (corrupt or replaced)."""
+
+
 def bundled_model_dir() -> Path:
     """Where the build puts the model inside the package."""
     return resources_root() / "models" / MODEL_NAME
@@ -68,8 +74,49 @@ def embedding_model_dir() -> Path:
     return Path(override).expanduser() if override else bundled_model_dir()
 
 
-def check_embedding_model(model_dir: Path | None = None) -> Path:
-    """Return the model directory, or raise naming the missing files and the fix."""
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        while block := f.read(1 << 20):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _stat_key(path: Path) -> list[int]:
+    st = path.stat()
+    return [st.st_size, st.st_mtime_ns]
+
+
+def _read_cache(cache_path: Path | None) -> dict[str, object]:
+    if cache_path is None:
+        return {}
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}  # no cache yet, or unreadable: hash again
+    return data if isinstance(data, dict) else {}
+
+
+def _write_cache(cache_path: Path | None, entries: dict[str, object]) -> None:
+    if cache_path is None:
+        return
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_path.with_name(cache_path.name + ".tmp")
+        tmp.write_text(json.dumps(entries), encoding="utf-8")
+        tmp.replace(cache_path)
+    except OSError as e:
+        logger.warning("embedding_model_check_cache_not_written", error_type=type(e).__name__)
+
+
+def check_embedding_model(
+    model_dir: Path | None = None, *, verify: bool = False, cache_path: Path | None = None
+) -> Path:
+    """Return the model directory, or raise naming the missing (or, with verify, corrupt) files.
+
+    With ``verify`` the runtime files' SHA-256 must equal the pinned ``MODEL_FILES`` values. A
+    verified (path, size, mtime) is remembered in ``cache_path`` so later starts skip the ~0.3 s hash.
+    """
     root = model_dir if model_dir is not None else embedding_model_dir()
     missing = [name for name in RUNTIME_FILES if not (root / name).is_file()]
     if missing:
@@ -77,6 +124,22 @@ def check_embedding_model(model_dir: Path | None = None) -> Path:
             f"The embedding model {MODEL_NAME} is missing from {root} ({', '.join(missing)}). "
             f"{FETCH_HINT}; the app never downloads it at runtime."
         )
+    if not verify:
+        return root
+    cache = _read_cache(cache_path)
+    verified: dict[str, object] = {}
+    for name in RUNTIME_FILES:
+        path = root / name
+        key = [str(path.resolve()), *_stat_key(path), MODEL_FILES[name]]
+        if cache.get(name) != key:
+            if _sha256(path) != MODEL_FILES[name]:
+                raise EmbeddingModelIntegrityError(
+                    f"The embedding model file {name} in {root} does not match its pinned SHA-256 "
+                    f"(damaged or replaced). {FETCH_HINT} again, or reinstall the app."
+                )
+        verified[name] = key
+    if verified != cache:
+        _write_cache(cache_path, verified)
     return root
 
 

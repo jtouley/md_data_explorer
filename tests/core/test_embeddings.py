@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from clinical_analytics.core.embeddings import (
 REFERENCE = json.loads(
     (Path(__file__).resolve().parents[1] / "fixtures" / "embeddings" / "minilm_reference.json").read_text()
 )
-MIN_COSINE = 0.999
+MIN_COSINE = 0.99999  # measured minimum 0.9999999 (1.23.2: 0.99999988)
 
 
 def _phrase_id(text: str) -> str:
@@ -203,3 +204,60 @@ def test_nl_query_engine_unknownEmbeddingModel_raisesValueError(make_semantic_la
     # Act / Assert
     with pytest.raises(ValueError, match="bundled embedding model"):
         NLQueryEngine(semantic, embedding_model="all-mpnet-base-v2")
+
+
+@pytest.fixture
+def pinned_model_copy(tmp_path):
+    """The runtime model files copied into a temp dir (so they can be damaged)."""
+    import shutil
+
+    dest = tmp_path / "model"
+    for name in embeddings.RUNTIME_FILES:
+        (dest / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(embeddings.bundled_model_dir() / name, dest / name)
+    return dest
+
+
+@pytest.mark.parametrize("damaged", embeddings.RUNTIME_FILES)
+def test_check_embedding_model_verifyDamagedFile_raisesIntegrityError(pinned_model_copy, damaged):
+    # Arrange: same size, one flipped byte
+    path = pinned_model_copy / damaged
+    data = bytearray(path.read_bytes())
+    data[len(data) // 2] ^= 0xFF
+    path.write_bytes(bytes(data))
+
+    # Act / Assert
+    with pytest.raises(embeddings.EmbeddingModelIntegrityError, match="pinned SHA-256") as excinfo:
+        check_embedding_model(pinned_model_copy, verify=True)
+    assert damaged in str(excinfo.value)
+
+
+def test_check_embedding_model_verifiedCache_skipsHashUntilFileChanges(pinned_model_copy, tmp_path, monkeypatch):
+    # Arrange
+    cache = tmp_path / "cache" / "check.json"
+    check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)
+    hashed: list[str] = []
+    real_sha = embeddings._sha256
+    monkeypatch.setattr(embeddings, "_sha256", lambda p: hashed.append(p.name) or real_sha(p))
+
+    # Act: unchanged files -> no hashing; a touched file -> hashed (and still verified)
+    check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)
+    hashed_when_unchanged = list(hashed)
+    tok = pinned_model_copy / "tokenizer.json"
+    os.utime(tok, ns=(tok.stat().st_atime_ns, tok.stat().st_mtime_ns + 1_000_000_000))
+    check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)
+
+    # Assert
+    assert hashed_when_unchanged == []
+    assert hashed == ["tokenizer.json"]
+
+
+def test_check_embedding_model_cacheSaysVerifiedButBytesReplaced_stillCaught(pinned_model_copy, tmp_path):
+    # Arrange: verified once, then replaced with different bytes of a different size
+    cache = tmp_path / "check.json"
+    check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)
+    (pinned_model_copy / "tokenizer.json").write_text("{}")
+
+    # Act / Assert
+    with pytest.raises(embeddings.EmbeddingModelIntegrityError):
+        check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)

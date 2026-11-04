@@ -8,7 +8,7 @@ stack pulled in for this command only:
 
 It writes tests/fixtures/embeddings/minilm_reference.json: the torch embeddings of a fixed list
 of synthetic clinical phrases, and the torch top-k golden-example matches for each phrase.
-tests/core/test_embeddings_equivalence.py compares the ONNX encoder against it.
+tests/core/test_embeddings.py compares the ONNX encoder against it.
 """
 
 from __future__ import annotations
