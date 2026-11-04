@@ -23,23 +23,13 @@ _LABEL_FIRST = re.compile(r"(?<![\w-])([A-Za-z]+)\s*[:=]\s*(\d+)(?![\w.])")
 _LABEL_TRIM = " \t,;/|()[]{}"
 # Fewer than two code/label pairs is a unit or a time point ("Week 4: weight"), not a code list.
 _MIN_PAIRS = 2
-# A label that starts with a unit ("years", "mg/dL") is a measurement note, not a category:
-# "Age at visit 1: years, visit 2: years" is two time points, not codes 1 and 2. Single
-# letters are left out because "1: M 2: F" is a real codebook.
-_UNIT_WORDS = frozenset(
-    {
-        "year", "years", "yr", "yrs", "month", "months", "mo", "mos", "week", "weeks", "wk", "wks",
-        "day", "days", "hour", "hours", "hr", "hrs", "minute", "minutes", "min", "mins", "second",
-        "seconds", "sec", "kg", "mg", "mcg", "ug", "ng", "pg", "lb", "lbs", "cm", "mm", "ml", "dl",
-        "mmol", "umol", "mmhg", "bpm", "iu", "units", "percent", "pct",
-    }
-)  # fmt: skip
-# Separators inside a label mean the text runs on past the label ("years, visit"), so the
-# header is prose with numbers in it rather than a code list.
-_LABEL_RUN_ON = re.compile(r"[,;]")
+# Letter tokens of a header or label ("Age at visit" -> ["age", "at", "visit"]).
+_WORD = re.compile(r"[a-z]+")
 
-# Integer-like text ("1", " 2", "1.0"): codes stored as text follow the numeric rule.
-_INTEGER_TEXT = re.compile(r"\s*-?\d+(\.0+)?\s*")
+# Integer-like text ("1", " 2", "+1", "1.0"): codes stored as text follow the numeric rule.
+_INTEGER_TEXT = re.compile(r"\s*[-+]?\d+(\.0+)?\s*")
+# "censor=0", "CNSR: 1": the header names the code that means censored.
+_CENSOR_CODE = re.compile(r"(?<![a-z])(?:censor[a-z]*|cnsr)\s*[:=]\s*(\d+)", re.IGNORECASE)
 
 # Words that name the event (modelled as 1) or the non-event of a binary variable.
 _EVENT_WORDS = frozenset(
@@ -56,7 +46,7 @@ _NON_EVENT_WORDS = frozenset(
 )  # fmt: skip
 # Column-name tokens that say the 1/yes level is NOT the event ("Alive 1: Yes 2: No", "survived",
 # CDISC "CNSR" where 1 = censored). "n" is left out: "n_stage" is not the word "no".
-_NON_EVENT_NAME_WORDS = (_NON_EVENT_WORDS - {"n"}) | {"survival", "censor", "censoring", "cnsr"}
+_NON_EVENT_NAME_WORDS = (_NON_EVENT_WORDS - {"n"}) | {"survival", "censor", "censoring", "censorship", "cnsr"}
 # Event words that name the outcome itself. Under a non-event column name these still identify
 # the event ("CNSR 0: event 1: censored"); affirmations like "yes" or "positive" do not, because
 # "yes" under "Alive" means alive.
@@ -76,8 +66,9 @@ def code_labels(name: str) -> dict[str, str]:
     'DEXA 1: Normal, 2: Osteopenia' -> {'1': 'Normal', '2': 'Osteopenia'};
     'Smoker (1=yes, 2=no)' -> {'1': 'yes', '2': 'no'}; 'Yes: 1 No: 0' -> {'1': 'Yes', '0': 'No'}.
 
-    Labels that start with a unit ("1: years") or run on past a comma ("1: years, visit") mean
-    the numbers are time points or measurements, so the header is not a code list.
+    Two codes with the same label are not a code list. That catches a header that repeats its
+    own phrase before each number, "Age at visit 1: years, visit 2: years": with the repeated
+    "visit" set aside, both labels read "years", so 1 and 2 are time points, not codes.
     """
     matches = list(_CODE_FIRST.finditer(name))
     labels: dict[str, str] = {}
@@ -87,17 +78,28 @@ def code_labels(name: str) -> dict[str, str]:
         if label[:1].isalpha():
             labels[match.group(1)] = label
     if len(labels) >= _MIN_PAIRS:
-        return labels if all(_is_category_label(label) for label in labels.values()) else {}
+        return {} if _labels_repeat(name[: matches[0].start()], list(labels.values())) else labels
     pairs = {code: label for label, code in _LABEL_FIRST.findall(name)}
     return pairs if len(pairs) >= _MIN_PAIRS else {}
 
 
-def _is_category_label(label: str) -> bool:
-    """A category name ("Osteopenia", "Treatment A", "n/a"), not a unit or run-on prose."""
-    if _LABEL_RUN_ON.search(label):
-        return False
-    first_word = re.split(r"[\s/]+", label.lower(), maxsplit=1)[0]
-    return first_word not in _UNIT_WORDS
+def _labels_repeat(prefix: str, labels: list[str]) -> bool:
+    """Whether two labels match once a trailing copy of the header's last word is set aside.
+
+    prefix is the header text before the first code ("Age at visit "). Every label but the last
+    runs up to the next code, so "years, visit" ends with the word that also leads code 1.
+    """
+    lead = _WORD.findall(prefix.lower())[-1:]
+    seen: set[tuple[str, ...]] = set()
+    for i, label in enumerate(labels):
+        words = _WORD.findall(label.lower())
+        if lead and i < len(labels) - 1 and words[-1:] == lead and len(words) > 1:
+            words = words[:-1]
+        key = tuple(words)
+        if key in seen:
+            return True
+        seen.add(key)
+    return False
 
 
 def header_has_code_labels(name: str) -> bool:
@@ -105,7 +107,7 @@ def header_has_code_labels(name: str) -> bool:
     return bool(code_labels(name))
 
 
-def _code_key(level: object) -> str:
+def code_key(level: object) -> str:
     """'2', 2 and 2.0 all name code '2'."""
     if isinstance(level, float) and level.is_integer():
         return str(int(level))
@@ -143,35 +145,46 @@ def binary_event_level(series: pl.Series) -> object | None:
     """The level modelled as the event (1) for a binary variable, or None when it cannot be told.
 
     - Boolean: True. Numeric 0/1: 1 (also when only one of the two values occurs).
-    - Integer-like text ("0"/"1", "1"/"2") follows the numeric rule, returning the text level:
-      a CSV that stores codes as text means the same thing as one that stores numbers.
+    - Integer-like text ("0"/"1", "+1"/"0", "1"/"2") follows the numeric rule, returning the text
+      level: a CSV that stores codes as text means the same thing as one that stores numbers.
+      Two spellings of one code ("1" and "01") are refused.
     - Otherwise the level whose label (decoded from the header, or the text value itself) is
       an event word (yes, dead, positive, ...), else the level opposite a non-event word
       (no, alive, ...).
     - Column named for the non-event (alive, survived, censored, censor, CNSR): None, unless
-      the header labels a level with an outcome word ("CNSR 0: event 1: censored"). In CDISC,
-      CNSR=1 means censored, so the usual 0/1 rule would model censoring as the event.
+      the header states the event: a label that names the outcome ("CNSR 0: event 1:
+      censored") or the censored code ("Death (censor=0)"). In CDISC, CNSR=1 means censored,
+      so the usual 0/1 rule would model censoring as the event.
     - Unrecognised text: the last level in sorted order; callers report the chosen level.
     - Codes other than 0/1 with no decodable labels (e.g. bare 1/2, numeric or text): None,
       because SPSS-style data often codes 2 as "No" and guessing would flip the answer.
     """
     if series.dtype == pl.Boolean:
         return True
-    levels = sorted(series.drop_nulls().unique().to_list(), key=str)
+    levels: list[object] = sorted(series.drop_nulls().unique().to_list(), key=str)
     numeric = is_numeric_dtype(series.dtype)
     text_codes = not numeric and bool(levels) and all(_INTEGER_TEXT.fullmatch(str(lvl)) for lvl in levels)
     coded = numeric or text_codes
-    codes = {lvl: _code_key(int(float(str(lvl))) if text_codes else lvl) for lvl in levels}
+    codes = {lvl: code_key(int(float(str(lvl))) if text_codes else lvl) for lvl in levels}
+    if len(set(codes.values())) < len(codes):
+        return None  # "1" and "01" are one code written two ways
     zero_one = coded and set(codes.values()) <= {"0", "1"}
     labels = code_labels(series.name)
     names = {lvl: (labels.get(codes[lvl]) or (None if coded else str(lvl))) for lvl in levels}
     words = {lvl: text.strip().lower() for lvl, text in names.items() if text}
-    name_tokens = re.findall(r"[a-z]+", short_name(series.name).lower())
+    name_tokens = _WORD.findall(short_name(series.name).lower())
     if any(token in _NON_EVENT_NAME_WORDS for token in name_tokens):
         # "Alive 1: Yes 2: No": the yes-level is the non-event, so word matching would invert it.
-        # Only a label that names the outcome itself ("0: event", "1: died") still identifies it.
+        # Only a label that names the outcome itself ("0: event", "1: died") still identifies it,
+        # or a stated censored code ("censor=0") when the other level is the only one left.
         stated = [lvl for lvl, word in words.items() if word in _OUTCOME_EVENT_WORDS]
-        return stated[0] if len(stated) == 1 else None
+        if len(stated) == 1:
+            return stated[0]
+        censored = {m.group(1) for m in _CENSOR_CODE.finditer(series.name)}
+        if coded and len(levels) == 2 and len(censored) == 1:
+            others = [lvl for lvl in levels if codes[lvl] not in censored]
+            return others[0] if len(others) == 1 else None
+        return None
     if zero_one and not labels:
         return _one_level(series, levels, text_codes)
     events = [lvl for lvl, word in words.items() if word in _EVENT_WORDS]
@@ -190,7 +203,7 @@ def binary_event_level(series: pl.Series) -> object | None:
 def display_level(column: str, level: object) -> str:
     """Readable name for a group level: decoded label, or 'column=level' for bare codes."""
     labels = code_labels(column)
-    text = _code_key(level)
+    text = code_key(level)
     if re.fullmatch(r"-?\d+\.0+", text):
         text = text.split(".")[0]
     if text in labels:

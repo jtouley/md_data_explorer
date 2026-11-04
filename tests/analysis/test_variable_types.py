@@ -271,3 +271,53 @@ def test_binary_event_level_nTokenInName_doesNotRefuseFlag(series, expected):
 
     # Assert
     assert level == expected
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("Period 1: day shift 2: night shift", {"1": "day shift", "2": "night shift"}),
+        ("Duration 1: hours 2: days", {"1": "hours", "2": "days"}),
+        ("Unit 1: min 2: max", {"1": "min", "2": "max"}),
+        ("Dose unit 1: mg 2: mcg", {"1": "mg", "2": "mcg"}),
+        ("Time unit 1=Months 2=Years", {"1": "Months", "2": "Years"}),
+        ("1: mg/dL high 2: normal", {"1": "mg/dL high", "2": "normal"}),
+        ("Pain 1: Mild, moderate 2: Severe", {"1": "Mild, moderate", "2": "Severe"}),
+        ("Site 1: ICU, ward 2: ER", {"1": "ICU, ward", "2": "ER"}),
+        ("Pain relief 0: Yes, complete 1: No", {"0": "Yes, complete", "1": "No"}),
+        ("Smoker 1: Yes (current, former) 0: No", {"1": "Yes (current, former", "0": "No"}),
+    ],
+    ids=[
+        "shift_words", "time_units", "min_max", "dose_units", "time_units_equals", "unit_then_word",
+        "comma_in_label", "comma_in_site", "yes_with_detail", "yes_with_parenthesis",
+    ],
+)  # fmt: skip
+def test_code_labels_unitOrCommaLabels_decodeRealCodebooks(header, expected):
+    # Arrange: header from parametrize
+
+    # Act
+    labels = code_labels(header)
+
+    # Assert
+    assert labels == expected
+
+
+@pytest.mark.parametrize(
+    ("series", "expected"),
+    [
+        (pl.Series("outcome", ["+1", "0"]), "+1"),
+        (pl.Series("outcome", ["0", "1", "01"]), None),
+        (pl.Series("censorship", [0, 1]), None),
+        (pl.Series("Death (censor=0)", [0, 1]), 1),
+        (pl.Series("Death (CNSR: 1)", ["0", "1"]), "0"),
+    ],
+    ids=["plus_sign", "two_spellings_of_one", "censorship", "censor_code_stated", "cnsr_code_stated_text"],
+)
+def test_binary_event_level_signedTextOrStatedCensorCode_resolvesEvent(series, expected):
+    # Arrange: series from parametrize
+
+    # Act
+    level = binary_event_level(series)
+
+    # Assert
+    assert level == expected

@@ -223,3 +223,17 @@ def test_calculate_median_survival_ci_isMedianTimeInterval(group_col):
     assert row["median_survival"] == 60
     assert row["ci_lower"] == ref_lower
     assert row["ci_upper"] is None
+
+
+def test_calculate_median_survival_notReached_returnsNoneNotInf():
+    # Arrange: 1 event in 10, so the curve never falls to 0.5.
+    # PANDAS EXCEPTION: calculate_median_survival takes a pandas frame (lifelines input).
+    df = pd.DataFrame({"duration": list(range(10, 110, 10)), "event": [1] + [0] * 9})
+
+    # Act
+    result = calculate_median_survival(df, duration_col="duration", event_col="event")
+
+    # Assert
+    row = result.iloc[0]
+    assert row["median_survival"] is None
+    assert row["ci_upper"] is None

@@ -1078,3 +1078,94 @@ class TestComputeMissingAndDegenerateInputs:
         assert result["test_type"] == "fisher_exact"
         assert "odds_ratio" not in result
         assert np.isfinite(result["p_value"])
+
+
+class TestComputeDegenerateGroupsReview:
+    """Float-noise constants, degenerate ANOVA, descriptive counts (second review of #66 fixes)."""
+
+    @pytest.mark.parametrize(
+        ("a_values", "b_values"),
+        [
+            ([0.1 + 0.2] * 5 + [0.3] * 5, [0.1 * 7] * 5 + [0.7] * 5),
+            ([1e8 + 1e-7] * 5 + [1e8] * 5, [2e8] * 10),
+        ],
+        ids=["float_noise", "large_magnitude_noise"],
+    )
+    def test_compute_comparison_floatNoiseConstantWelch_refusesWithoutPValue(
+        self, a_values, b_values, sample_context_compare
+    ):
+        # Arrange
+        df = pl.DataFrame({"score": a_values + b_values, "category": ["A"] * 10 + ["B"] * 10})
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert "values do not vary within a group (A, B)" in result["error"]
+        assert "p_value" not in result
+
+    def test_compute_comparison_smallRealSpreadWelch_isNotRefused(self, sample_context_compare):
+        # Arrange: spread of 0.01 on values near 5 is real variation, not float noise
+        df = pl.DataFrame({"score": [5.0, 5.01] * 5 + [6.0, 6.01] * 5, "category": ["A"] * 10 + ["B"] * 10})
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert result["test_type"] == "welch_t_test"
+        assert np.isfinite(result["p_value"])
+
+    @pytest.mark.parametrize(
+        ("values", "groups", "message"),
+        [
+            ([10.0] * 5 + [20.0] * 5 + [30.0] * 5, ["A"] * 5 + ["B"] * 5 + ["C"] * 5, "do not vary within any"),
+            ([10.0, 20.0, 30.0], ["A", "B", "C"], "at least 2 observations for ANOVA (A, B, C)"),
+            ([10.0, 11.0, 20.0, 21.0, 30.0], ["A", "A", "B", "B", "C"], "at least 2 observations for ANOVA (C)"),
+        ],
+        ids=["all_constant", "one_per_group", "one_small_group"],
+    )
+    def test_compute_comparison_degenerateAnova_refusesWithoutPValue(
+        self, values, groups, message, sample_context_compare
+    ):
+        # Arrange
+        df = pl.DataFrame({"score": values, "category": groups})
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert message in result["error"]
+        assert "p_value" not in result
+
+    @pytest.mark.parametrize(
+        ("values", "expected_counts"),
+        [
+            ([100.0, float("nan"), 140.0], (2, 1)),
+            ([100.0, float("inf"), None, 140.0], (2, 2)),
+        ],
+        ids=["nan", "inf_and_null"],
+    )
+    def test_compute_descriptive_nonFiniteValue_countsMatchMean(self, values, expected_counts):
+        # Arrange
+        df = pl.DataFrame({"ldl": values}, schema={"ldl": pl.Float64})
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.DESCRIBE
+        context.primary_variable = "ldl"
+
+        # Act
+        result = compute_descriptive_analysis(df, context)
+
+        # Assert
+        assert (result["non_null_count"], result["null_count"]) == expected_counts
+        assert result["mean"] == pytest.approx(120.0)
+
+    def test_compute_comparison_textZeroOneOutcome_reportsEventLevelOne(self, sample_context_compare):
+        # Arrange: 0/1 stored as text; the numbers parse to floats
+        df = pl.DataFrame({"score": ["1"] + ["0"] * 8 + ["1"] * 8 + ["0"], "category": ["A"] * 9 + ["B"] * 9})
+
+        # Act
+        result = compute_comparison_analysis(df, sample_context_compare)
+
+        # Assert
+        assert result["event_level"] == "1"
+        assert result["odds_ratio"] == pytest.approx(64.0)
