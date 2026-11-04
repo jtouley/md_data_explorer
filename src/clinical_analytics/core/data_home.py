@@ -13,6 +13,7 @@ Resolution order:
 from __future__ import annotations
 
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -38,6 +39,47 @@ def data_home() -> Path:
     """Root for runtime data. Resolved on every call so the env override applies at runtime."""
     override = os.environ.get(DATA_HOME_ENV, "").strip()
     return Path(override).expanduser().resolve() if override else _platform_data_dir()
+
+
+DATA_HOME_MODE = 0o700
+
+
+class DataHomeOwnershipError(PermissionError):
+    """The data home belongs to another account, which could read every dataset in it."""
+
+
+def ensure_data_home() -> Path:
+    """Create the data home owner-only (0700) and tighten one this user owns that is wider.
+
+    Everything below inherits the protection: other local accounts cannot traverse into it,
+    whatever the mode of the user's home directory. ``mkdir(mode=...)`` applies only to the
+    last path component, so parents keep the default mode; the data home itself is the guard.
+
+    Raises DataHomeOwnershipError when the folder is owned by another account (it can read the
+    data and this app cannot fix the mode). A world-writable parent without the sticky bit is
+    logged as a warning: another account could swap the folder, but refusing would stop
+    ordinary shared setups.
+    """
+    home = data_home()
+    home.mkdir(mode=DATA_HOME_MODE, parents=True, exist_ok=True)
+    if not hasattr(os, "getuid"):  # Windows: the per-user LOCALAPPDATA ACLs apply
+        return home
+    st = home.stat()
+    if st.st_uid != os.getuid():
+        raise DataHomeOwnershipError(
+            f"The data folder {home} is owned by another user account, which could read the data in "
+            f"it. Use a folder you own: set {DATA_HOME_ENV} or fix the folder's owner."
+        )
+    if st.st_mode & 0o077:
+        home.chmod(DATA_HOME_MODE)
+        logger.info("data_home_permissions_tightened", mode=oct(DATA_HOME_MODE))
+    parent_mode = home.parent.stat().st_mode
+    if parent_mode & stat.S_IWOTH and not parent_mode & stat.S_ISVTX:
+        logger.warning(
+            "data_home_parent_world_writable",
+            action="Any account can rename the data folder's parent entries; move the data home",
+        )
+    return home
 
 
 def uploads_dir() -> Path:

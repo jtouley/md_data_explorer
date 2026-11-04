@@ -104,10 +104,30 @@ told apart (`result_presentation.py`, `_mask`). Rendering every hidden cell as "
 would be false for secondary cells; rendering "—" reads as "missing" or "zero" in clinical
 tables. The footnote says what is true for both: "Hidden to protect privacy: counts from 1 to 10
 are not shown, and some other cells are hidden so those counts can't be worked out from totals."
+Within one answer the API uses one marker: when the table hides a count, the claim does not write
+"<11" for it either, and says "n hidden; some excluded for missing data" (n and the exclusions
+add up to the dataset's row count, so both are hidden when either is small) or "count hidden".
+"<11" appears only when it is the answer's sole hidden count, e.g. "Total count: <11."
 We never write "<5"; the threshold is 11.
 Only the API's exact tokens mean hidden: the lowercase `suppressed` and `<11` (built from the
 threshold). Any other text, such as an age band "<65" or a category spelled "Suppressed", is a
 label and is shown as written, with no † and no footnote.
+
+**Data check (cohort details) uses one label only.** Its report (`contracts/quality.py`) shows
+every suppressed count the same way, as "some … ; count hidden to protect privacy", never "<11":
+with a visible row total, two labels would tell a reader that the non-"<11" hidden counts are 11
+or more, and a column's missing + bad + valid counts would then pin a small one. A hidden count
+there only means "at least 1" (zero is shown as 0). A check whose count is hidden always has the
+status "review", whatever the value (a pass/warning would say which side of a threshold it is on:
+1 of 20 missing "passed" at 5% meant exactly 1), so the summary and "N things to review" depend
+only on shown numbers. When any count in a column is 1–10, all of that column's non-zero counts
+are hidden together (hiding only some would let a reader work out which was smaller). A column
+gets one problem-value check at most: a coded column whose name looks like "age" or "BMI" gets
+its codebook check, not a range (codes are not measurements). The row count is always shown, as
+in the meta line and the first-rows overview; tables of 1–12 rows show it but hide every column
+count, zeros included, with the line "{N} rows: too few rows to report counts". Its footnote: "Hidden to protect privacy:
+counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be
+worked out from the totals. A hidden count is never zero."
 
 ### Session titles
 
@@ -296,6 +316,8 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Working | Processing… / Stage: planning | Reading your question… / Running the analysis… |
 | Claim | Claim: {claim} + title twice | {headline} / {stats line} / {caveats}; title once as caption |
 | Hidden cell | suppressed | hidden† / <11† + footnote |
+| Upload ready + data check | ✓ x uploaded | "{name} is ready." + "Data check found N things to review in cohort details." / "Data check found nothing to flag." / "Data check could not run." |
+| Cohort details: data check | (none) | Section "Data check": the API's lines as a list (suppressed counts read "some …; count hidden to protect privacy"), the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions." |
 | Hold heading | (none) | Check this plan before it runs |
 | Confirm / Reject | Confirm / Reject | Run this analysis / Not what I meant |
 | Rejected | Query rejected — not executed. | Not run. Rephrase your question below. |

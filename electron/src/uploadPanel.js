@@ -2,22 +2,35 @@
  * Upload panel helpers (Phase 8) — pure functions + DOM rendering.
  */
 
+import { normalizeQuality } from './dataCheckPanel.js';
+
 const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality: import('./dataCheckPanel.js').DataCheck | null }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
-    return { upload_id: '', dataset_name: '', status: 'failed', message: '' };
+    return { upload_id: '', dataset_name: '', status: 'failed', message: '', quality: null };
   }
   return {
     upload_id: String(raw.upload_id ?? ''),
     dataset_name: String(raw.dataset_name ?? ''),
     status: String(raw.status ?? 'failed'),
     message: String(raw.message ?? ''),
+    quality: normalizeQuality(raw.quality),
   };
+}
+
+/**
+ * Status line with the data-check sentence appended ("{name} is ready. Data check found …").
+ * @param {string} headline a full sentence
+ * @param {string|null} note from dataCheckStatusNote
+ * @returns {string}
+ */
+export function uploadStatusText(headline, note) {
+  return note ? `${headline} ${note}` : headline;
 }
 
 /**

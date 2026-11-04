@@ -18,6 +18,7 @@ export default defineConfig({
         'src/sessionSidebar.js',
         'src/theme.js',
         'src/uploadPanel.js',
+        'src/webContentsGuard.js',
       ],
       exclude: ['src/**/*.test.js'],
       thresholds: {

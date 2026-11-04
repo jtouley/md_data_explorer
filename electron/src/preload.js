@@ -117,6 +117,21 @@ const clinicalAPI = {
   },
 
   /**
+   * Data-quality report for a dataset's active version (contract checks run at upload).
+   * @param {string} datasetId
+   * @returns {Promise<{ summary: string[], passed: number, warnings: number, failed: number, not_run: number, checks: object[] }>}
+   */
+  async getDatasetQuality(datasetId) {
+    const enc = encodeURIComponent(datasetId);
+    const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/quality`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.detail || `Failed to load data quality: ${response.statusText}`);
+    }
+    return data;
+  },
+
+  /**
    * Fetch dataset preview rows.
    * @param {string} datasetId
    * @param {number} [limit]
@@ -418,7 +433,7 @@ const clinicalAPI = {
    * Upload a dataset file (CSV, Excel, SPSS).
    * @param {File} file
    * @param {string} [datasetName]
-   * @returns {Promise<{ upload_id: string, dataset_name: string, status: string, message: string }>}
+   * @returns {Promise<{ upload_id: string, dataset_name: string, status: string, message: string, quality: object|null }>}
    */
   async uploadDataset(file, datasetName) {
     const form = new FormData();

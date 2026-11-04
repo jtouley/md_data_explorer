@@ -194,12 +194,14 @@ def main():
         max_iterations=args.max_iterations,
     )
 
-    # Step 0: Refresh golden questions from production logs (Phase 6 integration)
+    # Step 0: Refresh golden questions from production logs (Phase 6 integration).
+    # Mined questions are what users typed about real data: they go to a file in the data home,
+    # never into the tracked args.questions_file (scripts/check_no_data_files.py).
     log_file = Path("/tmp/nl_query.log")
     if log_file.exists():
         new_count = refresh_golden_questions_from_logs(
             log_file=log_file,
-            golden_questions_file=args.questions_file,
+            golden_questions_file=args.log_dir / "mined_golden_questions.yaml",
             min_confidence=0.8,
             max_new_questions=5,  # Add up to 5 new questions per run
         )

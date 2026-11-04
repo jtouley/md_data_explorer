@@ -24,8 +24,10 @@ dependencies = [
     "pymupdf>=1.23.0",  # PDF text extraction
     # Embeddings for semantic matching: the all-MiniLM-L6-v2 ONNX export run with ONNX Runtime
     # (core/embeddings.py). No torch: the model is bundled at build time (make fetch-embedding-model).
-    "onnxruntime>=1.20.0",
-    "tokenizers>=0.21.0",
+    # Pinned: newest release >= 2 weeks old with macOS 13 arm64 + x86_64 wheels for cp311-cp313
+    # (1.24+ dropped Intel macOS and needs macOS 14). Supported minimum: macOS 13.
+    "onnxruntime==1.23.2",
+    "tokenizers>=0.22.1,<0.24",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
     "langchain>=1.2.0",
@@ -41,6 +43,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "alembic>=1.14.0",
     "python-multipart>=0.0.12",  # For form data / file uploads
+    "open-data-contract-standard>=3.2.0,<3.3.0",
 ]
 
 [project.optional-dependencies]
@@ -139,6 +142,7 @@ repo-context-mcp = [
     "mcp>=1.8.0",
 ]
 dev = [
+    "datacontract-cli>=1.2.9,<1.3",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.1",
     "mkdocs-mermaid2-plugin>=1.2.3",

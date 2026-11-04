@@ -12,19 +12,37 @@ case where clinical data commonly breaks naive statistics:
 - sparse_cells.csv: a 2x2 table with expected counts below 5 (Fisher's exact test).
 - separation.csv: a predictor that perfectly separates the outcome (logistic regression is
   not estimable).
+- src/clinical_analytics/resources/demo/sample_cohort.csv: the 80-row "Load sample" cohort the app ships, built from
+  arithmetic patterns (no random draws) with two planted exceptions so the outcome is not a
+  deterministic function of the predictors.
 
-Run from the repo root:  uv run python scripts/make_synthetic_data.py
+Paths are relative to the repo root; the files written are exactly the synthetic kit that
+scripts/check_no_data_files.py allows to be tracked.
+
+Usage (from the repo root):
+    uv run python scripts/make_synthetic_data.py                # rewrite the committed files
+    uv run python scripts/make_synthetic_data.py --out-dir DIR  # write the kit under DIR
+    uv run python scripts/make_synthetic_data.py --check        # regenerate in a temp dir and
+                                                                # fail if any committed file differs
 """
 
 from __future__ import annotations
 
+import argparse
+import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-OUT_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "synthetic"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SYNTHETIC_DIR = Path("tests") / "fixtures" / "synthetic"
+DEMO_PATH = Path("src") / "clinical_analytics" / "resources" / "demo" / "sample_cohort.csv"
 SEED = 20261103
+# Demo rows whose outcome breaks the "age >= 55 or diabetes" rule; without them a logistic
+# model on the demo cohort would face perfect separation.
+DEMO_OUTCOME_EXCEPTIONS = frozenset({11, 20})
 
 DEXA_COLUMN = "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis"
 STATIN_COLUMN = "Statin use 1: Yes 2: No"
@@ -110,19 +128,87 @@ def make_separation(rng: np.random.Generator) -> pl.DataFrame:
     )
 
 
-def main() -> None:
+def make_demo_cohort(n: int = 80) -> pl.DataFrame:
+    i = np.arange(1, n + 1)
+    age = 25 + (7 * i) % 55
+    diabetes = (i % 3 == 0).astype(np.int64)
+    rule = (age >= 55) | (diabetes == 1)
+    outcome = np.where(np.isin(i, list(DEMO_OUTCOME_EXCEPTIONS)), ~rule, rule).astype(np.int64)
+    return pl.DataFrame(
+        {
+            "patient_id": [f"P{k:03d}" for k in i],
+            "outcome": outcome,
+            "age": age,
+            "sex": np.where(i % 2 == 1, "M", "F"),
+            "diabetes": diabetes,
+            "hypertension": (i % 4 == 0).astype(np.int64),
+        }
+    )
+
+
+def build_kit() -> dict[Path, pl.DataFrame]:
+    """Every synthetic file, keyed by its path relative to the repo root.
+
+    Draw order matters: all seeded datasets share one generator, so append new ones at the end.
+    """
     rng = np.random.default_rng(SEED)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    datasets = {
-        "cohort.csv": make_cohort(rng),
-        "unequal_groups.csv": make_unequal_groups(rng),
-        "sparse_cells.csv": make_sparse_cells(),
-        "separation.csv": make_separation(rng),
+    return {
+        SYNTHETIC_DIR / "cohort.csv": make_cohort(rng),
+        SYNTHETIC_DIR / "unequal_groups.csv": make_unequal_groups(rng),
+        SYNTHETIC_DIR / "sparse_cells.csv": make_sparse_cells(),
+        SYNTHETIC_DIR / "separation.csv": make_separation(rng),
+        DEMO_PATH: make_demo_cohort(),
     }
-    for name, frame in datasets.items():
-        frame.write_csv(OUT_DIR / name)
-        print(f"wrote {OUT_DIR / name} ({frame.height} rows)")
+
+
+def write_kit(root: Path) -> list[Path]:
+    """Write the kit under root (the repo root to refresh the committed files)."""
+    written = []
+    for rel, frame in build_kit().items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        frame.write_csv(target)
+        written.append(rel)
+    return written
+
+
+def mismatches(generated_root: Path, committed_root: Path = REPO_ROOT) -> list[Path]:
+    """Kit files whose committed bytes differ from a fresh generation (or are missing)."""
+    bad = []
+    for rel in build_kit():
+        committed = committed_root / rel
+        if not committed.is_file() or committed.read_bytes() != (generated_root / rel).read_bytes():
+            bad.append(rel)
+    return bad
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--out-dir", type=Path, help="Write the kit under this directory instead of the repo")
+    mode.add_argument("--check", action="store_true", help="Fail if the committed kit differs from a regeneration")
+    args = parser.parse_args(argv)
+
+    if args.check:
+        with tempfile.TemporaryDirectory(prefix="synthetic-kit-") as tmp:
+            write_kit(Path(tmp))
+            bad = mismatches(Path(tmp))
+        if bad:
+            print("Committed synthetic files differ from scripts/make_synthetic_data.py output:", file=sys.stderr)
+            for rel in bad:
+                print(f"  {rel}", file=sys.stderr)
+            print(
+                "Regenerate with `uv run python scripts/make_synthetic_data.py` and review the diff.", file=sys.stderr
+            )
+            return 1
+        print(f"Synthetic kit matches the generator byte for byte ({len(build_kit())} files).")
+        return 0
+
+    root = args.out_dir or REPO_ROOT
+    for rel in write_kit(root):
+        print(f"wrote {root / rel}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

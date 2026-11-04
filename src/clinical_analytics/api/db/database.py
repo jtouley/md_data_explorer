@@ -16,11 +16,12 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from clinical_analytics.api.models.database import Base
-from clinical_analytics.core.data_home import session_db_path
+from clinical_analytics.core.data_home import ensure_data_home, session_db_path
 
 
 def _default_database_url() -> str:
     """SQLite file in the per-user data home, never the current working directory."""
+    ensure_data_home()
     path = session_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{path}"

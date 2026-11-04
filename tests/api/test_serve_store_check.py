@@ -1,10 +1,13 @@
 """serve.main checks the store before uvicorn starts and reports failures as one plain line."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from clinical_analytics.api import serve
+from clinical_analytics.core.data_home import DATA_HOME_ENV
+from clinical_analytics.storage.dataset_deletion import DUCKDB_FILENAME, compaction_marker
 from clinical_analytics.storage.datastore import StoreInUseError
 from clinical_analytics.storage.store_format import StoreFormatError, StoreLockedError
 
@@ -54,8 +57,39 @@ def test_main_storeCheckPasses_startsUvicorn() -> None:
     assert run.call_args.kwargs["port"] == 8123
 
 
+@pytest.mark.parametrize("store_bytes", [b"not a duckdb file", b""], ids=["unreadable_store", "empty_store"])
+def test_main_pendingCompactionCannotFinish_oneLineExit2NoServer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], store_bytes: bytes
+) -> None:
+    # Arrange: a marker from a failed delete and a store the rewrite cannot open.
+    monkeypatch.setenv(DATA_HOME_ENV, str(tmp_path))
+    store = tmp_path / "data" / DUCKDB_FILENAME
+    store.parent.mkdir(parents=True)
+    store.write_bytes(store_bytes)
+    compaction_marker(store).write_text("pending\n")
+
+    # Act
+    with (
+        patch.object(serve, "prepare_store_for_engine", return_value=None),
+        patch.object(serve.uvicorn, "run") as run,
+        pytest.raises(SystemExit) as exited,
+    ):
+        serve.main([])
+
+    # Assert
+    stderr_lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("Clinical Analytics")]
+    assert exited.value.code == serve.STORE_CHECK_FAILED_EXIT
+    assert len(stderr_lines) == 1
+    assert "needs-compaction" in stderr_lines[0]
+    # Actionable for a packaged-app user: steps inline, no repository docs path.
+    assert "docs/" not in stderr_lines[0]
+    assert str(tmp_path / "data") in stderr_lines[0]
+    assert compaction_marker(store).exists()
+    run.assert_not_called()
+
+
 def test_main_embeddingModelMissing_plainMessageExit2NoServer(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Arrange: point the model directory at an empty folder (as in a build that skipped the fetch)
     monkeypatch.setenv("CLINICAL_ANALYTICS_EMBEDDING_MODEL_DIR", str(tmp_path))

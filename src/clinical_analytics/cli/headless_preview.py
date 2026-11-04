@@ -16,6 +16,7 @@ from typing import Any
 
 import polars as pl
 
+from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.datasets.demo import DEMO_DATASET_NAME, build_demo_metadata, get_demo_csv_path
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
@@ -110,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         "--csv",
         type=Path,
         default=None,
-        help="Path to CSV (default: bundled data/demo/sample_cohort.csv)",
+        help="Path to CSV (default: the bundled synthetic sample cohort)",
     )
     parser.add_argument(
         "--upload-dir",
@@ -120,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--preview-rows", type=int, default=5, help="Sample rows to include (default 5).")
     args = parser.parse_args(argv)
+    # stdout carries the JSON payload: structlog's default printer would write logs there too.
+    configure_logging()
 
     csv_path = args.csv if args.csv is not None else get_demo_csv_path()
     try:

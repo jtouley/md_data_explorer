@@ -196,6 +196,21 @@ class QueryService:
                 failure_reason=failure_reason,
             )
 
+        if plan_changed:
+            # Hold before execution: the gate only sees confidence, so a confident reparse
+            # to a different plan would otherwise run without the user ever seeing it.
+            return QueryResult(
+                plan=query_plan,
+                issues=issues,
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=context,
+                requires_confirmation=True,
+                failure_reason=PLAN_CHANGED_REASON,
+                plan_line=shown_plan_line,
+            )
+
         try:
             execution_result = self.semantic_layer.execute_query_plan(
                 query_plan,
@@ -216,8 +231,6 @@ class QueryService:
 
                 if requires_confirmation:
                     plan_line = shown_plan_line
-                    if plan_changed:
-                        failure_reason = PLAN_CHANGED_REASON
                 elif execution_result.get("success") is False:
                     reason = failure_reason or ((execution_result.get("warnings") or ["Execution failed"])[0])
                     issues.append({"message": str(reason), "severity": "error"})

@@ -25,6 +25,9 @@ from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
 logger = logging.getLogger(__name__)
 
+# Common ID column names stored as text (prevents integer overflow, keeps schemas consistent)
+ID_COLUMN_NAMES = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
+
 
 class SchemaDriftPolicy(Enum):
     """Policy for handling schema drift during overwrites."""
@@ -1182,21 +1185,10 @@ def save_table_list(
         db_path = storage.upload_dir.parent / "analytics.duckdb"
         parquet_dir = storage.upload_dir.parent / "parquet"
 
-        # Common ID column names that should be strings (prevent integer overflow)
-        id_column_names = {
-            "patient_id",
-            "patientid",
-            "subject_id",
-            "subjectid",
-            "id",
-            "mrn",
-            "study_id",
-        }
-
         # Convert ID columns to strings before persisting (ensures consistent schema)
         # Cast every ID column in one pass: casting each on the original frame kept only the last.
         for table in tables:
-            id_cols = [col for col in table["data"].columns if col.lower() in id_column_names]
+            id_cols = [col for col in table["data"].columns if col.lower() in ID_COLUMN_NAMES]
             if id_cols:
                 # Strings prevent integer overflow and keep the schema consistent across uploads
                 table["data"] = table["data"].with_columns(pl.col(id_cols).cast(pl.Utf8))
@@ -1369,6 +1361,29 @@ def save_table_list(
                 logger.warning(f"Failed to generate upload questions for {upload_id}: {e}", exc_info=True)
                 # Don't set example_questions - will be empty list or None
 
+        # 5.5 Data contract + quality checks for this version (ID columns as stored: text)
+        from clinical_analytics.contracts.service import check_upload_or_log
+
+        stored_id_cols = [col for col in unified_df.columns if col.lower() in ID_COLUMN_NAMES]
+        quality_report = check_upload_or_log(
+            storage.upload_dir.parent,
+            unified_df.with_columns(pl.col(stored_id_cols).cast(pl.Utf8)) if stored_id_cols else unified_df,
+            upload_id=upload_id,
+            dataset_version=dataset_version,
+            metadata=metadata,
+            overlay_dir=storage.metadata_dir,
+        )
+        # Recorded either way, so the upload response never shows an older run as this one's.
+        if quality_report.status == "ran":
+            metadata["quality"] = {
+                "status": "ran",
+                "run_ts": quality_report.run_ts,
+                "failed": quality_report.failed,
+                "warnings": quality_report.warnings,
+            }
+        else:
+            metadata["quality"] = {"status": "not_run", "reason": quality_report.reason}
+
         # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
         full_metadata = {
             **metadata,
@@ -1524,9 +1539,10 @@ class UserDatasetStorage:
                 never the source tree; see core.data_home)
         """
         if upload_dir is None:
-            from clinical_analytics.core.data_home import uploads_dir, warn_if_legacy_repo_data
+            from clinical_analytics.core.data_home import ensure_data_home, uploads_dir, warn_if_legacy_repo_data
 
             warn_if_legacy_repo_data(Path(__file__).parent.parent.parent.parent.parent)
+            ensure_data_home()
             upload_dir = uploads_dir()
 
         self.upload_dir = Path(upload_dir)
@@ -1640,8 +1656,15 @@ class UserDatasetStorage:
             existing_upload_id = None
             existing_version_history = None
 
+            # The bundled sample matches only the earlier sample (is_demo), never a clinician's
+            # dataset that happens to share its display name; that one is left untouched.
+            saving_demo = metadata.get("is_demo") is True
             for existing_meta in existing_uploads:
-                if existing_meta.get("dataset_name") == dataset_name:
+                if saving_demo:
+                    same_dataset = existing_meta.get("is_demo") is True
+                else:
+                    same_dataset = existing_meta.get("dataset_name") == dataset_name
+                if same_dataset:
                     if not overwrite:
                         # Reject duplicate without overwrite flag
                         return (
@@ -1992,6 +2015,7 @@ class UserDatasetStorage:
                     "dataset_name": dataset_name,
                     "upload_timestamp": datetime.now().isoformat(),
                     "file_size_bytes": len(file_bytes),
+                    "source_file_sha256": hashlib.sha256(file_bytes).hexdigest(),
                     "file_format": file_ext.lstrip("."),
                     "schema_validation": schema_validation_result,
                     "validation": {
@@ -2753,6 +2777,7 @@ class UserDatasetStorage:
                     "original_filename": UploadSecurityValidator.sanitize_filename(original_filename),
                     "upload_timestamp": datetime.now().isoformat(),
                     "file_size_bytes": len(file_bytes),
+                    "source_file_sha256": hashlib.sha256(file_bytes).hexdigest(),
                     "file_format": "zip_multi_table",
                 }
             )

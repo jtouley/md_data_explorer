@@ -9,6 +9,7 @@ Reference: docs/architecture/SEMANTIC_LAYER_FASTAPI_ADAPTER.md
 """
 
 import threading
+import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Annotated
@@ -59,6 +60,25 @@ def dataset_deletion_guard(dataset_id: str) -> Iterator[None]:
         with _semantic_layer_lock(dataset_id):
             _semantic_layer_cache.pop(dataset_id, None)
             _deleting_datasets.discard(dataset_id)
+
+
+# One lock per dataset_id around writes of derived files (contracts, quality reports) and the
+# purge that deletes them, so a slow backfill cannot write after a concurrent delete purged.
+# Weak values: an entry lives only while a request holds or waits for it, so the map stays small.
+_dataset_files_locks: weakref.WeakValueDictionary[str, threading.Lock] = weakref.WeakValueDictionary()
+_dataset_files_locks_guard = threading.Lock()
+
+
+@contextmanager
+def dataset_files_lock(dataset_id: str) -> Iterator[None]:
+    """Hold the per-dataset lock for derived-file writes and the delete purge (blocking)."""
+    with _dataset_files_locks_guard:
+        lock = _dataset_files_locks.get(dataset_id)
+        if lock is None:
+            lock = threading.Lock()
+            _dataset_files_locks[dataset_id] = lock
+    with lock:
+        yield
 
 
 def _semantic_layer_lock(dataset_id: str) -> threading.Lock:
