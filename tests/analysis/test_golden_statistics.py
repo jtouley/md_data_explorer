@@ -156,6 +156,49 @@ class TestGoldenComparison:
         # Generator: statin probability 0.35 without diabetes, 0.65 with
         assert result["group_proportions"]["1"] > result["group_proportions"]["0"]
 
+    def test_compare_ldlBySite_matchesOneWayAnovaReference(self, load_synthetic_dataset):
+        # Arrange: three sites, LDL shifted by 0 / +4 / +9 in the generator
+        df = load_synthetic_dataset("cohort")
+        sites = ["North", "South", "West"]
+        ref_f, ref_p = stats.f_oneway(*[_group_values(df, "ldl", "site", site) for site in sites])
+        ref_means = {site: float(_group_values(df, "ldl", "site", site).mean()) for site in sites}
+
+        # Act
+        result = compute_comparison_analysis(df, _context(primary_variable="ldl", grouping_variable="site"))
+
+        # Assert
+        assert result["test_type"] == "anova"
+        assert result["statistic"] == pytest.approx(ref_f, rel=REL)
+        assert result["p_value"] == pytest.approx(ref_p, rel=REL)
+        assert result["group_means"] == pytest.approx(ref_means, rel=REL)
+        assert result["n_excluded"] == df["ldl"].null_count()
+        assert ref_means["North"] < ref_means["South"] < ref_means["West"]
+
+    def test_compare_demoOutcomeByHypertension_matchesContingencyReference(self, project_root):
+        # Arrange: the bundled "Load sample" cohort (data/demo, same generator)
+        df = pl.read_csv(project_root / "data" / "demo" / "sample_cohort.csv")
+        counts = df.group_by("outcome", "hypertension").len()
+        table = np.array(
+            [
+                [counts.filter((pl.col("outcome") == y) & (pl.col("hypertension") == g))["len"].sum() for g in (0, 1)]
+                for y in (0, 1)
+            ]
+        )
+        ref_chi2, ref_p, ref_dof, ref_expected = stats.chi2_contingency(table)
+        ref_props = {str(g): table[1, j] / table[:, j].sum() for j, g in enumerate((0, 1))}
+
+        # Act
+        result = compute_comparison_analysis(df, _context(primary_variable="outcome", grouping_variable="hypertension"))
+
+        # Assert: expected counts are all >= 5, so chi-square (Yates-corrected for 2x2), not Fisher
+        assert ref_expected.min() >= 5
+        assert result["test_type"] == "chi_square"
+        assert result["chi2"] == pytest.approx(ref_chi2, rel=REL)
+        assert result["p_value"] == pytest.approx(ref_p, rel=REL)
+        assert result["dof"] == ref_dof == 1
+        assert result["group_proportions"] == pytest.approx(ref_props, rel=REL)
+        assert result["n_used"] == df.height == 80
+
 
 class TestGoldenPredictor:
     def test_predict_outcomeFromAgeTreatmentDiabetes_matchesLogitReference(self, load_synthetic_dataset):

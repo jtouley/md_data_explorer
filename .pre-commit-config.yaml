@@ -74,6 +74,16 @@ repos:
         pass_filenames: true
         always_run: false
 
+      # Tracked-data guard (same check as `make check-data` in CI): blocks data files and
+      # local-only artifacts (overlays, settings, session DBs, .env, store backups) even when
+      # staged with `git add -f`. Reads the index, so it sees what is about to be committed.
+      - id: check-no-data-files
+        name: Block patient data and local-only files
+        entry: uv run python scripts/check_no_data_files.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
       # Coverage check - DISABLED temporarily (run manually: make test-cov-check)
       # TODO: Re-enable when test suite stabilizes
       # To re-enable: change stages: [manual] back to stages: [pre-push]
