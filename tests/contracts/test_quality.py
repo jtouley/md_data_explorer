@@ -17,7 +17,7 @@ from clinical_analytics.contracts.quality import (
     measure,
     run_quality,
 )
-from tests.contracts.conftest import DEXA, STATIN
+from tests.contracts.conftest import DEXA, FIXED_TS, STATIN
 
 
 def _by_id(report: Any) -> dict[str, Any]:
@@ -68,7 +68,7 @@ def test_runQuality_cohortWithDefects_statusesAndSuppressedMessages(cohort_with_
 
     # Assert
     checks = _by_id(report)
-    assert checks["patient_id_no_duplicates"].status == "failed"
+    assert checks["patient_id_no_duplicates"].status == config.HIDDEN_STATUS  # hidden: fixed status
     assert checks["patient_id_no_duplicates"].count == config.COUNT_HIDDEN
     assert checks["patient_id_no_duplicates"].percent is None
     assert checks["dexa_result_invalid"].status == "warning"
@@ -78,8 +78,8 @@ def test_runQuality_cohortWithDefects_statusesAndSuppressedMessages(cohort_with_
     assert checks["ldl_missing"].status == "warning"
     assert checks["ldl_missing"].message == "ldl: 5.7% missing"
     assert checks["statin_use_invalid"].status == "passed"
-    assert (report.failed, report.not_run) == (1, 0)
-    assert report.summary[0] == "patient_id: some repeated values; count hidden to protect privacy"
+    assert (report.failed, report.review, report.not_run) == (0, 2, 0)
+    assert "patient_id: some repeated values; count hidden to protect privacy" in report.summary
 
 
 def test_runQuality_cleanSyntheticCohort_onlyLdlMissingnessFlagged(load_synthetic_dataset, make_contract):
@@ -99,9 +99,9 @@ def test_runQuality_cleanSyntheticCohort_onlyLdlMissingnessFlagged(load_syntheti
     ("ldl", "expected_count", "expected_percent", "expected_status"),
     [
         ([100.0] * 20, 0, 0.0, "passed"),
-        ([None] * 1 + [100.0] * 19, config.COUNT_HIDDEN, None, "passed"),
-        ([None] * 10 + [100.0] * 10, config.COUNT_HIDDEN, None, "warning"),
-        ([None] * 11 + [100.0] * 9, config.COUNT_HIDDEN, None, "warning"),
+        ([None] * 1 + [100.0] * 19, config.COUNT_HIDDEN, None, config.HIDDEN_STATUS),
+        ([None] * 10 + [100.0] * 10, config.COUNT_HIDDEN, None, config.HIDDEN_STATUS),
+        ([None] * 11 + [100.0] * 9, config.COUNT_HIDDEN, None, config.HIDDEN_STATUS),
         ([None] * 11 + [100.0] * 11, 11, 50.0, "warning"),
         ([None] * 20, 20, 100.0, "warning"),
     ],
@@ -129,8 +129,14 @@ def test_runQuality_missingCounts_suppressedBelowMinCell(
 
 @pytest.mark.parametrize(
     ("rows", "expected_status", "expected_row_count"),
-    [(0, "warning", 0), (5, "warning", config.COUNT_HIDDEN), (10, "warning", config.COUNT_HIDDEN), (11, "passed", 11)],
-    ids=["empty", "small", "boundary_10", "boundary_11"],
+    [
+        (0, "warning", 0),
+        (5, config.HIDDEN_STATUS, config.COUNT_HIDDEN),
+        (10, config.HIDDEN_STATUS, config.COUNT_HIDDEN),
+        (12, config.HIDDEN_STATUS, config.COUNT_HIDDEN),
+        (13, "passed", 13),
+    ],
+    ids=["empty", "small", "boundary_10", "boundary_12_all_hidden", "boundary_13_shown"],
 )
 def test_runQuality_rowCount_warnsBelowSmallCellThreshold(make_contract, rows, expected_status, expected_row_count):
     # Arrange
@@ -267,7 +273,7 @@ def test_runQuality_objectDuplicateOnColumnPair_countsRepeatedCombinations():
 
     # Assert
     assert report.checks[0].count == config.COUNT_HIDDEN
-    assert report.checks[0].status == "failed"
+    assert report.checks[0].status == config.HIDDEN_STATUS
 
 
 @pytest.mark.parametrize(
@@ -318,9 +324,9 @@ def test_passes_ruleWithoutOperator_raisesQualityCheckError():
 
 
 def test_runQuality_manyFindings_summaryCappedWithRemainder(make_contract):
-    # Arrange: one missing value in each of 12 columns -> 12 notable lines.
-    data: dict[str, list[Any]] = {"patient_id": [f"P{i}" for i in range(12)]}
-    data.update({f"lab{c}": [None if i == 0 else 1.0 for i in range(12)] for c in range(12)})
+    # Arrange: 20 rows (row count shown), one missing value in each of 12 columns -> 12 notable lines.
+    data: dict[str, list[Any]] = {"patient_id": [f"P{i}" for i in range(20)]}
+    data.update({f"lab{c}": [None if i == 0 else 1.0 for i in range(20)] for c in range(12)})
     df = pl.DataFrame(data)
 
     # Act
@@ -382,7 +388,7 @@ def test_runQuality_nanBmi_countedMissingNotOutOfRange(make_contract):
 
     # Assert
     assert (checks["bmi_missing"].count, checks["bmi_missing"].percent) == (12, 40.0)
-    assert (checks["bmi_range"].count, checks["bmi_range"].status) == (config.COUNT_HIDDEN, "warning")
+    assert (checks["bmi_range"].count, checks["bmi_range"].status) == (config.COUNT_HIDDEN, config.HIDDEN_STATUS)
     assert "90" in checks["bmi_range"].message
 
 
@@ -514,9 +520,8 @@ def _feasible_values(
 
     if report.row_count == "<11":
         row_options = range(1, _LIMIT)
-    elif isinstance(report.row_count, str):  # hidden: the row-count status still says which side of 11
-        passed = checks["row_count_min"].status == "passed"
-        row_options = range(_LIMIT, rows + _LIMIT + 4) if passed else range(1, _LIMIT)
+    elif isinstance(report.row_count, str):  # hidden; its status is fixed, so it bounds nothing
+        row_options = range(1, rows + _LIMIT + 4)
     else:
         row_options = range(rows, rows + 1)
     cells = sorted({c for line in lines for c in line})
@@ -556,9 +561,9 @@ def _assert_small_cells_robust(report: Any, truth: dict[str, int], lines, shown_
         if 0 < value < _LIMIT:
             options = feasible[cell]
             assert value in options, (label, cell)
-            if rows >= _LIMIT:
+            if not isinstance(report.row_count, str):
                 assert max(options) >= _LIMIT, (label, cell, value, sorted(options)[:12])
-            else:
+            else:  # tiny table, row count hidden: at minimum never a single value
                 assert len(options) > 1, (label, cell, value, sorted(options))
 
 
@@ -612,7 +617,7 @@ def test_runQuality_idColumnTwelveRowsOneDistinct_distinctCountNotPinned(make_co
     _assert_small_cells_robust(report, truth, _STATIN_LINES, shown, 400, "id")
 
 
-@pytest.mark.parametrize("rows", [5, 10, 11, 12, 13])
+@pytest.mark.parametrize("rows", [5, 10, 11, 12, 13, 14])
 def test_runQuality_tinyTables_everySmallCountRobust(make_contract, rows):
     # Arrange: tables at and just above the threshold, where the row total itself is small.
     df = _column_cohort(1, 1, rows=rows)
@@ -666,3 +671,113 @@ def test_runQuality_randomSmallTables_bruteForceNoSmallCountPinned(make_contract
         assert all(checks[c].count == truth[k] or isinstance(checks[c].count, str) for k, c in shown_ids.items())
         assert all(checks[c].percent is None for c in shown_ids.values() if isinstance(checks[c].count, str))
         _assert_small_cells_robust(report, truth, lines, shown_ids, rows, f"trial {trial}")
+
+
+def _rest_floor(kind: str, rows: int, cells: tuple[int, ...]) -> int:
+    """What a reader knows about the never-shown rest: >= 0, and >= 1 distinct ID if any ID present."""
+    return 1 if kind == "id" and rows - cells[0] > 0 else 0
+
+
+def _full_report_feasible(
+    contract: Any, checks: list[Any], raw: dict[str, int], report: Any, cells: tuple[str, ...], kind: str
+) -> tuple[list[set[int]], set[int]]:
+    """Values of ``cells`` (one column's counts) and of its rest that a reader cannot rule out.
+
+    Every field of the report is a constraint: counts, percents, statuses, totals, messages and
+    the summary (so also the UI's "N things to review"). Other columns stay at their true values,
+    and so does the row total when it is shown (a hidden one is enumerated too), so the sets are a
+    subset of what the reader allows: if a subset already holds a value of 11 or more, so does
+    the full set.
+    """
+    import itertools
+
+    from clinical_analytics.contracts.quality import report_from_counts
+
+    true_rows = raw[ROWS_KEY]
+    totals = range(1, true_rows + _LIMIT + 1) if isinstance(report.row_count, str) else [true_rows]
+    key = report.model_dump_json(exclude={"run_ts"})
+    seen: list[set[int]] = [set() for _ in cells]
+    rests: set[int] = set()
+    others = {k: v for k, v in raw.items() if k not in cells and k != ROWS_KEY}
+    for rows in totals:
+        if any(v > rows for v in others.values()):
+            continue
+        for values in itertools.product(range(rows + 1), repeat=len(cells)):
+            rest = rows - sum(values)
+            if rest < _rest_floor(kind, rows, values):
+                continue
+            candidate = {**raw, ROWS_KEY: rows, **dict(zip(cells, values))}
+            built = report_from_counts(contract, checks, candidate, run_at=FIXED_TS)
+            if built.model_dump_json(exclude={"run_ts"}) != key:
+                continue
+            for i, v in enumerate(values):
+                seen[i].add(v)
+            rests.add(rest)
+    return seen, rests
+
+
+def _assert_reader_cannot_pin(df: pl.DataFrame, contract: Any, columns: dict[str, tuple[tuple[str, ...], str]]) -> None:
+    checks = compile_contract(contract, df.collect_schema())
+    raw = measure(df.lazy(), checks)
+    report = run_quality(df.lazy(), contract, run_at=FIXED_TS)
+    rows = raw[ROWS_KEY]
+    for label, (cells, kind) in columns.items():
+        seen, rests = _full_report_feasible(contract, checks, raw, report, cells, kind)
+        truths = [raw[c] for c in cells]
+        for options, value, name in [*zip(seen, truths, cells), (rests, rows - sum(truths), f"{label} rest")]:
+            assert value in options, (label, name)
+            if 0 < value < _LIMIT:
+                if not isinstance(report.row_count, str):
+                    assert max(options) >= _LIMIT, (label, name, value, sorted(options))
+                else:  # tiny table, row count hidden: at minimum never a single value
+                    assert len(options) > 1, (label, name, value, sorted(options))
+
+
+def test_runQuality_hiddenMissingWithStatus_twentyRows_countNotPinnedByStatus(make_contract):
+    # Arrange: 1 of 20 missing; on 447bf51 "hidden" + "passed" (<= 5%) meant exactly 1.
+    df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(20)], "ldl": [None] + [1.0] * 19})
+    contract = make_contract(df, created_at=FIXED_TS)
+
+    # Act / Assert
+    _assert_reader_cannot_pin(df, contract, {"ldl": (("ldl_missing",), "plain")})
+
+
+def test_runQuality_hiddenCounts_statusIndependentOfHiddenValue(make_contract):
+    # Arrange: two tables differing only in a hidden count (1 vs 2 missing of 20; 5% vs 10%).
+    def report_for(n_missing: int) -> Any:
+        df = pl.DataFrame(
+            {"patient_id": [f"P{i}" for i in range(20)], "ldl": [None] * n_missing + [1.0] * (20 - n_missing)}
+        )
+        return run_quality(df.lazy(), make_contract(df), run_at=FIXED_TS)
+
+    # Act
+    one, two = report_for(1), report_for(2)
+
+    # Assert: the whole report is the same, statuses and totals included.
+    assert one.model_dump(exclude={"run_ts"}) == two.model_dump(exclude={"run_ts"})
+    assert _by_id(one)["ldl_missing"].status == config.HIDDEN_STATUS
+
+
+def test_runQuality_randomSmallTables_fullReportBruteForceNoSmallCountPinned(make_contract):
+    # Arrange: seeded random cohorts small enough to enumerate every column assignment.
+    import random
+
+    rng = random.Random(4112026)
+    for _trial in range(30):
+        rows = rng.randint(5, 16)
+        ids = [f"P{rng.randint(0, rows)}" if rng.random() > 0.15 else None for _ in range(rows)]
+        statin = [rng.choice([None, 1, 2, 7]) for _ in range(rows)]
+        bmi = [rng.choice([None, float("nan"), 25.0, 500.0, 5.0]) for _ in range(rows)]
+        df = pl.DataFrame({"patient_id": ids, STATIN: pl.Series(statin, dtype=pl.Int64), "bmi": bmi})
+        contract = make_contract(df, created_at=FIXED_TS)
+
+        # Act / Assert
+        _assert_reader_cannot_pin(
+            df,
+            contract,
+            {
+                "id": (("patient_id_not_null", "patient_id_no_duplicates"), "id"),
+                "statin": (("statin_use_missing", "statin_use_invalid"), "plain"),
+                "bmi": (("bmi_missing", "bmi_range"), "plain"),
+            },
+        )

@@ -32,10 +32,21 @@ MIN_CELL_SIZE: Final = SMALL_CELL_THRESHOLD
 # the proportions of missing data are below approximately 5%"; above that, the doctor should know.
 MISSINGNESS_WARN_PERCENT: Final = 5.0
 
+# Status of every check whose count is hidden, whatever the hidden value: a pass/warning would
+# say which side of a threshold the hidden count is on, which with the row total can pin it.
+HIDDEN_STATUS: Final = "review"
+
 # The one label for every suppressed count in a quality report: small (1..10) and the others hidden
 # so a small count cannot be worked out. It only says "at least 1" (zero is shown as 0); a second
 # label for small counts would tell a reader the rest are 11 or more.
 COUNT_HIDDEN: Final = "hidden"
+
+# Tables of 1..MAX_ROWS_ALL_HIDDEN rows show no non-zero count and no row count. The cut-off is
+# fixed (not "when a column cannot be protected"), so a hidden row count reveals only that the
+# table is this small. From MIN_CELL_SIZE + 2 rows up, hiding a column's non-zero counts always
+# leaves every small count able to be MIN_CELL_SIZE or more (rows - 2 >= 11: one hidden
+# neighbour >= 1, and >= 1 distinct value when duplicates are counted).
+MAX_ROWS_ALL_HIDDEN: Final = MIN_CELL_SIZE + 1
 
 # Fewer rows than the small-cell threshold: every count would be suppressed.
 MIN_ROW_COUNT: Final = MIN_CELL_SIZE

@@ -113,7 +113,10 @@ label and is shown as written, with no † and no footnote.
 every suppressed count the same way, as "some … ; count hidden to protect privacy", never "<11":
 with a visible row total, two labels would tell a reader that the non-"<11" hidden counts are 11
 or more, and a column's missing + bad + valid counts would then pin a small one. A hidden count
-there only means "at least 1" (zero is shown as 0). Its footnote: "Hidden to protect privacy:
+there only means "at least 1" (zero is shown as 0). A check whose count is hidden always has the
+status "review", whatever the value (a pass/warning would say which side of a threshold it is on:
+1 of 20 missing "passed" at 5% meant exactly 1), so the summary and "N things to review" depend
+only on shown numbers. Tables of 1–12 rows hide the row count and every non-zero count. Its footnote: "Hidden to protect privacy:
 counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be
 worked out from the totals. A hidden count is never zero."
 

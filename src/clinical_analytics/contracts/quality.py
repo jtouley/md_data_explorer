@@ -21,9 +21,12 @@ repeated; ``rest`` is never shown but can be worked out when the others are), or
 ``[missing, rest]``. Counts of 1..10 are hidden, and more cells are hidden until, for every
 small count (``rest`` included), a reader who knows the shown numbers, the row count and that
 each hidden count is at least 1 must still allow it to be 11 or more. When even hiding every
-count of a column cannot achieve that (tiny tables), the row count and every non-zero count are
-hidden. Hidden counts lose their percent. Pass/warning statuses still say which side of a
-threshold a hidden count is on (e.g. missingness above 5%); that coarse bound is accepted.
+tables of 1..12 rows (``config.MAX_ROWS_ALL_HIDDEN``, a fixed cut-off so the choice itself
+says nothing more), the row count and every non-zero count are hidden; above that, hiding a
+column's counts always suffices. Hidden counts lose their percent, and their check's status is always "review"
+(``config.HIDDEN_STATUS``), whatever the hidden value: a pass/warning status would say which side
+of a threshold the count is on, and with the row total that can pin it (1 of 20 missing "passed"
+at 5% meant exactly 1). Totals, messages and the summary therefore depend only on shown numbers.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ from clinical_analytics.contracts.errors import QualityCheckError
 
 logger = structlog.get_logger()
 
-CheckStatus: TypeAlias = Literal["passed", "warning", "failed", "not_run"]
+CheckStatus: TypeAlias = Literal["passed", "warning", "failed", "review", "not_run"]
 HIDDEN_NOTE = "count hidden to protect privacy"
 ROWS_KEY = "__rows"
 RANGE_METRIC = "range"
@@ -90,6 +93,7 @@ class QualityReport(BaseModel):
     passed: int
     warnings: int
     failed: int
+    review: int = Field(0, description="Checks whose count is hidden (status 'review')")
     not_run: int
     summary: list[str] = Field(default_factory=list, description="Short plain-language lines for the UI")
     checks: list[QualityCheckResult] = Field(default_factory=list)
@@ -299,8 +303,6 @@ def _message(check: CompiledCheck, count: int, shown: int | str, percent: float 
     if check.metric == "rowCount":
         if shown != config.COUNT_HIDDEN:
             return f"{shown} rows"
-        if count < config.MIN_ROW_COUNT:
-            return "Too few rows: every count is hidden to protect privacy"
         return "Row count hidden to protect privacy"
     if count == 0:
         return f"{name}: no problems found"
@@ -362,11 +364,17 @@ def _lines(checks: list[CompiledCheck], raw: dict[str, int]) -> tuple[dict[str, 
     return cell_of, value, lines
 
 
-def _max_feasible(cell: str, rows: int, value: dict[str, int], hidden: set[str], lines: list[Line]) -> int:
-    """Largest value a reader could not rule out for ``cell`` (hidden counts >= 1, rest >= 0)."""
+def _max_feasible(
+    cell: str, rows: int, value: dict[str, int], hidden: set[str], lines: list[Line], distinct_rests: set[str]
+) -> int:
+    """Largest value a reader could not rule out for ``cell``: hidden counts >= 1, rest >= 0, and
+    for a duplicate check rest (the distinct values) >= 1 whenever any value repeats."""
 
     def low(c: str | None) -> int:
         return 0 if c is None else (1 if c in hidden else value[c])
+
+    def rest_floor(bad: str | None, rest: str) -> int:
+        return 1 if rest in distinct_rests and bad is not None and low(bad) > 0 else 0
 
     if cell.endswith("::rest"):
         m, bad, _ = next(line for line in lines if line[2] == cell)
@@ -376,9 +384,9 @@ def _max_feasible(cell: str, rows: int, value: dict[str, int], hidden: set[str],
         return value[cell]
     as_missing = [line for line in lines if line[0] == cell]
     if as_missing:
-        return min(rows - low(bad) for _, bad, _ in as_missing)
-    m = next(line[0] for line in lines if line[1] == cell)
-    return rows - low(m)
+        return min(rows - low(bad) - rest_floor(bad, rest) for _, bad, rest in as_missing)
+    m, bad, rest = next(line for line in lines if line[1] == cell)
+    return rows - low(m) - rest_floor(bad, rest)
 
 
 def _neighbours(cell: str, lines: list[Line]) -> list[str]:
@@ -390,24 +398,28 @@ def _neighbours(cell: str, lines: list[Line]) -> list[str]:
     return out
 
 
-def _hidden_cells(rows: int, value: dict[str, int], lines: list[Line]) -> tuple[set[str], bool]:
+def _hidden_cells(
+    rows: int, value: dict[str, int], lines: list[Line], distinct_rests: set[str]
+) -> tuple[set[str], bool]:
     """Shown cells to hide, and whether the row count must be hidden too (see module docstring)."""
     limit = config.MIN_CELL_SIZE
     shown_cells = {c for line in lines for c in line[:2] if c is not None}
     everything = ({c for c in shown_cells if value[c] > 0}, True)
-    if 0 < rows < limit:
+    if 0 < rows <= config.MAX_ROWS_ALL_HIDDEN:
         return everything
     hidden = {c for c in shown_cells if 0 < value[c] < limit}
     small = [c for c, v in value.items() if 0 < v < limit]
     while True:
-        weak = next((c for c in small if _max_feasible(c, rows, value, hidden, lines) < limit), None)
+        weak = next((c for c in small if _max_feasible(c, rows, value, hidden, lines, distinct_rests) < limit), None)
         if weak is None:
             return hidden, False
         candidates = sorted(
             {c for c in _neighbours(weak, lines) if c not in hidden and value[c] > 0}, key=lambda c: value[c]
         )
         if not candidates:
-            return everything
+            # Unreachable above MAX_ROWS_ALL_HIDDEN (see config); hiding the row count only now
+            # would itself reveal that this column's counts are small.
+            raise QualityCheckError("Small counts cannot be protected for this table")
         hidden.add(candidates[0])
 
 
@@ -417,7 +429,8 @@ def _shown_counts(
     """Count and percent as shown for every runnable check, and the row count as shown."""
     rows = raw[ROWS_KEY]
     cell_of, value, lines = _lines(checks, raw)
-    hidden, rows_hidden = _hidden_cells(rows, value, lines)
+    distinct_rests = {f"{c.id}::rest" for c in checks if c.metric == "duplicateValues"}
+    hidden, rows_hidden = _hidden_cells(rows, value, lines, distinct_rests)
     shown_rows: int | str = config.COUNT_HIDDEN if rows_hidden else rows
     shown: dict[str, tuple[int | str, float | None]] = {}
     for c in checks:
@@ -453,18 +466,21 @@ def _result(
     passed = _passes(check.rule, observed)
     shown, percent = shown_counts[check.id]
     status: CheckStatus = "passed" if passed else ("failed" if check.severity == "error" else "warning")
+    if shown == config.COUNT_HIDDEN:
+        status = config.HIDDEN_STATUS  # never depends on the hidden value
     return QualityCheckResult(
         **common, status=status, count=shown, percent=percent, message=_message(check, count, shown, percent)
     )
 
 
 def _summary(results: list[QualityCheckResult]) -> list[str]:
-    """Failed, then warnings, then any other missing values; capped for a small upload notice."""
-    order = {"failed": 0, "warning": 1, "passed": 2, "not_run": 3}
+    """Failed, warnings, hidden ("review"), then any other missing values; capped for the upload notice."""
+    order = {"failed": 0, "warning": 1, "review": 2, "passed": 3, "not_run": 4}
     notable = [
         r
         for r in results
-        if r.status in ("failed", "warning", "not_run") or (r.metric == "nullValues" and r.count not in (0, None))
+        if r.status in ("failed", "warning", "review", "not_run")
+        or (r.metric == "nullValues" and r.count not in (0, None))
     ]
     notable.sort(key=lambda r: order[r.status])
     lines = [r.message for r in notable]
@@ -481,7 +497,25 @@ def _custom_value(contract: OpenDataContractStandard, prop: str) -> Any:
 def run_quality(lf: pl.LazyFrame, contract: OpenDataContractStandard, run_at: datetime | None = None) -> QualityReport:
     """Check ``lf`` against ``contract`` (one collect) and build the suppressed report."""
     checks = compile_contract(contract, lf.collect_schema())
-    raw = measure(lf, checks)
+    report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at)
+    logger.info(
+        "quality_run_completed",
+        upload_id=report.upload_id,
+        checks=len(report.checks),
+        failed=report.failed,
+        warnings=report.warnings,
+        not_run=report.not_run,
+    )
+    return report
+
+
+def report_from_counts(
+    contract: OpenDataContractStandard,
+    checks: list[CompiledCheck],
+    raw: dict[str, int],
+    run_at: datetime | None = None,
+) -> QualityReport:
+    """The suppressed report for raw counts (``measure`` output). Pure: no data is read."""
     shown_counts, shown_rows = _shown_counts(checks, raw)
     results = [_result(c, raw, shown_counts) for c in checks]
     ts = (run_at or datetime.now(UTC)).astimezone(UTC)
@@ -494,16 +528,9 @@ def run_quality(lf: pl.LazyFrame, contract: OpenDataContractStandard, run_at: da
         passed=sum(r.status == "passed" for r in results),
         warnings=sum(r.status == "warning" for r in results),
         failed=sum(r.status == "failed" for r in results),
+        review=sum(r.status == "review" for r in results),
         not_run=sum(r.status == "not_run" for r in results),
         summary=_summary(results),
         checks=results,
-    )
-    logger.info(
-        "quality_run_completed",
-        upload_id=report.upload_id,
-        checks=len(results),
-        failed=report.failed,
-        warnings=report.warnings,
-        not_run=report.not_run,
     )
     return report
