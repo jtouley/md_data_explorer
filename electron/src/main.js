@@ -9,7 +9,8 @@
  * - The per-launch API token goes only to that exact page (or the Vite dev server in dev).
  * - The window cannot navigate away from the app or open new windows; the renderer is sandboxed.
  */
-import { app, BrowserWindow, ipcMain, nativeTheme, net, protocol } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol } from 'electron';
+import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -32,13 +33,32 @@ import {
   parseThemeSetting,
   serializeThemeSetting,
 } from './theme.js';
+import { API_BASE_URL_ARG_PREFIX } from './apiAuth.js';
+import {
+  BackendSidecar,
+  resolveHealthTimeoutMs,
+  resolvePreferredPort,
+  resolvePythonExecutable,
+  startupFailureMessage,
+  useExternalBackend,
+} from './backendSidecar.js';
 
 // Per-launch API token. scripts/run_app.sh generates it and passes it to both the backend and
 // this process (CLINICAL_ANALYTICS_API_TOKEN); started on its own, main generates one. Throws on
 // a weak launcher token.
 const { token: apiToken, source: apiTokenSource } = resolveApiToken(process.env);
 // Explicit developer opt-out: only then may the preload use a backend that does not check tokens.
-const devNoAuth = resolveDevNoAuth(process.env);
+// Only meaningful for an external dev backend; the backend this app starts always checks tokens.
+const devNoAuth = resolveDevNoAuth(process.env) && useExternalBackend(process.env);
+
+// Electron owns the backend (started below) unless the dev flow runs its own API
+// (CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1: separate Vite + `make run-api`, or scripts/run_app.sh).
+const externalBackend = useExternalBackend(process.env);
+/** @type {BackendSidecar | null} */
+let sidecar = null;
+/** Address of the backend this launch started (null: the preload default / dev override). */
+let apiBaseUrl = null;
+let backendStopped = false;
 
 const devServerUrl =
   typeof MAIN_WINDOW_VITE_DEV_SERVER_URL === 'string' && MAIN_WINDOW_VITE_DEV_SERVER_URL
@@ -138,6 +158,8 @@ function lockDownWebContents(contents) {
  * @returns {BrowserWindow} The created window
  */
 const createWindow = () => {
+  const additionalArguments = [`${THEME_ARG_PREFIX}${nativeTheme.themeSource}`];
+  if (apiBaseUrl) additionalArguments.push(`${API_BASE_URL_ARG_PREFIX}${apiBaseUrl}`);
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -152,8 +174,9 @@ const createWindow = () => {
       sandbox: true, // preload uses only contextBridge + ipcRenderer (bundled, no Node APIs)
       webviewTag: false,
       preload: path.join(__dirname, 'preload.js'),
-      // The saved theme (settings.json), so the page's first paint matches nativeTheme.
-      additionalArguments: [`${THEME_ARG_PREFIX}${nativeTheme.themeSource}`],
+      // The saved theme (settings.json), so the page's first paint matches nativeTheme, and the
+      // address of the backend this launch started.
+      additionalArguments,
     },
   });
   lockDownWebContents(mainWindow.webContents);
@@ -175,10 +198,52 @@ const createWindow = () => {
 // Application Lifecycle
 // ============================================================================
 
+/** Show why the backend did not start, then quit (stopping whatever was started). */
+function failStartup(failure) {
+  const { title, message } = startupFailureMessage(failure || { reason: 'spawn' });
+  console.error(`${title}: ${message}`);
+  dialog.showErrorBox(title, message);
+  app.quit();
+}
+
+/** Spawn the backend and wait until it is ready; false when it failed (error already shown). */
+async function startBackend() {
+  try {
+    sidecar = new BackendSidecar({
+      python: resolvePythonExecutable(process.env, { appRoot: app.getAppPath() }),
+      token: apiToken,
+      env: process.env,
+      preferredPort: resolvePreferredPort(process.env),
+      healthTimeoutMs: resolveHealthTimeoutMs(process.env),
+      parentPid: process.pid,
+      cwd: os.homedir(),
+      log: (line) => console.log(line),
+    });
+    apiBaseUrl = await sidecar.spawn();
+  } catch (failure) {
+    failStartup(failure instanceof Error ? { reason: 'spawn', detail: failure.message } : failure);
+    return false;
+  }
+  console.log(`📡 Backend starting at ${apiBaseUrl} (pid ${sidecar.child?.pid})`);
+  // The window opens only once the backend answers: the renderer checks the connection on load.
+  try {
+    await sidecar.waitUntilReady();
+  } catch (failure) {
+    failStartup(failure);
+    return false;
+  }
+  console.log('✅ Backend ready');
+  return true;
+}
+
 // Create window when app is ready
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   console.log('🚀 Clinical Analytics Electron app starting...');
-  console.log('📡 Backend API URL: http://127.0.0.1:8000');
+  if (externalBackend) {
+    console.log('📡 Using an already-running backend (CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1)');
+  } else if (!(await startBackend())) {
+    return;
+  }
   console.log(
     `🔑 API token: ${apiTokenSource === 'env' ? 'from launcher' : 'generated (backend must use the same one)'}` +
       (devNoAuth ? ' — dev mode: an unauthenticated backend is accepted' : '')
@@ -207,6 +272,21 @@ app.whenReady().then(() => {
     }
   });
 });
+
+// Stop the backend before quitting: SIGTERM, then a kill after the grace period.
+app.on('before-quit', (event) => {
+  if (!sidecar || backendStopped) return;
+  event.preventDefault();
+  backendStopped = true;
+  sidecar
+    .stop()
+    .then((how) => console.log(`🛑 Backend stopped (${how})`))
+    .catch((error) => console.error('Could not stop the backend:', error?.message || error))
+    .finally(() => app.quit());
+});
+
+// Last resort if the process exits some other way: never leave the backend running.
+process.on('exit', () => sidecar?.killNow());
 
 // Quit when all windows are closed (except macOS)
 app.on('window-all-closed', () => {

@@ -22,6 +22,7 @@ from collections.abc import Sequence
 
 import uvicorn
 
+from clinical_analytics.api.parent_watchdog import start_parent_watchdog
 from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.embeddings import EmbeddingModelMissingError, check_embedding_model
 from clinical_analytics.core.log_redaction import configure_logging
@@ -40,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--reload", action="store_true", help="development: restart on code changes")
     parser.add_argument("--log-level", default="info", choices=["debug", "info", "warning", "error"])
+    parser.add_argument(
+        "--exit-with-parent",
+        type=int,
+        default=None,
+        metavar="PID",
+        help="shut down when process PID exits (the desktop app passes its own PID)",
+    )
     return parser
 
 
@@ -72,6 +80,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if reason is not None:
         print(f"Clinical Analytics cannot start: {' '.join(reason.split())}", file=sys.stderr)
         sys.exit(STORE_CHECK_FAILED_EXIT)
+    if args.exit_with_parent is not None:
+        start_parent_watchdog(args.exit_with_parent)
     uvicorn.run(
         APP_IMPORT_PATH,
         host=args.host,

@@ -5,8 +5,10 @@ const REPO_ROOT = require('node:path').resolve(__dirname, '..', '..', '..');
 const ELECTRON_ROOT = require('node:path').resolve(REPO_ROOT, 'electron');
 const API_URL = 'http://127.0.0.1:8000/health';
 
-// The harness starts a dev-mode API (no token); the app must be told it may use one.
+// The harness starts a dev-mode API (no token); the app must be told it may use one, and that
+// it should use that API instead of starting its own (except in the sidecar test below).
 process.env.CLINICAL_ANALYTICS_DEV_NO_AUTH = '1';
+process.env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND = '1';
 const RENDERER_URL = 'http://localhost:5173';
 
 let apiProcess;
@@ -97,6 +99,24 @@ function buildForgeMainBundle() {
     cwd: ELECTRON_ROOT,
     stdio: 'inherit',
   });
+}
+
+/** PIDs of backends started by this Electron process (serve.py --exit-with-parent <pid>). */
+function sidecarPids(electronPid) {
+  const out = execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' });
+  return out
+    .split('\n')
+    .filter((line) => line.includes('clinical_analytics.api.serve'))
+    .filter((line) => line.includes(`--exit-with-parent ${electronPid}`))
+    .map((line) => Number(line.trim().split(/\s+/)[0]));
+}
+
+async function healthStatus(baseUrl) {
+  try {
+    return (await fetch(`${baseUrl}/health`)).status;
+  } catch {
+    return 'unreachable';
+  }
 }
 
 test.describe.serial('Native Electron binary harness', () => {
@@ -223,5 +243,84 @@ test.describe.serial('Native Electron binary harness', () => {
       await page.evaluate(() => window.appTheme.set('system'));
       await app.close();
     }
+  });
+  test('starts its own backend on a free port, reaches /health, and leaves none behind', async () => {
+    // Arrange: the harness API already holds port 8000, so the app must pick another one. A
+    // throwaway data home keeps the two backends off each other's data store.
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const dataHome = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'ca-sidecar-'));
+    const env = {
+      ...process.env,
+      ELECTRON_DISABLE_SANDBOX: '1',
+      CLINICAL_ANALYTICS_DATA_HOME: dataHome,
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
+    delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
+    delete env.CLINICAL_ANALYTICS_API_TOKEN;
+    expect(await isUrlHealthy(API_URL)).toBe(true);
+
+    // Act
+    const app = await electron.launch({ args: ['--no-sandbox', ELECTRON_ROOT], env });
+    const electronPid = app.process().pid;
+    let mainLog = '';
+    app.process().stdout.on('data', (chunk) => {
+      mainLog += chunk;
+    });
+    let baseUrl;
+    try {
+      const page = await app.firstWindow();
+      baseUrl = await page.evaluate(() => window.clinicalAPI.getApiBaseUrl());
+
+      // Assert: a loopback address on a port other than the occupied 8000
+      expect(baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      expect(baseUrl).not.toBe('http://127.0.0.1:8000');
+      // The renderer reaches it through the preload, which verified the token proof first.
+      await expect(page.locator('#connection-status')).toHaveClass(/status-connected/, {
+        timeout: 90000,
+      });
+      expect(await healthStatus(baseUrl)).toBe(200);
+      // It enforces this launch's token (unlike the dev-mode harness API).
+      expect((await fetch(`${baseUrl}/api/datasets`)).status).toBe(401);
+      expect(sidecarPids(electronPid)).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
+
+    // Assert: quitting stopped the backend; no orphan is left.
+    await expect.poll(() => sidecarPids(electronPid), { timeout: 15000 }).toEqual([]);
+    await expect.poll(() => healthStatus(baseUrl), { timeout: 15000 }).toBe('unreachable');
+    // Stopped by main on quit with SIGTERM (not by the kill fallback or the parent watchdog).
+    expect(mainLog).toContain('Backend stopped (terminated)');
+    fs.rmSync(dataHome, { recursive: true, force: true });
+  });
+  test('a killed app (no quit handler) still leaves no backend: the watchdog stops it', async () => {
+    // Arrange
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const dataHome = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'ca-sidecar-'));
+    const env = {
+      ...process.env,
+      ELECTRON_DISABLE_SANDBOX: '1',
+      CLINICAL_ANALYTICS_DATA_HOME: dataHome,
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
+    delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
+    const app = await electron.launch({ args: ['--no-sandbox', ELECTRON_ROOT], env });
+    const electronPid = app.process().pid;
+    const page = await app.firstWindow();
+    const baseUrl = await page.evaluate(() => window.clinicalAPI.getApiBaseUrl());
+    expect(await healthStatus(baseUrl)).toBe(200);
+    expect(sidecarPids(electronPid)).toHaveLength(1);
+
+    // Act: simulate a crash or force quit
+    process.kill(electronPid, 'SIGKILL');
+
+    // Assert
+    await expect.poll(() => sidecarPids(electronPid), { timeout: 30000 }).toEqual([]);
+    await expect.poll(() => healthStatus(baseUrl), { timeout: 15000 }).toBe('unreachable');
+    fs.rmSync(dataHome, { recursive: true, force: true });
   });
 });

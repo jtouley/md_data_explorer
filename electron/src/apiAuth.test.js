@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 import {
   DEFAULT_API_BASE_URL,
   MAX_STREAM_RECONNECTS,
+  apiBaseUrlFromArgv,
   apiErrorMessage,
   enrichmentDecisionResult,
   createReplayFilter,
@@ -248,7 +249,36 @@ describe('API address', () => {
 
     // Assert
     expect(preload).not.toMatch(/localhost:8000/);
-    expect(csp.trim()).toBe('http://127.0.0.1:8000');
+    // The sidecar's port varies per launch; the host stays the IPv4 loopback literal only.
+    expect(csp.trim()).toBe('http://127.0.0.1:*');
+  });
+});
+
+describe('apiBaseUrlFromArgv', () => {
+  test.each([
+    [
+      'sidecar port',
+      ['electron', '--clinical-api-base-url=http://127.0.0.1:54321'],
+      'http://127.0.0.1:54321',
+    ],
+    ['lowest port', ['--clinical-api-base-url=http://127.0.0.1:1'], 'http://127.0.0.1:1'],
+    ['highest port', ['--clinical-api-base-url=http://127.0.0.1:65535'], 'http://127.0.0.1:65535'],
+    ['no argument', ['electron', '.'], null],
+    ['undefined argv', undefined, null],
+    ['port zero', ['--clinical-api-base-url=http://127.0.0.1:0'], null],
+    ['port too large', ['--clinical-api-base-url=http://127.0.0.1:65536'], null],
+    ['localhost', ['--clinical-api-base-url=http://localhost:8000'], null],
+    ['remote host', ['--clinical-api-base-url=http://evil.example:8000'], null],
+    ['https', ['--clinical-api-base-url=https://127.0.0.1:8000'], null],
+    ['path suffix', ['--clinical-api-base-url=http://127.0.0.1:8000/x'], null],
+    ['userinfo', ['--clinical-api-base-url=http://a@127.0.0.1:8000'], null],
+    ['empty value', ['--clinical-api-base-url='], null],
+  ])('%s', (_name, argv, expected) => {
+    // Act
+    const url = apiBaseUrlFromArgv(argv);
+
+    // Assert
+    expect(url).toBe(expected);
   });
 });
 

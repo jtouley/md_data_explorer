@@ -339,7 +339,9 @@ echo ""
 
 if command -v npm >/dev/null 2>&1 && [ -d electron/node_modules ]; then
     echo -e "${GREEN}🖥  Opening the desktop app (Electron)...${NC}"
-    npm --prefix electron start
+    # This script already started the backend with this launch's token; tell the app to use it
+    # instead of starting its own sidecar (which it does when launched on its own).
+    CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1 npm --prefix electron start
 else
     echo -e "${YELLOW}⚠ Electron dependencies not installed - desktop window not opened.${NC}"
     echo -e "${CYAN}   Install once with: cd electron && npm ci   then re-run this script.${NC}"
