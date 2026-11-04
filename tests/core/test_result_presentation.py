@@ -286,7 +286,7 @@ class TestPresentAnalysisStatisticalReporting:
             (
                 {**T_TEST, "test_type": "welch_t_test", "n_used": 280, "n_excluded": 4},
                 "Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; Welch t-test p<0.001; "
-                "n hidden; some excluded for missing data). Unadjusted comparison by treatment.",
+                "n hidden). Unadjusted comparison by treatment.",
             ),
             (
                 {**T_TEST, "test_type": "welch_t_test", "n_used": None, "n_excluded": None},
@@ -752,16 +752,25 @@ class TestSmallCellRecovery:
     @pytest.mark.parametrize(
         ("n_used", "n_excluded", "expected"),
         [
-            (397, 3, "n hidden; some excluded for missing data"),
-            (10, 390, "n hidden; some excluded for missing data"),
+            (397, 3, "n hidden"),
+            (10, 390, "n hidden"),
             (389, 11, "n=389; 11 excluded for missing data"),
             (400, 0, "n=400"),
-            (11, 0, "n=11"),
+            (12, 0, "n=12"),
+            (11, 0, "n hidden"),
         ],
-        ids=["small_excluded", "small_n", "both_large", "none_excluded", "threshold_none_excluded"],
+        ids=[
+            "small_excluded",
+            "small_n",
+            "both_large",
+            "none_excluded",
+            "floor_plus_two_none_excluded",
+            "floor_plus_one_always_hidden",
+        ],
     )
     def test_present_predictor_nClause_hidesBothWhenEitherSmall(self, n_used, n_excluded, expected):
-        # Arrange: n_used + n_excluded is the dataset row count, which the app shows
+        # Arrange: n_used + n_excluded is the dataset row count, which the app shows; logistic
+        # regression needs 10 rows, so of 11 rows n is 10 or 11 and is hidden either way
         analysis = _predictor((n_used, n_excluded))
 
         # Act
@@ -844,8 +853,15 @@ class TestHiddenNStatistics:
 
     @pytest.mark.parametrize(
         ("n_used", "n_events", "n_excluded", "shown"),
-        [(1, 1, 0, False), (10, 5, 0, False), (11, 1, 1, False), (11, 5, 0, True), (60, 20, 11, True)],
-        ids=["one_patient", "just_below", "exclusion_hides_n", "threshold", "large"],
+        [
+            (1, 1, 0, False),
+            (10, 5, 0, False),
+            (11, 1, 1, False),
+            (11, 5, 0, False),
+            (12, 5, 0, True),
+            (60, 20, 11, True),
+        ],
+        ids=["one_patient", "just_below", "exclusion_hides_n", "floor_plus_one_rows", "floor_plus_two_rows", "large"],
     )
     def test_present_survival_ungroupedHiddenN_hidesMedian(self, n_used, n_events, n_excluded, shown):
         # Arrange: a median of one patient is that patient's time
@@ -857,3 +873,175 @@ class TestHiddenNStatistics:
         # Assert: with n=11 and 1 excluded (row count 12) a shown median would mark n as >= 11
         assert ("400.0" in json.dumps(presentation)) == shown
         assert presentation["table"]["rows"][0]["median days"] == (400.0 if shown else SECONDARY_SUPPRESSED)
+
+
+# --- Algorithm-aware recovery audit -----------------------------------------------------------
+#
+# The reader sees one answer and the dataset row count R, knows how the presenter suppresses
+# cells, and knows the analysis floors (a t-test needs two patients per group, Kaplan-Meier and
+# logistic regression ten complete rows, a correlation three). Every candidate in a box of cell
+# values is presented; candidates with the same R and the same answer cannot be told apart. A
+# count from 1 to 10 whose value is the same in every candidate sharing its answer is leaked.
+# Only R up to the box size is judged, where every composition of R is in the box.
+
+
+def _attack(
+    build: Callable[[tuple[int, ...]], dict[str, Any]],
+    candidates: Iterable[tuple[int, ...]],
+    names: tuple[str, ...],
+    r_max: int,
+    judged: Callable[[str], bool] = lambda answer: True,
+) -> list[tuple[tuple[int, ...], str]]:
+    book: dict[tuple[int, str], dict[str, set[int]]] = {}
+    shown: dict[tuple[int, ...], tuple[int, str]] = {}
+    for cells in candidates:
+        if sum(cells) > r_max:
+            continue  # answers are compared within one row count, so these never matter
+        key = (sum(cells), _answer(build(cells)))
+        shown[cells] = key
+        for name, value in zip(names, cells, strict=True):
+            book.setdefault(key, {}).setdefault(name, set()).add(value)
+    return [
+        (cells, name)
+        for cells, key in shown.items()
+        if 11 <= key[0] <= r_max and judged(key[1])
+        for name, value in zip(names, cells, strict=True)
+        if value in _SMALL and book[key][name] == {value}
+    ]
+
+
+def _box(
+    sizes: tuple[range | tuple[int, ...], ...], keep: Callable[[tuple[int, ...]], bool] = lambda c: True
+) -> Callable[[], Iterator[tuple[int, ...]]]:
+    """Candidates in a box of cell values, built when the test runs (not at collection)."""
+    from itertools import product
+
+    return lambda: (c for c in product(*sizes) if keep(c))
+
+
+def _ttest_filtered(cells: tuple[int, ...]) -> dict[str, Any]:
+    drug, placebo, excluded, filtered = cells
+    return {**_two_group_comparison((drug, placebo, excluded)), "dataset_row_count": sum(cells)}
+
+
+def _anova(cells: tuple[int, ...]) -> dict[str, Any]:
+    a, b, c, excluded = cells
+    return {
+        "type": "comparison",
+        "test_type": "anova",
+        "outcome_col": "ldl",
+        "group_col": "site",
+        "groups": ["a", "b", "c"],
+        "n_groups": 3,
+        "p_value": 0.03,
+        "group_means": {"a": 10.0, "b": 20.0, "c": 30.0},
+        "group_sizes": {"a": a, "b": b, "c": c},
+        "n_used": a + b + c,
+        "n_excluded": excluded,
+    }
+
+
+def _predictor_filtered(cells: tuple[int, ...]) -> dict[str, Any]:
+    n_used, excluded, filtered = cells
+    return {**_predictor((n_used, excluded)), "dataset_row_count": sum(cells)}
+
+
+def _count_filtered(cells: tuple[int, ...]) -> dict[str, Any]:
+    total, filtered = cells
+    return {"type": "count", "total_count": total, "dataset_row_count": total + filtered}
+
+
+def _grouped_count3(cells: tuple[int, ...]) -> dict[str, Any]:
+    return _grouped_count(cells)
+
+
+def _numeric_with_nulls(cells: tuple[int, ...]) -> dict[str, Any]:
+    n, nulls = cells
+    return {**_numeric_descriptive((n, nulls)), "row_count": n + nulls, "null_count": nulls}
+
+
+def _relationship(cells: tuple[int, ...]) -> dict[str, Any]:
+    n, excluded = cells
+    return {
+        "type": "relationship",
+        "correlations": [{"var1": "age", "var2": "ldl", "correlation": -0.42}],
+        "n_observations": n,
+        "n_excluded": excluded,
+    }
+
+
+def _value_counts_cut(cells: tuple[int, ...]) -> dict[str, Any]:
+    # ten levels are listed (value_counts().head(10)); the last cell is the cut remainder
+    *listed, rest = cells
+    analysis = _value_counts(tuple(listed))
+    return {**analysis, "row_count": sum(cells)}
+
+
+_ALGORITHM_AUDITS = {
+    "t_test": (_two_group_comparison, ("A", "B", "excluded"), _box((range(2, 25), range(2, 25), range(25))), 24),
+    "t_test_filtered": (
+        _ttest_filtered,
+        ("A", "B", "excluded", "filtered"),
+        _box((range(2, 16), range(2, 16), range(16), range(16))),
+        15,
+    ),
+    "anova": (_anova, ("a", "b", "c", "excluded"), _box((range(2, 24), range(2, 24), range(2, 24), range(24))), 23),
+    "survival_summary": (
+        _survival_summary,
+        ("events", "censored", "excluded"),
+        _box((range(25), range(25), range(25)), lambda c: c[0] + c[1] >= 10),
+        24,
+    ),
+    "predictor": (_predictor, ("n_used", "excluded"), _box((range(10, 40), range(40))), 39),
+    "predictor_filtered": (
+        _predictor_filtered,
+        ("n_used", "excluded", "filtered"),
+        _box((range(10, 30), range(30), range(30))),
+        29,
+    ),
+    "chi_square": (
+        _chi_square,
+        ("A0", "B0", "A1", "B1", "excluded"),
+        lambda: (
+            c
+            for total in range(2, 21)
+            for c in _compositions(total, (0,) * 5)
+            if c[0] + c[2] > 0 and c[1] + c[3] > 0 and sum(c[:4]) >= 2
+        ),
+        20,
+    ),
+    "grouped_count": (_grouped_count3, ("A", "B", "C"), _box((range(1, 33),) * 3), 32),
+    "count_filtered": (_count_filtered, ("total", "filtered"), _box((range(40), range(40))), 39),
+    "numeric_nulls": (_numeric_with_nulls, ("n", "nulls"), _box((range(40), range(40))), 39),
+    "relationship": (_relationship, ("n", "excluded"), _box((range(3, 40), range(40))), 39),
+    "value_counts_cut": (
+        _value_counts_cut,
+        tuple(f"level{i}" for i in range(10)) + ("rest",),
+        # eight listed levels fixed at 30; the last two listed levels and the cut remainder vary
+        # (the remainder is any number of levels no larger than the tenth)
+        _box(
+            ((30,),) * 8 + (range(1, 31), range(1, 31), range(31)), lambda c: c[8] >= c[9] and (c[10] == 0 or c[9] >= 1)
+        ),
+        240 + 30,
+    ),
+}
+
+_JUDGED: dict[str, Callable[[str], bool]] = {"value_counts_cut": lambda answer: answer.count('"count": 30') == 8}
+
+
+class TestAlgorithmAwareRecovery:
+    """No count from 1 to 10 is pinned by one answer for a reader who knows the algorithm."""
+
+    @pytest.mark.parametrize("scenario", sorted(_ALGORITHM_AUDITS))
+    def test_present_analysis_algorithmAwareAttack_pinsNoSmallCount(self, scenario):
+        # Arrange
+        build, names, candidates, r_max = _ALGORITHM_AUDITS[scenario]
+        # A box that fixes some cells is exact only for answers that show those cells.
+        judged = _JUDGED.get(scenario, lambda answer: True)
+
+        # Act
+        leaks = _attack(build, candidates(), names, r_max, judged)
+
+        # Assert
+        examples = [(cells, name, _answer(build(cells))) for cells, name in leaks[:3]]
+        assert leaks == [], f"{len(leaks)} pinned cells, e.g. {examples}"

@@ -105,8 +105,10 @@ would be false for secondary cells; rendering "—" reads as "missing" or "zero"
 tables. The footnote says what is true for both: "Hidden to protect privacy: counts from 1 to 10
 are not shown, and some other cells are hidden so those counts can't be worked out from totals."
 Within one answer the API uses one marker: when the table hides a count, the claim does not write
-"<11" for it either, and says "n hidden; some excluded for missing data" (n and the exclusions
-add up to the dataset's row count, so both are hidden when either is small) or "count hidden".
+"<11" for it either. It says "n hidden" (n, the exclusions and any rows a filter removed add up to
+the dataset's row count, so n is hidden when any of them is small, together with every group
+size; the clause then does not say whether rows were excluded), "n=377; some excluded for missing
+data" (only the exclusions hidden), "count hidden", or "Total count hidden." for a filtered count.
 "<11" appears only when it is the answer's sole hidden count, e.g. "Total count: <11."
 We never write "<5"; the threshold is 11.
 Only the API's exact tokens mean hidden: the lowercase `suppressed` and `<11` (built from the

@@ -10,6 +10,13 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.analysis.sample_floors import (
+    MIN_COMPARISON_N,
+    MIN_CORRELATION_N,
+    MIN_GROUP_N,
+    MIN_REGRESSION_N,
+    MIN_SURVIVAL_N,
+)
 from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, code_key, is_numeric_dtype
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
@@ -563,7 +570,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     n_used = analysis_df.height
     n_excluded = n_in_scope - n_used
 
-    if n_used < 2:
+    if n_used < MIN_COMPARISON_N:
         return {"type": "comparison", "error": "Not enough data for comparison"}
 
     outcome_series = analysis_df[outcome_col]
@@ -577,7 +584,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             analysis_df = _drop_missing(analysis_df.with_columns(converted.alias(outcome_col)))
             n_used = analysis_df.height
             n_excluded = n_in_scope - n_used
-            if n_used < 2:
+            if n_used < MIN_COMPARISON_N:
                 return {"type": "comparison", "error": "Not enough data for comparison"}
             outcome_series = analysis_df[outcome_col]
     outcome_kind = classify_variable(outcome_series)
@@ -612,7 +619,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
         if n_groups == 2:
             a, b = group_data
-            if min(len(a), len(b)) < 2:
+            if min(len(a), len(b)) < MIN_GROUP_N:
                 return {**base, "error": "Each group needs at least 2 observations for a t-test"}
             constant = _constant_groups(groups, group_data)
             if constant:
@@ -642,7 +649,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "group_means": group_means,
                 **headline,
             }
-        small = [str(g) for g, d in zip(groups, group_data, strict=True) if len(d) < 2]
+        small = [str(g) for g, d in zip(groups, group_data, strict=True) if len(d) < MIN_GROUP_N]
         if small:
             return {**base, "error": f"Each group needs at least 2 observations for ANOVA ({', '.join(small)})"}
         if len(_constant_groups(groups, group_data)) == n_groups:
@@ -1019,7 +1026,7 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         "n_excluded": n_in_scope - n_used,
     }
 
-    if n_used < 10:
+    if n_used < MIN_REGRESSION_N:
         return {**base, "error": "Need at least 10 complete observations"}
 
     outcome_series = analysis_df[outcome_col]
@@ -1115,7 +1122,7 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
         "n_excluded": n_in_scope - n_used,
     }
 
-    if n_used < 10:
+    if n_used < MIN_SURVIVAL_N:
         return {**base, "error": "Need at least 10 complete observations"}
 
     unique_vals = sorted(analysis_df[event_col].unique().to_list(), key=str)
@@ -1263,7 +1270,7 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
     # Calculate correlations using only numeric variables
     analysis_df = _drop_missing(df.select(numeric_variables))
 
-    if analysis_df.height < 3:
+    if analysis_df.height < MIN_CORRELATION_N:
         return {"type": "relationship", "error": "Need at least 3 observations with complete data"}
 
     # Cast to numeric for correlation (should all be numeric now, but ensure Float64)
@@ -1304,4 +1311,5 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
         "strong_correlations": strong_correlations,
         "moderate_correlations": moderate_correlations,
         "n_observations": analysis_df.height,
+        "n_excluded": df.height - analysis_df.height,
     }
