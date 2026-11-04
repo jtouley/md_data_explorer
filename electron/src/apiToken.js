@@ -104,3 +104,27 @@ export function resolveAppFilePath(requestUrl, rootDir) {
   if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
   return resolved;
 }
+
+/**
+ * The page's Content-Security-Policy, sent as a response header by main. connect-src names the one
+ * backend origin this launch uses (exact port), so page script cannot reach any other loopback
+ * service (for example a local model server that could be told to fetch from the internet).
+ * index.html keeps a meta CSP limited to 127.0.0.1; both apply, so the header narrows it.
+ * @param {string} apiBaseUrl - http://127.0.0.1:<port>
+ * @returns {string}
+ */
+export function contentSecurityPolicy(apiBaseUrl) {
+  const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(apiBaseUrl || '');
+  const port = match ? Number(match[1]) : 0;
+  if (!(port >= 1 && port <= 65535)) {
+    throw new Error(
+      `API address must be http://127.0.0.1:<port>, got ${JSON.stringify(apiBaseUrl)}`
+    );
+  }
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    `connect-src http://127.0.0.1:${port}`,
+  ].join('; ');
+}

@@ -119,6 +119,52 @@ async function healthStatus(baseUrl) {
   }
 }
 
+/**
+ * Launch the app so it starts its own backend: no external-backend flag, no dev opt-out, no
+ * launcher token, and a throwaway data home (keeps it off the harness API's store).
+ */
+async function launchWithSidecar() {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const dataHome = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'ca-sidecar-'));
+  const env = {
+    ...process.env,
+    ELECTRON_DISABLE_SANDBOX: '1',
+    CLINICAL_ANALYTICS_DATA_HOME: dataHome,
+  };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
+  delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
+  delete env.CLINICAL_ANALYTICS_API_TOKEN;
+  const app = await electron.launch({ args: ['--no-sandbox', ELECTRON_ROOT], env });
+  let log = '';
+  app.process().stdout.on('data', (chunk) => {
+    log += chunk;
+  });
+  return {
+    app,
+    electronPid: app.process().pid,
+    mainLog: () => log,
+    cleanup: () => fs.rmSync(dataHome, { recursive: true, force: true }),
+  };
+}
+
+/** The app's own page (not the startup window). */
+async function appWindow(app, timeoutMs = 90000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const win = app
+      .windows()
+      .find((w) => !w.isClosed() && !w.url().startsWith('data:') && w.url() !== 'about:blank');
+    if (win) {
+      await win.waitForLoadState('domcontentloaded');
+      return win;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error('The app window did not open');
+}
+
 test.describe.serial('Native Electron binary harness', () => {
   test.beforeAll(async () => {
     const apiAlreadyRunning = await isUrlHealthy(API_URL);
@@ -244,36 +290,29 @@ test.describe.serial('Native Electron binary harness', () => {
       await app.close();
     }
   });
-  test('starts its own backend on a free port, reaches /health, and leaves none behind', async () => {
-    // Arrange: the harness API already holds port 8000, so the app must pick another one. A
-    // throwaway data home keeps the two backends off each other's data store.
-    const fs = require('node:fs');
-    const os = require('node:os');
-    const dataHome = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'ca-sidecar-'));
-    const env = {
-      ...process.env,
-      ELECTRON_DISABLE_SANDBOX: '1',
-      CLINICAL_ANALYTICS_DATA_HOME: dataHome,
-    };
-    delete env.ELECTRON_RUN_AS_NODE;
-    delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
-    delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
-    delete env.CLINICAL_ANALYTICS_API_TOKEN;
+  test('starts its own backend on a free port behind a startup window, and leaves none behind', async () => {
+    // Arrange: the harness API already holds port 8000, so the app must pick another one.
     expect(await isUrlHealthy(API_URL)).toBe(true);
-
-    // Act
-    const app = await electron.launch({ args: ['--no-sandbox', ELECTRON_ROOT], env });
-    const electronPid = app.process().pid;
-    let mainLog = '';
-    app.process().stdout.on('data', (chunk) => {
-      mainLog += chunk;
-    });
+    const { app, electronPid, mainLog, cleanup } = await launchWithSidecar();
+    const windowUrls = [];
+    app.on('window', (win) => windowUrls.push(win.url()));
     let baseUrl;
     try {
-      const page = await app.firstWindow();
+      // Act: the first window is the startup window, shown while the backend boots
+      const first = await app.firstWindow();
+      const firstUrl = first.url();
+      const firstTitle = firstUrl.startsWith('data:')
+        ? await first
+            .getByTestId('startup-title')
+            .textContent()
+            .catch(() => 'closed')
+        : null;
+      const page = await appWindow(app);
       baseUrl = await page.evaluate(() => window.clinicalAPI.getApiBaseUrl());
 
-      // Assert: a loopback address on a port other than the occupied 8000
+      // Assert
+      expect(firstUrl.startsWith('data:text/html')).toBe(true);
+      expect(firstTitle === 'closed' || /Starting Clinical Analytics/.test(firstTitle)).toBe(true);
       expect(baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       expect(baseUrl).not.toBe('http://127.0.0.1:8000');
       // The renderer reaches it through the preload, which verified the token proof first.
@@ -281,36 +320,103 @@ test.describe.serial('Native Electron binary harness', () => {
         timeout: 90000,
       });
       expect(await healthStatus(baseUrl)).toBe(200);
-      // It enforces this launch's token (unlike the dev-mode harness API).
-      expect((await fetch(`${baseUrl}/api/datasets`)).status).toBe(401);
+      expect((await fetch(`${baseUrl}/api/datasets`)).status).toBe(401); // token enforced
       expect(sidecarPids(electronPid)).toHaveLength(1);
+      await expect
+        .poll(() => app.windows().filter((w) => w.url().startsWith('data:')).length)
+        .toBe(0);
     } finally {
       await app.close();
     }
 
-    // Assert: quitting stopped the backend; no orphan is left.
-    await expect.poll(() => sidecarPids(electronPid), { timeout: 15000 }).toEqual([]);
+    // Assert: quitting stopped the backend gracefully; no orphan is left.
+    await expect.poll(() => sidecarPids(electronPid), { timeout: 20000 }).toEqual([]);
     await expect.poll(() => healthStatus(baseUrl), { timeout: 15000 }).toBe('unreachable');
-    // Stopped by main on quit with SIGTERM (not by the kill fallback or the parent watchdog).
-    expect(mainLog).toContain('Backend stopped (terminated)');
-    fs.rmSync(dataHome, { recursive: true, force: true });
+    expect(mainLog()).toContain('Backend stopped (terminated)');
+    cleanup();
   });
-  test('a killed app (no quit handler) still leaves no backend: the watchdog stops it', async () => {
+
+  test('page CSP allows only this launch backend port, not other loopback services', async () => {
+    // Arrange: the harness API on 8000 stands in for any other local service (CORS allows the
+    // dev page's origin, so only the CSP can stop the request)
+    const { app, cleanup } = await launchWithSidecar();
+    try {
+      const page = await appWindow(app);
+      const baseUrl = await page.evaluate(() => window.clinicalAPI.getApiBaseUrl());
+      await expect(page.locator('#connection-status')).toHaveClass(/status-connected/, {
+        timeout: 90000,
+      });
+
+      // Act
+      const probe = (url) =>
+        page.evaluate(
+          (u) =>
+            fetch(u).then(
+              (r) => `status ${r.status}`,
+              () => 'blocked'
+            ),
+          url
+        );
+      const own = await probe(`${baseUrl}/health`);
+      const other = await probe('http://127.0.0.1:8000/health');
+
+      // Assert
+      expect(own).toBe('status 200');
+      expect(other).toBe('blocked');
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  test('a backend that dies after startup: dialog offers Restart, which brings a new one', async () => {
     // Arrange
-    const fs = require('node:fs');
-    const os = require('node:os');
-    const dataHome = fs.mkdtempSync(require('node:path').join(os.tmpdir(), 'ca-sidecar-'));
-    const env = {
-      ...process.env,
-      ELECTRON_DISABLE_SANDBOX: '1',
-      CLINICAL_ANALYTICS_DATA_HOME: dataHome,
-    };
-    delete env.ELECTRON_RUN_AS_NODE;
-    delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
-    delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
-    const app = await electron.launch({ args: ['--no-sandbox', ELECTRON_ROOT], env });
-    const electronPid = app.process().pid;
-    const page = await app.firstWindow();
+    const { app, electronPid, cleanup } = await launchWithSidecar();
+    try {
+      const page = await appWindow(app);
+      await expect(page.locator('#connection-status')).toHaveClass(/status-connected/, {
+        timeout: 90000,
+      });
+      const [firstPid] = sidecarPids(electronPid);
+      // Answer the native dialog with "Restart" and record what it said.
+      await app.evaluate(({ dialog }) => {
+        globalThis.__crashDialogs = [];
+        dialog.showMessageBox = async (opts) => {
+          globalThis.__crashDialogs.push({ message: opts.message, buttons: opts.buttons });
+          return { response: 0 };
+        };
+      });
+
+      // Act: the backend crashes
+      process.kill(firstPid, 'SIGKILL');
+
+      // Assert: the dialog was shown, a new backend runs and the new window is connected
+      await expect
+        .poll(() => app.evaluate(() => globalThis.__crashDialogs.length), { timeout: 15000 })
+        .toBe(1);
+      const shown = await app.evaluate(() => globalThis.__crashDialogs[0]);
+      expect(shown.message).toMatch(/stopped unexpectedly/);
+      expect(shown.buttons).toEqual(['Restart', 'Quit']);
+      await expect
+        .poll(() => sidecarPids(electronPid).filter((pid) => pid !== firstPid).length, {
+          timeout: 60000,
+        })
+        .toBe(1);
+      const restarted = await appWindow(app);
+      await expect(restarted.locator('#connection-status')).toHaveClass(/status-connected/, {
+        timeout: 90000,
+      });
+    } finally {
+      await app.close();
+    }
+    await expect.poll(() => sidecarPids(electronPid), { timeout: 20000 }).toEqual([]);
+    cleanup();
+  });
+
+  test('a killed app (no quit handler) still leaves no backend', async () => {
+    // Arrange
+    const { app, electronPid, cleanup } = await launchWithSidecar();
+    const page = await appWindow(app);
     const baseUrl = await page.evaluate(() => window.clinicalAPI.getApiBaseUrl());
     expect(await healthStatus(baseUrl)).toBe(200);
     expect(sidecarPids(electronPid)).toHaveLength(1);
@@ -318,9 +424,9 @@ test.describe.serial('Native Electron binary harness', () => {
     // Act: simulate a crash or force quit
     process.kill(electronPid, 'SIGKILL');
 
-    // Assert
+    // Assert: stdin closes and the parent watchdog fires; either stops the backend
     await expect.poll(() => sidecarPids(electronPid), { timeout: 30000 }).toEqual([]);
     await expect.poll(() => healthStatus(baseUrl), { timeout: 15000 }).toBe('unreachable');
-    fs.rmSync(dataHome, { recursive: true, force: true });
+    cleanup();
   });
 });

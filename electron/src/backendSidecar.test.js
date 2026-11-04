@@ -20,6 +20,7 @@ import {
   resolvePythonExecutable,
   startupFailureMessage,
   stopProcessTree,
+  unexpectedExitMessage,
   useExternalBackend,
   waitForHealth,
 } from './backendSidecar.js';
@@ -154,6 +155,7 @@ describe('configuration', () => {
       '51234',
       '--exit-with-parent',
       '999',
+      '--stop-on-stdin-close',
     ]);
   });
 
@@ -319,7 +321,7 @@ describe('waitForHealth', () => {
         },
       })
     ).rejects.toMatchObject({ reason: 'timeout', timeoutMs: 1000 });
-    expect(fetchFn).toHaveBeenCalledTimes(4); // t = 0, 400, 800, 1200
+    expect(fetchFn).toHaveBeenCalledTimes(3); // t = 0, 400, 800; none after the deadline
   });
 });
 
@@ -338,7 +340,7 @@ describe('BackendSidecar', () => {
     expect(args).toEqual(buildBackendArgs(51234, 999));
     expect(options.detached).toBe(true);
     expect(options.cwd).toBe('/home/doctor');
-    expect(options.stdio).toEqual(['ignore', 'pipe', 'pipe']);
+    expect(options.stdio).toEqual(['pipe', 'pipe', 'pipe']); // stdin: the stop lifeline
     expect(options.env.CLINICAL_ANALYTICS_API_TOKEN).toBe(TOKEN);
     expect(options.env).not.toHaveProperty('CLINICAL_ANALYTICS_DEV_NO_AUTH');
   });
@@ -451,9 +453,11 @@ describe('BackendSidecar', () => {
 });
 
 describe('stopProcessTree on Windows', () => {
-  test('taskkill /T first, then /T /F after the grace period', async () => {
-    // Arrange
+  function windowsChild({ exitsOnStdinClose }) {
     const child = makeFakeChild();
+    child.stdin = {
+      end: vi.fn(() => exitsOnStdinClose && setImmediate(() => child.emit('exit', 0, null))),
+    };
     let exited = false;
     const onExit = new Promise((resolve) => child.once('exit', resolve)).then(() => {
       exited = true;
@@ -462,22 +466,69 @@ describe('stopProcessTree on Windows', () => {
       if (args.includes('/F')) setImmediate(() => child.emit('exit', 1, null));
       cb(null);
     });
+    return { child, onExit, execFileFn, isExited: () => exited };
+  }
+
+  test('graceful: closes stdin (serve.py --stop-on-stdin-close) and never runs taskkill', async () => {
+    // Arrange
+    const { child, onExit, execFileFn, isExited } = windowsChild({ exitsOnStdinClose: true });
+
+    // Act
+    const how = await stopProcessTree(child, {
+      platform: 'win32',
+      graceMs: 1000,
+      execFileFn,
+      isExited,
+      onExit,
+    });
+
+    // Assert
+    expect(how).toBe('terminated');
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(execFileFn).not.toHaveBeenCalled();
+  });
+
+  test('still running after the grace period: taskkill /T /F ends the tree', async () => {
+    // Arrange
+    const { child, onExit, execFileFn, isExited } = windowsChild({ exitsOnStdinClose: false });
 
     // Act
     const how = await stopProcessTree(child, {
       platform: 'win32',
       graceMs: 20,
       execFileFn,
-      isExited: () => exited,
+      isExited,
       onExit,
     });
 
     // Assert
     expect(how).toBe('killed');
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
     expect(execFileFn.mock.calls.map((c) => [c[0], c[1]])).toEqual([
-      ['taskkill', ['/pid', '4321', '/T']],
       ['taskkill', ['/pid', '4321', '/T', '/F']],
     ]);
+  });
+
+  test('POSIX never touches stdin: SIGTERM to the group is the graceful request', async () => {
+    // Arrange
+    const child = makeFakeChild();
+    child.stdin = { end: vi.fn() };
+    const onExit = new Promise((resolve) => child.once('exit', resolve));
+    const killFn = vi.fn((pid, sig) => child.receive(sig));
+
+    // Act
+    const how = await stopProcessTree(child, {
+      platform: 'darwin',
+      graceMs: 1000,
+      killFn,
+      isExited: () => false,
+      onExit,
+    });
+
+    // Assert
+    expect(how).toBe('terminated');
+    expect(killFn).toHaveBeenCalledWith(-4321, 'SIGTERM');
+    expect(child.stdin.end).not.toHaveBeenCalled();
   });
 
   test('a process that is already gone (ESRCH) is not an error', async () => {
@@ -495,5 +546,107 @@ describe('stopProcessTree on Windows', () => {
         onExit,
       })
     ).resolves.toBe('terminated');
+  });
+});
+
+describe('health wait timeouts', () => {
+  const base = {
+    baseUrl: 'http://127.0.0.1:51234',
+    token: TOKEN,
+    cryptoImpl: webcrypto,
+    pollMs: 1,
+  };
+  const never = () => new Promise(() => {});
+
+  test('a squatter that accepts and never answers ends in a timeout, not a stall', async () => {
+    // Arrange
+    const fetchFn = vi.fn(never);
+    const started = Date.now();
+
+    // Act
+    const failure = await waitForHealth({
+      ...base,
+      fetchFn,
+      timeoutMs: 300,
+      attemptMs: 50,
+      exited: () => null,
+    }).catch((f) => f);
+
+    // Assert
+    expect(failure).toMatchObject({ reason: 'timeout', timeoutMs: 300 });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(fetchFn.mock.calls.length).toBeGreaterThan(1); // retried after each attempt timed out
+  });
+
+  test('health answers but the token check hangs: refused as untrusted within the deadline', async () => {
+    // Arrange: /health is fine, the nonce request never returns
+    const fetchFn = vi.fn(async (url) => {
+      if (url.includes('nonce=')) return never();
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    // Act
+    const failure = await waitForHealth({
+      ...base,
+      fetchFn,
+      timeoutMs: 2000,
+      attemptMs: 50,
+      exited: () => null,
+    }).catch((f) => f);
+
+    // Assert
+    expect(failure).toMatchObject({ reason: 'untrusted', detail: 'no-answer' });
+  });
+
+  test('each attempt carries an abort signal', async () => {
+    const fetchFn = makeBackendFetch();
+    await waitForHealth({ ...base, fetchFn, timeoutMs: 1000, exited: () => null });
+    expect(fetchFn.mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true);
+  });
+});
+
+describe('unexpected exit after startup', () => {
+  test('calls onUnexpectedExit when a ready backend dies on its own', async () => {
+    // Arrange
+    const onUnexpectedExit = vi.fn();
+    const { sidecar, child } = makeSidecar({ onUnexpectedExit });
+    await sidecar.spawn();
+    await sidecar.waitUntilReady();
+
+    // Act
+    child.stderr.emit('data', 'MemoryError\n');
+    child.emit('exit', null, 'SIGKILL');
+    await sidecar.exitPromise;
+
+    // Assert
+    expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
+    const text = unexpectedExitMessage(onUnexpectedExit.mock.calls[0][0]);
+    expect(text.buttons).toEqual(['Restart', 'Quit']);
+    expect(text.detail).toMatch(/stopped \(SIGKILL\)[\s\S]*MemoryError/);
+  });
+
+  test.each([
+    ['during startup (the error window covers it)', false],
+    ['after the app asked it to stop', true],
+  ])('is not called %s', async (_name, readyThenStop) => {
+    // Arrange
+    const onUnexpectedExit = vi.fn();
+    const { sidecar, child } = makeSidecar({
+      onUnexpectedExit,
+      fetchFn: makeBackendFetch({ refuseFirst: readyThenStop ? 0 : 1e9 }),
+    });
+    await sidecar.spawn();
+
+    // Act
+    if (readyThenStop) {
+      await sidecar.waitUntilReady();
+      await sidecar.stop();
+    } else {
+      child.emit('exit', 1, null);
+      await sidecar.exitPromise;
+    }
+
+    // Assert
+    expect(onUnexpectedExit).not.toHaveBeenCalled();
   });
 });

@@ -249,8 +249,38 @@ describe('API address', () => {
 
     // Assert
     expect(preload).not.toMatch(/localhost:8000/);
-    // The sidecar's port varies per launch; the host stays the IPv4 loopback literal only.
+    // Outer bound for any context (the sidecar's port varies); main's header narrows it to the
+    // exact port, see contentSecurityPolicy.
     expect(csp.trim()).toBe('http://127.0.0.1:*');
+  });
+});
+
+describe('contentSecurityPolicy (header from main)', () => {
+  test('connect-src is exactly the backend origin of this launch', async () => {
+    // Arrange
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+
+    // Act
+    const csp = contentSecurityPolicy('http://127.0.0.1:51234');
+
+    // Assert
+    const connect = csp.match(/connect-src ([^;]*)/)[1].trim();
+    expect(connect).toBe('http://127.0.0.1:51234');
+    expect(csp).not.toMatch(/\*/);
+    expect(csp).toContain("default-src 'self'");
+  });
+
+  test.each([
+    'http://127.0.0.1:*',
+    'http://localhost:8000',
+    'http://127.0.0.1:0',
+    'http://127.0.0.1:65536',
+    'https://127.0.0.1:8000',
+    '',
+    null,
+  ])('refuses %j', async (url) => {
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+    expect(() => contentSecurityPolicy(url)).toThrow(/127\.0\.0\.1/);
   });
 });
 
