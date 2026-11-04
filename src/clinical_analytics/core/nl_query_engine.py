@@ -392,7 +392,7 @@ class NLQueryEngine:
         is provided, the LLM can detect refinement queries like "remove the n/a" that
         modify previous queries, and intelligently merge them.
 
-        Tier precedence (Phase 4): Parsing order can be configured via config/nl_query.yaml
+        Tier precedence (Phase 4): Parsing order can be configured via resources/config/nl_query.yaml
         to support A/B testing of semantic-first vs pattern-first approaches.
 
         Args:
@@ -910,7 +910,7 @@ class NLQueryEngine:
         """
         Tier 1: Regex pattern matching for common queries.
 
-        Uses config-driven patterns from config/nl_query_patterns.yaml.
+        Uses config-driven patterns from resources/config/nl_query_patterns.yaml.
         Patterns are loaded once and cached via load_patterns_config().
 
         Args:
@@ -1986,7 +1986,7 @@ Filter extraction (ADR009 Phase 5):
         Config is loaded once and cached in the instance for subsequent calls.
 
         Returns:
-            Validation config dict from config/validation.yaml
+            Validation config dict from resources/config/validation.yaml
         """
         if self._validation_config is None:
             from clinical_analytics.core.config_loader import load_validation_config
@@ -1998,7 +1998,7 @@ Filter extraction (ADR009 Phase 5):
         """
         DBA validation layer - checks type safety and schema correctness.
 
-        Uses config-driven prompts from config/validation.yaml.
+        Uses config-driven prompts from resources/config/validation.yaml.
         Logs calls with structured observability (LLMFeature.DBA_VALIDATION).
 
         Args:
@@ -2096,7 +2096,7 @@ Validate this query intent for type safety. Return JSON:
         """
         Retry parsing with DBA feedback on previous errors.
 
-        Uses config-driven prompts from config/validation.yaml.
+        Uses config-driven prompts from resources/config/validation.yaml.
         Logs calls with structured observability (LLMFeature.VALIDATION_RETRY).
 
         Args:

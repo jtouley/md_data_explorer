@@ -46,7 +46,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --group dev
 
-      - name: Fetch bundled embedding model (pinned, SHA-256 checked)
+      - name: Cache bundled embedding model
+        uses: actions/cache@v4
+        with:
+          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
+          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
+          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+
+      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
         run: make fetch-embedding-model
 
       - name: Fast test suite
@@ -68,7 +75,14 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --extra dev --group dev
 
-      - name: Fetch bundled embedding model (pinned, SHA-256 checked)
+      - name: Cache bundled embedding model
+        uses: actions/cache@v4
+        with:
+          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
+          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
+          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+
+      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
         run: make fetch-embedding-model
 
       - name: Set up Node
@@ -92,6 +106,36 @@ jobs:
           CI: true
         run: xvfb-run -a npm run test:quality
 
+  smoke-installed:
+    # Wheel installed outside the repo, API started from another cwd, upload + query. Runs
+    # in a network namespace (loopback only) where the runner allows unprivileged ones.
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ">=0.5.0"
+
+      - name: Install dependencies
+        run: uv sync --extra dev --group dev
+
+      - name: Cache bundled embedding model
+        uses: actions/cache@v4
+        with:
+          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
+          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
+          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+
+      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
+        run: make fetch-embedding-model
+
+      - name: Installed-wheel smoke test
+        run: make smoke-installed
+
   coverage:
     runs-on: ubuntu-latest
     needs: quality
@@ -106,7 +150,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --group dev
 
-      - name: Fetch bundled embedding model (pinned, SHA-256 checked)
+      - name: Cache bundled embedding model
+        uses: actions/cache@v4
+        with:
+          path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
+          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
+          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+
+      - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
         run: make fetch-embedding-model
 
       - name: Run Coverage Check

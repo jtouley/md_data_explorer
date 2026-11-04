@@ -87,6 +87,7 @@ nav:
       - Contributing: development/contributing.md
       - Development Setup: development/setup.md
       - Testing: development/testing.md
+      - Packaging: development/packaging.md
   - Specifications:
       - Master plan (roadmap): implementation/MASTER_PLAN.md
       - Electron cutover (omnibus): specs/omnibus_electron_streamlit_cutover.md

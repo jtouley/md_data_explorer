@@ -20,7 +20,6 @@ Synthetic data only; the driver never prints row-level values.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import secrets
@@ -103,7 +102,8 @@ def _snapshot(root: Path) -> set[str]:
 
 
 def _bring_up_loopback() -> None:
-    """In a fresh network namespace ``lo`` is down; bring it up without needing ``ip``."""
+    """In a fresh network namespace ``lo`` is down; bring it up without needing ``ip`` (Linux only)."""
+    import fcntl  # POSIX-only; imported here so the module also loads on Windows
     siocgifflags, siocsifflags, iff_up = 0x8913, 0x8914, 0x1
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
         ifr = struct.pack("16sH14s", b"lo", 0, b"\0" * 14)
