@@ -33,7 +33,8 @@ import {
   renderSessionList,
   titleFromQuestion,
 } from './sessionSidebar.js';
-import { normalizeUploadResponse, renderUploadArea } from './uploadPanel.js';
+import { normalizeUploadResponse, renderUploadArea, uploadStatusText } from './uploadPanel.js';
+import { dataCheckStatusNote, normalizeQuality, renderDataCheck } from './dataCheckPanel.js';
 import { icon } from './icons.js';
 import { THEME_STORAGE_KEY, isThemeSource } from './theme.js';
 
@@ -63,6 +64,9 @@ const elements = {
   closeDatasetPanelBtn: document.getElementById('close-dataset-panel'),
   datasetOverview: document.getElementById('dataset-overview'),
   datasetOverviewSummary: document.getElementById('dataset-overview-summary'),
+  dataCheckSection: document.getElementById('data-check-section'),
+  dataCheckHint: document.getElementById('data-check-hint'),
+  dataCheckList: document.getElementById('data-check-list'),
   datasetPreviewHead: document.getElementById('dataset-preview-head'),
   datasetPreviewBody: document.getElementById('dataset-preview-body'),
   chatContainer: document.getElementById('chat-container'),
@@ -1079,6 +1083,7 @@ async function loadDatasetOverview() {
     datasetOverviewSummary.textContent = '';
     datasetMeta?.classList.add('hidden');
     renderDatasetPreview([], []);
+    void loadDataCheck(null);
     return;
   }
 
@@ -1109,6 +1114,7 @@ async function loadDatasetOverview() {
 
     datasetOverviewSummary.textContent = `${rowCount} rows • ${columns.length} columns`;
     renderDatasetPreview(columns, rows);
+    void loadDataCheck(datasetId);
     if (datasetMeta) {
       datasetMeta.textContent = `${rowCount} rows · ${columns.length} variables`;
       datasetMeta.classList.remove('hidden');
@@ -1133,6 +1139,31 @@ async function loadDatasetOverview() {
     datasetOverviewSummary.textContent = `Couldn't load this cohort's first rows: ${error.message}`;
     renderDatasetPreview([], []);
   }
+}
+
+/**
+ * Fill the "Data check" section of the cohort details sheet. GET /quality also backfills the
+ * check for cohorts uploaded before it existed. A failed request reads "could not run".
+ * @param {string | null} datasetId
+ */
+async function loadDataCheck(datasetId) {
+  const { dataCheckSection, dataCheckHint, dataCheckList } = elements;
+  if (!dataCheckSection || !dataCheckHint || !dataCheckList) return;
+  if (!datasetId || typeof window.clinicalAPI?.getDatasetQuality !== 'function') {
+    dataCheckSection.classList.add('hidden');
+    return;
+  }
+  const parts = { hint: dataCheckHint, list: dataCheckList };
+  dataCheckSection.classList.remove('hidden');
+  renderDataCheck(parts, 'loading');
+  let check;
+  try {
+    check = normalizeQuality(await window.clinicalAPI.getDatasetQuality(datasetId));
+  } catch (error) {
+    check = { status: 'not_run', reason: error?.message || null };
+  }
+  if (datasetId !== state.currentDatasetId) return;
+  renderDataCheck(parts, check);
 }
 
 /**
@@ -1955,7 +1986,13 @@ async function handleLoadSample() {
     const raw = await window.clinicalAPI.loadSampleDataset();
     const result = normalizeUploadResponse(raw);
     if (result.status === 'ready' && result.upload_id) {
-      setDatasetStatus(`${result.dataset_name || 'The sample cohort'} is ready.`, 'ok');
+      setDatasetStatus(
+        uploadStatusText(
+          `${result.dataset_name || 'The sample cohort'} is ready.`,
+          dataCheckStatusNote(result.quality)
+        ),
+        'ok'
+      );
       await selectNewDataset(result.upload_id);
     } else {
       setDatasetStatus(`Couldn't load the sample cohort: ${result.message}`, 'error');
@@ -1975,7 +2012,13 @@ async function handleFileUpload(file) {
     const result = normalizeUploadResponse(raw);
 
     if (result.status === 'ready') {
-      setDatasetStatus(`${result.dataset_name || file.name} is ready.`, 'ok');
+      setDatasetStatus(
+        uploadStatusText(
+          `${result.dataset_name || file.name} is ready.`,
+          dataCheckStatusNote(result.quality)
+        ),
+        'ok'
+      );
       await selectNewDataset(result.upload_id);
     } else {
       setDatasetStatus(`Couldn't upload ${file.name}: ${result.message}`, 'error');

@@ -11,23 +11,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
-from clinical_analytics.api.db.database import SessionLocal, create_tables, engine
+from clinical_analytics.api.db.database import SessionLocal, engine
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes import queries
 from clinical_analytics.api.routes.enrichments import default_overlay_dir
-from clinical_analytics.core.data_home import DATA_HOME_ENV, data_home
+from clinical_analytics.core.data_home import data_home
 
-
-@pytest.fixture(autouse=True)
-def _isolated_data_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Own data home: xdist workers share the default one, and its DuckDB file takes one writer.
-    monkeypatch.setenv(DATA_HOME_ENV, str(tmp_path / "home"))
-    # The plain test_client does not run the lifespan that creates the session tables. Workers
-    # share the session DB, so a parallel worker may win the CREATE race; the retry then no-ops.
-    try:
-        create_tables()
-    except OperationalError:
-        create_tables()
+pytestmark = pytest.mark.usefixtures("isolated_data_home")
 
 
 def _session_db_bytes() -> bytes:

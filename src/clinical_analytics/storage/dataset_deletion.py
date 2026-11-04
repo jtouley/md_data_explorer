@@ -6,6 +6,7 @@ An upload leaves data in several places under the data home (``<data home>/data`
   original file named in metadata (``stored_relpath`` / ``stored_filename``)
 * ``uploads/metadata/{id}.json`` and the enrichment overlays ``uploads/metadata/overlays/{id}/``
 * Parquet exports ``parquet/{id}_<table>_<version>.parquet``
+* Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``
 * DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``, and any pre-upgrade backup
   copies of the store (``analytics.duckdb.backup-*``, see ``storage.store_format``)
 
@@ -35,6 +36,7 @@ from pathlib import Path
 import duckdb
 import structlog
 
+from clinical_analytics.contracts.config import CONTRACTS_DIRNAME, DQ_DIRNAME
 from clinical_analytics.storage.datastore import StoreInUseError, exclusive_store
 from clinical_analytics.storage.store_format import (
     STORE_FILENAME,
@@ -50,6 +52,7 @@ logger = structlog.get_logger()
 DATASET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,127}$")
 DUCKDB_FILENAME = STORE_FILENAME
 PARQUET_DIRNAME = "parquet"
+DERIVED_DIRNAMES = (CONTRACTS_DIRNAME, DQ_DIRNAME)
 
 
 class DatasetDeletionError(RuntimeError):
@@ -304,6 +307,11 @@ def purge_dataset_files(
                 metadata_dir / "overlays" / dataset_id,
             ]:
                 _remove(path, uploads_root, report)
+
+            # Data contracts and quality reports (contracts/{id}/, dq/{id}/); removing a missing
+            # directory is a no-op, so a retried delete is safe.
+            for dirname in DERIVED_DIRNAMES:
+                _remove(data_dir / dirname / dataset_id, data_dir, report)
 
             parquet_dir = data_dir / PARQUET_DIRNAME
             if parquet_dir.is_dir():

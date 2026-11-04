@@ -1607,6 +1607,18 @@ ul {
   margin-top: var(--sp-6);
 }
 
+.data-check-list {
+  margin: 0;
+  padding-left: var(--sp-5);
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
+  color: var(--text-1);
+}
+
+.data-check-list li + li {
+  margin-top: var(--sp-1);
+}
+
 .panel-subsection {
   margin-top: var(--sp-6);
 }

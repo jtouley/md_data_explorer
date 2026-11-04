@@ -46,6 +46,15 @@ flowchart LR
 | Import boundaries (api vs core vs ui) | [ARCHITECTURE_BOUNDARIES.md](ARCHITECTURE_BOUNDARIES.md) |
 | Tests and Makefile | `tests/AGENTS.md` (repository root), repo `Makefile` |
 | CI vs local suites | [Automation matrix (CI, Makefile, Electron)](../development/testing.md#automation-matrix-ci-makefile-electron) |
+| Data contracts and quality checks | `src/clinical_analytics/contracts/` (thresholds and sources in `config.py`); see [Data contracts: known limits](#data-contracts-known-limits) |
+
+## Data contracts: known limits
+
+Each upload version gets one ODCS v3.2.0 contract in `<data home>/data/contracts/<upload_id>/<version>.odcs.yaml`, written once, and a quality report per run in `dq/`.
+
+- **Version is not bumped on accepted patches.** The contract is built from the metadata patches accepted when it is first written (listed in its `metadataPatchIds`). A patch accepted later does not produce a new contract or bump `version` (it stays `1.0.0`). Re-contracting on patch acceptance is deferred; until then a contract can lag the resolved metadata.
+- Multi-table uploads get one contract for the combined table only.
+- Lab values get no plausibility range until units are captured.
 
 ## How to verify
 

@@ -43,6 +43,10 @@ def _seed(data_dir: Path, dataset_id: str) -> None:
     overlay.mkdir(parents=True, exist_ok=True)
     (overlay / "patches.jsonl").write_text("{}\n")
     (uploads / "metadata" / f"{dataset_id}.json").write_text(json.dumps({"stored_relpath": f"{dataset_id}.xlsx"}))
+    (data_dir / "contracts" / dataset_id).mkdir(parents=True, exist_ok=True)
+    (data_dir / "contracts" / dataset_id / "v1.odcs.yaml").write_text(f"id: {dataset_id}\n")
+    (data_dir / "dq" / dataset_id / "v1").mkdir(parents=True, exist_ok=True)
+    (data_dir / "dq" / dataset_id / "v1" / "20261103T120000000000Z.json").write_text("{}")
     (data_dir / "parquet").mkdir(exist_ok=True)
     (data_dir / "parquet" / f"{dataset_id}_patients_v1.parquet").write_bytes(b"PAR1")
     con = duckdb.connect(str(data_dir / "analytics.duckdb"))
@@ -93,6 +97,22 @@ def test_purgeDatasetFiles_seededDataset_removesAllArtifactsAndKeepsLongerPrefix
     assert _duckdb_tables(tmp_path) == {"dsx_2_patients_v1"}
     assert (tmp_path / "uploads" / "metadata" / "dsx_2.json").exists()
     assert (tmp_path / "parquet" / "dsx_2_patients_v1.parquet").exists()
+    assert (tmp_path / "contracts" / "dsx_2" / "v1.odcs.yaml").exists()
+    assert (tmp_path / "dq" / "dsx_2" / "v1").is_dir()
+
+
+@pytest.mark.parametrize("dirname", ["contracts", "dq"])
+def test_purgeDatasetFiles_contractAndQualityDirs_removedAndCounted(tmp_path: Path, dirname: str) -> None:
+    # Arrange
+    _seed(tmp_path, "dsx")
+
+    # Act
+    report = purge_dataset_files("dsx", tmp_path / "uploads")
+
+    # Assert
+    assert not (tmp_path / dirname / "dsx").exists()
+    assert (tmp_path / dirname).is_dir()  # other datasets' contracts/reports stay
+    assert tmp_path / dirname / "dsx" in report.removed_paths
 
 
 def test_purgeDatasetFiles_droppedTable_leavesNoBytesInDuckdbFile(tmp_path: Path) -> None:

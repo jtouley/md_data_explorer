@@ -4,6 +4,7 @@ Endpoints:
 - GET  /api/datasets                      - List available datasets
 - GET  /api/datasets/{dataset_id}         - Get dataset metadata
 - GET  /api/datasets/{dataset_id}/preview - Get sample rows
+- GET  /api/datasets/{dataset_id}/quality - Data-quality report for the active version
 - POST /api/datasets/upload               - Upload a dataset file
 - DELETE /api/datasets/{dataset_id}       - Delete a dataset and everything derived from it
 """
@@ -12,6 +13,7 @@ import asyncio
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import polars as pl
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,11 +23,16 @@ from sqlalchemy.orm import Session
 from clinical_analytics.api.db.database import get_db
 from clinical_analytics.api.dependencies import (
     dataset_deletion_guard,
+    dataset_files_lock,
     invalidate_semantic_layer_cache,
     reject_if_deleting,
 )
 from clinical_analytics.api.models import database as db_models
 from clinical_analytics.api.routes.queries import forget_query_service
+from clinical_analytics.contracts.errors import ContractDamagedError, ContractError
+from clinical_analytics.contracts.quality import QualityNotRun, QualityReport
+from clinical_analytics.contracts.service import check_upload
+from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core.log_redaction import error_fields, text_fingerprint
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.storage.dataset_deletion import (
@@ -238,8 +245,6 @@ def preview_dataset(
         if not metadata:
             raise ValueError(f"Upload {dataset_id} not found")
 
-        import polars as pl
-
         data = storage.get_upload_data(dataset_id, lazy=True)
         if data is None:
             raise ValueError(f"Dataset data not found for {dataset_id}")
@@ -270,6 +275,106 @@ def preview_dataset(
         ) from e
 
 
+NO_CHECK_RECORDED = "no data check was recorded for this upload"
+REPORT_UNAVAILABLE = "this upload's report could not be read"
+
+
+def _upload_quality(storage: UserDatasetStorage, upload_id: str) -> QualityReport | QualityNotRun:
+    """The result of this upload's own check, for the upload response.
+
+    Only the report whose run time the upload recorded is returned: an older report on disk for
+    the same version is not this upload's result, so a failed run shows as not run.
+    """
+    metadata = storage.get_upload_metadata(upload_id) or {}
+    recorded = metadata.get("quality")
+    version = metadata.get("dataset_version")
+    if not isinstance(recorded, dict) or not isinstance(version, str) or not version:
+        return QualityNotRun(reason=NO_CHECK_RECORDED)
+    if recorded.get("status") == "not_run":
+        return QualityNotRun(reason=str(recorded.get("reason") or NO_CHECK_RECORDED))
+    try:
+        report = latest_report(storage.upload_dir.parent, upload_id, version)
+    except (ContractError, ValueError) as e:
+        logger.error("dataset_upload_quality_unreadable", upload_id=upload_id, **error_fields(e))
+        return QualityNotRun(reason=REPORT_UNAVAILABLE)
+    if report is None or report.run_ts != recorded.get("run_ts"):
+        logger.error("dataset_upload_quality_missing", upload_id=upload_id)
+        return QualityNotRun(reason=REPORT_UNAVAILABLE)
+    return report
+
+
+def _backfill_quality(storage: UserDatasetStorage, dataset_id: str, version: str) -> QualityReport:
+    """Build the contract and report under the dataset's files lock (see ``get_dataset_quality``).
+
+    Raises:
+        HTTPException: 409 if a delete started meanwhile, 404 if the dataset is gone.
+    """
+    log = logger.bind(dataset_id=dataset_id)
+    data_dir = storage.upload_dir.parent
+    with dataset_files_lock(dataset_id):
+        reject_if_deleting(dataset_id)
+        metadata = storage.get_upload_metadata(dataset_id)
+        if not metadata or metadata.get("dataset_version") != version:
+            raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+        report = latest_report(data_dir, dataset_id, version)  # another request may have backfilled
+        if report is not None:
+            return report
+        log.info("dataset_quality_backfill")
+        data = storage.get_upload_data(dataset_id, lazy=True)
+        if data is None:
+            raise HTTPException(status_code=404, detail=f"Dataset data not found: {dataset_id}")
+        return check_upload(
+            data_dir,
+            data.collect(),
+            upload_id=dataset_id,
+            dataset_version=version,
+            metadata=metadata,
+            overlay_dir=storage.metadata_dir,
+        )
+
+
+@router.get("/datasets/{dataset_id}/quality", response_model=QualityReport)
+def get_dataset_quality(dataset_id: str) -> QualityReport:
+    """Data-quality report for the dataset's active version (latest run).
+
+    Uploads made before contracts existed (or whose upload check failed) have none: the contract
+    and report are generated on first request (the contract is written once per version, so
+    repeating the request is safe). The backfill holds the dataset's files lock, which a delete
+    also takes around its purge, and re-checks the deleting mark and metadata under it, so a
+    concurrent delete cannot leave contract or report files behind.
+
+    Raises:
+        HTTPException: 400 bad id, 404 unknown dataset, 409 while deleting, 500 if the check fails.
+    """
+    try:
+        validate_dataset_id(dataset_id)
+    except InvalidDatasetIdError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    log = logger.bind(dataset_id=dataset_id)
+    reject_if_deleting(dataset_id)
+
+    storage = UserDatasetStorage()
+    metadata = storage.get_upload_metadata(dataset_id)
+    version = (metadata or {}).get("dataset_version")
+    if not metadata or not version:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+    data_dir = storage.upload_dir.parent
+    try:
+        report = latest_report(data_dir, dataset_id, version)
+        if report is None:
+            report = _backfill_quality(storage, dataset_id, version)
+    except ContractDamagedError as e:
+        log.error("dataset_quality_contract_damaged", **error_fields(e))
+        raise HTTPException(status_code=500, detail="The saved data contract for this cohort is damaged.") from e
+    except (ContractError, OSError, pl.exceptions.PolarsError) as e:
+        log.error("dataset_quality_failed", **error_fields(e))
+        raise HTTPException(
+            status_code=500, detail=f"Could not check this dataset's quality ({type(e).__name__})."
+        ) from e
+    log.info("dataset_quality_completed", failed=report.failed, warnings=report.warnings)
+    return report
+
+
 # ============================================================================
 # Upload (Phase 8)
 # ============================================================================
@@ -284,6 +389,9 @@ class DatasetUploadResponse(BaseModel):
     dataset_name: str = Field(..., description="Display name for the dataset")
     status: Literal["ready", "failed"] = Field(..., description="Upload processing status")
     message: str = Field("", description="Human-readable status message")
+    quality: QualityReport | QualityNotRun | None = Field(
+        None, description="This upload's data-quality report, or status 'not_run' with a reason"
+    )
 
 
 class DatasetDeleteResponse(BaseModel):
@@ -332,6 +440,7 @@ def load_sample_dataset() -> DatasetUploadResponse:
         dataset_name=display_name,
         status="ready",
         message=message or "Sample cohort loaded",
+        quality=_upload_quality(storage, upload_id),
     )
 
 
@@ -398,6 +507,7 @@ async def upload_dataset(
         dataset_name=display_name,
         status="ready",
         message=message,
+        quality=await asyncio.to_thread(_upload_quality, storage, upload_id),
     )
 
 
@@ -441,7 +551,9 @@ def delete_dataset(dataset_id: str, db: Annotated[Session, Depends(get_db)]) -> 
             deleted_sessions = len(sessions)
 
         try:
-            report = purge_dataset_files(dataset_id, storage.upload_dir, before_metadata=delete_sessions)
+            # Waits for an in-flight quality backfill, so its files are purged too.
+            with dataset_files_lock(dataset_id):
+                report = purge_dataset_files(dataset_id, storage.upload_dir, before_metadata=delete_sessions)
         except DatasetStoreBusyError as e:
             log.warning("dataset_delete_store_busy")
             raise HTTPException(status_code=409, detail=str(e)) from e
