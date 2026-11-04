@@ -1539,9 +1539,10 @@ class UserDatasetStorage:
                 never the source tree; see core.data_home)
         """
         if upload_dir is None:
-            from clinical_analytics.core.data_home import uploads_dir, warn_if_legacy_repo_data
+            from clinical_analytics.core.data_home import ensure_data_home, uploads_dir, warn_if_legacy_repo_data
 
             warn_if_legacy_repo_data(Path(__file__).parent.parent.parent.parent.parent)
+            ensure_data_home()
             upload_dir = uploads_dir()
 
         self.upload_dir = Path(upload_dir)
@@ -1655,8 +1656,15 @@ class UserDatasetStorage:
             existing_upload_id = None
             existing_version_history = None
 
+            # The bundled sample matches only the earlier sample (is_demo), never a clinician's
+            # dataset that happens to share its display name; that one is left untouched.
+            saving_demo = metadata.get("is_demo") is True
             for existing_meta in existing_uploads:
-                if existing_meta.get("dataset_name") == dataset_name:
+                if saving_demo:
+                    same_dataset = existing_meta.get("is_demo") is True
+                else:
+                    same_dataset = existing_meta.get("dataset_name") == dataset_name
+                if same_dataset:
                     if not overwrite:
                         # Reject duplicate without overwrite flag
                         return (

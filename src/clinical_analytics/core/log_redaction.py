@@ -4,9 +4,10 @@ Questions typed by clinicians, filter values and row values can identify patient
 line at any level may carry them. Call sites log a keyed hash plus a length or count instead
 (``stable_hash`` / ``text_fingerprint``). ``redact_sensitive_fields`` is a structlog processor
 that enforces the same rule as a backstop when a call site slips: any event key that names raw
-text (``query``, ``question`` ...) is replaced by its keyed hash and size, keys that hold data
+text (``query``, ``question``, any ``*_preview`` ...) is replaced by its keyed hash and size, keys that hold data
 values (``value``, ``filters``, ``rows`` ...) by their size only, and rendered tracebacks keep
-frames and exception types but drop exception messages (they often quote values).
+frames and exception types but drop exception messages (they often quote values); a
+``traceback`` key gets the same treatment.
 
 Hashes are HMAC-SHA256 with a random per-install key stored in the data home (``.log-key``), so
 a short value such as a diagnosis code cannot be recovered by hashing a dictionary of
@@ -34,7 +35,7 @@ from typing import Any
 
 import structlog
 
-from clinical_analytics.core.data_home import data_home
+from clinical_analytics.core.data_home import data_home, ensure_data_home
 
 LOG_LEVEL_ENV = "CLINICAL_ANALYTICS_LOG_LEVEL"
 DEFAULT_LOG_LEVEL = "INFO"
@@ -86,6 +87,16 @@ SENSITIVE_LOG_KEYS: frozenset[str] = frozenset(
         "suggestion",
         "suggested_value",
         "current_value",
+        # Fragments of the question the pattern tier extracted, and names that can carry
+        # identifiers (an upload's file name, a failure reason quoting LLM-chosen columns).
+        "variable_term",
+        "primary_term",
+        "group_term",
+        "group_phrase",
+        "subject_phrase",
+        "original",
+        "filename",
+        "failure_reason",
     }
 )
 # Keys whose values are data values: even a keyed hash is not logged, only the size.
@@ -106,6 +117,24 @@ VALUE_LOG_KEYS: frozenset[str] = frozenset(
         "current_value",
     }
 )
+
+# Key families matched by shape, so a new ``*_preview`` field needs no allowlist edit.
+SENSITIVE_LOG_KEY_SUFFIXES: tuple[str, ...] = ("_preview",)
+# Keys that hold rendered tracebacks: kept as frames and exception types, messages dropped.
+TRACEBACK_LOG_KEYS: frozenset[str] = frozenset({"traceback"})
+
+
+def is_sensitive_log_key(key: object) -> bool:
+    """True for keys that can carry user text or data values (exact names or a known suffix)."""
+    if not isinstance(key, str):
+        return False
+    return (
+        key in SENSITIVE_LOG_KEYS
+        or key == "preview"
+        or key.endswith(SENSITIVE_LOG_KEY_SUFFIXES)
+        or key in TRACEBACK_LOG_KEYS
+    )
+
 
 REDACTED = "[redacted]"
 LOG_KEY_FILENAME = ".log-key"
@@ -175,6 +204,7 @@ def log_hash_key() -> bytes | None:
         key = _log_keys.get(path)
         if key is None:
             try:
+                ensure_data_home()
                 key = _load_or_create_key(path)
             except OSError as e:
                 _warn_key_unavailable_once(e)
@@ -281,7 +311,7 @@ def _redact_nested(value: Any, depth: int = 0) -> Any:
     if isinstance(value, Mapping):
         out: dict[Any, Any] = {}
         for k, v in value.items():
-            if isinstance(k, str) and k in SENSITIVE_LOG_KEYS:
+            if is_sensitive_log_key(k):
                 size = _size_of(v)
                 out[k] = REDACTED if size is None else f"{REDACTED} size={size}"
             else:
@@ -349,10 +379,14 @@ def redact_sensitive_fields(_logger: Any, _method_name: str, event_dict: Mutable
     # Text from format_exc_info_redacted is built without messages; anything else is parsed.
     if isinstance(exception, str) and not event_dict.pop("_exception_redacted", False):
         event_dict["exception"] = redact_traceback(exception)
+    for key in TRACEBACK_LOG_KEYS:
+        rendered = event_dict.get(key)
+        if isinstance(rendered, str):
+            event_dict[key] = redact_traceback(rendered)
     for key, value in list(event_dict.items()):
-        if key not in SENSITIVE_LOG_KEYS and isinstance(value, (Mapping, list, tuple, set, frozenset)):
+        if not is_sensitive_log_key(key) and isinstance(value, (Mapping, list, tuple, set, frozenset)):
             event_dict[key] = _redact_nested(value)
-    for key in [k for k in event_dict if k in SENSITIVE_LOG_KEYS]:
+    for key in [k for k in event_dict if is_sensitive_log_key(k) and k not in TRACEBACK_LOG_KEYS]:
         value = event_dict.pop(key)
         if value is None:
             continue

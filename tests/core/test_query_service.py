@@ -313,9 +313,41 @@ class TestQueryServiceAnalysis:
         result = service.ask("compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_line=sent)
 
         # Assert
-        assert layer.execute_query_plan.call_args.kwargs["confirmed"] is expected_confirmed
+        if expected_reason == "changed":
+            # A different plan is held before execution (see the high-confidence test below).
+            layer.execute_query_plan.assert_not_called()
+            assert result.requires_confirmation is True
+        else:
+            assert layer.execute_query_plan.call_args.kwargs["confirmed"] is expected_confirmed
         if expected_reason == "changed":
             assert result.failure_reason == PLAN_CHANGED_REASON
             assert result.plan_line == shown
         elif expected_reason == "held":
             assert result.failure_reason == HOLD_FAILURE_REASON
+
+    @pytest.mark.parametrize("confidence", [0.95, 0.75, 1.0], ids=["high", "at_threshold", "certain"])
+    def test_ask_changedPlanAtHighConfidence_staysHeldWithoutExecuting(self, mock_semantic_layer, confidence):
+        """A confirmation for one plan never runs a different reparse, however confident."""
+        # Arrange
+        from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
+
+        service, layer = self._service(mock_semantic_layer, {"success": True, "run_key": "rk"}, {"type": "comparison"})
+        plan = QueryPlan(intent="FIND_PREDICTORS", metric="ldl", group_by="treatment", confidence=confidence)
+        service.nl_engine._intent_to_plan.return_value = plan
+        shown = format_plan_line(plan, service._intent_to_context(service.nl_engine.parse_query.return_value, plan))
+        confirmed_line = "COMPARE_GROUPS · outcome ldl · grouping treatment"
+
+        # Act
+        result = service.ask(
+            "compare ldl by treatment", dataset_id="ds", confirmed=True, confirm_plan_line=confirmed_line
+        )
+
+        # Assert
+        assert result.requires_confirmation is True
+        assert result.failure_reason == PLAN_CHANGED_REASON
+        assert result.plan_line == shown
+        assert result.claim is None
+        assert result.analysis is None
+        assert result.run_key is None
+        layer.execute_query_plan.assert_not_called()
+        layer.format_execution_result.assert_not_called()

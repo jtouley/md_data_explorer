@@ -138,9 +138,11 @@ def get_available_datasets():
     DatasetRegistry.discover_datasets()
     DatasetRegistry.load_config()
     return [
-        name for name in DatasetRegistry.list_datasets()
+        name
+        for name in DatasetRegistry.list_datasets()
         if name != "uploaded"  # Exclude uploaded class (not instances)
     ]
+
 
 @pytest.mark.parametrize("dataset_name", get_available_datasets())
 def test_cohort_retrieval_with_default_filters(dataset_name):

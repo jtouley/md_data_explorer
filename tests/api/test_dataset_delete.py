@@ -9,6 +9,7 @@ from typing import Any
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from clinical_analytics.api.db.database import SessionLocal, engine
 from clinical_analytics.api.models import database as db_models
@@ -120,14 +121,14 @@ def test_deleteDataset_queryAndPreviewArriveDuringPurge_rejected409AndNothingCac
     real_purge = datasets_routes.purge_dataset_files
     seen: dict[str, int] = {}
 
-    def purge_with_concurrent_requests(ds_id: str, uploads_root: Path) -> Any:
+    def purge_with_concurrent_requests(ds_id: str, uploads_root: Path, **kwargs: Any) -> Any:
         # Real HTTP requests through the app while the delete is in progress.
         seen["query"] = test_client.post(
             "/api/queries", json={"session_id": "s1", "dataset_id": ds_id, "query_text": "how many"}
         ).status_code
         seen["preview"] = test_client.get(f"/api/datasets/{ds_id}/preview").status_code
         seen["detail"] = test_client.get(f"/api/datasets/{ds_id}").status_code
-        return real_purge(ds_id, uploads_root)
+        return real_purge(ds_id, uploads_root, **kwargs)
 
     monkeypatch.setattr(datasets_routes, "purge_dataset_files", purge_with_concurrent_requests)
 
@@ -238,3 +239,115 @@ def test_vacuumIfFreePages_rowsDeletedBeforeSecureDelete_bytesGone(tmp_path: Pat
     assert vacuumed is True
     assert again is False
     assert b"pangolin-question-" not in (tmp_path / "old.db").read_bytes()
+
+
+def _owned_paths(root: Path, dataset_id: str) -> set[str]:
+    """Relative paths under root whose name mentions the dataset id."""
+    return {str(p.relative_to(root)) for p in root.rglob("*") if dataset_id in str(p.relative_to(root))}
+
+
+def test_deleteDataset_storeConnectionHeld_returns409AndChangesNothing(test_client: TestClient) -> None:
+    # Arrange: a real registered connection to the store, as an in-flight query would hold.
+    from clinical_analytics.storage.datastore import close_store_connection, open_store_connection
+
+    marker = f"wombatosis{secrets.token_hex(4)}"
+    dataset_id = _upload(test_client, marker)
+    session_id = test_client.post("/api/sessions", json={"dataset_id": dataset_id}).json()["session_id"]
+    with SessionLocal() as db:
+        db.add(db_models.Message(message_id=f"m_{marker}", session_id=session_id, role="user", content=marker))
+        db.commit()
+    overlay = default_overlay_dir() / "overlays" / dataset_id / "v1"
+    overlay.mkdir(parents=True)
+    (overlay / "patches.jsonl").write_text('{"column": "diagnosis"}\n')
+    before = _owned_paths(data_home(), dataset_id)
+    assert any(p.endswith(".csv") for p in before), before
+    assert any(p.endswith(".parquet") for p in before), before
+    assert any(p.endswith(f"{dataset_id}.json") for p in before), before
+    assert any("overlays" in p for p in before), before
+    store = data_home() / "data" / "analytics.duckdb"
+    held = open_store_connection(store)
+
+    # Act
+    try:
+        response = test_client.delete(f"/api/datasets/{dataset_id}")
+    finally:
+        close_store_connection(store, held)
+
+    # Assert
+    assert response.status_code == 409, response.text
+    assert _owned_paths(data_home(), dataset_id) == before
+    with SessionLocal() as db:
+        assert db.get(db_models.Session, session_id) is not None
+        assert db.get(db_models.Message, f"m_{marker}") is not None
+    assert dataset_id.encode() in store.read_bytes()
+    assert test_client.get(f"/api/datasets/{dataset_id}").status_code == 200
+
+
+def _sessions_for(dataset_id: str) -> int:
+    with SessionLocal() as db:
+        return db.query(db_models.Session).filter(db_models.Session.dataset_id == dataset_id).count()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OperationalError("COMMIT", {}, Exception("database is locked")),
+        RuntimeError("process killed here"),
+    ],
+    ids=["sqlite_locked", "process_killed"],
+)
+def test_deleteDataset_sessionCommitFailsOnce_retryRemovesSessionsAndSucceeds(
+    test_client: TestClient, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    # Arrange: the session delete's commit fails once, as when SQLite is locked or the process dies.
+    from sqlalchemy.orm import Session as OrmSession
+
+    dataset_id = _upload(test_client, f"numbat{secrets.token_hex(4)}")
+    test_client.post("/api/sessions", json={"dataset_id": dataset_id})
+    assert _sessions_for(dataset_id) == 1
+    real_commit = OrmSession.commit
+    armed = {"on": True}
+
+    def failing_commit(self: OrmSession) -> None:
+        if armed["on"] and self.deleted:
+            armed["on"] = False
+            raise failure
+        real_commit(self)
+
+    monkeypatch.setattr(OrmSession, "commit", failing_commit)
+    try:
+        first = test_client.delete(f"/api/datasets/{dataset_id}").status_code
+    except type(failure):
+        first = None  # the error escaped the route, like a crash mid-request
+    monkeypatch.setattr(OrmSession, "commit", real_commit)
+
+    # Act
+    retry = test_client.delete(f"/api/datasets/{dataset_id}")
+
+    # Assert
+    assert first != 200
+    assert retry.status_code == 200, retry.text
+    assert _sessions_for(dataset_id) == 0
+    assert test_client.get(f"/api/datasets/{dataset_id}").status_code == 404
+
+
+@pytest.mark.parametrize("sessions", [1, 2], ids=["one_orphan", "two_orphans"])
+def test_deleteDataset_metadataGoneSessionsLeft_deletesOrphansAndReturns200(
+    test_client: TestClient, sessions: int
+) -> None:
+    # Arrange: an earlier delete removed the metadata, then died before the sessions went.
+    from clinical_analytics.core.data_home import uploads_dir
+
+    dataset_id = _upload(test_client, f"bilby{secrets.token_hex(4)}")
+    for _ in range(sessions):
+        test_client.post("/api/sessions", json={"dataset_id": dataset_id})
+    (uploads_dir() / "metadata" / f"{dataset_id}.json").unlink()
+
+    # Act
+    response = test_client.delete(f"/api/datasets/{dataset_id}")
+
+    # Assert
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted_sessions"] == sessions
+    assert _sessions_for(dataset_id) == 0
+    assert test_client.delete(f"/api/datasets/{dataset_id}").status_code == 404

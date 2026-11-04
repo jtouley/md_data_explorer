@@ -17,6 +17,7 @@ import polars as pl
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from clinical_analytics.api.db.database import get_db
@@ -32,7 +33,7 @@ from clinical_analytics.contracts.errors import ContractDamagedError, ContractEr
 from clinical_analytics.contracts.quality import QualityNotRun, QualityReport
 from clinical_analytics.contracts.service import check_upload
 from clinical_analytics.contracts.store import latest_report
-from clinical_analytics.core.log_redaction import error_fields
+from clinical_analytics.core.log_redaction import error_fields, text_fingerprint
 from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
 from clinical_analytics.storage.dataset_deletion import (
     DatasetDeletionError,
@@ -410,7 +411,7 @@ ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls", ".sav"}
 @router.post("/datasets/sample", response_model=DatasetUploadResponse)
 def load_sample_dataset() -> DatasetUploadResponse:
     """Load the bundled sample cohort into upload storage (stranger-ready demo)."""
-    from clinical_analytics.datasets.demo import DEMO_DATASET_NAME, build_demo_metadata, get_demo_csv_path
+    from clinical_analytics.datasets.demo import build_demo_metadata, demo_display_name, get_demo_csv_path
 
     log = logger.bind()
     log.info("dataset_sample_load_requested")
@@ -420,10 +421,11 @@ def load_sample_dataset() -> DatasetUploadResponse:
         raise HTTPException(status_code=500, detail=f"Sample cohort missing: {path}")
 
     storage = UserDatasetStorage()
+    display_name = demo_display_name(storage)
     success, message, upload_id = storage.save_upload(
         file_bytes=path.read_bytes(),
         original_filename=path.name,
-        metadata=build_demo_metadata(),
+        metadata=build_demo_metadata(display_name),
         overwrite=True,
     )
     if not success or upload_id is None:
@@ -435,7 +437,7 @@ def load_sample_dataset() -> DatasetUploadResponse:
     log.info("dataset_sample_load_completed", upload_id=upload_id)
     return DatasetUploadResponse(
         upload_id=upload_id,
-        dataset_name=DEMO_DATASET_NAME,
+        dataset_name=display_name,
         status="ready",
         message=message or "Sample cohort loaded",
         quality=_upload_quality(storage, upload_id),
@@ -455,11 +457,14 @@ async def upload_dataset(
         file: Multipart file upload
         dataset_name: Optional human-readable name (defaults to filename stem)
     """
-    log = logger.bind(filename=file.filename)
-    log.info("dataset_upload_requested")
-
     filename = file.filename or "upload"
     ext = Path(filename).suffix.lower()
+    # A file name can name a patient: log its keyed hash, length and extension, never the text.
+    log = logger.bind(
+        **text_fingerprint(filename, prefix="filename"),
+        filename_ext=ext if ext in ALLOWED_UPLOAD_EXTENSIONS else "other",
+    )
+    log.info("dataset_upload_requested")
 
     if ext not in ALLOWED_UPLOAD_EXTENSIONS:
         raise HTTPException(
@@ -511,8 +516,10 @@ def delete_dataset(dataset_id: str, db: Annotated[Session, Depends(get_db)]) -> 
     """Delete a dataset: raw file, metadata, DuckDB tables, Parquet exports, enrichment overlays,
     its sessions and messages, and in-memory query results.
 
-    Order: in-memory state, then sessions, then files with metadata last, so a failure leaves the
-    dataset listed and the delete can simply be retried.
+    Order, all under the store lock: DuckDB tables, files, then sessions and messages (their own
+    transaction), then metadata last. A busy store (409) changes nothing; any later failure
+    leaves the metadata, so the dataset stays listed and a retry finishes the delete. A retry
+    after metadata is gone (a crash between the two) still removes leftover sessions.
     """
     try:
         validate_dataset_id(dataset_id)
@@ -521,7 +528,9 @@ def delete_dataset(dataset_id: str, db: Annotated[Session, Depends(get_db)]) -> 
 
     log = logger.bind(dataset_id=dataset_id)
     storage = UserDatasetStorage()
-    if not (storage.metadata_dir / f"{dataset_id}.json").exists():
+    has_metadata = (storage.metadata_dir / f"{dataset_id}.json").exists()
+    has_sessions = db.query(db_models.Session).filter(db_models.Session.dataset_id == dataset_id).count() > 0
+    if not has_metadata and not has_sessions:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
     log.info("dataset_delete_requested")
 
@@ -530,22 +539,34 @@ def delete_dataset(dataset_id: str, db: Annotated[Session, Depends(get_db)]) -> 
     with dataset_deletion_guard(dataset_id):
         forget_query_service(dataset_id)
 
-        sessions = db.query(db_models.Session).filter(db_models.Session.dataset_id == dataset_id).all()
-        for db_session in sessions:
-            db.delete(db_session)  # cascades to messages
-        db.commit()
+        deleted_sessions = 0
+
+        def delete_sessions() -> None:
+            # Before the metadata goes: if this commit fails, the dataset stays listed for a retry.
+            nonlocal deleted_sessions
+            sessions = db.query(db_models.Session).filter(db_models.Session.dataset_id == dataset_id).all()
+            for db_session in sessions:
+                db.delete(db_session)  # cascades to messages
+            db.commit()
+            deleted_sessions = len(sessions)
 
         try:
             # Waits for an in-flight quality backfill, so its files are purged too.
             with dataset_files_lock(dataset_id):
-                report = purge_dataset_files(dataset_id, storage.upload_dir)
+                report = purge_dataset_files(dataset_id, storage.upload_dir, before_metadata=delete_sessions)
         except DatasetStoreBusyError as e:
-            log.warning("dataset_delete_store_busy", deleted_sessions=len(sessions))
+            log.warning("dataset_delete_store_busy")
             raise HTTPException(status_code=409, detail=str(e)) from e
         except DatasetDeletionError as e:
-            log.error("dataset_delete_failed", deleted_sessions=len(sessions), error_type=type(e).__name__)
+            log.error("dataset_delete_failed", error_type=type(e).__name__)
             # Messages name files, never absolute paths (see storage.dataset_deletion).
             raise HTTPException(status_code=500, detail=f"Dataset only partly deleted, try again: {e}") from e
+        except SQLAlchemyError as e:
+            db.rollback()
+            log.error("dataset_delete_sessions_failed", error_type=type(e).__name__)
+            raise HTTPException(
+                status_code=500, detail="Dataset files deleted but its chats were not; try the delete again"
+            ) from e
         finally:
             # Anything rebuilt despite the guard (a request already past it) is dropped again.
             invalidate_semantic_layer_cache(dataset_id)
@@ -555,11 +576,11 @@ def delete_dataset(dataset_id: str, db: Annotated[Session, Depends(get_db)]) -> 
         "dataset_delete_completed",
         removed_paths=len(report.removed_paths),
         dropped_tables=len(report.dropped_tables),
-        deleted_sessions=len(sessions),
+        deleted_sessions=deleted_sessions,
     )
     return DatasetDeleteResponse(
         dataset_id=dataset_id,
         removed_paths=len(report.removed_paths),
         dropped_tables=len(report.dropped_tables),
-        deleted_sessions=len(sessions),
+        deleted_sessions=deleted_sessions,
     )
