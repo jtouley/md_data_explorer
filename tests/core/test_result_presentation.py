@@ -1,11 +1,15 @@
 """Tests for claim-first presentation of analysis results (core/result_presentation.py)."""
 
+import json
 import math
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pytest
 
-from clinical_analytics.core.result_presentation import present_analysis, to_json_safe
+from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis, to_json_safe
 
 T_TEST = {
     "type": "comparison",
@@ -282,7 +286,7 @@ class TestPresentAnalysisStatisticalReporting:
             (
                 {**T_TEST, "test_type": "welch_t_test", "n_used": 280, "n_excluded": 4},
                 "Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; Welch t-test p<0.001; "
-                "n=280; <11 excluded for missing data). Unadjusted comparison by treatment.",
+                "n hidden; some excluded for missing data). Unadjusted comparison by treatment.",
             ),
             (
                 {**T_TEST, "test_type": "welch_t_test", "n_used": None, "n_excluded": None},
@@ -451,9 +455,405 @@ class TestSmallCellSuppression:
         # Act
         presentation = present_analysis(analysis)
 
-        # Assert
+        # Assert: A's size is hidden as B's complement, so A's median is hidden too; a shown
+        # median would mark A as the large group and give B away as n - A
         assert "20.9" not in presentation["claim"]
-        assert "B not shown (fewer than 11 patients)" in presentation["claim"]
+        assert "300.0" not in presentation["claim"]
+        assert "A not shown, B not shown (log-rank p=0.200; n=60)" in presentation["claim"]
         rows = {row["arm"]: row for row in presentation["table"]["rows"]}
-        assert rows["B"]["median days"] == "suppressed"
-        assert rows["A"]["median days"] == 300.0
+        assert rows["B"] == {"arm": "B", "n": "suppressed", "median days": "suppressed"}
+        assert rows["A"] == {"arm": "A", "n": "suppressed", "median days": "suppressed"}
+
+
+# --- Brute-force recovery audit -------------------------------------------------------------
+#
+# An attacker sees one answer (claim + table) and the dataset row count, and knows how the
+# presenter works. For a synthetic analysis built from integer cells, enumerate every other
+# cell assignment with the same visible total, keep those whose answer is identical, and
+# collect the feasible values of each quantity. A count from 1 to 10 whose feasible set is a
+# single value has been leaked.
+
+_SMALL = range(1, 11)
+
+
+def _compositions(total: int, minimums: tuple[int, ...]) -> Iterator[tuple[int, ...]]:
+    """Every tuple of len(minimums) integers, each >= its minimum, summing to total."""
+    if len(minimums) == 1:
+        if total >= minimums[0]:
+            yield (total,)
+        return
+    for first in range(minimums[0], total - sum(minimums[1:]) + 1):
+        for rest in _compositions(total - first, minimums[1:]):
+            yield (first, *rest)
+
+
+@dataclass(frozen=True)
+class _Scenario:
+    build: Callable[[tuple[int, ...]], dict[str, Any]]
+    quantities: Callable[[tuple[int, ...]], dict[str, int]]
+    candidates: Callable[[tuple[int, ...]], Iterable[tuple[int, ...]]]
+
+
+def _answer(analysis: dict[str, Any]) -> str:
+    return json.dumps(present_analysis(analysis), sort_keys=True, default=str)
+
+
+def _recovered(scenario: _Scenario, cells: tuple[int, ...]) -> dict[str, int]:
+    """Small quantities (1-10) whose value is the only one consistent with the answer."""
+    shown = _answer(scenario.build(cells))
+    feasible: dict[str, set[int]] = {}
+    for candidate in scenario.candidates(cells):
+        if _answer(scenario.build(candidate)) == shown:
+            for name, value in scenario.quantities(candidate).items():
+                feasible.setdefault(name, set()).add(value)
+    truth = scenario.quantities(cells)
+    return {name: value for name, value in truth.items() if value in _SMALL and feasible.get(name) == {value}}
+
+
+def _same_total(minimums: tuple[int, ...]) -> Callable[[tuple[int, ...]], Iterable[tuple[int, ...]]]:
+    """Candidates sharing the visible dataset row count (the sum of all cells)."""
+    return lambda cells: _compositions(sum(cells), minimums)
+
+
+def _two_group_comparison(cells: tuple[int, ...]) -> dict[str, Any]:
+    drug, placebo, excluded = cells
+    return {
+        **T_TEST,
+        "group_sizes": {"drug": drug, "placebo": placebo},
+        "n_used": drug + placebo,
+        "n_excluded": excluded,
+    }
+
+
+def _chi_square(cells: tuple[int, ...]) -> dict[str, Any]:
+    a0, b0, a1, b1, excluded = cells
+    return {
+        "type": "comparison",
+        "test_type": "chi_square",
+        "outcome_col": "y",
+        "group_col": "arm",
+        "groups": ["A", "B"],
+        "group_sizes": {"A": a0 + a1, "B": b0 + b1},
+        "contingency": [{"y": "0", "A": a0, "B": b0}, {"y": "1", "A": a1, "B": b1}],
+        "event_level": "1",
+        "group_proportions": {"A": a1 / (a0 + a1) if a0 + a1 else 0.0, "B": b1 / (b0 + b1) if b0 + b1 else 0.0},
+        "p_value": 0.03,
+        "n_used": a0 + b0 + a1 + b1,
+        "n_excluded": excluded,
+    }
+
+
+def _chi_square_candidates(cells: tuple[int, ...]) -> Iterator[tuple[int, ...]]:
+    # every group has at least one patient
+    return (c for c in _compositions(sum(cells), (0, 0, 0, 0, 0)) if c[0] + c[2] > 0 and c[1] + c[3] > 0)
+
+
+def _predictor(cells: tuple[int, ...]) -> dict[str, Any]:
+    n_used, excluded = cells
+    return {
+        "type": "predictor",
+        "outcome_col": "outcome",
+        "summary": {"hdl": {"Odds Ratio": 1.0, "CI Lower": 0.9, "CI Upper": 1.1, "P-Value": 0.8}},
+        "significant_predictors": [],
+        "n_used": n_used,
+        "n_excluded": excluded,
+    }
+
+
+def _survival_grouped(cells: tuple[int, ...]) -> dict[str, Any]:
+    a, b, excluded = cells
+    return {
+        "type": "survival",
+        "time_col": "days",
+        "event_col": "event",
+        "event_level": "1",
+        "group_col": "arm",
+        "group_medians": {"A": 300.0, "B": 20.9},
+        "group_sizes": {"A": a, "B": b},
+        "logrank_p_value": 0.2,
+        "n_used": a + b,
+        "n_excluded": excluded,
+    }
+
+
+def _survival_summary(cells: tuple[int, ...]) -> dict[str, Any]:
+    events, censored, excluded = cells
+    return {
+        "type": "survival",
+        "time_col": "days",
+        "event_col": "event",
+        "event_level": "1",
+        "median_survival": 400.0,
+        "n_used": events + censored,
+        "n_events": events,
+        "n_excluded": excluded,
+    }
+
+
+def _survival_summary_candidates(cells: tuple[int, ...]) -> Iterator[tuple[int, ...]]:
+    return (c for c in _compositions(sum(cells), (0, 0, 0)) if c[0] + c[1] > 0)
+
+
+def _value_counts(cells: tuple[int, ...]) -> dict[str, Any]:
+    # nulls are a value_counts row too, so the counts sum to the dataset row count
+    return {
+        "type": "descriptive",
+        "focused_variable": "smoker",
+        "is_numeric": False,
+        "value_counts": [{"smoker": f"level{i}", "count": c} for i, c in enumerate(cells)],
+    }
+
+
+def _value_counts_candidates(cells: tuple[int, ...]) -> Iterator[tuple[int, ...]]:
+    # value_counts is sorted by count, descending
+    minimums = tuple(1 for _ in cells)
+    return (c for c in _compositions(sum(cells), minimums) if list(c) == sorted(c, reverse=True))
+
+
+def _grouped_count(cells: tuple[int, ...]) -> dict[str, Any]:
+    return {
+        "type": "count",
+        "total_count": sum(cells),
+        "grouped_by": "site",
+        "group_counts": [{"site": f"s{i}", "count": c} for i, c in enumerate(cells)],
+    }
+
+
+def _grouped_count_candidates(cells: tuple[int, ...]) -> Iterator[tuple[int, ...]]:
+    # The total is not tied to the dataset row count (filters), so vary it and the group count.
+    for total in range(1, 14):
+        for k in range(1, min(total, 10) + 1):
+            yield from _compositions(total, tuple(1 for _ in range(k)))
+    if sum(cells) >= 14:
+        yield from _compositions(sum(cells), tuple(1 for _ in cells))
+
+
+def _numeric_descriptive(cells: tuple[int, ...]) -> dict[str, Any]:
+    n, missing = cells
+    return {
+        "type": "descriptive",
+        "focused_variable": "ldl",
+        "is_numeric": True,
+        "mean": 121.49,
+        "median": 121.5,
+        "std": 14.4,
+        "min": 83.0,
+        "max": 159.0,
+        "non_null_count": n,
+    }
+
+
+def _named(*names: str) -> Callable[[tuple[int, ...]], dict[str, int]]:
+    return lambda cells: dict(zip(names, cells, strict=True))
+
+
+def _with_n_used(*names: str, parts: int) -> Callable[[tuple[int, ...]], dict[str, int]]:
+    return lambda cells: {**dict(zip(names, cells, strict=True)), "n_used": sum(cells[:parts])}
+
+
+_SCENARIOS = {
+    "t_test": _Scenario(
+        _two_group_comparison, _with_n_used("drug", "placebo", "excluded", parts=2), _same_total((1, 1, 0))
+    ),
+    "chi_square": _Scenario(
+        _chi_square, _with_n_used("A0", "B0", "A1", "B1", "excluded", parts=4), _chi_square_candidates
+    ),
+    "predictor": _Scenario(_predictor, _named("n_used", "excluded"), _same_total((1, 0))),
+    "survival_grouped": _Scenario(
+        _survival_grouped, _with_n_used("A", "B", "excluded", parts=2), _same_total((1, 1, 0))
+    ),
+    "survival_summary": _Scenario(
+        _survival_summary, _with_n_used("events", "censored", "excluded", parts=2), _survival_summary_candidates
+    ),
+    "value_counts": _Scenario(
+        _value_counts, lambda c: {f"level{i}": v for i, v in enumerate(c)}, _value_counts_candidates
+    ),
+    "grouped_count": _Scenario(
+        # a site missing from a candidate has no patients in it
+        _grouped_count,
+        lambda c: {**{f"s{i}": c[i] if i < len(c) else 0 for i in range(10)}, "total": sum(c)},
+        _grouped_count_candidates,
+    ),
+    "numeric_descriptive": _Scenario(_numeric_descriptive, _named("n", "missing"), _same_total((0, 0))),
+}
+
+_AUDIT_CASES = [
+    # (scenario, cells) at the boundaries: counts 1, 10, 11; totals 11, 12, 21, 22; n_excluded 0
+    ("t_test", (11, 10, 1)),
+    ("t_test", (10, 11, 0)),
+    ("t_test", (11, 11, 0)),
+    ("t_test", (6, 5, 1)),
+    ("t_test", (1, 10, 10)),
+    ("t_test", (11, 10, 0)),
+    ("chi_square", (5, 5, 1, 0, 0)),
+    ("chi_square", (10, 0, 1, 0, 1)),
+    ("chi_square", (5, 6, 0, 0, 10)),
+    ("predictor", (11, 1)),
+    ("predictor", (1, 10)),
+    ("predictor", (10, 11)),
+    ("predictor", (11, 10)),
+    ("predictor", (22, 0)),
+    ("predictor", (397, 3)),
+    ("predictor", (10, 390)),
+    ("survival_grouped", (11, 1, 0)),
+    ("survival_grouped", (11, 10, 1)),
+    ("survival_grouped", (10, 1, 11)),
+    ("survival_summary", (11, 1, 0)),
+    ("survival_summary", (10, 11, 1)),
+    ("survival_summary", (1, 10, 11)),
+    ("survival_summary", (5, 5, 1)),
+    ("value_counts", (10, 10)),
+    ("value_counts", (11, 10)),
+    ("value_counts", (11, 1)),
+    ("value_counts", (10, 1, 1)),
+    ("value_counts", (11, 11)),
+    ("grouped_count", (1,) * 10),
+    ("grouped_count", (10, 1)),
+    ("grouped_count", (11, 1)),
+    ("grouped_count", (5, 5)),
+    ("numeric_descriptive", (10, 1)),
+    ("numeric_descriptive", (1, 10)),
+]
+
+
+class TestSmallCellRecovery:
+    """No count from 1 to 10 can be worked out from one answer plus the dataset row count."""
+
+    @pytest.mark.parametrize(
+        ("scenario", "cells"),
+        _AUDIT_CASES,
+        ids=[f"{name}-{'_'.join(map(str, cells))}" for name, cells in _AUDIT_CASES],
+    )
+    def test_present_analysis_bruteForceAttack_recoversNoSmallCount(self, scenario, cells):
+        # Arrange
+        audit = _SCENARIOS[scenario]
+
+        # Act
+        recovered = _recovered(audit, cells)
+
+        # Assert
+        assert recovered == {}, f"answer {_answer(audit.build(cells))} reveals {recovered}"
+
+    @pytest.mark.parametrize(
+        ("scenario", "cells"),
+        _AUDIT_CASES,
+        ids=[f"{name}-{'_'.join(map(str, cells))}" for name, cells in _AUDIT_CASES],
+    )
+    def test_present_analysis_hiddenCounts_useOneMarkerPerAnswer(self, scenario, cells):
+        # Arrange
+        analysis = _SCENARIOS[scenario].build(cells)
+
+        # Act
+        shown = _answer(analysis)
+
+        # Assert: "<11" next to "suppressed" tells primary (1-10) from secondary (>=11) cells
+        assert not ("<11" in shown and SECONDARY_SUPPRESSED in shown), shown
+
+    @pytest.mark.parametrize(
+        ("n_used", "n_excluded", "expected"),
+        [
+            (397, 3, "n hidden; some excluded for missing data"),
+            (10, 390, "n hidden; some excluded for missing data"),
+            (389, 11, "n=389; 11 excluded for missing data"),
+            (400, 0, "n=400"),
+            (11, 0, "n=11"),
+        ],
+        ids=["small_excluded", "small_n", "both_large", "none_excluded", "threshold_none_excluded"],
+    )
+    def test_present_predictor_nClause_hidesBothWhenEitherSmall(self, n_used, n_excluded, expected):
+        # Arrange: n_used + n_excluded is the dataset row count, which the app shows
+        analysis = _predictor((n_used, n_excluded))
+
+        # Act
+        claim = present_analysis(analysis)["claim"]
+
+        # Assert
+        assert f"(n={n_used}" in claim if expected.startswith("n=") else "(n hidden" in claim
+        assert claim.endswith(f"Logistic regression of outcome on hdl ({expected}); unadjusted.")
+
+
+class TestSmallGroupStatistics:
+    """A group statistic of a handful of patients is close to their values; it hides with n."""
+
+    @pytest.mark.parametrize(
+        ("sizes", "expected_means"),
+        [
+            ((1, 1, 1), ["suppressed", "suppressed", "suppressed"]),
+            ((10, 50, 60), ["suppressed", "suppressed", 30.0]),
+            ((11, 11, 11), [10.0, 20.0, 30.0]),
+            ((0, 50, 60), [10.0, 20.0, 30.0]),
+        ],
+        ids=["one_patient_each", "small_group_and_complement", "threshold", "empty_group"],
+    )
+    def test_present_anova_smallGroup_hidesItsMeanKeepsTest(self, sizes, expected_means):
+        # Arrange: one patient per group makes each mean that patient's value
+        analysis = {
+            "type": "comparison",
+            "test_type": "anova",
+            "outcome_col": "ldl",
+            "group_col": "site",
+            "groups": ["a", "b", "c"],
+            "n_groups": 3,
+            "p_value": 0.03,
+            "group_means": {"a": 10.0, "b": 20.0, "c": 30.0},
+            "group_sizes": dict(zip(["a", "b", "c"], sizes, strict=True)),
+            "n_used": sum(sizes),
+            "n_excluded": 0,
+        }
+
+        # Act
+        presentation = present_analysis(analysis)
+
+        # Assert: the overall test is still reported; each hidden size hides its mean
+        assert presentation["claim"].startswith("Mean ldl differed across 3 site groups (ANOVA p=0.030")
+        rows = presentation["table"]["rows"]
+        assert [row["mean ldl"] for row in rows] == expected_means
+        assert all((row["n"] == SECONDARY_SUPPRESSED) == (row["mean ldl"] == SECONDARY_SUPPRESSED) for row in rows)
+
+
+class TestHiddenNStatistics:
+    """With n hidden, no statistic that can be one patient's value is shown."""
+
+    @pytest.mark.parametrize(
+        ("n", "shown"),
+        [(1, False), (10, False), (11, True), (300, True)],
+        ids=["one_patient", "just_below", "threshold", "large"],
+    )
+    def test_present_descriptive_hiddenN_hidesEveryStatistic(self, n, shown):
+        # Arrange: min/max of a handful of patients are their values; a mean of one is too
+        analysis = {
+            "type": "descriptive",
+            "focused_variable": "ldl",
+            "is_numeric": True,
+            "mean": 121.49,
+            "median": 121.5,
+            "std": 14.4,
+            "min": 83.0,
+            "max": 159.0,
+            "non_null_count": n,
+        }
+
+        # Act
+        answer = json.dumps(present_analysis(analysis))
+
+        # Assert
+        values = ("121.49", "121.5", "14.4", "83.0", "159.0")
+        assert all((value in answer) == shown for value in values), answer
+        if not shown:
+            assert "Statistics for ldl are not shown because n is hidden (n hidden)." in answer
+
+    @pytest.mark.parametrize(
+        ("n_used", "n_events", "n_excluded", "shown"),
+        [(1, 1, 0, False), (10, 5, 0, False), (11, 1, 1, False), (11, 5, 0, True), (60, 20, 11, True)],
+        ids=["one_patient", "just_below", "exclusion_hides_n", "threshold", "large"],
+    )
+    def test_present_survival_ungroupedHiddenN_hidesMedian(self, n_used, n_events, n_excluded, shown):
+        # Arrange: a median of one patient is that patient's time
+        analysis = _survival_summary((n_events, n_used - n_events, n_excluded))
+
+        # Act
+        presentation = present_analysis(analysis)
+
+        # Assert: with n=11 and 1 excluded (row count 12) a shown median would mark n as >= 11
+        assert ("400.0" in json.dumps(presentation)) == shown
+        assert presentation["table"]["rows"][0]["median days"] == (400.0 if shown else SECONDARY_SUPPRESSED)

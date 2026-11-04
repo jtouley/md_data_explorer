@@ -322,7 +322,7 @@ export const HIDDEN_CELL_FOOTNOTE =
   "and some other cells are hidden so those counts can't be worked out from totals.";
 
 const STATS_TOKEN =
-  /(\bp\s*[<=>]|\bn\s*=|\bCI\b|\bOR\b|\br\s*=|\bSD\b|\bmedian\b|\bexcluded\b|log-rank|t-test|chi-square|ANOVA|Fisher)/;
+  /(\bp\s*[<=>]|\bn\s*=|\bn hidden\b|\bCI\b|\bOR\b|\br\s*=|\bSD\b|\bmedian\b|\bexcluded\b|log-rank|t-test|chi-square|ANOVA|Fisher)/;
 
 /**
  * Index just past the first sentence (a '.' at paren depth 0 followed by a space and a capital,
