@@ -1536,17 +1536,22 @@ def semantic_layer_with_clinical_columns():
 
     mock._fuzzy_match_variable = mock_fuzzy_match
 
-    # Mock base view with clinical columns
-    base_view = pl.DataFrame(
-        {
-            "patient_id": ["P001", "P002", "P003"],
-            "statins": ["yes", "no", "yes"],
-            "statin": ["atorvastatin", "none", "simvastatin"],
-            "hiv_regiment": ["regimen_a", "regimen_b", "regimen_a"],
-            "Current Regimen": ["regimen_1", "regimen_2", "regimen_1"],
-            "BMI": [25.5, 28.3, 22.1],
-            "LDL mg/dL": [120, 150, 100],
-        }
+    # Base view with clinical columns. SemanticLayer.get_base_view() returns an Ibis
+    # table (callers use .columns, .schema(), .select().execute()), so the mock must too.
+    import ibis
+
+    base_view = ibis.memtable(
+        pl.DataFrame(
+            {
+                "patient_id": ["P001", "P002", "P003"],
+                "statins": ["yes", "no", "yes"],
+                "statin": ["atorvastatin", "none", "simvastatin"],
+                "hiv_regiment": ["regimen_a", "regimen_b", "regimen_a"],
+                "Current Regimen": ["regimen_1", "regimen_2", "regimen_1"],
+                "BMI": [25.5, 28.3, 22.1],
+                "LDL mg/dL": [120, 150, 100],
+            }
+        )
     )
     mock.get_base_view.return_value = base_view
 
