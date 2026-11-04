@@ -131,14 +131,14 @@ def test_deleteDataset_queryAndPreviewArriveDuringPurge_rejected409AndNothingCac
     real_purge = datasets_routes.purge_dataset_files
     seen: dict[str, int] = {}
 
-    def purge_with_concurrent_requests(ds_id: str, uploads_root: Path) -> Any:
+    def purge_with_concurrent_requests(ds_id: str, uploads_root: Path, **kwargs: Any) -> Any:
         # Real HTTP requests through the app while the delete is in progress.
         seen["query"] = test_client.post(
             "/api/queries", json={"session_id": "s1", "dataset_id": ds_id, "query_text": "how many"}
         ).status_code
         seen["preview"] = test_client.get(f"/api/datasets/{ds_id}/preview").status_code
         seen["detail"] = test_client.get(f"/api/datasets/{ds_id}").status_code
-        return real_purge(ds_id, uploads_root)
+        return real_purge(ds_id, uploads_root, **kwargs)
 
     monkeypatch.setattr(datasets_routes, "purge_dataset_files", purge_with_concurrent_requests)
 
@@ -291,3 +291,73 @@ def test_deleteDataset_storeConnectionHeld_returns409AndChangesNothing(test_clie
         assert db.get(db_models.Message, f"m_{marker}") is not None
     assert dataset_id.encode() in store.read_bytes()
     assert test_client.get(f"/api/datasets/{dataset_id}").status_code == 200
+
+
+def _sessions_for(dataset_id: str) -> int:
+    with SessionLocal() as db:
+        return db.query(db_models.Session).filter(db_models.Session.dataset_id == dataset_id).count()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OperationalError("COMMIT", {}, Exception("database is locked")),
+        RuntimeError("process killed here"),
+    ],
+    ids=["sqlite_locked", "process_killed"],
+)
+def test_deleteDataset_sessionCommitFailsOnce_retryRemovesSessionsAndSucceeds(
+    test_client: TestClient, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    # Arrange: the session delete's commit fails once, as when SQLite is locked or the process dies.
+    from sqlalchemy.orm import Session as OrmSession
+
+    dataset_id = _upload(test_client, f"numbat{secrets.token_hex(4)}")
+    test_client.post("/api/sessions", json={"dataset_id": dataset_id})
+    assert _sessions_for(dataset_id) == 1
+    real_commit = OrmSession.commit
+    armed = {"on": True}
+
+    def failing_commit(self: OrmSession) -> None:
+        if armed["on"] and self.deleted:
+            armed["on"] = False
+            raise failure
+        real_commit(self)
+
+    monkeypatch.setattr(OrmSession, "commit", failing_commit)
+    try:
+        first = test_client.delete(f"/api/datasets/{dataset_id}").status_code
+    except type(failure):
+        first = None  # the error escaped the route, like a crash mid-request
+    monkeypatch.setattr(OrmSession, "commit", real_commit)
+
+    # Act
+    retry = test_client.delete(f"/api/datasets/{dataset_id}")
+
+    # Assert
+    assert first != 200
+    assert retry.status_code == 200, retry.text
+    assert _sessions_for(dataset_id) == 0
+    assert test_client.get(f"/api/datasets/{dataset_id}").status_code == 404
+
+
+@pytest.mark.parametrize("sessions", [1, 2], ids=["one_orphan", "two_orphans"])
+def test_deleteDataset_metadataGoneSessionsLeft_deletesOrphansAndReturns200(
+    test_client: TestClient, sessions: int
+) -> None:
+    # Arrange: an earlier delete removed the metadata, then died before the sessions went.
+    from clinical_analytics.core.data_home import uploads_dir
+
+    dataset_id = _upload(test_client, f"bilby{secrets.token_hex(4)}")
+    for _ in range(sessions):
+        test_client.post("/api/sessions", json={"dataset_id": dataset_id})
+    (uploads_dir() / "metadata" / f"{dataset_id}.json").unlink()
+
+    # Act
+    response = test_client.delete(f"/api/datasets/{dataset_id}")
+
+    # Assert
+    assert response.status_code == 200, response.text
+    assert response.json()["deleted_sessions"] == sessions
+    assert _sessions_for(dataset_id) == 0
+    assert test_client.delete(f"/api/datasets/{dataset_id}").status_code == 404

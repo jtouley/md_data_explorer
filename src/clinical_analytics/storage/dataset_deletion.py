@@ -16,7 +16,8 @@ is removed last, only after the swap, so a failure part-way leaves the dataset l
 delete can be retried; running it twice is safe. The purge takes the store lock before it
 touches anything and refuses to run while any registered connection to the store is open (see
 ``storage.datastore``); on a busy store nothing is removed. Order under the lock: DuckDB tables
-(and the rewrite) and pre-upgrade store backups, then files, then metadata.
+(and the rewrite) and pre-upgrade store backups, then files, then the caller's
+``before_metadata`` step (the API's session delete), then metadata.
 
 Sessions and in-memory query results are API state and are removed by the API route.
 """
@@ -27,6 +28,7 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -175,7 +177,14 @@ def _purge_duckdb(db_path: Path, dataset_id: str | None, other_ids: set[str], re
                 con.execute("DETACH compacted_store")
             finally:
                 con.close()
-            os.replace(compacted, db_path)
+            try:
+                os.replace(compacted, db_path)
+            except OSError as e:
+                compacted.unlink(missing_ok=True)
+                raise DatasetDeletionError(
+                    "Could not swap the rewritten data store into place "
+                    f"({e.strerror or type(e).__name__}); the tables are dropped, retry to finish"
+                ) from e
             db_path.with_name(f"{db_path.name}.wal").unlink(missing_ok=True)
             marker.unlink()
     except StoreInUseError as e:
@@ -210,7 +219,13 @@ def resume_pending_compaction(data_dir: Path) -> bool:
     return True
 
 
-STORE_RECOVERY_DOC = "docs/security/LOCAL_DATA_SECURITY.md (Recovering from a pending store rewrite)"
+def store_recovery_hint(data_dir: Path) -> str:
+    """One sentence a packaged-app user can act on (no repository paths)."""
+    return (
+        "Free disk space or fix the permissions of the data folder and start again; if the store "
+        f"still cannot be opened, quit, move {DUCKDB_FILENAME} and every {DUCKDB_FILENAME}.* file "
+        f"out of {data_dir}, delete them, and start again."
+    )
 
 
 class StoreCompactionPendingError(DatasetDeletionError):
@@ -233,21 +248,27 @@ def finish_pending_compaction(data_dir: Path) -> bool:
             error_type=type(e).__name__,
             cause_type=type(cause).__name__,
             marker=marker.name,
-            recovery=f"API not started; see {STORE_RECOVERY_DOC}",
+            recovery="API not started until the rewrite succeeds",
         )
         raise StoreCompactionPendingError(
             f"A deleted dataset is still in the data store ({marker.name} is present) and the "
-            f"store rewrite failed ({type(cause).__name__}). The API will not start until it "
-            f"succeeds; see {STORE_RECOVERY_DOC}."
+            f"store rewrite failed ({type(cause).__name__}). {store_recovery_hint(data_dir)}"
         ) from e
 
 
-def purge_dataset_files(dataset_id: str, uploads_root: Path) -> DeletionReport:
+def purge_dataset_files(
+    dataset_id: str,
+    uploads_root: Path,
+    before_metadata: Callable[[], None] | None = None,
+) -> DeletionReport:
     """Delete all files and DuckDB tables for ``dataset_id`` under the uploads root's parent.
 
     Args:
         dataset_id: Upload id.
         uploads_root: The ``uploads`` directory (``UserDatasetStorage.upload_dir``).
+        before_metadata: Called under the store lock after the tables and files are gone and
+            before the metadata is removed (the API deletes sessions here). If it raises, the
+            metadata stays, so the dataset stays listed and a retry finishes the delete.
 
     Raises:
         InvalidDatasetIdError: id is not a plain identifier.
@@ -290,6 +311,8 @@ def purge_dataset_files(dataset_id: str, uploads_root: Path) -> DeletionReport:
                     if _owned_by(parquet.name, dataset_id, other_ids):
                         _remove(parquet, data_dir, report)
 
+            if before_metadata is not None:
+                before_metadata()
             # Last: while metadata exists the dataset stays listed, so a failed delete can be retried.
             _remove(metadata_path, uploads_root, report)
     except StoreInUseError as e:

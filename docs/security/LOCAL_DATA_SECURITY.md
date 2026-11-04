@@ -117,9 +117,11 @@ the page, then removes, for that dataset id:
 - in-memory query results, events and conversation history
 
 The delete takes the store lock before it removes anything, then drops the DuckDB tables and
-rewrites the store, then removes the files, then the metadata, and only then the sessions and
-messages. If the store is busy (HTTP 409), nothing is removed: files, metadata, tables and chat
-all stay. Metadata goes after the files, so a delete that fails part-way leaves the dataset listed and can be retried.
+rewrites the store, then removes the files, then the sessions and messages (in their own
+transaction), and the metadata last. If the store is busy (HTTP 409), nothing is removed: files,
+metadata, tables and chat all stay. Because metadata goes last, a delete that fails part-way
+leaves the dataset listed and can be retried; a retry for an id whose metadata is already gone
+still removes any sessions left for it.
 A durable `analytics.duckdb.needs-compaction` marker is written before any table is dropped and
 removed only after the rewritten store has replaced the old file, so a failed rewrite is redone
 on retry instead of being reported as success. The purge holds a process-wide store lock and
@@ -143,7 +145,8 @@ While `analytics.duckdb.needs-compaction` exists, the store file may still hold 
 deleted dataset. The API finishes that rewrite at startup. If it cannot, the API refuses to
 start: `python -m clinical_analytics.api.serve` prints one line, `Clinical Analytics cannot
 start: A deleted dataset is still in the data store (analytics.duckdb.needs-compaction is
-present) ...`, and exits with status 2, the same way as a failed engine check (below). The log
+present) ...`, followed by the two steps below in short form, and exits with status 2, the same
+way as a failed engine check (below). The log
 line `store_compaction_failed` names the error type, never a path or value. A bare `uvicorn` run
 fails its startup with `StoreCompactionPendingError` instead. Nothing is served from the file in
 the meantime.
@@ -208,6 +211,14 @@ one line saying why and exits with status 2:
 
 The app never keeps more than one backup. When a start finds a backup left by a failed check,
 it copies the store again and deletes the old backup, since the store may have changed since then.
+
+## The data folder is private to your account
+
+On macOS and Linux the data home is created with mode `0700`, and a data home you own with a
+wider mode is tightened to `0700` at startup. If the folder belongs to another account, the app
+refuses to start and says so: that account could read every dataset in it. A data home whose
+parent folder is writable by everyone (without the sticky bit `/tmp` has) is logged as
+`data_home_parent_world_writable`; move it somewhere only you can write.
 
 ## Disk encryption is required
 

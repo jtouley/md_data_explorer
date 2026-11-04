@@ -129,4 +129,15 @@ def test_loadSampleDataset_userDatasetHasDemoName_userDatasetUntouchedAndDemoSep
     assert demo_id != user_id
     assert upload_storage.get_upload_metadata(user_id) == user_meta_before
     assert upload_storage.get_upload_metadata(demo_id)["is_demo"] is True
+    assert upload_storage.get_upload_metadata(demo_id)["dataset_name"] == f"{DEMO_DATASET_NAME} (sample)"
     assert set(upload_storage.get_upload_data(user_id).collect_schema().names()) == {"patient_id", "ldl", "arm"}
+
+
+def test_loadSampleDataset_noNameClash_keepsPlainSampleName(upload_storage):
+    """Without a user dataset of that name, the sample keeps its plain display name."""
+    # Arrange / Act
+    ok, message, demo_id = load_sample_dataset(upload_storage, overwrite=True)
+
+    # Assert
+    assert ok is True, message
+    assert upload_storage.get_upload_metadata(demo_id)["dataset_name"] == DEMO_DATASET_NAME

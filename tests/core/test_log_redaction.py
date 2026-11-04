@@ -424,3 +424,47 @@ def test_parseJsonResponse_malformedClinicalText_renderedWarningOmitsPhrase(
     assert "llm_json_parse_failed" in err
     assert "nephropathy" not in err
     assert "HIV" not in err
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        f"what is the average {SECRET_VALUE}",
+        f"count patients broken down by diagnosis {SECRET_VALUE}",
+        f"how many patients per diagnosis {SECRET_VALUE}",
+    ],
+    ids=["what_is_average", "broken_down_by", "per_group"],
+)
+def test_ask_patternTierQuestionFragments_neverLoggedAtAnyLevel(
+    make_semantic_layer: Any, mock_llm_calls: Any, question: str
+) -> None:
+    # Arrange
+    layer = make_semantic_layer(
+        data={"patient_id": [1, 2, 3, 4], "age": [45, 62, 38, 51], "diagnosis": ["a", "flu", "a", "flu"]}
+    )
+    service = QueryService(layer)
+
+    # Act
+    with _capture_structlog_all_levels() as events:
+        service.ask(question, dataset_id="ds")
+
+    # Assert
+    assert events, "the ask pipeline should log something"
+    assert SECRET_VALUE not in repr(events)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["variable_term", "primary_term", "group_term", "group_phrase", "original", "filename", "failure_reason"],
+)
+def test_redactSensitiveFields_questionFragmentKey_replacedByHashAndSize(key: str) -> None:
+    # Arrange
+    event = {"event": "x", key: CLINICAL_PHRASE}
+
+    # Act
+    out = redact_sensitive_fields(None, "debug", event)
+
+    # Assert
+    assert CLINICAL_PHRASE not in repr(out)
+    assert out[f"{key}_redacted"] is True
+    assert out[f"{key}_size"] == len(CLINICAL_PHRASE)

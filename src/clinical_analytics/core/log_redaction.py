@@ -87,6 +87,16 @@ SENSITIVE_LOG_KEYS: frozenset[str] = frozenset(
         "suggestion",
         "suggested_value",
         "current_value",
+        # Fragments of the question the pattern tier extracted, and names that can carry
+        # identifiers (an upload's file name, a failure reason quoting LLM-chosen columns).
+        "variable_term",
+        "primary_term",
+        "group_term",
+        "group_phrase",
+        "subject_phrase",
+        "original",
+        "filename",
+        "failure_reason",
     }
 )
 # Keys whose values are data values: even a keyed hash is not logged, only the size.

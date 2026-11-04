@@ -22,7 +22,7 @@ from collections.abc import Sequence
 
 import uvicorn
 
-from clinical_analytics.core.data_home import uploads_dir
+from clinical_analytics.core.data_home import DataHomeOwnershipError, ensure_data_home, uploads_dir
 from clinical_analytics.core.log_redaction import configure_logging
 from clinical_analytics.storage.dataset_deletion import StoreCompactionPendingError, finish_pending_compaction
 from clinical_analytics.storage.datastore import StoreInUseError
@@ -47,10 +47,11 @@ def check_store() -> str | None:
     """Run the startup store check; return a one-line reason if the API must not start."""
     data_dir = uploads_dir().parent
     try:
+        ensure_data_home()
         prepare_store_for_engine(data_dir)
         # A rewrite left pending by a failed delete must finish before anything reads the store.
         finish_pending_compaction(data_dir)
-    except (StoreFormatError, StoreCompactionPendingError) as e:
+    except (StoreFormatError, StoreCompactionPendingError, DataHomeOwnershipError) as e:
         return str(e)
     except StoreInUseError:
         return "The data store is in use by this app. Close every Clinical Analytics window and start it again."

@@ -348,3 +348,31 @@ def test_purgeDatasetFiles_preUpgradeBackupPresent_backupRemoved(tmp_path: Path)
     assert store_backups(tmp_path / "analytics.duckdb") == []
     assert set(backups) <= set(report.removed_paths)
     assert not _store_has(tmp_path, b"backup-sentinel-")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [OSError(28, "No space left on device"), PermissionError(13, "Permission denied")],
+    ids=["disk_full", "permission"],
+)
+def test_purgeDatasetFiles_swapFails_errorNamesTheSwapStepAndKeepsFiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: OSError
+) -> None:
+    # Arrange
+    _seed(tmp_path, "dsx")
+
+    def failing_replace(src: Path, dst: Path) -> None:
+        raise failure
+
+    monkeypatch.setattr(deletion_mod.os, "replace", failing_replace)
+
+    # Act
+    with pytest.raises(DatasetDeletionError) as raised:
+        purge_dataset_files("dsx", tmp_path / "uploads")
+
+    # Assert
+    assert "swap the rewritten data store" in str(raised.value)
+    assert failure.strerror in str(raised.value)
+    assert (tmp_path / "uploads" / "raw" / "dsx.csv").exists()
+    assert (tmp_path / "uploads" / "metadata" / "dsx.json").exists()
+    assert not (tmp_path / "analytics.duckdb.compact").exists()

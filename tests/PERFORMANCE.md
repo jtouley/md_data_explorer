@@ -33,6 +33,7 @@ def test_example(make_semantic_layer, mock_llm_calls, nl_query_engine_with_cache
     result = engine.parse_query("remove the n/a", conversation_history=[...])
     assert result.intent_type == "COUNT"
 
+
 # Integration test (slow, uses real LLM)
 @pytest.mark.integration
 @pytest.mark.slow
@@ -106,6 +107,7 @@ def test_example(synthetic_dexa_excel_file):
     # Subsequent calls: Loads from cache (99% faster)
     assert synthetic_dexa_excel_file.exists()
 
+
 # CSV fixture (uses cache automatically)
 def test_example(large_patients_csv):
     # First call: Generates CSV string, caches it
@@ -142,6 +144,7 @@ def test_example(get_dataset_by_name):
     dataset = get_dataset_by_name("my_dataset")
     cohort = dataset.get_cohort()
     assert len(cohort) > 0
+
 
 # Old pattern: Still works (backward compatible)
 def test_example(discovered_datasets):

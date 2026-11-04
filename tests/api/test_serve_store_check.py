@@ -81,5 +81,8 @@ def test_main_pendingCompactionCannotFinish_oneLineExit2NoServer(
     assert exited.value.code == serve.STORE_CHECK_FAILED_EXIT
     assert len(stderr_lines) == 1
     assert "needs-compaction" in stderr_lines[0]
+    # Actionable for a packaged-app user: steps inline, no repository docs path.
+    assert "docs/" not in stderr_lines[0]
+    assert str(tmp_path / "data") in stderr_lines[0]
     assert compaction_marker(store).exists()
     run.assert_not_called()

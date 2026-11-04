@@ -105,3 +105,51 @@ def test_dataHome_firstWriter_createsOwnerOnlyDirectory(tmp_path, monkeypatch, c
 
     # Assert
     assert home.stat().st_mode & 0o777 == 0o700
+
+
+_POSIX_ROOT = hasattr(__import__("os"), "geteuid") and __import__("os").geteuid() == 0
+
+
+@pytest.mark.skipif(not _POSIX_ROOT, reason="needs chown to another uid")
+@pytest.mark.parametrize("mode", [0o777, 0o700], ids=["world_open", "owner_only"])
+def test_ensureDataHome_ownedByAnotherUser_refusesWithClearMessage(tmp_path, monkeypatch, mode):
+    # Arrange
+    import os
+
+    home = tmp_path / "theirs"
+    home.mkdir()
+    home.chmod(mode)
+    os.chown(home, 12345, 12345)
+    monkeypatch.setenv(data_home.DATA_HOME_ENV, str(home))
+
+    # Act / Assert
+    with pytest.raises(PermissionError, match="owned by another user"):
+        data_home.ensure_data_home()
+    assert home.stat().st_mode & 0o777 == mode
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "getuid"), reason="POSIX permissions")
+@pytest.mark.parametrize(
+    ("parent_mode", "expect_warning"),
+    [(0o777, True), (0o1777, False), (0o755, False)],
+    ids=["world_writable", "sticky_like_tmp", "normal"],
+)
+def test_ensureDataHome_parentPermissions_warnsOnlyWhenWorldWritableWithoutSticky(
+    tmp_path, monkeypatch, parent_mode, expect_warning
+):
+    # Arrange
+    from structlog.testing import capture_logs
+
+    parent = tmp_path / "shared"
+    parent.mkdir()
+    parent.chmod(parent_mode)
+    monkeypatch.setenv(data_home.DATA_HOME_ENV, str(parent / "home"))
+
+    # Act
+    with capture_logs() as logs:
+        home = data_home.ensure_data_home()
+
+    # Assert
+    warned = [e for e in logs if e["event"] == "data_home_parent_world_writable"]
+    assert bool(warned) is expect_warning
+    assert home.stat().st_mode & 0o777 == 0o700
