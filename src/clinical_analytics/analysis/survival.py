@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Survival Analysis Module - Time-to-event analysis for clinical data.
 

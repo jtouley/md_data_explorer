@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Semantic Layer - Dynamic SQL Generation via Ibis.
 

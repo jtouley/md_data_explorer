@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Data check (contract quality report) for a cohort: pure helpers + the details-sheet section.
  * The API sends plain-language lines with small counts already hidden; nothing is recomputed.

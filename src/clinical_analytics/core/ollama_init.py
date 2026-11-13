@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Ollama Initialization for App Startup.
 

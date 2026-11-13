@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Headless CSV upload → JSON preview (issue #51).
 
 UI-free entrypoint. Uses ``UserDatasetStorage.save_upload`` then reads

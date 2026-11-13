@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Decide whether a QueryPlan may execute. Issue #52."""
 
 from dataclasses import dataclass

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Bundled sample clinical cohort for one-click demo onboarding."""
 
 from __future__ import annotations

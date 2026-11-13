@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Compile a data contract's rules to Polars expressions and run them in one collect.
 
 Supported (ODCS v3.2.0 ``library`` metrics plus type options):

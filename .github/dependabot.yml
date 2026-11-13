@@ -1,0 +1,39 @@
+# Dependabot version updates: weekly, one grouped PR per ecosystem (security updates stay separate).
+# Options: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+updates:
+  # Actions are pinned to full commit SHAs with the tag in a comment; Dependabot bumps both.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  # Python: pyproject.toml + uv.lock (the uv ecosystem updates the lock file too).
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-minor-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+      python-major:
+        applies-to: version-updates
+        update-types: ["major"]
+
+  # Electron desktop shell: electron/package.json + package-lock.json.
+  - package-ecosystem: "npm"
+    directory: "/electron"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+      npm-major:
+        applies-to: version-updates
+        update-types: ["major"]

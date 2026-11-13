@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Storage module for persistent DuckDB, dataset versioning, and query logging."""
 
 from clinical_analytics.storage.datastore import DataStore

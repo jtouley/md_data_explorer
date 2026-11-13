@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Natural Language Query Engine for parsing free-form clinical research questions.
 

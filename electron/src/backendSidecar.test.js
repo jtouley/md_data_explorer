@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { describe, test, expect, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';

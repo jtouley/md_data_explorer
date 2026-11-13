@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 StateStore - Protocol and implementations for session state abstraction.
 

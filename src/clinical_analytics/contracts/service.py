@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Upload-time orchestration: build (or reuse) the version's contract, check the data, store both."""
 
 from __future__ import annotations

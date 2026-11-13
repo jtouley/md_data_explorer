@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Relationship Detector - Automatic Foreign Key Discovery
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 ResultCache - Pure Python result caching with LRU eviction.
 

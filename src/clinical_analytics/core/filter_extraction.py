@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 LLM-powered filter extraction (ADR009 Phase 5).
 

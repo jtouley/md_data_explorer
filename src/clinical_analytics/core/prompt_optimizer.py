@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Self-learning prompt optimization for NL query parsing.
 
 This module analyzes golden question failures and automatically generates

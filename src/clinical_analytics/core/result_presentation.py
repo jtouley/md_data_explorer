@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Claim-first presentation of analysis results.
 
 Turns the dicts returned by ``analysis.compute`` (via ``SemanticLayer.format_execution_result``)

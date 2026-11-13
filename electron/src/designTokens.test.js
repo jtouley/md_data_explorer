@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * The colour tokens in index.css must keep the contrast recorded in docs/app/DESIGN.md:
  * 4.5:1 for text, 3:1 for UI boundaries, in light and dark.

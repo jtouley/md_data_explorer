@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Constants for data contracts and data-quality checks (one place, each with its source).
 
 Thresholds here are reporting thresholds: a check above one is shown to the user as a warning.

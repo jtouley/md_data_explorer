@@ -1,0 +1,56 @@
+name: Bug report
+description: Something does not work or gives a wrong result.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not include real patient data**, screenshots of it, column values or file excerpts.
+        Reproduce with the **Load sample** cohort or describe the data's shape (column types, group sizes).
+        If the bug shows a small count (1-10) or sends data off the machine, stop and follow
+        [SECURITY.md](https://github.com/jtouley/md_data_explorer/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The question you asked, the dataset shape, and the exact steps.
+      placeholder: |
+        1. Load sample
+        2. Ask "compare outcome by diabetes"
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Commit (`git rev-parse --short HEAD`) or app version.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Windows, Linux]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error text
+      description: Remove anything that could identify a patient before pasting.
+      render: text
+  - type: checkboxes
+    id: no-phi
+    attributes:
+      label: Privacy
+      options:
+        - label: This report contains no real patient data.
+          required: true

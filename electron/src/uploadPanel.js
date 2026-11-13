@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Upload panel helpers (Phase 8) — pure functions + DOM rendering.
  */

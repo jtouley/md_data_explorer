@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Keep patient-level text out of logs.
 
 Questions typed by clinicians, filter values and row values can identify patients, so no log

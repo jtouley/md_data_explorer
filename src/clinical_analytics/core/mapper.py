@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Column Mapping Engine - Config-driven data transformation.
 

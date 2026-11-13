@@ -1,0 +1,34 @@
+name: Privacy concern (design question, no exploit details)
+description: A question or concern about how the app protects patient data. To report a leak, use a private security advisory instead.
+labels: ["privacy"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If you found a way to see a patient count from 1 to 10, work one out, or get patient data
+        off the machine, do not file it here.** Report it privately as described in
+        [SECURITY.md](https://github.com/jtouley/md_data_explorer/blob/main/SECURITY.md)
+        ([open a private advisory](https://github.com/jtouley/md_data_explorer/security/advisories/new)).
+
+        Use this form for public, non-exploitable concerns: a design question, unclear documentation,
+        or a hardening suggestion. Never include real patient data.
+  - type: textarea
+    id: concern
+    attributes:
+      label: Concern
+      description: What are you worried about, and which part of the app or docs does it involve?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: This is not a working leak or exploit (those go to a private advisory per SECURITY.md).
+          required: true
+        - label: This contains no real patient data.
+          required: true

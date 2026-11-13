@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 AsyncQueryService - Async wrapper around core QueryService for API usage.
 

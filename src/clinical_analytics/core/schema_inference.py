@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Automatic Schema Inference Engine - Zero Manual Configuration
 

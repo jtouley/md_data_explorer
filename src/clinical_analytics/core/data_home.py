@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Where runtime data lives: outside the source tree, per user.
 
 Uploads, the DuckDB analytics store, Parquet exports and the session database can hold

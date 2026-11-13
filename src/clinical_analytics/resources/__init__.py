@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Read-only files shipped inside the package (config YAML, the synthetic demo cohort).
 
 Read them through ``clinical_analytics.core.resources``; never write here. Anything the app

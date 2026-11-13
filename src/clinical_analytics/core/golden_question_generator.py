@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Automated golden question generation (ADR009 Phase 6).
 

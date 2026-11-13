@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Pydantic models for API request/response schemas.
 
 These models define the API contracts between frontend and backend.
