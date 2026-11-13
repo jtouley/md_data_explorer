@@ -63,3 +63,28 @@ def test_atomicWrite_nonExclusive_replaces(tmp_path: Path):
 
     # Assert
     assert '"a": 2' in target.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("age_s", "removed"), [(7200, True), (10, False)], ids=["stale", "fresh"])
+def test_sweepStalePartFiles_removesOnlyStaleTempFiles(tmp_path: Path, age_s: int, removed: bool):
+    # Arrange
+    import os
+    import time
+
+    from clinical_analytics.storage.atomic import sweep_stale_part_files
+
+    part = tmp_path / "parquet" / ".user_upload_x_t_v.parquet.0123.part"
+    part.parent.mkdir()
+    part.write_bytes(b"rows")
+    keep = tmp_path / "parquet" / "user_upload_x_t_v.parquet"
+    keep.write_bytes(b"data")
+    old = time.time() - age_s
+    os.utime(part, (old, old))
+
+    # Act
+    count = sweep_stale_part_files(tmp_path, min_age_s=3600)
+
+    # Assert
+    assert part.exists() is not removed
+    assert count == int(removed)
+    assert keep.exists()

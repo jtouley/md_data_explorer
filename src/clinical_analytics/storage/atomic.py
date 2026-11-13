@@ -5,7 +5,9 @@ Every write goes to a hidden ``.<name>.<random>.part`` file in the target's dire
 fsynced, then moved into place with ``os.replace`` (atomic on POSIX and Windows), and the
 directory is fsynced so the rename itself survives a power cut. A crash at any point leaves
 either the old file or the new one, never a truncated one; at worst a ``.part`` file is left
-behind, which nothing reads.
+behind, which nothing reads. Such a file can hold patient rows, so a dataset delete removes its
+``.part`` files (``storage.dataset_deletion``) and startup sweeps stale ones
+(``sweep_stale_part_files``).
 
 Two modes:
 
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -31,6 +34,8 @@ import structlog
 logger = structlog.get_logger()
 
 PART_SUFFIX = ".part"
+# A temp file older than this cannot belong to a write still in progress (startup sweep).
+STALE_PART_MIN_AGE_S = 3600.0
 
 
 def _part_path(path: Path) -> Path:
@@ -112,3 +117,34 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     """Replace a JSON document crash-safely (metadata: always replaced, never exclusive)."""
     text = json.dumps(payload, indent=2)
     atomic_write(path, lambda p: p.write_text(text, encoding="utf-8"))
+
+
+def sweep_stale_part_files(root: Path, *, min_age_s: float = STALE_PART_MIN_AGE_S) -> int:
+    """Remove temp files a crash left under ``root`` (hidden ``.*.part``, older than ``min_age_s``).
+
+    Run at startup: a crash mid-write leaves a ``.part`` file that can hold patient rows and that
+    nothing references. Files younger than ``min_age_s`` are kept, as another process may still
+    be writing them.
+
+    Returns:
+        How many files were removed.
+
+    Raises:
+        OSError: a stale file exists but could not be removed.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        return 0
+    cutoff = time.time() - min_age_s
+    removed = 0
+    for part in root.rglob(f".*{PART_SUFFIX}"):
+        try:
+            if not part.is_file() or part.is_symlink() or part.stat().st_mtime > cutoff:
+                continue
+        except FileNotFoundError:
+            continue  # finished (renamed or removed) since the listing
+        part.unlink(missing_ok=True)
+        removed += 1
+    if removed:
+        logger.info("stale_part_files_removed", count=removed)
+    return removed

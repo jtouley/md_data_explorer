@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import duckdb
 import polars as pl
@@ -44,6 +44,10 @@ logger = structlog.get_logger(__name__)
 
 # Schema version for caching - increment when schema changes break compatibility
 SCHEMA_VERSION = "1.1"  # 1.1: null anchor keys excluded, per-table feature suffixes
+# Part of the stored cohort's file name (user_datasets.cohort_parquet_path). Bump it whenever a
+# change here can change the cohort built from the same tables, so a re-upload of identical
+# data never reuses a cohort Parquet that the old logic built.
+COHORT_LOGIC_VERSION: Final = "1"
 
 # Classification heuristic only: a table whose rows / distinct keys is at most this is treated as
 # "meant to be one row per key" (dimension). Whether it IS unique is judged exactly, never with this.

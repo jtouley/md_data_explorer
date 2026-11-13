@@ -6,15 +6,24 @@ Types are decided over the whole file, column by column, never from a sample:
 * ID-named columns (``ID_COLUMN_NAMES``) and digit codes with a leading zero (zip ``02139``,
   ward ``01``) stay text.
 * ``true``/``false`` become Boolean; whole numbers Int64 (nulls stay null, not Float64); decimal
-  numbers Float64. ``NaN``/``inf`` words and ``1,234`` are not numbers.
-* Dates are parsed per value against a fixed list of formats. Day-first and month-first slash
-  dates are only used when some value settles the order (a day above 12); otherwise the column
-  stays text. Values that match no format become null, and the count is reported.
+  numbers Float64. ``1,234`` is not a number. Whole numbers that do not fit Int64 stay text
+  (``int_overflow``); they never become Float64, which would lose digits.
+* Missing-value markers (``MISSING_VALUE_TOKENS``: ``NA``, ``.``, ``#N/A``, ``NaN``, ...) become
+  null only in a column whose other values are all numbers or all dates, and the count is
+  reported (``missing_tokens``). A column that stays text keeps every value: ``None`` or ``-``
+  can be a real category level.
+* Dates are parsed per value against a fixed list of formats. Day-first and month-first dates
+  are only used when some value settles the order (a day above 12), and the same order must
+  hold for every separator; otherwise the column stays text. A value that matches no format
+  keeps the whole column as text (``not_dates``), the same rule as for numbers: nothing is
+  silently turned into a missing value.
 * A column that cannot take a type stays text, and only that column: a note says which column
   and why (``ColumnTypeNote``). Nothing falls back to "every column is text".
 
 A first row that is a units sub-header (``years``, ``mg/dL`` above numeric columns, with no ID)
-is kept as unit metadata and is not a patient. A row with no ID and no values fails the upload.
+is kept as unit metadata and is not a patient; the report says that row was removed. Trailing
+lines with no values (``,,,`` written by exporters) are dropped; any other row with no ID and no
+values fails the upload.
 """
 
 from __future__ import annotations
@@ -28,17 +37,95 @@ from typing import Final, Literal
 import polars as pl
 import structlog
 
+from clinical_analytics.contracts.config import MISSING_VALUE_TOKENS
+
 logger = structlog.get_logger()
 
 # Columns stored as text whatever they hold (avoids integer overflow, keeps joins consistent).
 ID_COLUMN_NAMES: Final = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
 
-# A date column needs this share of its non-null values to parse; below it, the column is text.
-DATE_MIN_PARSED_SHARE: Final = 0.9
 # A column is reported as "numeric with some text" when at least this share is numeric.
 NUMERIC_NOTE_SHARE: Final = 0.5
 
-NoteReason = Literal["leading_zero", "not_numeric", "date_values_unparsed", "ambiguous_dates", "not_dates"]
+# "date_values_unparsed" is no longer produced; it stays readable in notes stored by earlier versions.
+NoteReason = Literal[
+    "leading_zero",
+    "not_numeric",
+    "date_values_unparsed",
+    "ambiguous_dates",
+    "not_dates",
+    "int_overflow",
+    "missing_tokens",
+    "shared_column_type",
+]
+
+# A units-row cell must be one of these (case-insensitive) or a ratio such as "mg/dL" or
+# "x10^9/L" (``_UNIT_RATIO_RE``), unless the file has an ID-named column whose cell is empty.
+UNIT_VOCABULARY: Final = frozenset(
+    {
+        "%",
+        "years",
+        "year",
+        "yrs",
+        "yr",
+        "y",
+        "months",
+        "month",
+        "mo",
+        "weeks",
+        "week",
+        "wk",
+        "days",
+        "day",
+        "d",
+        "hours",
+        "hour",
+        "h",
+        "hr",
+        "min",
+        "minutes",
+        "s",
+        "kg",
+        "g",
+        "mg",
+        "mcg",
+        "ug",
+        "µg",
+        "lb",
+        "lbs",
+        "cm",
+        "mm",
+        "m",
+        "in",
+        "ml",
+        "l",
+        "mmhg",
+        "bpm",
+        "°c",
+        "°f",
+        "degc",
+        "degf",
+        "iu",
+        "u",
+        "meq",
+        "mmol",
+        "µmol",
+        "umol",
+        "mol",
+        "date",
+        "yyyy-mm-dd",
+        "dd/mm/yyyy",
+        "mm/dd/yyyy",
+        "score",
+        "points",
+        "ratio",
+        "index",
+        "cells",
+        "count",
+        "n",
+    }
+)
+_UNIT_RATIO_RE: Final = re.compile(r"^[^\d\s/]*[a-zµ%°][^/]*/[^/]*[a-zµ0-9²][^/]*$", re.IGNORECASE)
 
 _INT_RE: Final = r"^[+-]?\d+$"
 _FLOAT_RE: Final = r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$"
@@ -106,7 +193,7 @@ def is_id_column_name(name: str) -> bool:
 class _ColumnPlan:
     expr: pl.Expr
     dtype: pl.DataType
-    note: ColumnTypeNote | None = None
+    notes: tuple[ColumnTypeNote, ...] = ()
 
 
 def _clean(col: str) -> pl.Expr:
@@ -115,11 +202,28 @@ def _clean(col: str) -> pl.Expr:
     return pl.when(trimmed == "").then(None).otherwise(trimmed)
 
 
+def _is_missing_token(expr: pl.Expr) -> pl.Expr:
+    """True where trimmed text is a missing-value marker (``MISSING_VALUE_TOKENS``)."""
+    return expr.str.strip_chars().str.to_lowercase().is_in(list(MISSING_VALUE_TOKENS))
+
+
+def _token_mask(s: pl.Series) -> pl.Series:
+    """``_is_missing_token`` for a series of trimmed text."""
+    return s.str.strip_chars().str.to_lowercase().is_in(list(MISSING_VALUE_TOKENS))
+
+
+def _clean_tokens(col: str) -> pl.Expr:
+    """``_clean`` with missing-value markers as null (only for columns typed as numbers or dates)."""
+    cleaned = _clean(col)
+    return pl.when(_is_missing_token(cleaned)).then(None).otherwise(cleaned)
+
+
 def _parse_dates(s: pl.Series) -> tuple[pl.Series | None, NoteReason | None]:
     """Parse a trimmed text series as Date/Datetime, or say why not (None when nothing parses)."""
     parsed_dt = [s.str.strptime(pl.Datetime("us"), fmt, strict=False) for fmt in _DATETIME_FORMATS]
     parsed_date = [s.str.strptime(pl.Date, fmt, strict=False) for fmt in _ISO_DATE_FORMATS]
 
+    settled: set[str] = set()  # orders that some separator family settled ("dmy", "mdy")
     for day_first, month_first in _AMBIGUOUS_FAMILIES:
         dmy = s.str.strptime(pl.Date, day_first, strict=False)
         mdy = s.str.strptime(pl.Date, month_first, strict=False)
@@ -130,12 +234,16 @@ def _parse_dates(s: pl.Series) -> tuple[pl.Series | None, NoteReason | None]:
             return None, "ambiguous_dates"  # both orders are in the column
         if only_dmy:
             parsed_date.append(dmy)
+            settled.add("dmy")
         elif only_mdy:
             parsed_date.append(mdy)
+            settled.add("mdy")
         elif disagree:
             return None, "ambiguous_dates"  # nothing settles the order
         else:
             parsed_date.append(dmy)  # every value reads the same either way
+    if len(settled) > 1:
+        return None, "ambiguous_dates"  # "/" reads day-first, "-" month-first: two conventions
 
     as_date = pl.select(pl.coalesce(parsed_date)).to_series()
     as_dt = pl.select(pl.coalesce(parsed_dt)).to_series()
@@ -156,44 +264,90 @@ def _plan_column(df: pl.DataFrame, col: str) -> _ColumnPlan:
     if n == 0 or is_id_column_name(col):
         return text
 
-    is_digits = non_null.str.contains(_DIGITS_RE)
-    if bool(is_digits.all()) and bool(non_null.str.contains(_LEADING_ZERO_RE).any()):
-        return _ColumnPlan(pl.col(col), pl.String(), ColumnTypeNote(col, "String", "leading_zero", 0, n))
+    def text_with(reason: NoteReason, failed: int) -> _ColumnPlan:
+        return _ColumnPlan(pl.col(col), pl.String(), (ColumnTypeNote(col, "String", reason, failed, n),))
 
-    lowered = non_null.str.to_lowercase()
-    if bool(lowered.is_in(["true", "false"]).all()):
+    # Missing-value markers are judged apart from the values: they become null only if the
+    # column types as numbers or dates; a text column keeps them as they are.
+    token_mask = _token_mask(non_null)
+    tokens = int(token_mask.sum())
+    values = non_null.filter(~token_mask)
+    if values.len() == 0:
+        return text
+
+    def typed(expr: pl.Expr, dtype: pl.DataType) -> _ColumnPlan:
+        notes = (ColumnTypeNote(col, str(dtype), "missing_tokens", tokens, n),) if tokens else ()
+        return _ColumnPlan(expr, dtype, notes)
+
+    is_digits = values.str.contains(_DIGITS_RE)
+    if bool(is_digits.all()) and bool(values.str.contains(_LEADING_ZERO_RE).any()):
+        return text_with("leading_zero", 0)
+
+    if not tokens and bool(non_null.str.to_lowercase().is_in(["true", "false"]).all()):
         expr = _clean(col).str.to_lowercase().replace_strict({"true": True, "false": False}, return_dtype=pl.Boolean)
         return _ColumnPlan(expr, pl.Boolean())
 
-    is_int = non_null.str.contains(_INT_RE)
-    if bool(is_int.all()) and non_null.cast(pl.Int64, strict=False).null_count() == 0:
-        return _ColumnPlan(_clean(col).cast(pl.Int64), pl.Int64())
+    if bool(values.str.contains(_INT_RE).all()):
+        overflow = int(values.cast(pl.Int64, strict=False).null_count())
+        if overflow:
+            # Never Float64: digits past 2**53 would be lost without a word.
+            return text_with("int_overflow", overflow)
+        return typed(_clean_tokens(col).cast(pl.Int64), pl.Int64())
 
-    is_float = non_null.str.contains(_FLOAT_RE)
+    is_float = values.str.contains(_FLOAT_RE)
     if bool(is_float.all()):
-        return _ColumnPlan(_clean(col).cast(pl.Float64), pl.Float64())
+        return typed(_clean_tokens(col).cast(pl.Float64), pl.Float64())
 
-    parsed, why_not = _parse_dates(s)
+    parsed, why_not = _parse_dates(s.set(_token_mask(s).fill_null(False), None) if tokens else s)
     if why_not is not None:
-        return _ColumnPlan(pl.col(col), pl.String(), ColumnTypeNote(col, "String", why_not, 0, n))
+        return text_with(why_not, 0)
     if parsed is not None:
-        ok = int(parsed.is_not_null().sum())
-        failed = n - ok
-        if ok / n >= DATE_MIN_PARSED_SHARE:
-            note = ColumnTypeNote(col, str(parsed.dtype), "date_values_unparsed", failed, n) if failed else None
-            return _ColumnPlan(pl.lit(parsed).alias(col), parsed.dtype, note)
-        return _ColumnPlan(pl.col(col), pl.String(), ColumnTypeNote(col, "String", "not_dates", failed, n))
+        failed = values.len() - int(parsed.is_not_null().sum())
+        if failed:
+            # Same rule as numbers: an unparsed value keeps the column as text, so no value is
+            # silently stored as missing (and the original text stays queryable).
+            return text_with("not_dates", failed)
+        return typed(pl.lit(parsed).alias(col), parsed.dtype)
 
     numeric = int(is_float.sum())
     if numeric / n >= NUMERIC_NOTE_SHARE:
-        return _ColumnPlan(pl.col(col), pl.String(), ColumnTypeNote(col, "String", "not_numeric", n - numeric, n))
+        return text_with("not_numeric", values.len() - numeric)
     return text
 
 
 def _type_columns(df: pl.DataFrame) -> tuple[pl.DataFrame, list[ColumnTypeNote]]:
     plans = {col: _plan_column(df, col) for col in df.columns}
     typed = df.with_columns([plan.expr.alias(col) for col, plan in plans.items()])
-    return typed, [plan.note for plan in plans.values() if plan.note is not None]
+    return typed, [note for plan in plans.values() for note in plan.notes]
+
+
+def settle_shared_column_types(
+    frames: dict[str, pl.DataFrame],
+) -> tuple[dict[str, pl.DataFrame], list[tuple[str, ColumnTypeNote]]]:
+    """Give a column name shared by several tables one type in all of them (join keys).
+
+    Each table is typed on its own, so ``ward`` can be text in a table where a value starts
+    with ``0`` and Int64 in another. Mixed whole and decimal numbers become Float64; any other
+    mix becomes text (which loses nothing). Returns the frames and one note per changed column.
+    """
+    dtypes: dict[str, set[pl.DataType]] = {}
+    for df in frames.values():
+        for col, dtype in df.schema.items():
+            dtypes.setdefault(col, set()).add(dtype)
+    target: dict[str, pl.DataType] = {}
+    for col, kinds in dtypes.items():
+        if len(kinds) < 2:
+            continue
+        target[col] = pl.Float64() if kinds <= {pl.Int64(), pl.Float64()} else pl.String()
+    settled: dict[str, pl.DataFrame] = {}
+    notes: list[tuple[str, ColumnTypeNote]] = []
+    for name, df in frames.items():
+        changes = [c for c in df.columns if c in target and df.schema[c] != target[c]]
+        settled[name] = df.with_columns(pl.col(c).cast(target[c]) for c in changes) if changes else df
+        notes.extend((name, ColumnTypeNote(c, str(target[c]), "shared_column_type", 0, df[c].count())) for c in changes)
+    if notes:
+        logger.info("staging_shared_column_types_settled", columns=len(notes))
+    return settled, notes
 
 
 # --- units row and empty rows -----------------------------------------------------------------
@@ -204,25 +358,51 @@ def _is_label(value: str) -> bool:
     return not _NUMBER_RE.match(value) and not _CENSORED_RE.match(value)
 
 
+def _is_unit(value: str) -> bool:
+    """A known unit word (``UNIT_VOCABULARY``) or a ratio unit such as 'mg/dL'."""
+    return value.strip().lower() in UNIT_VOCABULARY or bool(_UNIT_RATIO_RE.match(value.strip()))
+
+
 def _units_row(df: pl.DataFrame) -> dict[str, str] | None:
     """Units by column if the first row is a units sub-header, else None.
 
-    The row is units when it has no ID, every filled cell is a label (not a number, not "<5"),
-    and every filled cell sits above a column whose remaining rows are numeric or dates.
+    The row is units when it has no ID, every filled cell is a label (not a number, not "<5",
+    not a missing-value marker), every filled cell sits above a column whose remaining rows are
+    numeric or dates, and either the file has an ID-named column (empty in this row) or some
+    cell is a known unit. Without that, an ID-less file's first patient could be dropped.
     """
     if df.height < 2:
         return None
     first = df.row(0, named=True)
     if any(is_id_column_name(c) and (first[c] or "").strip() for c in df.columns):
         return None
-    filled = {c: v.strip() for c, v in first.items() if v is not None and v.strip()}
+    filled = {
+        c: v.strip()
+        for c, v in first.items()
+        if v is not None and v.strip() and v.strip().lower() not in MISSING_VALUE_TOKENS
+    }
     if not filled or not all(_is_label(v) for v in filled.values()):
+        return None
+    has_id_column = any(is_id_column_name(c) for c in df.columns)
+    if not has_id_column and not any(_is_unit(v) for v in filled.values()):
         return None
     rest, _ = _type_columns(df.slice(1))
     typed_cols = {c for c, t in rest.schema.items() if t.is_numeric() or t.is_temporal()}
     if not set(filled) <= typed_cols:
         return None
     return filled
+
+
+def _drop_trailing_blank_rows(df: pl.DataFrame) -> pl.DataFrame:
+    """Drop trailing rows with no values (``,,,`` lines exporters write after the data)."""
+    if df.width == 0 or df.height == 0:
+        return df
+    blank = df.select(pl.all_horizontal([_clean(c).is_null() for c in df.columns])).to_series()
+    filled = blank.not_().arg_true()
+    keep = int(filled[-1]) + 1 if filled.len() else 0
+    if keep < df.height:
+        logger.info("staging_trailing_blank_rows_dropped", rows=df.height - keep)
+    return df.head(keep)
 
 
 def _reject_empty_rows(df: pl.DataFrame, first_row_number: int) -> None:
@@ -276,7 +456,7 @@ def read_csv_typed(file_bytes: bytes) -> StagedTable:
         text = pl.read_csv(io.BytesIO(file_bytes), infer_schema=False)
     except (pl.exceptions.ComputeError, pl.exceptions.NoDataError) as e:
         raise StagingError(f"The CSV file could not be read: {type(e).__name__}") from e
-    return stage_text_frame(text)
+    return stage_text_frame(_drop_trailing_blank_rows(text))
 
 
 def _cell_text(value: object) -> str | None:
@@ -389,9 +569,7 @@ def read_excel_typed(file_bytes: bytes, header_row: int | None = None) -> Staged
     width = len(headers)
     body = [[_cell_text(v) for v in (r + [None] * width)[:width]] for r in rows[header_row + 1 :]]
     # Trailing all-empty rows are sheet formatting, not data lines (unlike in a CSV).
-    while body and all(v is None or not v.strip() for v in body[-1]):
-        body.pop()
-    text = pl.DataFrame(body, schema=dict.fromkeys(headers, pl.String), orient="row")
+    text = _drop_trailing_blank_rows(pl.DataFrame(body, schema=dict.fromkeys(headers, pl.String), orient="row"))
     return stage_text_frame(text, header_row_number=header_row + 1)
 
 
@@ -411,6 +589,9 @@ _NOTE_TEXT: Final[dict[str, str]] = {
     "leading_zero": "kept as text: codes with leading zeros (like 02139) must not become numbers",
     "not_numeric": "kept as text: {n} values are not plain numbers (like '<5' or '1,234'), so it is not averaged",
     "date_values_unparsed": "read as dates; {n} values matched no date format and count as missing",
+    "int_overflow": "kept as text: {n} whole numbers are too large to store as numbers without losing digits",
+    "missing_tokens": "{n} values were missing-value markers (like NA, . or #N/A) and are stored as missing",
+    "shared_column_type": "type changed to match the same column in another table, so the tables join",
     "ambiguous_dates": "kept as text: dates could be day/month or month/day and nothing in the file settles which",
     "not_dates": "kept as text: {n} values are not dates",
 }
@@ -423,5 +604,7 @@ def describe_column_types(notes: list[dict[str, str | int]], units: dict[str, st
         failed, checked = int(note.get("failed_values", 0)), int(note.get("checked_values", 0))
         text = _NOTE_TEXT[str(note["reason"])].format(n=_shown_count(failed, checked, small_cell_limit))
         lines.append(f"{note['column']}: {text}.")
+    if units:
+        lines.append("The row under the header was read as units, not a patient, and is not in the data.")
     lines.extend(f"{column}: unit {unit} (from the units row under the header)." for column, unit in units.items())
     return lines

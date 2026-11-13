@@ -59,6 +59,35 @@ def _sql_literal(value: Any) -> str:
 
 _SUPPORTED_FILTER_OPS = frozenset({"==", "!=", "IN", "NOT_IN", ">", ">=", "<", "<="})
 
+# How a single source file is read (``init_params["source_format"]``). Typed uploads are Parquet;
+# bundled registry datasets name a CSV. There is no fallback: an unknown file type is an error,
+# never a sample-based CSV re-inference.
+SourceFormat = Literal["parquet", "csv"]
+_SOURCE_FORMAT_BY_SUFFIX: dict[str, SourceFormat] = {".parquet": "parquet", ".csv": "csv"}
+_SOURCE_READERS: dict[SourceFormat, str] = {"parquet": "read_parquet", "csv": "read_csv"}
+
+
+def resolve_source_format(source_path: Path, declared: object = None) -> SourceFormat:
+    """The reader format for a source file: the declared one, checked against the file suffix.
+
+    Raises:
+        ValueError: unknown suffix, unknown declared format, or a declared format the suffix contradicts.
+    """
+    by_suffix = _SOURCE_FORMAT_BY_SUFFIX.get(source_path.suffix.lower())
+    if declared is None:
+        if by_suffix is None:
+            raise ValueError(
+                f"Unknown source file type '{source_path.suffix}' for {source_path.name}; "
+                f"expected one of {sorted(_SOURCE_FORMAT_BY_SUFFIX)} or an explicit source_format"
+            )
+        return by_suffix
+    if declared not in _SOURCE_READERS:
+        raise ValueError(f"Unknown source_format {declared!r}; expected one of {sorted(_SOURCE_READERS)}")
+    if by_suffix is not None and by_suffix != declared:
+        raise ValueError(f"source_format {declared!r} does not match the file type of {source_path.name}")
+    fmt: SourceFormat = "parquet" if declared == "parquet" else "csv"
+    return fmt
+
 
 def _missing_column_message(column: str) -> str:
     return (
@@ -621,7 +650,7 @@ class SemanticLayer:
                 # Use quoted identifiers for extra safety + parameter binding for file path
                 # DuckDB supports ? placeholders for parameterized queries
                 quoted_table = f'"{validated_name}"'
-                reader = "read_parquet" if source_path.suffix.lower() == ".parquet" else "read_csv_auto"
+                reader = _SOURCE_READERS[resolve_source_format(source_path, init_params.get("source_format"))]
                 duckdb_con.execute(
                     f"CREATE OR REPLACE TABLE {quoted_table} AS SELECT * FROM {reader}(?)",
                     [abs_path],
@@ -1463,29 +1492,45 @@ class SemanticLayer:
 
     def _save_metadata(self, upload_id: str, metadata: dict[str, Any]) -> None:
         """
-        Save metadata JSON for upload (atomic update).
+        Persist this layer's alias mappings into the upload's metadata (read-modify-write).
+
+        Goes through ``storage.metadata_lock.update_metadata``: under the metadata's sidecar lock the
+        file is re-read and only ``alias_mappings`` (the one key the layer owns) is merged in, so
+        a concurrent writer (legacy conversion, content-hash backfill, documentation add) is
+        never overwritten with the stale copy this layer read earlier.
 
         Args:
             upload_id: Upload identifier
-            metadata: Metadata dict to save
+            metadata: Metadata holding the alias mappings to save (and its dataset_version)
+
+        Raises:
+            ValueError: the stored metadata belongs to another dataset version.
+            RuntimeError, OSError: the lock or the write failed; the file is unchanged.
         """
-        import json
+        from clinical_analytics.storage.metadata_lock import update_metadata
 
         metadata_path = self._get_metadata_path(upload_id)
-        metadata_dir = metadata_path.parent
-        metadata_dir.mkdir(parents=True, exist_ok=True)
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        alias_mappings = metadata.get("alias_mappings") or {"user_aliases": {}, "system_aliases": {}}
+        expected_version = metadata.get("dataset_version")
 
-        # Atomic write: write to temp file, then rename
-        temp_path = metadata_path.with_suffix(".json.tmp")
-        try:
-            with open(temp_path, "w") as f:
-                json.dump(metadata, f, indent=2)
-            temp_path.replace(metadata_path)
-        except Exception as e:
-            logger.error(f"Failed to save metadata for {upload_id}: {e}")
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
+        def mutate(current: dict[str, Any]) -> bool:
+            if not current:  # no metadata yet: start from what the layer holds
+                current.update(metadata)
+                return True
+            stored_version = current.get("dataset_version")
+            if expected_version and stored_version and stored_version != expected_version:
+                raise ValueError(
+                    f"Dataset version mismatch: stored={stored_version}, requested={expected_version}. "
+                    "Aliases are scoped per dataset version."
+                )
+            stored = current.setdefault("alias_mappings", {})
+            for kind in ("user_aliases", "system_aliases"):
+                # Merged, not replaced: an alias another writer added meanwhile is kept.
+                stored[kind] = {**(stored.get(kind) or {}), **(alias_mappings.get(kind) or {})}
+            return True
+
+        update_metadata(metadata_path, mutate, missing_ok=True)
 
     def _load_user_aliases(self, upload_id: str, dataset_version: str) -> None:
         """

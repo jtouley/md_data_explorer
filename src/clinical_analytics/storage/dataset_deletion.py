@@ -8,6 +8,8 @@ An upload leaves data in several places under the data home (``<data home>/data`
   ``stored_filename``)
 * ``uploads/metadata/{id}.json``, its write lock ``.{id}.json.lock`` and the enrichment overlays
   ``uploads/metadata/overlays/{id}/``
+* Temp files a crashed write left behind (``storage.atomic``): ``parquet/.{id}_*.part`` and
+  ``uploads/metadata/.{id}.json.*.part`` (they can hold patient rows)
 * Typed Parquet ``parquet/{id}_<table>_<version>.parquet`` and ``parquet/{id}__cohort_<version>.parquet``
 * Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``
 * DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``, and any pre-upgrade backup
@@ -40,6 +42,7 @@ import duckdb
 import structlog
 
 from clinical_analytics.contracts.config import CONTRACTS_DIRNAME, DQ_DIRNAME
+from clinical_analytics.storage.atomic import PART_SUFFIX
 from clinical_analytics.storage.datastore import StoreInUseError, exclusive_store
 from clinical_analytics.storage.store_format import (
     STORE_FILENAME,
@@ -322,6 +325,13 @@ def purge_dataset_files(
                 for parquet in sorted(parquet_dir.glob(f"{dataset_id}_*")):
                     if _owned_by(parquet.name, dataset_id, other_ids):
                         _remove(parquet, data_dir, report)
+                # Temp files of a crashed write: ".{id}_<table>_<version>.parquet.<uuid>.part"
+                for part in sorted(parquet_dir.glob(f".{dataset_id}_*{PART_SUFFIX}")):
+                    if _owned_by(part.name[1:], dataset_id, other_ids):
+                        _remove(part, data_dir, report)
+            if metadata_dir.is_dir():
+                for part in sorted(metadata_dir.glob(f".{dataset_id}.json.*{PART_SUFFIX}")):
+                    _remove(part, uploads_root, report)
 
             if before_metadata is not None:
                 before_metadata()

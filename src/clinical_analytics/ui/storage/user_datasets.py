@@ -16,21 +16,21 @@ Storage layout per dataset version (``STORAGE_LAYOUT``), all under the data home
 * ``uploads/metadata/{upload_id}.json``: written last, as the commit point. Until it names a
   version, that version does not exist for readers.
 
-Every file goes through ``storage.atomic.atomic_write`` (temp file, fsync, rename). Data files
-are named by content version and never replaced. Uploads made before this layout (``{id}.csv``)
-are converted to it on first load (``UserDatasetStorage.stored_dataset``).
+Every file goes through ``storage.atomic`` (temp file, fsync, rename). Data files are named by
+content version and never replaced; the cohort Parquet's name also covers the cohort logic and
+relationships (``cohort_parquet_path``), and an existing file is only reused after its schema and
+row count are checked. Metadata is committed by read-modify-write under the sidecar lock.
+Uploads made before this layout (``{id}.csv``) are converted to it on first load
+(``UserDatasetStorage.stored_dataset``).
 """
 
 import hashlib
 import io
 import json
-import platform
 import threading
-import time
 import uuid
 import zipfile
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -41,7 +41,14 @@ import polars as pl
 import structlog
 
 from clinical_analytics.core.schema import DataQualityError
-from clinical_analytics.storage.atomic import atomic_write
+from clinical_analytics.storage import atomic
+from clinical_analytics.storage.metadata_lock import (
+    METADATA_LOCK_TIMEOUT_S,
+    FileLockTimeoutError,
+    file_lock,
+    metadata_lock_path,
+)
+from clinical_analytics.storage.metadata_lock import update_metadata as _update_metadata
 from clinical_analytics.storage.staging import (
     ID_COLUMN_NAMES,
     StagedTable,
@@ -50,12 +57,21 @@ from clinical_analytics.storage.staging import (
     read_csv_typed,
     read_excel_rows,
     read_excel_typed,
+    settle_shared_column_types,
 )
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
 logger = structlog.get_logger()
 
-__all__ = ["ID_COLUMN_NAMES"]  # defined once, in storage.staging; re-exported for old imports
+# Defined once elsewhere (storage.staging, storage.metadata_lock); re-exported for old imports.
+__all__ = [
+    "ID_COLUMN_NAMES",
+    "METADATA_LOCK_TIMEOUT_S",
+    "FileLockTimeoutError",
+    "_update_metadata",
+    "file_lock",
+    "metadata_lock_path",
+]
 
 # Cross-dataset dedup key: compute_dataset_version over the dataset as stored (its Parquet files),
 # so it matches for identical data whatever Polars version or upload path produced it. It sits
@@ -72,10 +88,11 @@ RAW_LANDING_KEY: Final = "raw_landing"
 COLUMN_TYPES_KEY: Final = "column_types"
 COLUMN_UNITS_KEY: Final = "column_units"
 COHORT_BUILD_KEY: Final = "cohort_build"  # multi-table: tables left out of the cohort, and why
+LEGACY_UNTYPED_KEY: Final = "legacy_tables_untyped"  # legacy tables kept as old Parquet (no CSV)
+BASE_ACTIVE_VERSION_KEY: Final = "_base_active_version"  # active version when a save started
 PARQUET_DIRNAME: Final = "parquet"
 COHORT_FILE_STEM: Final = "_cohort"  # {upload_id}__cohort_{version}: no sanitized table name starts with "_"
 PARQUET_COMPRESSION: Final = "zstd"
-METADATA_LOCK_TIMEOUT_S: Final = 10.0
 
 
 class SchemaDriftPolicy(Enum):
@@ -98,144 +115,32 @@ class UploadError(Exception):
     pass
 
 
-class FileLockTimeoutError(Exception):
-    """File lock acquisition timeout error."""
-
-    pass
+class DatasetChangedError(UploadError):
+    """Another save changed the dataset's active version while this one ran (retry the upload)."""
 
 
-@contextmanager
-def file_lock(file_path: Path, timeout: float = 10.0) -> Iterator[Any]:
-    """
-    Cross-platform file locking context manager.
+def active_version_id(metadata: dict[str, Any] | None) -> str | None:
+    """The version readers see: the active ``version_history`` entry, else a legacy ``dataset_version``."""
+    if not metadata:
+        return None
+    active = [v for v in metadata.get("version_history") or [] if v.get("is_active")]
+    if active:
+        return str(active[0].get("version"))
+    legacy = metadata.get("dataset_version")
+    return str(legacy) if legacy else None
 
-    Provides exclusive file locking for metadata writes to prevent corruption
-    from concurrent Streamlit reruns.
 
-    Platform-specific behavior:
-    - Unix/Linux/macOS: Uses fcntl.flock() for full-file advisory lock
-    - Windows: Uses msvcrt.locking() to lock 1 byte at file start
-      (common hack for file-level locking on Windows, not a full mandatory lock)
+ProgressCallback = Callable[[int, str], None]
 
-    Args:
-        file_path: Path to file to lock
-        timeout: Maximum time to wait for lock acquisition (seconds)
 
-    Yields:
-        File handle (opened for read-write, will not truncate existing content)
-
-    Raises:
-        FileLockTimeoutError: If lock cannot be acquired within timeout
-
-    Metadata is never written through the yielded handle: callers lock the sidecar
-    ``metadata_lock_path(...)`` and replace the metadata atomically (``_write_metadata``,
-    ``_update_metadata``), so a crash can never leave it truncated.
-
-    """
-    file_path = Path(file_path)
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Open file for read-write, create if doesn't exist
-    # Use 'r+' mode if file exists, 'w+' if it doesn't (to create it)
-    if file_path.exists():
-        f = open(file_path, "r+")
-    else:
-        f = open(file_path, "w+")
-
+def _notify_progress(progress_cb: ProgressCallback | None, progress: int, message: str) -> None:
+    """Best-effort UI progress: a failing callback is logged (type only) and never stops the save."""
+    if progress_cb is None:
+        return
     try:
-        # Platform-specific locking
-        is_windows = platform.system() == "Windows"
-
-        if is_windows:
-            # Windows: Use msvcrt
-            import msvcrt
-
-            start_time = time.time()
-            while True:
-                try:
-                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-                    break  # Lock acquired
-                except OSError:
-                    if time.time() - start_time > timeout:
-                        raise FileLockTimeoutError(f"Could not acquire lock on {file_path} within {timeout}s")
-                    time.sleep(0.1)  # Wait and retry
-        else:
-            # Unix/Linux/macOS: Use fcntl
-            import fcntl
-
-            start_time = time.time()
-            while True:
-                try:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break  # Lock acquired
-                except BlockingIOError:
-                    if time.time() - start_time > timeout:
-                        raise FileLockTimeoutError(f"Could not acquire lock on {file_path} within {timeout}s")
-                    time.sleep(0.1)  # Wait and retry
-
-        # Lock acquired, yield file handle
-        yield f
-
-    finally:
-        # Release lock (automatic on file close, but explicit is better)
-        try:
-            if is_windows:
-                import msvcrt
-
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
-            else:
-                import fcntl
-
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        except OSError:
-            logger.debug("file_lock_unlock_failed", lock=file_path.name)  # closing releases it anyway
-
-        f.close()
-
-
-def metadata_lock_path(metadata_path: Path) -> Path:
-    """Sidecar lock file for a dataset's metadata (the metadata file itself is replaced, not locked)."""
-    return metadata_path.with_name(f".{metadata_path.name}.lock")
-
-
-def _json_writer(payload: dict[str, Any]) -> Callable[[Path], object]:
-    text = json.dumps(payload, indent=2)
-    return lambda part: part.write_text(text, encoding="utf-8")
-
-
-def _write_metadata(metadata_path: Path, metadata: dict[str, Any]) -> None:
-    """Replace a dataset's metadata atomically under its lock: the commit point of every save.
-
-    Raises:
-        RuntimeError: the lock was not acquired in time.
-        OSError: the write failed; the previous metadata is unchanged.
-    """
-    try:
-        with file_lock(metadata_lock_path(metadata_path), timeout=METADATA_LOCK_TIMEOUT_S):
-            atomic_write(metadata_path, _json_writer(metadata))
-    except FileLockTimeoutError as e:
-        raise RuntimeError(f"Failed to acquire lock on {metadata_path.name} (timeout after 10s)") from e
-
-
-def _update_metadata(metadata_path: Path, mutate: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
-    """Read, change and atomically replace metadata under its lock (``mutate`` False: no write).
-
-    Returns:
-        The metadata as it now stands.
-
-    Raises:
-        RuntimeError: the lock was not acquired in time.
-        FileNotFoundError: no metadata for this dataset.
-        OSError: the write failed; the previous metadata is unchanged.
-    """
-    try:
-        with file_lock(metadata_lock_path(metadata_path), timeout=METADATA_LOCK_TIMEOUT_S):
-            current = json.loads(metadata_path.read_text(encoding="utf-8"))
-            if mutate(current):
-                atomic_write(metadata_path, _json_writer(current))
-            return dict(current)
-    except FileLockTimeoutError as e:
-        raise RuntimeError(f"Failed to acquire lock on {metadata_path.name} (timeout after 10s)") from e
+        progress_cb(progress, message)
+    except (RuntimeError, ValueError, TypeError, AttributeError, KeyError, OSError) as e:
+        logger.warning("progress_callback_failed", progress=progress, error_type=type(e).__name__)
 
 
 # Re-export schema conversion functions for backward compatibility
@@ -397,7 +302,7 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
 
             # Check for duplicate table names
             seen = set()
-            tables = []
+            tables: list[dict[str, Any]] = []
 
             for entry in csv_files:
                 # Extract table name (filename stem)
@@ -425,6 +330,12 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
                 tables.append({"name": name, "data": df, "notes": staged.notes, "units": staged.units})
                 logger.debug(f"Loaded table '{name}': {df.height:,} rows, {df.width} cols")
 
+            # Tables are typed one by one; a column shared by several (a join key such as ward)
+            # must have one type in all of them before the cohort is built.
+            settled, shared_notes = settle_shared_column_types({t["name"]: t["data"] for t in tables})
+            for table in tables:
+                table["data"] = settled[table["name"]]
+                table["notes"] = (*table["notes"], *(n for name, n in shared_notes if name == table["name"]))
             return tables
 
     except zipfile.BadZipFile:
@@ -977,14 +888,68 @@ def table_parquet_path(storage: "UserDatasetStorage", upload_id: str, table_name
     return _parquet_dir(storage) / f"{upload_id}_{_sanitize_table_name(table_name)}_{dataset_version}.parquet"
 
 
-def cohort_parquet_path(storage: "UserDatasetStorage", upload_id: str, dataset_version: str) -> Path:
-    """Typed Parquet of a multi-table upload's unified cohort for one version."""
-    return _parquet_dir(storage) / f"{upload_id}_{COHORT_FILE_STEM}_{dataset_version}.parquet"
+def cohort_file_key(dataset_version: str, relationships: list[str] | None) -> str:
+    """Name key of a derived cohort: the table version, the cohort logic version and the joins.
+
+    The cohort depends on MultiTableHandler's logic as well as on the tables, so a logic change
+    (``COHORT_LOGIC_VERSION``) or other relationships give a new file and never reuse a stale one.
+    """
+    from clinical_analytics.core import multi_table_handler
+
+    payload = json.dumps(
+        [dataset_version, multi_table_handler.COHORT_LOGIC_VERSION, sorted(relationships or [])],
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def cohort_parquet_path(
+    storage: "UserDatasetStorage", upload_id: str, dataset_version: str, relationships: list[str] | None
+) -> Path:
+    """Typed Parquet of a multi-table upload's unified cohort (named by ``cohort_file_key``)."""
+    key = cohort_file_key(dataset_version, relationships)
+    return _parquet_dir(storage) / f"{upload_id}_{COHORT_FILE_STEM}_{key}.parquet"
 
 
 def _write_parquet(df: pl.DataFrame, path: Path) -> bool:
-    """Write a versioned data file once (True); an existing file already holds this version's data (False)."""
-    return atomic_write(path, lambda part: df.write_parquet(part, compression=PARQUET_COMPRESSION), exclusive=True)
+    """Write a versioned data file once (True), or reuse an existing one that matches (False).
+
+    The file name is a content version, so an existing file should hold these rows; its schema
+    and row count are checked before it is reused, so a name clash can never serve other data.
+
+    Raises:
+        UploadError: an existing file under this name holds other data.
+    """
+    wrote = atomic.atomic_write(
+        path, lambda part: df.write_parquet(part, compression=PARQUET_COMPRESSION), exclusive=True
+    )
+    if not wrote:
+        same_schema = pl.read_parquet_schema(path) == dict(df.schema)
+        same_rows = same_schema and pl.scan_parquet(path).select(pl.len()).collect().item() == df.height
+        if not (same_schema and same_rows):
+            logger.error("existing_parquet_mismatch", file=path.name, same_schema=same_schema)
+            raise UploadError(
+                f"A stored file named like this version ({path.name}) does not match the data being saved. "
+                "Delete the dataset and upload it again."
+            )
+    return wrote
+
+
+def _check_unique_table_names(tables: list[dict[str, Any]]) -> None:
+    """Fail fast when two tables would be stored under one file name (``Lab Results``, ``lab-results``).
+
+    Raises:
+        UploadError: names that sanitize alike, listed so the user can rename one.
+    """
+    from clinical_analytics.storage.datastore import _sanitize_table_name
+
+    by_file: dict[str, list[str]] = {}
+    for table in tables:
+        by_file.setdefault(_sanitize_table_name(table["name"]), []).append(str(table["name"]))
+    clashes = [names for names in by_file.values() if len(names) > 1]
+    if clashes:
+        listed = "; ".join(" and ".join(f"'{n}'" for n in names) for names in clashes)
+        raise UploadError(f"Tables {listed} would be stored under the same name. Rename one and upload again.")
 
 
 def _discard_uncommitted(storage: "UserDatasetStorage", upload_id: str, created: list[Path]) -> None:
@@ -1033,15 +998,19 @@ def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(pl.col(id_cols).cast(pl.Utf8)) if id_cols else df
 
 
-def _upload_failure_reason(e: BaseException) -> str:
-    """A reason for the user that never quotes cell values (DuckDB/Polars errors can).
+# Exceptions whose messages this project writes for the user (never with cell values).
+_USER_MESSAGE_ERRORS: Final = (StagingError, UploadError, SecurityError, DataQualityError)
 
-    Our own errors (staging, upload, security, plain ValueError) carry messages written for the
-    user; library errors are named by type only.
+
+def _upload_failure_reason(e: BaseException) -> str:
+    """A reason for the user that never quotes cell values.
+
+    Allow-list: only the project's own errors (``_USER_MESSAGE_ERRORS`` and their subclasses
+    defined in this project) keep their message. Every other error, a plain ``ValueError`` or a
+    library error such as ``pyarrow.ArrowInvalid`` ("Could not convert 'Jane Doe'"), is named by
+    type only.
     """
-    if isinstance(e, pl.exceptions.PolarsError):
-        return type(e).__name__
-    if isinstance(e, StagingError | UploadError | SecurityError | DataQualityError | ValueError):
+    if isinstance(e, _USER_MESSAGE_ERRORS) and type(e).__module__.startswith("clinical_analytics."):
         return str(e)
     return type(e).__name__
 
@@ -1064,7 +1033,10 @@ def save_table_list(
     2. Read the cohort back from its Parquet: everything after this uses that one frame.
     3. Build and probe the query view from that Parquet. If it cannot be built, the upload fails.
     4. Run the contract and quality checks on the same frame.
-    5. Write metadata (atomic replace).
+    5. Commit metadata: read-modify-write under the sidecar lock. If the active version changed
+       since this save started (``BASE_ACTIVE_VERSION_KEY``), fail with a retryable error.
+
+    Whatever the exception type, files this call wrote are removed unless the commit happened.
 
     Args:
         storage: UserDatasetStorage instance
@@ -1079,7 +1051,10 @@ def save_table_list(
     """
     log = logger.bind(upload_id=upload_id, table_count=len(tables))
     created: list[Path] = []  # data files this call wrote; removed if the save does not commit
+    committed = False
     try:
+        _check_unique_table_names(tables)
+
         # 1. Extract documentation context (Phase 1: ADR004)
         # Skip extraction if doc_context already exists (idempotency safeguard)
         if "doc_files" in metadata and metadata["doc_files"]:
@@ -1165,7 +1140,7 @@ def save_table_list(
         if raw_bytes is not None:
             ext = Path(str(metadata.get("original_filename", ""))).suffix.lower() or ".bin"
             raw_landing = storage.raw_dir / upload_id / f"{dataset_version}{ext}"
-            if atomic_write(raw_landing, lambda part: part.write_bytes(raw_bytes), exclusive=True):
+            if atomic.atomic_write_bytes(raw_landing, raw_bytes, exclusive=True):
                 created.append(raw_landing)
 
         parquet_paths: dict[str, str] = {}
@@ -1177,19 +1152,28 @@ def save_table_list(
         if len(tables) == 1:
             cohort_path = Path(parquet_paths[tables[0]["name"]])
         else:
-            cohort_path = cohort_parquet_path(storage, upload_id, dataset_version)
+            cohort_path = cohort_parquet_path(storage, upload_id, dataset_version, metadata.get("relationships"))
             if _write_parquet(unified_df, cohort_path):
                 created.append(cohort_path)
         log.info("typed_parquet_written", tables=len(parquet_paths))
 
         # 6. From here on, the stored frame is the one source of truth (what queries will read).
         stored_df = pl.read_parquet(cohort_path)
-        content_hash = compute_stored_content_hash({"tables": table_names, "parquet_paths": parquet_paths})
+        # The tables in memory are what was written (or a checked match of it): no re-read needed.
+        content_hash = compute_dataset_version([t["data"] for t in tables])
+
+        inferred: Any = None  # SchemaInferenceEngine result, computed at most once
+
+        def inferred_schema() -> Any:
+            nonlocal inferred
+            if inferred is None:
+                from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
+                inferred = SchemaInferenceEngine().infer_schema(stored_df)
+            return inferred
 
         if "inferred_schema" not in metadata:
-            from clinical_analytics.core.schema_inference import SchemaInferenceEngine
-
-            metadata["inferred_schema"] = SchemaInferenceEngine().infer_schema(stored_df).to_dataset_config()
+            metadata["inferred_schema"] = inferred_schema().to_dataset_config()
 
         column_types = [n.as_dict() for t in tables for n in t.get("notes", ())]
         column_units: dict[str, str] = {}
@@ -1206,8 +1190,11 @@ def save_table_list(
             for t in tables
         }
 
-        # Version history entry and event (Phase 2/5)
+        # Version history entry and event (Phase 2/5); merged into the stored history at commit.
         is_overwrite = metadata.pop("_is_overwrite", False)
+        base_active_version = metadata.pop(BASE_ACTIVE_VERSION_KEY, None)
+        provided_history: list[dict[str, Any]] = metadata.pop("_existing_version_history", None) or []
+        metadata.pop("_existing_events", None)  # re-read under the lock at commit
         now_utc = datetime.now(UTC)
         event_id = uuid.uuid4().hex
         timestamp = now_utc.isoformat().replace("+00:00", "Z")
@@ -1221,18 +1208,6 @@ def save_table_list(
             COHORT_PARQUET_KEY: str(cohort_path),
             "source_filename": metadata.get("original_filename", ""),
         }
-        existing_version_history = metadata.pop("_existing_version_history", None)
-        if existing_version_history:
-            previous_active = next((v for v in existing_version_history if v.get("is_active", False)), None)
-            for existing_version in existing_version_history:
-                existing_version["is_active"] = False
-            version_history = existing_version_history + [version_entry]
-        else:
-            previous_active = None
-            version_history = [version_entry]
-        version_history.sort(key=lambda v: v.get("created_at", ""))
-
-        existing_events = metadata.pop("_existing_events", None)
         event_entry: dict[str, Any] = {
             "event_id": event_id,
             "timestamp": timestamp,
@@ -1240,9 +1215,8 @@ def save_table_list(
             "version": dataset_version,
             "upload_id": upload_id,
         }
-        if is_overwrite and previous_active:
-            event_entry["previous_version"] = previous_active["version"]
-        events = (existing_events or []) + [event_entry]
+        if is_overwrite and base_active_version:
+            event_entry["previous_version"] = base_active_version
 
         full_metadata = {
             **metadata,
@@ -1267,8 +1241,8 @@ def save_table_list(
             },
             "parquet_paths": parquet_paths,
             "alias_mappings": metadata.get("alias_mappings", {"user_aliases": {}, "system_aliases": {}}),
-            "version_history": version_history,
-            "events": events,
+            "version_history": [*(dict(v, is_active=False) for v in provided_history), version_entry],
+            "events": [event_entry],
         }
 
         # 7. Build and probe the query view from the stored Parquet, before anything is committed.
@@ -1278,7 +1252,6 @@ def save_table_list(
             probe_query_view(storage, upload_id, full_metadata, expected_rows=stored_df.height)
         except SemanticLayerBuildError as e:
             log.error("upload_query_view_failed", reason=str(e))
-            _discard_uncommitted(storage, upload_id, created)
             return False, f"The dataset could not be prepared for questions: {e}"
 
         # 8. Example questions (best effort: a failure here never blocks the upload)
@@ -1286,14 +1259,13 @@ def save_table_list(
             from unittest.mock import MagicMock
 
             from clinical_analytics.core.question_generator import generate_upload_questions
-            from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
             try:
                 mock_semantic_layer = MagicMock()
                 mock_semantic_layer.get_column_alias_index.return_value = {c: c for c in stored_df.columns}
                 full_metadata["example_questions"] = generate_upload_questions(
                     semantic_layer=mock_semantic_layer,
-                    inferred_schema=SchemaInferenceEngine().infer_schema(stored_df),
+                    inferred_schema=inferred_schema(),
                     doc_context=metadata.get("doc_context"),
                 )
             except (ValueError, KeyError, TypeError, AttributeError, pl.exceptions.PolarsError) as e:
@@ -1320,8 +1292,31 @@ def save_table_list(
         else:
             full_metadata["quality"] = {"status": "not_run", "reason": quality_report.reason}
 
-        # 10. Commit: metadata last
-        _write_metadata(storage.metadata_dir / f"{upload_id}.json", full_metadata)
+        # 10. Commit: metadata last, by read-modify-write under the lock. The stored history and
+        # events are re-read here, so a concurrent change is merged, never overwritten.
+        def commit(current: dict[str, Any]) -> bool:
+            now_active = active_version_id(current)
+            if now_active != base_active_version:
+                log.warning("dataset_changed_during_save", expected=base_active_version, found=now_active)
+                raise DatasetChangedError(
+                    "The dataset changed while this upload was being saved (another upload finished first). "
+                    "Upload again."
+                )
+            history = current.get("version_history") or provided_history
+            merged = {
+                **full_metadata,
+                "version_history": sorted(
+                    [*(dict(v, is_active=False) for v in history), version_entry],
+                    key=lambda v: v.get("created_at", ""),
+                ),
+                "events": [*(current.get("events") or []), event_entry],
+            }
+            current.clear()
+            current.update(merged)
+            return True
+
+        _update_metadata(storage.metadata_dir / f"{upload_id}.json", commit, missing_ok=True)
+        committed = True
         log.info("dataset_version_committed", rows=stored_df.height, columns=stored_df.width)
         return True, f"Saved {len(tables)} tables"
 
@@ -1336,13 +1331,16 @@ def save_table_list(
         pl.exceptions.PolarsError,
     ) as e:
         log.error("save_tables_failed", error_type=type(e).__name__)
-        try:
-            _discard_uncommitted(storage, upload_id, created)
-        except OSError as cleanup_error:
-            log.error("uncommitted_files_not_removed", error_type=type(cleanup_error).__name__)
         if isinstance(e, DataQualityError):
             return False, f"The tables could not be combined into one row per patient: {e}"
         return False, f"Error saving tables: {_upload_failure_reason(e)}"
+    finally:
+        # Runs on every exit, whatever the exception type: nothing uncommitted stays on disk.
+        if not committed:
+            try:
+                _discard_uncommitted(storage, upload_id, created)
+            except OSError as cleanup_error:
+                log.error("uncommitted_files_not_removed", error_type=type(cleanup_error).__name__)
 
 
 _MIGRATION_LOCKS: dict[str, threading.Lock] = {}
@@ -1396,10 +1394,14 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
     """
     Convert an upload made before typed storage to typed Parquet, once, on first load.
 
-    The unified CSV (what the semantic layer used to read) and each ``{id}_tables/*.csv`` are
-    staged with the same typing as new uploads and written as versioned Parquet; per-table
-    Parquet that already exists is reused. Metadata is updated last. If the Parquet or metadata
-    cannot be written, the staged frames are served from memory and the fallback is logged.
+    The unified CSV (what the semantic layer used to read) and every ``{id}_tables/*.csv`` are
+    staged with the same typing as new uploads and written as versioned Parquet, so the tables
+    and the cohort follow one typing regime. An old per-table Parquet (written by the pandas
+    round trip) is reused only for a table with no CSV, and is listed in metadata under
+    ``LEGACY_UNTYPED_KEY`` so the mismatch is visible. The new files are named by the version of
+    the re-staged data (never the legacy version, which hashed other bytes and may name an old
+    file). Metadata is updated last. If the Parquet or metadata cannot be written, the staged
+    frames are served from memory and the fallback is logged.
 
     Raises:
         FileNotFoundError: no stored data for this upload.
@@ -1413,18 +1415,22 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
 
     from clinical_analytics.storage.versioning import compute_dataset_version
 
-    version = str(metadata.get("dataset_version") or compute_dataset_version([cohort]))
     tables_dir = storage.raw_dir / f"{upload_id}_tables"
-    existing = {name: Path(p) for name, p in (metadata.get("parquet_paths") or {}).items() if Path(p).is_file()}
+    old_parquet = {name: Path(p) for name, p in (metadata.get("parquet_paths") or {}).items() if Path(p).is_file()}
     table_frames: dict[str, pl.DataFrame] = {}
+    untyped: dict[str, Path] = {}
     for name in metadata.get("tables") or []:
-        if name not in existing and (tables_dir / f"{name}.csv").is_file():
-            table_frames[name] = _stage_legacy_file(tables_dir / f"{name}.csv")
+        csv_path = tables_dir / f"{name}.csv"
+        if csv_path.is_file():
+            table_frames[name] = _stage_legacy_file(csv_path)
+        elif name in old_parquet:
+            untyped[name] = old_parquet[name]
+    version = compute_dataset_version([cohort, *table_frames.values()])
 
     try:
-        cohort_path = cohort_parquet_path(storage, upload_id, version)
+        cohort_path = cohort_parquet_path(storage, upload_id, version, metadata.get("relationships"))
         _write_parquet(cohort, cohort_path)
-        table_paths = dict(existing)
+        table_paths = dict(untyped)
         for name, df in table_frames.items():
             table_paths[name] = table_parquet_path(storage, upload_id, name, version)
             _write_parquet(df, table_paths[name])
@@ -1433,7 +1439,8 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
             current[STORAGE_LAYOUT_KEY] = STORAGE_LAYOUT
             current[COHORT_PARQUET_KEY] = str(cohort_path)
             current["parquet_paths"] = {name: str(p) for name, p in table_paths.items()}
-            current.setdefault("dataset_version", version)
+            current[LEGACY_UNTYPED_KEY] = sorted(untyped)
+            current.setdefault("dataset_version", version)  # aliases are scoped by the original one
             current.setdefault("tables", [])
             if "variable_mapping" in current and "inferred_schema" not in current:
                 from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
@@ -1445,15 +1452,17 @@ def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metada
             return True
 
         updated = _update_metadata(storage.metadata_dir / f"{upload_id}.json", mutate)
-    except (OSError, RuntimeError) as e:
+    except (OSError, RuntimeError, UploadError) as e:
         log.warning("legacy_upload_fallback", reason=type(e).__name__, source=source.suffix)
         return StoredDataset(
             metadata=metadata,
             cohort_path=None,
-            table_paths=existing,
+            table_paths=untyped,
             cohort_frame=cohort,
             table_frames=table_frames,
         )
+    if untyped:
+        log.warning("legacy_tables_untyped", tables=len(untyped))
     log.info("legacy_upload_converted", tables=len(table_paths))
     return StoredDataset(metadata=updated, cohort_path=cohort_path, table_paths=table_paths)
 
@@ -1616,8 +1625,8 @@ class UserDatasetStorage:
             metadata: Upload metadata (variable types, mappings, etc.)
             progress_cb: Optional callback(progress: int, message: str) for UI updates (0-100, not 0.0-1.0)
                 NOTE: This couples storage to UI (technical debt). Future: emit structured events instead.
-                Progress callbacks are best-effort: exceptions are caught and ignored to prevent UI errors
-                from breaking storage operations.
+                Progress callbacks are best-effort: a failing callback is logged (``_notify_progress``)
+                and never breaks the save.
             overwrite: If True, allow overwriting existing dataset with same name (Phase 4.2)
 
         Returns:
@@ -1625,19 +1634,11 @@ class UserDatasetStorage:
         """
         # Security validation
         # Progress callback is best-effort: don't let UI errors break storage
-        if progress_cb:
-            try:
-                progress_cb(5, "Validating file security and format...")
-            except Exception:
-                pass  # Best-effort: continue even if callback fails
+        _notify_progress(progress_cb, 5, "Validating file security and format...")
 
         valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
         if not valid:
-            if progress_cb:
-                try:
-                    progress_cb(100, f"❌ Validation failed: {error}")
-                except Exception:
-                    pass  # Best-effort
+            _notify_progress(progress_cb, 100, f"❌ Validation failed: {error}")
             return False, error, None
 
         try:
@@ -1656,6 +1657,7 @@ class UserDatasetStorage:
             existing_uploads = self.list_uploads()
             existing_upload_id = None
             existing_version_history = None
+            base_active_version: str | None = None  # active version when this save started
 
             # The bundled sample matches only the earlier sample (is_demo), never a clinician's
             # dataset that happens to share its display name; that one is left untouched.
@@ -1678,6 +1680,7 @@ class UserDatasetStorage:
                         # Overwrite mode: preserve existing upload_id and version_history
                         existing_upload_id = existing_meta.get("upload_id")
                         existing_version_history = existing_meta.get("version_history", [])
+                        base_active_version = active_version_id(existing_meta)
 
                         # Phase 4.2: Legacy dataset migration during overwrite
                         # If existing_version_history is empty but legacy metadata exists,
@@ -1741,11 +1744,7 @@ class UserDatasetStorage:
                         break
 
             # Generate upload ID (or use existing if overwriting)
-            if progress_cb:
-                try:
-                    progress_cb(10, "Generating unique upload identifier...")
-                except Exception:  # noqa: BLE001 - UI callback is best-effort by contract
-                    pass
+            _notify_progress(progress_cb, 10, "Generating unique upload identifier...")
 
             # Phase 4.2: Use existing upload_id if overwriting
             if existing_upload_id:
@@ -1754,11 +1753,7 @@ class UserDatasetStorage:
                 upload_id = self.generate_upload_id(original_filename)
 
             # Normalize upload to table list (unified entry point)
-            if progress_cb:
-                try:
-                    progress_cb(20, "Normalizing upload to table list...")
-                except Exception:  # noqa: BLE001 - UI callback is best-effort by contract
-                    pass
+            _notify_progress(progress_cb, 20, "Normalizing upload to table list...")
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
 
@@ -1801,19 +1796,16 @@ class UserDatasetStorage:
 
             df = tables[0]["data"]
 
-            # Overwrite: block breaking type drift against the stored version (same reader both sides)
+            # Overwrite: block breaking type drift against the stored version, after the same
+            # normalization the save applies (ID columns as text), so an identical re-upload passes.
             if existing_version_history and overwrite and existing_upload_id:
-                blocked = self._check_overwrite_drift(existing_upload_id, df, metadata)
+                blocked = self._check_overwrite_drift(existing_upload_id, _cast_id_columns(df), metadata)
                 if blocked is not None:
                     return False, blocked, None
 
             # Validate schema if variable mapping is provided
             # This enforces the UnifiedCohort schema contract at save-time
-            if progress_cb:
-                try:
-                    progress_cb(70, "Validating data schema and quality...")
-                except Exception:
-                    pass  # Best-effort
+            _notify_progress(progress_cb, 70, "Validating data schema and quality...")
 
             variable_mapping = metadata.get("variable_mapping", {})
             schema_validation_result = None
@@ -1922,25 +1914,15 @@ class UserDatasetStorage:
                 }
             )
 
-            # Phase 4.2: Pass existing_version_history and events for overwrite
+            # Phase 4.2: Pass existing_version_history for overwrite; the commit re-reads the stored
+            # history and events under the metadata lock and checks the active version is unchanged.
             if existing_version_history is not None:
                 metadata["_existing_version_history"] = existing_version_history
-                # Phase 5: Preserve existing events list
-                existing_meta_for_events = None
-                for meta in self.list_uploads():
-                    if meta.get("upload_id") == existing_upload_id:
-                        existing_meta_for_events = meta
-                        break
-                if existing_meta_for_events:
-                    metadata["_existing_events"] = existing_meta_for_events.get("events", [])
                 metadata["_is_overwrite"] = True  # Phase 5: Mark as overwrite event
+            metadata[BASE_ACTIVE_VERSION_KEY] = base_active_version
 
             # Save using unified save_table_list() function
-            if progress_cb:
-                try:
-                    progress_cb(85, "Saving dataset files and metadata...")
-                except Exception:
-                    pass  # Best-effort
+            _notify_progress(progress_cb, 85, "Saving dataset files and metadata...")
 
             success, message = save_table_list(self, tables, upload_id, metadata, progress_cb, raw_bytes=file_bytes)
 
@@ -1966,11 +1948,7 @@ class UserDatasetStorage:
                 )
                 logger.info("Duplicate content detected for upload %s: %d dataset(s)", upload_id, len(dup_names))
 
-            if progress_cb:
-                try:
-                    progress_cb(100, f"✅ Upload complete! Dataset '{dataset_name}' ready to use.")
-                except Exception:
-                    pass  # Best-effort
+            _notify_progress(progress_cb, 100, f"✅ Upload complete! Dataset '{dataset_name}' ready to use.")
 
             # Phase 1: Include duplicate warning in success message (if any)
             success_message = f"Upload successful: {upload_id}"
@@ -1981,11 +1959,7 @@ class UserDatasetStorage:
 
         except (UploadError, SecurityError, OSError, RuntimeError, ValueError, pl.exceptions.PolarsError) as e:
             logger.error("save_upload_failed", error_type=type(e).__name__)
-            if progress_cb:
-                try:
-                    progress_cb(100, f"Error: {_upload_failure_reason(e)}")
-                except Exception:  # noqa: BLE001 - UI callback is best-effort by contract
-                    pass
+            _notify_progress(progress_cb, 100, f"Error: {_upload_failure_reason(e)}")
             return False, f"Error saving upload: {_upload_failure_reason(e)}", None
 
     def _stored_cohort_schema(self, upload_id: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -2279,24 +2253,16 @@ class UserDatasetStorage:
             metadata["doc_context"] = doc_context
             logger.info(f"Extracted doc_context ({len(doc_context)} chars) from PDF")
 
-            # Optionally re-run schema inference with doc_context
+            # Optionally re-run schema inference with doc_context, on the stored typed cohort
+            # (the same Parquet queries read; legacy uploads are converted first).
             if re_infer_schema:
-                # Load the dataset
-                tables = []
-                table_names = metadata.get("table_names", [])
-                for table_name in table_names:
-                    table_path = self.raw_dir / upload_id / f"{table_name}.parquet"
-                    if table_path.exists():
-                        df = pl.read_parquet(table_path)
-                        tables.append({"name": table_name, "data": df})
+                main_df = self.stored_dataset(upload_id, metadata).scan_cohort().collect()
 
-                if tables:
+                if main_df.width:
                     # Re-run schema inference with doc_context
                     from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
                     engine = SchemaInferenceEngine()
-                    # Use first table for schema inference (or combine if multi-table)
-                    main_df = tables[0]["data"]
                     inferred_schema = engine.infer_schema(main_df, doc_context=doc_context)
 
                     # Update variable_types with enhanced schema
@@ -2328,7 +2294,7 @@ class UserDatasetStorage:
             _update_metadata(metadata_path, mutate)
             return True, f"Documentation added successfully ({len(doc_context)} chars extracted)"
 
-        except (RuntimeError, OSError, ValueError, pl.exceptions.PolarsError) as e:
+        except (RuntimeError, OSError, ValueError, UploadError, pl.exceptions.PolarsError) as e:
             logger.error("add_documentation_failed", upload_id=upload_id, error_type=type(e).__name__)
             return False, f"Error adding documentation: {type(e).__name__}"
 
@@ -2375,6 +2341,7 @@ class UserDatasetStorage:
         dataset_name = metadata.get("dataset_name")
         existing_upload_id = None
         existing_version_history = None
+        base_active_version: str | None = None
         if overwrite and dataset_name:
             # Check if dataset with this name already exists
             existing_datasets = self.list_uploads()
@@ -2387,6 +2354,7 @@ class UserDatasetStorage:
                         existing_meta = None
                     if existing_meta:
                         existing_version_history = existing_meta.get("version_history", [])
+                        base_active_version = active_version_id(existing_meta)
                         # Phase 4.2: Legacy dataset migration during overwrite
                         if len(existing_version_history) == 0:
                             # Legacy dataset: create synthetic version_history from top-level metadata
@@ -2529,12 +2497,9 @@ class UserDatasetStorage:
             # Phase 9: Pass overwrite metadata to save_table_list
             if overwrite and existing_version_history is not None:
                 metadata["_existing_version_history"] = existing_version_history
-                # Phase 5: Preserve existing events list
-                if existing_upload_id:
-                    existing_meta_for_events = self.get_upload_metadata(existing_upload_id)
-                    if existing_meta_for_events:
-                        metadata["_existing_events"] = existing_meta_for_events.get("events", [])
                 metadata["_is_overwrite"] = True
+            # The commit re-reads history and events under the lock and checks this version is still active.
+            metadata[BASE_ACTIVE_VERSION_KEY] = base_active_version if existing_upload_id and overwrite else None
 
             # Save using unified save_table_list() function
             if progress_callback:
@@ -2569,9 +2534,15 @@ class UserDatasetStorage:
             message = f"Multi-table upload successful: {len(tables_list)} tables"
             return True, " ".join([message, *notes]), upload_id
 
-        except Exception as e:
-            import traceback
-
-            logger.error(f"Error processing ZIP upload: {type(e).__name__}: {str(e)}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            return False, f"Error processing ZIP upload: {str(e)}", None
+        except (
+            UploadError,
+            SecurityError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            KeyError,
+            pl.exceptions.PolarsError,
+        ) as e:
+            # Type only, in logs and in the reply: exception text can quote cell values.
+            logger.error("zip_upload_failed", error_type=type(e).__name__)
+            return False, f"Error processing ZIP upload: {_upload_failure_reason(e)}", None

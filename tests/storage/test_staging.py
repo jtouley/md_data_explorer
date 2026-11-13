@@ -11,12 +11,14 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
+from clinical_analytics.contracts.config import MISSING_VALUE_TOKENS
 from clinical_analytics.storage.staging import (
     ID_COLUMN_NAMES,
     StagingError,
     describe_column_types,
     read_csv_typed,
     read_excel_typed,
+    settle_shared_column_types,
     stage_text_frame,
 )
 
@@ -141,7 +143,7 @@ def test_stage_thousands_separator_isNotReadAsDecimal():
 
 
 @pytest.mark.parametrize("token", ["NaN", "inf", "-Infinity"])
-def test_stage_float_words_areNotFloats(token):
+def test_stage_float_words_inNumericColumn_areMissing(token):
     # Arrange
     data = _csv(["patient_id,bmi", "P1,22.5", f"P2,{token}", "P3,24.1"])
 
@@ -149,7 +151,107 @@ def test_stage_float_words_areNotFloats(token):
     staged = read_csv_typed(data)
 
     # Assert
-    assert staged.data.schema["bmi"] == pl.String
+    assert staged.data.schema["bmi"] == pl.Float64
+    assert staged.data["bmi"].to_list() == [22.5, None, 24.1]
+
+
+# --- missing-value tokens ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("token", [t for t in MISSING_VALUE_TOKENS if t] + ["NA", "N/A", "#N/A", "NULL", " None "])
+def test_stage_missing_token_inIntColumn_isNull_andCounted(token):
+    # Arrange
+    data = _csv(["patient_id,age", "P1,34", f"P2,{token}", "P3,51"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data.schema["age"] == pl.Int64
+    assert staged.data["age"].to_list() == [34, None, 51]
+    note = _note(staged, "age")
+    assert (note.reason, note.failed_values, note.checked_values) == ("missing_tokens", 1, 3)
+
+
+def test_stage_missing_tokens_inNumericColumns_keepNumbers():
+    # Arrange: the review's example
+    data = _csv(["patient_id,age,crp", "p1,34,NA", "p2,NA,5.1", "p3,51,3.2"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    expected = pl.DataFrame(
+        {"patient_id": ["p1", "p2", "p3"], "age": [34, None, 51], "crp": [None, 5.1, 3.2]},
+        schema={"patient_id": pl.String, "age": pl.Int64, "crp": pl.Float64},
+    )
+    assert_frame_equal(staged.data, expected)
+
+
+def test_stage_missing_token_inDateColumn_isNull():
+    # Arrange
+    data = _csv(["patient_id,visit", "P1,2021-03-01", "P2,.", "P3,2021-03-03"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data["visit"].to_list() == [dt.date(2021, 3, 1), None, dt.date(2021, 3, 3)]
+    assert _note(staged, "visit").reason == "missing_tokens"
+
+
+@pytest.mark.parametrize("level", ["None", "-", "?", "na", "NA"])
+def test_stage_text_column_keepsTokenLikeCategoryLevel(level):
+    # Arrange: smoking = "None" is a real answer, not a missing value
+    data = _csv(["patient_id,smoking", "P1,Current", f"P2,{level}", "P3,Former"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data.schema["smoking"] == pl.String
+    assert staged.data["smoking"].to_list() == ["Current", level, "Former"]
+    assert [n for n in staged.notes if n.column == "smoking"] == []
+
+
+def test_stage_leading_zero_codes_withToken_stayText_unchanged():
+    # Arrange
+    data = _csv(["patient_id,zip", "P1,02139", "P2,NA", "P3,10001"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data["zip"].to_list() == ["02139", "NA", "10001"]
+    assert _note(staged, "zip").reason == "leading_zero"
+
+
+# --- integers that do not fit Int64 --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "dtype", "reason"),
+    [
+        (str(2**63 - 1), pl.Int64, None),
+        (str(-(2**63)), pl.Int64, None),
+        (str(2**63), pl.String, "int_overflow"),
+        ("12345678901234567890123", pl.String, "int_overflow"),
+    ],
+    ids=["int64_max", "int64_min", "int64_max_plus_one", "very_long"],
+)
+def test_stage_int64_boundary_neverBecomesFloat(value, dtype, reason):
+    # Arrange
+    data = _csv(["patient_id,accession", f"P1,{value}", "P2,1"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data.schema["accession"] == dtype
+    notes = [n.reason for n in staged.notes if n.column == "accession"]
+    assert notes == ([reason] if reason else [])
+    if dtype == pl.String:
+        assert staged.data["accession"].to_list() == [value, "1"]
 
 
 def test_stage_all_null_column_isText_withoutNote():
@@ -178,9 +280,9 @@ def test_stage_true_false_column_isBoolean():
 # --- mixed date formats --------------------------------------------------------------------
 
 
-def test_stage_mixed_date_formats_parsedPerValue_andFailuresCounted():
-    # Arrange: ISO and day-first slashes (31/01 proves day-first), plus one unparseable value
-    rows = [f"P{i},2023-01-15,50" for i in range(20)] + [f"Q{i},31/01/2023,51" for i in range(20)] + ["R0,soon,52"]
+def test_stage_mixed_date_formats_parsedPerValue():
+    # Arrange: ISO and day-first slashes (31/01 proves day-first)
+    rows = [f"P{i},2023-01-15,50" for i in range(20)] + [f"Q{i},31/01/2023,51" for i in range(20)]
     data = _csv(["patient_id,admit_date,age", *rows])
 
     # Act
@@ -188,14 +290,34 @@ def test_stage_mixed_date_formats_parsedPerValue_andFailuresCounted():
 
     # Assert
     assert staged.data.schema["admit_date"] == pl.Date
-    assert staged.data.schema["age"] == pl.Int64
-    assert staged.data["admit_date"].drop_nulls().unique().sort().to_list() == [
-        dt.date(2023, 1, 15),
-        dt.date(2023, 1, 31),
-    ]
+    assert staged.data["admit_date"].unique().sort().to_list() == [dt.date(2023, 1, 15), dt.date(2023, 1, 31)]
+
+
+def test_stage_unparsed_date_value_keepsColumnText_neverNulled():
+    # Arrange: one value matches no format; it must not silently become missing
+    rows = [f"P{i},2023-01-15,50" for i in range(40)] + ["R0,soon,52"]
+    data = _csv(["patient_id,admit_date,age", *rows])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data.schema["admit_date"] == pl.String
+    assert staged.data["admit_date"].to_list()[-1] == "soon"
     note = _note(staged, "admit_date")
-    assert note.reason == "date_values_unparsed"
-    assert note.failed_values == 1
+    assert (note.reason, note.failed_values) == ("not_dates", 1)
+
+
+def test_stage_day_first_and_month_first_families_isAmbiguous():
+    # Arrange: "/" settles day-first (13/01), "-" settles month-first (01-13)
+    data = _csv(["patient_id,seen", "P1,13/01/2024", "P2,01-13-2024", "P3,02/03/2024"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data.schema["seen"] == pl.String
+    assert _note(staged, "seen").reason == "ambiguous_dates"
 
 
 def test_stage_ambiguous_day_month_order_staysText_withNote():
@@ -283,6 +405,53 @@ def test_stage_first_row_that_is_data_isKept(first_row):
     assert staged.units == {}
 
 
+@pytest.mark.parametrize(
+    "first_row",
+    ["unknown,missing", "NA,NA", "pending,later"],
+    ids=["labels", "null_tokens", "words"],
+)
+def test_stage_idless_first_row_withoutUnitWords_isAPatient(first_row):
+    # Arrange: no ID-named column and no unit word: a real first patient, not units
+    data = _csv(["age,weight", first_row, "34,70", "51,80"])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data.height == 3
+    assert staged.units == {}
+
+
+def test_stage_idless_units_row_withUnitWords_isRemoved_andReported():
+    # Arrange
+    data = _csv(["age,ldl", "years,mg/dL", "34,100", "51,120"])
+
+    # Act
+    staged = read_csv_typed(data)
+    lines = describe_column_types([], staged.units, small_cell_limit=11)
+
+    # Assert
+    assert staged.data.height == 2
+    assert staged.units == {"age": "years", "ldl": "mg/dL"}
+    assert lines[0].startswith("The row under the header was read as units")
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [[","], [",", ","], [" , "], [",", ""]],
+    ids=["one", "two", "spaces", "then_blank"],
+)
+def test_stage_trailing_comma_only_lines_areDropped(tail):
+    # Arrange: Excel and other exporters write trailing ",,," lines
+    data = _csv(["patient_id,age", "1,30", "2,31", *tail])
+
+    # Act
+    staged = read_csv_typed(data)
+
+    # Assert
+    assert staged.data.height == 2
+
+
 @pytest.mark.parametrize("blank", [",,", " , , "], ids=["empty", "spaces"])
 def test_stage_row_without_id_or_values_failsLoudly(blank):
     # Arrange
@@ -348,4 +517,50 @@ def test_describeColumnTypes_units_listedPerColumn():
     lines = describe_column_types([], {"ldl": "mg/dL"}, small_cell_limit=11)
 
     # Assert
-    assert lines == ["ldl: unit mg/dL (from the units row under the header)."]
+    assert lines == [
+        "The row under the header was read as units, not a patient, and is not in the data.",
+        "ldl: unit mg/dL (from the units row under the header).",
+    ]
+
+
+# --- column types shared across tables -----------------------------------------------------
+
+
+def test_settleSharedColumnTypes_textInOneTable_makesKeyTextEverywhere():
+    # Arrange: "ward" has a leading zero in one table only
+    frames = {
+        "patients": pl.DataFrame({"patient_id": ["P1", "P2"], "ward": ["01", "12"]}),
+        "visits": pl.DataFrame({"patient_id": ["P1", "P2"], "ward": [12, 13]}),
+    }
+
+    # Act
+    settled, notes = settle_shared_column_types(frames)
+
+    # Assert
+    assert settled["visits"].schema["ward"] == pl.String
+    assert settled["visits"]["ward"].to_list() == ["12", "13"]
+    assert settled["patients"]["ward"].to_list() == ["01", "12"]
+    assert [(t, n.column, n.reason) for t, n in notes] == [("visits", "ward", "shared_column_type")]
+
+
+def test_settleSharedColumnTypes_intAndFloat_becomeFloat():
+    # Arrange
+    frames = {"a": pl.DataFrame({"k": [1, 2]}), "b": pl.DataFrame({"k": [1.5, 2.0]})}
+
+    # Act
+    settled, _ = settle_shared_column_types(frames)
+
+    # Assert
+    assert settled["a"].schema["k"] == pl.Float64
+
+
+def test_settleSharedColumnTypes_sameTypes_unchanged():
+    # Arrange
+    frames = {"a": pl.DataFrame({"k": ["x"]}), "b": pl.DataFrame({"k": ["y"]})}
+
+    # Act
+    settled, notes = settle_shared_column_types(frames)
+
+    # Assert
+    assert notes == []
+    assert_frame_equal(settled["a"], frames["a"])

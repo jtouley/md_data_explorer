@@ -585,7 +585,7 @@ class UploadedDataset(ClinicalDataset):
             config["init_params"] = {"frame": stored.cohort_frame}
         else:
             assert stored.cohort_path is not None
-            config["init_params"] = {"source_path": str(stored.cohort_path.resolve())}
+            config["init_params"] = {"source_path": str(stored.cohort_path.resolve()), "source_format": "parquet"}
 
         layer: SemanticLayer | None = None
         try:
@@ -808,14 +808,22 @@ class UploadedDataset(ClinicalDataset):
         }
 
 
+def _parquet_schema(path: Path) -> dict[str, pl.DataType]:
+    """Schema of a stored Parquet file, as Polars types."""
+    return dict(pl.read_parquet_schema(path))
+
+
 def probe_query_view(storage: UserDatasetStorage, upload_id: str, metadata: dict[str, Any], expected_rows: int) -> None:
     """Build a dataset version's query view exactly as queries will, and read all of it once.
 
     Runs at upload before the metadata is committed, so a version that cannot answer questions
-    is never reported ready.
+    is never reported ready. One aggregate counts every column of the view (a full scan, nothing
+    materialized), and the registered source table's types must equal the stored Parquet's, so
+    the data checked is the data queried.
 
     Raises:
-        SemanticLayerBuildError: the view cannot be built or read, or its row count is wrong.
+        SemanticLayerBuildError: the view cannot be built or read, its row count is wrong, or its
+            types differ from the stored Parquet.
     """
     log = logger.bind(upload_id=upload_id, dataset_version=metadata.get("dataset_version"))
     try:
@@ -824,8 +832,12 @@ def probe_query_view(storage: UserDatasetStorage, upload_id: str, metadata: dict
         layer = dataset.get_semantic_layer()
     except (ValueError, FileNotFoundError) as e:
         raise SemanticLayerBuildError(f"the query view could not be built ({type(e).__name__})") from e
+    cohort_path = dataset._stored.cohort_path if dataset._stored is not None else None
     try:
-        rows = layer.get_base_view().to_pyarrow().num_rows
+        view = layer.get_base_view()
+        counts = [view.count().name("_rows"), *(view[c].count().name(f"_c{i}") for i, c in enumerate(view.columns))]
+        rows = int(view.aggregate(counts).to_pyarrow().column("_rows")[0].as_py())
+        view_schema = dict(pl.DataFrame(layer.raw.limit(0).to_pyarrow()).schema) if cohort_path else None
     except _BUILD_ERRORS as e:
         log.error("upload_probe_failed", error_type=type(e).__name__)
         raise SemanticLayerBuildError(f"the query view could not be read ({type(e).__name__})") from e
@@ -834,6 +846,15 @@ def probe_query_view(storage: UserDatasetStorage, upload_id: str, metadata: dict
     if rows != expected_rows:
         log.error("upload_probe_row_mismatch", rows=rows, expected=expected_rows)
         raise SemanticLayerBuildError("the query view does not hold every stored row")
+    if cohort_path is not None and view_schema != _parquet_schema(cohort_path):
+        stored_schema = _parquet_schema(cohort_path)
+        differing = sorted(
+            c for c in {*stored_schema, *(view_schema or {})} if stored_schema.get(c) != (view_schema or {}).get(c)
+        )
+        log.error("upload_probe_schema_mismatch", columns=len(differing))
+        raise SemanticLayerBuildError(
+            f"the query view's column types differ from the stored data ({', '.join(differing)})"
+        )
     log.info("upload_probe_passed")
 
 

@@ -17,6 +17,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
+from clinical_analytics.storage import atomic
 from clinical_analytics.ui.storage import user_datasets
 from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
 
@@ -242,7 +243,7 @@ def test_legacy_conversionCannotBeSaved_fallsBackToStagedCsv(store, monkeypatch)
     def refuse(*args, **kwargs):
         raise OSError(30, "Read-only file system")
 
-    monkeypatch.setattr(user_datasets, "atomic_write", refuse)
+    monkeypatch.setattr(atomic, "atomic_write", refuse)
 
     # Act
     layer_frame = _layer_frame(store, upload_id)
@@ -261,7 +262,7 @@ def test_overwrite_crashMidSave_previousVersionLoadsIntact(store, monkeypatch, c
     # Arrange
     upload_id = _upload(store, _cohort_csv(), name="trial")
     before = _layer_frame(store, upload_id)
-    real = user_datasets.atomic_write
+    real = atomic.atomic_write
 
     def crash(path, writer, **kwargs):
         name = Path(path).name
@@ -275,7 +276,7 @@ def test_overwrite_crashMidSave_previousVersionLoadsIntact(store, monkeypatch, c
             raise OSError(5, "simulated crash")
         return real(path, writer, **kwargs)
 
-    monkeypatch.setattr(user_datasets, "atomic_write", crash)
+    monkeypatch.setattr(atomic, "atomic_write", crash)
 
     # Act
     ok, _, _ = store.save_upload(
@@ -478,3 +479,400 @@ def test_saveUpload_failsAfterDataWritten_removesOnlyFilesItWrote(store, monkeyp
     # Assert
     assert not ok
     assert _owned_files(store, upload_id) == v1_files
+
+
+# --- review round: privacy ------------------------------------------------------------------
+
+
+def _library_errors() -> list[BaseException]:
+    import pyarrow as pa
+
+    return [
+        ValueError("invalid literal for int() with base 10: 'Jane Doe'"),
+        pa.ArrowInvalid("Could not convert 'Jane Doe' with type str"),
+        TypeError("'Jane Doe' is not a number"),
+        KeyError("Jane Doe"),
+    ]
+
+
+@pytest.mark.parametrize("error", _library_errors(), ids=["ValueError", "ArrowInvalid", "TypeError", "KeyError"])
+def test_uploadFailureReason_libraryError_namedByTypeOnly(error):
+    # Act
+    reason = user_datasets._upload_failure_reason(error)
+
+    # Assert
+    assert reason == type(error).__name__
+    assert "Jane" not in reason
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        user_datasets.StagingError("The CSV file could not be read"),
+        user_datasets.UploadError("No CSV files in ZIP"),
+        user_datasets.SecurityError("Invalid path"),
+        user_datasets.DataQualityError("duplicate rows on key 'patient_id'"),
+    ],
+    ids=["staging", "upload", "security", "data_quality"],
+)
+def test_uploadFailureReason_projectError_keepsItsMessage(error):
+    # Act / Assert
+    assert user_datasets._upload_failure_reason(error) == str(error)
+
+
+def test_saveTableList_unexpectedErrorType_stillRemovesUncommittedFiles(store, monkeypatch):
+    # Arrange: a TypeError is not in any except tuple; the files must go anyway
+    from clinical_analytics.contracts import service
+
+    def broken(*args, **kwargs):
+        raise TypeError("unexpected")
+
+    monkeypatch.setattr(service, "check_upload_or_log", broken)
+
+    # Act / Assert
+    with pytest.raises(TypeError):
+        store.save_upload(_cohort_csv(), "c.csv", {"dataset_name": "c", "variable_mapping": dict(MAPPING)})
+    data_dir = store.upload_dir.parent
+    assert [p for p in (data_dir / "parquet").glob("*") if p.is_file()] == []
+    assert [p for p in store.raw_dir.rglob("*") if p.is_file()] == []
+
+
+def test_deleteUpload_removesLeftoverPartFiles(store):
+    # Arrange: a crash left hidden temp files that hold patient rows
+    upload_id = _upload(store, _cohort_csv())
+    parquet_part = store.upload_dir.parent / "parquet" / f".{upload_id}_cohort_abc.parquet.0123.part"
+    metadata_part = store.metadata_dir / f".{upload_id}.json.0123.part"
+    parquet_part.write_bytes(b"rows")
+    metadata_part.write_bytes(b"{}")
+
+    # Act
+    ok, message = store.delete_upload(upload_id)
+
+    # Assert
+    assert ok, message
+    assert not parquet_part.exists()
+    assert not metadata_part.exists()
+
+
+# --- review round: wrong or lost data -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "names", [("Lab Results", "lab-results"), ("labs", "Labs"), ("a b", "a_b")], ids=["space_dash", "case", "space"]
+)
+def test_saveTableList_namesSanitizingAlike_failFast_noFiles(store, names):
+    # Arrange
+    from clinical_analytics.ui.storage.user_datasets import save_table_list
+
+    df = pl.DataFrame({"patient_id": ["P1", "P2"], "v": [1, 2]})
+    tables = [{"name": names[0], "data": df}, {"name": names[1], "data": df.with_columns(pl.col("v") * 10)}]
+
+    # Act
+    ok, message = save_table_list(store, tables, "user_upload_collide01", {"original_filename": "c.zip"})
+
+    # Assert
+    assert not ok
+    assert names[0] in message and names[1] in message
+    assert _owned_files(store, "user_upload_collide01") == []
+
+
+def test_saveTableList_existingFileWithOtherContent_isRefused(store):
+    # Arrange: a file already holds the version's name but different rows
+    from clinical_analytics.storage.versioning import compute_dataset_version
+    from clinical_analytics.ui.storage.user_datasets import save_table_list, table_parquet_path
+
+    df = pl.DataFrame({"patient_id": ["P1", "P2"], "v": [1, 2]})
+    version = compute_dataset_version([df])
+    path = table_parquet_path(store, "user_upload_squat01", "t", version)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame({"x": ["other"]}).write_parquet(path)
+
+    # Act
+    ok, message = save_table_list(store, [{"name": "t", "data": df}], "user_upload_squat01", {"original_filename": "t"})
+
+    # Assert
+    assert not ok
+    assert "does not match" in message
+
+
+def test_saveTableList_cohortLogicChange_neverReusesStaleCohort(store, make_cohort_with_categorical, monkeypatch):
+    # Arrange
+    from clinical_analytics.core import multi_table_handler
+    from clinical_analytics.ui.storage.user_datasets import save_table_list
+
+    patients = make_cohort_with_categorical(n_patients=30)
+    visits = pl.DataFrame({"patient_id": ["P001", "P001", "P002"], "sbp": [120, 130, 140]})
+
+    def tables():
+        return [{"name": "patients", "data": patients}, {"name": "visits", "data": visits}]
+
+    ok, message = save_table_list(store, tables(), "user_upload_logic01", {"original_filename": "m.zip"})
+    assert ok, message
+    first = store.get_upload_metadata("user_upload_logic01")["cohort_parquet"]
+
+    # Act
+    monkeypatch.setattr(multi_table_handler, "COHORT_LOGIC_VERSION", "test-next")
+    meta = {
+        "original_filename": "m.zip",
+        "_base_active_version": store.get_upload_metadata("user_upload_logic01")["dataset_version"],
+        "_is_overwrite": True,
+    }
+    ok, message = save_table_list(store, tables(), "user_upload_logic01", meta)
+
+    # Assert
+    assert ok, message
+    second = store.get_upload_metadata("user_upload_logic01")["cohort_parquet"]
+    assert second != first
+    assert Path(first).exists() and Path(second).exists()
+
+
+def test_extractZipTables_sharedKey_hasOneTypeInEveryTable():
+    # Arrange: ward has a leading zero only in patients
+    import io
+    import zipfile
+
+    from clinical_analytics.ui.storage.user_datasets import extract_zip_tables
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("patients.csv", "patient_id,ward\nP1,01\nP2,12\n")
+        z.writestr("visits.csv", "patient_id,ward,sbp\nP1,12,120\nP2,13,130\n")
+
+    # Act
+    tables = {t["name"]: t for t in extract_zip_tables(buf.getvalue())}
+
+    # Assert
+    assert tables["patients"]["data"].schema["ward"] == pl.String
+    assert tables["visits"]["data"].schema["ward"] == pl.String
+    assert [n.reason for n in tables["visits"]["notes"] if n.column == "ward"] == ["shared_column_type"]
+
+
+def _make_legacy_multi(store: UserDatasetStorage, upload_id: str = "user_upload_legacymt01") -> str:
+    """A legacy multi-table upload: cohort CSV, per-table CSVs, and old pandas-typed Parquet."""
+    _make_legacy(store, upload_id)
+    tables_dir = store.raw_dir / f"{upload_id}_tables"
+    tables_dir.mkdir()
+    (tables_dir / "patients.csv").write_bytes(_cohort_csv())
+    old_parquet = store.upload_dir.parent / "parquet" / f"{upload_id}_patients_oldver.parquet"
+    old_parquet.parent.mkdir(parents=True, exist_ok=True)
+    # The old DataStore round trip: zip lost its leading zeros and became Int64
+    pl.read_csv(io_bytes(_cohort_csv())).write_parquet(old_parquet)
+    only_parquet = store.upload_dir.parent / "parquet" / f"{upload_id}_extra_oldver.parquet"
+    pl.DataFrame({"patient_id": ["P0000"], "n": [1]}).write_parquet(only_parquet)
+    path = store.metadata_dir / f"{upload_id}.json"
+    metadata = json.loads(path.read_text())
+    metadata["tables"] = ["patients", "extra"]
+    metadata["parquet_paths"] = {"patients": str(old_parquet), "extra": str(only_parquet)}
+    path.write_text(json.dumps(metadata))
+    return upload_id
+
+
+def io_bytes(data: bytes):
+    import io
+
+    return io.BytesIO(data)
+
+
+def test_legacy_conversion_restagesEveryTableWithCsv_dtypesMatchCohort(store):
+    # Arrange
+    upload_id = _make_legacy_multi(store)
+
+    # Act
+    stored = store.stored_dataset(upload_id)
+
+    # Assert
+    table = pl.read_parquet(stored.table_paths["patients"])
+    cohort = pl.read_parquet(stored.cohort_path)
+    assert table.schema == cohort.schema
+    assert table.schema["zip"] == pl.String
+    assert stored.metadata["legacy_tables_untyped"] == ["extra"]
+
+
+def test_overwrite_renamedNumericId_identicalReupload_isAllowed(store):
+    # Arrange: record_number is not ID-named; ensure_patient_id renames it to patient_id
+    rows = ["record_number,age,outcome"] + [f"{1000 + i},{40 + i % 30},{i % 2}" for i in range(200)]
+    data = ("\n".join(rows) + "\n").encode()
+    meta = {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]}
+    ok, message, upload_id = store.save_upload(data, "rn.csv", {"dataset_name": "rn", "variable_mapping": dict(meta)})
+    assert ok, message
+
+    # Act
+    ok, message, again = store.save_upload(
+        data, "rn.csv", {"dataset_name": "rn", "variable_mapping": dict(meta)}, overwrite=True
+    )
+
+    # Assert
+    assert ok, message
+    assert again == upload_id
+
+
+def test_addDocumentation_dictionaryPdf_addsCodebooks(store):
+    # Arrange: a real PDF data dictionary
+    import pymupdf
+
+    meta = {
+        "dataset_name": "doc",
+        "variable_mapping": dict(MAPPING),
+        "variable_types": {"outcome": {"type": "binary"}},
+    }
+    ok, message, upload_id = store.save_upload(_cohort_csv(), "doc.csv", meta)
+    assert ok, message
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 72), "outcome: 0: Alive, 1: Dead")
+    pdf = doc.tobytes()
+
+    # Act
+    ok, message = store.add_documentation_to_upload(upload_id, pdf)
+
+    # Assert
+    assert ok, message
+    codebook = store.get_upload_metadata(upload_id)["variable_types"]["outcome"]["codebook"]
+    assert codebook == {"0": "Alive", "1": "Dead"}
+
+
+# --- review round: concurrency --------------------------------------------------------------
+
+
+def test_overwrite_datasetChangedDuringSave_failsRetryably_andKeepsOtherVersion(store, monkeypatch):
+    # Arrange: while v2 is being checked, another save commits v3
+    from clinical_analytics.contracts import service
+
+    upload_id = _upload(store, _cohort_csv(), name="race")
+    real = service.check_upload_or_log
+    path = store.metadata_dir / f"{upload_id}.json"
+
+    def other_save_commits(*args, **kwargs):
+        def mutate(current):
+            for v in current["version_history"]:
+                v["is_active"] = False
+            current["version_history"].append({"version": "other", "is_active": True, "tables": {}})
+            current["events"].append({"event_id": "other-event"})
+            return True
+
+        user_datasets._update_metadata(path, mutate)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "check_upload_or_log", other_save_commits)
+
+    # Act
+    ok, message, _ = store.save_upload(
+        _cohort_csv(300, age_offset=60),
+        "race.csv",
+        {"dataset_name": "race", "variable_mapping": dict(MAPPING)},
+        overwrite=True,
+    )
+
+    # Assert
+    assert not ok
+    assert "upload again" in message.lower()
+    after = store.get_upload_metadata(upload_id)
+    assert [v["version"] for v in after["version_history"] if v["is_active"]] == ["other"]
+    assert after["events"][-1]["event_id"] == "other-event"
+
+
+def test_overwrite_commitRereadsHistory_keepsConcurrentEvents(store, monkeypatch):
+    # Arrange: an event appended (not a new version) while the save runs must survive the commit
+    from clinical_analytics.contracts import service
+
+    upload_id = _upload(store, _cohort_csv(), name="merge")
+    real = service.check_upload_or_log
+    path = store.metadata_dir / f"{upload_id}.json"
+
+    def concurrent_event(*args, **kwargs):
+        def mutate(current):
+            current["events"].append({"event_id": "concurrent"})
+            return True
+
+        user_datasets._update_metadata(path, mutate)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "check_upload_or_log", concurrent_event)
+
+    # Act
+    ok, message, _ = store.save_upload(
+        _cohort_csv(300, age_offset=60),
+        "merge.csv",
+        {"dataset_name": "merge", "variable_mapping": dict(MAPPING)},
+        overwrite=True,
+    )
+
+    # Assert
+    assert ok, message
+    events = [e["event_id"] for e in store.get_upload_metadata(upload_id)["events"]]
+    assert "concurrent" in events
+    assert len(store.get_upload_metadata(upload_id)["version_history"]) == 2
+
+
+def test_aliasAdd_readModifyWrite_keepsConcurrentMetadataChange(store, monkeypatch):
+    # Arrange: the layer holds a stale copy; another writer changes the file meanwhile
+    upload_id = _upload(store, _cohort_csv())
+    dataset = UploadedDataset(upload_id, storage=store)
+    dataset.load()
+    layer = dataset.get_semantic_layer()
+    stale = store.get_upload_metadata(upload_id)
+    monkeypatch.setattr(layer, "_load_metadata", lambda _uid: json.loads(json.dumps(stale)))
+    ok, message = store.update_metadata(upload_id, {"concurrent_key": 1})
+    assert ok, message
+
+    # Act
+    layer.add_user_alias("years", "age", upload_id, stale["dataset_version"])
+
+    # Assert
+    after = store.get_upload_metadata(upload_id)
+    assert after["concurrent_key"] == 1
+    assert after["alias_mappings"]["user_aliases"]["years"] == "age"
+
+
+# --- review round: smaller items -------------------------------------------------------------
+
+
+def test_probe_viewSchemaDiffersFromParquet_raisesBuildError(store, monkeypatch):
+    # Arrange
+    from clinical_analytics.datasets.uploaded import definition
+
+    upload_id = _upload(store, _cohort_csv())
+    metadata = store.get_upload_metadata(upload_id)
+    real = definition._parquet_schema
+
+    def wrong(path):
+        return {**real(path), "age": pl.String()}
+
+    monkeypatch.setattr(definition, "_parquet_schema", wrong)
+
+    # Act / Assert
+    with pytest.raises(definition.SemanticLayerBuildError, match="types"):
+        definition.probe_query_view(store, upload_id, metadata, expected_rows=metadata["row_count"])
+
+
+def test_upload_progressCallbackError_isLogged_uploadSucceeds(store):
+    # Arrange
+    def failing_cb(progress: int, message: str) -> None:
+        raise RuntimeError("UI went away")
+
+    # Act
+    ok, message, _ = store.save_upload(
+        _cohort_csv(), "cb.csv", {"dataset_name": "cb", "variable_mapping": dict(MAPPING)}, progress_cb=failing_cb
+    )
+
+    # Assert
+    assert ok, message
+
+
+@pytest.mark.parametrize(
+    ("suffix", "source_format", "error"),
+    [(".pq", None, "Unknown source file type"), (".parquet", "csv", "does not match")],
+    ids=["unknown_suffix", "format_mismatch"],
+)
+def test_semanticLayer_sourceFormat_isExplicit_neverFallsBackToCsv(
+    tmp_path, make_semantic_layer, suffix, source_format, error
+):
+    # Arrange
+    source = tmp_path / f"cohort{suffix}"
+    pl.DataFrame({"patient_id": ["P1"], "age": [40]}).write_parquet(source)
+    init_params: dict[str, str] = {"source_path": str(source)}
+    if source_format:
+        init_params["source_format"] = source_format
+
+    # Act / Assert
+    with pytest.raises(ValueError, match=error):
+        make_semantic_layer(config_overrides={"init_params": init_params})
