@@ -26,10 +26,9 @@ import bisect
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any, TypeVar
 
-T = TypeVar("T")
+from clinical_analytics.core.nl_query_config import STEM_MATCH_MIN_PREFIX
 
-# Common-prefix length stem_match requires (word_accounting.stem_match: "at least five letters").
-_STEM_PREFIX = 5
+T = TypeVar("T")
 
 
 class ColumnValues(list[Any]):
@@ -82,8 +81,8 @@ class StemIndex:
         self._by_prefix: dict[str, list[str]] = {}
         for target in set(words):
             self._by_bare.setdefault(target.rstrip("s"), []).append(target)
-            if len(target) >= _STEM_PREFIX:
-                self._by_prefix.setdefault(target[:_STEM_PREFIX], []).append(target)
+            if len(target) >= STEM_MATCH_MIN_PREFIX:
+                self._by_prefix.setdefault(target[:STEM_MATCH_MIN_PREFIX], []).append(target)
         self._sorted = sorted({target for group in self._by_bare.values() for target in group})
         self._memo: dict[str, frozenset[str]] = {}
 
@@ -91,8 +90,8 @@ class StemIndex:
         found = self._memo.get(word)
         if found is None:
             candidates = set(self._by_bare.get(word.rstrip("s"), ()))
-            if len(word) >= _STEM_PREFIX:
-                candidates.update(self._by_prefix.get(word[:_STEM_PREFIX], ()))
+            if len(word) >= STEM_MATCH_MIN_PREFIX:
+                candidates.update(self._by_prefix.get(word[:STEM_MATCH_MIN_PREFIX], ()))
             found = frozenset(target for target in candidates if self._stem_match(word, target))
             self._memo[word] = found
         return found

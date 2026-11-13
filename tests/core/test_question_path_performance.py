@@ -99,18 +99,6 @@ def test_refreshValueIndex_aliasAdded_dropsCachedValues(make_semantic_layer, nl_
     assert list(after) == list(before)
 
 
-def test_invalidateValueIndex_cachedValues_readAgain(make_semantic_layer, nl_query_engine_with_cached_model) -> None:
-    # Arrange
-    engine = nl_query_engine_with_cached_model(semantic_layer=make_semantic_layer(data=_frame(_ROWS)))
-    before = engine._distinct_values("sex")
-
-    # Act
-    engine.invalidate_value_index()
-
-    # Assert
-    assert engine._distinct_values("sex") is not before
-
-
 @pytest.mark.parametrize(
     ("sql", "expected"),
     [
@@ -120,6 +108,9 @@ def test_invalidateValueIndex_cachedValues_readAgain(make_semantic_layer, nl_que
             "WITH _cohort_in AS (SELECT 1), cut AS (SELECT 1 AS m) SELECT * FROM _cohort_in, cut",
         ),
         ("  with cut AS (SELECT 1) SELECT 2", "WITH _cohort_in AS (SELECT 1), cut AS (SELECT 1) SELECT 2"),
+        ("WITH\ncut AS (SELECT 1) SELECT 2", "WITH _cohort_in AS (SELECT 1), cut AS (SELECT 1) SELECT 2"),
+        ("WITH\tcut AS (SELECT 1) SELECT 2", "WITH _cohort_in AS (SELECT 1), cut AS (SELECT 1) SELECT 2"),
+        ("WITH \n\t cut AS (SELECT 1) SELECT 2", "WITH _cohort_in AS (SELECT 1), cut AS (SELECT 1) SELECT 2"),
     ],
 )
 def test_withCohortCte_query_viewBoundAsFirstCte(sql: str, expected: str) -> None:
@@ -130,13 +121,31 @@ def test_withCohortCte_query_viewBoundAsFirstCte(sql: str, expected: str) -> Non
     assert combined == expected
 
 
-def test_withCohortCte_recursiveQuery_refused() -> None:
+@pytest.mark.parametrize(
+    "sql", ["WITH RECURSIVE r AS (SELECT 1) SELECT * FROM r", "with\n\trecursive r AS (SELECT 1) SELECT * FROM r"]
+)
+def test_withCohortCte_recursiveQuery_refused(sql: str) -> None:
     # Arrange / Act / Assert
     with pytest.raises(ValueError, match="recursive"):
-        _with_cohort_cte("SELECT 1", "WITH RECURSIVE r AS (SELECT 1) SELECT * FROM r")
+        _with_cohort_cte("SELECT 1", sql)
+
+
+@pytest.mark.parametrize("separator", [" ", "\n", "\t"])
+def test_withCohortCte_withAnyWhitespace_duckdbRunsIt(make_semantic_layer, separator: str) -> None:
+    # Arrange
+    layer = make_semantic_layer(data=_frame(_ROWS))
+    sql = f"WITH{separator}cut AS (SELECT median(ldl) AS m FROM _cohort_in) SELECT count(*) AS n FROM _cohort_in, cut"
+
+    # Act
+    frame = layer._duck_aggregate(layer.get_base_view(), sql)
+
+    # Assert
+    assert frame.height == 1
 
 
 class _Context:
+    query_plan: QueryPlan | None = None
+
     def __init__(self, **values: Any) -> None:
         self.primary_variable = values.get("primary")
         self.grouping_variable = values.get("group")
@@ -178,6 +187,101 @@ def test_analysisColumns_plan_onlyExactlyNamedColumnsOrEveryColumn(
 
     # Assert
     assert needed == expected
+
+
+def test_analysisColumns_contextPlanFilterOnOtherColumn_statisticUnchanged(make_semantic_layer) -> None:
+    # Arrange: the plan passed in has no filter; the context's (refined) plan filters on sex,
+    # which compute applies. Projecting to the plan's columns would drop sex.
+    from clinical_analytics.analysis.compute import compute_analysis_by_type
+    from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
+
+    layer = make_semantic_layer(data=_frame(_ROWS))
+    plan = QueryPlan(intent="DESCRIBE", metric="ldl", confidence=0.9)
+    refined = QueryPlan(
+        intent="DESCRIBE", metric="ldl", confidence=0.9, filters=[FilterSpec(column="sex", operator="==", value="F")]
+    )
+    context = AnalysisContext(inferred_intent=AnalysisIntent.DESCRIBE, primary_variable="ldl", query_plan=refined)
+    view = layer._filtered_view(plan)
+    expected = compute_analysis_by_type(view.to_polars(), context)
+
+    # Act
+    needed = _analysis_columns(plan, context, list(view.columns))
+    result = compute_analysis_by_type((view.select(needed) if needed is not None else view).to_polars(), context)
+
+    # Assert
+    assert needed is None
+    assert result["mean"] == pytest.approx(expected["mean"])
+    assert result["filtered_count"] == expected["filtered_count"] == _ROWS // 2
+
+
+@pytest.mark.parametrize(
+    ("context_filters", "expected"),
+    [
+        ([], ["ldl"]),  # the same plan: projected
+        ([FilterSpec(column="site", operator="==", value="North")], None),  # a different plan: every column
+    ],
+)
+def test_analysisColumns_contextPlan_projectedOnlyWhenSamePlan(
+    context_filters: list[FilterSpec], expected: list[str] | None
+) -> None:
+    # Arrange
+    plan = QueryPlan(intent="DESCRIBE", metric="ldl")
+    context = _Context(primary="ldl")
+    context.query_plan = QueryPlan(intent="DESCRIBE", metric="ldl", filters=context_filters)
+
+    # Act
+    needed = _analysis_columns(plan, context, _VIEW)
+
+    # Assert
+    assert needed == expected
+
+
+def test_analysisColumns_contextPlanIsPlan_itsFilterColumnsKept() -> None:
+    # Arrange
+    plan = QueryPlan(intent="DESCRIBE", metric="ldl", filters=[FilterSpec(column="age", operator=">", value=65)])
+    context = _Context(primary="ldl")
+    context.query_plan = plan
+
+    # Act
+    needed = _analysis_columns(plan, context, _VIEW)
+
+    # Assert
+    assert needed == ["age", "ldl"]
+
+
+def test_cohortSql_fiftyQuestions_catalogDoesNotGrow(make_semantic_layer) -> None:
+    # Arrange
+    layer = make_semantic_layer(data=_frame(_ROWS))
+
+    def views() -> int:
+        return layer.con.con.execute("SELECT count(*) FROM duckdb_views() WHERE NOT internal").fetchone()[0]
+
+    before = views()
+
+    # Act: 50 questions, each with a different cutoff, so each builds new cohort views.
+    for index in range(50):
+        steps = [CohortStep("gt_median", "ldl"), CohortStep("ge_percent_rank", "age", quantile=index / 100)]
+        layer._execute_plan(QueryPlan(intent="COUNT", confidence=0.9, cohort_steps=steps))
+
+    # Assert
+    assert views() == before
+    assert layer._cohort_views == []
+
+
+def test_cohortSql_failedQuestion_viewsStillDropped(make_semantic_layer) -> None:
+    # Arrange
+    layer = make_semantic_layer(data=_frame(_ROWS))
+    before = layer.con.con.execute("SELECT count(*) FROM duckdb_views() WHERE NOT internal").fetchone()[0]
+
+    # Act
+    with pytest.raises(RuntimeError, match="boom"):
+        with layer._cohort_views_dropped():
+            layer._filtered_view(QueryPlan(intent="COUNT", cohort_steps=[CohortStep("gt_median", "ldl")]))
+            raise RuntimeError("boom")
+
+    # Assert
+    after = layer.con.con.execute("SELECT count(*) FROM duckdb_views() WHERE NOT internal").fetchone()[0]
+    assert after == before
 
 
 def test_cohortSql_medianCutoff_sameRowsAsPolars(make_semantic_layer) -> None:

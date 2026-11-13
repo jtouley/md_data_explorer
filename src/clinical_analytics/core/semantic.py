@@ -15,6 +15,8 @@ import os
 import re
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -23,6 +25,7 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
@@ -181,6 +184,8 @@ def plan_restriction_problem(plan: "QueryPlan", columns: list[str]) -> str | Non
 
 
 _COHORT_CTE = "_cohort_in"
+# A leading WITH, whatever whitespace follows it (space, newline, tab), and whether it is RECURSIVE.
+_LEADING_WITH = re.compile(r"WITH\s+(RECURSIVE\b)?", re.IGNORECASE)
 
 
 def _with_cohort_cte(view_sql: str, sql: str) -> str:
@@ -190,10 +195,11 @@ def _with_cohort_cte(view_sql: str, sql: str) -> str:
     a query cannot have two.
     """
     body = sql.lstrip()
-    if body[:5].upper() == "WITH ":
-        if body[5:].lstrip().upper().startswith("RECURSIVE"):
+    leading = _LEADING_WITH.match(body)
+    if leading is not None:
+        if leading.group(1):
             raise ValueError("A recursive cohort query is not supported")
-        return f"WITH {_COHORT_CTE} AS ({view_sql}), {body[5:]}"
+        return f"WITH {_COHORT_CTE} AS ({view_sql}), {body[leading.end() :]}"
     return f"WITH {_COHORT_CTE} AS ({view_sql}) {body}"
 
 
@@ -201,10 +207,18 @@ def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> li
     """The view columns compute_analysis_by_type reads for this plan, in view order, or None.
 
     The analysis reads the context's variables and filter columns, nothing else, when each one
-    is a column of the view by its exact name. Otherwise (no variable, "all", a fuzzy name the
-    analysis resolves against every column, a filter on a column the view lacks) None: the
-    whole view is passed, so the result, and any error it reports, is what it always was.
+    is a column of the view by its exact name. Its filters are every one it may apply: the
+    plan's, ``context.query_plan``'s (compute applies those first) and the legacy
+    ``context.filters``. Otherwise (no variable, "all", a fuzzy name the analysis resolves
+    against every column, a filter on a column the view lacks, or a ``context.query_plan`` that
+    is not ``plan``) None: the whole view is passed, so the result, and any error it reports,
+    is what it always was.
     """
+    context_plan = getattr(context, "query_plan", None)
+    if context_plan is not None and context_plan is not plan and context_plan != plan:
+        # compute_* filters by context.query_plan; a projection chosen from another plan could
+        # drop the column one of its filters needs.
+        return None
     variables = [
         getattr(context, "primary_variable", None),
         getattr(context, "grouping_variable", None),
@@ -215,12 +229,26 @@ def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> li
     named = [variable for variable in variables if variable is not None]
     if not named or any(not isinstance(variable, str) or variable not in columns for variable in named):
         return None
-    filters = [*(plan.filters or []), *(getattr(context, "filters", None) or [])]
+    filters = [
+        *(plan.filters or []),
+        *((context_plan.filters or []) if context_plan is not None else []),
+        *(getattr(context, "filters", None) or []),
+    ]
     filter_columns = [getattr(spec, "column", None) for spec in filters]
     if any(column not in columns for column in filter_columns):
         return None
     wanted = {*named, *filter_columns}
     return [column for column in columns if column in wanted]
+
+
+def _apply_duckdb_limits(raw: Any) -> None:
+    """Set the configured memory limit and thread count on one layer's DuckDB connection.
+
+    The limits apply per layer: every SemanticLayer is its own in-memory DuckDB. Both values
+    were validated when nl_query_config was imported (a parsed number and unit, an int).
+    """
+    raw.execute(f"SET memory_limit = '{nl_query_config.DUCKDB_MEMORY_LIMIT.sql}'")
+    raw.execute(f"SET threads = {int(nl_query_config.DUCKDB_THREADS)}")
 
 
 def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
@@ -564,7 +592,17 @@ class SemanticLayer:
         # Connect to DuckDB (in-memory for now, can be file-based later).
         # One connection is not safe for overlapping threads.
         self.con = ibis.duckdb.connect()
+        configured = False
+        try:
+            _apply_duckdb_limits(self.con.con)
+            configured = True
+        finally:
+            if not configured:
+                # Never leave an unconfigured in-memory database open behind a failed build.
+                self.con.disconnect()
         self._con_lock = threading.Lock()
+        # Temporary views the current cohort query created; dropped once its rows are read.
+        self._cohort_views: list[str] = []
 
         # Register data source
         self._register_source()
@@ -2293,10 +2331,11 @@ class SemanticLayer:
             # filtered base view the plan validated, not from get_cohort().
             from clinical_analytics.analysis.compute import compute_analysis_by_type
 
-            view = self._filtered_view(query_plan)
-            needed = _analysis_columns(query_plan, context, list(view.columns))
-            # Only the columns the analysis reads leave DuckDB, straight into Polars.
-            base_rows = (view.select(needed) if needed is not None else view).to_polars()
+            with self._cohort_views_dropped():
+                view = self._filtered_view(query_plan)
+                needed = _analysis_columns(query_plan, context, list(view.columns))
+                # Only the columns the analysis reads leave DuckDB, straight into Polars.
+                base_rows = (view.select(needed) if needed is not None else view).to_polars()
             if cohort is not None:
                 logger.debug(
                     "non_count_format_uses_base_view cohort_passed=%s intent=%s",
@@ -2767,7 +2806,26 @@ class SemanticLayer:
         sql = _with_cohort_cte(self.con.compile(view), sql_template.format(col=quoted))
         name = "_cohort_" + hashlib.sha256(sql.encode()).hexdigest()[:24]
         self.con.con.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS {sql}")
+        if name not in self._cohort_views:
+            self._cohort_views.append(name)
         return self.con.table(name)
+
+    @contextmanager
+    def _cohort_views_dropped(self) -> Iterator[None]:
+        """Drop the cohort views created inside this block once it ends, result read or not.
+
+        Materialise every view built here before the block ends: a lazy table that reads one
+        fails after it. Nested blocks drop only their own views.
+        """
+        start = len(self._cohort_views)
+        try:
+            yield
+        finally:
+            created = self._cohort_views[start:]
+            del self._cohort_views[start:]
+            # Newest first: a later view may read an earlier one.
+            for name in reversed(created):
+                self.con.con.execute(f"DROP VIEW IF EXISTS {name}")
 
     def _duck_aggregate(self, view: Any, sql: str) -> pl.DataFrame:
         """Run ``sql`` over ``view`` (named ``_cohort_in``) in DuckDB, as a Polars frame.
@@ -2802,7 +2860,12 @@ class SemanticLayer:
         return f"SELECT {by}, {select} FROM _cohort_in GROUP BY 1 ORDER BY 1 NULLS LAST"
 
     def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame | pl.DataFrame:
-        """Execute QueryPlan and return results DataFrame."""
+        """Execute QueryPlan and return results DataFrame, with its cohort views dropped."""
+        with self._cohort_views_dropped():
+            return self._execute_plan_rows(plan)
+
+    def _execute_plan_rows(self, plan: "QueryPlan") -> pd.DataFrame | pl.DataFrame:
+        """The plan's result, materialised (the caller drops the cohort views it created)."""
         view = self._filtered_view(plan)
 
         if plan.proportion_column:

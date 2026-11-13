@@ -34,6 +34,7 @@ def test_describe_uses_base_view_outcome_not_cohort_alias() -> None:
     layer = object.__new__(SemanticLayer)
     layer._base_view = ibis.memtable(base)
     layer._base_counts = {}  # __init__ is bypassed; every answer now counts the base view once
+    layer._cohort_views = []  # cohort views the answer creates are dropped once it is read
     context = AnalysisContext(
         primary_variable="outcome",
         inferred_intent=AnalysisIntent.DESCRIBE,

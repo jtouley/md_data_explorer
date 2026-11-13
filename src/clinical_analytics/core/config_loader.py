@@ -179,9 +179,8 @@ class NLQueryConfigDefaults:
     enable_proactive_questions: bool = False
     llm_timeout_question_generation_s: float = 5.0
     enable_multi_layer_validation: bool = False
-    # Semantic layers kept open at once (api/dependencies.py); each holds a dataset in DuckDB.
-    semantic_layer_cache_size: int = 4
-    # Per-layer DuckDB limits: a percentage of RAM or a size ("20%", "2GB"); 0 threads = half the CPUs.
+    # DuckDB limits per semantic layer (each is its own DuckDB, so N open layers may use N times
+    # these): a percentage of RAM or a size ("20%", "2GB"); 0 threads = half the CPUs.
     duckdb_memory_limit: str = "20%"
     duckdb_threads: int = 0
 
@@ -218,7 +217,6 @@ class NLQueryConfigDefaults:
             "enable_proactive_questions": self.enable_proactive_questions,
             "llm_timeout_question_generation_s": self.llm_timeout_question_generation_s,
             "enable_multi_layer_validation": self.enable_multi_layer_validation,
-            "semantic_layer_cache_size": self.semantic_layer_cache_size,
             "duckdb_memory_limit": self.duckdb_memory_limit,
             "duckdb_threads": self.duckdb_threads,
         }
@@ -328,7 +326,6 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
         "ENABLE_RESULT_INTERPRETATION": "enable_result_interpretation",
         "ENABLE_PROACTIVE_QUESTIONS": "enable_proactive_questions",
         "LLM_TIMEOUT_QUESTION_GENERATION_S": "llm_timeout_question_generation_s",
-        "SEMANTIC_LAYER_CACHE_SIZE": "semantic_layer_cache_size",
         "DUCKDB_MEMORY_LIMIT": "duckdb_memory_limit",
         "DUCKDB_THREADS": "duckdb_threads",
     }

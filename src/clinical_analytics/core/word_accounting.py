@@ -27,6 +27,7 @@ from typing import Any, Literal, TypeAlias
 
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.execution_gate import limit_text
+from clinical_analytics.core.nl_query_config import STEM_MATCH_MIN_PREFIX
 from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, grouped_statistic
 
 # Words that carry no limit come from one reviewed vocabulary, shared with the cohort peel
@@ -184,7 +185,8 @@ def name_tokens(name: str) -> list[str]:
 
 
 def stem_match(word: str, target: str) -> bool:
-    """Same word, a plural, or a shared stem of at least five letters covering 75% of the shorter."""
+    """Same word, a plural, or a shared stem of at least STEM_MATCH_MIN_PREFIX letters covering
+    75% of the shorter."""
     if word == target or word.rstrip("s") == target.rstrip("s"):
         return True
     if word.isdigit() or target.isdigit():
@@ -195,7 +197,7 @@ def stem_match(word: str, target: str) -> bool:
         if left != right:
             break
         common += 1
-    return common >= 5 and common >= 0.75 * shorter
+    return common >= STEM_MATCH_MIN_PREFIX and common >= 0.75 * shorter
 
 
 _AGE_UNITS = {"years", "year", "yrs", "yr", "y", "at", "baseline", "in", "current"}

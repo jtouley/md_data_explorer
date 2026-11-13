@@ -749,6 +749,10 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
 
     Returns:
         Filtered DataFrame
+
+    Raises:
+        ValueError: a filter names a column the frame lacks. Skipping it would answer on rows
+            the question excluded.
     """
     if not filters:
         return df
@@ -757,7 +761,7 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
     filtered_df = df
     for filter_spec in filters:
         if filter_spec.column not in df.columns:
-            continue  # Skip if column not found
+            raise ValueError(f"Filter column '{filter_spec.column}' not found")
 
         # Apply null exclusion if requested (default: yes)
         if filter_spec.exclude_nulls:

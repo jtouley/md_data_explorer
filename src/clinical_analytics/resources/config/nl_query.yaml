@@ -18,10 +18,10 @@ auto_execute_confidence_threshold: 0.75
 # cells cannot identify individuals. 11 follows common clinical data-use agreements.
 small_cell_threshold: 11
 
-# Semantic layers kept open at once; the least recently used one beyond this is closed.
-semantic_layer_cache_size: 4
-# DuckDB limits for each open layer: memory as a share of RAM or a size ("20%", "2GB");
-# threads 0 means half the CPUs, so a question never takes the whole machine.
+# DuckDB limits PER SEMANTIC LAYER: every layer (one per open dataset) is its own in-memory
+# DuckDB, so N open datasets may use up to N times these. Memory is a share of RAM (above 0,
+# at most 100%) or a size above 0 ("20%", "2GB"); threads 0 means half the CPUs. A bad value
+# stops the process at startup (core/nl_query_config.py).
 duckdb_memory_limit: "20%"
 duckdb_threads: 0
 

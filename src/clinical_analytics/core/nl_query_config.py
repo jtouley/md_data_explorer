@@ -11,6 +11,10 @@ Environment variables take precedence over YAML config.
 """
 
 import logging
+import os
+import re
+from dataclasses import dataclass
+from typing import Literal, TypeAlias
 
 from clinical_analytics.core.config_loader import load_nl_query_config
 
@@ -42,11 +46,81 @@ MAX_NUMERIC_GROUP_LEVELS: int = 10
 # Below it a small table's every column is unique per row, and its values must still match.
 VALUE_MATCH_MIN_IDENTIFIER_VALUES: int = 50
 
-# Open semantic layers (least recently used beyond this are closed) and each layer's DuckDB
-# limits. Validated in api/dependencies.py before they reach a SET statement.
-SEMANTIC_LAYER_CACHE_SIZE: int = int(_config["semantic_layer_cache_size"])
-DUCKDB_MEMORY_LIMIT: str = str(_config["duckdb_memory_limit"])
-DUCKDB_THREADS: int = int(_config["duckdb_threads"])
+# Shared stem: two words match when they share at least this many leading letters (and 75% of
+# the shorter). word_accounting.stem_match and the value index's prefix buckets
+# (core/value_index.py) both read it, so the index stays an exact superset of stem_match.
+STEM_MATCH_MIN_PREFIX: int = 5
+
+MemoryUnit: TypeAlias = Literal["%", "KB", "MB", "GB", "TB", "KiB", "MiB", "GiB", "TiB"]
+_UNITS: dict[str, MemoryUnit] = {
+    "KB": "KB",
+    "MB": "MB",
+    "GB": "GB",
+    "TB": "TB",
+    "KIB": "KiB",
+    "MIB": "MiB",
+    "GIB": "GiB",
+    "TIB": "TiB",
+}
+_MEMORY_LIMIT = re.compile(r"(\d+(?:\.\d+)?)\s*(%|[KMGT]i?B)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class DuckdbMemoryLimit:
+    """A DuckDB memory_limit: a positive size, or a share of RAM above 0 and at most 100%."""
+
+    amount: float
+    unit: MemoryUnit
+
+    @property
+    def sql(self) -> str:
+        """The value for ``SET memory_limit``, built from the parsed number and unit only."""
+        return f"{self.amount:.6f}".rstrip("0").rstrip(".") + self.unit
+
+
+def parse_duckdb_memory_limit(value: object) -> DuckdbMemoryLimit:
+    """Parse ``"20%"``, ``"2GB"`` or ``"512 MiB"`` into a number and a unit.
+
+    Raises:
+        ValueError: not a size or a percentage, zero or less (DuckDB accepts "0GB" and then
+            fails every query), or a percentage above 100.
+    """
+    text = value.strip() if isinstance(value, str) else ""
+    match = _MEMORY_LIMIT.fullmatch(text)
+    if match is None:
+        raise ValueError(f"duckdb_memory_limit must be a size such as '2GB' or a share such as '20%', got {value!r}")
+    amount = float(match.group(1))
+    raw_unit = match.group(2)
+    unit: MemoryUnit = "%" if raw_unit == "%" else _UNITS[raw_unit.upper()]
+    if amount <= 0:
+        raise ValueError(f"duckdb_memory_limit must be above 0, got {value!r}")
+    if unit == "%" and amount > 100:
+        raise ValueError(f"duckdb_memory_limit must be at most 100%, got {value!r}")
+    return DuckdbMemoryLimit(amount, unit)
+
+
+def resolve_duckdb_threads(value: object) -> int:
+    """The DuckDB thread count: a positive count as given, 0 for half the CPUs (at least 1).
+
+    Raises:
+        ValueError: not a whole number (a YAML boolean included), or below 0.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise ValueError(f"duckdb_threads must be a whole number, got {value!r}")
+    try:
+        threads = int(value)
+    except ValueError:
+        raise ValueError(f"duckdb_threads must be a whole number, got {value!r}") from None
+    if threads < 0:
+        raise ValueError(f"duckdb_threads must be 0 (half the CPUs) or more, got {threads}")
+    return threads or max(1, (os.cpu_count() or 2) // 2)
+
+
+# DuckDB limits PER SEMANTIC LAYER, applied in SemanticLayer.__init__. Each layer is its own
+# in-memory DuckDB, so N open layers may use N times these. Validated here, at import, so a bad
+# setting stops the process at startup instead of failing the first question on each dataset.
+DUCKDB_MEMORY_LIMIT: DuckdbMemoryLimit = parse_duckdb_memory_limit(_config["duckdb_memory_limit"])
+DUCKDB_THREADS: int = resolve_duckdb_threads(_config["duckdb_threads"])
 
 # Performance/timeout settings
 TIER_TIMEOUT_SECONDS: float = _config["tier_timeout_seconds"]

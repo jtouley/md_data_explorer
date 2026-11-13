@@ -2766,11 +2766,6 @@ Fix the errors and return a corrected query intent as JSON.
             self._distinct_value_cache = {}
             self._value_index_signature = signature
 
-    def invalidate_value_index(self) -> None:
-        """Forget every column's cached values; the next question reads them again."""
-        self._distinct_value_cache = {}
-        self._value_index_signature = None
-
     def _fuzzy_match_variable(self, query_term: str) -> tuple[str | None, float, list[str] | None]:
         """
         Match variable with collision awareness.
