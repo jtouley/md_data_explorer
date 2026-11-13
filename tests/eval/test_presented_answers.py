@@ -27,7 +27,7 @@ from clinical_analytics.eval.headless import (
 )
 from tests.eval.adversarial_probes import own_frame, probes
 from tests.eval.negation_probes import PROBES as SCOPE_PROBES
-from tests.eval.over_holding_probes import ANSWERED, HELD
+from tests.eval.over_holding_probes import ANSWERED, HELD, HELD_SINCE_NARROWING
 from tests.eval.reviewer_probes import PROBES
 from tests.eval.test_negation_probes import outcome as negation_outcome
 from tests.eval.test_over_holding_probes import outcome as over_holding_outcome
@@ -169,7 +169,7 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
         outcome = _held(result) if truth is None else classify_presented_generic(truth, result)
         record("adversarial", query, outcome, truth, result)
 
-    for probe in (*ANSWERED, *HELD):
+    for probe in (*ANSWERED, *HELD_SINCE_NARROWING, *HELD):
         graded, result, expected = over_holding_outcome(probe)
         record("over-holding", probe.query, graded, expected, result)
 

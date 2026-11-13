@@ -2585,15 +2585,6 @@ class SemanticLayer:
             raise CohortStepError(problem)
         if step.op == "eq":
             return self._filter_equal(view, column, step.value)
-        if step.op == "ne":
-            # Patients with another recorded value; an empty value is not "not placebo".
-            excluded = self._equality_value(view, column, step.value)
-            return view.filter(view[column].notnull() & (view[column] != excluded))
-        if step.op == "in":
-            values = step.value if isinstance(step.value, list) else [step.value]
-            if not values:
-                raise CohortStepError(_unsupported_step_message(step.op, column))
-            return view.filter(view[column].isin([self._equality_value(view, column, value) for value in values]))
         if step.op in {"gt", "lt", "ge", "le"}:
             if not view[column].type().is_numeric():
                 raise CohortStepError(_text_order_message(column))

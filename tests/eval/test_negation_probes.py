@@ -1,4 +1,4 @@
-"""Negation-scope regression set: each question gets its exact plan and true value, or a hold.
+"""Adversarial regression set: each question gets its exact plan and true value, or a hold.
 
 Graded on what the app shows. A probe expecting a hold that runs is wrong; a probe expecting a
 plan that runs with other limits, or shows another value, is wrong. 0 wrong is the target.
@@ -12,10 +12,12 @@ from typing import Any
 import polars as pl
 import pytest
 
+from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
+from clinical_analytics.core.word_accounting import unjustified_elements, unused_words
 from clinical_analytics.eval.catalog import repo_root
 from clinical_analytics.eval.headless import ask, classify_presented_generic, register_frame
 from tests.eval.adversarial_probes import own_frame
-from tests.eval.negation_probes import PROBES, ScopeProbe, codes_frame
+from tests.eval.negation_probes import PLAN_PROBES, PROBES, ScopeProbe, codes_frame, review_frame
 
 
 @lru_cache(maxsize=1)
@@ -24,6 +26,7 @@ def _frames() -> dict[str, pl.DataFrame]:
         "coh": pl.read_csv(repo_root() / "tests" / "fixtures" / "synthetic" / "cohort.csv"),
         "own": own_frame(),
         "codes": codes_frame(),
+        "rev": review_frame(),
     }
     for name, frame in frames.items():
         register_frame(f"negscope_{name}", frame)
@@ -66,6 +69,42 @@ def test_negationProbes_set_coversEveryRequiredFamily() -> None:
     assert any(" or " in query and ("share" in query or "proportion" in query) for query in queries)
     assert any("more likely" in query and " or " in query for query in queries)
     assert any(probe.dataset == "codes" for probe in PROBES)
+    assert any(probe.dataset == "rev" for probe in PROBES)
+
+
+def _plan(spec: dict[str, Any]) -> QueryPlan:
+    proportion = spec.get("proportion")
+    return QueryPlan(
+        intent=spec.get("intent", "COUNT"),
+        metric=spec.get("metric"),
+        group_by=spec.get("group_by"),
+        statistic=spec.get("statistic"),
+        filters=[FilterSpec(column, operator, value) for operator, column, value in spec.get("filters", [])],
+        cohort_steps=[CohortStep(op, column, value) for op, column, value in spec.get("steps", [])],
+        proportion_column=proportion[0] if proportion else None,
+        proportion_value=proportion[1] if proportion else None,
+        confidence=0.9,
+    )
+
+
+@pytest.mark.parametrize(
+    ("dataset", "question", "spec"),
+    [pytest.param(*case, id=f"{case[0]}:{case[1]}:{index}") for index, case in enumerate(PLAN_PROBES)],
+)
+def test_gate_reviewedWrongPlan_isHeld(dataset: str, question: str, spec: dict[str, Any]) -> None:
+    # Arrange
+    frame = _frames()[dataset]
+    plan = _plan(spec)
+
+    def values_for(column: str) -> list[Any]:
+        return frame.get_column(column).unique().to_list()
+
+    # Act
+    unused = unused_words(question, plan, frame.columns, values_for)
+    unasked = unjustified_elements(question, plan, frame.columns, values_for)
+
+    # Assert
+    assert unused or unasked, f"{question!r} ran with {spec!r}"
 
 
 @pytest.mark.parametrize(

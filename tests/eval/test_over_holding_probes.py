@@ -12,7 +12,15 @@ import pytest
 from clinical_analytics.eval.catalog import repo_root
 from clinical_analytics.eval.headless import ask, classify_presented, register_frame
 from tests.eval.adversarial_probes import own_frame
-from tests.eval.over_holding_probes import ANSWERED, HELD, Probe, creatinine_frame
+from tests.eval.over_holding_probes import (
+    ANSWERABLE,
+    ANSWERED,
+    HELD,
+    HELD_SINCE_NARROWING,
+    NARROWED,
+    Probe,
+    creatinine_frame,
+)
 
 
 @lru_cache(maxsize=1)
@@ -44,13 +52,16 @@ def outcome(probe: Probe) -> tuple[str, dict[str, Any], Any]:
 
 def test_overHoldingProbes_set_hasEveryQuestionOnce() -> None:
     # Arrange
-    keys = [(probe.dataset, probe.query) for probe in (*ANSWERED, *HELD)]
+    keys = [(probe.dataset, probe.query) for probe in (*ANSWERABLE, *HELD)]
 
     # Act
     duplicates = {key for key in keys if keys.count(key) > 1}
+    unknown = NARROWED - set(keys)
 
     # Assert
     assert duplicates == set()
+    assert unknown == set()
+    assert len(ANSWERED) + len(HELD_SINCE_NARROWING) + len(HELD) == 75
 
 
 @pytest.mark.slow
@@ -81,3 +92,20 @@ def test_overHoldingProbe_dangerousQuestion_heldWithReason(probe: Probe) -> None
     # Assert
     assert graded in {"held", "refused"}, f"{probe.query!r} ran: {(result.get('presentation') or {}).get('claim')!r}"
     assert result["failure_reason"] or result["issues"], "a hold must say why"
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "probe", [pytest.param(probe, id=f"{probe.dataset}:{probe.query}") for probe in HELD_SINCE_NARROWING]
+)
+def test_overHoldingProbe_needsInference_heldNeverWrong(probe: Probe) -> None:
+    # Arrange: probe above
+
+    # Act
+    graded, result, expected = outcome(probe)
+
+    # Assert
+    assert graded in {"held", "refused"}, (
+        f"{probe.query!r}: {graded}, expected {expected!r}, shown {(result.get('presentation') or {}).get('claim')!r}"
+    )

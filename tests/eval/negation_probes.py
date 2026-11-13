@@ -1,14 +1,20 @@
-"""Adversarial regression set for the gate's second review: negation scope, ranges, "or" lists
-and numeric-coded categories.
+"""Adversarial regression set for the gate: negation, ranges, "or" lists, 0/1 columns, absence
+labels, "per X" groupings and numeric-coded categories.
 
 Every probe states its expected outcome: the exact limits the plan must apply (and the value
-the app must then show, computed here with Polars), or a hold. A hold is expected wherever the
-words leave the meaning open: a negation before two coordinated items, a negation that may or
-may not reach a comparison, a reversed range, an "or" list after a share verb or "more likely",
-and a grouping by many integer codes (which the user confirms). The target is 0 wrong.
+the app must then show, computed here with Polars), or a hold. The gate does not infer meaning,
+so a hold is expected wherever the words need interpreting: any negation ("not", "without",
+"excluding", "non", "never"), an "or" list, a 0/1 column with no codebook, a text column with
+an absence label ("none", "Never"), a lone "per X" grouping, a reversed range, and a grouping
+by many integer codes (which the user confirms). The target is 0 wrong.
+
+Every question from both review rounds of #93 is here, and must hold or refuse. PLAN_PROBES
+pins the wrong plans those reviews built: the gate must hold each one.
 
 Frames: the committed synthetic cohort ("coh"), the reviewer's generated frame ("own",
-adversarial_probes.own_frame) and a seeded frame with integer-coded columns ("codes").
+adversarial_probes.own_frame), a seeded frame with integer-coded columns ("codes") and a
+seeded frame with the second review's columns ("rev": statin with "none", smoking
+Current/Former/Never, 0/1 outcome, repeated subject ids).
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from __future__ import annotations
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 import polars as pl
 
@@ -32,7 +38,7 @@ Limit = tuple[str, str, Any]
 
 @dataclass(frozen=True)
 class ScopeProbe:
-    dataset: str  # "coh", "own" or "codes"
+    dataset: str  # "coh", "own", "codes" or "rev"
     query: str
     limits: tuple[Limit, ...] | None  # None: must hold or refuse
     truth: Truth | None = None
@@ -74,6 +80,28 @@ def codes_frame(size: int = 300) -> pl.DataFrame:
     )
 
 
+def review_frame(size: int = 300) -> pl.DataFrame:
+    """Seeded frame with the columns of the second review: absence labels, a 0/1 outcome with no
+    codebook, smoking recorded as Current/Former/Never, and three rows per subject."""
+    rng = random.Random(17)
+    return pl.DataFrame(
+        {
+            "patient_id": [f"R{i:04d}" for i in range(size)],
+            "subject_id": [f"S{i // 3:04d}" for i in range(size)],
+            "age": [rng.randint(30, 90) for _ in range(size)],
+            "sex": [rng.choice(["F", "M"]) for _ in range(size)],
+            "treatment": [rng.choice(["placebo", "drug A"]) for _ in range(size)],
+            "site": [rng.choice(["North", "South", "West"]) for _ in range(size)],
+            "statin": [rng.choice(["atorvastatin", "simvastatin", "none"]) for _ in range(size)],
+            "smoking": [rng.choice(["Current", "Former", "Never"]) for _ in range(size)],
+            "outcome": [rng.choice([0, 1]) for _ in range(size)],
+            "diabetes": [rng.choice([0, 1]) for _ in range(size)],
+            "ldl": [round(rng.uniform(60, 200), 1) for _ in range(size)],
+            "events": [rng.randint(0, 4) for _ in range(size)],
+        }
+    )
+
+
 def _limits(*items: Limit) -> tuple[Limit, ...]:
     """Expected limits in the order headless.plan_limits writes them."""
 
@@ -104,62 +132,16 @@ PROBES: tuple[ScopeProbe, ...] = (
     hold("coh", "how many patients other than women on drug?"),
     hold("coh", "how many patients outside the west and the south?"),
     hold("coh", "how many patients are not in the west and on drug?"),
-    # Two negations, each right before its own item: both apply, nothing is in doubt. The CSV
-    # reader stores Yes/No as booleans, so "without hypertension" is Hypertension = False.
-    ScopeProbe(
-        "own",
-        "how many patients not on placebo and without hypertension?",
-        _limits(("ne", "arm", "placebo"), ("eq", "Hypertension", False)),
-        count((c("arm") != "placebo") & (c("Hypertension") == "No")),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many non-diabetic women?",
-        _limits(("eq", "diabetes", 0), ("eq", "sex", "F")),
-        count((c("diabetes") == 0) & (c("sex") == "F")),
-    ),  # fmt: skip
-    ScopeProbe(
-        "coh",
-        "how many non-diabetic patients on placebo?",
-        _limits(("eq", "diabetes", 0), ("eq", "treatment", "placebo")),
-        count((c("diabetes") == 0) & (c("treatment") == "placebo")),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many women without diabetes?",
-        _limits(("eq", "diabetes", 0), ("eq", "sex", "F")),
-        count((c("diabetes") == 0) & (c("sex") == "F")),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many women not on placebo?",
-        _limits(("ne", "treatment", "placebo"), ("eq", "sex", "F")),
-        count((c("treatment") != "placebo") & (c("sex") == "F")),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many patients on placebo without diabetes?",
-        _limits(("eq", "treatment", "placebo"), ("eq", "diabetes", 0)),
-        count((c("treatment") == "placebo") & (c("diabetes") == 0)),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many statin non-users on placebo?",
-        _limits(("eq", STATIN, 2), ("eq", "treatment", "placebo")),
-        count((S == 2) & (c("treatment") == "placebo")),
-    ),
-    ScopeProbe(
-        "own",
-        "how many smokers without hypertension?",
-        _limits(("eq", SMOKER, 1), ("eq", "Hypertension", False)),
-        count((c(SMOKER) == 1) & (c("Hypertension") == "No")),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many patients without diabetes?",
-        _limits(("eq", "diabetes", 0)),
-        count(c("diabetes") == 0),
-    ),
+    # A negation right before its item still holds: no check reads it as "every other value".
+    hold("own", "how many patients not on placebo and without hypertension?"),
+    hold("coh", "how many non-diabetic women?"),
+    hold("coh", "how many non-diabetic patients on placebo?"),
+    hold("coh", "how many women without diabetes?"),
+    hold("coh", "how many women not on placebo?"),
+    hold("coh", "how many patients on placebo without diabetes?"),
+    hold("coh", "how many statin non-users on placebo?"),
+    hold("own", "how many smokers without hypertension?"),
+    hold("coh", "how many patients without diabetes?"),
     # ------------------------------------------------------------------
     # Negation x comparison
     # ------------------------------------------------------------------
@@ -170,30 +152,14 @@ PROBES: tuple[ScopeProbe, ...] = (
     hold("coh", "how many patients not between 50 and 65?"),
     hold("coh", "how many patients excluding those aged 40-60?"),
     hold("coh", "how many patients excluding women over 65?"),
-    # The peel and the gate agree on "age <= 65", but the filter parser also reads "exclude
-    # patients" as patient_id != "patients": that invalid plan is refused, never offered.
+    # "not over 65" is never read as "65 or under": every negated comparison holds.
     hold("coh", "how many patients exclude patients over 65?"),
-    ScopeProbe("coh", "how many patients not over 65?", _limits(("le", "age", 65)), count(c("age") <= 65)),
-    ScopeProbe("coh", "how many patients not under 40?", _limits(("ge", "age", 40)), count(c("age") >= 40)),
-    ScopeProbe("coh", "how many patients excluding those over 65?", _limits(("le", "age", 65)), count(c("age") <= 65)),
-    ScopeProbe(
-        "coh",
-        "how many patients over 65 without diabetes?",
-        _limits(("gt", "age", 65), ("eq", "diabetes", 0)),
-        count((c("age") > 65) & (c("diabetes") == 0)),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many women not over 65?",
-        _limits(("eq", "sex", "F"), ("le", "age", 65)),
-        count((c("sex") == "F") & (c("age") <= 65)),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many patients over 65 not on placebo?",
-        _limits(("gt", "age", 65), ("ne", "treatment", "placebo")),
-        count((c("age") > 65) & (c("treatment") != "placebo")),
-    ),
+    hold("coh", "how many patients not over 65?"),
+    hold("coh", "how many patients not under 40?"),
+    hold("coh", "how many patients excluding those over 65?"),
+    hold("coh", "how many patients over 65 without diabetes?"),
+    hold("coh", "how many women not over 65?"),
+    hold("coh", "how many patients over 65 not on placebo?"),
     # ------------------------------------------------------------------
     # Ranges: hyphenated, reversed, open-ended
     # ------------------------------------------------------------------
@@ -244,26 +210,11 @@ PROBES: tuple[ScopeProbe, ...] = (
     ScopeProbe("coh", "how many patients over 65?", _limits(("gt", "age", 65)), count(c("age") > 65)),
     ScopeProbe("coh", "how many patients under 40?", _limits(("lt", "age", 40)), count(c("age") < 40)),
     # ------------------------------------------------------------------
-    # "or" lists in filters, shares and rates
+    # "or" lists in filters, shares and rates: never bound as a list
     # ------------------------------------------------------------------
-    ScopeProbe(
-        "coh",
-        "how many patients in the north or west?",
-        _limits(("in", "site", ["North", "West"])),
-        count(c("site").is_in(["North", "West"])),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many women in the north or south?",
-        _limits(("in", "site", ["North", "South"]), ("eq", "sex", "F")),
-        count(c("site").is_in(["North", "South"]) & (c("sex") == "F")),
-    ),
-    ScopeProbe(
-        "coh",
-        "how many patients on drug or placebo?",
-        _limits(("in", "treatment", ["drug", "placebo"])),
-        count(c("treatment").is_in(["drug", "placebo"])),
-    ),
+    hold("coh", "how many patients in the north or west?"),
+    hold("coh", "how many women in the north or south?"),
+    hold("coh", "how many patients on drug or placebo?"),
     hold("coh", "what share of patients are in the north or west?"),
     hold("coh", "what proportion of women are in the north or west?"),
     hold("coh", "what percentage of patients are on drug or placebo?"),
@@ -284,5 +235,60 @@ PROBES: tuple[ScopeProbe, ...] = (
     # "site_id" splits into "site" and "id"; the filter parser binds the number to patient_id,
     # and the unused word "site" holds that plan.
     hold("codes", "how many patients with site_id over 6?"),
-    ScopeProbe("codes", "how many smokers?", _limits(("eq", "smoker", 1)), count(c("smoker") == 1)),
+    # A 0/1 column with no codebook is not read as yes/no.
+    hold("codes", "how many smokers?"),
+    # ------------------------------------------------------------------
+    # Second review round: each ran a wrong answer without a hold
+    # ------------------------------------------------------------------
+    hold("rev", "how many patients not on statins?"),
+    hold("own", "how many patients not on statins?"),
+    hold("rev", "how many patients on statins?"),
+    hold("rev", "average outcome by site"),
+    hold("coh", "average outcome by site"),
+    hold("rev", "how many patients who are smokers?"),
+    hold("rev", "how many never smokers?"),
+    hold("rev", "how many patients on placebo without outcome?"),
+    hold("coh", "how many patients on placebo without outcome?"),
+    hold("own", "drug A non-users"),
+    hold("own", "how many drug A non-users?"),
+    hold("rev", "how many events per subject?"),
+    hold("rev", "how many patients per subject?"),
+    hold("coh", "compare ldl in diabetics over 65 between women and men"),
+    hold("rev", "compare ldl in diabetics over 65 between women and men"),
+    # "diabetics over 65": the cutoff names no measure, never "diabetes > 65".
+    hold("coh", "how many diabetics over 65?"),
 )
+
+# The wrong plans the review rounds built, as (dataset, question, plan). The gate must hold each:
+# unused_words or unjustified_elements is not empty. Plans are built in the test.
+PlanCase: TypeAlias = tuple[str, str, dict[str, Any]]
+PLAN_PROBES: tuple[PlanCase, ...] = (
+    ("rev", "how many patients not on statins?", {"steps": [("ne", "statin", "none")]}),
+    ("rev", "how many patients not on statins?", {"filters": [("!=", "statin", "none")]}),
+    ("rev", "average outcome by site", {"intent": "DESCRIBE", "metric": "outcome", "group_by": "site",
+                                        "statistic": "mean", "steps": [("eq", "outcome", 1)]}),
+    ("rev", "how many patients who are smokers?", {"steps": [("ne", "smoking", "Never")]}),
+    ("rev", "how many patients who are smokers?", {"filters": [("!=", "smoking", "Never")]}),
+    ("rev", "how many patients on placebo without outcome?",
+     {"steps": [("ne", "treatment", "placebo"), ("eq", "outcome", 0)]}),
+    ("rev", "how many patients on placebo without outcome?",
+     {"filters": [("!=", "treatment", "placebo"), ("==", "outcome", 0)]}),
+    ("rev", "how many women on placebo?", {"steps": [("ne", "sex", "F"), ("eq", "treatment", "placebo")]}),
+    ("rev", "how many women on placebo?", {"filters": [("!=", "sex", "F"), ("==", "treatment", "placebo")]}),
+    ("own", "how many drug A non-users?", {"steps": [("eq", "arm", "drug A")]}),
+    ("rev", "how many events per subject?", {"group_by": "subject_id"}),
+    ("own", "how many patients without diabetes and hypertension?",
+     {"steps": [("eq", "diabetes_type", "None"), ("eq", "Hypertension", True)]}),
+    ("coh", "how many patients excluding women on placebo?",
+     {"filters": [("!=", "sex", "F"), ("==", "treatment", "placebo")]}),
+    ("coh", "how many patients excluding those with ldl over 160?", {"steps": [("gt", "ldl", 160.0)]}),
+    ("coh", "how many patients excluding those with ldl over 160?", {"steps": [("le", "ldl", 160.0)]}),
+    ("coh", "how many patients not over 65?", {"steps": [("le", "age", 65.0)]}),
+    ("coh", "how many patients between 65 and 50?", {"steps": [("ge", "age", 65.0), ("le", "age", 50.0)]}),
+    ("coh", "how many patients between 65 and 50?", {"steps": [("ge", "age", 50.0), ("le", "age", 65.0)]}),
+    ("coh", "what share of patients are in the north or west?",
+     {"proportion": ("site", ["North", "West"])}),
+    ("coh", "how many patients in the north or west?", {"steps": [("in", "site", ["North", "West"])]}),
+    ("own", "are smokers more likely to be in the north or west?",
+     {"steps": [("in", "Region", ["North", "West"])], "group_by": "Smoker 1: Yes 2: No"}),
+)  # fmt: skip

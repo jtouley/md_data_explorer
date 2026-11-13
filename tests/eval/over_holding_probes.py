@@ -1,10 +1,12 @@
 """Over-holding regression probes: questions the M2 gate used to hold that have one answer.
 
-Each answer probe was held or refused before the over-holding fixes and must now be answered
-with the value computed here with Polars from the question's plain meaning. Each hold probe
-is a case where loosening the gate could produce a wrong answer (a stored number bound by a
-label digit, a reversed proportion, a dropped filter, statin non-users read as users, an
-ambiguous number or list); it must stay held or refused.
+Each answer probe was held or refused before the over-holding fixes. ANSWERED must be answered
+with the value computed here with Polars from the question's plain meaning; NARROWED lists the
+answerable probes that hold again because answering them needs an inference the gate does not
+make, and those must hold or refuse. Each HELD probe is a case where loosening the gate could
+produce a wrong answer (a stored number bound by a label digit, a reversed proportion, a
+dropped filter, statin non-users read as users, an ambiguous number or list); it must stay
+held or refused.
 
 Three frames: the committed synthetic cohort, the second review's generated frame
 (adversarial_probes.own_frame) and a small seeded frame with a Creatinine column holding 2.2
@@ -91,7 +93,7 @@ S = c(STATIN)
 OWN_STATIN = c("statin")
 READMITTED = c("readmitted") == "yes"
 
-ANSWERED: tuple[Probe, ...] = (
+ANSWERABLE: tuple[Probe, ...] = (
     # Grouped comparison computes the asked statistic (median, maximum) per group.
     Probe("coh", "compare median ldl by sex", by("sex", measure("ldl", "median")), group_by="sex"),
     Probe(
@@ -219,6 +221,59 @@ ANSWERED: tuple[Probe, ...] = (
     # A label digit binds the label, never a stored number of another column.
     Probe("creat", "how many patients with type 2 diabetes?", count(c("diabetes_type") == "Type 2")),
 )
+
+# Answerable questions that hold again since #93 was narrowed to changes that cannot invert or
+# widen a meaning. Each needs an inference the gate no longer makes: a negation read as "every
+# other value" or an inverted comparison, a 0/1 column read as yes/no with no codebook, an
+# absence label ("none") read as "not on any", an "or" list, the group of a comparison read from
+# the values it names, or a lone "in each site" grouping. Their true values stay above; each must
+# hold or refuse, never run with another value.
+NARROWED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("coh", "compare median ldl between the north and the west"),
+        ("coh", "compare ldl between women and men"),
+        ("coh", "compare ldl between the north and the south"),
+        ("coh", "how many patients in each site?"),
+        ("coh", "how many diabetic patients?"),
+        ("coh", "how many diabetics are women?"),
+        ("coh", "what is the average ldl of diabetics?"),
+        ("coh", "what proportion of women are diabetic?"),
+        ("coh", "how many patients without diabetes?"),
+        ("coh", "what is the average ldl in non-diabetic patients?"),
+        ("coh", "how many patients had the outcome?"),
+        ("coh", "how many patients with no event?"),
+        ("coh", "how many events in women?"),
+        ("coh", "average age of statin non-users"),
+        ("coh", "how many statin non-users are women?"),
+        ("coh", "how many non users of statin?"),
+        ("coh", "how many patients not on placebo?"),
+        ("coh", "how many patients excluding women?"),
+        ("coh", "how many patients other than men?"),
+        ("coh", "how many patients outside the west?"),
+        ("coh", "how many patients except those in the west?"),
+        ("coh", "how many patients without a normal dexa result?"),
+        ("coh", "how many patients in the north or west?"),
+        ("coh", "how many women in the north or west on drug?"),
+        ("coh", "how many patients on drug or placebo?"),
+        ("coh", "how many patients not over 65?"),
+        ("coh", "how many patients in the north on statin not over 65?"),
+        ("coh", "Are women more likely than men to have diabetes?"),
+        ("coh", "Are patients on placebo more likely to have the outcome?"),
+        ("coh", "are diabetics more likely to use statins?"),
+        ("coh", "are statin users more likely to be diabetic?"),
+        ("own", "how many patients not on placebo?"),
+        ("own", "how many diabetic patients?"),
+        ("own", "how many patients without diabetes?"),
+        ("own", "how many patients on statins?"),
+        ("own", "how many patients not on a statin?"),
+    }
+)
+
+ANSWERED: tuple[Probe, ...] = tuple(probe for probe in ANSWERABLE if (probe.dataset, probe.query) not in NARROWED)
+HELD_SINCE_NARROWING: tuple[Probe, ...] = tuple(
+    probe for probe in ANSWERABLE if (probe.dataset, probe.query) in NARROWED
+)
+
 
 HELD: tuple[Probe, ...] = (
     # "type 2 diabetes" must never become Creatinine = 2.2.

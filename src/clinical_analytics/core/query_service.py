@@ -24,6 +24,7 @@ from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import (
     coded_grouping_reason,
     explain_hold,
+    indicator_statistic_reason,
     measurement_grouping_reason,
     unjustified_elements,
     unjustified_reason,
@@ -427,6 +428,9 @@ class QueryService:
         )
         if coded:
             return coded
+        indicator = indicator_statistic_reason(question, plan, values_for)
+        if indicator:
+            return indicator
         # Value presence: a limit on a value the column does not hold would report "0 patients".
         return absent_value_reason(plan, columns, values_for)
 

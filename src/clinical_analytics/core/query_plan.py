@@ -30,7 +30,7 @@ STATISTIC_WORDS: dict[str, Statistic] = {
 
 # Cohort ops the semantic layer can execute. Anything else must refuse, not be skipped.
 SUPPORTED_COHORT_OPS: frozenset[str] = frozenset(
-    {"eq", "ne", "in", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"}
+    {"eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"}
 )
 
 
@@ -69,10 +69,9 @@ class CohortStep:
     which is the SQL equivalent of a CTE cutoff.
     """
 
-    op: Literal["eq", "ne", "in", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"]
+    op: Literal["eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"]
     column: str
-    # "in": a list of stored values (any of them); "ne": the one value excluded.
-    value: str | int | float | list[str | int | float] | None = None
+    value: str | int | float | None = None
     quantile: float | None = None
 
 

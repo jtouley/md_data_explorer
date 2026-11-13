@@ -1,9 +1,9 @@
-"""Review round two of the over-holding fix: the gate may never let a wrong plan run.
+"""Review rounds of the over-holding fix: the gate may never let a wrong plan run.
 
-Each test uses the reviewer's exact question. When the words leave the meaning open
-(a negation before two items, a negation before a comparison it may not reach, a reversed
-range, an "or" list after a share verb or "more likely"), the plan holds: a narrower answer
-rate is acceptable, a wrong answer is not.
+Each test uses the reviewer's exact question. The gate does not infer meaning: a negation is
+never read as "every other value" or as an inverted comparison, an "or" list is never bound,
+a reversed range binds nothing. The plan holds: a narrower answer rate is acceptable, a wrong
+answer is not.
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from clinical_analytics.core import cohort_constraints, word_accounting
+from clinical_analytics.core import word_accounting
 from clinical_analytics.core.cohort_constraints import peel_cohort
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
 from clinical_analytics.core.query_service import QueryService
-from clinical_analytics.core.question_vocabulary import INVERSE_OP, negation_scope
+from clinical_analytics.core.question_vocabulary import negation_scope
 from clinical_analytics.core.word_accounting import (
     coded_grouping_reason,
     measurement_grouping_reason,
@@ -61,20 +61,19 @@ def _count_plan(*steps: CohortStep) -> QueryPlan:
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
+        pytest.param("how many patients without diabetes and hypertension", [], id="without_x_and_y"),
+        pytest.param("how many patients excluding women on placebo", [], id="excluding"),
+        pytest.param("how many patients not on placebo with diabetes?", [], id="not_x_with_y"),
+        pytest.param("how many patients not on placebo?", [], id="not_x"),
+        # "placebo" comes before the negation and is bound as asked; "outcome" is not bound.
         pytest.param(
-            "how many patients without diabetes and hypertension",
-            [CohortStep("eq", "diabetes", 0)],
-            id="without_x_and_y",
-        ),
-        pytest.param("how many patients excluding women on placebo", [CohortStep("ne", "sex", "F")], id="excluding"),
-        pytest.param(
-            "how many patients not on placebo with diabetes?",
-            [CohortStep("ne", "treatment", "placebo")],
-            id="not_x_with_y",
+            "how many patients on placebo without outcome?",
+            [CohortStep("eq", "treatment", "placebo")],
+            id="negation_after_value",
         ),
     ],
 )
-def test_peelCohort_negationBeforeTwoItems_leavesTheSecondUnbound(query: str, expected: list[CohortStep]) -> None:
+def test_peelCohort_negatedQuestion_bindsNothingTheNegationMayReach(query: str, expected: list[CohortStep]) -> None:
     # Arrange: query above
 
     # Act
@@ -140,8 +139,7 @@ def test_peelCohort_negationBeforeComparisonPhrase_neverBindsTheAskedDirection()
     steps = _steps(query)
 
     # Assert
-    assert CohortStep("gt", "ldl", 160.0) not in steps
-    assert all(step.column != "ldl" or step.op == "le" for step in steps)
+    assert all(step.column != "ldl" for step in steps)
 
 
 @pytest.mark.parametrize(
@@ -319,36 +317,32 @@ def test_unusedWords_reversedRange_holdsEveryPlan(plan: QueryPlan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Finding 7 (and 10): one negation scope and one inverse table
+# Finding 7 (and 10): a negated comparison is never inverted, in the peel or the gate
 # ---------------------------------------------------------------------------
 
 
-def test_unusedWords_excludePatientsOver65_peeledPlanIsUsedAndJustified() -> None:
+@pytest.mark.parametrize(
+    ("query", "inverted"),
+    [
+        pytest.param("how many patients exclude patients over 65", CohortStep("le", "age", 65.0), id="exclude"),
+        pytest.param("how many patients not over 65", CohortStep("le", "age", 65.0), id="not_over"),
+        pytest.param("how many patients not under 40", CohortStep("ge", "age", 40.0), id="not_under"),
+        pytest.param("how many patients excluding those over 65", CohortStep("le", "age", 65.0), id="excluding"),
+    ],
+)
+def test_negatedComparison_peelAndGate_neverInvertIt(query: str, inverted: CohortStep) -> None:
     # Arrange
-    query = "how many patients exclude patients over 65"
+    plan = _count_plan(inverted)
 
     # Act
     steps = _steps(query)
-    plan = _count_plan(*steps)
     unused = unused_words(query, plan, _COLUMNS, _values)
     unasked = unjustified_elements(query, plan, _COLUMNS, _values)
 
     # Assert
-    assert steps == [CohortStep("le", "age", 65.0)]
-    assert unused == []
-    assert unasked == []
-
-
-def test_inverseOp_peelAndGate_shareTheVocabularyTable() -> None:
-    # Arrange
-    modules = (cohort_constraints, word_accounting)
-
-    # Act
-    private_tables = [module.__name__ for module in modules if hasattr(module, "_INVERSE_OP")]
-
-    # Assert
-    assert private_tables == []
-    assert {INVERSE_OP[INVERSE_OP[op]] for op in INVERSE_OP} == set(INVERSE_OP)
+    assert steps == []
+    assert str(int(inverted.value)) in unused  # type: ignore[arg-type]
+    assert unasked != []
 
 
 @pytest.mark.parametrize(
@@ -358,9 +352,9 @@ def test_inverseOp_peelAndGate_shareTheVocabularyTable() -> None:
         pytest.param("how many patients exclude patients over 65", "over", "negated", id="subject_between"),
         pytest.param("how many patients without diabetes and hypertension", "hypertension", "uncertain", id="and"),
         pytest.param("how many patients excluding women on placebo", "placebo", "uncertain", id="phrase"),
-        pytest.param("how many non-diabetic women", "women", "clear", id="non_prefix_is_tight"),
+        pytest.param("how many non-diabetic women", "women", "uncertain", id="non_prefix_may_reach_on"),
         pytest.param("how many non smokers and diabetics", "diabetics", "uncertain", id="non_then_and"),
-        pytest.param("how many statin non-users on placebo", "placebo", "clear", id="postfix_non"),
+        pytest.param("how many statin non-users on placebo", "placebo", "negated", id="postfix_non"),
         pytest.param("how many patients over 65", "over", "clear", id="no_negation"),
         pytest.param("", "", "clear", id="empty"),
     ],

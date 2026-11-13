@@ -31,7 +31,6 @@ from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, grou
 # and the pre-execution gap check.
 from clinical_analytics.core.question_vocabulary import (
     FUNCTION_WORDS,
-    INVERSE_OP,
     LINK_WORDS,
     NEGATION_CUES,
     NO_LIMIT_WORDS,
@@ -39,7 +38,6 @@ from clinical_analytics.core.question_vocabulary import (
     SUBJECT_WORDS,
     NegationScope,
     negation_scope,
-    postfix_non,
     range_ends,
     range_in_order,
 )
@@ -158,12 +156,6 @@ def comparison_scope(tokens: list[str], at: int, direction_at: int) -> NegationS
     """Negation scope of the comparison of the number at ``at`` with its direction word: read
     from where the comparison starts ("over 65", "65 or older"), by the shared rule."""
     return negation_scope(tokens[: min(at, direction_at)])
-
-
-def _last_negation(tokens: list[str], before: int) -> int | None:
-    """Position of the negation word that governs the word at ``before``, when the gate can use it."""
-    governing = next((at for at in range(before - 1, -1, -1) if tokens[at] in NEGATION_CUES), None)
-    return governing if governing is not None and tokens[governing] in NEGATION_WORDS else None
 
 
 def shown(word: str) -> str:
@@ -311,7 +303,9 @@ def _owner_before(
             return age, True
         named = _column_for_word(word, columns, alias_index)
         if named is not None:
-            return named, True
+            # "diabetics over 65": a yes/no or text column cannot own a cutoff. The words name
+            # no measure for the number, so it has no owner and the plan holds.
+            return (named if named in numeric_columns else None), True
         break
     before = tokens[:number_at]
     measures = {
@@ -384,7 +378,9 @@ def explain_hold(
     """
     tokens = tokenize(question)
     unused = _unused_at(tokens, plan, columns, values_for, alias_index, context)
-    if not unused:
+    words = [shown(tokens[at]) for at in unused if shown(tokens[at])]
+    if not words:
+        # Only a range marker is left, which unused_words does not report either: no hold.
         return None
     namer = _ColumnNamer(
         [*columns, *sorted(_referenced_columns(plan, context) - set(columns))], values_for, alias_index
@@ -393,7 +389,6 @@ def explain_hold(
         sentence = explain(tokens, unused, plan, columns, values_for, alias_index, namer)
         if sentence:
             return sentence
-    words = [shown(tokens[at]) for at in unused if shown(tokens[at])]
     unknown = [
         tokens[at]
         for at in unused
@@ -611,6 +606,29 @@ def coded_grouping_reason(
     )
 
 
+def indicator_statistic_reason(question: str, plan: Any, values_for: Callable[[str], list[Any]]) -> str | None:
+    """One sentence when the question asks a statistic of a 0/1 column with no codebook, or None.
+
+    "average outcome by site" on a column holding only 0 and 1 reports the share coded 1. That
+    is the asked rate only if 1 means yes, which nothing in the data says, so the plan is held
+    for the user's confirmation. A header codebook ("outcome 0: No 1: Yes") settles it.
+    """
+    metric = getattr(plan, "metric", None)
+    if not metric or not any(word in STATISTIC_WORDS for word in tokenize(question)):
+        return None
+    if parse_column_name(str(metric)).value_mapping:
+        return None
+    present = {value for value in values_for(str(metric)) if value is not None}
+    numbers = {float(value) for value in present if isinstance(value, int | float) and not isinstance(value, bool)}
+    if len(numbers) != len(present) or numbers != {0.0, 1.0}:
+        return None
+    name = _short(str(metric))
+    return (
+        f"{name} holds only 0 and 1, and nothing in the data says which one means yes; its average is the "
+        f"share coded 1. Confirm the plan if 1 means yes, or ask 'how many patients have {name} 1'."
+    )
+
+
 def _is_grouping(column: str, values_for: Callable[[str], list[Any]]) -> bool:
     """A column with a few stored labels or codes (sex, site, treatment), not an identifier."""
     from clinical_analytics.core.nl_query_config import MAX_NUMERIC_GROUP_LEVELS
@@ -698,9 +716,8 @@ def _unused_at(
             values = spec.value if isinstance(spec.value, list) else [spec.value]
             bound_words.setdefault(spec.column, set()).update(_value_words(spec.column, values))
     for step in steps:
-        if step.op in {"eq", "ne", "in"}:
-            values = step.value if isinstance(step.value, list) else [step.value]
-            bound_words.setdefault(step.column, set()).update(_value_words(step.column, values))
+        if step.op == "eq":
+            bound_words.setdefault(step.column, set()).update(_value_words(step.column, [step.value]))
     for column_attr, value_attr in (("proportion_column", "proportion_value"), ("rate_column", "rate_value")):
         share_column = getattr(plan, column_attr, None)
         if share_column:
@@ -749,16 +766,10 @@ def _unused_at(
             continue
         owner = number_owner(tokens, at, columns, numeric_columns, alias_index, ranges)
         op = DIRECTION_OPS[tokens[direction_at]]
-        # "not over 65", "exclude patients over 65": the negation flips the comparison it
-        # governs. One it may or may not reach ("excluding those with ldl over 160") leaves the
-        # number unused, whatever the plan holds.
-        scope = comparison_scope(tokens, at, direction_at)
-        if scope == "uncertain":
+        # "not over 65", "excluding those with ldl over 160": a comparison a negation may
+        # reach is never read, as asked or inverted. The number stays unused, so the plan holds.
+        if comparison_scope(tokens, at, direction_at) != "clear":
             continue
-        negated = scope == "negated"
-        negation_at = _last_negation(tokens, min(at, direction_at)) if negated else None
-        if negated:
-            op = INVERSE_OP[op]
         # "median ldl over 70": when the only mention of the summarised measure is also the
         # number's owner, the cutoff could equally mean age. Ambiguous: the number stays unused.
         # Not when the words say age ("older than 50", "aged 40 to 60").
@@ -772,8 +783,6 @@ def _unused_at(
         if owner is not None and not summarised and _has_comparison(filters, steps, owner, op, float(word)):
             used[at] = True
             used[direction_at] = True
-            if negated and negation_at is not None:
-                used[negation_at] = True
             # "over 100 kg", "above 160 mg/dl", "over 365 days": the unit is part of the comparison.
             units = unit_words(owner) | (_AGE_UNIT_WORDS if owner == age_column(columns) else set())
             after = max(at, direction_at) + 1
@@ -828,7 +837,7 @@ def _unused_at(
 
 def _governed_word(tokens: list[str], before: int) -> str | None:
     """The first word after the last negation before ``before`` that carries a limit."""
-    cues = [at for at in range(before) if tokens[at] in NEGATION_CUES and not postfix_non(tokens[:before], at)]
+    cues = [at for at in range(before) if tokens[at] in NEGATION_CUES]
     if not cues:
         return None
     return next((word for word in tokens[cues[-1] + 1 : before] if word not in NO_LIMIT_WORDS), None)
@@ -904,18 +913,14 @@ def _logic_used(
     word = tokens[at]
     intent = str(getattr(plan, "intent", "") or "")
     if word in NEGATION_WORDS:
-        postfix = at >= 1 and tokens[at - 1] not in _INTENT_VOCABULARY and tokens[at - 1] not in NO_LIMIT_WORDS
-        if word == "non" and at + 1 < len(tokens) and tokens[at + 1] in SUBJECT_WORDS and postfix:
-            # "statin non-users": the negation excludes the word before it, never the words after.
-            targets = namer.neighbour(tokens, at, -1, reach=1)
-        else:
-            targets = namer.neighbour(tokens, at, 1)
+        targets = namer.neighbour(tokens, at, 1)
         return any(_negated_in_plan(plan, filters, steps, column, values_for) for column in targets)
     if word in OR_WORDS:
         targets = namer.neighbour(tokens, at, -1) | namer.neighbour(tokens, at, 1)
-        listed = [(spec.column, spec.value) for spec in filters if spec.operator == "IN"]
-        listed += [(step.column, step.value) for step in steps if step.op == "in"]
-        return any(isinstance(value, list) and len(value) >= 2 and column in targets for column, value in listed)
+        return any(
+            spec.operator == "IN" and isinstance(spec.value, list) and len(spec.value) >= 2 and spec.column in targets
+            for spec in filters
+        )
     if word in BETWEEN_WORDS:
         after = namer.neighbour(tokens, at, 1)
         if intent == "COMPARE_GROUPS" or grouped_statistic(plan) is not None:
@@ -990,8 +995,6 @@ def _negated_in_plan(
             return True
         if spec.operator == "==" and _is_no_value(column, spec.value, values_for):
             return True
-    if any(step.op == "ne" and step.column == column for step in steps):
-        return True
     if any(
         step.op == "eq" and step.column == column and _is_no_value(column, step.value, values_for) for step in steps
     ):
@@ -1082,13 +1085,9 @@ def _same_number(value: Any, number: float) -> bool:
 
 
 def _is_no_value(column: str, value: Any, values_for: Callable[[str], list[Any]]) -> bool:
-    """The value is the column's "No" code, or the stored value meaning none ("none")."""
-    from clinical_analytics.core.cohort_constraints import absence_value, yes_no_values
+    from clinical_analytics.core.cohort_constraints import yes_no_values
 
-    values = values_for(column)
-    _yes, no = yes_no_values(column, values)
-    if no is None:
-        no = absence_value(values)
+    _yes, no = yes_no_values(column, values_for(column))
     return no is not None and str(no) == str(value)
 
 
@@ -1228,7 +1227,7 @@ class _Justifier:
         """The question names this stored value: every word of its label, or its code label."""
         if value is None:
             return False
-        if isinstance(value, bool) or self._is_polarity(column, value) or _is_no_value(column, value, self.values_for):
+        if isinstance(value, bool) or self._is_polarity(column, value):
             # Yes/no columns are bound by naming the column ("diabetics", "statin users").
             return self.column_named(column)
         label = str(value).strip().lower()
@@ -1243,6 +1242,14 @@ class _Justifier:
             return True
         return self._words_named([word for word in name_tokens(label) if word not in LOGIC_WORDS])
 
+    def _negated_at_value(self, column: str, value: Any) -> bool:
+        """Every word naming this value stands right after a negation, by the shared scope rule."""
+        words = _value_words(column, [value])
+        named = [
+            at for at, token in enumerate(self.tokens) if token not in FUNCTION_WORDS and _names_value(token, words)
+        ]
+        return bool(named) and all(negation_scope(self.tokens[:at]) == "negated" for at in named)
+
     def equality_justified(self, column: str, values: list[Any]) -> bool:
         if not values or not all(self.value_named(column, value) for value in values):
             return False
@@ -1254,8 +1261,12 @@ class _Justifier:
         if spec.operator in {"==", "IN"}:
             return self.equality_justified(spec.column, values)
         if spec.operator in {"!=", "NOT_IN"}:
-            negated = any(token in NEGATION_WORDS for token in self.tokens)
-            return negated and self.equality_justified(spec.column, values)
+            # Each excluded value must be named right after its own negation ("not on placebo").
+            # A negation elsewhere in the question ("on placebo without outcome") never justifies
+            # excluding a value the question asks for.
+            return self.equality_justified(spec.column, values) and all(
+                self._negated_at_value(spec.column, value) for value in values
+            )
         if spec.operator in _FILTER_OP:
             return self.comparison_justified(spec.column, _FILTER_OP[spec.operator], spec.value)
         return False
@@ -1263,20 +1274,14 @@ class _Justifier:
     def step_justified(self, step: Any) -> bool:
         if step.op == "eq":
             return self.equality_justified(step.column, [step.value])
-        if step.op == "in":
-            return self.equality_justified(step.column, step.value if isinstance(step.value, list) else [step.value])
-        if step.op == "ne":
-            if _is_no_value(step.column, step.value, self.values_for):
-                # "on statins" is everyone but "none": naming the column asks for it.
-                return self.column_named(step.column)
-            negated = any(token in NEGATION_WORDS for token in self.tokens)
-            return negated and self.equality_justified(step.column, [step.value])
         if step.op in {"gt", "lt", "ge", "le"}:
             return self.comparison_justified(step.column, step.op, step.value)
         if step.op in {"gt_median", "ge_percent_rank"}:
             cutoff = any(token in CUTOFF_WORDS or token in {"median", "older", "higher"} for token in self.tokens)
             return cutoff and self.column_named(step.column)
-        return self.column_named(step.column)
+        if step.op == "not_null":
+            return self.column_named(step.column)
+        return False  # an op the peel never builds ("ne", "in") is never asked for
 
     def comparison_justified(self, column: str, op: str, value: Any) -> bool:
         """The number is in the question, with a comparison word of the same direction, on this column."""
@@ -1292,12 +1297,9 @@ class _Justifier:
             for near in (at - 1, at + 1):
                 if not (0 <= near < len(self.tokens) and self.tokens[near] in DIRECTION_OPS):
                     continue
-                asked = DIRECTION_OPS[self.tokens[near]]
-                scope = comparison_scope(self.tokens, at, near)
-                if scope == "negated":
-                    ops.add(INVERSE_OP[asked])
-                elif scope == "clear":
-                    ops.add(asked)
+                # A comparison a negation may reach justifies nothing, as asked or inverted.
+                if comparison_scope(self.tokens, at, near) == "clear":
+                    ops.add(DIRECTION_OPS[self.tokens[near]])
             plain = negation_scope(self.tokens[:at]) == "clear"
             if not (op in ops or (between and plain and op in {"ge", "le", "gt", "lt"})):
                 continue

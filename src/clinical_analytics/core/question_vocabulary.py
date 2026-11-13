@@ -9,8 +9,9 @@ and fail another, or worse, a limit could be dropped in one place and never noti
 
 Adding a word here makes every check accept it in any question, so the lists stay small and
 reviewed. A word that can narrow the patients (a negation, "or", a direction such as "over",
-"only", "currently") never belongs here; tests/core/test_question_vocabulary.py enforces that
-for the logic words the gate knows about.
+"only", "currently") never belongs here;
+tests/core/test_over_holding.py::test_noLimitWords_vocabulary_sharesNoWordWithLogicOrNegation
+enforces that for the logic and negation words the gate knows about.
 """
 
 from __future__ import annotations
@@ -53,75 +54,30 @@ NEGATION_WORDS: frozenset[str] = frozenset(
 # Negation scope: one rule for the cohort peel, the word-accounting gate and the justifier.
 # ---------------------------------------------------------------------------
 
-# Every word that can start an exclusion. The gate only accepts NEGATION_WORDS as used; the
-# others ("drop", "remove") still put the words after them in doubt, so nothing after them
-# is bound as asked. "other than" is rewritten to __neg__ before tokenising.
+# Every word that can start an exclusion. No check reads a negation as an inverted comparison
+# or as "every value but this one": a value or number a negation may reach is left unbound,
+# so the plan holds. "other than" is rewritten to __neg__ before tokenising.
 NEGATION_CUES: frozenset[str] = NEGATION_WORDS | {"__neg__", "remove", "removing", "drop", "omit", "rid"}
-
-# "<value> non-users": the "non" excludes the word before it, never the words after it.
-NON_USER_NOUNS: frozenset[str] = frozenset({"user", "users", "taker", "takers", "patient", "patients"})
-
-# Words that may stand before "non" without being what it excludes ("how many non-users").
-_LEAD_WORDS: frozenset[str] = frozenset(
-    {
-        "how", "many", "number", "count", "total", "proportion", "share", "percentage", "percent", "fraction",
-        "average", "avg", "mean", "median", "minimum", "maximum", "min", "max", "std",
-    }
-)  # fmt: skip
-
-# Words that join two items, so a negation before the first may or may not reach the second.
-_COORDINATORS: frozenset[str] = frozenset({"and", "or", "nor"})
-
-# The inverse of each comparison: "not over 65" is "65 or under".
-INVERSE_OP: dict[str, str] = {"gt": "le", "lt": "ge", "ge": "lt", "le": "gt"}
 
 NegationScope: TypeAlias = Literal["negated", "clear", "uncertain"]
 
 
-def postfix_non(words: Sequence[str], at: int) -> bool:
-    """True when ``words[at]`` is the "non" of "<value> non-users", which excludes the word before it."""
-    return (
-        words[at] == "non"
-        and at >= 1
-        and at + 1 < len(words)
-        and words[at + 1] in NON_USER_NOUNS
-        and words[at - 1] not in NO_LIMIT_WORDS
-        and words[at - 1] not in _LEAD_WORDS
-        and words[at - 1] not in NEGATION_CUES
-    )
-
-
 def negation_scope(before: Sequence[str]) -> NegationScope:
-    """Whether a negation governs the word that follows ``before`` (the question's words up to it).
+    """Whether a negation reaches the word that follows ``before`` (the question's words up to it).
 
+    - "clear": no negation word comes before it.
     - "negated": the last negation stands right before it, with only words that carry no limit
-      in between ("not on placebo", "excluding those over 65").
-    - "clear": no negation reaches it.
+      in between ("without diabetes").
     - "uncertain": a negation comes earlier, with other limits in between ("without diabetes
-      and hypertension", "excluding women on placebo", "not on placebo with diabetes"). The
-      negation may cover the whole phrase or only its first item; the words do not say, so
-      every caller leaves the word unbound and the plan holds.
-
-    "non" written onto a word ("non-diabetic women") reaches only that word, unless the next
-    word joins another item to it ("non-smokers and drinkers"): then the rest is uncertain.
+      and hypertension", "excluding women on placebo"). The words do not say whether the
+      negation covers it, so no caller binds it and the plan holds.
     """
-    cues = [at for at, word in enumerate(before) if word in NEGATION_CUES and not postfix_non(before, at)]
+    cues = [at for at, word in enumerate(before) if word in NEGATION_CUES]
     if not cues:
         return "clear"
-    last = cues[-1]
-    between = list(before[last + 1 :])
-    if all(word in NO_LIMIT_WORDS for word in between):
+    if all(word in NO_LIMIT_WORDS for word in before[cues[-1] + 1 :]):
         return "negated"
-    if before[last] == "non" and len(cues) == 1 and between[0] not in NO_LIMIT_WORDS:
-        rest = between[1:]
-        if not rest or rest[0] not in _COORDINATORS:
-            return "clear"
     return "uncertain"
-
-
-def postfix_negated(after: Sequence[str]) -> bool:
-    """True when the word starting ``after`` is followed by "non-users" ("statin non-users")."""
-    return len(after) >= 3 and after[1] == "non" and after[2] in NON_USER_NOUNS
 
 
 # ---------------------------------------------------------------------------

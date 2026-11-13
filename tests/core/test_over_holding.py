@@ -1,6 +1,6 @@
-"""Over-holding fixes: each cause the gate held answerable questions for, and the dangerous
-neighbours of each that must still hold (label digit vs stored number, reversed rate,
-dropped filter, statin non-users)."""
+"""Over-holding fixes that cannot invert or widen a meaning, and the dangerous neighbours that
+must still hold (label digit vs stored number, reversed rate, dropped filter, statin non-users,
+negations, "or" lists, 0/1 columns and absence labels, which the gate never interprets)."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import polars as pl
 import polars.testing
 import pytest
 
-from clinical_analytics.core.cohort_constraints import absence_value, peel_cohort, yes_no_values
-from clinical_analytics.core.query_plan import CohortStep, QueryPlan, grouped_statistic
+from clinical_analytics.core.cohort_constraints import peel_cohort, yes_no_values
+from clinical_analytics.core.query_plan import CohortStep, CohortStepError, QueryPlan, grouped_statistic
 from clinical_analytics.core.question_vocabulary import NEGATION_WORDS, NO_LIMIT_WORDS
 from clinical_analytics.core.word_accounting import (
     LOGIC_WORDS,
@@ -108,12 +108,12 @@ def test_unusedWords_fillerOnlyQuestion_everyFillerWordUsed(question: str) -> No
 @pytest.mark.parametrize(
     ("column", "values", "expected"),
     [
-        pytest.param("diabetes", [0, 1], (1, 0), id="indicator"),
-        pytest.param("diabetes", [0.0, 1.0, None], (1.0, 0.0), id="indicator_float_with_null"),
+        pytest.param("diabetes", [0, 1], (None, None), id="indicator_without_codebook_is_not_yes_no"),
+        pytest.param("diabetes", [0.0, 1.0, None], (None, None), id="indicator_float_with_null"),
         pytest.param("grade", [0, 1, 2], (None, None), id="three_codes_not_indicator"),
         pytest.param("diabetes", [1], (None, None), id="one_code_not_indicator"),
         pytest.param("diabetes", [], (None, None), id="empty"),
-        pytest.param("flag 0: Yes 1: No", [0, 1], (0, 1), id="codebook_wins_over_indicator"),
+        pytest.param("flag 0: Yes 1: No", [0, 1], (0, 1), id="codebook_says_which"),
         pytest.param("smoker", ["yes", "no"], ("yes", "no"), id="text_yes_no"),
     ],
 )
@@ -125,27 +125,6 @@ def test_yesNoValues_storedValues_readsTheCoding(column: str, values: list[Any],
 
     # Assert
     assert coding == expected
-
-
-@pytest.mark.parametrize(
-    ("values", "expected"),
-    [
-        pytest.param(["atorvastatin", "simvastatin", "none"], "none", id="none_label"),
-        pytest.param(["Type 1", "Type 2", "None"], "None", id="capitalised"),
-        pytest.param(["yes", "none"], None, id="only_one_other_value"),
-        pytest.param(["a", "b", "c"], None, id="no_absence_label"),
-        pytest.param(["none", "no", "x", "y"], None, id="two_absence_labels"),
-        pytest.param([], None, id="empty"),
-    ],
-)
-def test_absenceValue_textColumn_findsTheNoneLabel(values: list[Any], expected: Any) -> None:
-    # Arrange: values above
-
-    # Act
-    absent = absence_value(values)
-
-    # Assert
-    assert absent == expected
 
 
 # ---------------------------------------------------------------------------
@@ -179,26 +158,19 @@ def test_peelCohort_labelDigit_neverBindsAStoredNumber(query: str, expected: lis
 @pytest.mark.parametrize(
     ("query", "expected"),
     [
-        pytest.param("average age of statin non-users", [CohortStep("eq", STATIN, 2)], id="postfix_non_users"),
+        pytest.param("average age of statin non-users", [], id="postfix_non_users_unbound"),
         pytest.param("average age of statin users", [CohortStep("eq", STATIN, 1)], id="users"),
-        pytest.param("how many non users of statin?", [CohortStep("eq", STATIN, 2)], id="prefix_non_users"),
-        pytest.param(
-            "how many statin non-users are women?",
-            [CohortStep("eq", "sex", "F"), CohortStep("eq", STATIN, 2)],
-            id="non_users_does_not_negate_women",
-        ),
-        pytest.param("how many patients not on placebo?", [CohortStep("ne", "treatment", "placebo")], id="not_value"),
-        pytest.param("how many patients excluding women?", [CohortStep("ne", "sex", "F")], id="excluding"),
-        pytest.param("how many patients outside the west?", [CohortStep("ne", "site", "West")], id="outside"),
-        pytest.param(
-            "how many patients not on placebo with diabetes?",
-            [CohortStep("ne", "treatment", "placebo")],
-            id="negation_may_reach_the_next_item_unbound",
-        ),
-        pytest.param("how many patients with no diabetes?", [CohortStep("eq", "diabetes", 0)], id="no_indicator"),
+        pytest.param("how many non users of statin?", [CohortStep("eq", STATIN, 2)], id="stated_no_code"),
+        pytest.param("how many statin non-users are women?", [], id="non_users_and_women_unbound"),
+        pytest.param("how many patients not on placebo?", [], id="not_value"),
+        pytest.param("how many patients excluding women?", [], id="excluding"),
+        pytest.param("how many patients outside the west?", [], id="outside"),
+        pytest.param("how many patients not on placebo with diabetes?", [], id="negation_before_two_items"),
+        pytest.param("how many patients with no diabetes?", [], id="no_indicator_without_codebook"),
+        pytest.param("how many drug a non-users?", [], id="multi_word_value_non_users"),
     ],
 )
-def test_peelCohort_negation_excludesOnlyTheWordItGoverns(query: str, expected: list[CohortStep]) -> None:
+def test_peelCohort_negation_bindsOnlyAStatedNoCode(query: str, expected: list[CohortStep]) -> None:
     # Arrange: query above
 
     # Act
@@ -209,25 +181,21 @@ def test_peelCohort_negation_excludesOnlyTheWordItGoverns(query: str, expected: 
 
 
 @pytest.mark.parametrize(
-    ("query", "expected"),
+    "query",
     [
-        pytest.param(
-            "how many patients in the north or west?",
-            [CohortStep("in", "site", ["North", "West"])],
-            id="or_list",
-        ),
-        pytest.param("how many patients in the north and south?", [], id="and_is_not_a_list"),
-        pytest.param("how many patients not in the north or west?", [], id="negated_list_unbound"),
+        pytest.param("how many patients in the north or west?", id="or_list"),
+        pytest.param("how many patients in the north and south?", id="and_list"),
+        pytest.param("how many patients not in the north or west?", id="negated_list"),
     ],
 )
-def test_peelCohort_valuesJoined_bindsOnlyAnOrList(query: str, expected: list[CohortStep]) -> None:
+def test_peelCohort_valuesJoined_neverBindsAList(query: str) -> None:
     # Arrange: query above
 
     # Act
     steps = _steps(query)
 
     # Assert
-    assert steps == expected
+    assert steps == []
 
 
 @pytest.mark.parametrize(
@@ -243,7 +211,7 @@ def test_peelCohort_valuesJoined_bindsOnlyAnOrList(query: str, expected: list[Co
             [CohortStep("ge", "age", 40.0), CohortStep("le", "age", 60.0)],
             id="aged_to",
         ),
-        pytest.param("how many patients not over 65?", [CohortStep("le", "age", 65.0)], id="negated_over"),
+        pytest.param("how many patients not over 65?", [], id="negated_over_never_inverted"),
         pytest.param("how many patients over 100 kg?", [CohortStep("gt", "Weight (kg)", 100.0)], id="unit_names"),
         pytest.param("how many patients with ldl over 100 kg?", [], id="unit_conflicts_with_name"),
         pytest.param(
@@ -267,9 +235,10 @@ def test_peelCohort_comparison_bindsTheNamedRange(query: str, expected: list[Coh
     ("query", "rate", "group"),
     [
         pytest.param("are men more likely to use statins than women?", STATIN, "sex", id="sex_before"),
-        pytest.param("are diabetics more likely to use statins?", STATIN, "diabetes", id="indicator_before"),
-        pytest.param("are statin users more likely to be diabetic?", "diabetes", STATIN, id="reversed_wording"),
-        pytest.param("are patients on placebo more likely to be diabetic?", "diabetes", "treatment", id="value_group"),
+        # A 0/1 column with no codebook is not yes/no: it is neither the groups nor the rate.
+        pytest.param("are diabetics more likely to use statins?", STATIN, None, id="indicator_before"),
+        pytest.param("are statin users more likely to be diabetic?", None, None, id="indicator_rate"),
+        pytest.param("are patients on placebo more likely to be diabetic?", None, None, id="value_group"),
         pytest.param("are statin users more likely to be women?", None, None, id="sex_rate_unbound"),
     ],
 )
@@ -284,37 +253,32 @@ def test_peelCohort_moreLikely_groupsBeforeRateAfter(query: str, rate: str | Non
 
 
 @pytest.mark.parametrize(
-    ("query", "group", "steps"),
+    "query",
     [
-        pytest.param("compare ldl between women and men", "sex", [], id="every_value"),
-        pytest.param(
-            "compare ldl between the north and the south",
-            "site",
-            [CohortStep("in", "site", ["North", "South"])],
-            id="some_values_limit",
-        ),
+        pytest.param("compare ldl between women and men", id="every_value"),
+        pytest.param("compare ldl between the north and the south", id="some_values"),
     ],
 )
-def test_peelCohort_compareBetweenValues_groupsByTheirColumn(query: str, group: str, steps: list[CohortStep]) -> None:
+def test_peelCohort_compareBetweenValues_guessesNoGroup(query: str) -> None:
     # Arrange: query above
 
     # Act
     peeled = peel_cohort(query, _COLUMNS, _values)
 
     # Assert
-    assert peeled.locked_group == group
-    assert peeled.steps == steps
+    assert peeled.locked_group is None
+    assert peeled.steps == []
 
 
 @pytest.mark.parametrize(
-    ("query", "expected"),
+    "query",
     [
-        pytest.param("how many patients on statins?", [CohortStep("ne", "statin", "none")], id="on_statins"),
-        pytest.param("how many patients not on a statin?", [CohortStep("eq", "statin", "none")], id="not_on"),
-        pytest.param("which statin was most prescribed?", [], id="asking_about_values"),
+        pytest.param("how many patients on statins?", id="on_statins"),
+        pytest.param("how many patients not on a statin?", id="not_on"),
+        pytest.param("which statin was most prescribed?", id="asking_about_values"),
     ],
 )
-def test_peelCohort_absenceLabel_namesTheSubset(query: str, expected: list[CohortStep]) -> None:
+def test_peelCohort_absenceLabel_neverReadAsYesNo(query: str) -> None:
     # Arrange: a dataset whose statin column records the drug, or "none"
     columns = ["patient_id", "age", "statin"]
 
@@ -322,7 +286,30 @@ def test_peelCohort_absenceLabel_namesTheSubset(query: str, expected: list[Cohor
     steps = peel_cohort(query, columns, _values).steps
 
     # Assert
-    assert steps == expected
+    assert steps == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("how many events per subject?", id="per"),
+        pytest.param("how many patients in each site?", id="each"),
+    ],
+)
+def test_attachCohort_loneEachOrPerGrouping_isNotStructure(query: str) -> None:
+    # Arrange
+    from clinical_analytics.core.cohort_constraints import attach_cohort
+
+    peeled = peel_cohort(
+        query, [*_COLUMNS, "subject_id"], lambda column: ["s1", "s2"] if column == "subject_id" else _values(column)
+    )
+
+    # Act
+    attached = attach_cohort(None, peeled)
+
+    # Assert
+    assert peeled.steps == []
+    assert attached is None
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +335,7 @@ def test_peelCohort_absenceLabel_namesTheSubset(query: str, expected: list[Cohor
         pytest.param(
             "how many patients not on placebo with diabetes?",
             QueryPlan(intent="COUNT", cohort_steps=[CohortStep("ne", "treatment", "placebo")], confidence=0.9),
-            ["diabetes"],
+            ["not", "placebo", "diabetes"],
             id="dropped_filter_held",
         ),
         pytest.param(
@@ -418,26 +405,20 @@ def test_unusedWords_looserGate_stillHoldsTheDangerousPlans(
 
 
 @pytest.mark.parametrize(
-    ("question", "steps", "expected"),
+    ("question", "steps"),
     [
-        pytest.param("how many patients on statins?", [CohortStep("ne", "statin", "none")], [], id="absence_named"),
-        pytest.param(
-            "how many patients on placebo?",
-            [CohortStep("ne", "treatment", "drug")],
-            ["treatment ≠ drug"],
-            id="exclusion_without_negation",
-        ),
+        pytest.param("how many patients on statins?", [CohortStep("ne", "statin", "none")], id="absence_label"),
+        pytest.param("how many patients not on statins?", [CohortStep("ne", "statin", "none")], id="negated_absence"),
+        pytest.param("how many patients not on placebo?", [CohortStep("ne", "treatment", "placebo")], id="negated"),
+        pytest.param("how many patients on placebo?", [CohortStep("ne", "treatment", "drug")], id="no_negation"),
         pytest.param(
             "how many patients in the north or west?",
-            [CohortStep("in", "site", ["North", "South"])],
-            ["site is one of North, South"],
-            id="list_value_not_asked",
+            [CohortStep("in", "site", ["North", "West"])],
+            id="or_list",
         ),
     ],
 )
-def test_unjustifiedElements_newSteps_needTheirWords(
-    question: str, steps: list[CohortStep], expected: list[str]
-) -> None:
+def test_unjustifiedElements_exclusionOrListStep_neverJustified(question: str, steps: list[CohortStep]) -> None:
     # Arrange
     plan = QueryPlan(intent="COUNT", cohort_steps=steps, confidence=0.9)
 
@@ -445,7 +426,7 @@ def test_unjustifiedElements_newSteps_needTheirWords(
     unasked = unjustified_elements(question, plan, _COLUMNS, _values)
 
     # Assert
-    assert unasked == expected
+    assert unasked != []
 
 
 @pytest.mark.parametrize(
@@ -567,33 +548,27 @@ def test_groupedStatistic_plan_isTheStatisticComputedPerGroup(plan: QueryPlan, e
 
 
 @pytest.mark.parametrize(
-    ("step", "expected_ids"),
+    "step",
     [
-        pytest.param(CohortStep("ne", "treatment", "placebo"), ["P1", "P3"], id="ne_drops_nulls"),
-        pytest.param(CohortStep("in", "site", ["North", "West"]), ["P1", "P2", "P4"], id="in"),
-        pytest.param(CohortStep("in", "site", ["North"]), ["P1", "P4"], id="in_one"),
+        pytest.param(CohortStep("ne", "treatment", "placebo"), id="ne"),  # type: ignore[arg-type]
+        pytest.param(CohortStep("in", "site", ["North", "West"]), id="in"),  # type: ignore[arg-type]
     ],
 )
-def test_executeQueryPlan_newCohortSteps_keepExactlyThoseRows(
-    make_semantic_layer, step: CohortStep, expected_ids: list[str]
-) -> None:
+def test_executeQueryPlan_exclusionOrListStep_isRefused(make_semantic_layer, step: CohortStep) -> None:
     # Arrange
     semantic = make_semantic_layer(
         dataset_name="ne_in_steps",
         data={
-            "patient_id": ["P1", "P2", "P3", "P4", "P5"],
-            "treatment": ["drug", "placebo", "drug", None, "placebo"],
-            "site": ["North", "West", "South", "North", "South"],
+            "patient_id": ["P1", "P2", "P3"],
+            "treatment": ["drug", "placebo", "drug"],
+            "site": ["North", "West", "South"],
         },
     )
     plan = QueryPlan(intent="COUNT", cohort_steps=[step], confidence=0.95)
 
-    # Act
-    rows = semantic._filtered_view(plan).execute()
-    frame = rows if isinstance(rows, pl.DataFrame) else pl.from_pandas(rows)  # pandas: ibis returns it
-
-    # Assert
-    assert sorted(frame.get_column("patient_id").to_list()) == expected_ids
+    # Act / Assert
+    with pytest.raises(CohortStepError):
+        semantic._filtered_view(plan)
 
 
 def test_executeQueryPlan_compareMedianByGroup_computesMedians(make_semantic_layer) -> None:
