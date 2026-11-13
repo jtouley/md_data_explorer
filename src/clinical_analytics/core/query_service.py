@@ -8,7 +8,6 @@ Manages query parsing, validation, and execution without Streamlit dependencies.
 
 import dataclasses
 import hashlib
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +29,7 @@ from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
+from clinical_analytics.core.connection_lock import ConnectionLock
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.log_redaction import error_fields
@@ -205,6 +205,18 @@ class QueryResult:
     plan_hash: str | None = None  # Canonical hash of the executable plan; a confirmation must return it
 
 
+@dataclass(frozen=True)
+class _Prepared:
+    """A question after the locked preparation step: what its parse and execution read."""
+
+    normalized_query: str
+    dataset_version: str
+    declaration_key: str | None
+    declarations: Declarations
+    mappings: tuple[LevelMapping, ...]
+    generation: Any  # the layer's state_generation when the declarations were applied
+
+
 class QueryService:
     """
     Pure Python query execution service.
@@ -249,49 +261,60 @@ class QueryService:
         confirm_plan_line: str | None = None,
         confirm_plan_hash: str | None = None,
     ) -> QueryResult:
-        """Parse and execute a query on this layer's single DuckDB connection."""
-        lock = getattr(self.semantic_layer, "_con_lock", None)
-        if lock is None or not hasattr(lock, "acquire"):
-            lock = threading.Lock()
-            try:
-                self.semantic_layer._con_lock = lock
-            except (AttributeError, TypeError):
-                pass
+        """Parse and execute a query; only the DuckDB steps hold the layer's connection lock.
+
+        Three steps. Preparing (declarations, confirmed level merges) changes the layer, so it
+        is locked. Parsing (pattern, embedding and LLM tiers) runs unlocked, so a slow parse
+        never holds up another question on the dataset; the DuckDB reads it makes take the lock
+        themselves. Checking and executing are locked. If another question merged levels while
+        this one parsed (the layer's ``state_generation`` moved), the question is prepared and
+        parsed again under the lock, so it is answered exactly as if it had run alone.
+        """
+        lock = self._connection_lock()
         with lock:
-            return self._ask_unlocked(
-                question,
-                dataset_id=dataset_id,
-                upload_id=upload_id,
-                dataset_version=dataset_version,
-                conversation_history=conversation_history,
+            prepared = self._prepare(question, dataset_id, upload_id, dataset_version)
+        if isinstance(prepared, QueryResult):
+            return prepared
+        query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history)
+        with lock:
+            if self._state_generation() != prepared.generation:
+                logger.info("question_reparsed_after_level_merge", dataset_id=dataset_id)
+                prepared = self._prepare(question, dataset_id, upload_id, dataset_version)
+                if isinstance(prepared, QueryResult):
+                    return prepared
+                query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history)
+            return self._finish(
+                prepared,
+                query_intent,
                 confirmed=confirmed,
                 confirm_plan_line=confirm_plan_line,
                 confirm_plan_hash=confirm_plan_hash,
             )
 
-    def _ask_unlocked(
+    def _connection_lock(self) -> Any:
+        """The layer's DuckDB lock (a stand-in layer without one gets its own)."""
+        lock = getattr(self.semantic_layer, "_con_lock", None)
+        if lock is None or not hasattr(lock, "acquire"):
+            lock = ConnectionLock()
+            try:
+                self.semantic_layer._con_lock = lock
+            except (AttributeError, TypeError):
+                pass
+        return lock
+
+    def _state_generation(self) -> Any:
+        return getattr(self.semantic_layer, "state_generation", 0)
+
+    def _prepare(
         self,
         question: str,
-        dataset_id: str | None = None,
-        upload_id: str | None = None,
-        dataset_version: str | None = None,
-        conversation_history: list[dict[str, Any]] | None = None,
-        confirmed: bool = False,
-        confirm_plan_line: str | None = None,
-        confirm_plan_hash: str | None = None,
-    ) -> QueryResult:
-        """
-        Parse and execute query, return structured result.
+        dataset_id: str | None,
+        upload_id: str | None,
+        dataset_version: str | None,
+    ) -> _Prepared | QueryResult:
+        """Normalize the question and apply the dataset's confirmed declarations (locked).
 
-        Args:
-            question: Natural language query text
-            dataset_id: Optional dataset identifier for logging
-            upload_id: Optional upload identifier for logging
-            dataset_version: Optional dataset version identifier (defaults to upload_id or dataset_id)
-            conversation_history: Optional conversation history for context-aware parsing
-
-        Returns:
-            QueryResult with plan, issues, result, confidence, run_key, context
+        Returns a refusal as a QueryResult, or what parsing and execution need.
         """
         # Normalize query (extracted from Ask_Questions.py normalize_query)
         normalized_query = self.conversation_manager.normalize_query(question)
@@ -324,14 +347,48 @@ class QueryService:
             )
         mappings = declarations.levels_for(dataset_version)
         self._apply_levels(mappings)
+        return _Prepared(
+            normalized_query=normalized_query,
+            dataset_version=dataset_version,
+            declaration_key=declaration_key,
+            declarations=declarations,
+            mappings=mappings,
+            generation=self._state_generation(),
+        )
 
-        # Parse query with NLQueryEngine
-        query_intent = self.nl_engine.parse_query(
-            normalized_query,
+    def _parse(
+        self,
+        prepared: _Prepared,
+        dataset_id: str | None,
+        upload_id: str | None,
+        conversation_history: list[dict[str, Any]] | None,
+    ) -> Any:
+        """Parse with NLQueryEngine; called without the lock (its DuckDB reads lock themselves)."""
+        return self.nl_engine.parse_query(
+            prepared.normalized_query,
             dataset_id=dataset_id,
             upload_id=upload_id,
             conversation_history=conversation_history,
         )
+
+    def _finish(
+        self,
+        prepared: _Prepared,
+        query_intent: Any,
+        confirmed: bool = False,
+        confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
+    ) -> QueryResult:
+        """Check, hold or execute the parsed question (locked).
+
+        Returns:
+            QueryResult with plan, issues, result, confidence, run_key, context
+        """
+        normalized_query = prepared.normalized_query
+        dataset_version = prepared.dataset_version
+        declaration_key = prepared.declaration_key
+        declarations = prepared.declarations
+        mappings = prepared.mappings
 
         # Handle parse failure
         if query_intent is None:

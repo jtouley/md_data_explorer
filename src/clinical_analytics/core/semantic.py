@@ -13,7 +13,6 @@ import logging
 import operator
 import os
 import re
-import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,6 +25,7 @@ import polars as pl
 from ibis import _
 
 from clinical_analytics.core import nl_query_config
+from clinical_analytics.core.connection_lock import ConnectionLock
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
@@ -604,7 +604,7 @@ class SemanticLayer:
         )
 
         # Connect to DuckDB (in-memory for now, can be file-based later).
-        # One connection is not safe for overlapping threads.
+        # One connection is not safe for overlapping threads: every DuckDB call holds _con_lock.
         self.con = ibis.duckdb.connect()
         configured = False
         try:
@@ -614,7 +614,11 @@ class SemanticLayer:
             if not configured:
                 # Never leave an unconfigured in-memory database open behind a failed build.
                 self.con.disconnect()
-        self._con_lock = threading.Lock()
+        self._con_lock = ConnectionLock()
+        # Bumped whenever what a parse reads changes (a level merge). A question parsed without
+        # the lock checks it under the lock and parses again if another question changed it.
+        self.state_generation = 0
+        self._closed = False
         # Temporary views the current cohort query created; dropped once its rows are read.
         self._cohort_views: list[str] = []
 
@@ -878,25 +882,28 @@ class SemanticLayer:
         A row with no ID is not one more patient: SQL ``DISTINCT`` would keep NULL as a value, so
         the count is ``COUNT(DISTINCT key)``, which leaves it out (``base_missing_count`` counts it).
         """
-        if entity_key not in self._base_counts:
-            view = self.get_base_view()
-            counted = view.count() if entity_key is None else view[entity_key].nunique()
-            self._base_counts[entity_key] = int(counted.execute())
-        return self._base_counts[entity_key]
+        with self._con_lock:  # also read by a parse, which runs without the lock
+            if entity_key not in self._base_counts:
+                view = self.get_base_view()
+                counted = view.count() if entity_key is None else view[entity_key].nunique()
+                self._base_counts[entity_key] = int(counted.execute())
+            return self._base_counts[entity_key]
 
     def base_missing_count(self, column: str) -> int:
         """Rows of the base view with no value in ``column``, counted once."""
-        if column not in self._base_missing:
-            view = self.get_base_view()
-            self._base_missing[column] = int(view.filter(view[column].isnull()).count().execute())
-        return self._base_missing[column]
+        with self._con_lock:
+            if column not in self._base_missing:
+                view = self.get_base_view()
+                self._base_missing[column] = int(view.filter(view[column].isnull()).count().execute())
+            return self._base_missing[column]
 
     def base_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
         """(distinct values of ``column`` named as the column, nulls included; rows holding each),
         counted in DuckDB once per column until ``remap_levels`` changes the levels."""
-        if column not in self._value_counts:
-            self._value_counts[column] = self._compute_value_counts(column)
-        return self._value_counts[column]
+        with self._con_lock:
+            if column not in self._value_counts:
+                self._value_counts[column] = self._compute_value_counts(column)
+            return self._value_counts[column]
 
     def _compute_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
         # Fixed field names, so no column name ("count", "__n") can collide with the count.
@@ -3066,11 +3073,29 @@ class SemanticLayer:
     def remap_levels(self, column: str, mapping: dict[str, str]) -> None:
         """Read the spellings in ``mapping`` as one level from now on (a confirmed mapping:
         "Male", "male", "M" -> "Male"). Rows and patients are unchanged; only labels merge."""
-        view = self.get_base_view()
-        self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
-        # The column's levels changed: its cached distinct count and value counts are stale.
-        self._base_counts.pop(column, None)
-        self._value_counts.pop(column, None)
+        with self._con_lock:
+            view = self.get_base_view()
+            self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
+            # The column's levels changed: its cached distinct count and value counts are stale.
+            self._base_counts.pop(column, None)
+            self._value_counts.pop(column, None)
+            self.state_generation += 1
+
+    def close(self) -> None:
+        """Close this layer's in-memory DuckDB. Safe to call twice.
+
+        Waits for the DuckDB step running on the layer, if any. The API's layer cache calls this
+        on a background thread, only once no request holds a lease on the layer.
+        """
+        with self._con_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self.con.disconnect()
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
     def _column_is_string(self, view: Any, column: str) -> bool:
         """From the schema: no rows are read."""

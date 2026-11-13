@@ -18,6 +18,8 @@ Example:
 import json
 import os
 import re
+import threading
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 from pathlib import Path
@@ -180,6 +182,9 @@ class NLQueryEngine:
         from clinical_analytics.core.embeddings import MODEL_NAME
 
         self.semantic_layer = semantic_layer
+        # Per-question parse state (the question's hash, its peeled cohort) lives per thread:
+        # questions on one layer parse at once, and one must never attach another's cohort.
+        self._question_local = threading.local()
         self.embedding_model_name = MODEL_NAME  # the bundled model; there is no other
         self.encoder = None  # Lazy load (the process-wide encoder, see core.embeddings.get_encoder)
         self.template_embeddings = None  # Lazy load
@@ -201,6 +206,35 @@ class NLQueryEngine:
 
         # Load golden examples for Tier 2 semantic matching
         self._load_golden_examples()
+
+    def _question_state(self) -> threading.local:
+        state: threading.local | None = self.__dict__.get("_question_local")
+        if state is None:  # an engine built without __init__ (tests patch it out)
+            state = self.__dict__.setdefault("_question_local", threading.local())
+        return state
+
+    @property
+    def _pending_cohort(self) -> Any:
+        """The cohort peeled off this thread's question, attached to its intent at the end."""
+        return getattr(self._question_state(), "pending_cohort", None)
+
+    @_pending_cohort.setter
+    def _pending_cohort(self, value: Any) -> None:
+        self._question_state().pending_cohort = value
+
+    @property
+    def _question_hash(self) -> str | None:
+        """Hash of the question this thread is parsing, for outcome logs."""
+        return getattr(self._question_state(), "question_hash", None)
+
+    @_question_hash.setter
+    def _question_hash(self, value: str | None) -> None:
+        self._question_state().question_hash = value
+
+    def _duckdb_lock(self) -> AbstractContextManager[Any]:
+        """The layer's DuckDB lock: a parse runs without it, its DuckDB reads run with it."""
+        lock = getattr(self.semantic_layer, "_con_lock", None)
+        return lock if lock is not None and hasattr(lock, "__enter__") else nullcontext()
 
     def _load_encoder(self) -> Any:
         """The process-wide bundled ONNX sentence encoder, or None when it cannot be loaded.
@@ -464,18 +498,17 @@ class NLQueryEngine:
 
         query = query.strip()
         from clinical_analytics.core.cohort_constraints import (
-            PeelResult,
             attach_cohort,
             peel_cohort,
         )
 
         # Outcome logs identify the user's question, not the residual left after the
         # cohort peel, so parse outcomes can be joined across tiers and runs.
-        self._question_hash: str | None = _stable_hash(query)
+        self._question_hash = _stable_hash(query)
         columns = list(self.semantic_layer.get_base_view().columns)
         self.refresh_value_index(columns)
         peeled = peel_cohort(query, columns, lambda column: self._distinct_values(column))
-        self._pending_cohort: PeelResult | None = peeled
+        self._pending_cohort = peeled
         query = peeled.residual
 
         # Import config constants
@@ -2715,15 +2748,16 @@ Fix the errors and return a corrected query intent as JSON.
         layer rather than once per question. refresh_value_index drops them when the layer's
         columns or aliases change.
         """
-        cache: dict[str, list[Any]] = getattr(self, "_distinct_value_cache", {})
-        if column in cache:
-            return cache[column]
-        # DuckDB deduplicates; only the distinct values cross into Python, as Polars.
-        frame = self.semantic_layer.get_base_view().select(column).distinct().order_by(column).to_polars()
-        stored = frame.get_column(column).to_list()
-        values = ColumnValues(column, stored, match_stored=self._value_words_matchable(column, stored))
-        cache[column] = values
-        self._distinct_value_cache = cache
+        with self._duckdb_lock():
+            cache: dict[str, list[Any]] = getattr(self, "_distinct_value_cache", {})
+            if column in cache:
+                return cache[column]
+            # DuckDB deduplicates; only the distinct values cross into Python, as Polars.
+            frame = self.semantic_layer.get_base_view().select(column).distinct().order_by(column).to_polars()
+            stored = frame.get_column(column).to_list()
+            values = ColumnValues(column, stored, match_stored=self._value_words_matchable(column, stored))
+            cache[column] = values
+            self._distinct_value_cache = cache
         if not values.match_stored:
             logger.debug("value_index_column_skipped", column_hash=_stable_hash(column), distinct=len(values))
         return values
@@ -2760,11 +2794,12 @@ Fix the errors and return a corrected query intent as JSON.
             tuple(columns),
             tuple(sorted(aliases.items())) if isinstance(aliases, dict) else (),
         )
-        if getattr(self, "_value_index_signature", None) != signature:
-            if getattr(self, "_distinct_value_cache", None):
-                logger.info("value_index_invalidated", columns=len(columns))
-            self._distinct_value_cache = {}
-            self._value_index_signature = signature
+        with self._duckdb_lock():  # never swapped out under a _distinct_values fill
+            if getattr(self, "_value_index_signature", None) != signature:
+                if getattr(self, "_distinct_value_cache", None):
+                    logger.info("value_index_invalidated", columns=len(columns))
+                self._distinct_value_cache = {}
+                self._value_index_signature = signature
 
     def _fuzzy_match_variable(self, query_term: str) -> tuple[str | None, float, list[str] | None]:
         """
