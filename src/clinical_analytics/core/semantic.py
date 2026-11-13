@@ -25,6 +25,7 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.analysis.numeric_text import is_numeric_text, missing_token_sql
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
@@ -2927,22 +2928,32 @@ class SemanticLayer:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.
 
         Patients missing the column are left out of the denominator (n) and counted in
-        n_rows, so the presentation can report them as excluded. Grouped: one row per group.
+        n_rows, so the presentation can report them as excluded. Missing is the rule every
+        analysis uses (``analysis.numeric_text``): null, and in numbers stored as text a missing
+        token ("N/A", "."). A text category keeps every level ("None" is an answer there).
+        Grouped: one row per group.
         """
         quoted = _quote_ident(column)
         literal = _sql_literal(self._equality_value(view, column, value))
         share = "rate" if group else "proportion"
+        recorded = f"{quoted} IS NOT NULL"
+        if view[column].type().is_string() and is_numeric_text(*self.base_value_counts(column)):
+            recorded += f" AND NOT ({missing_token_sql(quoted)})"
         entity = self.count_entity_key
         if entity:
             # Rows are visits: count patients (distinct key), as the COUNT answer does. The query
             # service refuses first when the value differs between a patient's visits.
             key = _quote_ident(entity)
             events = f"count(DISTINCT {key}) FILTER (WHERE {quoted} = {literal})"
-            n = f"count(DISTINCT {key}) FILTER (WHERE {quoted} IS NOT NULL)"
+            n = f"count(DISTINCT {key}) FILTER (WHERE {recorded})"
             # A row with no ID is no patient, as SemanticLayer._base_count counts them.
             n_rows = f"count(DISTINCT {key})"
         else:
-            events, n, n_rows = f"count(*) FILTER (WHERE {quoted} = {literal})", f"count({quoted})", "count(*)"
+            events, n, n_rows = (
+                f"count(*) FILTER (WHERE {quoted} = {literal})",
+                f"count(*) FILTER (WHERE {recorded})",
+                "count(*)",
+            )
         select = (
             f"{events} AS events, {n} AS n, {n_rows} AS n_rows, "
             f"CASE WHEN {n} = 0 THEN NULL ELSE {events} / {n} END AS {share}"

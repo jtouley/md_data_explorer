@@ -134,6 +134,26 @@ def parse_numeric_text(series: pl.Series, weights: pl.Series | None = None) -> N
     )
 
 
+def is_numeric_text(series: pl.Series, weights: pl.Series | None = None) -> bool:
+    """Whether ``series`` is numbers stored as text (numbers, limits or missing tokens).
+
+    A comma whose meaning cannot be told is still numeric text: its missing tokens are missing.
+    ``weights`` as for ``parse_numeric_text``.
+    """
+    try:
+        return parse_numeric_text(series, weights) is not None
+    except AmbiguousNumberFormatError:
+        return True
+
+
+def missing_token_sql(quoted: str) -> str:
+    """DuckDB form of ``missing_token_expr``: true where the text in ``quoted`` (an identifier
+    already quoted) is a missing token once trimmed of whitespace and lowercased."""
+    tokens = ", ".join("'" + token.replace("'", "''") + "'" for token in MISSING_VALUE_TOKENS)
+    whitespace = "' ' || chr(9) || chr(10) || chr(11) || chr(12) || chr(13)"
+    return f"lower(trim({quoted}, {whitespace})) IN ({tokens})"
+
+
 def all_missing_message(column: str, what: str) -> str:
     """The one sentence for a statistic over a column with no values."""
     from clinical_analytics.analysis.variable_types import short_name

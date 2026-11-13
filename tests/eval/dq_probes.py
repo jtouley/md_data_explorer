@@ -61,6 +61,25 @@ def fold_frame() -> pl.DataFrame:
     return pl.DataFrame({"patient_id": [f"Q{i:03d}" for i in range(len(arms))], "arm": arms})
 
 
+def predictor_frame() -> pl.DataFrame:
+    """60 patients at sites East, North and West; West has 3. Died for every third patient, so
+    no level separates the outcome; age varies."""
+    size = 60
+    return pl.DataFrame(
+        {
+            "patient_id": [f"Q{i:03d}" for i in range(size)],
+            "site": ["West" if i < 3 else ("East" if i % 2 else "North") for i in range(size)],
+            "died": [1 if i % 3 == 0 else 0 for i in range(size)],
+            "age": [30 + (i * 13) % 40 for i in range(size)],
+        }
+    )
+
+
+# Predictor answers: (frame, outcome, predictors). The NL parser does not pass named predictors
+# through to the plan, so the probe fixes them; the grader reads the claim and the term labels.
+PREDICTOR_PROBES: tuple[tuple[str, str, tuple[str, ...]], ...] = (("predictor", "died", ("age", "site")),)
+
+
 def visits_died_frame() -> pl.DataFrame:
     """200 visit rows of 170 patients; died is the same at every visit of a patient (40 of 170)."""
     ids = IDS[:170] + IDS[:30]

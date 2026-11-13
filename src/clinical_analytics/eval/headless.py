@@ -17,7 +17,7 @@ import polars as pl
 from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.query_service import QueryService
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
+from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis, term_label
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.eval.catalog import DATASET_FILES, load_dataset_frame
 
@@ -219,6 +219,7 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None, confirm: boo
         "intent": plan.intent if plan else None,
         "metric": plan.metric if plan else None,
         "group_by": plan.group_by if plan else None,
+        "predictors": list(getattr(result.context, "predictor_variables", None) or []),
         "limits": plan_limits(plan),
         "proportion": (plan.proportion_column, plan.proportion_value) if plan and plan.proportion_column else None,
         "rate": (plan.rate_column, plan.rate_value) if plan and plan.rate_column else None,
@@ -322,6 +323,40 @@ def small_level_labels(frame: pl.DataFrame, columns: list[str], threshold: int) 
         small = counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value")
         labels |= {display_level(column, value) for value in small.to_list()}
     return labels
+
+
+def _small_levels(frame: pl.DataFrame, column: str, threshold: int) -> tuple[list[Any], bool]:
+    """(values of ``column`` held by 1..threshold-1 rows, whether the column is 0/1 or boolean)."""
+    counts = frame.get_column(column).drop_nulls().alias("value").value_counts(name="__n")
+    small = counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value").to_list()
+    indicator = frame.schema[column] == pl.Boolean or set(counts.get_column("value").to_list()) <= {0, 1}
+    return small, indicator
+
+
+def predictor_label_leaks(
+    presentation: dict[str, Any] | None, frame: pl.DataFrame, predictors: list[str], outcome: str | None, threshold: int
+) -> set[str]:
+    """Labels of levels held by 1..threshold-1 rows that a predictor answer shows.
+
+    A regression names a level as its indicator term ("site_West", or "DEXA: Osteopenia" for a
+    coded header), as the column itself for a 0/1 or boolean predictor, and the outcome's event
+    value in the claim ("status = Yes"). Each is looked for as a whole word in the claim and in
+    the table's labels.
+    """
+    shown = [str((presentation or {}).get("claim") or ""), *shown_labels(presentation)]
+    labels: set[str] = set()
+    for column in [*predictors, *([outcome] if outcome else [])]:
+        if column not in frame.columns:
+            continue
+        small, indicator = _small_levels(frame, column, threshold)
+        for value in small:
+            labels.add(display_level(column, value))
+            if column == outcome:
+                continue
+            code = int(value) if isinstance(value, float) and value.is_integer() else value
+            term = f"{column}_{code}"
+            labels |= {term, term_label(term)} | ({column} if indicator else set())
+    return {label for label in labels if any(re.search(rf"(?<!\w){re.escape(label)}(?!\w)", text) for text in shown)}
 
 
 def _shown(value: Any) -> Any:

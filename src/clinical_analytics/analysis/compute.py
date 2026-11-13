@@ -12,7 +12,7 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
-from clinical_analytics.analysis.grouping import grouping_problem
+from clinical_analytics.analysis.grouping import grouping_problem, is_small_level
 from clinical_analytics.analysis.numeric_text import statistic_refusal
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
@@ -21,9 +21,16 @@ from clinical_analytics.analysis.sample_floors import (
     MIN_REGRESSION_N,
     MIN_SURVIVAL_N,
 )
-from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, code_key, is_numeric_dtype
+from clinical_analytics.analysis.variable_types import (
+    binary_event_level,
+    classify_variable,
+    code_key,
+    is_numeric_dtype,
+    short_name,
+)
 from clinical_analytics.contracts.builder import implausible_values
 from clinical_analytics.core.analysis_types import AnalysisContext
+from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 from clinical_analytics.core.query_plan import FilterSpec
 
 
@@ -859,12 +866,73 @@ def _code_text(series: pl.Series) -> pl.Series:
     return series.cast(pl.Utf8)
 
 
+def _level_sizes(series: pl.Series) -> dict[Any, int]:
+    """Rows holding each present value of ``series``."""
+    counts = series.drop_nulls().alias("value").value_counts(name="__n")
+    return dict(zip(counts.get_column("value").to_list(), counts.get_column("__n").to_list(), strict=True))
+
+
 def _ambiguous_event_message(column: str, series: pl.Series) -> str:
-    values = ", ".join(str(v) for v in sorted(series.drop_nulls().unique().to_list(), key=str))
+    """Why the event value cannot be told. A value held by 1-10 patients is not named."""
+    sizes = _level_sizes(series)
+    named = sorted(str(v) for v, n in sizes.items() if not is_small_level(n))
+    rare = any(is_small_level(n) for n in sizes.values())
+    values = ", ".join(named + ([f"and values held by fewer than {SMALL_CELL_THRESHOLD} patients"] if rare else []))
     return (
         f"Cannot tell which value of {column} is the event (values: {values}). Recode it to 0/1, "
         f"or name the codes in the column header, e.g. '{column} 1: Yes 2: No'."
     )
+
+
+def _small_level_refusal(frame: pl.DataFrame, outcome_col: str, levelled: list[str]) -> str | None:
+    """Why a regression of ``outcome_col`` on ``frame`` (complete cases) is not fitted, or None.
+
+    A level held by 1-10 patients would be named by its indicator term (or, for a 0/1 predictor,
+    by the column) beside an odds ratio that rests on those patients; a reference level that
+    small is behind every other level's odds ratio. Folding it into "Other" changes the model,
+    so the model is refused instead, as is an outcome with 1-10 patients on one side. The level
+    is never named. ``levelled``: predictors fitted as levels (indicators, 0/1 or boolean).
+    """
+    if any(is_small_level(n) for n in _level_sizes(frame[outcome_col]).values()):
+        name = short_name(outcome_col)
+        return (
+            f"Fewer than {SMALL_CELL_THRESHOLD} patients have one of the two values of {name}, so a model of it is "
+            f"not fitted: its odds ratios would rest on those few patients."
+        )
+    for column in levelled:
+        if any(is_small_level(n) for n in _level_sizes(frame[column]).values()):
+            name = short_name(column)
+            return (
+                f"{name} has a value held by fewer than {SMALL_CELL_THRESHOLD} of the patients in the model, so the "
+                f"model is not fitted: that value's odds ratio would rest on those few patients and its label would "
+                f"point to them. Leave {name} out, or merge its rare values in the file."
+            )
+    return None
+
+
+def _term_sizes(
+    frame: pl.DataFrame, predictors: list[str], categorical: list[str], levelled: list[str]
+) -> dict[str, int | None]:
+    """Patients behind each fitted term that names a level: the smaller of its level and the
+    level it is compared with (an indicator ``<column>_<level>`` against its column's reference,
+    the first level in sorted order as ``get_dummies(drop_first=True)`` takes it; 1 against 0).
+    None for a slope, which names no level.
+
+    ``frame``: the complete cases the model is fitted on, before indicators are made.
+    """
+    sizes: dict[str, int | None] = {}
+    for column in predictors:
+        if column in categorical:
+            levels = _level_sizes(_code_text(frame[column]))
+            reference = levels[min(levels)]
+            sizes.update(
+                {f"{column}_{level}": min(n, reference) for level, n in levels.items() if level != min(levels)}
+            )
+        elif column in levelled:
+            sizes[column] = min(_level_sizes(frame[column]).values())
+        else:
+            sizes[column] = None
+    return sizes
 
 
 def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
@@ -930,6 +998,10 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         [pl.col(p).cast(pl.Int64) for p in predictors if analysis_df[p].dtype == pl.Boolean]
     )
     categorical = [p for p in predictors if _needs_indicators(analysis_df[p])]
+    levelled = [p for p in predictors if p in categorical or classify_variable(analysis_df[p]) == "binary"]
+    refusal = _small_level_refusal(analysis_df, outcome_col, levelled)
+    if refusal:
+        return {**base, "error": refusal}
     analysis_df_pd = analysis_df.with_columns([_code_text(analysis_df[c]) for c in categorical]).to_pandas()
     if categorical:
         analysis_df_pd = pd.get_dummies(analysis_df_pd, columns=categorical, drop_first=True, dtype=int)
@@ -964,6 +1036,7 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         "event_level": code_key(event_level),
         "summary": summary_dict,
         "significant_predictors": significant_predictors,
+        "term_sizes": _term_sizes(analysis_df, predictors, categorical, levelled),
         "schema": {col: str(dtype) for col, dtype in summary_df.dtypes.items()},
     }
 

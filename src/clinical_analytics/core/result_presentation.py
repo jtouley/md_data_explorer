@@ -420,7 +420,7 @@ def _plain(text: str) -> str:
     return text.replace("**", "")
 
 
-def _term_label(term: Any) -> str:
+def term_label(term: Any) -> str:
     """Readable regression term: drop the boolean-dummy suffix; decode coded-category dummies.
 
     'DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis_2' -> 'DEXA result: Osteopenia'.
@@ -732,9 +732,30 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
     event_level = analysis.get("event_level")
     event = _event_phrase(outcome, event_level) if event_level is not None else outcome_name
     summary = analysis.get("summary") or {}
+    n_clause = _n_clause(analysis, suppress_with_exclusions(analysis, {}, floor=MIN_REGRESSION_N))
+    # A term names a level ("site_West") beside an odds ratio that rests on its patients and its
+    # reference level's: with 1-10 of them it is never shown. Folding it into "Other" would be a
+    # different model, so the model is withheld (compute refuses it first). ``term_sizes`` maps
+    # each term to those patients, None for a slope; a term missing from it, a size that is not
+    # a count, or a payload without it is treated as small (fail closed).
+    sizes = analysis.get("term_sizes")
+    named = analysis.get("significant_predictors") or []
+    terms = [var for var in summary if var != "Intercept"] + [
+        s.get("variable") for s in named if isinstance(s, Mapping)
+    ]
+    if terms and (
+        not isinstance(sizes, Mapping)
+        or any(var not in sizes or (sizes[var] is not None and is_small_level(sizes[var])) for var in terms)
+    ):
+        withheld = _with_details(
+            f"The model of {outcome_name} is not shown because a predictor has a value held by fewer than "
+            f"{_limit(None)} patients",
+            [n_clause],
+        )
+        return {"claim": withheld + ".", "table": None}
     rows = [
         {
-            "variable": _term_label(var),
+            "variable": term_label(var),
             "odds ratio": _num(stats.get("Odds Ratio")),
             "95% CI low": _num(stats.get("CI Lower")),
             "95% CI high": _num(stats.get("CI Upper")),
@@ -746,12 +767,11 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
     significant = sorted(analysis.get("significant_predictors") or [], key=lambda s: _num(s.get("p_value")) or 1.0)
     predictors = ", ".join(str(r["variable"]) for r in rows)
     model = f"Logistic regression of {event}" + (f" on {predictors}" if predictors else "")
-    n_clause = _n_clause(analysis, suppress_with_exclusions(analysis, {}, floor=MIN_REGRESSION_N))
     if significant:
         top = significant[0]
         odds, lo, hi, p = (_num(top.get(k)) for k in ("odds_ratio", "ci_lower", "ci_upper", "p_value"))
         claim = _with_details(
-            f"{_term_label(top.get('variable'))} had the strongest evidence of association with {event}",
+            f"{term_label(top.get('variable'))} had the strongest evidence of association with {event}",
             [
                 f"OR {_fmt(odds)}" if odds is not None else None,
                 f"95% CI {_fmt(lo)} to {_fmt(hi)}" if lo is not None and hi is not None else None,

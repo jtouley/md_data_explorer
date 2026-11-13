@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import polars as pl
+import polars.testing
 import pytest
 
 from clinical_analytics.core.analysis_types import AnalysisContext
@@ -302,3 +303,64 @@ def test_allNullStatisticsReason_patientsMatched_givesTheRealCause(
     assert expected in reason
     if expected != NO_MATCH_REASON:
         assert "No patients matched" not in reason
+
+
+# A numeric-text lab column: "2" 30 patients, "3" 30, and 40 missing written as tokens or null.
+_TOKEN_FRAME = pl.DataFrame(
+    {
+        "patient_id": [f"P{index:03d}" for index in range(_SIZE)],
+        "site": ["North" if index % 2 else "South" for index in range(_SIZE)],
+        "grade": [
+            ("2" if index < 30 else "3") if index < 60 else (" N/A", ".", "NA", None)[index % 4]
+            for index in range(_SIZE)
+        ],
+        # A text category whose level "None" is a real answer, not a missing token.
+        "diabetes": ["None" if index < 40 else "Type 2" for index in range(_SIZE)],
+    }
+)
+
+
+@pytest.fixture
+def token_layer(make_semantic_layer):
+    return make_semantic_layer(dataset_name="tokens", data=_TOKEN_FRAME)
+
+
+@pytest.mark.parametrize("entity_key", [None, "patient_id"], ids=["rows", "patients"])
+def test_proportion_numericTextMissingTokens_leftOutOfTheDenominator(token_layer, entity_key: str | None) -> None:
+    # Arrange: 30 of the 60 recorded grades are "2"; "N/A", "." and "NA" are missing, as null is.
+    token_layer.count_entity_key = entity_key
+    plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="grade", proportion_value="2")
+
+    # Act
+    execution, shown = _present(token_layer, plan)
+
+    # Assert
+    row = execution["result"].row(0, named=True)
+    assert (row["events"], row["n"], row["n_rows"]) == (30, 60, 100)
+    assert row["proportion"] == pytest.approx(0.5)
+    assert "40 excluded for missing data" in shown["claim"]
+
+
+def test_rate_numericTextMissingTokens_leftOutOfEachGroupsDenominator(token_layer) -> None:
+    # Arrange: each site has 30 recorded grades, 15 of them "2".
+    plan = QueryPlan(intent="COUNT", confidence=0.95, rate_column="grade", rate_value="2", group_by="site")
+
+    # Act
+    execution, _shown = _present(token_layer, plan)
+
+    # Assert
+    rows = execution["result"].select("site", "events", "n").sort("site")
+    expected = pl.DataFrame({"site": ["North", "South"], "events": [15, 15], "n": [30, 30]})
+    pl.testing.assert_frame_equal(rows, expected, check_dtypes=False)
+
+
+def test_proportion_textCategoryNamedNone_staysRecorded(token_layer) -> None:
+    # Arrange: "None" is a level of a text category, not numeric text, so it is recorded.
+    plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="diabetes", proportion_value="Type 2")
+
+    # Act
+    execution, _shown = _present(token_layer, plan)
+
+    # Assert
+    row = execution["result"].row(0, named=True)
+    assert (row["events"], row["n"]) == (60, 100)
