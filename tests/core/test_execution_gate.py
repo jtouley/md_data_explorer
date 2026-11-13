@@ -262,3 +262,15 @@ def test_apply_planned_query_result_clears_force_rerun_on_hold_error_and_continu
         session = {"force_rerun:v1": True}
         assert apply_planned_query_result(result, session, "v1") == label
         assert session["force_rerun:v1"] is False
+
+
+@pytest.mark.parametrize("name", ["HOLD_FAILURE_REASON", "PLAN_CHANGED_REASON"])
+def test_holdReasons_fixedCopy_isOneSentence(name: str) -> None:
+    # Arrange
+    from clinical_analytics.core import execution_gate
+
+    # Act
+    reason = getattr(execution_gate, name)
+
+    # Assert
+    assert reason.endswith(".") and reason.count(".") == 1

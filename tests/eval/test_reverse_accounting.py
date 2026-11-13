@@ -63,7 +63,9 @@ def test_reverseProbe_question_answeredCorrectlyOrHeldWithReason(index: int) -> 
     # Assert
     if not result["success"]:
         assert question not in _MUST_ANSWER, f"over-held: {question!r}: {result['failure_reason']!r}"
-        assert result["held"] and result["failure_reason"], "a hold must say why"
+        reason = result["failure_reason"] or ""
+        assert result["held"] and result["plan_line"], "a hold shows the exact plan line"
+        assert reason.endswith(".") and reason.count(". ") == 0, f"one plain sentence: {reason!r}"
         return
     assert truth is not None, f"must not run: {question!r}"
     assert values_match(truth, _value(question, result)), f"{question!r}: truth {truth!r}"

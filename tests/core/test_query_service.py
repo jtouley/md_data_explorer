@@ -354,7 +354,7 @@ class TestQueryServiceAnalysis:
     @pytest.mark.parametrize(
         ("extra", "element"),
         [
-            pytest.param(FilterSpec("Creatinine", "==", 2.2), "Creatinine = 2.2", id="unasked_equality"),
+            pytest.param(FilterSpec("Creatinine", "==", 2.2), "Creatinine == 2.2", id="unasked_equality"),
             pytest.param(FilterSpec("age", ">", 65), "age > 65", id="unasked_comparison"),
         ],
     )
@@ -371,7 +371,7 @@ class TestQueryServiceAnalysis:
         # Assert
         assert result.requires_confirmation is True
         assert result.failure_reason == f"The plan uses {element}, which your question doesn't ask for."
-        assert result.plan_line is not None
+        assert result.plan_line is not None and element in result.plan_line
         layer.execute_query_plan.assert_not_called()
 
     @pytest.mark.parametrize(

@@ -187,6 +187,7 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str,
         "success": success,
         "held": held,
         "failure_reason": result.failure_reason,
+        "plan_line": result.plan_line,
     }
 
 

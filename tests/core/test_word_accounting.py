@@ -206,12 +206,31 @@ def test_numberOwner_question_bindsTheNamedColumnOrNone(question: str, expected:
     assert owner == expected
 
 
-def test_holdReason_unusedWords_plainLanguageList() -> None:
-    # Arrange / Act
-    reason = hold_reason(["not", "__ge__", "smoke"])
+@pytest.mark.parametrize(
+    ("words", "expected"),
+    [
+        pytest.param(["recently"], "I couldn't place the word 'recently', so it is not in the plan.", id="one_word"),
+        pytest.param(
+            ["not", "placebo"],
+            "I couldn't place the words 'not' and 'placebo', so they are not in the plan.",
+            id="two_words",
+        ),
+        pytest.param(
+            ["not", "__ge__", "smoke"],
+            "I couldn't place the words 'not', 'or more' and 'smoke', so they are not in the plan.",
+            id="placeholder_shown_as_words",
+        ),
+    ],
+)
+def test_holdReason_unusedWords_isOnePlainSentence(words: list[str], expected: str) -> None:
+    # Arrange: words above
+
+    # Act
+    reason = hold_reason(words)
 
     # Assert
-    assert reason == "I didn't use: 'not', 'or more', 'smoke'. Check the plan before running it."
+    assert reason == expected
+    assert reason.count(".") == 1
 
 
 @pytest.mark.parametrize(

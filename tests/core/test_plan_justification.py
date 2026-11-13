@@ -80,13 +80,13 @@ CREAT_22 = CohortStep("eq", "Creatinine", 2.2)
         pytest.param(
             "how many patients with BMI 30 plus?",
             _count(CohortStep("eq", "BMI", 30.0)),
-            ["BMI = 30"],
+            ["BMI = 30.0"],
             id="plus_is_not_equality",
         ),
         pytest.param(
             "how many patients with diabetes?",
             _count(filters=[FilterSpec("diabetes", "==", "Type 2"), FilterSpec("Creatinine", ">", 2.0)]),
-            ["diabetes = Type 2", "Creatinine > 2"],
+            ["diabetes == Type 2", "Creatinine > 2.0"],
             id="llm_added_filters",
         ),
         pytest.param(
@@ -116,8 +116,14 @@ CREAT_22 = CohortStep("eq", "Creatinine", 2.2)
         pytest.param(
             "how many dialysis patients with stage 3 or more kidney disease?",
             _count(CohortStep("eq", "kidney disease", "Stage 3"), CohortStep("ge", "dialysis_years", 3.0)),
-            ["dialysis_years >= 3"],
+            ["dialysis_years ≥ 3"],
             id="label_digit_not_reused_as_cutoff",
+        ),
+        pytest.param(
+            "how many patients?",
+            _count(CohortStep("eq", "Statin use 1: Yes 2: No", 1)),
+            ["Statin use 1: Yes 2: No = 1 (Yes)"],
+            id="coded_value_shown_with_its_label",
         ),
         pytest.param("average age", _mean("Creatinine"), ["outcome Creatinine"], id="metric_not_asked"),
         pytest.param("how many patients?", _count(group_by="Region"), ["grouping Region"], id="group_not_asked"),
@@ -206,3 +212,28 @@ def test_unjustifiedReason_elements_isOnePlainSentence(elements: list[str], expe
 
     # Assert
     assert reason == expected
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        pytest.param(_count(TYPE_2, CREAT_22, CohortStep("ge", "BMI", 30.0)), id="cohort_steps"),
+        pytest.param(
+            _count(filters=[FilterSpec("Creatinine", ">", 2.0), FilterSpec("Region", "IN", ["North", "South"])]),
+            id="filters",
+        ),
+        pytest.param(_count(filters=[FilterSpec("Region", "!=", "South", exclude_nulls=False)]), id="missing_kept"),
+    ],
+)
+def test_unjustifiedElements_everyLimit_isQuotedExactlyFromThePlanLine(plan: QueryPlan) -> None:
+    # Arrange
+    from clinical_analytics.core.execution_gate import format_plan_line
+
+    plan_line = format_plan_line(plan)
+
+    # Act
+    elements = _unjustified("how many patients?", plan)
+
+    # Assert
+    assert len(elements) == len(plan.filters) + len(plan.cohort_steps)
+    assert all(element in plan_line for element in elements)

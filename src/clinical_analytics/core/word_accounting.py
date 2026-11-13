@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from clinical_analytics.core.column_parser import parse_column_name
+from clinical_analytics.core.execution_gate import limit_text
+from clinical_analytics.core.query_plan import CohortStep
 
 # Reviewed vocabulary. Adding a word here makes the gate accept it in any question.
 FUNCTION_WORDS: frozenset[str] = frozenset(
@@ -114,7 +116,6 @@ _SEX_INFLECTIONS = {
     "m": {"m", "male", "males", "man", "men"},
     "male": {"male", "males", "man", "men"},
 }
-HOLD_PREFIX = "I didn't use:"
 # A word starts with a letter and keeps its digits ("hba1c", "cd4"); a number stands alone.
 _TOKEN = r"__[a-z_]+__|[a-z][a-z0-9]*|\d+(?:\.\d+)?"
 
@@ -137,9 +138,16 @@ def shown(word: str) -> str:
     return _SHOWN.get(word, word)
 
 
+def _listed(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
 def hold_reason(words: Iterable[str]) -> str:
-    quoted = ", ".join(f"'{shown(word)}'" for word in words)
-    return f"{HOLD_PREFIX} {quoted}. Check the plan before running it."
+    """One plain sentence naming the words of the question that the plan leaves out."""
+    quoted = [f"'{shown(word)}'" for word in words]
+    if len(quoted) == 1:
+        return f"I couldn't place the word {quoted[0]}, so it is not in the plan."
+    return f"I couldn't place the words {_listed(quoted)}, so they are not in the plan."
 
 
 def name_tokens(name: str) -> list[str]:
@@ -577,15 +585,13 @@ _AGE_JUSTIFY = frozenset({"age", "aged", "old", "older", "oldest", "younger", "y
     "__gt_age__",
     "__lt_age__",
 }
-_STEP_SYMBOL = {"eq": "=", "gt": ">", "lt": "<", "ge": ">=", "le": "<="}
 _FILTER_OP = {">": "gt", "<": "lt", ">=": "ge", "<=": "le"}
 _NUMBER_TOKEN = re.compile(r"\d+(?:\.\d+)?")
 
 
 def unjustified_reason(elements: list[str]) -> str:
     """One plain sentence naming the plan elements the question did not ask for."""
-    named = elements[0] if len(elements) == 1 else f"{', '.join(elements[:-1])} and {elements[-1]}"
-    return f"The plan uses {named}, which your question doesn't ask for."
+    return f"The plan uses {_listed(elements)}, which your question doesn't ask for."
 
 
 def unjustified_elements(
@@ -596,7 +602,8 @@ def unjustified_elements(
     alias_index: dict[str, str] | None = None,
     context: Any = None,
 ) -> list[str]:
-    """Plan elements no word of the question justifies, as plan-line text, in plan order.
+    """Plan elements no word of the question justifies, in plan order, each written exactly as
+    the plan line shows it (execution_gate.limit_text) so the reader can find it on the card.
 
     The forward check (unused_words) asks whether every word is used; this asks whether every
     element was asked for. A measure, grouping, filter column, value and operator each need a
@@ -616,32 +623,18 @@ def unjustified_elements(
         missing.append(f"grouping {group_by}")
     for spec in getattr(plan, "filters", []) or []:
         if not check.filter_justified(spec):
-            missing.append(_describe(spec.column, "=" if spec.operator == "==" else spec.operator, spec.value))
+            missing.append(limit_text(spec))
     for step in getattr(plan, "cohort_steps", []) or []:
         if not check.step_justified(step):
-            missing.append(_describe(step.column, _STEP_SYMBOL.get(step.op, step.op), step.value))
+            missing.append(limit_text(step))
     for column_attr, value_attr in (("proportion_column", "proportion_value"), ("rate_column", "rate_value")):
         share_column = getattr(plan, column_attr, None)
         if share_column and not check.equality_justified(str(share_column), [getattr(plan, value_attr, None)]):
-            missing.append(_describe(str(share_column), "=", getattr(plan, value_attr, None)))
+            missing.append(limit_text(CohortStep("eq", str(share_column), getattr(plan, value_attr, None))))
     for predictor in getattr(context, "predictor_variables", None) or []:
         if predictor and predictor not in {metric, group_by} and not check.column_named(str(predictor)):
             missing.append(f"predictor {predictor}")
     return missing
-
-
-def _describe(column: str, symbol: str, value: Any) -> str:
-    if value is None:
-        return f"{column} {symbol}".strip()
-    values = value if isinstance(value, list) else [value]
-    text = " or ".join(_number_text(item) for item in values)
-    return f"{column} {symbol} {text}"
-
-
-def _number_text(value: Any) -> str:
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
 
 
 class _Justifier:

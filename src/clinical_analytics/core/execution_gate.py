@@ -10,9 +10,7 @@ from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
 
 HOLD_FAILURE_REASON = "Confirmation required before execution."
-PLAN_CHANGED_REASON = (
-    "The question was interpreted differently from the plan you confirmed. Review this plan before it runs."
-)
+PLAN_CHANGED_REASON = "This plan is different from the one you approved, so it has not run."
 
 _TEST_LABELS = {
     "COMPARE_GROUPS": "group comparison",
@@ -84,6 +82,14 @@ def _filter_text(spec: FilterSpec) -> str:
     else:
         text = f"{spec.column} {spec.operator} {spec.value}"
     return text if spec.exclude_nulls else f"{text} (missing kept)"
+
+
+def limit_text(limit: FilterSpec | CohortStep) -> str:
+    """One filter or cohort limit exactly as format_plan_line writes it, so a hold reason can
+    quote the plan line word for word."""
+    if isinstance(limit, CohortStep):
+        return _step_text(limit)
+    return _filter_text(limit)
 
 
 # QueryPlan fields that never change what executes (display text, gating score, cache key).
