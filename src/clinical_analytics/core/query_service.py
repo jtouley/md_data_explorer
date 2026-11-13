@@ -7,7 +7,9 @@ Manages query parsing, validation, and execution without Streamlit dependencies.
 """
 
 import dataclasses
+import hashlib
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,8 +19,13 @@ import structlog
 
 from clinical_analytics.analysis.grouping import grouping_problem
 from clinical_analytics.analysis.variable_types import short_name
-from clinical_analytics.contracts.declarations import Declarations, DeclarationStore, MemoryDeclarationStore
-from clinical_analytics.contracts.errors import ContractError, ContractStoreError
+from clinical_analytics.contracts.declarations import (
+    Declarations,
+    DeclarationStore,
+    LevelMapping,
+    MemoryDeclarationStore,
+)
+from clinical_analytics.contracts.errors import ContractError, ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks
@@ -28,7 +35,7 @@ from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_p
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
-from clinical_analytics.core.plan_values import absent_value_reason
+from clinical_analytics.core.plan_values import absent_value_reason, plan_values
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
@@ -48,17 +55,92 @@ CONFIRMATION_NOT_SAVED_REASON = (
     "I couldn't save your confirmation, so the question was not run. Try again; if it keeps "
     "happening, the dataset's saved settings may be damaged."
 )
-_PATIENT_COUNTED = frozenset({"count", "proportion", "rate"})
+INVALID_DATASET_KEY_REASON = (
+    "This dataset's ID is not valid, so the question was not run. Open the dataset again from the list."
+)
+_ENTITY_COUNTED = frozenset({"proportion", "rate"})
 
 
-def _unit_of(analysis: dict[str, Any], visits: bool) -> str:
-    """What n counts in ``analysis``: patients, or visits for a statistic over visit rows."""
-    if not visits:
-        return "patients"
-    frequency = analysis.get("type") == "descriptive" and analysis.get("value_counts") is not None
-    if analysis.get("type") in _PATIENT_COUNTED or (frequency and not analysis.get("is_numeric")):
-        return "patients"
-    return "visits"
+def _unit_of(analysis: dict[str, Any], plan: QueryPlan, findings: answer_checks.Findings) -> str | None:
+    """What n counts in ``analysis``: "patients" only when the counted entity is the patient
+    key (or rows are one per patient), rows as "visits" or "rows" by the grain, and no unit for
+    any other entity (a COUNT of distinct wards is not a count of patients)."""
+    kind = analysis.get("type")
+    frequency = kind == "descriptive" and analysis.get("value_counts") is not None and not analysis.get("is_numeric")
+    visit_key = findings.key if findings.visits else None
+    if kind == "count":
+        entity = plan.entity_key or visit_key
+    elif kind in _ENTITY_COUNTED or frequency:
+        entity = visit_key  # shares and frequency tables count distinct patients once rows are visits
+    else:
+        entity = None  # a statistic over rows
+    if entity is not None:
+        return "patients" if entity == findings.key else None
+    if findings.visits:
+        return "visits"
+    return "patients" if findings.rows_are_patients else "rows"
+
+
+def _confirmed_value(value: Any, lookup: dict[str, str]) -> Any:
+    """``value`` with each confirmed spelling replaced by its merged level (lists item by item)."""
+    if isinstance(value, list):
+        return [_confirmed_value(item, lookup) for item in value]
+    return lookup.get(value, value) if isinstance(value, str) else value
+
+
+def remapped_plan(plan: QueryPlan, mappings: tuple[LevelMapping, ...]) -> QueryPlan:
+    """``plan`` with every limit, share and rate value that is a confirmed spelling replaced by its
+    merged level (after ``remap_levels`` the base view holds only the merged level). For
+    execution only: word accounting, the hash and the plan line read the plan as parsed."""
+    lookups: dict[str, dict[str, str]] = {}
+    for mapping in mappings:
+        lookups.setdefault(mapping.column, {}).update({s: mapping.canonical for s in mapping.spellings})
+    if not lookups:
+        return plan
+
+    def mapped(column: str | None, value: Any) -> Any:
+        return _confirmed_value(value, lookups.get(str(column), {}))
+
+    return dataclasses.replace(
+        plan,
+        filters=[dataclasses.replace(f, value=mapped(f.column, f.value)) for f in plan.filters],
+        cohort_steps=[
+            dataclasses.replace(step, value=mapped(step.column, step.value)) if step.op == "eq" else step
+            for step in plan.cohort_steps
+        ],
+        proportion_value=mapped(plan.proportion_column, plan.proportion_value),
+        rate_value=mapped(plan.rate_column, plan.rate_value),
+    )
+
+
+def merged_words(plan: QueryPlan, mappings: tuple[LevelMapping, ...]) -> dict[tuple[str, str], tuple[str, ...]]:
+    """(column, merged level) -> the words a plan line shows beside it: the spelling the question
+    used, then the other spellings held by at least ``MIN_CELL_SIZE`` rows (``LevelMapping.named``),
+    so "sex = M" reads "sex = Male (includes 'M', 'male')" and a rare spelling is never named."""
+    asked: dict[tuple[str, str], list[str]] = {}
+    by_spelling = {(m.column, s): m for m in mappings for s in m.spellings}
+    for column, value, _compared in plan_values(plan):
+        for item in value if isinstance(value, list) else [value]:
+            mapping = by_spelling.get((str(column), item)) if isinstance(item, str) else None
+            if mapping is None:
+                continue
+            words = asked.setdefault((mapping.column, mapping.canonical), [])
+            if item != mapping.canonical and item not in words:
+                words.append(item)
+            for named in sorted(mapping.named):
+                if named != mapping.canonical and named not in words:
+                    words.append(named)
+    return {key: tuple(words) for key, words in asked.items() if words}
+
+
+def confirmation_hash(parsed: QueryPlan, executed: QueryPlan, context: AnalysisContext) -> str:
+    """The hash a confirmation must return: the plan as parsed, plus the plan that runs when a
+    confirmed merge changes it, so a merge confirmed after the hold was shown changes the hash."""
+    parsed_hash = plan_fingerprint(parsed, context)
+    if executed == parsed:
+        return parsed_hash
+    executed_hash = plan_fingerprint(executed, context)
+    return hashlib.sha256(f"{parsed_hash}:{executed_hash}".encode()).hexdigest()
 
 
 def all_null_statistics_reason(result: Any, plan: QueryPlan) -> str | None:
@@ -225,6 +307,24 @@ class QueryService:
                 context=None,
             )
 
+        # Confirmed declarations, read once per question. Merged spellings are applied before the
+        # parse, so the parser reads the merged levels ("male" names Male, not a tie of spellings).
+        dataset_version = dataset_version or upload_id or dataset_id or "unknown"
+        declaration_key = dataset_id or upload_id
+        declarations = self._load_declarations(declaration_key)
+        if declarations is None:
+            return QueryResult(
+                plan=None,
+                issues=[{"message": INVALID_DATASET_KEY_REASON, "severity": "error"}],
+                result=None,
+                confidence=0.0,
+                run_key=None,
+                context=None,
+                failure_reason=INVALID_DATASET_KEY_REASON,
+            )
+        mappings = declarations.levels_for(dataset_version)
+        self._apply_levels(mappings)
+
         # Parse query with NLQueryEngine
         query_intent = self.nl_engine.parse_query(
             normalized_query,
@@ -245,7 +345,6 @@ class QueryService:
             )
 
         # Convert QueryIntent to QueryPlan
-        dataset_version = dataset_version or upload_id or dataset_id or "unknown"
         query_plan: QueryPlan = self.nl_engine._intent_to_plan(query_intent, dataset_version)
 
         # Generate run_key using semantic layer (canonical implementation)
@@ -277,8 +376,11 @@ class QueryService:
         # A confirmation covers exactly the executable plan the user reviewed: it is bound to
         # the canonical plan hash, never to the display line (two plans can share a line).
         # Re-parsing can yield a different plan; that one is held and shown on its own.
-        shown_plan_line = format_plan_line(query_plan, context)
-        plan_hash = plan_fingerprint(query_plan, context)
+        # The plan as parsed is what the question is checked against; a limit on a confirmed
+        # spelling runs on the merged level ("M" -> "Male"), and the line shown says so.
+        executed_plan = remapped_plan(query_plan, mappings)
+        shown_plan_line = format_plan_line(executed_plan, context, merged=merged_words(query_plan, mappings))
+        plan_hash = confirmation_hash(query_plan, executed_plan, context)
         plan_changed = False
         if confirmed and confirm_plan_hash != plan_hash:
             confirmed = False
@@ -290,7 +392,7 @@ class QueryService:
             # has words the plan does not use, that misreading is the cause the reader can fix,
             # so it is the reason given.
             misread = (
-                self._unused_words_reason(normalized_query, query_plan, context)
+                self._unused_words_reason(normalized_query, query_plan, context, mappings)
                 if query_plan.filters and self._plan_columns_exist(query_plan)
                 else None
             )
@@ -361,10 +463,9 @@ class QueryService:
         # Data checks on the columns the plan reads: refuse what would be wrong whatever the
         # doctor says; hold what only they can settle (grain, category spellings, implausible
         # values) until they confirm this exact plan; otherwise note it on the answer.
-        declaration_key = dataset_id or upload_id
-        findings = self._data_findings(query_plan, declaration_key, dataset_version)
+        findings = self._data_findings(query_plan, declaration_key, dataset_version, declarations)
         if confirmed and not findings.refusal:
-            findings.refusal = self._declare(declaration_key, findings)
+            findings.refusal, declarations = self._declare(declaration_key, findings, declarations)
         if findings.refusal:
             return QueryResult(
                 plan=query_plan,
@@ -375,19 +476,13 @@ class QueryService:
                 context=context,
                 failure_reason=findings.refusal,
             )
-        # A limit on a spelling the doctor confirmed as one category reads the merged level
-        # ("M" -> "Male"), so it is not a limit on a value the merged view no longer holds.
-        query_plan = self._remapped_plan(query_plan, declaration_key, dataset_version)
-        if getattr(context, "query_plan", None) is not None:
-            context.query_plan = query_plan  # the answer formats the plan that ran
-
         # Word accounting (all tiers): a plan that leaves a word of the question unused answers
         # a different question. Hold it for review regardless of confidence; only the user's
         # confirmation of this exact plan (by hash) releases it.
         # Reverse accounting: every element of the plan must also be asked for by the question.
         # The data-check holds join the same hold, so one confirmation covers what was shown.
         if not confirmed:
-            accounting = self._accounting_hold_reason(normalized_query, query_plan, context)
+            accounting = self._accounting_hold_reason(normalized_query, query_plan, context, mappings)
             accounting_reason = " ".join([r for r in [accounting, *findings.holds] if r]) or None
             if accounting_reason:
                 return QueryResult(
@@ -402,6 +497,13 @@ class QueryService:
                     plan_line=shown_plan_line,
                     plan_hash=plan_hash,
                 )
+
+        # A limit on a spelling the doctor confirmed as one category reads the merged level
+        # ("M" -> "Male"), so it is not a limit on a value the merged view no longer holds. Remapped
+        # again here: this confirmation may have just merged the spellings.
+        query_plan = remapped_plan(query_plan, declarations.levels_for(dataset_version))
+        if getattr(context, "query_plan", None) is not None:
+            context.query_plan = query_plan  # the answer formats the plan that ran
 
         try:
             execution_result = self.semantic_layer.execute_query_plan(
@@ -437,7 +539,7 @@ class QueryService:
                         if analysis.get("error"):
                             issues.append({"message": str(analysis["error"]), "severity": "error"})
                         else:
-                            analysis = self._with_findings(analysis, findings)
+                            analysis = self._with_findings(analysis, findings, query_plan)
                             claim = present_analysis(analysis).get("claim")
         except CohortStepError as e:
             # Already plain language: say why the limit could not be applied.
@@ -468,33 +570,37 @@ class QueryService:
             return self._unsaved, "unsaved"
         return self.declarations, dataset_key
 
-    def _load_declarations(self, dataset_key: str | None) -> Declarations:
+    def _load_declarations(self, dataset_key: str | None) -> Declarations | None:
+        """The dataset's declarations; None when its id is not a valid key (the question is then
+        refused). Unreadable declarations count as none, so a confirmed question is held again."""
         store, key = self._store(dataset_key)
         try:
             return store.load(key)
+        except InvalidDeclarationKeyError as e:
+            logger.error("declarations_key_invalid", **error_fields(e))
+            return None
         except ContractStoreError as e:
             # Unreadable: nothing confirmed applies, so the question is held again.
             logger.error("declarations_unreadable", dataset_key=dataset_key, **error_fields(e))
             return Declarations()
 
     def _data_findings(
-        self, plan: QueryPlan, dataset_key: str | None, dataset_version: str | None
+        self, plan: QueryPlan, dataset_key: str | None, dataset_version: str | None, declarations: Declarations
     ) -> answer_checks.Findings:
         """Run the data checks for ``plan``. ``findings.visits``: rows are declared visits on this
         dataset version.
 
-        Stored declarations are applied first (count patients once rows are visits; merge
-        confirmed spellings), so a confirmed question is not held again. Every check is a
-        DuckDB aggregate (answer_checks): no column is copied per question.
+        ``declarations`` (loaded once per question, merges already applied) decide whether rows
+        are visits, so a confirmed question is not held again. Every check is a DuckDB aggregate
+        (answer_checks), and value counts are shared per column: no column is copied per question.
         """
         findings = answer_checks.Findings()
-        declarations = self._load_declarations(dataset_key)
-        self._apply_levels(declarations, dataset_version)
         layer = self.semantic_layer
         grain = answer_checks.grain_of(layer)
         visits = grain.repeated and answer_checks.declared_visits(grain, declarations, dataset_version)
         layer.count_entity_key = grain.key if visits else None
         findings.keyed, findings.visits = grain.key is not None, visits
+        findings.key, findings.rows_are_patients = grain.key, grain.rows_are_patients
 
         findings.refusal = answer_checks.metric_refusal(plan, layer)
         if findings.refusal:
@@ -517,6 +623,9 @@ class QueryService:
         for _column, hold, note in answer_checks.implausible_sentences(plan, layer):
             findings.holds.append(hold)
             findings.notes.append(note)
+        null_keys = answer_checks.missing_key_note(grain, visits or grain.repeated)
+        if null_keys:
+            findings.notes.append(null_keys)
         columns = answer_checks.plan_columns(plan)
         report = self._latest_report(dataset_key, dataset_version)
         findings.notes.extend(answer_checks.report_notes(report, columns))
@@ -532,14 +641,17 @@ class QueryService:
             logger.error("quality_report_unreadable", dataset_key=dataset_key, **error_fields(e))
             return None
 
-    def _declare(self, dataset_key: str | None, findings: answer_checks.Findings) -> str | None:
+    def _declare(
+        self, dataset_key: str | None, findings: answer_checks.Findings, declarations: Declarations
+    ) -> tuple[str | None, Declarations]:
         """Store what the doctor confirmed by confirming this plan, and apply it now.
 
-        Returns a plain refusal when the confirmation cannot be stored: the answer would
-        otherwise rest on a confirmation the next question does not know about.
+        Returns (refusal, declarations now stored). The refusal is plain when the confirmation
+        cannot be stored: the answer would otherwise rest on a confirmation the next question
+        does not know about.
         """
         if findings.grain_to_declare is None and not findings.levels_to_declare:
-            return None
+            return None, declarations
         grain, levels = findings.grain_to_declare, findings.levels_to_declare
 
         def change(declarations: Declarations) -> Declarations:
@@ -554,28 +666,31 @@ class QueryService:
             declarations = store.update(key, change)
         except ContractStoreError as e:
             logger.error("declarations_not_saved", dataset_key=dataset_key, **error_fields(e))
-            return CONFIRMATION_NOT_SAVED_REASON
+            return CONFIRMATION_NOT_SAVED_REASON, declarations
         if grain is not None:
             self.semantic_layer.count_entity_key = grain.key
             findings.visits = True
         if levels:
-            self._apply_levels(declarations, levels[0].dataset_version)
+            self._apply_levels(declarations.levels_for(levels[0].dataset_version))
         logger.info(
             "data_declarations_confirmed",
             dataset_key=dataset_key,
             grain=grain is not None,
             level_mappings=len(levels),
         )
-        return None
+        return None, declarations
 
-    def _apply_levels(self, declarations: Declarations, dataset_version: str | None) -> None:
-        """Merge each set of spellings confirmed on this version into one level, once per layer.
+    def _apply_levels(self, mappings: tuple[LevelMapping, ...]) -> None:
+        """Merge each set of confirmed spellings into one level, once per layer.
 
-        The NL engine's cached values of the column keep the original spellings next to the
-        merged one, so a question that names "M" still resolves and is read as "Male".
+        The NL engine then reads the merged levels only, so "male" names Male instead of tying
+        Male and male. Word accounting still knows the spellings (``_values_with_spellings``), so
+        a plan that names "M" is checked as asked and runs on Male.
         """
+        if not mappings:
+            return
         columns = set(self.semantic_layer.get_base_view().columns)
-        for mapping in declarations.levels_for(dataset_version):
+        for mapping in mappings:
             marker = (mapping.column, mapping.spellings, mapping.dataset_version)
             if marker in self._applied_levels or mapping.column not in columns:
                 continue
@@ -584,37 +699,28 @@ class QueryService:
             cache: dict[str, list[Any]] | None = getattr(self.nl_engine, "_distinct_value_cache", None)
             if cache is not None:
                 cache.pop(mapping.column, None)
-                merged = set(self.nl_engine._distinct_values(mapping.column)) | set(mapping.spellings)
-                cache[mapping.column] = sorted(merged, key=lambda value: (value is None, str(value)))
 
-    def _remapped_plan(self, plan: QueryPlan, dataset_key: str | None, dataset_version: str | None) -> QueryPlan:
-        """``plan`` with every limit, share and rate value that is a confirmed spelling replaced by
-        its merged level (the base view holds only the merged level after ``remap_levels``)."""
-        mappings = self._load_declarations(dataset_key).levels_for(dataset_version)
-        lookup = {(m.column, s): m.canonical for m in mappings for s in m.spellings}
-        if not lookup:
-            return plan
+    def _values_with_spellings(self, mappings: tuple[LevelMapping, ...]) -> Callable[[str], list[Any]]:
+        """The column values word accounting checks a plan against: the merged levels, plus the
+        confirmed spellings each one includes (the parse may name "M")."""
+        base = self.nl_engine._distinct_values
+        extra: dict[str, set[str]] = {}
+        for mapping in mappings:
+            extra.setdefault(mapping.column, set()).update(mapping.spellings)
+        if not extra:
+            return base
 
-        def mapped(column: str | None, value: Any) -> Any:
-            if isinstance(value, list):
-                return [mapped(column, v) for v in value]
-            return lookup.get((str(column), value), value) if isinstance(value, str) else value
+        def values_for(column: str) -> list[Any]:
+            values = base(column)
+            if column not in extra:
+                return values
+            merged = set(values) | extra[column]
+            return sorted(merged, key=lambda value: (value is None, str(value)))
 
-        filters = [dataclasses.replace(f, value=mapped(f.column, f.value)) for f in plan.filters]
-        steps = [
-            dataclasses.replace(step, value=mapped(step.column, step.value)) if step.op == "eq" else step
-            for step in plan.cohort_steps
-        ]
-        return dataclasses.replace(
-            plan,
-            filters=filters,
-            cohort_steps=steps,
-            proportion_value=mapped(plan.proportion_column, plan.proportion_value),
-            rate_value=mapped(plan.rate_column, plan.rate_value),
-        )
+        return values_for
 
     @staticmethod
-    def _with_findings(analysis: dict[str, Any], findings: answer_checks.Findings) -> dict[str, Any]:
+    def _with_findings(analysis: dict[str, Any], findings: answer_checks.Findings, plan: QueryPlan) -> dict[str, Any]:
         """The analysis with what n counts and the data-check notes the answer must carry.
 
         Every n says what it counts: patients for counts, shares and frequency tables (distinct
@@ -623,7 +729,8 @@ class QueryService:
         """
         disclosed = (analysis.get("implausible") or {}).get("column")
         notes = [n for n in findings.notes if not (disclosed and n.startswith(f"{short_name(disclosed)} has "))]
-        extra: dict[str, Any] = {"unit": _unit_of(analysis, findings.visits)} if findings.keyed else {}
+        unit = _unit_of(analysis, plan, findings) if findings.keyed else None
+        extra: dict[str, Any] = {"unit": unit} if unit else {}
         if notes:
             extra["data_notes"] = notes
         return {**analysis, **extra}
@@ -658,27 +765,31 @@ class QueryService:
         declared = metadata.get("type") if isinstance(metadata, dict) else None
         return declared if isinstance(declared, str) else None
 
-    def _unused_words_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
+    def _unused_words_reason(
+        self, question: str, plan: QueryPlan, context: AnalysisContext, mappings: tuple[LevelMapping, ...] = ()
+    ) -> str | None:
         """The sentence naming the question words this plan leaves out, or None."""
         columns = list(self.semantic_layer.get_base_view().columns)
         raw_index = self.semantic_layer.get_column_alias_index()
         alias_index = raw_index if isinstance(raw_index, dict) else None
-        return explain_hold(
-            question, plan, columns, self.nl_engine._distinct_values, alias_index=alias_index, context=context
-        )
+        values_for = self._values_with_spellings(mappings)
+        return explain_hold(question, plan, columns, values_for, alias_index=alias_index, context=context)
 
-    def _accounting_hold_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
+    def _accounting_hold_reason(
+        self, question: str, plan: QueryPlan, context: AnalysisContext, mappings: tuple[LevelMapping, ...] = ()
+    ) -> str | None:
         """Why this plan must be reviewed before it runs, or None when question and plan agree.
 
         Forward: a word of the question the plan does not use. Reverse: an element of the plan
         the question does not ask for. Then: a grouping by many integer codes, and a limit on a
-        value its column does not hold.
+        value its column does not hold. Run on the plan as parsed; a confirmed spelling
+        (``mappings``) is a value its column holds.
         """
         columns = list(self.semantic_layer.get_base_view().columns)
         raw_index = self.semantic_layer.get_column_alias_index()
         alias_index = raw_index if isinstance(raw_index, dict) else None
-        values_for = self.nl_engine._distinct_values
-        explained = self._unused_words_reason(question, plan, context)
+        values_for = self._values_with_spellings(mappings)
+        explained = self._unused_words_reason(question, plan, context, mappings)
         if explained:
             return explained
         unasked = unjustified_elements(question, plan, columns, values_for, alias_index=alias_index, context=context)

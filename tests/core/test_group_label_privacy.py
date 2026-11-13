@@ -73,6 +73,35 @@ class TestGroupingProblem:
         # Assert
         assert result is small
 
+    def test_groupFolding_usesTheOneSmallLevelRule(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Arrange: the presenter must fold by grouping.is_small_level, not a copy of the rule
+        from clinical_analytics.core import result_presentation
+
+        seen: list[Any] = []
+
+        def spy(count: object) -> bool:
+            seen.append(count)
+            return is_small_level(count)
+
+        monkeypatch.setattr(result_presentation, "is_small_level", spy)
+        analysis = {
+            "type": "count",
+            "total_count": 213,
+            "grouped_by": "site",
+            "group_counts": [
+                {"site": "North", "count": 150},
+                {"site": "South", "count": 60},
+                {"site": "R", "count": 3},
+            ],
+        }
+
+        # Act
+        present_analysis(analysis)
+
+        # Assert
+        assert {150, 60, 3} <= set(seen)
+        assert not hasattr(result_presentation, "_is_small")
+
 
 class TestManyLevelGroupingRefused:
     @pytest.mark.slow

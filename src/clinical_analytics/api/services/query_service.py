@@ -292,6 +292,13 @@ class AsyncQueryService:
         )
         logger.info("query_completed", query_id=query_id, intent_type=intent_type)
 
+    def _ask_active_version(self, *, question: str, dataset_id: str, **kwargs: Any) -> CoreQueryResult:
+        """``ask`` on the dataset's active version, read here in the worker thread: the metadata
+        read is disk I/O and must never block the event loop."""
+        return self._core.ask(
+            question=question, dataset_id=dataset_id, dataset_version=active_dataset_version(dataset_id), **kwargs
+        )
+
     async def _execute_query_background(
         self,
         query_id: str,
@@ -326,10 +333,9 @@ class AsyncQueryService:
             # session_id identifies the conversation, not the upload: it selects the history
             # passed to the parser, while dataset_id stays the data key.
             result: CoreQueryResult = await asyncio.to_thread(
-                self._core.ask,
+                self._ask_active_version,
                 question=query,
                 dataset_id=dataset_id,
-                dataset_version=active_dataset_version(dataset_id),
                 conversation_history=self.conversation_history(session_id, context),
                 confirmed=confirmed,
                 confirm_plan_line=confirm_plan_line,
@@ -533,10 +539,9 @@ class AsyncQueryService:
 
         # Execute synchronously in thread pool
         result: CoreQueryResult = await asyncio.to_thread(
-            self._core.ask,
+            self._ask_active_version,
             question=query,
             dataset_id=dataset_id,
-            dataset_version=active_dataset_version(dataset_id),
             conversation_history=self.conversation_history(session_id),
             confirmed=confirmed,
             confirm_plan_line=confirm_plan_line,

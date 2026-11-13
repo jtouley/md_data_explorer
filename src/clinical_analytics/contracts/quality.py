@@ -447,16 +447,11 @@ def _max_feasible(
     return rows - low(m) - rest_floor(bad, rest)
 
 
-def _is_tiny(rows: int) -> bool:
-    """Tables of 1..MAX_ROWS_NO_COUNTS rows report no column counts (a fixed cut-off)."""
-    return 0 < rows <= config.MAX_ROWS_NO_COUNTS
-
-
 def _hidden_cells(rows: int, value: dict[str, int], lines: list[Line], distinct_rests: set[str]) -> set[str]:
     """Shown cells to hide (see module docstring). The row count itself is always shown."""
     limit = config.MIN_CELL_SIZE
     shown_cells = {c for line in lines for c in line[:2] if c is not None}
-    if _is_tiny(rows):
+    if config.is_tiny_table(rows):
         return shown_cells  # zeros too: a lone hidden count could otherwise equal the row count
     # A line with any count of 1..10 (rest included) hides all its non-zero shown counts, closed
     # over lines that share a cell. Hiding only some, chosen by size or by a fixed order, lets a
@@ -652,10 +647,13 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     text = [c for c, dtype in schema.items() if dtype == pl.String and c not in skipped and c in props]
     if not text:
         return []
-    levels = lf.select([pl.col(c).drop_nulls().value_counts().implode().alias(c) for c in text]).collect()
+    # Fixed field names ("value", "__n"), so no column name ("count", "__n") collides with them.
+    levels = lf.select(
+        [pl.col(c).drop_nulls().alias("value").value_counts(name="__n").implode().alias(c) for c in text]
+    ).collect()
     results = []
     for column in text:
-        counts = {row[column]: row["count"] for row in levels.get_column(column)[0].to_list()}
+        counts = {row["value"]: row["__n"] for row in levels.get_column(column)[0].to_list()}
         groups = level_variants(list(counts))
         if not groups:
             continue
@@ -686,16 +684,20 @@ def run_quality(
     contract: OpenDataContractStandard,
     run_at: datetime | None = None,
     data_version: str | None = None,
+    previous_contract: OpenDataContractStandard | None = None,
 ) -> QualityReport:
     """Check ``lf`` against ``contract`` and build the suppressed report: the counted checks in one
     collect, then type conformance (schema only) and category spellings (one more collect).
 
-    ``data_version``: the version ``lf`` holds, when it is not the contract's own (type checks
-    run only then; see ``type_results``).
+    ``data_version``: the version ``lf`` holds. ``previous_contract``: the contract of the
+    dataset's previous version, which the column types are checked against (version N+1 against
+    N's contract); without one, the types are checked against ``contract`` only when it is
+    another version's, else reported as not run (see ``type_results``).
     """
     schema = lf.collect_schema()
     checks = compile_contract(contract, schema)
-    extra = [*type_results(contract, schema, data_version), *level_variant_results(lf, contract)]
+    typed_by = previous_contract if previous_contract is not None else contract
+    extra = [*type_results(typed_by, schema, data_version), *level_variant_results(lf, contract)]
     report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at, extra=extra)
     logger.info(
         "quality_run_completed",
@@ -721,7 +723,7 @@ def report_from_counts(
     """
     shown_counts = _shown_counts(checks, raw)
     rows = raw[ROWS_KEY]
-    tiny = _is_tiny(rows)
+    tiny = config.is_tiny_table(rows)
     results = [_result(c, raw, shown_counts, tiny) for c in checks] + list(extra or [])
     ts = (run_at or datetime.now(UTC)).astimezone(UTC)
     report = QualityReport(

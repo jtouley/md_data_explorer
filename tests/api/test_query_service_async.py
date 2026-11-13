@@ -749,3 +749,31 @@ class TestQueryResultSmallCells:
         text = json.dumps(body)
         assert not any(key in text for key in ('"result"', '"contingency"', '"group_proportions"', '"died"'))
         assert not {7.0, 3.0, 0.7, 0.3} & set(_numbers_in(body)), body
+
+
+class TestVersionLookupOffEventLoop:
+    """The dataset version is read from disk in the worker thread, never on the event loop."""
+
+    @pytest.mark.asyncio
+    async def test_executeQuery_versionLookup_runsInWorkerThread(self, async_query_service, mock_core_query_service):
+        # Arrange
+        import threading
+
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=None, issues=[], result=None, confidence=0.9, run_key=None, context=None
+        )
+        threads: list[threading.Thread] = []
+
+        def lookup(dataset_id: str) -> str:
+            threads.append(threading.current_thread())
+            return "v1"
+
+        # Act
+        with patch("clinical_analytics.api.services.query_service.active_dataset_version", lookup):
+            await async_query_service.execute_query(query="how many patients", dataset_id="ds1")
+
+        # Assert
+        assert threads and threads[0] is not threading.main_thread()
+        assert mock_core_query_service.ask.call_args.kwargs["dataset_version"] == "v1"

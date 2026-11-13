@@ -43,20 +43,27 @@ from clinical_analytics.core.schema_inference import patient_key_by_name
 _STATISTIC_INTENTS = frozenset({"DESCRIBE", "COMPARE_GROUPS"})
 # Report checks an answer already handles itself (hold or disclosure), so not repeated as notes.
 _HANDLED_METRICS = frozenset({RANGE_METRIC, "duplicateValues", "censoredValues", "levelVariants"})
-_COUNT = "__n"
 
 
 @dataclass(frozen=True)
 class Grain:
-    """The patient key, rows, and distinct keys of the dataset (None: no key)."""
+    """The patient key, rows, distinct non-null keys, and rows with no key (None: no key)."""
 
     key: str | None
     rows: int
     patients: int | None
+    missing_keys: int = 0
 
     @property
     def repeated(self) -> bool:
-        return self.patients is not None and self.patients < self.rows
+        """Some ID is on more than one row. Rows with no ID repeat no ID, so they are left out:
+        100 rows with 98 IDs and 2 empty ones are one row per patient."""
+        return self.patients is not None and self.patients < self.rows - self.missing_keys
+
+    @property
+    def rows_are_patients(self) -> bool:
+        """Every row has an ID and no ID repeats: counting rows counts patients."""
+        return self.key is not None and not self.repeated and self.missing_keys == 0
 
     def declaration(self, dataset_version: str | None) -> GrainDeclaration | None:
         if self.key is None or self.patients is None:
@@ -75,6 +82,8 @@ class Findings:
     levels_to_declare: list[LevelMapping] = field(default_factory=list)
     keyed: bool = False  # the dataset has a patient key, so every n can say what it counts
     visits: bool = False  # rows are declared visits (on this dataset version)
+    key: str | None = None  # the patient key
+    rows_are_patients: bool = False  # every row has an ID and none repeats
 
 
 def patient_key(layer: Any) -> str | None:
@@ -95,7 +104,19 @@ def grain_of(layer: Any) -> Grain:
     rows = int(layer._base_count(None))
     if key is None:
         return Grain(key=None, rows=rows, patients=None)
-    return Grain(key=key, rows=rows, patients=int(layer._base_count(key)))
+    return Grain(
+        key=key, rows=rows, patients=int(layer._base_count(key)), missing_keys=int(layer.base_missing_count(key))
+    )
+
+
+def missing_key_note(grain: Grain, visits: bool) -> str | None:
+    """The note for rows with no patient ID, or None. The count follows the small-cell rule
+    (its line: the rows that have an ID). At visit grain those rows are in no patient count."""
+    if grain.key is None or grain.missing_keys == 0:
+        return None
+    amount = line_count_text(grain.missing_keys, [grain.rows - grain.missing_keys])
+    counted = "; those rows are not counted as patients" if visits else ""
+    return f"Data check: {grain.key} is missing on {amount} rows{counted}."
 
 
 def declared_visits(grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
@@ -135,12 +156,12 @@ def _equality_values(plan: QueryPlan) -> Iterator[tuple[str, Any]]:
             yield column, value
 
 
-def value_counts(layer: Any, column: str) -> pl.DataFrame:
-    """Rows per distinct value of ``column`` (nulls included), counted in DuckDB: only the
-    distinct values cross into Polars. Columns: ``column`` and ``__n``."""
-    view = layer.get_base_view()
-    counted: pl.DataFrame = view.group_by(column).aggregate(**{_COUNT: view.count()}).to_polars()
-    return counted
+def value_counts(layer: Any, column: str) -> tuple[pl.Series, pl.Series]:
+    """(distinct values of ``column``, nulls included; rows per value), counted in DuckDB once
+    per column for the layer (``SemanticLayer.base_value_counts``): only the distinct values
+    cross into Polars, and the checks of one question share them."""
+    values, counts = layer.base_value_counts(column)
+    return values, counts
 
 
 def _is_string(layer: Any, column: str) -> bool:
@@ -159,8 +180,8 @@ def metric_refusal(plan: QueryPlan, layer: Any) -> str | None:
     if not _is_string(layer, metric):
         present = int(view[metric].count().execute())
         return all_missing_message(metric, what) if present == 0 and rows else None
-    counts = value_counts(layer, metric)
-    return statistic_refusal(counts.get_column(metric), what, counts.get_column(_COUNT), rows)[0]
+    values, counts = value_counts(layer, metric)
+    return statistic_refusal(values, what, counts, rows)[0]
 
 
 def _implausible_numeric(layer: Any, column: str) -> Implausible | None:
@@ -191,8 +212,8 @@ def implausible_in_layer(layer: Any, column: str) -> Implausible | None:
         return None
     dtype = view[column].type()
     if dtype.is_string():
-        counts = value_counts(layer, column)
-        return implausible_values(counts.get_column(column), counts.get_column(_COUNT))
+        values, counts = value_counts(layer, column)
+        return implausible_values(values, counts)
     if dtype.is_numeric() and not dtype.is_boolean():
         return _implausible_numeric(layer, column)
     return None
@@ -256,13 +277,16 @@ def variant_findings(
     for column, values in asked.items():
         if column not in columns or not _is_string(layer, column):
             continue
-        counts = value_counts(layer, column).drop_nulls(column)
-        frequency = dict(zip(counts.get_column(column).to_list(), counts.get_column(_COUNT).to_list(), strict=True))
+        levels, counts = value_counts(layer, column)
+        frequency = {v: int(n) for v, n in zip(levels.to_list(), counts.to_list(), strict=True) if v is not None}
         for group in level_variants(list(frequency)):
             if (column, group) in confirmed or (values is not None and not values & set(group)):
                 continue
             canonical, sentence = variant_sentence(column, group, frequency)
-            mapping = LevelMapping(column=column, spellings=group, canonical=canonical, dataset_version=dataset_version)
+            named = tuple(spelling for spelling in group if frequency.get(spelling, 0) >= MIN_CELL_SIZE)
+            mapping = LevelMapping(
+                column=column, spellings=group, canonical=canonical, named=named, dataset_version=dataset_version
+            )
             found.append((column, mapping, sentence))
     return found
 

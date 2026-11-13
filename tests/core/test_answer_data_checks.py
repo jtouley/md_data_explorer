@@ -28,7 +28,11 @@ from clinical_analytics.contracts.errors import ContractStoreError
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.answer_checks import grain_of
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
-from clinical_analytics.core.query_service import CONFIRMATION_NOT_SAVED_REASON, QueryService
+from clinical_analytics.core.query_service import (
+    CONFIRMATION_NOT_SAVED_REASON,
+    INVALID_DATASET_KEY_REASON,
+    QueryService,
+)
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine, patient_key_by_name
 
@@ -523,8 +527,8 @@ class TestConfirmedSpellingMerge:
         # Assert
         assert _shown(result) == expected
 
-    def test_applyLevels_distinctValueCache_keepsSpellingsBesideMergedLevel(self, make_semantic_layer: Any) -> None:
-        # Arrange: the NL engine resolved "M" before the merge
+    def test_applyLevels_parserReadsMergedLevelsAccountingKnowsSpellings(self, make_semantic_layer: Any) -> None:
+        # Arrange: before the merge "male" ties Male and male, so the parser binds neither
         service = _service(make_semantic_layer, sex_frame())
         assert "M" in service.nl_engine._distinct_values("sex")
         grouped = QueryPlan(intent="COUNT", group_by="sex", confidence=0.99)
@@ -533,8 +537,10 @@ class TestConfirmedSpellingMerge:
         # Act
         _ask(service, grouped, confirm_hash=held.plan_hash)
 
-        # Assert: "M" still resolves to a value; the plan then reads it as Male
-        assert {"M", "Male", "male", "Female"} <= set(service.nl_engine._distinct_values("sex"))
+        # Assert: the parser sees one level; word accounting still accepts a plan naming "M"
+        mappings = service.declarations.load("probe").levels_for("probe")
+        assert service.nl_engine._distinct_values("sex") == ["Female", "Male"]
+        assert {"M", "Male", "male", "Female"} <= set(service._values_with_spellings(mappings)("sex"))
 
 
 class TestSpellingHoldPrivacy:
@@ -755,3 +761,309 @@ class TestPatientKeyRanking:
 
         # Assert
         assert (grain.key, grain.repeated) == ("patient_id", True)
+
+
+# --- Second review round (PR #96): null keys, units, merged plans, caching, bad ids -----------
+
+
+def null_key_frame(missing: int, rows: int = 100) -> pl.DataFrame:
+    """``rows`` rows, one per patient, of which ``missing`` have no patient ID."""
+    ids: list[str | None] = [f"P{i:03d}" for i in range(rows - missing)]
+    return pl.DataFrame({"patient_id": ids + [None] * missing, "age": [40] * rows})
+
+
+def visits_with_null_keys(missing: int) -> pl.DataFrame:
+    """200 visit rows of 170 patients (sex one value per patient) plus ``missing`` rows with no ID."""
+    ids: list[str | None] = [*IDS[:170], *IDS[:30], *([None] * missing)]
+    sex = ["2: Female" if pid is None or int(pid[1:]) % 2 else "1: Male" for pid in ids]
+    return pl.DataFrame({"patient_id": ids, "sex": sex})
+
+
+def _ask_question(service: QueryService, question: str, confirm_hash: str | None = None) -> Any:
+    """Ask through the real parser and word accounting (nothing stubbed)."""
+    return service.ask(question, dataset_id="probe", confirmed=confirm_hash is not None, confirm_plan_hash=confirm_hash)
+
+
+class TestNullPatientKeys:
+    def test_grainOf_nullKeys_countsDistinctNonNullNotRepeated(self, make_semantic_layer: Any) -> None:
+        # Arrange: 100 rows, 98 unique IDs, 2 rows without an ID (no ID repeats)
+        layer = make_semantic_layer(data=null_key_frame(2))
+
+        # Act
+        grain = grain_of(layer)
+
+        # Assert
+        assert (grain.rows, grain.patients, grain.missing_keys, grain.repeated) == (100, 98, 2, False)
+
+    @pytest.mark.parametrize(
+        ("missing", "amount"),
+        [
+            pytest.param(2, "some", id="small_count_suppressed"),
+            pytest.param(15, "15", id="count_shown"),
+        ],
+    )
+    def test_ask_nullKeysNoRepeat_answeredInRowsAndNullsNoted(
+        self, make_semantic_layer: Any, missing: int, amount: str
+    ) -> None:
+        # Arrange
+        service = _service(make_semantic_layer, null_key_frame(missing))
+
+        # Act
+        result = _ask(service, QueryPlan(intent="COUNT", confidence=0.99))
+
+        # Assert: never held as repeated IDs; rows without an ID are not called patients
+        note = f"Data check: patient_id is missing on {amount} rows."
+        assert _shown(result) == f"ANSWER Total count: 100 rows. {note}"
+        assert result.analysis["data_notes"] == [note]
+
+    def test_ask_nullKeysAtVisitGrain_countsNonNullPatientsOnly(self, make_semantic_layer: Any) -> None:
+        # Arrange: 170 patients over 200 visit rows, plus 15 rows with no ID
+        service = _service(make_semantic_layer, visits_with_null_keys(15))
+        plan = QueryPlan(intent="COUNT", confidence=0.99)
+        held = _ask(service, plan)
+
+        # Act
+        result = _ask(service, plan, confirm_hash=held.plan_hash)
+
+        # Assert: the missing ID is not one more patient
+        assert _shown(result) == (
+            "ANSWER Total count: 170 patients. "
+            "Data check: patient_id is missing on 15 rows; those rows are not counted as patients."
+        )
+        assert result.analysis["n_filtered_out"] == 0
+
+    def test_ask_frequencyAtVisitGrainWithNullKeys_filteredOutIsZero(self, make_semantic_layer: Any) -> None:
+        # Arrange
+        service = _service(make_semantic_layer, visits_with_null_keys(15))
+        plan = QueryPlan(intent="DESCRIBE", metric="sex", confidence=0.99)
+        held = _ask(service, plan)
+
+        # Act
+        result = _ask(service, plan, confirm_hash=held.plan_hash)
+
+        # Assert: the table counts 170 patients and no filter removed any
+        assert result.analysis is not None, _shown(result)
+        assert result.analysis["row_count"] == 170
+        assert result.analysis["n_filtered_out"] == 0
+
+
+class TestUnitOfCountedEntity:
+    @pytest.mark.parametrize(
+        ("entity", "expected"),
+        [
+            pytest.param("ward", "ANSWER Total count: 12.", id="other_entity_no_unit"),
+            pytest.param("patient_id", "ANSWER Total count: 200 patients.", id="patient_key_patients"),
+        ],
+    )
+    def test_ask_countDistinctEntity_unitOnlyForPatientKey(
+        self, make_semantic_layer: Any, entity: str, expected: str
+    ) -> None:
+        # Arrange: one row per patient, 12 wards
+        frame = pl.DataFrame({"patient_id": IDS, "ward": [f"W{i % 12:02d}" for i in range(N)]})
+        service = _service(make_semantic_layer, frame)
+
+        # Act
+        result = _ask(service, QueryPlan(intent="COUNT", entity_key=entity, confidence=0.99))
+
+        # Assert
+        assert _shown(result) == expected
+
+
+class TestMergedLevelsOnParsedPlan:
+    def test_ask_maleTwiceAfterConfirmingSpellings_answers150NoHold(self, make_semantic_layer: Any) -> None:
+        # Arrange: nothing stubbed. Male 60, male 50, M 40 are one level once confirmed. ("M"
+        # alone is a one-letter word, which the parser never binds to a value.)
+        service = _service(make_semantic_layer, sex_frame())
+        held = _ask_question(service, "count patients by sex")
+        assert held.requires_confirmation
+        _ask_question(service, "count patients by sex", confirm_hash=held.plan_hash)
+
+        # Act
+        first = _ask_question(service, "how many male patients")
+        second = _ask_question(service, "how many male patients")
+
+        # Assert
+        assert [_shown(first), _shown(second)] == ["ANSWER Total count: 150 patients."] * 2
+
+    def test_ask_nonCanonicalValueAfterConfirmation_accountingOnParsedPlanNoHold(
+        self, make_semantic_layer: Any
+    ) -> None:
+        # Arrange: the parse is fixed to sex == M; word accounting runs for real
+        service = _service(make_semantic_layer, sex_frame())
+        grouped = QueryPlan(intent="COUNT", group_by="sex", confidence=0.99)
+        held = _ask(service, grouped)
+        _ask(service, grouped, confirm_hash=held.plan_hash)
+        plan = QueryPlan(
+            intent="COUNT",
+            filters=[FilterSpec(column="sex", operator="==", value="M")],
+            scope="filtered",
+            confidence=0.99,
+        )
+        intent = SimpleNamespace(
+            confidence=0.99,
+            intent_type="COUNT",
+            primary_variable=None,
+            grouping_variable=None,
+            predictor_variables=[],
+            time_variable=None,
+            event_variable=None,
+            filters=[],
+        )
+        service.nl_engine.parse_query = lambda *args, **kwargs: intent  # type: ignore[method-assign]
+        service.nl_engine._intent_to_plan = lambda *args: plan  # type: ignore[method-assign]
+
+        # Act
+        results = [_ask_question(service, "how many M patients") for _ in range(2)]
+
+        # Assert
+        assert [_shown(r) for r in results] == ["ANSWER Total count: 150 patients."] * 2
+
+    def test_ask_heldPlanWithMergedSpelling_lineShowsMergedLevelAndConfirmRuns(self, make_semantic_layer: Any) -> None:
+        # Arrange: after the merge, a limit on "M" is shown as the merged level, with the word asked
+        ages = [30 + i % 50 for i in range(N)]
+        ages[0] = 400
+        service = _service(make_semantic_layer, sex_frame().with_columns(pl.Series("age", ages)))
+        grouped = QueryPlan(intent="COUNT", group_by="sex", confidence=0.99)
+        _ask(service, grouped, confirm_hash=_ask(service, grouped).plan_hash)
+        plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="age",
+            filters=[FilterSpec(column="sex", operator="==", value="M")],
+            scope="filtered",
+            confidence=0.99,
+        )
+
+        # Act
+        held = _ask(service, plan)
+        answered = _ask(service, plan, confirm_hash=held.plan_hash)
+
+        # Assert
+        assert held.requires_confirmation
+        assert "sex == Male (includes 'M', 'male')" in (held.plan_line or "")
+        assert not answered.requires_confirmation
+        assert answered.analysis is not None
+
+
+class TestOneLookupPerAsk:
+    def test_ask_afterConfirmation_declarationsLoadedOnce(self, make_semantic_layer: Any) -> None:
+        # Arrange
+        class CountingStore(MemoryDeclarationStore):
+            loads = 0
+
+            def load(self, dataset_id: str) -> Declarations:
+                CountingStore.loads += 1
+                return super().load(dataset_id)
+
+        service = _service(make_semantic_layer, sex_frame(), declarations=CountingStore())
+        grouped = QueryPlan(intent="COUNT", group_by="sex", confidence=0.99)
+        _ask(service, grouped, confirm_hash=_ask(service, grouped).plan_hash)
+        CountingStore.loads = 0
+        plan = QueryPlan(
+            intent="COUNT",
+            filters=[FilterSpec(column="sex", operator="==", value="M")],
+            scope="filtered",
+            confidence=0.99,
+        )
+
+        # Act
+        _ask(service, plan)
+
+        # Assert
+        assert CountingStore.loads == 1
+
+    def test_baseValueCounts_cachedUntilLevelsRemapped(self, make_semantic_layer: Any) -> None:
+        # Arrange
+        layer = make_semantic_layer(data=sex_frame())
+        first = layer.base_value_counts("sex")
+
+        # Act
+        again = layer.base_value_counts("sex")
+        layer.remap_levels("sex", {"male": "Male", "M": "Male"})
+        merged = layer.base_value_counts("sex")
+
+        # Assert
+        assert again is first
+        values, counts = merged
+        assert values.name == "sex"
+        assert dict(zip(values.to_list(), counts.to_list(), strict=True)) == {"Male": 150, "Female": 50}
+
+    @pytest.mark.parametrize("name", ["__n", "count", "value"])
+    def test_ask_groupByColumnNamedLikeCountField_heldNoCrash(self, make_semantic_layer: Any, name: str) -> None:
+        # Arrange
+        frame = sex_frame().rename({"sex": name})
+        service = _service(make_semantic_layer, frame)
+
+        # Act
+        result = _ask(service, QueryPlan(intent="COUNT", group_by=name, confidence=0.99))
+
+        # Assert
+        assert result.requires_confirmation
+        assert "may be one category written differently" in (result.failure_reason or "")
+
+    def test_ask_textLabColumn_valueCountsComputedOncePerColumn(
+        self, make_semantic_layer: Any, monkeypatch: Any
+    ) -> None:
+        # Arrange: glucose as text runs the statistic check and the plausibility check
+        glucose = [str(round(4.0 + (i % 50) / 10, 1)) for i in range(N)]
+        glucose[1] = "n/a"
+        frame = pl.DataFrame({"patient_id": IDS, "glucose": glucose})
+        service = _service(make_semantic_layer, frame)
+        layer = service.semantic_layer
+        computed: list[str] = []
+        original = layer._compute_value_counts
+
+        def spy(column: str) -> tuple[pl.Series, pl.Series]:
+            computed.append(column)
+            return original(column)
+
+        monkeypatch.setattr(layer, "_compute_value_counts", spy)
+
+        # Act
+        _ask(service, QueryPlan(intent="DESCRIBE", metric="glucose", confidence=0.99))
+
+        # Assert
+        assert computed == ["glucose"]
+
+
+class TestInvalidDatasetId:
+    def test_fileDeclarationStore_invalidId_raisesContractStoreError(self, tmp_path: Any) -> None:
+        # Arrange
+        store = FileDeclarationStore(tmp_path)
+
+        # Act / Assert
+        with pytest.raises(ContractStoreError):
+            store.load("../outside")
+
+    @pytest.mark.parametrize(
+        "dataset_id",
+        [
+            pytest.param("../outside", id="path_traversal"),
+            pytest.param("a/b", id="slash"),
+            pytest.param("-leading-dash", id="bad_first_char"),
+            pytest.param("x" * 129, id="too_long"),
+        ],
+    )
+    def test_ask_invalidDatasetId_plainRefusalNotException(
+        self, make_semantic_layer: Any, tmp_path: Any, dataset_id: str
+    ) -> None:
+        # Arrange
+        service = _service(make_semantic_layer, dupids(), declarations=FileDeclarationStore(tmp_path))
+        plan = QueryPlan(intent="COUNT", confidence=0.99)
+        service.nl_engine.parse_query = lambda *args, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+            confidence=0.99,
+            intent_type="COUNT",
+            primary_variable=None,
+            grouping_variable=None,
+            predictor_variables=[],
+            time_variable=None,
+            event_variable=None,
+            filters=[],
+        )
+        service.nl_engine._intent_to_plan = lambda *args: plan  # type: ignore[method-assign]
+        service._accounting_hold_reason = lambda *args: None  # type: ignore[method-assign]
+
+        # Act
+        result = service.ask("how many patients", dataset_id=dataset_id)
+
+        # Assert
+        assert _shown(result) == f"REFUSED {INVALID_DATASET_KEY_REASON}"

@@ -533,8 +533,12 @@ class SemanticLayer:
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
         # Base-view counts, each counted once (the source does not change): rows under None,
-        # distinct values of an entity key under its column name.
+        # distinct non-null values of an entity key under its column name.
         self._base_counts: dict[str | None, int] = {}
+        # Rows with no value in a column (a missing patient ID), counted once per column.
+        self._base_missing: dict[str, int] = {}
+        # (values, rows per value) of a column, counted once until a level remap changes it.
+        self._value_counts: dict[str, tuple[pl.Series, pl.Series]] = {}
         self.count_entity_key = None
 
         # Alias index (lazy initialization)
@@ -778,12 +782,36 @@ class SemanticLayer:
         return self._base_count(None)
 
     def _base_count(self, entity_key: str | None) -> int:
-        """Rows of the base view, or its distinct ``entity_key`` values; each counted once."""
+        """Rows of the base view, or its distinct non-null ``entity_key`` values; each counted once.
+
+        A row with no ID is not one more patient: SQL ``DISTINCT`` would keep NULL as a value, so
+        the count is ``COUNT(DISTINCT key)``, which leaves it out (``base_missing_count`` counts it).
+        """
         if entity_key not in self._base_counts:
             view = self.get_base_view()
-            counted = view.count() if entity_key is None else view.select(entity_key).distinct().count()
+            counted = view.count() if entity_key is None else view[entity_key].nunique()
             self._base_counts[entity_key] = int(counted.execute())
         return self._base_counts[entity_key]
+
+    def base_missing_count(self, column: str) -> int:
+        """Rows of the base view with no value in ``column``, counted once."""
+        if column not in self._base_missing:
+            view = self.get_base_view()
+            self._base_missing[column] = int(view.filter(view[column].isnull()).count().execute())
+        return self._base_missing[column]
+
+    def base_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
+        """(distinct values of ``column`` named as the column, nulls included; rows holding each),
+        counted in DuckDB once per column until ``remap_levels`` changes the levels."""
+        if column not in self._value_counts:
+            self._value_counts[column] = self._compute_value_counts(column)
+        return self._value_counts[column]
+
+    def _compute_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
+        # Fixed field names, so no column name ("count", "__n") can collide with the count.
+        view = self.get_base_view()
+        counted = view.select(value=view[column]).group_by("value").aggregate(n=_.count()).to_polars()
+        return counted.get_column("value").alias(column), counted.get_column("n")
 
     def apply_filters(self, view, filters: dict[str, Any]) -> ibis.Table:
         """
@@ -2792,8 +2820,8 @@ class SemanticLayer:
             key = _quote_ident(entity)
             events = f"count(DISTINCT {key}) FILTER (WHERE {quoted} = {literal})"
             n = f"count(DISTINCT {key}) FILTER (WHERE {quoted} IS NOT NULL)"
-            # A missing key is one more distinct value, as SemanticLayer._base_count counts it.
-            n_rows = f"(count(DISTINCT {key}) + max(CASE WHEN {key} IS NULL THEN 1 ELSE 0 END))"
+            # A row with no ID is no patient, as SemanticLayer._base_count counts them.
+            n_rows = f"count(DISTINCT {key})"
         else:
             events, n, n_rows = f"count(*) FILTER (WHERE {quoted} = {literal})", f"count({quoted})", "count(*)"
         select = (
@@ -2839,8 +2867,8 @@ class SemanticLayer:
                 counted = view[entity_key].nunique() if entity_key else _.count()
                 result = view.group_by(plan.group_by).aggregate(counted.name("count")).order_by(plan.group_by)
             elif entity_key:
-                # Count distinct entities
-                result = view.select(entity_key).distinct().count()
+                # Count distinct entities; a row with no ID is not one more (see _base_count).
+                result = view[entity_key].nunique()
             else:
                 # Total count
                 result = view.count()
@@ -2916,6 +2944,9 @@ class SemanticLayer:
         "Male", "male", "M" -> "Male"). Rows and patients are unchanged; only labels merge."""
         view = self.get_base_view()
         self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
+        # The column's levels changed: its cached distinct count and value counts are stale.
+        self._base_counts.pop(column, None)
+        self._value_counts.pop(column, None)
 
     def _column_is_string(self, view: Any, column: str) -> bool:
         """From the schema: no rows are read."""

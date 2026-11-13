@@ -84,19 +84,21 @@ def plausibility_key(column: str) -> str:
 
 
 def _hinted(key: str, aliases: frozenset[str]) -> bool:
-    """A short alias followed by a unit in the header: 'Na (mmol/L)' -> 'nammoll'."""
+    """An alias followed by a unit in the header: 'Na (mmol/L)' -> 'nammoll', 'Glucose (mg/dL)'
+    -> 'glucosemgdl'."""
     return any(key == alias + unit for alias in aliases for unit in config.UNIT_HINTS)
 
 
 def find_plausibility_range(column: str) -> config.PlausibilityRange | None:
     """The configured range for ``column`` by its normalised short name, or None.
 
-    A short alias ("na", "k", "tc") matches only with a unit in the header: a column literally
-    named "na" or "tc" (not applicable, treatment code) gets no lab range.
+    Any alias also matches with a unit after it, as lab exports write headers ("Glucose (mg/dL)",
+    "creatinine umol/L"). A short alias ("na", "k", "tc") matches only with a unit in the header:
+    a column literally named "na" or "tc" (not applicable, treatment code) gets no lab range.
     """
     key = plausibility_key(column)
     return next(
-        (r for r in config.PLAUSIBILITY_RANGES if key in r.aliases or _hinted(key, r.hinted_aliases)),
+        (r for r in config.PLAUSIBILITY_RANGES if key in r.aliases or _hinted(key, r.aliases | r.hinted_aliases)),
         None,
     )
 
@@ -160,7 +162,8 @@ def implausible_values(series: pl.Series, weights: pl.Series | None = None) -> I
     values = series
     if series.dtype == pl.String:
         try:
-            parsed = parse_numeric_text(series)
+            # Weighted like statistic_refusal: the near-numeric share counts rows, not distinct values.
+            parsed = parse_numeric_text(series, weights)
         except AmbiguousNumberFormatError:
             return None  # the answer refuses on the format; there are no numbers to check
         if parsed is None:
@@ -361,7 +364,7 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         # when that is true of the data (patient grain), never for visit-level rows. A tiny
         # table states neither (its report hides every count, so the contract must not tell).
         prop["required"] = True
-        if df_is_tiny(series.len()):
+        if config.is_tiny_table(series.len()):
             pass
         elif repeated:
             prop["unique"] = False
@@ -424,16 +427,11 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
     return prop
 
 
-def df_is_tiny(rows: int) -> bool:
-    """Tables of 1..MAX_ROWS_NO_COUNTS rows: the report hides every count, zeros included."""
-    return 0 < rows <= config.MAX_ROWS_NO_COUNTS
-
-
 def _granularity(df: pl.DataFrame, id_column: str | None) -> str:
     """The grain the data shows: one row per identifier, or several (rows may be visits)."""
     if id_column is None:
         return "One row per record as uploaded; no identifier column"
-    if df_is_tiny(df.height):
+    if config.is_tiny_table(df.height):
         return "One row per record as uploaded; too few rows to state the grain"
     present = df.get_column(id_column).drop_nulls()
     if present.n_unique() < present.len():

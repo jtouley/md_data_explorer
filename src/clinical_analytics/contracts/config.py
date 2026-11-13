@@ -50,6 +50,13 @@ COUNT_HIDDEN: Final = "hidden"
 # value when duplicates are counted).
 MAX_ROWS_NO_COUNTS: Final = MIN_CELL_SIZE + 1
 
+
+def is_tiny_table(rows: int) -> bool:
+    """A table of 1..MAX_ROWS_NO_COUNTS rows: no column count is reported, zeros included, and
+    the contract states no grain. The one rule the builder and the report both use."""
+    return 0 < rows <= MAX_ROWS_NO_COUNTS
+
+
 OVERLAPPING_CHECK_REASON: Final = "another check already counts problem values in this column"
 TOO_FEW_ROWS_NOTE: Final = "too few rows to report counts"
 

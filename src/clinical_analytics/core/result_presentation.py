@@ -20,6 +20,7 @@ from clinical_analytics.analysis.grouping import (
     HIDDEN_GROUPS_LABEL,
     MAX_GROUP_LEVELS,
     OTHER_LABEL,
+    is_small_level,
     too_many_levels_message,
 )
 from clinical_analytics.analysis.sample_floors import (
@@ -288,9 +289,10 @@ def line_count_text(count: int, line: Sequence[int], threshold: int | None = Non
 
 
 def _unit(analysis: Mapping[str, Any]) -> str | None:
-    """What n counts, when the query service knows the dataset's grain: patients or visits."""
+    """What n counts, when the query service knows the dataset's grain: patients, visits, or rows
+    (some rows have no patient ID, so rows are not patients)."""
     unit = analysis.get("unit")
-    return unit if unit in ("patients", "visits") else None
+    return unit if unit in ("patients", "visits", "rows") else None
 
 
 def _counted(value: Any, analysis: Mapping[str, Any]) -> str:
@@ -452,11 +454,6 @@ def _hidden_cell(value: Any) -> bool:
     return isinstance(value, str) and value == SECONDARY_SUPPRESSED
 
 
-def _is_small(value: Any) -> bool:
-    """A true size from 1 to threshold-1, or one that is not a count (fail closed)."""
-    return not _is_count(value) or 0 < int(value) < _limit(None)
-
-
 class _Fold(set[Any]):
     """Groups folded into one row, and that row's label."""
 
@@ -525,11 +522,11 @@ def _small_parts(sizes: Mapping[Any, Any], hidden: set[Any], floor: int = 1) -> 
     """
     if N_USED in hidden:
         return _Fold()
-    folded = {g for g, n in sizes.items() if g in hidden or _is_small(n)}
+    folded = {g for g, n in sizes.items() if g in hidden or is_small_level(n)}
     if not folded:
         return _Fold()
     if _split_fold_allowed(sizes, folded, max(1, floor)):
-        return _Fold({g for g in folded if _is_small(sizes[g])})
+        return _Fold({g for g in folded if is_small_level(sizes[g])})
     return _Fold(folded, HIDDEN_GROUPS_LABEL)
 
 

@@ -29,9 +29,9 @@ import pydantic
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
-from clinical_analytics.contracts.errors import ContractStoreError
+from clinical_analytics.contracts.errors import ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.store import contracts_root
-from clinical_analytics.storage.dataset_deletion import validate_dataset_id
+from clinical_analytics.storage.dataset_deletion import InvalidDatasetIdError, validate_dataset_id
 
 logger = structlog.get_logger()
 
@@ -58,6 +58,9 @@ class LevelMapping(BaseModel):
     column: str
     spellings: tuple[str, ...]
     canonical: str
+    # Spellings held by at least MIN_CELL_SIZE rows when confirmed: the only ones a plan line
+    # may name beside the merged level (a label of 1 to 10 rows is never shown).
+    named: tuple[str, ...] = ()
     dataset_version: str | None = None
 
 
@@ -127,7 +130,16 @@ class FileDeclarationStore:
         self.data_dir = data_dir
 
     def _path(self, dataset_id: str) -> Path:
-        return contracts_root(self.data_dir) / validate_dataset_id(dataset_id) / DECLARATIONS_FILENAME
+        """The dataset's declarations file.
+
+        Raises:
+            InvalidDeclarationKeyError: ``dataset_id`` is not a plain identifier (``../``).
+        """
+        try:
+            checked = validate_dataset_id(dataset_id)
+        except InvalidDatasetIdError as e:
+            raise InvalidDeclarationKeyError("Invalid dataset id for declarations") from e
+        return contracts_root(self.data_dir) / checked / DECLARATIONS_FILENAME
 
     def load(self, dataset_id: str) -> Declarations:
         """The dataset's declarations, or none.

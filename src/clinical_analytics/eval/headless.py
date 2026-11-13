@@ -317,8 +317,9 @@ def small_level_labels(frame: pl.DataFrame, columns: list[str], threshold: int) 
     for column in columns:
         if column not in frame.columns:
             continue
-        counts = frame.get_column(column).drop_nulls().value_counts()
-        small = counts.filter((pl.col("count") > 0) & (pl.col("count") < threshold)).get_column(column)
+        # Fixed field names, so a column named "count" does not collide with the count.
+        counts = frame.get_column(column).drop_nulls().alias("value").value_counts(name="__n")
+        small = counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value")
         labels |= {display_level(column, value) for value in small.to_list()}
     return labels
 

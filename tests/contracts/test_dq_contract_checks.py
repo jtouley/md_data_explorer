@@ -304,3 +304,138 @@ def test_findPlausibilityRange_shortAlias_needsUnitHint(column: str, expected: s
 
     # Assert
     assert (found.variable if found else None) == expected
+
+
+# --- Second review round (PR #96) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [
+        pytest.param("Glucose (mg/dL)", "glucose", id="glucose_mgdl"),
+        pytest.param("LDL (mg/dL)", "ldl", id="ldl_mgdl"),
+        pytest.param("creatinine umol/L", "creatinine", id="creatinine_umoll"),
+        pytest.param("Glucose (mmol/L)", "glucose", id="glucose_mmoll"),
+        pytest.param("glucose", "glucose", id="plain_alias_no_unit"),
+        pytest.param("Glucose (notes)", None, id="non_unit_suffix_no_range"),
+    ],
+)
+def test_findPlausibilityRange_plainAliasWithUnitSuffix_getsRange(column: str, expected: str | None) -> None:
+    # Act
+    found = find_plausibility_range(column)
+
+    # Assert
+    assert (found.variable if found else None) == expected
+
+
+@pytest.mark.parametrize("name", ["count", "len", "__n"])
+def test_runQuality_textColumnNamedLikeCountField_noCrash(make_contract: Any, name: str) -> None:
+    # Arrange: value_counts() names its count field "count"; a column of that name collided
+    df = pl.DataFrame({"patient_id": IDS, name: ["Male"] * 100 + ["male"] * 60 + ["Female"] * 40})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    assert _checks(report)[f"{name.strip('_') or 'column_2'}{config.LEVEL_VARIANTS_RULE_SUFFIX}"].status == "warning"
+
+
+def test_smallLevelLabels_columnNamedCount_noCrash() -> None:
+    # Arrange
+    from clinical_analytics.eval.headless import small_level_labels
+
+    frame = pl.DataFrame({"count": ["a"] * 3 + ["b"] * 20})
+
+    # Act
+    labels = small_level_labels(frame, ["count"], threshold=11)
+
+    # Assert
+    assert labels == {"a"}
+
+
+def test_implausibleValues_distinctValuesWithWeights_shareWeightedByRows() -> None:
+    # Arrange: 30 distinct readings held by 100 rows each, one of them -5, and 2 words held by
+    # one row each: 30/32 distinct values are numbers (< 95%), but 3000/3002 rows are
+    values = pl.Series("glucose", [str(v) for v in range(70, 99)] + ["-5", "pending", "see notes"])
+    weights = pl.Series([100] * 30 + [1, 1])
+
+    # Act
+    found = implausible_values(values, weights)
+
+    # Assert
+    assert found is not None
+    assert (found.count, found.present) == (100, 3000)
+
+
+def test_checkUpload_typeChangedBetweenVersions_checkedAgainstPreviousContract(tmp_path: Any) -> None:
+    # Arrange: version v1 stores age as integers; v2 (an overwrite of the same upload) as text
+    from clinical_analytics.contracts.service import check_upload
+
+    v1 = pl.DataFrame({"patient_id": IDS, "age": [40 + i % 30 for i in range(N)]})
+    v2 = pl.DataFrame({"patient_id": IDS, "age": [str(40 + i % 30) for i in range(N)]})
+    base: dict[str, Any] = {
+        "dataset_name": "cohort",
+        "inferred_schema": {"column_mapping": {"patient_id": "patient_id"}},
+    }
+    first_meta = {**base, "version_history": [{"version": "v1", "is_active": True}]}
+    second_meta = {
+        **base,
+        "version_history": [{"version": "v1", "is_active": False}, {"version": "v2", "is_active": True}],
+    }
+
+    # Act
+    first = check_upload(tmp_path, v1, upload_id="u1", dataset_version="v1", metadata=first_meta)
+    second = check_upload(tmp_path, v2, upload_id="u1", dataset_version="v2", metadata=second_meta)
+
+    # Assert
+    assert _checks(first)[f"table{config.TYPE_RULE_SUFFIX}"].status == "not_run"
+    age = _checks(second)[f"age{config.TYPE_RULE_SUFFIX}"]
+    assert (age.status, age.message) == ("failed", "age: stored as string, but the contract expects integer")
+    assert _checks(second)[f"patient_id{config.TYPE_RULE_SUFFIX}"].status == "passed"
+
+
+def test_checkUpload_previousContractMissing_typeCheckNotRun(tmp_path: Any) -> None:
+    # Arrange: a legacy previous version without a contract
+    from clinical_analytics.contracts.service import check_upload
+
+    df = pl.DataFrame({"patient_id": IDS, "age": [40] * N})
+    meta = {
+        "dataset_name": "cohort",
+        "inferred_schema": {"column_mapping": {"patient_id": "patient_id"}},
+        "version_history": [{"version": "v0", "is_active": False}, {"version": "v1", "is_active": True}],
+    }
+
+    # Act
+    report = check_upload(tmp_path, df, upload_id="u1", dataset_version="v1", metadata=meta)
+
+    # Assert
+    assert _checks(report)[f"table{config.TYPE_RULE_SUFFIX}"].status == "not_run"
+
+
+@pytest.mark.parametrize(
+    ("rows", "tiny"),
+    [
+        pytest.param(0, False, id="empty"),
+        pytest.param(1, True, id="one"),
+        pytest.param(config.MAX_ROWS_NO_COUNTS, True, id="boundary"),
+        pytest.param(config.MAX_ROWS_NO_COUNTS + 1, False, id="above"),
+    ],
+)
+def test_isTinyTable_boundaries(rows: int, tiny: bool) -> None:
+    # Act / Assert
+    assert config.is_tiny_table(rows) is tiny
+
+
+def test_tinyTableRule_builderAndReportUseOneRule(make_contract: Any, monkeypatch: Any) -> None:
+    # Arrange: change the one rule; both the contract's grain and the report follow it
+    df = pl.DataFrame({"patient_id": IDS, "age": [40] * N})
+    monkeypatch.setattr(config, "is_tiny_table", lambda rows: True)
+
+    # Act
+    contract = make_contract(df)
+    report = run_quality(df.lazy(), contract)
+
+    # Assert
+    granularity = yaml.safe_load(contract.to_yaml())["schema"][0]["dataGranularityDescription"]
+    assert granularity == "One row per record as uploaded; too few rows to state the grain"
+    assert report.summary[0] == f"{N} rows: {config.TOO_FEW_ROWS_NOTE}"
