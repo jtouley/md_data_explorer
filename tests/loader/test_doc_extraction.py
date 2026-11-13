@@ -1,7 +1,10 @@
 """Tests for documentation extraction from ZIP uploads."""
 
+import json
 from io import BytesIO
 from zipfile import ZipFile
+
+import pytest
 
 from clinical_analytics.core.doc_parser import (
     extract_context_from_docs,
@@ -320,6 +323,52 @@ class TestAddDocumentationToUpload:
         # Assert: variable_types enhanced with codebooks (if schema inference ran)
         # Note: This depends on schema inference implementation
         # For now, just verify doc_context is present
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("present", "value"),
+        [
+            pytest.param(True, None, id="none"),
+            pytest.param(False, None, id="absent"),
+            pytest.param(True, "not-a-dict", id="wrong_type"),
+        ],
+    )
+    def test_add_documentation_variableTypesMissingOrInvalid_reInfersAndStoresDict(
+        self, upload_storage, present, value
+    ):
+        # Arrange: a saved upload whose metadata file has variable_types null, missing or a string
+        import polars as pl
+
+        from clinical_analytics.ui.storage.user_datasets import save_table_list
+
+        df = pl.DataFrame(
+            {
+                "patient_id": [f"P{i:03d}" for i in range(100)],
+                "current_regimen": [1, 2, 1] * 33 + [1],
+                "age": [20 + (i % 50) for i in range(100)],
+            }
+        )
+        upload_id = upload_storage.generate_upload_id("test_dataset.csv")
+        saved, _ = save_table_list(
+            upload_storage, [{"name": "patients", "data": df}], upload_id, {"dataset_name": "test_dataset"}
+        )
+        assert saved is True
+        metadata_path = upload_storage.metadata_dir / f"{upload_id}.json"
+        on_disk = json.loads(metadata_path.read_text())
+        on_disk.pop("variable_types", None)
+        if present:
+            on_disk["variable_types"] = value
+        metadata_path.write_text(json.dumps(on_disk))
+        doc_path = upload_storage.upload_dir / "dictionary.txt"
+        doc_path.write_text("current_regimen: Current antiretroviral regimen\nCurrent Regimen: 1: Biktarvy, 2: Symtuza")
+
+        # Act: re-inference merges codebooks into metadata["variable_types"]
+        success, message = upload_storage.add_documentation_to_upload(upload_id, doc_path, re_infer_schema=True)
+
+        # Assert
+        assert success is True, message
+        assert json.loads(metadata_path.read_text())["variable_types"] == {}
 
 
 class TestStandalonePdfUpload:
