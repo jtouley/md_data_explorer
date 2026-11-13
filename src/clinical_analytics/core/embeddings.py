@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
@@ -192,6 +193,41 @@ class OnnxSentenceEncoder:
             feeds["token_type_ids"] = np.array([e.type_ids for e in encoded], dtype=np.int64)
         hidden = self._session.run(None, feeds)[0]  # (batch, seq, 384) last_hidden_state
         return mean_pool_normalize(np.asarray(hidden, dtype=np.float32), attention)
+
+
+# One encoder per process and model directory: the model is a fixed, stateless artifact (~90 MB as
+# an ONNX session), so every NLQueryEngine shares it. A missing model is remembered as well, so it
+# is looked for once per process, not on every query.
+_ENCODERS: dict[Path, OnnxSentenceEncoder | EmbeddingModelMissingError] = {}
+_ENCODERS_LOCK: Final = threading.Lock()
+
+
+def get_encoder() -> OnnxSentenceEncoder:
+    """The shared encoder for the current model directory, loaded on first use.
+
+    Raises:
+        EmbeddingModelMissingError: the model is not there. The same error is raised again on
+            later calls without looking again; installing the model needs a restart.
+    """
+    root = embedding_model_dir()
+    with _ENCODERS_LOCK:
+        cached = _ENCODERS.get(root)
+        if cached is None:
+            try:
+                cached = OnnxSentenceEncoder(root)
+            except EmbeddingModelMissingError as e:
+                logger.error("embedding_model_missing", error=str(e), effect="semantic matching disabled")
+                cached = e
+            _ENCODERS[root] = cached
+    if isinstance(cached, EmbeddingModelMissingError):
+        raise cached
+    return cached
+
+
+def reset_encoder_cache() -> None:
+    """Forget the shared encoders and remembered failures (tests; after replacing the model)."""
+    with _ENCODERS_LOCK:
+        _ENCODERS.clear()
 
 
 def mean_pool_normalize(hidden: npt.NDArray[np.float32], attention_mask: npt.NDArray[np.int64]) -> Embeddings:

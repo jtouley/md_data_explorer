@@ -342,10 +342,10 @@ def cached_sentence_transformer():
     Loaded once per test session and reused. The model is a build artifact, never downloaded at
     runtime: if it is missing the tests that need it fail with the command that fetches it.
     """
-    from clinical_analytics.core.embeddings import EmbeddingModelMissingError, OnnxSentenceEncoder
+    from clinical_analytics.core.embeddings import EmbeddingModelMissingError, get_encoder
 
     try:
-        encoder = OnnxSentenceEncoder()
+        encoder = get_encoder()  # the same instance every NLQueryEngine in this process uses
     except EmbeddingModelMissingError as e:
         pytest.fail(str(e))
 
@@ -376,7 +376,12 @@ def mock_encoder():
 
     mock.encode = MagicMock(side_effect=mock_encode)
 
-    with patch("clinical_analytics.core.embeddings.OnnxSentenceEncoder", return_value=mock):
+    # get_encoder is what NLQueryEngine calls; patching it (not only the class) keeps the mock out of
+    # the process-wide encoder cache and the real encoder out of these tests.
+    with (
+        patch("clinical_analytics.core.embeddings.OnnxSentenceEncoder", return_value=mock),
+        patch("clinical_analytics.core.embeddings.get_encoder", return_value=mock),
+    ):
         yield mock
 
 

@@ -336,3 +336,149 @@ def test_check_embedding_model_cacheSaysVerifiedButBytesReplaced_stillCaught(pin
     # Act / Assert
     with pytest.raises(embeddings.EmbeddingModelIntegrityError):
         check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)
+
+
+@pytest.fixture
+def fresh_encoder_cache(monkeypatch):
+    """An empty process-wide encoder cache for one test (the real one is put back afterwards)."""
+    monkeypatch.setattr(embeddings, "_ENCODERS", {})
+
+
+@pytest.fixture
+def counted_encoder_loads(monkeypatch):
+    """Counts how often the encoder is constructed (each is a model lookup and, if found, a load)."""
+    real = embeddings.OnnxSentenceEncoder
+    loads: list[Path | None] = []
+
+    class CountingEncoder(real):  # type: ignore[misc, valid-type]
+        def __init__(self, model_dir: Path | None = None, *, batch_size: int = 32) -> None:
+            loads.append(model_dir)
+            super().__init__(model_dir, batch_size=batch_size)
+
+    monkeypatch.setattr(embeddings, "OnnxSentenceEncoder", CountingEncoder)
+    return loads
+
+
+@pytest.mark.parametrize("calls", [1, 2, 5])
+def test_get_encoder_repeatedCalls_loadsModelOncePerProcess(fresh_encoder_cache, counted_encoder_loads, calls):
+    # Act
+    encoders = [embeddings.get_encoder() for _ in range(calls)]
+
+    # Assert
+    assert all(encoder is encoders[0] for encoder in encoders)
+    assert len(counted_encoder_loads) == 1
+
+
+@pytest.mark.parametrize("calls", [1, 3])
+def test_get_encoder_modelMissing_remembersFailureWithoutLookingAgain(
+    fresh_encoder_cache, counted_encoder_loads, monkeypatch, tmp_path, calls
+):
+    # Arrange: a model directory with nothing in it
+    monkeypatch.setenv(embeddings.EMBEDDING_MODEL_DIR_ENV, str(tmp_path))
+
+    # Act / Assert: the same error every time, with the command that fixes it
+    for _ in range(calls):
+        with pytest.raises(EmbeddingModelMissingError, match="make fetch-embedding-model"):
+            embeddings.get_encoder()
+    assert len(counted_encoder_loads) == 1
+
+
+def test_get_encoder_modelDirChanges_usesEncoderForThatDirectory(
+    fresh_encoder_cache, counted_encoder_loads, monkeypatch, tmp_path
+):
+    # Arrange: the bundled model first, then an override pointing at an empty directory
+    bundled = embeddings.get_encoder()
+    monkeypatch.setenv(embeddings.EMBEDDING_MODEL_DIR_ENV, str(tmp_path))
+
+    # Act / Assert: the missing override is not answered with the bundled encoder
+    with pytest.raises(EmbeddingModelMissingError):
+        embeddings.get_encoder()
+    monkeypatch.delenv(embeddings.EMBEDDING_MODEL_DIR_ENV)
+    assert embeddings.get_encoder() is bundled
+    assert len(counted_encoder_loads) == 2
+
+
+@pytest.mark.parametrize("queries", [0, 1, 4], ids=["init_only", "one_query", "four_queries"])
+def test_nl_query_engine_modelMissing_semanticMatchOffAndModelNotRetriedPerQuery(
+    fresh_encoder_cache, counted_encoder_loads, monkeypatch, tmp_path, make_semantic_layer, queries
+):
+    # Arrange: library use without the bundled model (serve.py's start check does not run here)
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    monkeypatch.setenv(embeddings.EMBEDDING_MODEL_DIR_ENV, str(tmp_path))
+    semantic = make_semantic_layer(dataset_name="no_model", data={"patient_id": [1, 2], "age": [40, 50]})
+
+    # Act: init embeds the golden examples (first and only lookup), then every query is Tier 2
+    engine = NLQueryEngine(semantic)
+    intents = [engine._semantic_match("how many patients?") for _ in range(queries)]
+
+    # Assert
+    assert intents == [None] * queries
+    assert engine.encoder is None
+    assert engine._encoder_unavailable is True
+    assert engine._golden_embeddings is None
+    assert len(counted_encoder_loads) == 1
+
+
+@pytest.mark.parametrize("engine_count", [2, 3])
+def test_nl_query_engine_severalDatasets_shareOneEncoderAndGoldenEmbeddings(
+    fresh_encoder_cache, counted_encoder_loads, monkeypatch, make_semantic_layer, engine_count
+):
+    # Arrange: one engine per dataset, as get_query_service_for_dataset builds them
+    from clinical_analytics.core import nl_query_engine
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    monkeypatch.setattr(nl_query_engine, "_GOLDEN_EMBEDDING_CACHE", {})
+    layers = [
+        make_semantic_layer(
+            dataset_name=f"shared_{i}",
+            data={"patient_id": [1, 2, 3], "age": [40 + i, 50, 60]},
+            workspace_name=f"workspace_{i}",
+        )
+        for i in range(engine_count)
+    ]
+
+    # Act
+    engines = [NLQueryEngine(layer) for layer in layers]
+    intents = [engine._semantic_match("how many patients?") for engine in engines]
+
+    # Assert: one ONNX session and one golden-example encoding for the whole process
+    assert len(counted_encoder_loads) == 1
+    assert all(engine.encoder is engines[0].encoder for engine in engines)
+    assert engines[0]._golden_embeddings is not None
+    assert all(engine._golden_embeddings is engines[0]._golden_embeddings for engine in engines)
+    assert not engines[0]._golden_embeddings.flags.writeable
+    assert [intent.intent_type for intent in intents] == ["COUNT"] * engine_count
+
+
+def test_golden_embedding_cache_fileEdited_embedsAgain(fresh_encoder_cache, monkeypatch, make_semantic_layer, tmp_path):
+    # Arrange: an engine pointed at its own golden examples file
+    import yaml
+
+    from clinical_analytics.core import nl_query_engine
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    monkeypatch.setattr(nl_query_engine, "_GOLDEN_EMBEDDING_CACHE", {})
+    config = tmp_path / "golden_examples.yaml"
+    config.write_text(yaml.safe_dump({"questions": [{"id": "a", "query": "how many patients?"}]}))
+    semantic = make_semantic_layer(dataset_name="edited_golden", data={"patient_id": [1, 2], "age": [40, 50]})
+
+    def load(engine: NLQueryEngine) -> np.ndarray:
+        engine._golden_embeddings = engine._golden_examples = None
+        engine._golden_config_path = config
+        engine._load_golden_examples()
+        return engine._golden_embeddings
+
+    first = load(NLQueryEngine(semantic))
+
+    # Act: same file again, then the file with one more example
+    again = load(NLQueryEngine(semantic))
+    config.write_text(
+        yaml.safe_dump({"questions": [{"id": "a", "query": "how many patients?"}, {"id": "b", "query": "mean age"}]})
+    )
+    edited = load(NLQueryEngine(semantic))
+
+    # Assert
+    assert again is first
+    assert first.shape == (1, EMBEDDING_DIM)
+    assert edited.shape == (2, EMBEDDING_DIM)

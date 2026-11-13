@@ -22,6 +22,7 @@ from difflib import get_close_matches
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import structlog
 
 from clinical_analytics.core.config_loader import load_patterns_config
@@ -30,6 +31,29 @@ from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 logger = structlog.get_logger()
+
+# Golden-example embeddings, shared by every engine in the process. Key: the config file's resolved
+# path, size and mtime (an edited file is embedded again). Value: the encoder that produced them
+# (compared by identity, so a different encoder never reuses them) and the read-only embeddings.
+_GoldenCacheKey = tuple[str, int, int]
+_GOLDEN_EMBEDDING_CACHE: dict[_GoldenCacheKey, tuple[Any, Any]] = {}
+_GOLDEN_EMBEDDING_CACHE_MAX = 8
+
+
+def _golden_cache_key(config_path: Path) -> _GoldenCacheKey | None:
+    """Cache key for a golden examples file, or None when it cannot be read (nothing is cached)."""
+    try:
+        stat = config_path.stat()
+    except OSError:
+        return None
+    return (str(config_path.resolve()), stat.st_size, stat.st_mtime_ns)
+
+
+def _remember_golden_embeddings(key: _GoldenCacheKey, encoder: Any, golden_embeddings: Any) -> None:
+    while len(_GOLDEN_EMBEDDING_CACHE) >= _GOLDEN_EMBEDDING_CACHE_MAX:
+        _GOLDEN_EMBEDDING_CACHE.pop(next(iter(_GOLDEN_EMBEDDING_CACHE)))  # oldest first
+    _GOLDEN_EMBEDDING_CACHE[key] = (encoder, golden_embeddings)
+
 
 # Valid intent types (single source of truth)
 VALID_INTENT_TYPES = [
@@ -163,7 +187,8 @@ class NLQueryEngine:
             raise ValueError(f"Only the bundled embedding model {MODEL_NAME!r} is available, got {embedding_model!r}")
         self.semantic_layer = semantic_layer
         self.embedding_model_name = embedding_model
-        self.encoder = None  # Lazy load
+        self.encoder = None  # Lazy load (the process-wide encoder, see core.embeddings.get_encoder)
+        self._encoder_unavailable = False  # the bundled model is missing: do not look again
         self.template_embeddings = None  # Lazy load
 
         # Overlay cache (mtime-based hot reload)
@@ -185,15 +210,27 @@ class NLQueryEngine:
         self._load_golden_examples()
 
     def _load_encoder(self) -> Any:
-        """The bundled ONNX sentence encoder. Never downloads; a missing model is logged loudly."""
-        from clinical_analytics.core.embeddings import EmbeddingModelMissingError, OnnxSentenceEncoder
+        """The process-wide bundled ONNX sentence encoder, or None when the model is missing.
 
+        Never downloads. serve.py refuses to start without the model; in library use a missing
+        model turns semantic matching off for this engine: it is logged once at error level and
+        remembered, so later queries do not try to load it again.
+        """
+        from clinical_analytics.core.embeddings import EmbeddingModelMissingError, get_encoder
+
+        if self._encoder_unavailable:
+            return None
         try:
-            return OnnxSentenceEncoder()
+            return get_encoder()
         except EmbeddingModelMissingError as e:
-            # serve.py refuses to start without the model; here (library use) semantic matching is off.
-            logger.error("embedding_model_missing", error=str(e), effect="semantic matching disabled")
-            raise
+            self._encoder_unavailable = True
+            logger.error(
+                "semantic_matching_disabled",
+                reason="embedding_model_missing",
+                error=str(e),
+                effect="queries use pattern matching and the local language model only",
+            )
+            return None
 
     def _load_golden_examples(self) -> None:
         """
@@ -208,10 +245,16 @@ class NLQueryEngine:
         if self._golden_embeddings is not None and self._golden_examples is not None:
             return
 
-        try:
-            from clinical_analytics.core.config_loader import load_golden_examples_config
+        from clinical_analytics.core.resources import ResourceNotFoundError
 
-            config = load_golden_examples_config(config_path=self._golden_config_path)
+        try:
+            from clinical_analytics.core.config_loader import (
+                golden_examples_config_path,
+                load_golden_examples_config,
+            )
+
+            config_path = self._golden_config_path or golden_examples_config_path()
+            config = load_golden_examples_config(config_path=config_path)
             examples = config.get("questions", [])
 
             if not examples:
@@ -219,9 +262,6 @@ class NLQueryEngine:
                 self._golden_embeddings = None
                 self._golden_examples = None
                 return
-
-            # Embed all queries
-            queries = [ex["query"] for ex in examples]
 
             # Lazy load encoder if needed
             if self.encoder is None:
@@ -233,7 +273,22 @@ class NLQueryEngine:
                 self._golden_examples = None
                 return
 
-            self._golden_embeddings = self.encoder.encode(queries)
+            # Embed all queries once per process: every engine (one per dataset) reads the same
+            # file with the same encoder, so the embeddings are shared, not recomputed.
+            cache_key = _golden_cache_key(config_path)
+            cached = _GOLDEN_EMBEDDING_CACHE.get(cache_key) if cache_key else None
+            if cached is not None and cached[0] is self.encoder and cached[1].shape[0] == len(examples):
+                self._golden_embeddings = cached[1]
+                self._golden_examples = examples
+                return
+
+            queries = [ex["query"] for ex in examples]
+            golden_embeddings = self.encoder.encode(queries)
+            if isinstance(golden_embeddings, np.ndarray):
+                golden_embeddings.setflags(write=False)  # shared between engines
+                if cache_key:
+                    _remember_golden_embeddings(cache_key, self.encoder, golden_embeddings)
+            self._golden_embeddings = golden_embeddings
             self._golden_examples = examples
 
             logger.info(
@@ -241,6 +296,8 @@ class NLQueryEngine:
                 count=len(examples),
                 embedding_shape=self._golden_embeddings.shape,
             )
+        except ResourceNotFoundError:
+            raise  # an incomplete install must fail, not run without its config
         except Exception as e:
             logger.warning(
                 "golden_examples_load_failed",
