@@ -523,7 +523,11 @@ def detect_header_row(rows: list[list[object]], max_rows: int = HEADER_SCAN_ROWS
 
     Skips title rows above the real header (a merged "Study cohort" banner).
     """
-    scores = [_header_score(r) for r in rows[:max_rows]]
+    scanned = rows[:max_rows]
+    # Score each row against the widest one: a sheet can store a one-cell title banner as a
+    # one-cell row, which is "fully filled" only relative to its own length.
+    width = max((len(r) for r in scanned), default=0)
+    scores = [_header_score(list(r) + [None] * (width - len(r))) for r in scanned]
     if not scores or max(scores) <= _HEADER_MIN_SCORE:
         return 0
     return scores.index(max(scores))
@@ -545,7 +549,11 @@ def read_excel_rows(file_bytes: bytes) -> list[list[object]]:
     except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError) as e:
         raise StagingError(f"The Excel file could not be read: {type(e).__name__}") from e
     try:
-        return [list(r) for r in wb.worksheets[0].iter_rows(values_only=True)]
+        sheet = wb.worksheets[0]
+        # Read-only mode trusts the sheet's declared size, and some exporters declare A1:A1
+        # (IHME's workbooks do): every row would come back one cell wide, title only.
+        sheet.reset_dimensions()
+        return [list(r) for r in sheet.iter_rows(values_only=True)]
     finally:
         wb.close()
 
