@@ -4,12 +4,14 @@
  *
  * Lifecycle:
  * 1. Pick a port on 127.0.0.1: the preferred one if free, otherwise one the OS hands out.
- * 2. Spawn `<python> -P -m clinical_analytics.api.serve --host 127.0.0.1 --port <port>
+ * 2. Spawn `<python> -I -u -m clinical_analytics.api.serve --host 127.0.0.1 --port <port>
  *    --exit-with-parent <electron pid> --stop-on-stdin-close` with this launch's API token in its
  *    environment (never the dev no-auth opt-out, never Ollama auto-download), from a directory
- *    of the app's own. `-P` keeps the working directory off Python's import path, so a stray
- *    json.py or yaml.py there (or in the home directory) is never imported in place of the real
- *    module; PYTHONPATH from the user's shell is dropped for the same reason.
+ *    of the app's own. `-I` (isolated mode) keeps the working directory and the user's
+ *    site-packages off Python's import path and ignores every PYTHON* variable (PYTHONPATH,
+ *    PYTHONHOME, PYTHONSTARTUP, ...), so a stray json.py or a .pth file in the user's files is
+ *    never imported by the process that holds the token. A venv still finds its own packages
+ *    (pyvenv.cfg, not the environment). `-u` keeps output unbuffered, as PYTHONUNBUFFERED would.
  * 3. Wait until anything answers /health, then check the server proves it knows the token
  *    (apiAuth.js), so a program squatting on the port is never used.
  * 4. On quit: SIGTERM to the process group (Windows: close its stdin), then a forced kill of the
@@ -46,8 +48,8 @@ export const STORE_CHECK_FAILED_EXIT = 2;
 const STDERR_TAIL_LINES = 40;
 // Never handed to the sidecar: the dev opt-out would let the renderer accept an unauthenticated
 // backend, and auto-init downloads Ollama models.
-// PYTHONPATH from the user's shell would put directories from outside the app on the import
-// path of a process that holds the API token.
+// PYTHONPATH is ignored under -I anyway; dropping it as well keeps it out of anything the
+// backend itself starts.
 const STRIPPED_ENV = [
   'CLINICAL_ANALYTICS_DEV_NO_AUTH',
   'CLINICAL_ANALYTICS_OLLAMA_AUTOINIT',
@@ -128,14 +130,23 @@ export function ensureBackendCwd(userDataDir, fsImpl = fs) {
     throw new Error(`the app's data directory must be an absolute path, got "${userDataDir}"`);
   }
   const dir = path.join(userDataDir, BACKEND_CWD_NAME);
-  fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    // A filesystem refusal (EACCES after a sudo run, ENOSPC, EROFS): a problem with this folder
+    // that reinstalling does not fix, so it gets its own failure naming the folder. Anything
+    // without a system error code is a bug and is thrown as it is.
+    if (typeof error?.code !== 'string') throw error;
+    throw { reason: 'folder', folder: dir, detail: error.code };
+  }
   return dir;
 }
 
 /** @param {number} port @param {number} parentPid */
 export function buildBackendArgs(port, parentPid) {
   return [
-    '-P', // safe path (Python 3.11+): the working directory is not put on sys.path
+    '-I', // isolated: no cwd or user site-packages on sys.path, PYTHON* variables ignored
+    '-u', // unbuffered stdout/stderr (PYTHONUNBUFFERED is ignored under -I)
     '-m',
     'clinical_analytics.api.serve',
     '--host',
@@ -153,7 +164,7 @@ export function buildBackendArgs(port, parentPid) {
  * @param {string} token
  */
 export function buildBackendEnv(baseEnv, token) {
-  const env = { ...baseEnv, CLINICAL_ANALYTICS_API_TOKEN: token, PYTHONUNBUFFERED: '1' };
+  const env = { ...baseEnv, CLINICAL_ANALYTICS_API_TOKEN: token };
   for (const name of STRIPPED_ENV) delete env[name];
   delete env.ELECTRON_RUN_AS_NODE;
   return env;
@@ -223,8 +234,9 @@ function exitDescription({ code, signal }) {
  * Text for the error window when the backend did not start. Every message says what happened
  * and what to do next; the wording follows the copy deck in docs/app/DESIGN.md ("analysis
  * engine", "on this computer").
- * @param {{ reason: 'exited' | 'timeout' | 'untrusted' | 'spawn' | 'config', code?: number | null,
- *   signal?: string | null, stderrText?: string, detail?: string, timeoutMs?: number }} failure
+ * @param {{ reason: 'exited' | 'timeout' | 'untrusted' | 'spawn' | 'config' | 'folder',
+ *   code?: number | null, signal?: string | null, stderrText?: string, detail?: string,
+ *   timeoutMs?: number, folder?: string }} failure
  * @returns {{ title: string, message: string }}
  */
 export function startupFailureMessage(failure) {
@@ -258,6 +270,16 @@ export function startupFailureMessage(failure) {
       message:
         'Another program is using the port Clinical Analytics chose for its analysis engine, ' +
         `so the app did not connect to it. ${START_AGAIN} It will choose a free port.`,
+    };
+  }
+  if (failure.reason === 'folder') {
+    return {
+      title,
+      message:
+        `Clinical Analytics could not create its working folder "${failure.folder}" ` +
+        `(${failure.detail || 'unknown error'}). Check that this folder, and the folders around ` +
+        'it, can be written by your user account and that the disk is not full, then start ' +
+        'Clinical Analytics again.',
     };
   }
   if (failure.reason === 'config') {
@@ -376,15 +398,20 @@ export async function waitForHealth(opts) {
     }
     if (answered) {
       let verdict;
+      let outOfTime = false;
       try {
         verdict = await verifyBackendEnforcesAuth(fetchFn, baseUrl, token, cryptoImpl);
       } catch (error) {
+        // The overall deadline, not the server, ended the proof (it was not sent, or its request
+        // only had what was left of the wait): a slow start, not another program on the port.
+        outOfTime = error instanceof DeadlineExceeded || now() >= deadline;
         verdict = {
           ok: false,
           reason: error?.name === 'TimeoutError' ? 'no-answer' : 'probe-failed',
         };
       }
       failIfGone();
+      if (outOfTime) throw { reason: 'timeout', timeoutMs };
       if (verdict.ok) return 'ready';
       throw { reason: 'untrusted', detail: verdict.reason };
     }

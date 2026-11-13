@@ -13,6 +13,8 @@
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
+import { parseLoopbackApiUrl } from './apiAuth.js';
+
 export { API_TOKEN_CHANNEL } from './apiAuth.js';
 
 export const API_TOKEN_ENV = 'CLINICAL_ANALYTICS_API_TOKEN';
@@ -114,9 +116,8 @@ export function resolveAppFilePath(requestUrl, rootDir) {
  * @returns {string}
  */
 export function contentSecurityPolicy(apiBaseUrl) {
-  const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(apiBaseUrl || '');
-  const port = match ? Number(match[1]) : 0;
-  if (!(port >= 1 && port <= 65535)) {
+  const parsed = parseLoopbackApiUrl(apiBaseUrl);
+  if (!parsed) {
     throw new Error(
       `API address must be http://127.0.0.1:<port>, got ${JSON.stringify(apiBaseUrl)}`
     );
@@ -125,6 +126,6 @@ export function contentSecurityPolicy(apiBaseUrl) {
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
-    `connect-src http://127.0.0.1:${port}`,
+    `connect-src http://127.0.0.1:${parsed.port}`,
   ].join('; ');
 }

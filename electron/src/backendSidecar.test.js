@@ -214,51 +214,85 @@ describe('configuration', () => {
     }
   );
 
-  test('backend cwd: a directory that cannot be created fails loudly', () => {
-    const mkdirSync = () => {
-      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
-    };
-    expect(() => ensureBackendCwd('/var/app-data', { mkdirSync })).toThrow(/EACCES/);
-  });
-
-  test.each(['json', 'argparse'])(
-    'a %s.py planted in the working directory is not imported by the interpreter the app starts',
-    (name) => {
-      // Arrange: a real interpreter, started with the app's flags, in a cwd holding a shadow module
-      const python = process.platform === 'win32' ? 'python' : 'python3';
-      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-shadow-'));
-      fs.writeFileSync(path.join(cwd, `${name}.py`), 'raise SystemExit("planted module ran")\n');
-      const safePathFlag = buildBackendArgs(51234, 999)[0];
-      // json.tool imports json and argparse; it adds nothing to sys.path itself
-      const probe = ['-m', 'json.tool'];
-      const run = (flags) => {
-        try {
-          execFileSync(python, [...flags, ...probe], { cwd, input: '{}', stdio: 'pipe' });
-          return 'real module';
-        } catch (error) {
-          return String(error.stderr).includes('planted module ran')
-            ? 'planted'
-            : `failed: ${error}`;
-        }
+  test.each([['EACCES'], ['ENOSPC'], ['EROFS']])(
+    'backend cwd: a folder that cannot be created (%s) fails as a folder problem naming it',
+    (code) => {
+      // Arrange
+      const mkdirSync = () => {
+        throw Object.assign(new Error(`${code}: cannot create`), { code });
       };
-      try {
-        // Act
-        const withoutFlag = run([]);
-        const withAppFlags = run([safePathFlag]);
 
-        // Assert: `-m` alone puts the cwd first on sys.path; the app's flag does not
-        expect(safePathFlag).toBe('-P');
-        expect(withoutFlag).toBe('planted');
-        expect(withAppFlags).toBe('real module');
-      } finally {
-        fs.rmSync(cwd, { recursive: true, force: true });
+      // Act
+      let failure;
+      try {
+        ensureBackendCwd('/var/app-data', { mkdirSync });
+      } catch (error) {
+        failure = error;
       }
+
+      // Assert: its own reason, with the folder, so the message is not "reinstall"
+      expect(failure).toEqual({
+        reason: 'folder',
+        folder: path.join('/var/app-data', BACKEND_CWD_NAME),
+        detail: code,
+      });
     }
   );
 
-  test('backend args: safe path first, bind loopback, pass the port and the parent pid', () => {
+  // Where each case plants its file: the working directory, or the user site-packages of a
+  // home directory made for the test (found by asking the interpreter itself).
+  const userSite = (python, env) =>
+    execFileSync(python, ['-c', 'import site; print(site.getusersitepackages())'], { env })
+      .toString()
+      .trim();
+  test.each([
+    ['json.py', 'the working directory'],
+    ['argparse.py', 'the working directory'],
+    ['usercustomize.py', 'user site-packages'],
+  ])('a planted %s in %s is not imported by the interpreter the app starts', (file, where) => {
+    // Arrange: a real interpreter, started with the app's flags, with a shadow module in reach
+    const python = process.platform === 'win32' ? 'python' : 'python3';
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-shadow-'));
+    const cwd = path.join(root, 'cwd');
+    const home = path.join(root, 'home');
+    fs.mkdirSync(cwd);
+    fs.mkdirSync(home);
+    const env = { ...process.env, HOME: home, APPDATA: home, USERPROFILE: home };
+    delete env.PYTHONUSERBASE;
+    delete env.PYTHONNOUSERSITE;
+    const dir = where === 'user site-packages' ? userSite(python, env) : cwd;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, file), 'raise SystemExit("planted module ran")\n');
+    const args = buildBackendArgs(51234, 999);
+    const interpreterFlags = args.slice(0, args.indexOf('-m'));
+    // json.tool imports json and argparse; it adds nothing to sys.path itself
+    const probe = ['-m', 'json.tool'];
+    const run = (flags) => {
+      try {
+        execFileSync(python, [...flags, ...probe], { cwd, env, input: '{}', stdio: 'pipe' });
+        return 'real module';
+      } catch (error) {
+        return String(error.stderr).includes('planted module ran') ? 'planted' : `failed: ${error}`;
+      }
+    };
+    try {
+      // Act
+      const withoutFlags = run([]);
+      const withAppFlags = run(interpreterFlags);
+
+      // Assert: a plain interpreter imports the planted file; the app's isolated one does not
+      expect(withoutFlags).toBe('planted');
+      expect(withAppFlags).toBe('real module');
+      expect(interpreterFlags).toEqual(['-I', '-u']); // -I: no cwd, user site or PYTHON* vars
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('backend args: isolated interpreter first, bind loopback, pass the port and the parent pid', () => {
     expect(buildBackendArgs(51234, 999)).toEqual([
-      '-P',
+      '-I',
+      '-u',
       '-m',
       'clinical_analytics.api.serve',
       '--host',
@@ -328,6 +362,24 @@ describe('port selection', () => {
 });
 
 describe('startup failure messages', () => {
+  test('a folder that cannot be created names the folder and does not say reinstall', () => {
+    // Act
+    const { message } = startupFailureMessage({
+      reason: 'folder',
+      folder: '/Users/dr/Library/Application Support/Clinical Analytics/backend',
+      detail: 'EACCES',
+    });
+
+    // Assert
+    expect(message).toBe(
+      'Clinical Analytics could not create its working folder ' +
+        '"/Users/dr/Library/Application Support/Clinical Analytics/backend" (EACCES). ' +
+        'Check that this folder, and the folders around it, can be written by your user ' +
+        'account and that the disk is not full, then start Clinical Analytics again.'
+    );
+    expect(message).not.toMatch(/reinstall/i);
+  });
+
   test('exit code 2 shows the one-line reason serve.py printed, without repeating the title', () => {
     // Act
     const { title, message } = startupFailureMessage({
@@ -902,6 +954,39 @@ describe('health wait timeouts', () => {
     // Assert
     expect(failure).toMatchObject({ reason: 'untrusted', detail: 'no-answer' });
   });
+
+  test.each([
+    ['the deadline passes before the proof is sent', 'deadline'],
+    ['the proof request is cut short by the deadline', 'cut-short'],
+  ])(
+    'health answers just before the deadline and %s: reported as a timeout, not untrusted',
+    async (_label, mode) => {
+      // Arrange: a fake clock; /health answers at 59.8 s of a 60 s wait
+      let clock = 0;
+      const fetchFn = vi.fn(async (url) => {
+        if (url.endsWith('/health')) {
+          clock = mode === 'deadline' ? 60000 : 59800;
+          return { ok: true, status: 200, json: async () => ({}) };
+        }
+        // the proof request runs until its 200 ms (what is left of the deadline) are used up
+        clock = 60000;
+        return never();
+      });
+
+      // Act
+      const failure = await waitForHealth({
+        ...base,
+        fetchFn,
+        timeoutMs: 60000,
+        attemptMs: 3000,
+        now: () => clock,
+        exited: () => null,
+      }).catch((f) => f);
+
+      // Assert: a slow start of the app's own backend, not another program on the port
+      expect(failure).toMatchObject({ reason: 'timeout', timeoutMs: 60000 });
+    }
+  );
 
   test('each attempt carries an abort signal', async () => {
     const fetchFn = makeBackendFetch();

@@ -50,7 +50,8 @@ help: ## Show this help message
 install: ## Install production dependencies
 	@echo "$(GREEN)Installing production dependencies...$(NC)"
 	$(UV) sync --no-dev --no-group dev
-	$(PYTHON_RUN) scripts/fetch_embedding_model.py
+	@# --no-sync: a plain `uv run` syncs first and would put the dev group back.
+	$(UV) run --no-sync python scripts/fetch_embedding_model.py
 
 install-dev: ## Install all dependencies including dev tools
 	@echo "$(GREEN)Installing development dependencies...$(NC)"

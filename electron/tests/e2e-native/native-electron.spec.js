@@ -457,9 +457,10 @@ test.describe.serial('Native Electron binary harness', () => {
     }
   });
 
-  test('modules planted in the home directory and the backend folder are not imported by the backend', async () => {
-    // Arrange: a home directory with scratch files named like modules the backend imports, and
-    // the same files in the folder the backend runs in
+  test('modules planted in the home directory, user site-packages and the backend folder are not imported by the backend', async () => {
+    // Arrange: a home directory with scratch files named like modules the backend imports, the
+    // same files in the folder the backend runs in, and a usercustomize.py plus a .pth file in the
+    // home directory's user site-packages (both run at interpreter start unless it is isolated)
     const fs = require('node:fs');
     const os = require('node:os');
     const path = require('node:path');
@@ -473,6 +474,25 @@ test.describe.serial('Native Electron binary harness', () => {
         fs.writeFileSync(path.join(dir, name), planted);
       }
     }
+    const venvPython = path.join(
+      REPO_ROOT,
+      '.venv',
+      process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
+    );
+    const userSite = execFileSync(
+      venvPython,
+      ['-c', 'import site; print(site.getusersitepackages())'],
+      { env: { ...process.env, HOME: home, APPDATA: home, USERPROFILE: home } }
+    )
+      .toString()
+      .trim();
+    expect(userSite.startsWith(home)).toBe(true);
+    fs.mkdirSync(userSite, { recursive: true });
+    fs.writeFileSync(path.join(userSite, 'usercustomize.py'), planted);
+    fs.writeFileSync(
+      path.join(userSite, 'planted.pth'),
+      `import os; open(${JSON.stringify(marker)}, "a").write("pth\\n")\n`
+    );
     const env = {
       ...process.env,
       ELECTRON_DISABLE_SANDBOX: '1',

@@ -10,8 +10,10 @@ Electron starts the API as a sidecar. Two lifelines tie the backend to it:
   ``exec`` (a shell wrapper, ``uv run``, the venv ``python.exe`` on Windows, a bundled-runtime
   launcher) sits in between, so ``os.getppid()`` is not compared. On POSIX the process must exist
   and, where the platform tells us (Linux ``/proc``), still be the one that was there when the
-  watch began and not a zombie; on Windows it waits on a process handle. Where a reused PID cannot
-  be told apart (macOS), the stdin lifeline is what notices the app is gone.
+  watch began and not a zombie. On Windows the process is opened once when the watch begins and
+  that one handle is waited on, so a PID that Windows gives to another process later is never
+  mistaken for the app. Where a reused PID cannot be told apart (macOS), the stdin lifeline is
+  what notices the app is gone.
 
 Either one asks uvicorn to shut down gracefully by setting ``server.should_exit`` once the server
 has started (stop accepting, let in-flight requests such as an upload or a DuckDB write finish).
@@ -28,7 +30,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import Any, BinaryIO, Protocol
 
 import structlog
 
@@ -46,18 +48,57 @@ class StoppableServer(Protocol):
     should_exit: bool
 
 
-def _windows_pid_alive(pid: int) -> bool:  # pragma: no cover - exercised on Windows only
+_WIN_SYNCHRONIZE = 0x00100000
+_WIN_WAIT_TIMEOUT = 0x00000102
+
+
+class WindowsProcessHandle:
+    """One Windows process, held open by handle from the moment the watch begins.
+
+    A handle names the process object itself, not its PID: while it is open the object stays, and
+    waiting on it reports that exact process ending. Reopening by PID on every check (what this
+    replaced) would find whichever process owns the PID now. ``kernel32`` is injectable so the
+    logic is tested without Windows.
+    """
+
+    def __init__(self, pid: int, kernel32: Any) -> None:
+        self.pid = pid
+        self._kernel32 = kernel32
+        self._handle = kernel32.OpenProcess(_WIN_SYNCHRONIZE, False, pid)
+        self._ended = not self._handle
+        if self._ended:
+            # Already gone, or not ours to watch: either way there is no app to stay alive for.
+            logger.warning("parent_process_not_openable", parent_pid=pid)
+
+    def alive(self) -> bool:
+        """Whether the process is still running (False from the first time it is seen ended)."""
+        if self._ended:
+            return False
+        # WAIT_TIMEOUT: not signalled, still running. Anything else (signalled, or the wait itself
+        # failed) counts as ended: an app we cannot confirm must not keep the backend alive.
+        if self._kernel32.WaitForSingleObject(self._handle, 0) == _WIN_WAIT_TIMEOUT:
+            return True
+        self.close()
+        return False
+
+    def close(self) -> None:
+        """Release the handle (safe to call more than once); the process then counts as ended."""
+        if self._handle:
+            self._kernel32.CloseHandle(self._handle)
+            self._handle = None
+        self._ended = True
+
+
+def _windows_kernel32() -> Any:  # pragma: no cover - Windows only
     import ctypes
 
-    synchronize, wait_timeout = 0x00100000, 0x00000102
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    handle = kernel32.OpenProcess(synchronize, False, pid)
-    if not handle:
-        return False
-    try:
-        return bool(kernel32.WaitForSingleObject(handle, 0) == wait_timeout)
-    finally:
-        kernel32.CloseHandle(handle)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    return kernel32
 
 
 def process_start_token(pid: int, proc_root: Path = Path("/proc")) -> str | None:
@@ -96,8 +137,13 @@ def parent_alive(parent_pid: int, start_token: str | None = None) -> bool:
     """
     if parent_pid <= 0:
         return False
-    if sys.platform == "win32":  # os.kill(pid, 0) would send CTRL_C_EVENT on Windows
-        return _windows_pid_alive(parent_pid)
+    if sys.platform == "win32":  # pragma: no cover - os.kill(pid, 0) would send CTRL_C_EVENT there
+        # A one-off answer only; the watchdog keeps one handle open instead (parent_liveness_check).
+        handle = WindowsProcessHandle(parent_pid, _windows_kernel32())
+        try:
+            return handle.alive()
+        finally:
+            handle.close()
     if not _posix_pid_exists(parent_pid):
         return False
     current = process_start_token(parent_pid)
@@ -106,6 +152,21 @@ def parent_alive(parent_pid: int, start_token: str | None = None) -> bool:
     if current == "":
         return False
     return start_token is None or current == start_token
+
+
+def parent_liveness_check(
+    parent_pid: int, *, platform: str = sys.platform, kernel32: Any = None
+) -> Callable[[int], bool]:
+    """The check the watchdog repeats, bound to the process that has ``parent_pid`` right now.
+
+    Windows: one handle, opened here and waited on at every check. POSIX: the PID must exist and,
+    on Linux, keep the start time read here.
+    """
+    if platform == "win32":
+        handle = WindowsProcessHandle(parent_pid, kernel32 if kernel32 is not None else _windows_kernel32())
+        return lambda _pid: handle.alive()
+    start_token = process_start_token(parent_pid)
+    return lambda pid: parent_alive(pid, start_token)
 
 
 def graceful_shutdown_request(
@@ -154,10 +215,7 @@ def start_parent_watchdog(
     if parent_pid <= 0:
         raise ValueError(f"parent PID must be positive, got {parent_pid}")
     if is_alive is None:
-        start_token = None if sys.platform == "win32" else process_start_token(parent_pid)
-
-        def is_alive(pid: int) -> bool:
-            return parent_alive(pid, start_token)
+        is_alive = parent_liveness_check(parent_pid)
 
     def _run() -> None:
         while is_alive(parent_pid):

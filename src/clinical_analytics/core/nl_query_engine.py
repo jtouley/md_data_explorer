@@ -1374,8 +1374,13 @@ class NLQueryEngine:
             # Fallback: template matching (original behavior)
             # Lazy compute template embeddings
             if self.template_embeddings is None:
+                from clinical_analytics.core.embeddings import encode_cached, texts_key
+
+                # The templates are a fixed list: one encoding serves every engine in the process.
                 template_texts = [t["template"] for t in self.query_templates]
-                self.template_embeddings = self.encoder.encode(template_texts)
+                self.template_embeddings = encode_cached(
+                    self.encoder, texts_key("query_templates", template_texts), template_texts
+                )
 
             # Compute similarity with all templates
             similarities = cosine_similarity(query_embedding, self.template_embeddings)[0]

@@ -295,7 +295,7 @@ async function startBackend() {
       env: process.env,
       ...resolveSidecarSettings(process.env),
       parentPid: process.pid,
-      // A folder of the app's own, not the home directory (see ensureBackendCwd and `-P`).
+      // A folder of the app's own, not the home directory (see ensureBackendCwd and `-I`).
       cwd: ensureBackendCwd(app.getPath('userData')),
       log: (line) => console.log(line),
       onUnexpectedExit: (info) => void handleBackendCrash(info),

@@ -48,11 +48,12 @@ Electron main (`electron/src/backendSidecar.js`) starts, checks and stops the ba
 | `CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS` | 60000 | Whole startup wait; each request also times out after 3 s |
 | `CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1` | off | Dev flow: use an already-running API (`make run-api`, `scripts/run_app.sh`) |
 
-- Spawned as `python -P -m clinical_analytics.api.serve --host 127.0.0.1 --port P
+- Spawned as `python -I -u -m clinical_analytics.api.serve --host 127.0.0.1 --port P
   --exit-with-parent <electron pid> --stop-on-stdin-close`, with this launch's API token, from
-  `<userData>/backend` (a folder of the app's own, not the home directory). `-P` keeps the
-  working directory off Python's import path and `PYTHONPATH` is not passed on, so a `json.py`
-  in the user's files is never imported in place of the real module.
+  `<userData>/backend` (a folder of the app's own, not the home directory). `-I` (isolated
+  mode) keeps the working directory and user site-packages off Python's import path and ignores
+  every `PYTHON*` variable, so a `json.py` or `.pth` file in the user's files is never imported
+  by the backend; the venv still finds its packages. `-u` keeps the output unbuffered.
 - A bad `CLINICAL_ANALYTICS_API_PORT` or `CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS` stops startup
   with a message naming the variable.
 - A startup window shows while it boots; the main window opens once `/health` answers and the

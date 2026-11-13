@@ -161,6 +161,29 @@ def check_embedding_model(
     return root
 
 
+# onnxruntime's own error classes for a model it cannot load (a truncated file raises
+# InvalidProtobuf). They derive from Exception directly, so they are named one by one.
+_ONNXRUNTIME_LOAD_ERROR_NAMES: Final = (
+    "EPFail",
+    "EngineError",
+    "Fail",
+    "InvalidArgument",
+    "InvalidGraph",
+    "InvalidProtobuf",
+    "NoModel",
+    "NoSuchFile",
+    "NotImplemented",
+    "RuntimeException",
+)
+
+
+def _onnxruntime_load_errors(ort: object) -> tuple[type[Exception], ...]:
+    """The onnxruntime exception classes that mean "this model file cannot be used"."""
+    state = getattr(getattr(ort, "capi", None), "onnxruntime_pybind11_state", None)
+    found = [getattr(state, name, None) for name in _ONNXRUNTIME_LOAD_ERROR_NAMES]
+    return tuple(cls for cls in found if isinstance(cls, type) and issubclass(cls, Exception))
+
+
 class OnnxSentenceEncoder:
     """Drop-in for ``SentenceTransformer.encode`` returning normalised float32 embeddings."""
 
@@ -178,23 +201,37 @@ class OnnxSentenceEncoder:
             raise EmbeddingModelLoadError(f"The embedding runtime could not be imported ({e}).") from e
         if hasattr(ort, "disable_telemetry_events"):
             ort.disable_telemetry_events()  # Windows ETW events; the app reports nothing anywhere
+
+        def unusable(file_name: str, error: BaseException) -> EmbeddingModelLoadError:
+            return EmbeddingModelLoadError(
+                f"The embedding model file {file_name} in {root} could not be loaded ({type(error).__name__}). "
+                f"{FETCH_HINT} again, or reinstall the app."
+            )
+
         try:
             tokenizer = Tokenizer.from_file(str(root / "tokenizer.json"))
-            tokenizer.enable_truncation(max_length=MAX_SEQ_LENGTH)
-            pad_id = tokenizer.token_to_id("[PAD]")
-            tokenizer.enable_padding(pad_id=0 if pad_id is None else pad_id, pad_token="[PAD]")  # longest in batch
-            options = ort.SessionOptions()
-            options.log_severity_level = 3
+        except OSError as e:
+            raise unusable("tokenizer.json", e) from e
+        except Exception as e:
+            # tokenizers reports an invalid tokenizer.json with the base Exception class itself
+            # (measured: type(e) is Exception), so there is no narrower type to name. Only that exact
+            # class is a damaged file; any subclass (TypeError, AttributeError, ...) is a programming
+            # error and is re-raised as it is, never remembered as "model unavailable".
+            if type(e) is not Exception:
+                raise
+            raise unusable("tokenizer.json", e) from e
+        tokenizer.enable_truncation(max_length=MAX_SEQ_LENGTH)
+        pad_id = tokenizer.token_to_id("[PAD]")
+        tokenizer.enable_padding(pad_id=0 if pad_id is None else pad_id, pad_token="[PAD]")  # longest in batch
+        options = ort.SessionOptions()
+        options.log_severity_level = 3
+        model_load_errors: tuple[type[Exception], ...] = (OSError, *_onnxruntime_load_errors(ort))
+        try:
             session = ort.InferenceSession(
                 str(root / "onnx" / "model.onnx"), sess_options=options, providers=["CPUExecutionProvider"]
             )
-        except Exception as e:  # noqa: BLE001 - third-party boundary, re-raised as a domain error
-            # onnxruntime's errors (InvalidProtobuf, Fail, ...) and tokenizers' plain Exception share
-            # no base class below Exception, so this is the narrowest catch that covers a damaged file.
-            raise EmbeddingModelLoadError(
-                f"The embedding model {MODEL_NAME} in {root} could not be loaded ({type(e).__name__}). "
-                f"{FETCH_HINT} again, or reinstall the app."
-            ) from e
+        except model_load_errors as e:
+            raise unusable("onnx/model.onnx", e) from e
         self._tokenizer = tokenizer
         self._session = session
         self._input_names = {i.name for i in self._session.get_inputs()}
@@ -225,12 +262,16 @@ class OnnxSentenceEncoder:
 _ENCODERS: dict[Path, OnnxSentenceEncoder | EmbeddingModelMissingError | EmbeddingModelLoadError] = {}
 _ENCODERS_LOCK: Final = threading.Lock()
 
-# Embeddings of fixed text lists (the golden examples), shared by every engine. Value: the encoder
-# that produced them (compared by identity, so another encoder never reuses them) and the
-# read-only array. Guarded by its own lock: engines are built concurrently in API worker threads.
+# Embeddings of fixed text lists (golden examples, query templates), shared by every engine.
+# Value: the encoder that produced them (compared by identity, so another encoder never reuses
+# them) and the read-only array. Engines are built concurrently in API worker threads, so the
+# dictionaries are guarded by a lock; the lock is held only to read and write them, never while
+# encoding. _TEXT_EMBEDDINGS_PENDING marks a key some thread is encoding right now: others asking
+# for the same key wait for that one encode, others asking for a different key are not held up.
 _TEXT_EMBEDDINGS: dict[Hashable, tuple[object, Embeddings]] = {}
+_TEXT_EMBEDDINGS_PENDING: dict[Hashable, threading.Event] = {}
 _TEXT_EMBEDDINGS_LOCK: Final = threading.Lock()
-TEXT_EMBEDDINGS_MAX_ENTRIES: Final = 8
+TEXT_EMBEDDINGS_MAX_ENTRIES: Final = 16
 
 
 def get_encoder() -> OnnxSentenceEncoder:
@@ -266,22 +307,46 @@ def get_encoder() -> OnnxSentenceEncoder:
 def encode_cached(encoder: OnnxSentenceEncoder, key: Hashable, texts: Sequence[str]) -> Embeddings:
     """Embeddings of ``texts``, computed once per ``key`` and encoder; the array is read-only.
 
-    ``key`` must change when the texts change (for a file: path, size and mtime). At most
-    ``TEXT_EMBEDDINGS_MAX_ENTRIES`` lists are kept; the oldest is dropped first.
+    ``key`` must change when the texts change (for a file: path, size and mtime; for a list: a
+    hash of it). At most ``TEXT_EMBEDDINGS_MAX_ENTRIES`` lists are kept; the oldest is dropped
+    first. Encoding runs outside the lock: threads asking for the same key wait for the first one
+    to finish and then reuse its result, and threads asking for another key do not wait at all.
+    If the encode fails, the error goes to the thread that ran it and nothing is cached; a thread
+    that was waiting tries for itself.
     """
-    with _TEXT_EMBEDDINGS_LOCK:
-        cached = _TEXT_EMBEDDINGS.get(key)
-        if cached is not None and cached[0] is encoder and cached[1].shape[0] == len(texts):
-            return cached[1]
+    while True:
+        with _TEXT_EMBEDDINGS_LOCK:
+            cached = _TEXT_EMBEDDINGS.get(key)
+            if cached is not None and cached[0] is encoder and cached[1].shape[0] == len(texts):
+                return cached[1]
+            in_progress = _TEXT_EMBEDDINGS_PENDING.get(key)
+            if in_progress is None:
+                done = _TEXT_EMBEDDINGS_PENDING[key] = threading.Event()
+                break
+        in_progress.wait()
+    try:
         embeddings = encoder.encode(texts)
-        if not isinstance(embeddings, np.ndarray):
-            return embeddings  # a stand-in encoder (tests): nothing worth sharing
-        embeddings.setflags(write=False)
-        _TEXT_EMBEDDINGS.pop(key, None)
-        while len(_TEXT_EMBEDDINGS) >= TEXT_EMBEDDINGS_MAX_ENTRIES:
-            _TEXT_EMBEDDINGS.pop(next(iter(_TEXT_EMBEDDINGS)))
-        _TEXT_EMBEDDINGS[key] = (encoder, embeddings)
+        if isinstance(embeddings, np.ndarray):  # a stand-in encoder (tests) may return something else
+            embeddings.setflags(write=False)
+            with _TEXT_EMBEDDINGS_LOCK:
+                _TEXT_EMBEDDINGS.pop(key, None)
+                while len(_TEXT_EMBEDDINGS) >= TEXT_EMBEDDINGS_MAX_ENTRIES:
+                    _TEXT_EMBEDDINGS.pop(next(iter(_TEXT_EMBEDDINGS)))
+                _TEXT_EMBEDDINGS[key] = (encoder, embeddings)
         return embeddings
+    finally:
+        with _TEXT_EMBEDDINGS_LOCK:
+            _TEXT_EMBEDDINGS_PENDING.pop(key, None)
+        done.set()
+
+
+def texts_key(kind: str, texts: Sequence[str]) -> tuple[str, str]:
+    """A cache key for a list of texts that has no file behind it: its kind and a hash of the list."""
+    digest = hashlib.sha256()
+    for text in texts:
+        digest.update(text.encode("utf-8"))
+        digest.update(b"\x00")
+    return (kind, digest.hexdigest())
 
 
 def reset_encoder_cache() -> None:

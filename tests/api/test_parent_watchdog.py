@@ -363,3 +363,97 @@ def _gone(pid: int) -> bool:
             return f.read().split(")")[-1].split()[0] == "Z"
     except FileNotFoundError:
         return True
+
+
+class FakeKernel32:
+    """Windows process handles without Windows: PIDs map to process objects, handles to objects.
+
+    ``pid_owner`` says which process holds each PID right now, so a reused PID can be simulated:
+    reopening by PID finds the new process, the old handle still names the old one.
+    """
+
+    WAIT_OBJECT_0 = 0x00000000
+    WAIT_TIMEOUT = 0x00000102
+    WAIT_FAILED = 0xFFFFFFFF
+
+    def __init__(self, pid_owner: dict[int, str], running: set[str], *, wait_fails: bool = False) -> None:
+        self.pid_owner = pid_owner
+        self.running = running
+        self.wait_fails = wait_fails
+        self.handles: dict[int, str] = {}
+        self.opened: list[int] = []
+        self.waited: list[int] = []
+        self.closed: list[int] = []
+
+    def OpenProcess(self, _access: int, _inherit: bool, pid: int) -> int:  # noqa: N802 - Win32 name
+        self.opened.append(pid)
+        owner = self.pid_owner.get(pid)
+        if owner is None:
+            return 0
+        handle = 100 + len(self.handles)
+        self.handles[handle] = owner
+        return handle
+
+    def WaitForSingleObject(self, handle: int, _ms: int) -> int:  # noqa: N802 - Win32 name
+        self.waited.append(handle)
+        if self.wait_fails:
+            return self.WAIT_FAILED
+        return self.WAIT_TIMEOUT if self.handles[handle] in self.running else self.WAIT_OBJECT_0
+
+    def CloseHandle(self, handle: int) -> int:  # noqa: N802 - Win32 name
+        self.closed.append(handle)
+        return 1
+
+
+def test_parent_liveness_check_windowsPidReusedAfterAppExits_seenAsGone():
+    # Arrange: Electron (PID 4242) is watched, then exits and Windows gives 4242 to another process
+    kernel32 = FakeKernel32({4242: "electron"}, {"electron"})
+    is_alive = parent_watchdog.parent_liveness_check(4242, platform="win32", kernel32=kernel32)
+    assert is_alive(4242) is True
+
+    # Act
+    kernel32.running = {"unrelated"}
+    kernel32.pid_owner[4242] = "unrelated"
+    answers = [is_alive(4242) for _ in range(3)]
+
+    # Assert: the one handle opened at the start is what is waited on; the PID is never reopened
+    assert answers == [False, False, False]
+    assert kernel32.opened == [4242]
+    assert set(kernel32.waited) == {100}
+    assert kernel32.closed == [100]
+
+
+@pytest.mark.parametrize(
+    ("pid_owner", "wait_fails", "expected_opened_handles"),
+    [({}, False, 0), ({4242: "electron"}, True, 1)],
+    ids=["not_openable", "wait_failed"],
+)
+def test_parent_liveness_check_windowsCannotConfirm_countsAsGone(pid_owner, wait_fails, expected_opened_handles):
+    # Arrange
+    kernel32 = FakeKernel32(pid_owner, {"electron"}, wait_fails=wait_fails)
+
+    # Act
+    is_alive = parent_watchdog.parent_liveness_check(4242, platform="win32", kernel32=kernel32)
+    answers = [is_alive(4242), is_alive(4242)]
+
+    # Assert: an app we cannot confirm does not keep the backend alive
+    assert answers == [False, False]
+    assert kernel32.opened == [4242]
+    assert len(kernel32.handles) == expected_opened_handles
+    assert len(kernel32.waited) == expected_opened_handles  # never waited again once ended
+
+
+def test_windows_process_handle_oneOffCheckOfRunningApp_closesItsHandle():
+    # Arrange
+    kernel32 = FakeKernel32({4242: "electron"}, {"electron"})
+
+    # Act
+    handle = parent_watchdog.WindowsProcessHandle(4242, kernel32)
+    alive = handle.alive()
+    handle.close()
+    handle.close()  # safe twice
+
+    # Assert
+    assert alive is True
+    assert kernel32.closed == [100]
+    assert handle.alive() is False

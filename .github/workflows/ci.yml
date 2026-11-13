@@ -50,8 +50,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
-          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
+          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
 
       - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
         run: make fetch-embedding-model
@@ -79,8 +79,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
-          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
+          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
 
       - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
         run: make fetch-embedding-model
@@ -127,8 +127,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
-          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
+          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
 
       - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
         run: make fetch-embedding-model
@@ -154,8 +154,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/clinical_analytics/resources/models/all-MiniLM-L6-v2
-          # Revision of sentence-transformers/all-MiniLM-L6-v2 (core/embeddings.py MODEL_REVISION).
-          key: embedding-model-1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+          # core/embeddings.py holds MODEL_REVISION and the file hashes: bumping it changes the key.
+          key: embedding-model-${{ hashFiles('src/clinical_analytics/core/embeddings.py') }}
 
       - name: Fetch bundled embedding model (pinned, SHA-256 checked; skips verified files)
         run: make fetch-embedding-model

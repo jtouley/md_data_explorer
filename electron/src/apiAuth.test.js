@@ -429,3 +429,40 @@ describe('enrichmentDecisionResult', () => {
     ).toThrow('nope');
   });
 });
+
+describe('parseLoopbackApiUrl: the preload address and the CSP header accept the same addresses', () => {
+  test.each([
+    ['http://127.0.0.1:8000', 8000],
+    ['http://127.0.0.1:1', 1],
+    ['http://127.0.0.1:65535', 65535],
+    ['http://127.0.0.1:0', null],
+    ['http://127.0.0.1:65536', null],
+    ['http://localhost:8000', null],
+    ['http://[::1]:8000', null],
+    ['http://127.0.0.1:8000/', null],
+    ['https://127.0.0.1:8000', null],
+    ['', null],
+    [null, null],
+  ])('%j -> port %j in both places', async (value, port) => {
+    // Arrange
+    const { parseLoopbackApiUrl, apiBaseUrlFromArgv, API_BASE_URL_ARG_PREFIX } =
+      await import('./apiAuth.js');
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+
+    // Act
+    const parsed = parseLoopbackApiUrl(value);
+    const fromArgv = apiBaseUrlFromArgv([`${API_BASE_URL_ARG_PREFIX}${value ?? ''}`]);
+    let csp = null;
+    try {
+      csp = contentSecurityPolicy(value);
+    } catch {
+      csp = null;
+    }
+
+    // Assert
+    expect(parsed?.port ?? null).toBe(port);
+    expect(fromArgv).toBe(port === null ? null : `http://127.0.0.1:${port}`);
+    if (port === null) expect(csp).toBeNull();
+    else expect(csp).toContain(`connect-src http://127.0.0.1:${port}`);
+  });
+});

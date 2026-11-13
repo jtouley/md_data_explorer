@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -348,6 +349,7 @@ def fresh_encoder_cache(monkeypatch):
     """Empty process-wide encoder and embedding caches for one test (the real ones are put back)."""
     monkeypatch.setattr(embeddings, "_ENCODERS", {})
     monkeypatch.setattr(embeddings, "_TEXT_EMBEDDINGS", {})
+    monkeypatch.setattr(embeddings, "_TEXT_EMBEDDINGS_PENDING", {})
 
 
 @pytest.fixture
@@ -543,6 +545,63 @@ def test_nl_query_engine_modelDamaged_semanticMatchOffAndModelNotReloadedPerQuer
     assert len(counted_encoder_loads) == 1
 
 
+@pytest.mark.parametrize(
+    ("target", "error"),
+    [
+        ("onnxruntime.InferenceSession", TypeError("unexpected keyword argument 'sess_options'")),
+        ("onnxruntime.InferenceSession", AttributeError("'module' has no attribute 'SessionOptions'")),
+        ("tokenizers.Tokenizer", TypeError("from_file() takes 1 positional argument")),
+        ("tokenizers.Tokenizer", AttributeError("no attribute 'from_file'")),
+    ],
+    ids=["session_typeerror", "session_attributeerror", "tokenizer_typeerror", "tokenizer_attributeerror"],
+)
+def test_get_encoder_programmingErrorInLibraryCall_raisedAsIsAndNotRemembered(
+    fresh_encoder_cache, counted_encoder_loads, monkeypatch, target, error
+):
+    # Arrange: a changed library API (a bug), not a damaged model file
+    def broken(*_args, **_kwargs):
+        raise error
+
+    replacement = type("BrokenTokenizer", (), {"from_file": staticmethod(broken)}) if "Tokenizer" in target else broken
+    monkeypatch.setattr(target, replacement)
+
+    # Act / Assert: the real error each time, never "model unavailable, reinstall"
+    for _ in range(2):
+        with pytest.raises(type(error)):
+            embeddings.get_encoder()
+    assert len(counted_encoder_loads) == 2
+    assert embeddings._ENCODERS == {}
+
+
+@pytest.mark.parametrize("engine_count", [2, 3])
+def test_nl_query_engine_templateFallback_templateEmbeddingsSharedAcrossEngines(
+    fresh_encoder_cache, make_semantic_layer, engine_count
+):
+    # Arrange: a question no golden example matches, so every engine falls back to the templates
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    engines = [
+        NLQueryEngine(
+            make_semantic_layer(
+                dataset_name=f"templates_{i}",
+                data={"patient_id": [1, 2], "age": [40 + i, 50]},
+                workspace_name=f"templates_ws_{i}",
+            )
+        )
+        for i in range(engine_count)
+    ]
+
+    # Act
+    for engine in engines:
+        engine._semantic_match("xylophone tuning schedule for the orchestra")
+
+    # Assert: one encoding of the fixed template list serves every engine
+    first = engines[0].template_embeddings
+    assert first is not None
+    assert all(engine.template_embeddings is first for engine in engines)
+    assert not first.flags.writeable
+
+
 class _CountingEncoder:
     """A stand-in encoder: counts encode calls and returns one row per text."""
 
@@ -584,7 +643,6 @@ def test_encode_cached_secondCall_reusesOnlyForSameKeyTextsAndEncoder(
 def test_encode_cached_manyThreadsManyKeys_noErrorsAndBounded(fresh_encoder_cache):
     """Engines are built concurrently (one per dataset, in API worker threads)."""
     # Arrange
-    import threading
 
     encoder = _CountingEncoder()
     errors: list[BaseException] = []
@@ -624,3 +682,76 @@ def test_reset_encoder_cache_afterUse_dropsEncodersAndTheEmbeddingsThatHoldThem(
     # Assert: nothing keeps the old ~90 MB session alive
     assert embeddings._ENCODERS == {}
     assert embeddings._TEXT_EMBEDDINGS == {}
+
+
+class _BlockingEncoder:
+    """A stand-in encoder whose encode waits until released, to hold one key "in progress"."""
+
+    def __init__(self, fail_first: bool = False) -> None:
+        self.calls = 0
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self._fail_first = fail_first
+
+    def encode(self, texts):
+        self.calls += 1
+        call = self.calls
+        self.started.set()
+        assert self.release.wait(timeout=10)
+        if self._fail_first and call == 1:
+            raise RuntimeError("encode failed")
+        return np.ones((len(texts), EMBEDDING_DIM), dtype=np.float32)
+
+
+def test_encode_cached_slowEncodeOfOneKey_otherKeyNotHeldUp(fresh_encoder_cache):
+    # Arrange: one thread is encoding key "slow" and has not finished
+    slow = _BlockingEncoder()
+    worker = threading.Thread(target=embeddings.encode_cached, args=(slow, "slow", ["a"]))
+    worker.start()
+    assert slow.started.wait(timeout=10)
+    other = _CountingEncoder()
+
+    # Act: another engine asks for a different key while that encode is still running
+    finished = threading.Event()
+    threading.Thread(target=lambda: (embeddings.encode_cached(other, "fast", ["b"]), finished.set())).start()
+    answered_while_slow_running = finished.wait(timeout=5)
+    slow.release.set()
+    worker.join(timeout=10)
+
+    # Assert
+    assert answered_while_slow_running
+    assert other.calls == 1
+
+
+@pytest.mark.parametrize("first_fails", [False, True], ids=["first_succeeds", "first_fails"])
+def test_encode_cached_sameKeyWhileEncoding_waitsThenReusesOrRetries(fresh_encoder_cache, first_fails):
+    # Arrange: thread A is encoding "k"; thread B asks for "k" meanwhile
+    encoder = _BlockingEncoder(fail_first=first_fails)
+    results: dict[str, object] = {}
+
+    def ask(name: str) -> None:
+        try:
+            results[name] = embeddings.encode_cached(encoder, "k", ["a", "b"])
+        except RuntimeError as e:
+            results[name] = e
+
+    a = threading.Thread(target=ask, args=("a",))
+    a.start()
+    assert encoder.started.wait(timeout=10)
+    b = threading.Thread(target=ask, args=("b",))
+    b.start()
+
+    # Act
+    encoder.release.set()
+    a.join(timeout=10)
+    b.join(timeout=10)
+
+    # Assert: success is shared (one encode); a failure is A's alone and B encodes for itself
+    if first_fails:
+        assert isinstance(results["a"], RuntimeError)
+        assert isinstance(results["b"], np.ndarray)
+        assert encoder.calls == 2
+    else:
+        assert results["b"] is results["a"]
+        assert encoder.calls == 1
+    assert embeddings._TEXT_EMBEDDINGS_PENDING == {}

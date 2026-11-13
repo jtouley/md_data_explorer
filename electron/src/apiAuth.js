@@ -16,6 +16,19 @@ export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
 export const API_BASE_URL_ARG_PREFIX = '--clinical-api-base-url=';
 
 /**
+ * The one parser for a backend address: `http://127.0.0.1:<port>` with a port of 1-65535 and
+ * nothing else (no path, not "localhost"). The preload address and the CSP header both use it,
+ * so they can never disagree about which addresses are allowed.
+ * @param {unknown} value
+ * @returns {{ url: string, port: number } | null}
+ */
+export function parseLoopbackApiUrl(value) {
+  const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(typeof value === 'string' ? value : '');
+  const port = match ? Number(match[1]) : 0;
+  return port >= 1 && port <= 65535 ? { url: `http://127.0.0.1:${port}`, port } : null;
+}
+
+/**
  * The backend address main passed on the command line, or null. Only http://127.0.0.1:<port> is
  * accepted, so the renderer can never be pointed anywhere but the loopback backend.
  * @param {string[] | undefined} argv
@@ -26,10 +39,7 @@ export function apiBaseUrlFromArgv(argv) {
     (a) => typeof a === 'string' && a.startsWith(API_BASE_URL_ARG_PREFIX)
   );
   if (!arg) return null;
-  const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(arg.slice(API_BASE_URL_ARG_PREFIX.length));
-  if (!match) return null;
-  const port = Number(match[1]);
-  return port >= 1 && port <= 65535 ? `http://127.0.0.1:${port}` : null;
+  return parseLoopbackApiUrl(arg.slice(API_BASE_URL_ARG_PREFIX.length))?.url ?? null;
 }
 
 /**
