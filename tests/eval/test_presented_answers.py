@@ -30,13 +30,22 @@ from clinical_analytics.eval.headless import (
     classify_presented_generic,
     frame_for,
     layer_for,
+    predictor_label_leaks,
     presented_answer,
     register_frame,
     shown_labels,
     small_level_labels,
 )
 from tests.eval.adversarial_probes import own_frame, probes
-from tests.eval.dq_probes import DQ_QUESTIONS, SHOWN_PROBES, dq_frames, fold_frame, visits_died_frame
+from tests.eval.dq_probes import (
+    DQ_QUESTIONS,
+    PREDICTOR_PROBES,
+    SHOWN_PROBES,
+    dq_frames,
+    fold_frame,
+    predictor_frame,
+    visits_died_frame,
+)
 from tests.eval.negation_probes import PROBES as SCOPE_PROBES
 from tests.eval.over_holding_probes import ANSWERED, HELD, HELD_SINCE_NARROWING
 from tests.eval.reviewer_probes import PROBES
@@ -151,18 +160,25 @@ def _label_leak(result: dict[str, Any], workspace: Path | None) -> str | None:
     frame = frame_for(result["dataset_id"], workspace)
     columns = [c for c in (result.get("group_by"), result.get("metric")) if c]
     leaked = shown_labels(result["presentation"]) & small_level_labels(frame, columns, SMALL_CELL_THRESHOLD)
+    if result.get("intent") == "FIND_PREDICTORS":
+        # A regression names a level as its term ("site_West") and the outcome's value in its claim.
+        predictors = list(result.get("predictors") or [])
+        leaked |= predictor_label_leaks(
+            result["presentation"], frame, predictors, result.get("metric"), SMALL_CELL_THRESHOLD
+        )
     return f"{result['query']!r} shows labels of small levels: {sorted(leaked)[:5]}" if leaked else None
 
 
-def _ask_plan(dataset_id: str, plan: QueryPlan, confirm: bool) -> dict[str, Any]:
-    """Ask with ``plan`` fixed (the parser is not under test) and grade what the app shows."""
+def _ask_plan(dataset_id: str, plan: QueryPlan, confirm: bool, predictors: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Ask with ``plan`` (and its ``predictors``) fixed (the parser is not under test) and grade
+    what the app shows."""
     service = QueryService(layer_for(dataset_id))
     intent = SimpleNamespace(
         confidence=0.99,
         intent_type=plan.intent,
         primary_variable=plan.metric,
         grouping_variable=plan.group_by,
-        predictor_variables=[],
+        predictor_variables=list(predictors),
         time_variable=None,
         event_variable=None,
         filters=[],
@@ -188,6 +204,8 @@ def _ask_plan(dataset_id: str, plan: QueryPlan, confirm: bool) -> dict[str, Any]
         "failure_reason": result.failure_reason,
         "group_by": plan.group_by,
         "metric": plan.metric,
+        "intent": plan.intent,
+        "predictors": list(predictors),
         "presentation": present_analysis(result.analysis) if success else {"claim": None, "table": None},
     }
 
@@ -256,6 +274,14 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
     for query in PRIVACY_QUERIES:
         result = ask("cohort", query, project_root)
         record("privacy", query, _held(result) if not result["success"] else "answered", "no small labels", result)
+
+    # Predictor answers: a term or the claim never names a level held by 1-10 patients.
+    for name, outcome, predictors in PREDICTOR_PROBES:
+        register_frame(f"dq_{name}", predictor_frame(name))
+        plan = QueryPlan(intent="FIND_PREDICTORS", metric=outcome, confidence=0.99)
+        result = _ask_plan(f"dq_{name}", plan, True, predictors)
+        outcome_shown = _held(result) if not result["success"] else "answered"
+        record("privacy", f"{name}: {outcome} ~ {predictors}", outcome_shown, "no small labels", result)
 
     # Data-quality probe files: held or refused, never a number (see tests/eval/dq_probes.py),
     # and a hold sentence never names a level held by 1-10 rows.

@@ -61,6 +61,36 @@ def fold_frame() -> pl.DataFrame:
     return pl.DataFrame({"patient_id": [f"Q{i:03d}" for i in range(len(arms))], "arm": arms})
 
 
+def predictor_frame(name: str) -> pl.DataFrame:
+    """60 patients at sites East, North and West. Died for every third patient, so no level
+    separates the outcome; age varies.
+
+    "predictor": West has 3 patients. "predictor_complete_cases": West has 12, but 3 of them
+    have no age, so the model (complete cases) rests on 9 West patients.
+    """
+    size = 60
+    west = 3 if name == "predictor" else 12
+    frame = pl.DataFrame(
+        {
+            "patient_id": [f"Q{i:03d}" for i in range(size)],
+            "site": ["West" if i < west else ("East" if i % 2 else "North") for i in range(size)],
+            "died": [1 if i % 3 == 0 else 0 for i in range(size)],
+            "age": [30 + (i * 13) % 40 for i in range(size)],
+        }
+    )
+    if name == "predictor_complete_cases":
+        frame = frame.with_columns(pl.when(pl.int_range(pl.len()) < 3).then(None).otherwise(pl.col("age")).alias("age"))
+    return frame
+
+
+# Predictor answers: (frame, outcome, predictors). The NL parser does not pass named predictors
+# through to the plan, so the probe fixes them; the grader reads the claim and the term labels.
+PREDICTOR_PROBES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("predictor", "died", ("age", "site")),
+    ("predictor_complete_cases", "died", ("age", "site")),
+)
+
+
 def visits_died_frame() -> pl.DataFrame:
     """200 visit rows of 170 patients; died is the same at every visit of a patient (40 of 170)."""
     ids = IDS[:170] + IDS[:30]

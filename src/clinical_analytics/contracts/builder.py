@@ -29,6 +29,7 @@ import polars as pl
 import pydantic
 from open_data_contract_standard.model import OpenDataContractStandard
 
+from clinical_analytics.analysis.numeric_text import is_numeric_text
 from clinical_analytics.analysis.variable_types import classify_variable, code_labels, short_name
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import ContractValidationError
@@ -270,16 +271,6 @@ def _censored_rule(name: str) -> dict[str, Any]:
     }
 
 
-def _is_numeric_text(series: pl.Series) -> bool:
-    """A text column whose values are numbers, limits or missing tokens (analysis.numeric_text)."""
-    from clinical_analytics.analysis.numeric_text import AmbiguousNumberFormatError, parse_numeric_text
-
-    try:
-        return parse_numeric_text(series) is not None
-    except AmbiguousNumberFormatError:
-        return True
-
-
 def _id_rules(name: str) -> list[dict[str, Any]]:
     """Identifier rules. The exact duplicate check always runs; a repeat is reported, and answers
     ask whether rows are visits before counting patients. Wording and severity do not depend on
@@ -374,7 +365,7 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         quality.extend(_id_rules(name))
     else:
         quality.append(_missing_rule(name, column in inputs.analysis_columns))
-        if dtype == pl.String and _is_numeric_text(series):
+        if dtype == pl.String and is_numeric_text(series):
             quality.append(_censored_rule(name))
     if is_id or (meta and meta.is_phi):
         prop["classification"] = "restricted"
