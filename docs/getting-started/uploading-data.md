@@ -8,7 +8,7 @@ The desktop app's **Upload dataset** button accepts one file at a time (`ALLOWED
 - **Excel files** (.xlsx, .xls)
 - **SPSS files** (.sav)
 
-To try the app without your own data, click **Load sample** instead. It loads a synthetic sample cohort that ships with the repository (`data/demo/sample_cohort.csv`, no real patients).
+To try the app without your own data, click **Load sample** instead. It loads a synthetic sample cohort that ships with the app (`src/clinical_analytics/resources/demo/sample_cohort.csv`, no real patients).
 
 ## Data Requirements
 

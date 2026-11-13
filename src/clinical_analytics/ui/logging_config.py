@@ -3,7 +3,7 @@ Centralized logging configuration for Streamlit UI.
 
 Configure once in app.py entry point, not per page.
 
-Configuration values are loaded from config/logging.yaml via config_loader.
+Configuration values are loaded from resources/config/logging.yaml via config_loader.
 The configure_logging() function applies these settings.
 """
 
@@ -13,7 +13,7 @@ import sys
 from clinical_analytics.core.config_loader import load_logging_config
 
 # Load configuration from YAML via config_loader
-# This loads from config/logging.yaml
+# This loads from resources/config/logging.yaml
 _logging_config = load_logging_config()
 
 

@@ -13,6 +13,8 @@
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
+import { parseLoopbackApiUrl } from './apiAuth.js';
+
 export { API_TOKEN_CHANNEL } from './apiAuth.js';
 
 export const API_TOKEN_ENV = 'CLINICAL_ANALYTICS_API_TOKEN';
@@ -103,4 +105,27 @@ export function resolveAppFilePath(requestUrl, rootDir) {
   const resolved = path.resolve(root, relative);
   if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
   return resolved;
+}
+
+/**
+ * The page's Content-Security-Policy, sent as a response header by main. connect-src names the one
+ * backend origin this launch uses (exact port), so page script cannot reach any other loopback
+ * service (for example a local model server that could be told to fetch from the internet).
+ * index.html keeps a meta CSP limited to 127.0.0.1; both apply, so the header narrows it.
+ * @param {string} apiBaseUrl - http://127.0.0.1:<port>
+ * @returns {string}
+ */
+export function contentSecurityPolicy(apiBaseUrl) {
+  const parsed = parseLoopbackApiUrl(apiBaseUrl);
+  if (!parsed) {
+    throw new Error(
+      `API address must be http://127.0.0.1:<port>, got ${JSON.stringify(apiBaseUrl)}`
+    );
+  }
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    `connect-src http://127.0.0.1:${parsed.port}`,
+  ].join('; ');
 }

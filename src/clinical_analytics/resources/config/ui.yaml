@@ -3,7 +3,7 @@
 # Single source of truth for feature toggles.
 #
 # Environment variables take precedence over YAML values.
-# See config/README.md for environment variable mapping.
+# See README.md in this directory for environment variable mapping.
 
 # Feature flags - single source of truth
 # Set MULTI_TABLE_ENABLED=true in environment to enable multi-table (ZIP) uploads
