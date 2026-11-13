@@ -150,16 +150,14 @@ def _weighted_median(values: pl.Series, weights: pl.Series) -> float | None:
     return float(frame.filter(pl.col("w").cum_sum() >= half).get_column("v")[0])
 
 
-def implausible_values(series: pl.Series, weights: pl.Series | None = None) -> Implausible | None:
-    """Values of ``series`` outside the column's range, or None (no range, none outside, or not
-    numbers). Numbers stored as text are read with ``parse_numeric_text`` first, so text glucose
-    "-5" is found as the float -5 is. ``weights``: the count of each value when ``series`` holds
-    distinct values (a DuckDB value count), so no full column is copied.
+def numbers_with_counts(series: pl.Series, weights: pl.Series | None = None) -> pl.DataFrame | None:
+    """``series`` as finite numbers ``v`` with their row counts ``w`` (nulls dropped), or None when
+    it is not numbers. Numbers stored as text are read with ``parse_numeric_text`` first, so text
+    glucose "-5" is read as the float -5 is. ``weights``: the count of each value when ``series``
+    holds distinct values (a DuckDB value count), so no full column is copied.
     """
     from clinical_analytics.analysis.numeric_text import AmbiguousNumberFormatError, parse_numeric_text
 
-    if find_plausibility_range(series.name) is None:
-        return None
     values = series
     if series.dtype == pl.String:
         try:
@@ -174,7 +172,18 @@ def implausible_values(series: pl.Series, weights: pl.Series | None = None) -> I
         return None
     counts = weights if weights is not None else pl.Series([1] * values.len(), dtype=pl.Int64)
     frame = pl.DataFrame({"v": values.cast(pl.Float64), "w": counts.cast(pl.Int64)}).drop_nulls()
-    frame = frame.filter(pl.col("v").is_finite())
+    return frame.filter(pl.col("v").is_finite())
+
+
+def implausible_values(series: pl.Series, weights: pl.Series | None = None) -> Implausible | None:
+    """Values of ``series`` outside the column's range, or None (no range, none outside, or not
+    numbers). Read with ``numbers_with_counts`` (numbers stored as text included).
+    """
+    if find_plausibility_range(series.name) is None:
+        return None
+    frame = numbers_with_counts(series, weights)
+    if frame is None:
+        return None
     bounds = range_for(series.name, _weighted_median(frame.get_column("v"), frame.get_column("w")))
     if bounds is None:
         return None

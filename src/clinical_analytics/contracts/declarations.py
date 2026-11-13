@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
-"""What the doctor confirmed about a dataset: its grain, and which category spellings are one.
+"""What the doctor confirmed about a dataset: its grain, which category spellings are one, and
+which unit a column's values are in where it mixes two.
 
 A declaration is made by confirming a held question and is stored so the next question does not
 ask again. Each one carries the dataset version it was made on and the facts it was made on (row
@@ -64,11 +65,33 @@ class LevelMapping(BaseModel):
     dataset_version: str | None = None
 
 
+class UnitRule(BaseModel):
+    """Values of ``column`` on ``side`` of ``cutoff`` are in ``source_unit``; they are read as
+    ``value * scale + offset`` in ``target_unit`` (confirmed on a column that mixes two units).
+
+    ``cutoff`` is a round number between the two clusters, never a patient's value.
+    ``relation``: the conversion as the plan line shows it ("1 mmol/L = 18.016 mg/dL").
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str
+    cutoff: float
+    side: Literal["below", "at_or_above"]
+    source_unit: str
+    target_unit: str
+    scale: float = Field(..., gt=0)
+    offset: float = 0.0
+    relation: str
+    dataset_version: str | None = None
+
+
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     grain: GrainDeclaration | None = None
     levels: tuple[LevelMapping, ...] = ()
+    units: tuple[UnitRule, ...] = ()
 
     def with_grain(self, grain: GrainDeclaration) -> Declarations:
         return self.model_copy(update={"grain": grain})
@@ -88,6 +111,17 @@ class Declarations(BaseModel):
     def levels_for(self, dataset_version: str | None) -> tuple[LevelMapping, ...]:
         """The level mappings confirmed on ``dataset_version`` (others belong to other data)."""
         return tuple(m for m in self.levels if m.dataset_version == dataset_version)
+
+    def with_unit(self, rule: UnitRule) -> Declarations:
+        """``rule`` replacing any rule for its column on its version (one rule per column)."""
+        kept = tuple(
+            r for r in self.units if not (r.column == rule.column and r.dataset_version == rule.dataset_version)
+        )
+        return self.model_copy(update={"units": (*kept, rule)})
+
+    def units_for(self, dataset_version: str | None) -> tuple[UnitRule, ...]:
+        """The unit rules confirmed on ``dataset_version`` (others belong to other data)."""
+        return tuple(r for r in self.units if r.dataset_version == dataset_version)
 
 
 class DeclarationStore(Protocol):
@@ -181,7 +215,12 @@ class FileDeclarationStore:
             finally:
                 if tmp is not None:
                     Path(tmp).unlink(missing_ok=True)
-        logger.info("declarations_saved", dataset_id=dataset_id, grain=bool(declarations.grain))
+        logger.info(
+            "declarations_saved",
+            dataset_id=dataset_id,
+            grain=bool(declarations.grain),
+            unit_rules=len(declarations.units),
+        )
 
     def update(self, dataset_id: str, change: Callable[[Declarations], Declarations]) -> Declarations:
         """Load, apply ``change`` and save as one step under the store lock.

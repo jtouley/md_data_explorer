@@ -10,6 +10,9 @@ answered: "Total count: 170." beside "25.0% of patients ... (n=200)", "Mean age 
 
 from __future__ import annotations
 
+import math
+from statistics import NormalDist
+
 import polars as pl
 
 from clinical_analytics.core.query_plan import QueryPlan
@@ -53,6 +56,39 @@ def dq_frames() -> dict[str, pl.DataFrame]:
             {"patient_id": IDS, "sex": ["Male"] * 100 + ["male"] * 47 + ["M"] * 3 + ["Female"] * 50, "age": [50] * N}
         ),
     }
+
+
+def lognormal_values(centre: float, log_sd: float, n: int, decimals: int = 1) -> list[float]:
+    """``n`` values spread like a log-normal lab result (median ``centre``), deterministic: the
+    distribution's quantiles at (i + 0.5) / n, rounded as a lab reports them."""
+    normal = NormalDist()
+    return [round(centre * math.exp(log_sd * normal.inv_cdf((i + 0.5) / n)), decimals) for i in range(n)]
+
+
+def interleave(first: list[float], second: list[float]) -> list[float]:
+    """The two lists' values alternating while both last (rows in upload order, not sorted)."""
+    merged: list[float] = []
+    for i in range(max(len(first), len(second))):
+        merged.extend(v[i] for v in (first, second) if i < len(v))
+    return merged
+
+
+def lab_frame(column: str, values: list[float]) -> pl.DataFrame:
+    return pl.DataFrame({"patient_id": [f"U{i:04d}" for i in range(len(values))], column: values})
+
+
+def mixed_glucose_frame(mmol_rows: int = 50, mg_rows: int = 150) -> pl.DataFrame:
+    """Glucose of 200 patients: most in mg/dL (median 110), some in mmol/L (median 6.5). On main
+    "average glucose" gave one number for the two scales (DQ M3: "Mean glucose was 35.61")."""
+    return lab_frame(
+        "glucose", interleave(lognormal_values(110, 0.25, mg_rows), lognormal_values(6.5, 0.25, mmol_rows))
+    )
+
+
+def skewed_glucose_frame() -> pl.DataFrame:
+    """Glucose of 200 patients, all mg/dL and wide: 140 near 100 and 60 hyperglycaemic near 180
+    (right-skewed, two clinical groups 1.8x apart, not the 18x of a unit). Must be answered."""
+    return lab_frame("glucose", interleave(lognormal_values(100, 0.12, 140), lognormal_values(180, 0.35, 60)))
 
 
 def fold_frame() -> pl.DataFrame:
@@ -109,6 +145,12 @@ SHOWN_PROBES: tuple[tuple[str, str | QueryPlan, bool, object], ...] = (
     ("fold", "how many patients by arm?", False, {"A": 200, "B": "hidden", "Other (groups under 11)": "hidden"}),
     ("visits_died", DIED_SHARE, True, "23.5% of patients had died=1 (n=170 patients)."),
 )
+
+
+# Unit probes: a column that mixes mg/dL and mmol/L must be held; a single-unit skewed one
+# must be answered with its true mean (the unit check must not hold plain wide variation).
+UNIT_HELD: tuple[str, ...] = ("average glucose", "what is the mean glucose?")
+UNIT_ANSWERED: tuple[str, ...] = ("average glucose",)
 
 
 # (probe, question): every one must be held or refused, never answered.
