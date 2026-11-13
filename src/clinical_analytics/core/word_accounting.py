@@ -6,7 +6,7 @@ confidence. This gate runs once, after parsing (any tier) and before execution, 
 such a plan for confirmation with the unused words named.
 
 A word is used only when:
-- it is in a small reviewed list of function words or subject nouns (FUNCTION_WORDS, SUBJECT_WORDS);
+- it is in the shared reviewed vocabulary of words that carry no limit (question_vocabulary);
 - it is an intent or statistic word and the plan has that intent (INTENT_WORDS);
 - it names a column the plan references (metric, group, predictors, time, event, filters,
   cohort steps, proportion/rate), by name, alias or a close stem;
@@ -21,30 +21,28 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.execution_gate import limit_text
-from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep
+from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, grouped_statistic
 
-# Reviewed vocabulary. Adding a word here makes the gate accept it in any question.
-FUNCTION_WORDS: frozenset[str] = frozenset(
-    {
-        "a", "all", "among", "amongst", "an", "and", "any", "are", "as", "at", "be", "been", "being",
-        "did", "do", "does", "for", "from", "had", "has", "have", "having", "i", "in", "is", "it",
-        "its", "me", "of", "on", "our", "s", "that", "the", "their", "them", "there", "these", "they",
-        "this", "those", "to", "us", "was", "we", "were", "what", "which", "who", "whom", "whose",
-        "with", "within",
-    }
-)  # fmt: skip
-SUBJECT_WORDS: frozenset[str] = frozenset(
-    {
-        "case", "cases", "cohort", "group", "groups", "individuals", "participant", "participants",
-        "patient", "patients", "people", "person", "persons", "subject", "subjects", "user", "users",
-    }
-)  # fmt: skip
-# Verbs that only link a patient to a stored value ("patients who received placebo").
-LINK_WORDS: frozenset[str] = frozenset({"given", "received", "receiving", "taking", "treated", "use", "uses", "using"})
+# Words that carry no limit come from one reviewed vocabulary, shared with the cohort peel
+# and the pre-execution gap check.
+from clinical_analytics.core.question_vocabulary import (
+    FUNCTION_WORDS,
+    LINK_WORDS,
+    NEGATION_CUES,
+    NO_LIMIT_WORDS,
+    RANGE_PATTERN,
+    SUBJECT_WORDS,
+    NegationScope,
+    negation_scope,
+    range_ends,
+    range_in_order,
+)
+from clinical_analytics.core.question_vocabulary import NEGATION_WORDS as BASE_NEGATION_WORDS
+
 INTENT_WORDS: dict[str, frozenset[str]] = {
     "COUNT": frozenset({"how", "many", "number", "count", "total"}),
     "STAT": frozenset(
@@ -56,9 +54,7 @@ INTENT_WORDS: dict[str, frozenset[str]] = {
     "SURVIVAL": frozenset({"survival"}),
 }
 # Logic words: used only when the plan holds the matching operator.
-NEGATION_WORDS: frozenset[str] = frozenset(
-    {"not", "non", "no", "without", "excluding", "exclude", "except", "outside", "never", "__neg__"}
-)
+NEGATION_WORDS: frozenset[str] = BASE_NEGATION_WORDS | {"__neg__"}
 OR_WORDS: frozenset[str] = frozenset({"or"})
 BETWEEN_WORDS: frozenset[str] = frozenset({"between"})
 RATE_WORDS: frozenset[str] = frozenset(
@@ -78,21 +74,29 @@ DIRECTION_OPS: dict[str, str] = {
     "__lt_age__": "lt",
     "__ge__": "ge",
     "__le__": "le",
+    # The two ends of a range, both included; shown as the numbers alone.
+    "__rlo__": "ge",
+    "__rhi__": "le",
 }
-_POSTFIX = {"__ge__", "__le__"}
+_POSTFIX = {"__ge__", "__le__", "__rlo__", "__rhi__"}
 _AGE_WORDS = {"aged", "age", "old", "__gt_age__", "__lt_age__"}
 LOGIC_WORDS: frozenset[str] = (
     NEGATION_WORDS | OR_WORDS | BETWEEN_WORDS | RATE_WORDS | BY_WORDS | CUTOFF_WORDS | frozenset(DIRECTION_OPS)
 )
 
+_NUM = r"\d+(?:\.\d+)?"
+_INTENT_VOCABULARY: frozenset[str] = frozenset().union(*INTENT_WORDS.values())
 # Multi-word logic phrases, rewritten to one placeholder before tokenising.
 _PHRASES: tuple[tuple[str, str], ...] = (
     (r"n't\b", " not"),
     (r"(\d)\s*\+", r"\1 __ge__ "),
     (r"(\d)\s+plus\b", r"\1 __ge__ "),
-    (r"\b(?:or|and) (?:more|older|over|above|greater|higher)\b(?! than)", " __ge__ "),
+    (rf"\bat least ({_NUM})\b", r" \1 __ge__ "),
+    (rf"\bat most ({_NUM})\b", r" \1 __le__ "),
+    # "65 or older", not "under 40 or over 80" (there "or" joins two comparisons).
+    (r"\b(?:or|and) (?:more|older|over|above|greater|higher)\b(?! than)(?!\s+\d)", " __ge__ "),
     (r"\bat least\b", " __ge__ "),
-    (r"\b(?:or|and) (?:less|fewer|younger|under|below|lower)\b(?! than)", " __le__ "),
+    (r"\b(?:or|and) (?:less|fewer|younger|under|below|lower)\b(?! than)(?!\s+\d)", " __le__ "),
     (r"\bat most\b", " __le__ "),
     (r"\b(?:more|less) likely\b", " __rate__ "),
     (r"\bother than\b", " __neg__ "),
@@ -110,6 +114,8 @@ _SHOWN = {
     "__lt_age__": "younger than",
     "__neg__": "other than",
     "__rate__": "more likely",
+    "__rlo__": "",
+    "__rhi__": "",
 }
 _SEX_INFLECTIONS = {
     "f": {"f", "female", "females", "woman", "women"},
@@ -127,12 +133,29 @@ class Token:
     index: int
 
 
+def _range_markers(match: re.Match[str]) -> str:
+    """A range in order becomes "<lo> __rlo__ <hi> __rhi__" (both ends included), read by the same
+    pattern as the peel (question_vocabulary.RANGE_PATTERN). A reversed one ("between 65 and 50")
+    keeps its numbers with no direction, so neither end is ever marked used and the plan holds."""
+    low, high, _lo, _hi = range_ends(match)
+    lead = "between " if match.group("lo") is not None else ""
+    if not range_in_order(match):
+        return f" {lead}{low} and {high} "
+    return f" {lead}{low} __rlo__ {high} __rhi__ "
+
+
 def tokenize(question: str) -> list[str]:
     """Lowercase words, numbers and logic placeholders, in order."""
-    text = question.lower()
+    text = RANGE_PATTERN.sub(_range_markers, question.lower())
     for pattern, replacement in _PHRASES:
         text = re.sub(pattern, replacement, text)
     return re.findall(_TOKEN, text)
+
+
+def comparison_scope(tokens: list[str], at: int, direction_at: int) -> NegationScope:
+    """Negation scope of the comparison of the number at ``at`` with its direction word: read
+    from where the comparison starts ("over 65", "65 or older"), by the shared rule."""
+    return negation_scope(tokens[: min(at, direction_at)])
 
 
 def shown(word: str) -> str:
@@ -144,11 +167,13 @@ def _listed(items: list[str]) -> str:
 
 
 def hold_reason(words: Iterable[str]) -> str:
-    """One plain sentence naming the words of the question that the plan leaves out."""
+    """One plain sentence naming the words the plan leaves out and what to do about them."""
     quoted = [f"'{shown(word)}'" for word in words]
     if len(quoted) == 1:
-        return f"I couldn't place the word {quoted[0]}, so it is not in the plan."
-    return f"I couldn't place the words {_listed(quoted)}, so they are not in the plan."
+        return f"I couldn't use the word {quoted[0]} in the plan; rephrase it with a column or value from your data."
+    return (
+        f"I couldn't use the words {_listed(quoted)} in the plan; rephrase them with columns or values from your data."
+    )
 
 
 def name_tokens(name: str) -> list[str]:
@@ -171,6 +196,8 @@ def stem_match(word: str, target: str) -> bool:
 
 
 _AGE_UNITS = {"years", "year", "yrs", "yr", "y", "at", "baseline", "in", "current"}
+# Words after an age cutoff that only restate it ("65 years old").
+_AGE_UNIT_WORDS = frozenset({"years", "year", "yrs", "yr", "y", "yo", "old"})
 
 
 def age_column(columns: list[str]) -> str | None:
@@ -204,25 +231,81 @@ def number_owner(
     """Column a compared number belongs to, or None when the question does not say.
 
     The nearest content word before the comparison names the column ("bmi over 30" is bmi).
+    A unit right after the number names the column whose name carries it ("over 100 kg" is
+    "Weight (kg)"); when the words before name a different column the number has no owner.
     Age is used only when the words say age ("older than", "aged"), or the number follows a
     subject ("patients over 65") and either no other measure is named before it, or the
     number is outside the observed range of every measure named before it.
     """
+    units = unit_columns(tokens, number_at, columns)
+    before = _owner_before(tokens, number_at, columns, numeric_columns, alias_index, ranges)
+    if not units:
+        return before[0]
+    if len(units) > 1:
+        # "over 2 years": years of age or years on dialysis? The words do not say.
+        return before[0] if before[1] and before[0] in units else None
+    unit = next(iter(units))
+    if before[1] and before[0] != unit:
+        return None
+    return unit
+
+
+def unit_columns(tokens: list[str], number_at: int, columns: list[str]) -> set[str]:
+    """Columns whose name carries the unit written right after the number (age owns "years")."""
+    at = number_at + 1
+    if at < len(tokens) and tokens[at] in _POSTFIX:
+        at += 1
+    if at >= len(tokens) or tokens[at] in LOGIC_WORDS or tokens[at] in NO_LIMIT_WORDS:
+        return set()
+    word = tokens[at]
+    owners = {column for column in columns if word in unit_words(column)}
+    age = age_column(columns)
+    if age and word in _AGE_UNIT_WORDS:
+        owners.add(age)
+    return owners
+
+
+def unit_words(column: str) -> set[str]:
+    """Words of a measure's name after the measure itself ("kg" of "Weight (kg)", "mg" and
+    "dl" of "LDL mg/dL", "days" of "followup_days"). Coded columns have none: their extra
+    words are value labels ("Yes", "No"), not units."""
+    if parse_column_name(column).value_mapping:
+        return set()
+    parts = [part for part in name_tokens(column) if not part.isdigit()]
+    return {part for part in parts[1:] if part not in LOGIC_WORDS and part not in NO_LIMIT_WORDS}
+
+
+def _owner_before(
+    tokens: list[str],
+    number_at: int,
+    columns: list[str],
+    numeric_columns: set[str],
+    alias_index: dict[str, str] | None,
+    ranges: dict[str, tuple[float, float]] | None,
+) -> tuple[str | None, bool]:
+    """(owner from the words before the number, whether those words name it explicitly)."""
     age = age_column(columns)
     start = number_at - 1
+    if start >= 1 and tokens[start] == "__rlo__" and _NUMBER_TOKEN.fullmatch(tokens[start - 1]):
+        # The upper end of a range ("50 __rlo__ 65 __rhi__") belongs where the lower end does.
+        return number_owner(tokens, start - 1, columns, numeric_columns, alias_index, ranges), True
     if start >= 0 and tokens[start] in DIRECTION_OPS and tokens[start] not in _POSTFIX:
         if tokens[start] in _AGE_WORDS:
-            return age
+            return age, True
+        start -= 1
+    elif start >= 0 and tokens[start] in BETWEEN_WORDS:
         start -= 1
     for at in range(start, -1, -1):
         word = tokens[at]
         if word in FUNCTION_WORDS:
             continue
         if word in _AGE_WORDS:
-            return age
+            return age, True
         named = _column_for_word(word, columns, alias_index)
         if named is not None:
-            return named
+            # "diabetics over 65": a yes/no or text column cannot own a cutoff. The words name
+            # no measure for the number, so it has no owner and the plan holds.
+            return (named if named in numeric_columns else None), True
         break
     before = tokens[:number_at]
     measures = {
@@ -231,17 +314,17 @@ def number_owner(
         if named is not None and named in numeric_columns and named != age
     }
     if not measures:
-        return age
+        return age, False
     if ranges is None:
-        return None
+        return None, False
     try:
         number = float(tokens[number_at])
     except ValueError:
-        return None
+        return None, False
     inside = [column for column in measures if column in ranges and ranges[column][0] <= number <= ranges[column][1]]
     if inside or any(column not in ranges for column in measures):
-        return None
-    return age
+        return None, False
+    return age, False
 
 
 def _column_for_word(word: str, columns: list[str], alias_index: dict[str, str] | None) -> str | None:
@@ -275,6 +358,334 @@ def unused_words(
 ) -> list[str]:
     """Content words of the question that the plan does not bind, in question order."""
     tokens = tokenize(question)
+    unused = [shown(tokens[at]) for at in _unused_at(tokens, plan, columns, values_for, alias_index, context)]
+    return [word for word in unused if word]
+
+
+def explain_hold(
+    question: str,
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    alias_index: dict[str, str] | None = None,
+    context: Any = None,
+) -> str | None:
+    """One plain sentence telling the reader what to change, or None when every word is used.
+
+    The cause decides the sentence: a number whose measure the words leave open, values
+    joined by "and" (together or each?), two ranges joined by "or", words that name nothing
+    in the data, and otherwise words the plan could not use.
+    """
+    tokens = tokenize(question)
+    unused = _unused_at(tokens, plan, columns, values_for, alias_index, context)
+    words = [shown(tokens[at]) for at in unused if shown(tokens[at])]
+    if not words:
+        # Only a range marker is left, which unused_words does not report either: no hold.
+        return None
+    namer = _ColumnNamer(
+        [*columns, *sorted(_referenced_columns(plan, context) - set(columns))], values_for, alias_index
+    )
+    for explain in (_ambiguous_number, _ranges_joined_by_or, _values_joined_by_and, _statistic_missing):
+        sentence = explain(tokens, unused, plan, columns, values_for, alias_index, namer)
+        if sentence:
+            return sentence
+    unknown = [
+        tokens[at]
+        for at in unused
+        if not _NUMBER_TOKEN.fullmatch(tokens[at])
+        and tokens[at] not in LOGIC_WORDS
+        and tokens[at] not in _INTENT_VOCABULARY
+        and not namer.columns_named(tokens[at])
+    ]
+    if unknown and len(unknown) == len(words):
+        return (
+            f"I couldn't match {_quoted(unknown)} to a column or value in this dataset; rephrase with a column "
+            f"name from your data, or leave {_it_them(unknown)} out."
+        )
+    return hold_reason(words)
+
+
+def _quoted(words: list[str]) -> str:
+    return _listed([f"'{word}'" for word in words])
+
+
+def _it_them(words: list[str]) -> str:
+    return "it" if len(words) == 1 else "them"
+
+
+def _ambiguous_number(
+    tokens: list[str],
+    unused: list[int],
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    alias_index: dict[str, str] | None,
+    namer: _ColumnNamer,
+) -> str | None:
+    """ "average bmi in patients over 30": 30 could limit age or bmi."""
+    for at in unused:
+        if not _NUMBER_TOKEN.fullmatch(tokens[at]):
+            continue
+        direction_at = _direction_at(tokens, at)
+        if direction_at is None:
+            continue
+        candidates: list[str] = []
+        age = age_column(columns)
+        if age:
+            candidates.append(age)
+        numeric = {column for column in columns if _is_measure(values_for(column))}
+        for word in tokens[:at]:
+            for column in sorted(namer.columns_named(word) & numeric):
+                if column not in candidates:
+                    candidates.append(column)
+        if len(candidates) < 2:
+            continue
+        number = tokens[at]
+        if tokens[direction_at] in {"__rlo__", "__rhi__"}:
+            low, high = (number, tokens[at + 2]) if tokens[direction_at] == "__rlo__" else (tokens[at - 2], number)
+            limit = f"between {low} and {high}"
+            number = f"{low} to {high}"
+        else:
+            limit = f"{_DIRECTION_SHOWN.get(tokens[direction_at], shown(tokens[direction_at]))} {number}"
+        examples = " or ".join(f"'{_short(column)} {limit}'" for column in candidates[:2])
+        return f"Say which measure {number} applies to, for example {examples}."
+    return None
+
+
+def _ranges_joined_by_or(
+    tokens: list[str],
+    unused: list[int],
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    alias_index: dict[str, str] | None,
+    namer: _ColumnNamer,
+) -> str | None:
+    """ "under 40 or over 80": the plan cannot keep patients who meet either range."""
+    if not any(tokens[at] in OR_WORDS for at in unused):
+        return None
+    numbers = [at for at, word in enumerate(tokens) if _NUMBER_TOKEN.fullmatch(word) and _direction_at(tokens, at)]
+    if len(numbers) < 2:
+        return None
+    return "I can't keep patients who meet either of two ranges; ask about each range in its own question."
+
+
+def _values_joined_by_and(
+    tokens: list[str],
+    unused: list[int],
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    alias_index: dict[str, str] | None,
+    namer: _ColumnNamer,
+) -> str | None:
+    """ "how many women and men?": both together, or each one?"""
+    if "and" not in tokens:
+        return None
+    for column in columns:
+        words = _value_words(column, values_for(column))
+        named = [at for at in unused if _names_value(tokens[at], words)]
+        keys = {_value_key(tokens[at], column, values_for) for at in named}
+        if len(keys) < 2:
+            continue
+        first, last = tokens[named[0]], tokens[named[-1]]
+        return f"Say '{first} or {last}' to count them together, or 'by {_short(column)}' to see each group."
+    return None
+
+
+# Declared column types (semantic layer / data contract) that settle what a numeric column is.
+_DECLARED_MEASURES = frozenset({"continuous", "numeric"})
+_DECLARED_CODES = frozenset({"categorical", "coded", "binary"})
+GroupingLevels: TypeAlias = Literal["measurement", "coded"]
+
+
+def numeric_grouping_levels(
+    values: list[Any], row_count: int | None = None, declared_type: str | None = None
+) -> GroupingLevels | None:
+    """What grouping by a numeric column with more than MAX_NUMERIC_GROUP_LEVELS values makes.
+
+    "measurement": one group per exact value of a measure. The column is declared continuous,
+    or holds a non-integer value, or has as many distinct values as half the rows (an
+    identifier or a raw measurement). "coded": integer codes (site 1..12, a zip code without a
+    codebook); grouping by them may be what was meant, so it is confirmed, never refused.
+    None: not a numeric column with that many values. Small cells in any grouping are hidden
+    by the engine, not here.
+    """
+    from clinical_analytics.core.nl_query_config import MAX_NUMERIC_GROUP_LEVELS
+
+    present = [value for value in values if value is not None]
+    distinct = set(present)
+    if not _is_measure(present) or len(distinct) <= MAX_NUMERIC_GROUP_LEVELS:
+        return None
+    declared = (declared_type or "").strip().lower()
+    if declared in _DECLARED_MEASURES:
+        return "measurement"
+    if declared in _DECLARED_CODES:
+        return "coded"
+    if any(not float(value).is_integer() for value in distinct):
+        return "measurement"
+    if row_count is not None and 2 * len(distinct) > row_count:
+        return "measurement"
+    return "coded"
+
+
+def _grouping_levels(
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    row_count: int | None,
+    declared_type: Callable[[str], str | None] | None,
+) -> tuple[str, list[Any], GroupingLevels] | None:
+    group_by = getattr(plan, "group_by", None)
+    if getattr(plan, "intent", None) not in {"COUNT", "DESCRIBE", "COMPARE_GROUPS"}:
+        return None  # a correlation's second variable is not a grouping
+    if not group_by or group_by not in columns or parse_column_name(str(group_by)).value_mapping:
+        return None
+    values = [value for value in values_for(str(group_by)) if value is not None]
+    declared = declared_type(str(group_by)) if declared_type is not None else None
+    levels = numeric_grouping_levels(values, row_count, declared)
+    return (str(group_by), values, levels) if levels is not None else None
+
+
+def measurement_grouping_reason(
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    row_count: int | None = None,
+    declared_type: Callable[[str], str | None] | None = None,
+) -> str | None:
+    """One sentence when the plan groups by a measurement, or None.
+
+    Grouping (or cross-tabulating) by a continuous column makes one group per exact value:
+    a privacy leak and no answer. It is refused whatever the words say, so it never runs.
+    Integer codes are not refused here (coded_grouping_reason holds them for confirmation).
+    """
+    found = _grouping_levels(plan, columns, values_for, row_count, declared_type)
+    if found is None or found[2] != "measurement":
+        return None
+    group_by, values, _levels = found
+    name = _short(group_by)
+    middle = sorted(float(value) for value in values)[len(values) // 2]
+    cutoff = f"{round(middle):g}" if abs(middle) >= 10 else f"{middle:.2g}"
+    metric = getattr(plan, "metric", None)
+    groups = [column for column in columns if column != group_by and _is_grouping(column, values_for)]
+    if metric and metric != group_by and metric in groups:
+        example = f"compare {name} by {_short(str(metric))}"
+    elif groups:
+        measure = _short(str(metric)) if metric and metric != group_by and metric in columns else name
+        example = f"compare {measure} by {_short(groups[0])}"
+    else:
+        example = f"average {name}"
+    return (
+        f"{name} is a measurement, not a group; ask about a range of it such as '{name} over {cutoff}', "
+        f"or ask '{example}'."
+    )
+
+
+def coded_grouping_reason(
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    row_count: int | None = None,
+    declared_type: Callable[[str], str | None] | None = None,
+) -> str | None:
+    """One sentence when the plan groups by many integer codes, or None.
+
+    "count patients by site_id" with sites 1..12 is a fair grouping, but the same integers
+    could be a measurement read as codes. Held for the user's confirmation, which releases it.
+    """
+    found = _grouping_levels(plan, columns, values_for, row_count, declared_type)
+    if found is None or found[2] != "coded":
+        return None
+    group_by, values, _levels = found
+    name = _short(group_by)
+    return (
+        f"{name} holds {len(set(values))} different numbers; the answer shows one group for each. Confirm the plan "
+        f"if {name} is a code such as a site or clinic, or ask about a range of it such as '{name} over "
+        f"{sorted(values)[len(values) // 2]:g}'."
+    )
+
+
+def indicator_statistic_reason(question: str, plan: Any, values_for: Callable[[str], list[Any]]) -> str | None:
+    """One sentence when the question asks a statistic of a 0/1 column with no codebook, or None.
+
+    "average outcome by site" on a column holding only 0 and 1 reports the share coded 1. That
+    is the asked rate only if 1 means yes, which nothing in the data says, so the plan is held
+    for the user's confirmation. A header codebook ("outcome 0: No 1: Yes") settles it.
+    """
+    metric = getattr(plan, "metric", None)
+    if not metric or not any(word in STATISTIC_WORDS for word in tokenize(question)):
+        return None
+    if parse_column_name(str(metric)).value_mapping:
+        return None
+    present = {value for value in values_for(str(metric)) if value is not None}
+    numbers = {float(value) for value in present if isinstance(value, int | float) and not isinstance(value, bool)}
+    if len(numbers) != len(present) or numbers != {0.0, 1.0}:
+        return None
+    name = _short(str(metric))
+    return (
+        f"{name} holds only 0 and 1, and nothing in the data says which one means yes; its average is the "
+        f"share coded 1. Confirm the plan if 1 means yes, or ask 'how many patients have {name} 1'."
+    )
+
+
+def _is_grouping(column: str, values_for: Callable[[str], list[Any]]) -> bool:
+    """A column with a few stored labels or codes (sex, site, treatment), not an identifier."""
+    from clinical_analytics.core.nl_query_config import MAX_NUMERIC_GROUP_LEVELS
+
+    values = {value for value in values_for(column) if value is not None}
+    return 2 <= len(values) <= MAX_NUMERIC_GROUP_LEVELS
+
+
+def _statistic_missing(
+    tokens: list[str],
+    unused: list[int],
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    alias_index: dict[str, str] | None,
+    namer: _ColumnNamer,
+) -> str | None:
+    """ "ldl for women?": a measure is named but no statistic of it is asked for."""
+    if (
+        getattr(plan, "intent", None) != "DESCRIBE"
+        or getattr(plan, "metric", None)
+        or any(word in INTENT_WORDS["STAT"] or word in INTENT_WORDS["COUNT"] for word in tokens)
+    ):
+        return None
+    numeric = {column for column in columns if _is_measure(values_for(column))}
+    for at in unused:
+        named = sorted(namer.columns_named(tokens[at]) & numeric)
+        if len(named) == 1:
+            return f"Say which statistic you want, for example 'average {tokens[at]}' or 'median {tokens[at]}'."
+    return None
+
+
+def _short(column: str) -> str:
+    from clinical_analytics.analysis.variable_types import short_name
+
+    return short_name(column)
+
+
+_DIRECTION_SHOWN = {
+    "__ge__": "at least",
+    "__le__": "at most",
+    "__gt__": "over",
+    "__lt__": "under",
+    "__gt_age__": "over",
+    "__lt_age__": "under",
+}
+
+
+def _unused_at(
+    tokens: list[str],
+    plan: Any,
+    columns: list[str],
+    values_for: Callable[[str], list[Any]],
+    alias_index: dict[str, str] | None,
+    context: Any,
+) -> list[int]:
+    """Positions of the tokens the plan does not bind."""
     used = [False] * len(tokens)
     intent = str(getattr(plan, "intent", "") or "")
     filters = list(getattr(plan, "filters", []) or [])
@@ -322,6 +733,19 @@ def unused_words(
     # ("between drug and placebo", "women and men"): then grouping covers exactly what was
     # asked. Naming some of them ("in the north", "north and south" of three sites) is a
     # limit the plan did not apply.
+    # The plan's own columns are always nameable, even if a caller's column list omits one.
+    namer = _ColumnNamer([*columns, *sorted(referenced - set(columns))], values_for, alias_index)
+    rate_at = tokens.index("__rate__") if "__rate__" in tokens else None
+    rate_ok = rate_at is not None and rate_direction_ok(tokens, rate_at, plan, namer)
+    if rate_ok and rate_at is not None:
+        # "are men more likely ... than women": the named groups are the sides compared, all
+        # of which the rate within each group shows; "than" introduces the other side.
+        group_values = _value_words(str(group_by), values_for(str(group_by)))
+        for at, word in enumerate(tokens):
+            if not used[at] and (word == "than" or (_names_value(word, group_values) and at < rate_at)):
+                used[at] = True
+            elif not used[at] and _names_value(word, group_values) and at > 0 and tokens[at - 1] == "than":
+                used[at] = True
     if group_by:
         stored = {str(value) for value in values_for(group_by) if value is not None}
         group_values = _value_words(group_by, values_for(group_by))
@@ -330,9 +754,6 @@ def unused_words(
         if stored and named >= stored:
             for at in hits:
                 used[at] = True
-
-    # The plan's own columns are always nameable, even if a caller's column list omits one.
-    namer = _ColumnNamer([*columns, *sorted(referenced - set(columns))], values_for, alias_index)
 
     # Numbers: bound to a comparison of the same direction on the column they belong to.
     metric = getattr(plan, "metric", None)
@@ -345,12 +766,29 @@ def unused_words(
             continue
         owner = number_owner(tokens, at, columns, numeric_columns, alias_index, ranges)
         op = DIRECTION_OPS[tokens[direction_at]]
+        # "not over 65", "excluding those with ldl over 160": a comparison a negation may
+        # reach is never read, as asked or inverted. The number stays unused, so the plan holds.
+        if comparison_scope(tokens, at, direction_at) != "clear":
+            continue
         # "median ldl over 70": when the only mention of the summarised measure is also the
         # number's owner, the cutoff could equally mean age. Ambiguous: the number stays unused.
-        summarised = intent in {"DESCRIBE", "COMPARE_GROUPS"} and owner == metric and metric_mentions <= 1
+        # Not when the words say age ("older than 50", "aged 40 to 60").
+        lead = min(at, direction_at) - 1
+        if lead >= 1 and tokens[lead] == "__rlo__" and _NUMBER_TOKEN.fullmatch(tokens[lead - 1]):
+            lead -= 2  # upper end of a range: the words before the lower end say what it is
+        says_age = tokens[direction_at] in _AGE_WORDS or (lead >= 0 and tokens[lead] in _AGE_WORDS)
+        summarised = (
+            intent in {"DESCRIBE", "COMPARE_GROUPS"} and owner == metric and metric_mentions <= 1 and not says_age
+        )
         if owner is not None and not summarised and _has_comparison(filters, steps, owner, op, float(word)):
             used[at] = True
             used[direction_at] = True
+            # "over 100 kg", "above 160 mg/dl", "over 365 days": the unit is part of the comparison.
+            units = unit_words(owner) | (_AGE_UNIT_WORDS if owner == age_column(columns) else set())
+            after = max(at, direction_at) + 1
+            while after < len(tokens) and tokens[after] in units:
+                used[after] = True
+                after += 1
             # "aged 65 or older": the age word is part of the bound comparison.
             lead = min(at, direction_at) - 1
             if lead >= 0 and tokens[lead] in {"aged", "age"} and owner == age_column(columns):
@@ -369,14 +807,51 @@ def unused_words(
             used[at] = statistic_planned(word, plan) or (
                 word == "median" and any(step.op == "gt_median" for step in steps)
             )
-        elif any(
-            word in INTENT_WORDS[name] for name in ("COMPARE_GROUPS", "CORRELATIONS", "FIND_PREDICTORS", "SURVIVAL")
-        ):
+        elif word in INTENT_WORDS["COMPARE_GROUPS"]:
+            # A comparison is answered by a test across groups or by the asked statistic per group.
+            used[at] = intent == "COMPARE_GROUPS" or grouped_statistic(plan) is not None
+        elif any(word in INTENT_WORDS[name] for name in ("CORRELATIONS", "FIND_PREDICTORS", "SURVIVAL")):
             used[at] = any(word in INTENT_WORDS[name] and intent == name for name in INTENT_WORDS)
         else:
             used[at] = _logic_used(tokens, at, plan, filters, steps, values_for, namer, context)
 
-    return [shown(word) for at, word in enumerate(tokens) if not used[at]]
+    # A word a negation may or may not reach ("hypertension" in "without diabetes and
+    # hypertension", "placebo" in "excluding women on placebo") is never used by a limit,
+    # whichever way the plan reads it: the words do not say, so the plan holds. Comparisons
+    # were read above from where they start, by the same rule.
+    # A word naming the same column as the negated word is part of that one item ("without a
+    # normal dexa result": "dexa result" names the column whose value "normal" is negated).
+    limited = _limited_columns(plan)
+    for at, word in enumerate(tokens):
+        if not used[at] or word in NO_LIMIT_WORDS or word in LOGIC_WORDS or _NUMBER_TOKEN.fullmatch(word):
+            continue
+        named = namer.columns_named(word) & limited
+        if not named or negation_scope(tokens[:at]) != "uncertain":
+            continue
+        governed = _governed_word(tokens, at)
+        if governed is None or not named & namer.columns_named(governed):
+            used[at] = False
+
+    return [at for at in range(len(tokens)) if not used[at]]
+
+
+def _governed_word(tokens: list[str], before: int) -> str | None:
+    """The first word after the last negation before ``before`` that carries a limit."""
+    cues = [at for at in range(before) if tokens[at] in NEGATION_CUES]
+    if not cues:
+        return None
+    return next((word for word in tokens[cues[-1] + 1 : before] if word not in NO_LIMIT_WORDS), None)
+
+
+def _limited_columns(plan: Any) -> set[str]:
+    """Columns the plan limits the patients on: filters, cohort steps, and a share's own column."""
+    limited = {str(spec.column) for spec in getattr(plan, "filters", []) or []}
+    limited |= {str(step.column) for step in getattr(plan, "cohort_steps", []) or []}
+    for attr in ("proportion_column", "rate_column"):
+        value = getattr(plan, attr, None)
+        if value:
+            limited.add(str(value))
+    return limited
 
 
 class _ColumnNamer:
@@ -448,13 +923,15 @@ def _logic_used(
         )
     if word in BETWEEN_WORDS:
         after = namer.neighbour(tokens, at, 1)
-        if intent == "COMPARE_GROUPS":
+        if intent == "COMPARE_GROUPS" or grouped_statistic(plan) is not None:
             return getattr(plan, "group_by", None) in after
         if intent == "CORRELATIONS":
             variables = {getattr(plan, "metric", None), getattr(plan, "group_by", None)}
             variables |= set(getattr(context, "predictor_variables", None) or [])
             return bool(after & variables)
         return _has_range(filters, steps)
+    if word == "__rate__":
+        return rate_direction_ok(tokens, at, plan, namer)
     if word in RATE_WORDS:
         return share_planned(plan)
     if word in BY_WORDS:
@@ -464,6 +941,19 @@ def _logic_used(
     if word in DIRECTION_OPS:
         return DIRECTION_OPS[word] == "gt" and any(step.op == "gt_median" for step in steps)
     return False
+
+
+def rate_direction_ok(tokens: list[str], at: int, plan: Any, namer: _ColumnNamer) -> bool:
+    """ "are <groups> more likely to <rate>": the plan's rate is what follows "more likely" and
+    its grouping is named before it. A plan with the two swapped answers the reversed question
+    ("are statin users more likely to be women" is not the statin rate of each sex)."""
+    rate_column = getattr(plan, "rate_column", None)
+    group_by = getattr(plan, "group_by", None)
+    if not (share_planned(plan) and rate_column and group_by):
+        return False
+    before = set().union(*(namer.columns_named(word) for word in tokens[:at]))
+    after = set().union(*(namer.columns_named(word) for word in tokens[at + 1 :]))
+    return rate_column in after and rate_column not in before and group_by in before
 
 
 def share_planned(plan: Any) -> bool:
@@ -479,8 +969,9 @@ def share_planned(plan: Any) -> bool:
 def statistic_planned(word: str, plan: Any) -> bool:
     """A statistic word is used only when the plan computes that statistic of a measure.
 
-    DESCRIBE computes the plan's own statistic; COMPARE_GROUPS compares means. "median age
-    by sex" on a plan that computes means leaves "median" unused, so the plan is held.
+    DESCRIBE computes the plan's own statistic. COMPARE_GROUPS compares means, or computes
+    the asked statistic per group (query_plan.grouped_statistic). A plan that computes means
+    leaves "median" unused, so the plan is held.
     """
     asked = STATISTIC_WORDS.get(word)
     if asked is None or not getattr(plan, "metric", None):
@@ -489,7 +980,7 @@ def statistic_planned(word: str, plan: Any) -> bool:
     if intent == "DESCRIBE":
         return asked == getattr(plan, "statistic", None)
     if intent == "COMPARE_GROUPS":
-        return asked == "mean"
+        return asked == (grouped_statistic(plan) or "mean")
     return False
 
 
@@ -577,9 +1068,11 @@ def _has_comparison(filters: list[Any], steps: list[Any], column: str, op: str, 
 
 
 def _has_range(filters: list[Any], steps: list[Any]) -> bool:
-    lows = {spec.column for spec in filters if spec.operator in {">", ">="}} | {s.column for s in steps if s.op == "gt"}
+    lows = {spec.column for spec in filters if spec.operator in {">", ">="}} | {
+        s.column for s in steps if s.op in {"gt", "ge"}
+    }
     highs = {spec.column for spec in filters if spec.operator in {"<", "<="}} | {
-        s.column for s in steps if s.op == "lt"
+        s.column for s in steps if s.op in {"lt", "le"}
     }
     return bool(lows & highs)
 
@@ -620,7 +1113,10 @@ _NUMBER_TOKEN = re.compile(r"\d+(?:\.\d+)?")
 
 def unjustified_reason(elements: list[str]) -> str:
     """One plain sentence naming the plan elements the question did not ask for."""
-    return f"The plan uses {_listed(elements)}, which your question doesn't ask for."
+    return (
+        f"The plan uses {_listed(elements)}, which your question doesn't ask for; confirm the plan if that is "
+        "what you meant, or name what you want."
+    )
 
 
 def unjustified_elements(
@@ -746,6 +1242,14 @@ class _Justifier:
             return True
         return self._words_named([word for word in name_tokens(label) if word not in LOGIC_WORDS])
 
+    def _negated_at_value(self, column: str, value: Any) -> bool:
+        """Every word naming this value stands right after a negation, by the shared scope rule."""
+        words = _value_words(column, [value])
+        named = [
+            at for at, token in enumerate(self.tokens) if token not in FUNCTION_WORDS and _names_value(token, words)
+        ]
+        return bool(named) and all(negation_scope(self.tokens[:at]) == "negated" for at in named)
+
     def equality_justified(self, column: str, values: list[Any]) -> bool:
         if not values or not all(self.value_named(column, value) for value in values):
             return False
@@ -757,8 +1261,12 @@ class _Justifier:
         if spec.operator in {"==", "IN"}:
             return self.equality_justified(spec.column, values)
         if spec.operator in {"!=", "NOT_IN"}:
-            negated = any(token in NEGATION_WORDS for token in self.tokens)
-            return negated and self.equality_justified(spec.column, values)
+            # Each excluded value must be named right after its own negation ("not on placebo").
+            # A negation elsewhere in the question ("on placebo without outcome") never justifies
+            # excluding a value the question asks for.
+            return self.equality_justified(spec.column, values) and all(
+                self._negated_at_value(spec.column, value) for value in values
+            )
         if spec.operator in _FILTER_OP:
             return self.comparison_justified(spec.column, _FILTER_OP[spec.operator], spec.value)
         return False
@@ -771,7 +1279,9 @@ class _Justifier:
         if step.op in {"gt_median", "ge_percent_rank"}:
             cutoff = any(token in CUTOFF_WORDS or token in {"median", "older", "higher"} for token in self.tokens)
             return cutoff and self.column_named(step.column)
-        return self.column_named(step.column)
+        if step.op == "not_null":
+            return self.column_named(step.column)
+        return False  # an op the peel never builds ("ne", "in") is never asked for
 
     def comparison_justified(self, column: str, op: str, value: Any) -> bool:
         """The number is in the question, with a comparison word of the same direction, on this column."""
@@ -783,12 +1293,15 @@ class _Justifier:
         for at, token in enumerate(self.tokens):
             if not _NUMBER_TOKEN.fullmatch(token) or float(token) != number or not self._number_free_for(at, column):
                 continue
-            ops = {
-                DIRECTION_OPS[self.tokens[near]]
-                for near in (at - 1, at + 1)
-                if 0 <= near < len(self.tokens) and self.tokens[near] in DIRECTION_OPS
-            }
-            if not (op in ops or (between and op in {"ge", "le", "gt", "lt"})):
+            ops: set[str] = set()
+            for near in (at - 1, at + 1):
+                if not (0 <= near < len(self.tokens) and self.tokens[near] in DIRECTION_OPS):
+                    continue
+                # A comparison a negation may reach justifies nothing, as asked or inverted.
+                if comparison_scope(self.tokens, at, near) == "clear":
+                    ops.add(DIRECTION_OPS[self.tokens[near]])
+            plain = negation_scope(self.tokens[:at]) == "clear"
+            if not (op in ops or (between and plain and op in {"ge", "le", "gt", "lt"})):
                 continue
             owner = number_owner(self.tokens, at, self.columns, self.numeric, self.alias_index, self.ranges)
             if owner == column or self.column_named(column):

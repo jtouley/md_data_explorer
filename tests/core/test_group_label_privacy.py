@@ -75,6 +75,8 @@ class TestGroupingProblem:
 
 
 class TestManyLevelGroupingRefused:
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_compareGroups_cohortLdlAsGroup_refusedNotTabulated(self, load_synthetic_dataset: Any) -> None:
         # Arrange
         cohort = load_synthetic_dataset("cohort")
@@ -90,6 +92,8 @@ class TestManyLevelGroupingRefused:
         assert "contingency" not in result
         assert "cannot be used to split patients into groups" in result["error"]
 
+    @pytest.mark.slow
+    @pytest.mark.integration
     def test_compareGroups_cohortLdlViaSemanticLayer_presentsNoLdlLabels(
         self, load_synthetic_dataset: Any, make_semantic_layer: Any
     ) -> None:

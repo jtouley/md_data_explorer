@@ -179,8 +179,8 @@ def test_tokenize_logicPhrases_becomeSingleTokens() -> None:
         "65",
         "__ge__",
         "or",
-        "__ge__",
         "50",
+        "__ge__",
         "__gt_age__",
         "40",
         "__neg__",
@@ -215,15 +215,21 @@ def test_numberOwner_question_bindsTheNamedColumnOrNone(question: str, expected:
 @pytest.mark.parametrize(
     ("words", "expected"),
     [
-        pytest.param(["recently"], "I couldn't place the word 'recently', so it is not in the plan.", id="one_word"),
+        pytest.param(
+            ["recently"],
+            "I couldn't use the word 'recently' in the plan; rephrase it with a column or value from your data.",
+            id="one_word",
+        ),
         pytest.param(
             ["not", "placebo"],
-            "I couldn't place the words 'not' and 'placebo', so they are not in the plan.",
+            "I couldn't use the words 'not' and 'placebo' in the plan; rephrase them with columns or values from "
+            "your data.",
             id="two_words",
         ),
         pytest.param(
             ["not", "__ge__", "smoke"],
-            "I couldn't place the words 'not', 'or more' and 'smoke', so they are not in the plan.",
+            "I couldn't use the words 'not', 'or more' and 'smoke' in the plan; rephrase them with columns or "
+            "values from your data.",
             id="placeholder_shown_as_words",
         ),
     ],

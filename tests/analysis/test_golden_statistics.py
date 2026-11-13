@@ -28,7 +28,7 @@ from clinical_analytics.analysis.compute import (
     compute_predictor_analysis,
     compute_survival_analysis,
 )
-from clinical_analytics.analysis.grouping import OTHER_LABEL
+from clinical_analytics.analysis.grouping import HIDDEN_GROUPS_LABEL
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.datasets.demo import get_demo_csv_path
@@ -325,9 +325,10 @@ class TestGoldenPresentation:
         presentation = present_analysis(analysis)
 
         # Assert
-        # Both are hidden, so both labels fold into one Other row: no label names the 4 exposed
+        # Both are hidden and no count is left visible, so both labels fold into one row whose
+        # label claims no size (16 is not under 11): no label names the 4 exposed
         counts = {row["exposed"]: row["count"] for row in presentation["table"]["rows"]}
-        assert counts == {OTHER_LABEL: "suppressed"}
+        assert counts == {HIDDEN_GROUPS_LABEL: "suppressed"}
 
 
 class TestEdgeInputs:

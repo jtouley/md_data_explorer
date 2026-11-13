@@ -32,7 +32,14 @@ from clinical_analytics.core.plan_values import absent_value_reason
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.core.word_accounting import hold_reason, unjustified_elements, unjustified_reason, unused_words
+from clinical_analytics.core.word_accounting import (
+    coded_grouping_reason,
+    explain_hold,
+    indicator_statistic_reason,
+    measurement_grouping_reason,
+    unjustified_elements,
+    unjustified_reason,
+)
 
 _GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len", "n_rows", "n_pairs", "events"})
 logger = structlog.get_logger()
@@ -278,8 +285,16 @@ class QueryService:
             plan_changed = True
 
         if not validation_result.get("valid", False):
-            # Fail closed: an invalid plan is refused here and never reaches execution.
-            failure_reason = next(
+            # Fail closed: an invalid plan never reaches execution, and it is refused, never held:
+            # confirming it could not make it run. When the parser added filters and the question
+            # has words the plan does not use, that misreading is the cause the reader can fix,
+            # so it is the reason given.
+            misread = (
+                self._unused_words_reason(normalized_query, query_plan, context)
+                if query_plan.filters and self._plan_columns_exist(query_plan)
+                else None
+            )
+            failure_reason = misread or next(
                 (str(item["message"]) for item in issues if item.get("severity") == "error"),
                 "Query plan is invalid",
             )
@@ -307,6 +322,26 @@ class QueryService:
                 failure_reason=PLAN_CHANGED_REASON,
                 plan_line=shown_plan_line,
                 plan_hash=plan_hash,
+            )
+
+        # A grouping by a measurement makes one group per exact value, which identifies
+        # patients. Refused whatever the words say, and a confirmation cannot release it.
+        measured = measurement_grouping_reason(
+            query_plan,
+            list(self.semantic_layer.get_base_view().columns),
+            self.nl_engine._distinct_values,
+            row_count=self._row_count(),
+            declared_type=self._declared_type,
+        )
+        if measured:
+            return QueryResult(
+                plan=query_plan,
+                issues=[*issues, {"message": measured, "severity": "error"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=context,
+                failure_reason=measured,
             )
 
         # Refused whatever the confirmation: a grouping by a many-level column (an exact lab
@@ -606,22 +641,57 @@ class QueryService:
         levels = int(view[plan.group_by].nunique().execute())
         return grouping_problem(plan.group_by, levels)
 
+    def _plan_columns_exist(self, plan: QueryPlan) -> bool:
+        """Every column the plan names is in the dataset (an invalid plan may name one that is not)."""
+        columns = set(self.semantic_layer.get_base_view().columns)
+        named = {plan.metric, plan.group_by, plan.proportion_column, plan.rate_column}
+        named |= {spec.column for spec in plan.filters} | {step.column for step in plan.cohort_steps}
+        return {column for column in named if column} <= columns
+
+    def _row_count(self) -> int | None:
+        count = self.semantic_layer.get_base_row_count()
+        return count if isinstance(count, int) and not isinstance(count, bool) else None
+
+    def _declared_type(self, column: str) -> str | None:
+        """The column's type as the dataset's own metadata declares it ("continuous", "categorical")."""
+        metadata = self.semantic_layer.get_column_metadata(column)
+        declared = metadata.get("type") if isinstance(metadata, dict) else None
+        return declared if isinstance(declared, str) else None
+
+    def _unused_words_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
+        """The sentence naming the question words this plan leaves out, or None."""
+        columns = list(self.semantic_layer.get_base_view().columns)
+        raw_index = self.semantic_layer.get_column_alias_index()
+        alias_index = raw_index if isinstance(raw_index, dict) else None
+        return explain_hold(
+            question, plan, columns, self.nl_engine._distinct_values, alias_index=alias_index, context=context
+        )
+
     def _accounting_hold_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
         """Why this plan must be reviewed before it runs, or None when question and plan agree.
 
         Forward: a word of the question the plan does not use. Reverse: an element of the plan
-        the question does not ask for. Then: a limit on a value its column does not hold.
+        the question does not ask for. Then: a grouping by many integer codes, and a limit on a
+        value its column does not hold.
         """
         columns = list(self.semantic_layer.get_base_view().columns)
         raw_index = self.semantic_layer.get_column_alias_index()
         alias_index = raw_index if isinstance(raw_index, dict) else None
         values_for = self.nl_engine._distinct_values
-        unused = unused_words(question, plan, columns, values_for, alias_index=alias_index, context=context)
-        if unused:
-            return hold_reason(unused)
+        explained = self._unused_words_reason(question, plan, context)
+        if explained:
+            return explained
         unasked = unjustified_elements(question, plan, columns, values_for, alias_index=alias_index, context=context)
         if unasked:
             return unjustified_reason(unasked)
+        coded = coded_grouping_reason(
+            plan, columns, values_for, row_count=self._row_count(), declared_type=self._declared_type
+        )
+        if coded:
+            return coded
+        indicator = indicator_statistic_reason(question, plan, values_for)
+        if indicator:
+            return indicator
         # Value presence: a limit on a value the column does not hold would report "0 patients".
         return absent_value_reason(plan, columns, values_for)
 

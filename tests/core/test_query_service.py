@@ -371,7 +371,10 @@ class TestQueryServiceAnalysis:
 
         # Assert
         assert result.requires_confirmation is True
-        assert result.failure_reason == f"The plan uses {element}, which your question doesn't ask for."
+        assert result.failure_reason == (
+            f"The plan uses {element}, which your question doesn't ask for; confirm the plan if that is what you "
+            "meant, or name what you want."
+        )
         assert result.plan_line is not None and element in result.plan_line
         layer.execute_query_plan.assert_not_called()
 
