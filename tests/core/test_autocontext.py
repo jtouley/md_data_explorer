@@ -313,3 +313,29 @@ class TestEstimateTokens:
             f"Token count should be ~101 with tiktoken (got {result}). "
             f"Character approximation gives ~{len(long_text) // 4}"
         )
+
+
+class TestReconstructInferredSchemaFromConfig:
+    """Config keys present with value None (as uploaded definitions write them) must not crash Tier 3."""
+
+    @pytest.mark.parametrize(
+        "none_key",
+        ["variable_types", "column_mapping", "outcomes"],
+    )
+    def test_build_autocontext_config_key_none_builds_context(self, mock_semantic_layer, none_key):
+        # Arrange: an uploaded layer whose config carries the key with value None
+        mock_sl = mock_semantic_layer(columns={"mx": "mx", "sex": "sex"})
+        mock_sl.config = {"variable_types": {}, "column_mapping": {}, "outcomes": {}, none_key: None}
+
+        # Act: no inferred_schema, so it is rebuilt from the semantic layer config
+        autocontext = build_autocontext(
+            semantic_layer=mock_sl,
+            inferred_schema=None,
+            doc_context=None,
+            query_terms=None,
+            max_tokens=4000,
+        )
+
+        # Assert: the context is built and lists the view's columns
+        assert isinstance(autocontext, AutoContext)
+        assert {c.name for c in autocontext.columns} >= {"mx", "sex"}

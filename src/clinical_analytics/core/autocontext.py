@@ -456,14 +456,16 @@ def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer: Any) -> Any
     schema = InferredSchema()
 
     # Extract patient_id from column_mapping
-    column_mapping = semantic_layer.config.get("column_mapping", {})
+    # A key can be present with value None (uploaded definitions copy metadata keys as-is),
+    # so `or {}` rather than a .get default: a .get default only covers a missing key.
+    column_mapping = semantic_layer.config.get("column_mapping") or {}
     for col, mapped in column_mapping.items():
         if mapped == "patient_id":
             schema.patient_id_column = col
             break
 
     # Extract outcome columns
-    outcomes = semantic_layer.config.get("outcomes", {})
+    outcomes = semantic_layer.config.get("outcomes") or {}
     schema.outcome_columns = list(outcomes.keys())
 
     # Get all columns from base view
@@ -474,7 +476,7 @@ def _reconstruct_inferred_schema_from_semantic_layer(semantic_layer: Any) -> Any
         all_columns = []
 
     # Classify columns from variable_types if available
-    variable_types = semantic_layer.config.get("variable_types", {})
+    variable_types = semantic_layer.config.get("variable_types") or {}
     for col in all_columns:
         if col == schema.patient_id_column or col in schema.outcome_columns:
             continue
