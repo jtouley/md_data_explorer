@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 LLM Observability Event Schema and Query Pattern Sanitization.
 

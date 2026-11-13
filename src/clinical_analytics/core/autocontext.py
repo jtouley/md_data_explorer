@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 AutoContext Packager for Tier 3 LLM Fallback
 

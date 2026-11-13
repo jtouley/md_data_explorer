@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Enrichment Panel UI Component for ADR011.
 

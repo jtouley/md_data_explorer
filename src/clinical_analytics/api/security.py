@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Local API access control: a per-launch bearer token and a Host allow-list.
 
 The API listens on 127.0.0.1, but any process on the machine, and any web page the clinician

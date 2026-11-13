@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Enrichment API routes for ADR011 metadata enrichment.
 
 Endpoints:

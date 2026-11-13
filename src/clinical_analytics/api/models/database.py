@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """SQLAlchemy ORM models for database persistence.
 
 These models define the database schema for sessions and messages.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 import re
 import warnings
 from typing import Any

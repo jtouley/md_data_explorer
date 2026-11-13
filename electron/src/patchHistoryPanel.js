@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Enrichment patch history (ADR011 / Phase 6c) — helpers + table rendering.
  */

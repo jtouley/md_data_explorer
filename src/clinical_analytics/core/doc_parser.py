@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Documentation Parser for Schema Inference
 

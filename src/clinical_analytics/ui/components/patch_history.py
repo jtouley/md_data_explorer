@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Patch History Viewer for ADR011 - HIPAA Audit Trail.
 

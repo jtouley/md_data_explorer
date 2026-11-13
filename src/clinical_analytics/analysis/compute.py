@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Pure compute functions for analysis - Polars-first, return serializable dicts.
 

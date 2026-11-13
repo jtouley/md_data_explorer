@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * The renderer's one icon set: 16px, 1.5px stroke, round caps, currentColor.
  * Drawn for this app from basic shapes (no third-party icon assets).

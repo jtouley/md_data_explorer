@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Word accounting: every content word of a question must be bound by the plan that runs.
 
 A plan that leaves a word of the question unused answers a different question, whatever its

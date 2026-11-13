@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Dataset API routes for Electron UI.
 
 Endpoints:

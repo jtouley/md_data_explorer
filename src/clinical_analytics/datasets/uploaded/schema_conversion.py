@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Schema conversion utilities for uploaded datasets.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Per-launch API token, app:// page origin and navigation policy (main process only).
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Type guard functions for safe None handling."""
 
 from typing import Any, TypeGuard

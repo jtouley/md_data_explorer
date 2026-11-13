@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Session management API routes.
 
 Endpoints:

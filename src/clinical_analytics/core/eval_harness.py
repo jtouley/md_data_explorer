@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Eval Harness - Golden Questions Testing (Phase 7.2).
 

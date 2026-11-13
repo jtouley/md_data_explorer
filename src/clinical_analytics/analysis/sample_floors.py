@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Smallest samples each analysis runs on.
 
 compute.py refuses below these, so a reader who sees an answer knows the sample was at least

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """One resolver for read-only files the app ships with.
 
 Config YAML and the synthetic demo cohort live inside the package

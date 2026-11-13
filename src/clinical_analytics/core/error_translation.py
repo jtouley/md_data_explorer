@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Error message translation with LLM (ADR009 Phase 4).
 

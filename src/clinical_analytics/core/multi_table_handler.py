@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Multi-Table Handler - Automatic Relationship Detection and Joins
 

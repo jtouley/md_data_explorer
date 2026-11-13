@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Proactive Question Generator for Upload Context
 

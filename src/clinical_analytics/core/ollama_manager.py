@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Ollama Manager - Self-contained LLM service management (ADR003 Phase 0).
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Enrichment Integration Service for ADR011 Phase 5.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """FastAPI application entry point.
 
 Main application setup with CORS, startup hooks, and route registration.

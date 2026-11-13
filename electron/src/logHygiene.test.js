@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { describe, test, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

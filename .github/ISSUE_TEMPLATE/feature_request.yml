@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an analysis, workflow or improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should the app do? An example question and expected answer helps.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy impact
+      description: Could this show small counts (1-10), let one be worked out, or need data to leave the machine? If so, how should that be prevented?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

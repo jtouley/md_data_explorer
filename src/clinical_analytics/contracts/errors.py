@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Exceptions for data contracts and data-quality runs. Messages never contain cell values."""
 
 from __future__ import annotations

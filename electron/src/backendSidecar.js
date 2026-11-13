@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * The Python backend as an Electron-owned sidecar (main process only; no `electron` import, so
  * every dependency is injectable and unit-tested with a fake child).

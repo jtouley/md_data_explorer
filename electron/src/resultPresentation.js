@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Pure helpers for mapping API intent + result_preview into chat UI copy.
  * Keeps parity labels aligned with AnalysisIntent enum values (lowercase).

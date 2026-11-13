@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Authenticated API helpers for the preload script.
  *
