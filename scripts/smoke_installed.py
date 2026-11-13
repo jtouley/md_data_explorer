@@ -2,7 +2,9 @@
 """Smoke test the backend as an *installed* package, away from the repo checkout.
 
 Steps:
-1. ``uv build --wheel`` into a temp dir.
+1. ``uv build`` into a temp dir: the default build, which makes the sdist and then builds the
+   wheel *from that sdist*, as a release build does. (``--wheel`` builds from the checkout and
+   hides files the sdist leaves out.) The wheel must contain the bundled embedding model.
 2. Fresh venv outside the repo; install the wheel plus the locked runtime dependencies.
 3. Start ``python -m clinical_analytics.api.serve`` from an unrelated cwd, with HOME and
    XDG_DATA_HOME pointing at a temp data home and a per-launch API token. On Linux, when
@@ -33,10 +35,16 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from clinical_analytics.core.embeddings import MODEL_NAME, RUNTIME_FILES  # noqa: E402
+
+MODEL_DIR_IN_WHEEL = f"clinical_analytics/resources/models/{MODEL_NAME}"
 FIXTURE_CSV = REPO_ROOT / "tests" / "fixtures" / "synthetic" / "cohort.csv"
 HEALTH_TIMEOUT_S = 180.0
 QUERY_TIMEOUT_S = 120.0
@@ -66,13 +74,27 @@ def _run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=True, text=True, capture_output=True, **kwargs)  # type: ignore[call-overload]
 
 
+def missing_model_files(wheel: Path) -> list[str]:
+    """Runtime files of the bundled embedding model that the wheel does not contain."""
+    with zipfile.ZipFile(wheel) as zf:
+        names = set(zf.namelist())
+    return [name for name in RUNTIME_FILES if f"{MODEL_DIR_IN_WHEEL}/{name}" not in names]
+
+
 def build_and_install(work: Path, extra_requirements: list[str] | None = None) -> Path:
-    """Build the wheel and install it into ``work/venv``; return the venv's python."""
+    """Build sdist and wheel the default way and install the wheel into ``work/venv``; return its python."""
     dist = work / "dist"
-    _run(["uv", "build", "--wheel", "--out-dir", str(dist)], cwd=REPO_ROOT)
+    _run(["uv", "build", "--out-dir", str(dist)], cwd=REPO_ROOT)
     wheels = sorted(dist.glob("clinical_analytics-*.whl"))
     if len(wheels) != 1:
         raise SmokeError(f"expected one wheel in {dist}, found {[w.name for w in wheels]}")
+    missing = missing_model_files(wheels[0])
+    if missing:
+        raise SmokeError(
+            f"the wheel built by `uv build` does not contain the embedding model ({', '.join(missing)}). "
+            "Run `make fetch-embedding-model` first, and check that pyproject.toml lists the model under "
+            "[tool.hatch.build] artifacts so the sdist carries it too."
+        )
     reqs = work / "requirements.txt"
     export = _run(
         ["uv", "export", "--frozen", "--no-dev", "--no-emit-workspace", "--no-hashes", "--no-header"],

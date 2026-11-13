@@ -191,7 +191,7 @@ fetch-embedding-model: ensure-venv ## Build step: fetch the pinned ONNX embeddin
 	@echo "$(GREEN)Fetching embedding model...$(NC)"
 	$(PYTHON_RUN) scripts/fetch_embedding_model.py
 
-smoke-installed: ensure-venv fetch-embedding-model ## Build the wheel, install it outside the repo and drive the API offline (slow)
+smoke-installed: ensure-venv fetch-embedding-model ## Default `uv build` (sdist, then wheel), install the wheel outside the repo and drive the API offline (slow)
 	@echo "$(GREEN)Running installed-wheel smoke test...$(NC)"
 	$(PYTEST) $(TEST_DIR)/install_smoke -v --tb=short -m "slow" $(PYTEST_ARGS)
 
