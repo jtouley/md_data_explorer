@@ -9,6 +9,7 @@ Small synthetic frames reproduce each probe file of the review:
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -279,7 +280,7 @@ class TestGrain:
         assert _shown(confirmed) == "ANSWER Total count: 170 patients."
         assert _shown(explicit) == "ANSWER Total count: 170 patients."
         assert _shown(share).startswith("REFUSED died differs between rows of the same patient")
-        assert store.load("probe").grain == GrainDeclaration(
+        assert store.load("probe").grain_for("probe") == GrainDeclaration(
             key="patient_id", rows=200, patients=170, dataset_version="probe"
         )
 
@@ -289,7 +290,7 @@ class TestGrain:
         store = MemoryDeclarationStore()
         store.save(
             "probe",
-            Declarations(grain=GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="probe")),
+            Declarations(grains=(GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="probe"),)),
         )
         service = _service(make_semantic_layer, frame, declarations=store)
 
@@ -312,7 +313,7 @@ class TestGrain:
     def test_declarationStore_staleDeclaration_isAskedAgain(self, make_semantic_layer: Any) -> None:
         # Arrange: declared on another version of the data (other counts)
         store = MemoryDeclarationStore()
-        store.save("probe", Declarations(grain=GrainDeclaration(key="patient_id", rows=150, patients=140)))
+        store.save("probe", Declarations(grains=(GrainDeclaration(key="patient_id", rows=150, patients=140),)))
         service = _service(make_semantic_layer, dupids(), declarations=store)
 
         # Act
@@ -325,7 +326,7 @@ class TestGrain:
 def test_fileDeclarationStore_roundTrip_safeToSaveTwice(tmp_path: Any) -> None:
     # Arrange
     store = FileDeclarationStore(tmp_path)
-    declared = Declarations(grain=GrainDeclaration(key="patient_id", rows=200, patients=170))
+    declared = Declarations(grains=(GrainDeclaration(key="patient_id", rows=200, patients=170),))
 
     # Act
     store.save("upload_abc", declared)
@@ -334,6 +335,55 @@ def test_fileDeclarationStore_roundTrip_safeToSaveTwice(tmp_path: Any) -> None:
     # Assert
     assert store.load("upload_abc") == declared
     assert store.load("other_upload") == Declarations()
+
+
+def test_declarations_grainConfirmedOnRetiredVersionLater_currentVersionsGrainKept() -> None:
+    # Arrange: v2's grain is stored; a confirmation still running on v1's layer finishes after.
+    v1 = GrainDeclaration(key="patient_id", rows=20, patients=10, dataset_version="v1")
+    v2 = GrainDeclaration(key="patient_id", rows=40, patients=20, dataset_version="v2")
+    v2_again = GrainDeclaration(key="patient_id", rows=40, patients=20, dataset_version="v2")
+
+    # Act
+    stored = Declarations().with_grain(v2).with_grain(v1).with_grain(v2_again)
+
+    # Assert: one grain per version; neither replaces the other.
+    assert stored.grains == (v1, v2_again)
+    assert (stored.grain_for("v1"), stored.grain_for("v2"), stored.grain_for("v3")) == (v1, v2, None)
+
+
+@pytest.mark.parametrize(
+    ("legacy_grain", "expected_versions"),
+    [
+        pytest.param(None, (), id="no_grain"),
+        pytest.param({"key": "patient_id", "rows": 2, "patients": 1, "dataset_version": "v1"}, ("v1",), id="one_grain"),
+    ],
+)
+def test_fileDeclarationStore_fileWithSingleGrainSlot_readAsThatVersionsGrain(
+    tmp_path: Any, legacy_grain: dict[str, Any] | None, expected_versions: tuple[str, ...]
+) -> None:
+    # Arrange: a file written before grains were kept per version.
+    store = FileDeclarationStore(tmp_path)
+    store.save("upload_abc", Declarations())
+    path = store._path("upload_abc")
+    path.write_text(json.dumps({"grain": legacy_grain, "levels": []}), encoding="utf-8")
+
+    # Act
+    loaded = store.load("upload_abc")
+
+    # Assert
+    assert tuple(g.dataset_version for g in loaded.grains) == expected_versions
+
+
+def test_fileDeclarationStore_fileWithBothGrainShapes_invalid(tmp_path: Any) -> None:
+    # Arrange
+    store = FileDeclarationStore(tmp_path)
+    store.save("upload_abc", Declarations())
+    path = store._path("upload_abc")
+    path.write_text(json.dumps({"grain": None, "grains": [], "levels": []}), encoding="utf-8")
+
+    # Act / Assert
+    with pytest.raises(ContractStoreError, match="invalid"):
+        store.load("upload_abc")
 
 
 # --- Plausibility holds (H3), censored refusal (H4), spellings (M2) --------------------------
@@ -442,7 +492,9 @@ def _visit_service(make_semantic_layer: Any, frame: pl.DataFrame) -> QueryServic
     rows, patients = frame.height, frame.get_column("patient_id").n_unique()
     store.save(
         "probe",
-        Declarations(grain=GrainDeclaration(key="patient_id", rows=rows, patients=patients, dataset_version="probe")),
+        Declarations(
+            grains=(GrainDeclaration(key="patient_id", rows=rows, patients=patients, dataset_version="probe"),)
+        ),
     )
     return _service(make_semantic_layer, frame, declarations=store)
 
@@ -638,7 +690,7 @@ class TestDeclarationKeys:
         store = MemoryDeclarationStore()
         store.save(
             "probe",
-            Declarations(grain=GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="v1")),
+            Declarations(grains=(GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="v1"),)),
         )
         service = _service(make_semantic_layer, dupids(), declarations=store)
 
@@ -713,7 +765,7 @@ def test_fileDeclarationStore_concurrentUpdates_keepBoth(tmp_path: Any) -> None:
 
     # Assert
     stored = first.load("upload_abc")
-    assert (stored.grain, stored.levels) == (grain, (level,))
+    assert (stored.grains, stored.levels) == ((grain,), (level,))
 
 
 class TestPatientKeyRanking:
@@ -946,7 +998,7 @@ class TestMergedLevelsOnParsedPlan:
 
 
 class TestOneLookupPerAsk:
-    def test_ask_afterConfirmation_declarationsLoadedOnce(self, make_semantic_layer: Any) -> None:
+    def test_ask_afterConfirmation_declarationsLoadedToPrepareAndToCheck(self, make_semantic_layer: Any) -> None:
         # Arrange
         class CountingStore(MemoryDeclarationStore):
             loads = 0
@@ -969,8 +1021,9 @@ class TestOneLookupPerAsk:
         # Act
         _ask(service, plan)
 
-        # Assert
-        assert CountingStore.loads == 1
+        # Assert: read once to prepare, once more under the lock before the checks run (another
+        # question or process may have stored a confirmation while this one parsed).
+        assert CountingStore.loads == 2
 
     def test_baseValueCounts_cachedUntilLevelsRemapped(self, make_semantic_layer: Any) -> None:
         # Arrange

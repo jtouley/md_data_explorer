@@ -609,6 +609,10 @@ class UploadedDataset(ClinicalDataset):
             log.error("semantic_layer_build_failed", error_type=type(e).__name__)
             raise SemanticLayerBuildError(f"the query view could not be built ({type(e).__name__})") from e
 
+        # The version of the metadata these rows were read with, so a question on this layer is
+        # labelled with it even if the dataset is uploaded again while the question runs.
+        version = self.metadata.get("dataset_version")
+        layer.loaded_version = version if isinstance(version, str) and version else None
         self.semantic = layer
         log.info("semantic_layer_built", tables=len(self.metadata.get("tables") or []))
 

@@ -10,6 +10,8 @@ try:
 except ModuleNotFoundError:
     sys.modules.setdefault("streamlit", types.ModuleType("streamlit"))
 
+import threading
+
 import ibis
 import pandas as pd
 import polars as pl
@@ -35,6 +37,7 @@ def test_describe_uses_base_view_outcome_not_cohort_alias() -> None:
     layer._base_view = ibis.memtable(base)
     layer._base_counts = {}  # __init__ is bypassed; every answer now counts the base view once
     layer._cohort_views = []  # cohort views the answer creates are dropped once it is read
+    layer._con_lock = threading.RLock()  # DuckDB reads (the base count) hold the layer's lock
     context = AnalysisContext(
         primary_variable="outcome",
         inferred_intent=AnalysisIntent.DESCRIBE,
