@@ -11,7 +11,9 @@ from open_data_contract_standard.model import OpenDataContractStandard
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import QualityCheckError
 from clinical_analytics.contracts.quality import (
+    LEVEL_VARIANTS_METRIC,
     ROWS_KEY,
+    TYPE_METRIC,
     _passes,
     compile_contract,
     measure,
@@ -61,7 +63,7 @@ def test_measure_cohortWithDefects_matchesIndependentPolarsCounts(cohort_with_de
 
 def test_runQuality_cohortWithDefects_statusesAndSuppressedMessages(cohort_with_defects, make_contract):
     # Arrange
-    contract = make_contract(cohort_with_defects)
+    contract = make_contract(cohort_with_defects, analysis_columns=("ldl",))
 
     # Act
     report = run_quality(cohort_with_defects.lazy(), contract)
@@ -78,7 +80,8 @@ def test_runQuality_cohortWithDefects_statusesAndSuppressedMessages(cohort_with_
     assert checks["ldl_missing"].status == "warning"
     assert checks["ldl_missing"].message == "ldl: 5.7% missing"
     assert checks["statin_use_invalid"].status == "passed"
-    assert (report.failed, report.review, report.not_run) == (0, 2, 0)
+    # the one not-run check: column types, which can only be compared on the next version
+    assert (report.failed, report.review, report.not_run) == (0, 2, 1)
     assert "patient_id: some repeated values; count hidden to protect privacy" in report.summary
 
 
@@ -87,7 +90,7 @@ def test_runQuality_cleanSyntheticCohort_onlyLdlMissingnessFlagged(load_syntheti
     df = load_synthetic_dataset("cohort")
 
     # Act
-    report = run_quality(df.lazy(), make_contract(df))
+    report = run_quality(df.lazy(), make_contract(df, analysis_columns=("ldl",)))
 
     # Assert
     assert report.summary == ["ldl: 5.8% missing"]
@@ -120,8 +123,8 @@ def test_runQuality_missingCounts_suppressedBelowMinCell(
     # Arrange
     df = pl.DataFrame({"patient_id": [f"P{i}" for i in range(len(ldl))], "ldl": pl.Series(ldl, dtype=pl.Float64)})
 
-    # Act
-    check = _by_id(run_quality(df.lazy(), make_contract(df)))["ldl_missing"]
+    # Act: ldl is an analysis variable, so its missingness is flagged above 5%
+    check = _by_id(run_quality(df.lazy(), make_contract(df, analysis_columns=("ldl",))))["ldl_missing"]
 
     # Assert
     assert (check.count, check.percent, check.status) == (expected_count, expected_percent, expected_status)
@@ -233,7 +236,7 @@ def test_runQuality_unsupportedRule_reportedNotRun(rule, reason):
     # Assert
     assert report.checks[0].status == "not_run"
     assert reason in report.checks[0].message
-    assert report.not_run == 1
+    assert report.not_run == 2  # the rule, and column types (compared only on a later version)
 
 
 @pytest.mark.parametrize(
@@ -400,7 +403,7 @@ def test_runQuality_noIdColumn_idChecksReportedNotRun(make_contract):
     report = run_quality(df.lazy(), make_contract(df, id_column=None))
 
     # Assert
-    not_run = {c.id: c.message for c in report.checks if c.status == "not_run"}
+    not_run = {c.id: c.message for c in report.checks if c.status == "not_run" and c.metric != TYPE_METRIC}
     assert not_run == {
         config.ID_NOT_NULL_RULE_ID: f"Identifier: not checked ({config.NO_ID_COLUMN_REASON})",
         config.ID_UNIQUE_RULE_ID: f"Identifier: not checked ({config.NO_ID_COLUMN_REASON})",
@@ -694,6 +697,8 @@ def _full_report_feasible(
 
     from clinical_analytics.contracts.quality import report_from_counts
 
+    # Results without counts (type, spellings) do not change with the counts enumerated here.
+    uncounted = [c for c in report.checks if c.metric in (TYPE_METRIC, LEVEL_VARIANTS_METRIC)]
     true_rows = raw[ROWS_KEY]
     totals = range(1, true_rows + _LIMIT + 1) if isinstance(report.row_count, str) else [true_rows]
     key = report.model_dump_json(exclude={"run_ts"})
@@ -708,7 +713,7 @@ def _full_report_feasible(
             if rest < _rest_floor(kind, rows, values):
                 continue
             candidate = {**raw, ROWS_KEY: rows, **dict(zip(cells, values))}
-            built = report_from_counts(contract, checks, candidate, run_at=FIXED_TS)
+            built = report_from_counts(contract, checks, candidate, run_at=FIXED_TS, extra=uncounted)
             if built.model_dump_json(exclude={"run_ts"}) != key:
                 continue
             for i, v in enumerate(values):
@@ -879,7 +884,8 @@ def test_runQuality_tinyTable_rowCountShownEveryColumnCountHidden(make_contract,
     # Assert: zeros hidden as well, one fixed message, nothing that depends on a hidden value.
     assert report.row_count == rows
     for check in report.checks:
-        if check.metric != "rowCount":
+        # Type conformance and spellings carry no count: they follow from the schema and labels.
+        if check.metric not in ("rowCount", TYPE_METRIC, LEVEL_VARIANTS_METRIC):
             assert (check.count, check.percent, check.status) == (config.COUNT_HIDDEN, None, config.HIDDEN_STATUS)
             assert check.message.endswith(config.TOO_FEW_ROWS_NOTE)
     assert report.summary == [f"{rows} rows: {config.TOO_FEW_ROWS_NOTE}"]

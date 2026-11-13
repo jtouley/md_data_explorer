@@ -10,7 +10,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Statin use = Yes by sex: F 47.1%, M 46.9% (n=400). Unadjusted.",
+   "claim": "Statin use = Yes by sex: F 47.1%, M 46.9% (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "sex",
@@ -78,7 +78,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152).",
+   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -141,7 +141,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 60.18 (SD 14.38; median 60.00; n=188).",
+   "claim": "Mean age was 60.18 (SD 14.38; median 60.00; n=188 patients).",
    "table": {
     "columns": [
      "variable",
@@ -180,7 +180,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 26.94 (SD 4.05; median 26.90; n=400).",
+   "claim": "Mean bmi was 26.94 (SD 4.05; median 26.90; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -225,7 +225,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days was 503.45 (SD 348.81; median 441.00; n=204).",
+   "claim": "Mean followup_days was 503.45 (SD 348.81; median 441.00; n=204 patients).",
    "table": {
     "columns": [
      "variable",
@@ -270,7 +270,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 51.71 (SD 7.51; median 51.45; n=84).",
+   "claim": "Mean hdl was 51.71 (SD 7.51; median 51.45; n=84 patients).",
    "table": {
     "columns": [
      "variable",
@@ -315,7 +315,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206).",
+   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206 patients; 13 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -360,7 +360,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by sex: F not shown, M not shown (n hidden). Unadjusted. Values are not shown for groups whose size is hidden to protect privacy.",
+   "claim": "Mean ldl by sex: F not shown, M not shown (n hidden). Unadjusted. Values are not shown for groups whose size is hidden to protect privacy. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "sex",
@@ -396,7 +396,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by site: North 126.04, South 128.61, West 134.15 (n=377; 23 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl by site: North 126.04, South 128.61, West 134.15 (n=377 patients; 23 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "site",
@@ -443,7 +443,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190; 14 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190 patients; 14 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "site",
@@ -490,7 +490,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n hidden).",
+   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -535,7 +535,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n hidden).",
+   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -580,7 +580,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 0.12 higher in placebo than drug, not statistically significant (95% CI -1.05 to 1.29; Welch t-test p=0.842; n=188). Unadjusted comparison by treatment.",
+   "claim": "Mean bmi was 0.12 higher in placebo than drug, not statistically significant (95% CI -1.05 to 1.29; Welch t-test p=0.842; n=188 patients). Unadjusted comparison by treatment.",
    "table": {
     "columns": [
      "treatment",
@@ -676,7 +676,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 204.",
+   "claim": "Total count: 204 patients.",
    "table": null
   },
   "proportion": null,
@@ -771,7 +771,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 94.",
+   "claim": "Total count: 94 patients.",
    "table": null
   },
   "proportion": null,
@@ -805,7 +805,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 57.",
+   "claim": "Total count: 57 patients.",
    "table": null
   },
   "proportion": null,
@@ -834,7 +834,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 179.",
+   "claim": "Total count: 179 patients.",
    "table": null
   },
   "proportion": null,
@@ -876,7 +876,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "144 total across 2 treatment groups.",
+   "claim": "144 patients across 2 treatment groups.",
    "table": {
     "columns": [
      "treatment",
@@ -915,7 +915,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 214.",
+   "claim": "Total count: 214 patients.",
    "table": null
   },
   "proportion": null,
@@ -939,7 +939,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 181.",
+   "claim": "Total count: 181 patients.",
    "table": null
   },
   "proportion": null,
@@ -1046,7 +1046,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 73.",
+   "claim": "Total count: 73 patients. Data check: ldl has 5.8% of its values missing.",
    "table": null
   },
   "proportion": null,
@@ -1075,7 +1075,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 47.",
+   "claim": "Total count: 47 patients.",
    "table": null
   },
   "proportion": null,
@@ -1099,7 +1099,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 188.",
+   "claim": "Total count: 188 patients.",
    "table": null
   },
   "proportion": null,
@@ -1152,7 +1152,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 89.",
+   "claim": "Total count: 89 patients.",
    "table": null
   },
   "proportion": null,
@@ -1176,7 +1176,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 47.",
+   "claim": "Total count: 47 patients.",
    "table": null
   },
   "proportion": null,
@@ -1200,7 +1200,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 89.",
+   "claim": "Total count: 89 patients.",
    "table": null
   },
   "proportion": null,
@@ -1224,7 +1224,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 124.",
+   "claim": "Total count: 124 patients.",
    "table": null
   },
   "proportion": null,
@@ -1248,7 +1248,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 38.",
+   "claim": "Total count: 38 patients.",
    "table": null
   },
   "proportion": null,
@@ -1277,7 +1277,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 63.",
+   "claim": "Total count: 63 patients. Data check: ldl has 5.8% of its values missing.",
    "table": null
   },
   "proportion": null,
@@ -1301,7 +1301,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 146.",
+   "claim": "Total count: 146 patients.",
    "table": null
   },
   "proportion": null,
@@ -1345,7 +1345,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 400.",
+   "claim": "Total count: 400 patients.",
    "table": null
   },
   "proportion": null,
@@ -1374,7 +1374,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 79.",
+   "claim": "Total count: 79 patients.",
    "table": null
   },
   "proportion": null,
@@ -1398,7 +1398,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 188.",
+   "claim": "Total count: 188 patients.",
    "table": null
   },
   "proportion": null,
@@ -1422,7 +1422,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "204 total across 2 treatment groups.",
+   "claim": "204 patients across 2 treatment groups.",
    "table": {
     "columns": [
      "treatment",
@@ -1519,7 +1519,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 104.",
+   "claim": "Total count: 104 patients.",
    "table": null
   },
   "proportion": null,
@@ -1548,7 +1548,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum ldl was 164.90 (n hidden).",
+   "claim": "Maximum ldl was 164.90 (n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -1598,7 +1598,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 53.93 (SD 7.22; median 55.40; n=54).",
+   "claim": "Mean hdl was 53.93 (SD 7.22; median 55.40; n=54 patients).",
    "table": {
     "columns": [
      "variable",
@@ -1643,7 +1643,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median hdl was 54.60 (n=151).",
+   "claim": "Median hdl was 54.60 (n=151 patients).",
    "table": {
     "columns": [
      "variable",
@@ -1693,7 +1693,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum bmi was 19.70 (n=94).",
+   "claim": "Minimum bmi was 19.70 (n=94 patients).",
    "table": {
     "columns": [
      "variable",
@@ -1738,7 +1738,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "219 total across 2 sex groups.",
+   "claim": "219 patients across 2 sex groups.",
    "table": {
     "columns": [
      "sex",
@@ -1777,7 +1777,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 219.",
+   "claim": "Total count: 219 patients.",
    "table": null
   },
   "proportion": null,
@@ -1819,7 +1819,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden).",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -1858,7 +1858,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 53.83 (SD 7.99; median 53.80; n=400).",
+   "claim": "Mean hdl was 53.83 (SD 7.99; median 53.80; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -1927,7 +1927,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "47.5% of patients who matched the limits had Statin use = Yes (n=219).",
+   "claim": "47.5% of patients who matched the limits had Statin use = Yes (n=219 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -1965,7 +1965,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "49.0% of patients who matched the limits had Statin use = Yes (n=151).",
+   "claim": "49.0% of patients who matched the limits had Statin use = Yes (n=151 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -2003,7 +2003,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "51.1% of patients who matched the limits had sex = F (n=188).",
+   "claim": "51.1% of patients who matched the limits had sex = F (n=188 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -2065,7 +2065,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "52.9% of patients who matched the limits had Statin use = No (n=204).",
+   "claim": "52.9% of patients who matched the limits had Statin use = No (n=204 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -2097,7 +2097,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "readmitted=True by Gender: Female 48.6%, Male 52.6% (n=500). Unadjusted.",
+   "claim": "readmitted=True by Gender: Female 48.6%, Male 52.6% (n=500 patients). Unadjusted.",
    "table": {
     "columns": [
      "Gender",
@@ -2136,7 +2136,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "readmitted=True by Smoker 1: Yes 2: No: Yes 50.2%, No 51.1% (n=500). Unadjusted.",
+   "claim": "readmitted=True by Smoker 1: Yes 2: No: Yes 50.2%, No 51.1% (n=500 patients). Unadjusted.",
    "table": {
     "columns": [
      "Smoker 1: Yes 2: No",
@@ -2175,7 +2175,7 @@
   "metric": "Age (years)",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean Age (years) by Region: North 54.55, North East 58.35, South 55.65, West 56.62 (n=500). Unadjusted.",
+   "claim": "Mean Age (years) by Region: North 54.55, North East 58.35, South 55.65, West 56.62 (n=500 patients). Unadjusted.",
    "table": {
     "columns": [
      "Region",
@@ -2251,7 +2251,7 @@
   "metric": "hba1c",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hba1c was 7.56 (SD 1.84; median 7.40; n=152).",
+   "claim": "Mean hba1c was 7.56 (SD 1.84; median 7.40; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -2320,7 +2320,7 @@
   "metric": "SBP mmHg",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean SBP mmHg was 148.23 (SD 31.09; median 151.50; n=248).",
+   "claim": "Mean SBP mmHg was 148.23 (SD 31.09; median 151.50; n=248 patients).",
    "table": {
     "columns": [
      "variable",
@@ -2365,7 +2365,7 @@
   "metric": "Weight (kg)",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean Weight (kg) was 93.64 (SD 27.57; median 94.00; n=253).",
+   "claim": "Mean Weight (kg) was 93.64 (SD 27.57; median 94.00; n=253 patients).",
    "table": {
     "columns": [
      "variable",
@@ -2433,7 +2433,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 130.",
+   "claim": "Total count: 130 patients.",
    "table": null
   },
   "proportion": null,
@@ -2457,7 +2457,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "247 total across 3 arm groups.",
+   "claim": "247 patients across 3 arm groups.",
    "table": {
     "columns": [
      "arm",
@@ -2500,7 +2500,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 231.",
+   "claim": "Total count: 231 patients.",
    "table": null
   },
   "proportion": null,
@@ -2524,7 +2524,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 196.",
+   "claim": "Total count: 196 patients.",
    "table": null
   },
   "proportion": null,
@@ -2548,7 +2548,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 139.",
+   "claim": "Total count: 139 patients.",
    "table": null
   },
   "proportion": null,
@@ -2572,7 +2572,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 128.",
+   "claim": "Total count: 128 patients.",
    "table": null
   },
   "proportion": null,
@@ -2637,7 +2637,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 26.",
+   "claim": "Total count: 26 patients.",
    "table": null
   },
   "proportion": null,
@@ -2679,7 +2679,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 171.",
+   "claim": "Total count: 171 patients.",
    "table": null
   },
   "proportion": null,
@@ -2721,7 +2721,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 226.",
+   "claim": "Total count: 226 patients.",
    "table": null
   },
   "proportion": null,
@@ -2745,7 +2745,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 194.",
+   "claim": "Total count: 194 patients.",
    "table": null
   },
   "proportion": null,
@@ -2769,7 +2769,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 167.",
+   "claim": "Total count: 167 patients.",
    "table": null
   },
   "proportion": null,
@@ -2793,7 +2793,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 226.",
+   "claim": "Total count: 226 patients.",
    "table": null
   },
   "proportion": null,
@@ -2817,7 +2817,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 253.",
+   "claim": "Total count: 253 patients.",
    "table": null
   },
   "proportion": null,
@@ -2841,7 +2841,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 287.",
+   "claim": "Total count: 287 patients.",
    "table": null
   },
   "proportion": null,
@@ -2865,7 +2865,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 248.",
+   "claim": "Total count: 248 patients.",
    "table": null
   },
   "proportion": null,
@@ -2889,7 +2889,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 142.",
+   "claim": "Total count: 142 patients.",
    "table": null
   },
   "proportion": null,
@@ -2913,7 +2913,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 289.",
+   "claim": "Total count: 289 patients.",
    "table": null
   },
   "proportion": null,
@@ -2937,7 +2937,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 172.",
+   "claim": "Total count: 172 patients.",
    "table": null
   },
   "proportion": null,
@@ -2961,7 +2961,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 226.",
+   "claim": "Total count: 226 patients.",
    "table": null
   },
   "proportion": null,
@@ -3011,7 +3011,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 252.",
+   "claim": "Total count: 252 patients.",
    "table": null
   },
   "proportion": null,
@@ -3035,7 +3035,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 269.",
+   "claim": "Total count: 269 patients.",
    "table": null
   },
   "proportion": null,
@@ -3059,7 +3059,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "50.2% of patients who matched the limits had readmitted=True (n=269).",
+   "claim": "50.2% of patients who matched the limits had readmitted=True (n=269 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -3091,7 +3091,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 53.83 (SD 7.99; median 53.80; n=400).",
+   "claim": "Mean hdl was 53.83 (SD 7.99; median 53.80; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -3130,7 +3130,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age differed across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p<0.001; n=400). Unadjusted.",
+   "claim": "Mean age differed across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p<0.001; n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -3171,7 +3171,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 5.62 higher in diabetes=1 than diabetes=0 (95% CI 2.37 to 8.87; Welch t-test p<0.001; n=400). Unadjusted comparison by diabetes.",
+   "claim": "Mean age was 5.62 higher in diabetes=1 than diabetes=0 (95% CI 2.37 to 8.87; Welch t-test p<0.001; n=400 patients). Unadjusted comparison by diabetes.",
    "table": {
     "columns": [
      "diabetes",
@@ -3207,7 +3207,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 5.07 higher in event=1 than event=0 (95% CI 2.28 to 7.87; Welch t-test p<0.001; n=400). Unadjusted comparison by event.",
+   "claim": "Mean age was 5.07 higher in event=1 than event=0 (95% CI 2.28 to 7.87; Welch t-test p<0.001; n=400 patients). Unadjusted comparison by event.",
    "table": {
     "columns": [
      "event",
@@ -3243,7 +3243,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 0.90 higher in placebo than drug, not statistically significant (95% CI -1.90 to 3.71; Welch t-test p=0.526; n=400). Unadjusted comparison by treatment.",
+   "claim": "Mean age was 0.90 higher in placebo than drug, not statistically significant (95% CI -1.90 to 3.71; Welch t-test p=0.526; n=400 patients). Unadjusted comparison by treatment.",
    "table": {
     "columns": [
      "treatment",
@@ -3279,7 +3279,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.292; n=400). Unadjusted.",
+   "claim": "Mean bmi did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.292; n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -3320,7 +3320,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 0.01 higher in diabetes=1 than diabetes=0, not statistically significant (95% CI -0.93 to 0.94; Welch t-test p=0.988; n=400). Unadjusted comparison by diabetes.",
+   "claim": "Mean bmi was 0.01 higher in diabetes=1 than diabetes=0, not statistically significant (95% CI -0.93 to 0.94; Welch t-test p=0.988; n=400 patients). Unadjusted comparison by diabetes.",
    "table": {
     "columns": [
      "diabetes",
@@ -3356,7 +3356,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 0.53 higher in event=0 than event=1, not statistically significant (95% CI -0.30 to 1.36; Welch t-test p=0.207; n=400). Unadjusted comparison by event.",
+   "claim": "Mean bmi was 0.53 higher in event=0 than event=1, not statistically significant (95% CI -0.30 to 1.36; Welch t-test p=0.207; n=400 patients). Unadjusted comparison by event.",
    "table": {
     "columns": [
      "event",
@@ -3392,7 +3392,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 0.19 higher in placebo than drug, not statistically significant (95% CI -0.60 to 0.99; Welch t-test p=0.632; n=400). Unadjusted comparison by treatment.",
+   "claim": "Mean bmi was 0.19 higher in placebo than drug, not statistically significant (95% CI -0.60 to 0.99; Welch t-test p=0.632; n=400 patients). Unadjusted comparison by treatment.",
    "table": {
     "columns": [
      "treatment",
@@ -3428,7 +3428,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.207; n=400). Unadjusted.",
+   "claim": "Mean followup_days did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.207; n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -3469,7 +3469,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days was 28.01 higher in diabetes=0 than diabetes=1, not statistically significant (95% CI -56.34 to 112.36; Welch t-test p=0.513; n=400). Unadjusted comparison by diabetes.",
+   "claim": "Mean followup_days was 28.01 higher in diabetes=0 than diabetes=1, not statistically significant (95% CI -56.34 to 112.36; Welch t-test p=0.513; n=400 patients). Unadjusted comparison by diabetes.",
    "table": {
     "columns": [
      "diabetes",
@@ -3505,7 +3505,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days was 257.90 higher in event=0 than event=1 (95% CI 189.86 to 325.95; Welch t-test p<0.001; n=400). Unadjusted comparison by event.",
+   "claim": "Mean followup_days was 257.90 higher in event=0 than event=1 (95% CI 189.86 to 325.95; Welch t-test p<0.001; n=400 patients). Unadjusted comparison by event.",
    "table": {
     "columns": [
      "event",
@@ -3541,7 +3541,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days was 133.74 higher in drug than placebo (95% CI 66.27 to 201.21; Welch t-test p<0.001; n=400). Unadjusted comparison by treatment.",
+   "claim": "Mean followup_days was 133.74 higher in drug than placebo (95% CI 66.27 to 201.21; Welch t-test p<0.001; n=400 patients). Unadjusted comparison by treatment.",
    "table": {
     "columns": [
      "treatment",
@@ -3577,7 +3577,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.800; n=400). Unadjusted.",
+   "claim": "Mean hdl did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.800; n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -3618,7 +3618,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 0.26 higher in diabetes=0 than diabetes=1, not statistically significant (95% CI -1.72 to 2.25; Welch t-test p=0.792; n=400). Unadjusted comparison by diabetes.",
+   "claim": "Mean hdl was 0.26 higher in diabetes=0 than diabetes=1, not statistically significant (95% CI -1.72 to 2.25; Welch t-test p=0.792; n=400 patients). Unadjusted comparison by diabetes.",
    "table": {
     "columns": [
      "diabetes",
@@ -3654,7 +3654,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 0.74 higher in event=1 than event=0, not statistically significant (95% CI -0.81 to 2.30; Welch t-test p=0.348; n=400). Unadjusted comparison by event.",
+   "claim": "Mean hdl was 0.74 higher in event=1 than event=0, not statistically significant (95% CI -0.81 to 2.30; Welch t-test p=0.348; n=400 patients). Unadjusted comparison by event.",
    "table": {
     "columns": [
      "event",
@@ -3690,7 +3690,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 1.46 higher in drug than placebo, not statistically significant (95% CI -0.11 to 3.02; Welch t-test p=0.069; n=400). Unadjusted comparison by treatment.",
+   "claim": "Mean hdl was 1.46 higher in drug than placebo, not statistically significant (95% CI -0.11 to 3.02; Welch t-test p=0.069; n=400 patients). Unadjusted comparison by treatment.",
    "table": {
     "columns": [
      "treatment",
@@ -3726,7 +3726,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.112; n=377; 23 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl did not differ significantly across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups (ANOVA p=0.112; n=377 patients; 23 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -3767,7 +3767,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 1.08 higher in diabetes=1 than diabetes=0, not statistically significant (95% CI -3.13 to 5.28; Welch t-test p=0.614; n=377; 23 excluded for missing data). Unadjusted comparison by diabetes.",
+   "claim": "Mean ldl was 1.08 higher in diabetes=1 than diabetes=0, not statistically significant (95% CI -3.13 to 5.28; Welch t-test p=0.614; n=377 patients; 23 excluded for missing data). Unadjusted comparison by diabetes. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "diabetes",
@@ -3803,7 +3803,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 1.53 higher in event=1 than event=0, not statistically significant (95% CI -1.96 to 5.02; Welch t-test p=0.390; n=377; 23 excluded for missing data). Unadjusted comparison by event.",
+   "claim": "Mean ldl was 1.53 higher in event=1 than event=0, not statistically significant (95% CI -1.96 to 5.02; Welch t-test p=0.390; n=377 patients; 23 excluded for missing data). Unadjusted comparison by event. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "event",
@@ -3839,7 +3839,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 16.97 higher in placebo than drug (95% CI 13.96 to 19.99; Welch t-test p<0.001; n=377; 23 excluded for missing data). Unadjusted comparison by treatment.",
+   "claim": "Mean ldl was 16.97 higher in placebo than drug (95% CI 13.96 to 19.99; Welch t-test p<0.001; n=377 patients; 23 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "treatment",
@@ -3875,7 +3875,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 400.",
+   "claim": "Total count: 400 patients.",
    "table": null
   },
   "proportion": null,
@@ -3893,7 +3893,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups.",
+   "claim": "400 patients across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -3930,7 +3930,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 diabetes groups.",
+   "claim": "400 patients across 2 diabetes groups.",
    "table": {
     "columns": [
      "diabetes",
@@ -3963,7 +3963,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 event groups.",
+   "claim": "400 patients across 2 event groups.",
    "table": {
     "columns": [
      "event",
@@ -3996,7 +3996,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 outcome groups.",
+   "claim": "400 patients across 2 outcome groups.",
    "table": {
     "columns": [
      "outcome",
@@ -4029,7 +4029,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 sex groups.",
+   "claim": "400 patients across 2 sex groups.",
    "table": {
     "columns": [
      "sex",
@@ -4062,7 +4062,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 3 site groups.",
+   "claim": "400 patients across 3 site groups.",
    "table": {
     "columns": [
      "site",
@@ -4099,7 +4099,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 Statin use 1: Yes 2: No groups.",
+   "claim": "400 patients across 2 Statin use 1: Yes 2: No groups.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -4132,7 +4132,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 treatment groups.",
+   "claim": "400 patients across 2 treatment groups.",
    "table": {
     "columns": [
      "treatment",
@@ -4165,7 +4165,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups.",
+   "claim": "400 patients across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -4202,7 +4202,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 diabetes groups.",
+   "claim": "400 patients across 2 diabetes groups.",
    "table": {
     "columns": [
      "diabetes",
@@ -4235,7 +4235,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 event groups.",
+   "claim": "400 patients across 2 event groups.",
    "table": {
     "columns": [
      "event",
@@ -4268,7 +4268,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 outcome groups.",
+   "claim": "400 patients across 2 outcome groups.",
    "table": {
     "columns": [
      "outcome",
@@ -4301,7 +4301,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 sex groups.",
+   "claim": "400 patients across 2 sex groups.",
    "table": {
     "columns": [
      "sex",
@@ -4334,7 +4334,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 3 site groups.",
+   "claim": "400 patients across 3 site groups.",
    "table": {
     "columns": [
      "site",
@@ -4371,7 +4371,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 Statin use 1: Yes 2: No groups.",
+   "claim": "400 patients across 2 Statin use 1: Yes 2: No groups.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -4404,7 +4404,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 treatment groups.",
+   "claim": "400 patients across 2 treatment groups.",
    "table": {
     "columns": [
      "treatment",
@@ -4437,7 +4437,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 400.",
+   "claim": "Total count: 400 patients.",
    "table": null
   },
   "proportion": null,
@@ -4455,7 +4455,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum hdl was 81.30 (n=400).",
+   "claim": "Maximum hdl was 81.30 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4494,7 +4494,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum age was 84.00 (n=400).",
+   "claim": "Maximum age was 84.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4533,7 +4533,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum bmi was 37.50 (n=400).",
+   "claim": "Maximum bmi was 37.50 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4572,7 +4572,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 58.98 (SD 14.21; median 58.00; n=400).",
+   "claim": "Mean age was 58.98 (SD 14.21; median 58.00; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4611,7 +4611,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 26.94 (SD 4.05; median 26.90; n=400).",
+   "claim": "Mean bmi was 26.94 (SD 4.05; median 26.90; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4650,7 +4650,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Median followup_days was 405.50 (n=400).",
+   "claim": "Median followup_days was 405.50 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4689,7 +4689,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl was 128.90 (n=377).",
+   "claim": "Median ldl was 128.90 (n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -4728,7 +4728,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum followup_days was 4.00 (n=400).",
+   "claim": "Minimum followup_days was 4.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4767,7 +4767,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum ldl was 80.90 (n=377).",
+   "claim": "Minimum ldl was 80.90 (n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -4806,7 +4806,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum hdl was 32.50 (n=400).",
+   "claim": "Minimum hdl was 32.50 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -4845,7 +4845,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups.",
+   "claim": "400 patients across 3 DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis groups.",
    "table": {
     "columns": [
      "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis",
@@ -4882,7 +4882,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 diabetes groups.",
+   "claim": "400 patients across 2 diabetes groups.",
    "table": {
     "columns": [
      "diabetes",
@@ -4915,7 +4915,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 event groups.",
+   "claim": "400 patients across 2 event groups.",
    "table": {
     "columns": [
      "event",
@@ -4948,7 +4948,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 outcome groups.",
+   "claim": "400 patients across 2 outcome groups.",
    "table": {
     "columns": [
      "outcome",
@@ -4981,7 +4981,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 sex groups.",
+   "claim": "400 patients across 2 sex groups.",
    "table": {
     "columns": [
      "sex",
@@ -5014,7 +5014,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 3 site groups.",
+   "claim": "400 patients across 3 site groups.",
    "table": {
     "columns": [
      "site",
@@ -5051,7 +5051,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 Statin use 1: Yes 2: No groups.",
+   "claim": "400 patients across 2 Statin use 1: Yes 2: No groups.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -5084,7 +5084,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 2 treatment groups.",
+   "claim": "400 patients across 2 treatment groups.",
    "table": {
     "columns": [
      "treatment",
@@ -5117,7 +5117,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 400.",
+   "claim": "Total count: 400 patients.",
    "table": null
   },
   "proportion": null,
@@ -5135,7 +5135,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "SD of age was 14.21 (n=400).",
+   "claim": "SD of age was 14.21 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -5174,7 +5174,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "SD of bmi was 4.05 (n=400).",
+   "claim": "SD of bmi was 4.05 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -5213,7 +5213,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age by outcome: outcome=0 56.69, outcome=1 68.12 (n=400). Unadjusted.",
+   "claim": "Mean age by outcome: outcome=0 56.69, outcome=1 68.12 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "outcome",
@@ -5249,7 +5249,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age by sex: F 58.18, M 59.82 (n=400). Unadjusted.",
+   "claim": "Mean age by sex: F 58.18, M 59.82 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "sex",
@@ -5285,7 +5285,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age by site: North 59.91, South 58.01, West 58.97 (n=400). Unadjusted.",
+   "claim": "Mean age by site: North 59.91, South 58.01, West 58.97 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "site",
@@ -5326,7 +5326,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age by Statin use 1: Yes 2: No: Yes 60.18, No 57.92 (n=400). Unadjusted.",
+   "claim": "Mean age by Statin use 1: Yes 2: No: Yes 60.18, No 57.92 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -5362,7 +5362,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 58.98 (SD 14.21; median 58.00; n=400).",
+   "claim": "Mean age was 58.98 (SD 14.21; median 58.00; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -5401,7 +5401,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi by outcome: outcome=0 26.92, outcome=1 27.02 (n=400). Unadjusted.",
+   "claim": "Mean bmi by outcome: outcome=0 26.92, outcome=1 27.02 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "outcome",
@@ -5437,7 +5437,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi by sex: F 26.83, M 27.06 (n=400). Unadjusted.",
+   "claim": "Mean bmi by sex: F 26.83, M 27.06 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "sex",
@@ -5473,7 +5473,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi by site: North 27.12, South 27.14, West 26.42 (n=400). Unadjusted.",
+   "claim": "Mean bmi by site: North 27.12, South 27.14, West 26.42 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "site",
@@ -5514,7 +5514,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi by Statin use 1: Yes 2: No: Yes 26.45, No 27.37 (n=400). Unadjusted.",
+   "claim": "Mean bmi by Statin use 1: Yes 2: No: Yes 26.45, No 27.37 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -5550,7 +5550,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 26.94 (SD 4.05; median 26.90; n=400).",
+   "claim": "Mean bmi was 26.94 (SD 4.05; median 26.90; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -5589,7 +5589,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days by outcome: outcome=0 506.08, outcome=1 429.79 (n=400). Unadjusted.",
+   "claim": "Mean followup_days by outcome: outcome=0 506.08, outcome=1 429.79 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "outcome",
@@ -5625,7 +5625,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days by sex: F 503.45, M 477.69 (n=400). Unadjusted.",
+   "claim": "Mean followup_days by sex: F 503.45, M 477.69 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "sex",
@@ -5661,7 +5661,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days by site: North 458.15, South 489.22, West 540.02 (n=400). Unadjusted.",
+   "claim": "Mean followup_days by site: North 458.15, South 489.22, West 540.02 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "site",
@@ -5702,7 +5702,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days by Statin use 1: Yes 2: No: Yes 496.24, No 486.02 (n=400). Unadjusted.",
+   "claim": "Mean followup_days by Statin use 1: Yes 2: No: Yes 496.24, No 486.02 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -5738,7 +5738,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl by outcome: outcome=0 54.05, outcome=1 52.94 (n=400). Unadjusted.",
+   "claim": "Mean hdl by outcome: outcome=0 54.05, outcome=1 52.94 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "outcome",
@@ -5774,7 +5774,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl by sex: F 54.88, M 52.73 (n=400). Unadjusted.",
+   "claim": "Mean hdl by sex: F 54.88, M 52.73 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "sex",
@@ -5810,7 +5810,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl by site: North 54.08, South 54.00, West 53.24 (n=400). Unadjusted.",
+   "claim": "Mean hdl by site: North 54.08, South 54.00, West 53.24 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "site",
@@ -5851,7 +5851,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl by Statin use 1: Yes 2: No: Yes 54.19, No 53.51 (n=400). Unadjusted.",
+   "claim": "Mean hdl by Statin use 1: Yes 2: No: Yes 54.19, No 53.51 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -5887,7 +5887,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by outcome: outcome=0 128.33, outcome=1 132.35 (n=377; 23 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl by outcome: outcome=0 128.33, outcome=1 132.35 (n=377 patients; 23 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "outcome",
@@ -5923,7 +5923,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by sex: F 128.83, M 129.40 (n=377; 23 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl by sex: F 128.83, M 129.40 (n=377 patients; 23 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "sex",
@@ -5959,7 +5959,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by site: North 126.04, South 128.61, West 134.15 (n=377; 23 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl by site: North 126.04, South 128.61, West 134.15 (n=377 patients; 23 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "site",
@@ -6000,7 +6000,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by Statin use 1: Yes 2: No: Yes 129.94, No 128.37 (n=377; 23 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl by Statin use 1: Yes 2: No: Yes 129.94, No 128.37 (n=377 patients; 23 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "Statin use 1: Yes 2: No",
@@ -6036,7 +6036,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days was 490.82 (SD 349.05; median 405.50; n=400).",
+   "claim": "Mean followup_days was 490.82 (SD 349.05; median 405.50; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6075,7 +6075,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.11 (SD 17.12; median 128.90; n=377).",
+   "claim": "Mean ldl was 129.11 (SD 17.12; median 128.90; n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -6114,7 +6114,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum age was 84.00 (n=400).",
+   "claim": "Maximum age was 84.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6153,7 +6153,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum bmi was 37.50 (n=400).",
+   "claim": "Maximum bmi was 37.50 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6192,7 +6192,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum followup_days was 1458.00 (n=400).",
+   "claim": "Maximum followup_days was 1458.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6231,7 +6231,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum ldl was 175.70 (n=377).",
+   "claim": "Maximum ldl was 175.70 (n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -6270,7 +6270,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum followup_days was 1458.00 (n=400).",
+   "claim": "Maximum followup_days was 1458.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6309,7 +6309,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum ldl was 175.70 (n=377).",
+   "claim": "Maximum ldl was 175.70 (n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -6348,7 +6348,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum hdl was 81.30 (n=400).",
+   "claim": "Maximum hdl was 81.30 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6387,7 +6387,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean followup_days was 490.82 (SD 349.05; median 405.50; n=400).",
+   "claim": "Mean followup_days was 490.82 (SD 349.05; median 405.50; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6426,7 +6426,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.11 (SD 17.12; median 128.90; n=377).",
+   "claim": "Mean ldl was 129.11 (SD 17.12; median 128.90; n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -6465,7 +6465,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 53.83 (SD 7.99; median 53.80; n=400).",
+   "claim": "Mean hdl was 53.83 (SD 7.99; median 53.80; n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6504,7 +6504,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median hdl was 53.80 (n=400).",
+   "claim": "Median hdl was 53.80 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6543,7 +6543,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Median age was 58.00 (n=400).",
+   "claim": "Median age was 58.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6582,7 +6582,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Median bmi was 26.90 (n=400).",
+   "claim": "Median bmi was 26.90 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6621,7 +6621,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum hdl was 32.50 (n=400).",
+   "claim": "Minimum hdl was 32.50 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6660,7 +6660,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum age was 35.00 (n=400).",
+   "claim": "Minimum age was 35.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6699,7 +6699,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum bmi was 15.00 (n=400).",
+   "claim": "Minimum bmi was 15.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6738,7 +6738,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum age was 35.00 (n=400).",
+   "claim": "Minimum age was 35.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6777,7 +6777,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum bmi was 15.00 (n=400).",
+   "claim": "Minimum bmi was 15.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6816,7 +6816,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum followup_days was 4.00 (n=400).",
+   "claim": "Minimum followup_days was 4.00 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6855,7 +6855,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Minimum ldl was 80.90 (n=377).",
+   "claim": "Minimum ldl was 80.90 (n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -6894,7 +6894,7 @@
   "metric": "followup_days",
   "plan_line": null,
   "presentation": {
-   "claim": "SD of followup_days was 349.05 (n=400).",
+   "claim": "SD of followup_days was 349.05 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -6933,7 +6933,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "SD of ldl was 17.12 (n=377).",
+   "claim": "SD of ldl was 17.12 (n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -6972,7 +6972,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "SD of hdl was 7.99 (n=400).",
+   "claim": "SD of hdl was 7.99 (n=400 patients).",
    "table": {
     "columns": [
      "variable",
@@ -7071,7 +7071,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age by gender: F 43.00, M 42.00 (n=100). Unadjusted.",
+   "claim": "Mean age by gender: F 43.00, M 42.00 (n=100 patients). Unadjusted.",
    "table": {
     "columns": [
      "gender",
@@ -7113,7 +7113,7 @@
   "metric": "cholesterol",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean cholesterol was 202.50 (SD 20.78; median 202.50; n=28).",
+   "claim": "Mean cholesterol was 202.50 (SD 20.78; median 202.50; n=28 patients).",
    "table": {
     "columns": [
      "variable",
@@ -7364,7 +7364,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "66 total across 2 treatment groups.",
+   "claim": "66 patients across 2 treatment groups.",
    "table": {
     "columns": [
      "treatment",
@@ -7403,7 +7403,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 66.",
+   "claim": "Total count: 66 patients.",
    "table": null
   },
   "proportion": null,
@@ -7439,7 +7439,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "100 total across 2 status groups.",
+   "claim": "100 patients across 2 status groups.",
    "table": {
     "columns": [
      "status",
@@ -7516,7 +7516,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 100.",
+   "claim": "Total count: 100 patients.",
    "table": null
   },
   "proportion": null,
@@ -7632,7 +7632,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 100.",
+   "claim": "Total count: 100 patients.",
    "table": null
   },
   "proportion": null,
@@ -7668,7 +7668,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 42.50 (SD 11.43; median 41.00; n=100).",
+   "claim": "Mean age was 42.50 (SD 11.43; median 41.00; n=100 patients).",
    "table": {
     "columns": [
      "variable",
@@ -7901,7 +7901,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 157.60 (SD 5.19; median 157.10; n=19).",
+   "claim": "Mean ldl was 157.60 (SD 5.19; median 157.10; n=19 patients). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -7976,7 +7976,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 2.15 higher in F than M (95% CI 0.59 to 3.71; Welch t-test p=0.007; n=400). Unadjusted comparison by sex.",
+   "claim": "Mean hdl was 2.15 higher in F than M (95% CI 0.59 to 3.71; Welch t-test p=0.007; n=400 patients). Unadjusted comparison by sex.",
    "table": {
     "columns": [
      "sex",
@@ -8012,7 +8012,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 16.97 higher in placebo than drug (95% CI 13.96 to 19.99; Welch t-test p<0.001; n=377; 23 excluded for missing data). Unadjusted comparison by treatment.",
+   "claim": "Mean ldl was 16.97 higher in placebo than drug (95% CI 13.96 to 19.99; Welch t-test p<0.001; n=377 patients; 23 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "treatment",
@@ -8054,7 +8054,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 196.",
+   "claim": "Total count: 196 patients.",
    "table": null
   },
   "proportion": null,
@@ -8112,7 +8112,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 73.",
+   "claim": "Total count: 73 patients.",
    "table": null
   },
   "proportion": null,
@@ -8184,7 +8184,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 181.",
+   "claim": "Total count: 181 patients.",
    "table": null
   },
   "proportion": null,
@@ -8208,7 +8208,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 204.",
+   "claim": "Total count: 204 patients.",
    "table": null
   },
   "proportion": null,
@@ -8271,7 +8271,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 28.",
+   "claim": "Total count: 28 patients.",
    "table": null
   },
   "proportion": null,
@@ -8319,7 +8319,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 81.70 (SD 1.62; median 82.00; n=44).",
+   "claim": "Mean age was 81.70 (SD 1.62; median 82.00; n=44 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8364,7 +8364,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 27.06 (SD 4.50; median 27.20; n=196).",
+   "claim": "Mean bmi was 27.06 (SD 4.50; median 27.20; n=196 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8409,7 +8409,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 27.25 (SD 4.01; median 27.45; n=144).",
+   "claim": "Mean bmi was 27.25 (SD 4.01; median 27.45; n=144 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8454,7 +8454,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean bmi was 26.83 (SD 3.57; median 26.80; n=204).",
+   "claim": "Mean bmi was 26.83 (SD 3.57; median 26.80; n=204 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8499,7 +8499,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190).",
+   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8544,7 +8544,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n hidden).",
+   "claim": "Mean ldl was 129.40 (SD 17.64; median 129.60; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8589,7 +8589,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206).",
+   "claim": "Mean ldl was 121.41 (SD 15.27; median 121.50; n=206 patients; 13 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8634,7 +8634,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden).",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8679,7 +8679,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190).",
+   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8742,7 +8742,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Median bmi was 27.20 (n=196).",
+   "claim": "Median bmi was 27.20 (n=196 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8787,7 +8787,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Median bmi was 27.45 (n=144).",
+   "claim": "Median bmi was 27.45 (n=144 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8832,7 +8832,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Median bmi was 26.80 (n=204).",
+   "claim": "Median bmi was 26.80 (n=204 patients).",
    "table": {
     "columns": [
      "variable",
@@ -8877,7 +8877,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl was 129.60 (n hidden).",
+   "claim": "Median ldl was 129.60 (n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8922,7 +8922,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl was 131.80 (n hidden).",
+   "claim": "Median ldl was 131.80 (n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -8967,7 +8967,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl was 127.90 (n=190).",
+   "claim": "Median ldl was 127.90 (n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -9185,14 +9185,16 @@
  },
  "negation|snap_codes|how many patients by zip?": {
   "confidence": 0.9,
-  "failure_reason": "zip holds 30 different numbers; the answer shows one group for each. Confirm the plan if zip is a code such as a site or clinic, or ask about a range of it such as 'zip over 10106'.",
+  "failure_reason": "zip has 30 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about zip as a measurement.",
   "group_by": "zip",
-  "held": true,
+  "held": false,
   "intent": "COUNT",
-  "issues": [],
+  "issues": [
+   "zip has 30 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about zip as a measurement."
+  ],
   "limits": [],
   "metric": null,
-  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping zip \u00b7 filters none \u00b7 test count",
+  "plan_line": null,
   "presentation": {
    "claim": null,
    "table": null
@@ -9380,7 +9382,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 148.",
+   "claim": "Total count: 148 patients.",
    "table": null
   },
   "proportion": null,
@@ -9404,7 +9406,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 148.",
+   "claim": "Total count: 148 patients.",
    "table": null
   },
   "proportion": null,
@@ -9433,7 +9435,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 179.",
+   "claim": "Total count: 179 patients.",
    "table": null
   },
   "proportion": null,
@@ -9462,7 +9464,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 179.",
+   "claim": "Total count: 179 patients.",
    "table": null
   },
   "proportion": null,
@@ -9496,7 +9498,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 79.",
+   "claim": "Total count: 79 patients.",
    "table": null
   },
   "proportion": null,
@@ -9525,7 +9527,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 179.",
+   "claim": "Total count: 179 patients.",
    "table": null
   },
   "proportion": null,
@@ -9608,7 +9610,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 129.",
+   "claim": "Total count: 129 patients.",
    "table": null
   },
   "proportion": null,
@@ -10166,7 +10168,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 144.",
+   "claim": "Total count: 144 patients.",
    "table": null
   },
   "proportion": null,
@@ -10219,7 +10221,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 36.",
+   "claim": "Total count: 36 patients.",
    "table": null
   },
   "proportion": null,
@@ -10243,7 +10245,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 148.",
+   "claim": "Total count: 148 patients.",
    "table": null
   },
   "proportion": null,
@@ -10272,7 +10274,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 192.",
+   "claim": "Total count: 192 patients.",
    "table": null
   },
   "proportion": null,
@@ -10786,7 +10788,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 149.",
+   "claim": "Total count: 149 patients.",
    "table": null
   },
   "proportion": null,
@@ -10831,14 +10833,16 @@
  },
  "negation|snap_rev|how many events per subject?": {
   "confidence": 0.9,
-  "failure_reason": "I couldn't use the words 'events' and 'per' in the plan; rephrase them with columns or values from your data.",
+  "failure_reason": "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement.",
   "group_by": "subject_id",
-  "held": true,
+  "held": false,
   "intent": "COUNT",
-  "issues": [],
+  "issues": [
+   "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement."
+  ],
   "limits": [],
   "metric": null,
-  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping subject_id \u00b7 filters none \u00b7 test count",
+  "plan_line": null,
   "presentation": {
    "claim": null,
    "table": null
@@ -10940,14 +10944,16 @@
  },
  "negation|snap_rev|how many patients per subject?": {
   "confidence": 0.9,
-  "failure_reason": "I couldn't use the word 'per' in the plan; rephrase it with a column or value from your data.",
+  "failure_reason": "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement.",
   "group_by": "subject_id",
-  "held": true,
+  "held": false,
   "intent": "COUNT",
-  "issues": [],
+  "issues": [
+   "subject_id has 100 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about subject_id as a measurement."
+  ],
   "limits": [],
   "metric": null,
-  "plan_line": "COUNT \u00b7 outcome none \u00b7 grouping subject_id \u00b7 filters none \u00b7 test count",
+  "plan_line": null,
   "presentation": {
    "claim": null,
    "table": null
@@ -11042,7 +11048,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Statin use = Yes by sex: F 47.1%, M 46.9% (n=400). Unadjusted.",
+   "claim": "Statin use = Yes by sex: F 47.1%, M 46.9% (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "sex",
@@ -11166,7 +11172,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152).",
+   "claim": "Mean age was 60.07 (SD 5.27; median 60.00; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -11229,7 +11235,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n hidden).",
+   "claim": "Mean ldl was 128.61 (SD 16.51; median 126.70; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -11295,14 +11301,16 @@
  },
  "over_holding|snap_coh|compare ldl by age": {
   "confidence": 0.95,
-  "failure_reason": "age holds 50 different numbers; the answer shows one group for each. Confirm the plan if age is a code such as a site or clinic, or ask about a range of it such as 'age over 60'.",
+  "failure_reason": "age has 50 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about age as a measurement.",
   "group_by": "age",
-  "held": true,
+  "held": false,
   "intent": "COMPARE_GROUPS",
-  "issues": [],
+  "issues": [
+   "age has 50 different values, so it cannot be used to split patients into groups: each group would show a few patients' exact values. Group by a column with at most 20 categories, or ask about age as a measurement."
+  ],
   "limits": [],
   "metric": "ldl",
-  "plan_line": "COMPARE_GROUPS \u00b7 outcome ldl \u00b7 grouping age \u00b7 filters none \u00b7 test group comparison",
+  "plan_line": null,
   "presentation": {
    "claim": null,
    "table": null
@@ -11328,7 +11336,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190; 14 excluded for missing data). Unadjusted comparison by treatment.",
+   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190 patients; 14 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "treatment",
@@ -11364,7 +11372,7 @@
   "metric": "bmi",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum bmi by site: North 37.50, South 37.00, West 35.90 (n=400). Unadjusted.",
+   "claim": "Maximum bmi by site: North 37.50, South 37.00, West 35.90 (n=400 patients). Unadjusted.",
    "table": {
     "columns": [
      "site",
@@ -11423,7 +11431,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Median ldl by sex: F 127.90, M 129.60 (n=377; 23 excluded for missing data). Unadjusted.",
+   "claim": "Median ldl by sex: F 127.90, M 129.60 (n=377 patients; 23 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "sex",
@@ -11551,7 +11559,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 212.",
+   "claim": "Total count: 212 patients.",
    "table": null
   },
   "proportion": null,
@@ -11580,7 +11588,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 179.",
+   "claim": "Total count: 179 patients.",
    "table": null
   },
   "proportion": null,
@@ -11609,7 +11617,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 129.",
+   "claim": "Total count: 129 patients.",
    "table": null
   },
   "proportion": null,
@@ -11689,7 +11697,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 214.",
+   "claim": "Total count: 214 patients.",
    "table": null
   },
   "proportion": null,
@@ -11886,7 +11894,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 144.",
+   "claim": "Total count: 144 patients.",
    "table": null
   },
   "proportion": null,
@@ -11993,7 +12001,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 148.",
+   "claim": "Total count: 148 patients.",
    "table": null
   },
   "proportion": null,
@@ -12022,7 +12030,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 192.",
+   "claim": "Total count: 192 patients.",
    "table": null
   },
   "proportion": null,
@@ -12307,7 +12315,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 103.",
+   "claim": "Total count: 103 patients.",
    "table": null
   },
   "proportion": null,
@@ -12343,7 +12351,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "readmitted=True by Gender: Female 48.6%, Male 52.6% (n=500). Unadjusted.",
+   "claim": "readmitted=True by Gender: Female 48.6%, Male 52.6% (n=500 patients). Unadjusted.",
    "table": {
     "columns": [
      "Gender",
@@ -12382,7 +12390,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "readmitted=True by Smoker 1: Yes 2: No: Yes 50.2%, No 51.1% (n=500). Unadjusted.",
+   "claim": "readmitted=True by Smoker 1: Yes 2: No: Yes 50.2%, No 51.1% (n=500 patients). Unadjusted.",
    "table": {
     "columns": [
      "Smoker 1: Yes 2: No",
@@ -12427,7 +12435,7 @@
   "metric": "hba1c",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hba1c was 7.56 (SD 1.84; median 7.40; n=152).",
+   "claim": "Mean hba1c was 7.56 (SD 1.84; median 7.40; n=152 patients).",
    "table": {
     "columns": [
      "variable",
@@ -12472,7 +12480,7 @@
   "metric": "SBP mmHg",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean SBP mmHg was 148.23 (SD 31.09; median 151.50; n=248).",
+   "claim": "Mean SBP mmHg was 148.23 (SD 31.09; median 151.50; n=248 patients).",
    "table": {
     "columns": [
      "variable",
@@ -12540,7 +12548,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 130.",
+   "claim": "Total count: 130 patients.",
    "table": null
   },
   "proportion": null,
@@ -12618,7 +12626,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 171.",
+   "claim": "Total count: 171 patients.",
    "table": null
   },
   "proportion": null,
@@ -12660,7 +12668,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 226.",
+   "claim": "Total count: 226 patients.",
    "table": null
   },
   "proportion": null,
@@ -12684,7 +12692,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 142.",
+   "claim": "Total count: 142 patients.",
    "table": null
   },
   "proportion": null,
@@ -12708,7 +12716,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 172.",
+   "claim": "Total count: 172 patients.",
    "table": null
   },
   "proportion": null,
@@ -12782,7 +12790,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 55.19 (SD 21.32; median 59.00; n=127).",
+   "claim": "Mean age was 55.19 (SD 21.32; median 59.00; n=127 patients).",
    "table": {
     "columns": [
      "variable",
@@ -12827,7 +12835,7 @@
   "metric": "hba1c",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hba1c was 7.83 (SD 1.90; median 7.90; n=130).",
+   "claim": "Mean hba1c was 7.83 (SD 1.90; median 7.90; n=130 patients).",
    "table": {
     "columns": [
      "variable",
@@ -12872,7 +12880,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 287.",
+   "claim": "Total count: 287 patients.",
    "table": null
   },
   "proportion": null,
@@ -12922,7 +12930,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 191.",
+   "claim": "Total count: 191 patients.",
    "table": null
   },
   "proportion": null,
@@ -12946,7 +12954,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 144.",
+   "claim": "Total count: 144 patients.",
    "table": null
   },
   "proportion": null,
@@ -12970,7 +12978,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 127.",
+   "claim": "Total count: 127 patients.",
    "table": null
   },
   "proportion": null,
@@ -12994,7 +13002,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 130.",
+   "claim": "Total count: 130 patients.",
    "table": null
   },
   "proportion": null,
@@ -13041,7 +13049,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 120.57 (SD 15.28; median 119.80; n hidden).",
+   "claim": "Mean ldl was 120.57 (SD 15.28; median 119.80; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -13086,7 +13094,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 126.04 (SD 17.36; median 126.35; n hidden).",
+   "claim": "Mean ldl was 126.04 (SD 17.36; median 126.35; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -13167,7 +13175,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 0.58 higher in M than F, not statistically significant (95% CI -2.89 to 4.05; Welch t-test p=0.743; n=377; 23 excluded for missing data). Unadjusted comparison by sex.",
+   "claim": "Mean ldl was 0.58 higher in M than F, not statistically significant (95% CI -2.89 to 4.05; Welch t-test p=0.743; n=377 patients; 23 excluded for missing data). Unadjusted comparison by sex. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "sex",
@@ -13233,7 +13241,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 4.07 higher in M than F, not statistically significant (95% CI -2.49 to 10.64; Welch t-test p=0.221; n hidden). Unadjusted comparison by sex.",
+   "claim": "Mean ldl was 4.07 higher in M than F, not statistically significant (95% CI -2.49 to 10.64; Welch t-test p=0.221; n hidden). Unadjusted comparison by sex. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "sex",
@@ -13275,7 +13283,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190; 14 excluded for missing data). Unadjusted comparison by treatment.",
+   "claim": "Mean ldl was 14.35 higher in placebo than drug (95% CI 10.04 to 18.66; Welch t-test p<0.001; n=190 patients; 14 excluded for missing data). Unadjusted comparison by treatment. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "treatment",
@@ -13345,7 +13353,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 35.",
+   "claim": "Total count: 35 patients.",
    "table": null
   },
   "proportion": null,
@@ -13369,7 +13377,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 204.",
+   "claim": "Total count: 204 patients.",
    "table": null
   },
   "proportion": null,
@@ -13393,7 +13401,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 204.",
+   "claim": "Total count: 204 patients.",
    "table": null
   },
   "proportion": null,
@@ -13417,7 +13425,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 196.",
+   "claim": "Total count: 196 patients.",
    "table": null
   },
   "proportion": null,
@@ -13441,7 +13449,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 196.",
+   "claim": "Total count: 196 patients.",
    "table": null
   },
   "proportion": null,
@@ -13465,7 +13473,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 196.",
+   "claim": "Total count: 196 patients.",
    "table": null
   },
   "proportion": null,
@@ -13489,7 +13497,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 148.",
+   "claim": "Total count: 148 patients.",
    "table": null
   },
   "proportion": null,
@@ -13513,7 +13521,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 148.",
+   "claim": "Total count: 148 patients.",
    "table": null
   },
   "proportion": null,
@@ -13537,7 +13545,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 212.",
+   "claim": "Total count: 212 patients.",
    "table": null
   },
   "proportion": null,
@@ -13561,7 +13569,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 188.",
+   "claim": "Total count: 188 patients.",
    "table": null
   },
   "proportion": null,
@@ -13585,7 +13593,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 151.",
+   "claim": "Total count: 151 patients.",
    "table": null
   },
   "proportion": null,
@@ -13614,7 +13622,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 129.",
+   "claim": "Total count: 129 patients.",
    "table": null
   },
   "proportion": null,
@@ -13650,7 +13658,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "400 total across 3 site groups.",
+   "claim": "400 patients across 3 site groups.",
    "table": {
     "columns": [
      "site",
@@ -13747,7 +13755,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 214.",
+   "claim": "Total count: 214 patients.",
    "table": null
   },
   "proportion": null,
@@ -13825,7 +13833,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 207.",
+   "claim": "Total count: 207 patients.",
    "table": null
   },
   "proportion": null,
@@ -13914,7 +13922,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 151.",
+   "claim": "Total count: 151 patients.",
    "table": null
   },
   "proportion": null,
@@ -13938,7 +13946,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 144.",
+   "claim": "Total count: 144 patients.",
    "table": null
   },
   "proportion": null,
@@ -13980,7 +13988,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 212.",
+   "claim": "Total count: 212 patients.",
    "table": null
   },
   "proportion": null,
@@ -14004,7 +14012,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 144.",
+   "claim": "Total count: 144 patients.",
    "table": null
   },
   "proportion": null,
@@ -14046,7 +14054,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 219.",
+   "claim": "Total count: 219 patients.",
    "table": null
   },
   "proportion": null,
@@ -14070,7 +14078,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 181.",
+   "claim": "Total count: 181 patients.",
    "table": null
   },
   "proportion": null,
@@ -14135,7 +14143,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 73.",
+   "claim": "Total count: 73 patients. Data check: ldl has 5.8% of its values missing.",
    "table": null
   },
   "proportion": null,
@@ -14159,7 +14167,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 144.",
+   "claim": "Total count: 144 patients.",
    "table": null
   },
   "proportion": null,
@@ -14183,7 +14191,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 127.",
+   "claim": "Total count: 127 patients.",
    "table": null
   },
   "proportion": null,
@@ -14207,7 +14215,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 148.",
+   "claim": "Total count: 148 patients.",
    "table": null
   },
   "proportion": null,
@@ -14231,7 +14239,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 84.",
+   "claim": "Total count: 84 patients.",
    "table": null
   },
   "proportion": null,
@@ -14255,7 +14263,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 214.",
+   "claim": "Total count: 214 patients.",
    "table": null
   },
   "proportion": null,
@@ -14279,7 +14287,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 178.",
+   "claim": "Total count: 178 patients. Data check: ldl has 5.8% of its values missing.",
    "table": null
   },
   "proportion": null,
@@ -14321,7 +14329,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 146.",
+   "claim": "Total count: 146 patients.",
    "table": null
   },
   "proportion": null,
@@ -14345,7 +14353,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 47.",
+   "claim": "Total count: 47 patients.",
    "table": null
   },
   "proportion": null,
@@ -14389,7 +14397,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 400.",
+   "claim": "Total count: 400 patients.",
    "table": null
   },
   "proportion": null,
@@ -14407,7 +14415,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 400.",
+   "claim": "Total count: 400 patients.",
    "table": null
   },
   "proportion": null,
@@ -14436,7 +14444,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 96.",
+   "claim": "Total count: 96 patients.",
    "table": null
   },
   "proportion": null,
@@ -14507,7 +14515,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 108.",
+   "claim": "Total count: 108 patients.",
    "table": null
   },
   "proportion": null,
@@ -14536,7 +14544,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 96.",
+   "claim": "Total count: 96 patients.",
    "table": null
   },
   "proportion": null,
@@ -14560,7 +14568,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "204 total across 3 site groups.",
+   "claim": "204 patients across 3 site groups.",
    "table": {
     "columns": [
      "site",
@@ -14631,7 +14639,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 36.",
+   "claim": "Total count: 36 patients.",
    "table": null
   },
   "proportion": null,
@@ -14750,7 +14758,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 60.30 (SD 13.93; median 61.00; n=178).",
+   "claim": "Mean age was 60.30 (SD 13.93; median 61.00; n=178 patients). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -14795,7 +14803,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean age was 57.92 (SD 14.02; median 57.00; n=212).",
+   "claim": "Mean age was 57.92 (SD 14.02; median 57.00; n=212 patients).",
    "table": {
     "columns": [
      "variable",
@@ -14914,7 +14922,7 @@
   "metric": "hdl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean hdl was 53.60 (SD 8.34; median 53.75; n=178).",
+   "claim": "Mean hdl was 53.60 (SD 8.34; median 53.75; n=178 patients). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -14959,7 +14967,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190; 14 excluded for missing data). Unadjusted.",
+   "claim": "Mean ldl by site: North 125.77, South 129.58, West 132.11 (n=190 patients; 14 excluded for missing data). Unadjusted. Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "site",
@@ -15024,7 +15032,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden).",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15141,7 +15149,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.37 (SD 16.40; median 129.30; n=198).",
+   "claim": "Mean ldl was 128.37 (SD 16.40; median 129.30; n=198 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15186,7 +15194,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden).",
+   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15231,7 +15239,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden).",
+   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15276,7 +15284,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden).",
+   "claim": "Mean ldl was 130.40 (SD 17.61; median 131.90; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15321,7 +15329,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden).",
+   "claim": "Mean ldl was 129.84 (SD 17.37; median 131.80; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15371,7 +15379,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.32 (SD 17.51; median 128.00; n hidden).",
+   "claim": "Mean ldl was 128.32 (SD 17.51; median 128.00; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15457,7 +15465,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.42 (SD 18.04; median 130.10; n hidden).",
+   "claim": "Mean ldl was 129.42 (SD 18.04; median 130.10; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15502,7 +15510,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237).",
+   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237 patients; 15 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15583,7 +15591,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237).",
+   "claim": "Mean ldl was 128.35 (SD 16.81; median 127.30; n=237 patients; 15 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15669,7 +15677,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 127.16 (SD 16.45; median 127.80; n hidden).",
+   "claim": "Mean ldl was 127.16 (SD 16.45; median 127.80; n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15738,7 +15746,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190).",
+   "claim": "Mean ldl was 128.83 (SD 16.63; median 127.90; n=190 patients; 14 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15819,7 +15827,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Mean ldl was 129.11 (SD 17.12; median 128.90; n=377).",
+   "claim": "Mean ldl was 129.11 (SD 17.12; median 128.90; n=377 patients; 23 excluded for missing data). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15924,7 +15932,7 @@
   "metric": "ldl",
   "plan_line": null,
   "presentation": {
-   "claim": "Maximum ldl was 175.70 (n hidden).",
+   "claim": "Maximum ldl was 175.70 (n hidden). Data check: ldl has 5.8% of its values missing.",
    "table": {
     "columns": [
      "variable",
@@ -15969,7 +15977,7 @@
   "metric": "age",
   "plan_line": null,
   "presentation": {
-   "claim": "Median age was 60.00 (n=196).",
+   "claim": "Median age was 60.00 (n=196 patients).",
    "table": {
     "columns": [
      "variable",
@@ -16038,7 +16046,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "53.1% of patients who matched the limits had Statin use = No (n=196).",
+   "claim": "53.1% of patients who matched the limits had Statin use = No (n=196 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -16070,7 +16078,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "53.0% of patients had Statin use = No (n=400).",
+   "claim": "53.0% of patients had Statin use = No (n=400 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -16102,7 +16110,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "54.8% of patients had treatment = drug (n=400).",
+   "claim": "54.8% of patients had treatment = drug (n=400 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -16134,7 +16142,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "47.0% of patients had Statin use = Yes (n=400).",
+   "claim": "47.0% of patients had Statin use = Yes (n=400 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -16172,7 +16180,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "53.9% of patients who matched the limits had treatment = drug (n=204).",
+   "claim": "53.9% of patients who matched the limits had treatment = drug (n=204 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -16210,7 +16218,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "47.1% of patients who matched the limits had Statin use = Yes (n=204).",
+   "claim": "47.1% of patients who matched the limits had Statin use = Yes (n=204 patients).",
    "table": {
     "columns": [
      "proportion",
@@ -16266,7 +16274,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 20.",
+   "claim": "Total count: 20 patients.",
    "table": null
   },
   "proportion": null,
@@ -16290,7 +16298,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 20.",
+   "claim": "Total count: 20 patients.",
    "table": null
   },
   "proportion": null,
@@ -16314,7 +16322,7 @@
   "metric": null,
   "plan_line": null,
   "presentation": {
-   "claim": "Total count: 21.",
+   "claim": "Total count: 21 patients.",
    "table": null
   },
   "proportion": null,

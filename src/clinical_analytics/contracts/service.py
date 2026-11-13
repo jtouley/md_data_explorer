@@ -37,6 +37,39 @@ def id_column_from_metadata(metadata: dict[str, Any]) -> str | None:
     return next((col for col, role in mapping.items() if role == "patient_id"), None)
 
 
+def _flatten_columns(value: Any) -> list[str]:
+    """Column names in a mapping value: a name, a list of names, or a dict of them
+    (``time_variables: {"time_zero": "admit_date"}``), nested to any depth."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [column for item in value.values() for column in _flatten_columns(item)]
+    if isinstance(value, list | tuple):
+        return [column for item in value for column in _flatten_columns(item)]
+    return []
+
+
+def analysis_columns_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
+    """Columns the upload names as analysis variables (outcomes, predictors, time and event).
+
+    Only these get the 5% missingness warning at upload; other columns' missingness is listed, and
+    an answer notes it for any column the question uses (``core.answer_checks.report_notes``).
+    """
+    found: list[str] = []
+    mapping = metadata.get("variable_mapping") or {}
+    for role, value in mapping.items():
+        if role == "patient_id":
+            continue
+        for column in _flatten_columns(value):
+            if column not in found:
+                found.append(column)
+    outcomes = (metadata.get("inferred_schema") or {}).get("outcomes") or {}
+    for column in outcomes if isinstance(outcomes, dict) else []:
+        if isinstance(column, str) and column not in found:
+            found.append(column)
+    return tuple(found)
+
+
 def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:
     """Ids whose latest log row is ACCEPTED (same rule as ``metadata_resolver``), sorted."""
     latest: dict[str, Patch] = {p.patch_id: p for p in patches}
@@ -66,6 +99,36 @@ def read_saved_contract(path: Path) -> OpenDataContractStandard:
     return contract
 
 
+def previous_version_id(metadata: dict[str, Any], dataset_version: str) -> str | None:
+    """The version before ``dataset_version`` in the upload's ``version_history`` (an overwrite
+    keeps the upload id and appends the new version), or None for a first upload."""
+    history = [str(v.get("version")) for v in metadata.get("version_history") or [] if v.get("version")]
+    if dataset_version not in history:
+        return None
+    before = history[: len(history) - 1 - history[::-1].index(dataset_version)]
+    return next((version for version in reversed(before) if version != dataset_version), None)
+
+
+def _previous_contract(
+    data_dir: Path, upload_id: str, metadata: dict[str, Any], dataset_version: str
+) -> OpenDataContractStandard | None:
+    """The previous version's saved contract, or None (first version, a legacy version without a
+    contract, or a damaged one: the type check is then reported as not run, never as passed)."""
+    previous = previous_version_id(metadata, dataset_version)
+    if previous is None:
+        return None
+    path = contract_path(data_dir, upload_id, previous)
+    if not path.exists():
+        return None
+    try:
+        return read_saved_contract(path)
+    except ContractError as e:
+        logger.warning(
+            "previous_contract_unreadable", upload_id=upload_id, previous_version=previous, **error_fields(e)
+        )
+        return None
+
+
 def check_upload(
     data_dir: Path,
     df: pl.DataFrame,
@@ -77,6 +140,9 @@ def check_upload(
     run_at: datetime | None = None,
 ) -> QualityReport:
     """Write the version's contract if it has none, check ``df`` against it, store the report.
+
+    Column types are checked against the previous version's contract (from ``version_history``
+    in ``metadata``), so a column that changed type between versions fails the check.
 
     Running twice is safe: the contract is reused (immutable per version) and each run adds a
     report file.
@@ -100,6 +166,7 @@ def check_upload(
             dataset_version=dataset_version,
             dataset_name=str(metadata.get("dataset_name") or upload_id),
             id_column=id_column_from_metadata(metadata),
+            analysis_columns=analysis_columns_from_metadata(metadata),
             source_file_sha256=metadata.get("source_file_sha256"),
             resolved=_resolve(df, patches) if accepted else None,
             accepted_patch_ids=accepted,
@@ -107,7 +174,8 @@ def check_upload(
         contract = build_contract(df, inputs)
         if not write_contract(data_dir, upload_id, dataset_version, contract):
             contract = read_saved_contract(path)  # another writer won; its contract is the version's
-    report = run_quality(df.lazy(), contract, run_at=run_at)
+    previous = _previous_contract(data_dir, upload_id, metadata, dataset_version)
+    report = run_quality(df.lazy(), contract, run_at=run_at, data_version=dataset_version, previous_contract=previous)
     write_report(data_dir, report)
     log.info("upload_checked", failed=report.failed, warnings=report.warnings)
     return report

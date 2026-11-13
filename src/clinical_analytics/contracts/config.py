@@ -50,6 +50,13 @@ COUNT_HIDDEN: Final = "hidden"
 # value when duplicates are counted).
 MAX_ROWS_NO_COUNTS: Final = MIN_CELL_SIZE + 1
 
+
+def is_tiny_table(rows: int) -> bool:
+    """A table of 1..MAX_ROWS_NO_COUNTS rows: no column count is reported, zeros included, and
+    the contract states no grain. The one rule the builder and the report both use."""
+    return 0 < rows <= MAX_ROWS_NO_COUNTS
+
+
 OVERLAPPING_CHECK_REASON: Final = "another check already counts problem values in this column"
 TOO_FEW_ROWS_NOTE: Final = "too few rows to report counts"
 
@@ -101,19 +108,85 @@ NO_ID_COLUMN_REASON: Final = "no ID column identified"
 PLAUSIBILITY_RANGE_PROPERTY: Final = "plausibilityRange"
 
 
+# A value recorded as a limit ("<5", "> 100", "<=0.1", "< 0.5 mg/L"): censored, never the limit
+# itself. An optional unit may follow the number.
+CENSORED_TEXT_PATTERN: Final = (
+    r"(?i)^\s*(<=|>=|<|>|≤|≥)\s*[+-]?(\d[\d,]*(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*([a-zµμ%][a-zµμ%/0-9.]*)?\s*$"
+)
+CENSORED_RULE_SUFFIX: Final = "_censored"
+# Lab words for "below the limit of quantification / not detected": censored like "<5".
+# Compared after strip() and lower(). Configurable: add a site's own words here.
+CENSORED_TEXT_WORDS: Final[tuple[str, ...]] = ("blq", "bql", "nd", "<lod", "<loq", "not detected")
+# A text column whose present values are at least this share plain numbers (the rest neither a
+# limit nor a missing token, e.g. "pending") is numbers with unreadable entries: answers refuse
+# and name the entries, never read the column as categories.
+NEAR_NUMERIC_SHARE: Final = 0.95
+NAMED_UNREADABLE_MAX: Final = 3
+
+# Missingness is flagged (above MISSINGNESS_WARN_PERCENT) only for the columns the upload names
+# as analysis variables. Every other column's missingness is measured and listed, not flagged:
+# an optional column (a second phone number) is not a data-quality problem (L1).
+MISSINGNESS_MEASURE_ONLY_PERCENT: Final = 100.0
+
+# Contract logicalType versus the data's type: a column checked as one type and queried as
+# another is how a check passes on data the answers never read.
+TYPE_RULE_SUFFIX: Final = "_type"
+
+# Category spellings that are the same level once case, spacing and these synonyms are
+# normalised (Male / male / M). Flagged at upload; a query on such a level is held until the
+# doctor confirms the levels are one.
+LEVEL_SYNONYMS: Final[dict[str, str]] = {
+    "m": "male",
+    "man": "male",
+    "f": "female",
+    "woman": "female",
+    "y": "yes",
+    "true": "yes",
+    "n": "no",
+    "false": "no",
+}
+LEVEL_VARIANT_MAX_LEVELS: Final = 50  # a column with more levels is free text, not a category
+LEVEL_VARIANTS_RULE_SUFFIX: Final = "_spellings"
+
+
 @dataclass(frozen=True)
 class PlausibilityRange:
     """Bounds outside which a value is almost certainly an entry error, not a rare patient.
 
-    These are not reference ranges. A column matches by its normalized short name.
+    These are not reference ranges. A column matches by its normalized short name. ``unit`` is
+    the unit the bounds hold in; when a variable is stored in more than one unit and the column
+    does not say which, the bounds are the widest across those units (so only values impossible
+    in every unit are flagged) and ``unit`` names them all. ``maximum`` None: no upper bound is
+    known, only the physical lower one.
     """
 
     variable: str
     aliases: frozenset[str]
     minimum: float
-    maximum: float
+    maximum: float | None
     unit: str
     source: str
+    # Aliases too short to trust alone ("na", "k", "tc": also "not applicable", "treatment code"):
+    # they match only with a unit in the header ("Na (mmol/L)" -> "nammoll").
+    hinted_aliases: frozenset[str] = frozenset()
+    # Per-unit bounds chosen from the column's median (temperature: °C below 50, else °F). When
+    # the median is unknown the wide bound applies and its text says the unit is unknown.
+    by_median: tuple[UnitBounds, ...] = ()
+
+
+@dataclass(frozen=True)
+class UnitBounds:
+    """Bounds in one unit, used when the column's median is below ``median_below`` (None: any)."""
+
+    unit: str
+    minimum: float
+    maximum: float
+    median_below: float | None
+
+
+# Header suffixes that name a lab unit (normalised: lower case, letters and digits only).
+UNIT_HINTS: Final[tuple[str, ...]] = ("mmoll", "mmol", "mgdl", "mgl", "meql", "meq", "gdl", "gl", "umoll", "µmoll")
+WIDE_BOUND_NOTE: Final = "unit unknown, wide bound"
 
 
 PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
@@ -139,7 +212,81 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
         source="Lower: Collins, Nat Med 1995;1:810 (survival below BMI 12). "
         "Upper: Lin et al., JAMIA Open 2022;5(4):ooac089 (adult EHR BMI 15-90)",
     ),
+    PlausibilityRange(
+        variable="glucose",
+        aliases=frozenset({"glucose", "bloodglucose", "plasmaglucose", "fastingglucose", "fbg", "fpg"}),
+        hinted_aliases=frozenset({"glu"}),
+        # Lower: a concentration cannot be negative. Upper: 2,656 mg/dL (147.6 mmol/L), the
+        # highest blood glucose on record (Guinness World Records, 2008). Unit unknown: the
+        # mg/dL bound, which also admits every mmol/L value.
+        minimum=0,
+        maximum=2656,
+        unit="mg/dL or mmol/L",
+        source="Lower: physical (no negative concentration). Upper: Guinness World Records 2008, "
+        "highest recorded blood glucose 2,656 mg/dL (147.6 mmol/L)",
+    ),
+    PlausibilityRange(
+        variable="temperature",
+        aliases=frozenset({"temperature", "temp", "bodytemperature", "bodytemp"}),
+        # Lower: survival from accidental hypothermia at 13.7 C (Gilbert M et al., Lancet
+        # 2000;355:375-376); the bound sits below it. Upper: 47 C (116.6 F), above the highest
+        # recorded survived body temperature, 46.5 C (Guinness World Records, 1980). The unit
+        # is read from the median (a body temperature in °C is below 50, in °F above): 98.6 in a
+        # °C column is flagged. Median unknown: the wide bound, from the °C lower to the °F upper.
+        minimum=10,
+        maximum=117,
+        unit="°C or °F",
+        source="Lower: Gilbert et al., Lancet 2000;355:375 (survival at 13.7 °C). "
+        "Upper: Guinness World Records 1980 (46.5 °C survived), as °F",
+        by_median=(
+            UnitBounds(unit="°C", minimum=10, maximum=47, median_below=50),
+            UnitBounds(unit="°F", minimum=50, maximum=117, median_below=None),
+        ),
+    ),
+    PlausibilityRange(
+        variable="spo2",
+        aliases=frozenset({"spo2", "sao2", "oxygensaturation", "o2sat", "o2saturation"}),
+        minimum=0,
+        maximum=100,
+        unit="%",
+        source="Physical: a saturation is a percentage (0-100)",
+    ),
+    PlausibilityRange(
+        variable="hba1c",
+        aliases=frozenset({"hba1c", "a1c", "glycatedhaemoglobin", "glycatedhemoglobin"}),
+        # % (NGSP) and mmol/mol (IFCC) share the header, so only the physical lower bound applies.
+        minimum=0,
+        maximum=None,
+        unit="% or mmol/mol",
+        source="Physical: a proportion cannot be negative (no upper bound: % and mmol/mol share a name)",
+    ),
+    *(
+        PlausibilityRange(
+            variable=name,
+            aliases=frozenset(aliases),
+            hinted_aliases=frozenset(hinted),
+            minimum=0,
+            maximum=None,
+            unit="concentration (unit unknown)",
+            source="Physical: a concentration cannot be negative. No upper bound is configured: "
+            "the unit (mg/dL, mmol/L, µmol/L) changes it by up to ~90x",
+        )
+        for name, aliases, hinted in (
+            ("ldl", {"ldl", "ldlc", "ldlcholesterol"}, set()),
+            ("hdl", {"hdl", "hdlc", "hdlcholesterol"}, set()),
+            ("cholesterol", {"cholesterol", "totalcholesterol", "chol"}, {"tc"}),
+            ("triglycerides", {"triglycerides", "triglyceride", "trig"}, {"tg"}),
+            ("creatinine", {"creatinine", "creat", "scr", "serumcreatinine"}, set()),
+            ("crp", {"crp", "creactiveprotein", "hscrp"}, set()),
+            ("sodium", {"sodium"}, {"na"}),
+            ("potassium", {"potassium"}, {"k"}),
+            ("haemoglobin", {"haemoglobin", "hemoglobin", "hgb"}, {"hb"}),
+            ("albumin", {"albumin"}, {"alb"}),
+            ("bilirubin", {"bilirubin", "bili", "tbili"}, set()),
+            ("urea", {"urea", "bun"}, set()),
+        )
+    ),
 )
 
-# Lipids and other labs are unit-dependent (mg/dL vs mmol/L differ ~39x for cholesterol), so they
-# get no range unless a unit is known. Not configured yet: deferred until units are captured.
+# Numeric columns with no configured range are marked so in the contract, never silently passed.
+NO_RANGE_KNOWN: Final = "no range known"

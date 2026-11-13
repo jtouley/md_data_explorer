@@ -203,7 +203,14 @@ def _with_cohort_cte(view_sql: str, sql: str) -> str:
     return f"WITH {_COHORT_CTE} AS ({view_sql}) {body}"
 
 
-def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> list[str] | None:
+ENTITY_KEY_MISSING_REASON = (
+    "Patients could not be counted for this answer because the patient ID column was not read, so no answer is shown."
+)
+
+
+def _analysis_columns(
+    plan: "QueryPlan", context: Any, columns: list[str], entity_key: str | None = None
+) -> list[str] | None:
     """The view columns compute_analysis_by_type reads for this plan, in view order, or None.
 
     The analysis reads the context's variables and filter columns, nothing else, when each one
@@ -212,7 +219,8 @@ def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> li
     ``context.filters``. Otherwise (no variable, "all", a fuzzy name the analysis resolves
     against every column, a filter on a column the view lacks, or a ``context.query_plan`` that
     is not ``plan``) None: the whole view is passed, so the result, and any error it reports,
-    is what it always was.
+    is what it always was. ``entity_key``: the patient key a visit-grain frequency counts
+    distinct values of (``count_entity_key``), always kept.
     """
     context_plan = getattr(context, "query_plan", None)
     if context_plan is not None and context_plan is not plan and context_plan != plan:
@@ -237,7 +245,9 @@ def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> li
     filter_columns = [getattr(spec, "column", None) for spec in filters]
     if any(column not in columns for column in filter_columns):
         return None
-    wanted = {*named, *filter_columns}
+    if entity_key is not None and entity_key not in columns:
+        return None
+    wanted = {*named, *filter_columns, *([entity_key] if entity_key else [])}
     return [column for column in columns if column in wanted]
 
 
@@ -556,6 +566,10 @@ class SemanticLayer:
     DRY Principle: All datasets use this same class, just with different configs.
     """
 
+    # The patient key once the doctor has declared rows to be visits (set by QueryService):
+    # COUNTs, shares and frequency tables then count distinct patients, not rows.
+    count_entity_key: str | None = None
+
     def __init__(
         self,
         dataset_name: str,
@@ -610,8 +624,13 @@ class SemanticLayer:
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
         # Base-view counts, each counted once (the source does not change): rows under None,
-        # distinct values of an entity key under its column name.
+        # distinct non-null values of an entity key under its column name.
         self._base_counts: dict[str | None, int] = {}
+        # Rows with no value in a column (a missing patient ID), counted once per column.
+        self._base_missing: dict[str, int] = {}
+        # (values, rows per value) of a column, counted once until a level remap changes it.
+        self._value_counts: dict[str, tuple[pl.Series, pl.Series]] = {}
+        self.count_entity_key = None
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -854,12 +873,36 @@ class SemanticLayer:
         return self._base_count(None)
 
     def _base_count(self, entity_key: str | None) -> int:
-        """Rows of the base view, or its distinct ``entity_key`` values; each counted once."""
+        """Rows of the base view, or its distinct non-null ``entity_key`` values; each counted once.
+
+        A row with no ID is not one more patient: SQL ``DISTINCT`` would keep NULL as a value, so
+        the count is ``COUNT(DISTINCT key)``, which leaves it out (``base_missing_count`` counts it).
+        """
         if entity_key not in self._base_counts:
             view = self.get_base_view()
-            counted = view.count() if entity_key is None else view.select(entity_key).distinct().count()
+            counted = view.count() if entity_key is None else view[entity_key].nunique()
             self._base_counts[entity_key] = int(counted.execute())
         return self._base_counts[entity_key]
+
+    def base_missing_count(self, column: str) -> int:
+        """Rows of the base view with no value in ``column``, counted once."""
+        if column not in self._base_missing:
+            view = self.get_base_view()
+            self._base_missing[column] = int(view.filter(view[column].isnull()).count().execute())
+        return self._base_missing[column]
+
+    def base_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
+        """(distinct values of ``column`` named as the column, nulls included; rows holding each),
+        counted in DuckDB once per column until ``remap_levels`` changes the levels."""
+        if column not in self._value_counts:
+            self._value_counts[column] = self._compute_value_counts(column)
+        return self._value_counts[column]
+
+    def _compute_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
+        # Fixed field names, so no column name ("count", "__n") can collide with the count.
+        view = self.get_base_view()
+        counted = view.select(value=view[column]).group_by("value").aggregate(n=_.count()).to_polars()
+        return counted.get_column("value").alias(column), counted.get_column("n")
 
     def apply_filters(self, view, filters: dict[str, Any]) -> ibis.Table:
         """
@@ -2314,17 +2357,20 @@ class SemanticLayer:
         # Format based on intent
         # Phase 3.3: Pass chart_spec to formatting methods
         # Shares and grouped statistics are already the answer: format the SQL frame as it is.
+        # Shares count patients once rows are declared visits (_share_sql), so the filtered-out
+        # count is in patients too.
         if query_plan.proportion_column:
-            formatted = _format_share_result(result_df_pl, query_plan, None, self.get_base_row_count())
+            formatted = _format_share_result(result_df_pl, query_plan, None, self._base_count(self.count_entity_key))
         elif query_plan.rate_column and query_plan.group_by:
-            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, self.get_base_row_count())
+            share_base = self._base_count(self.count_entity_key)
+            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
         elif grouped_statistic(query_plan) is not None:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
             # What the filters removed, in the unit the total is counted in: distinct entities
             # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
-            entity_key = query_plan.entity_key if not query_plan.group_by else None
+            entity_key = self._count_entity_key(query_plan) if not query_plan.group_by else None
             formatted["n_filtered_out"] = self._base_count(entity_key) - formatted["total_count"]
         else:
             # The aggregated SQL frame is not renderer-shaped. Recompute from the
@@ -2333,7 +2379,7 @@ class SemanticLayer:
 
             with self._cohort_views_dropped():
                 view = self._filtered_view(query_plan)
-                needed = _analysis_columns(query_plan, context, list(view.columns))
+                needed = _analysis_columns(query_plan, context, list(view.columns), self.count_entity_key)
                 # Only the columns the analysis reads leave DuckDB, straight into Polars.
                 base_rows = (view.select(needed) if needed is not None else view).to_polars()
             if cohort is not None:
@@ -2354,10 +2400,41 @@ class SemanticLayer:
                 formatted["n_filtered_out"] = (
                     self.get_base_row_count() - base_rows.height + formatted.get("n_filtered_out", 0)
                 )
+                entity = self.count_entity_key
+                if entity and formatted.get("value_counts") is not None and not formatted.get("is_numeric"):
+                    formatted = self._entity_frequency(formatted, base_rows, entity)
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
         return formatted
+
+    def _entity_frequency(self, formatted: dict[str, Any], rows: pl.DataFrame, entity: str) -> dict[str, Any]:
+        """A frequency table that counts patients per level once rows are visits (distinct
+        ``entity`` per level), refused when a patient's level differs between visits: the levels
+        would then not add up to the patients."""
+        from clinical_analytics.core.answer_checks import varies_refusal
+
+        column = formatted.get("focused_variable")
+        if not column or column not in rows.columns or entity not in rows.columns:
+            # Never fall back to row counts: they would be shown as patients (a wrong answer).
+            logger.error(
+                "entity_frequency_column_missing entity_present=%s level_present=%s",
+                entity in rows.columns,
+                bool(column) and column in rows.columns,
+            )
+            return {"type": "descriptive", "error": ENTITY_KEY_MISSING_REASON}
+        pairs = rows.select(entity, column).filter(pl.col(entity).is_not_null()).unique()
+        patients = pairs.get_column(entity).n_unique()
+        if pairs.height != patients:
+            return {"type": "descriptive", "error": varies_refusal(column, "level")}
+        counts = pairs.group_by(column).agg(pl.len().alias("count")).sort(["count", column], descending=[True, False])
+        return {
+            **formatted,
+            "value_counts": counts.head(10).to_dicts(),
+            "row_count": patients,
+            "unique_count": counts.height,
+            "n_filtered_out": self._base_count(entity) - patients,
+        }
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
         """Format COUNT result DataFrame to result dict format."""
@@ -2414,10 +2491,16 @@ class SemanticLayer:
                 "headline": f"Total count: **{total_count}**",
             }
 
+    def _count_entity_key(self, plan: "QueryPlan") -> str | None:
+        """What a COUNT counts: the plan's entity key, else the patient key once the doctor has
+        declared rows to be visits (``count_entity_key``, set by QueryService), else rows."""
+        return plan.entity_key or self.count_entity_key
+
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
         if plan.intent == "COUNT":
-            # A COUNT with neither entity_key nor group_by is a row count ("how many patients?").
+            # A COUNT with neither entity_key nor group_by counts rows, or patients (distinct
+            # patient key) once rows are declared visits: see _count_entity_key.
             pass
         elif plan.intent == "DESCRIBE":
             # DESCRIBE requires metric (primary_variable)
@@ -2848,11 +2931,21 @@ class SemanticLayer:
         """
         quoted = _quote_ident(column)
         literal = _sql_literal(self._equality_value(view, column, value))
-        events = f"count(*) FILTER (WHERE {quoted} = {literal})"
         share = "rate" if group else "proportion"
+        entity = self.count_entity_key
+        if entity:
+            # Rows are visits: count patients (distinct key), as the COUNT answer does. The query
+            # service refuses first when the value differs between a patient's visits.
+            key = _quote_ident(entity)
+            events = f"count(DISTINCT {key}) FILTER (WHERE {quoted} = {literal})"
+            n = f"count(DISTINCT {key}) FILTER (WHERE {quoted} IS NOT NULL)"
+            # A row with no ID is no patient, as SemanticLayer._base_count counts them.
+            n_rows = f"count(DISTINCT {key})"
+        else:
+            events, n, n_rows = f"count(*) FILTER (WHERE {quoted} = {literal})", f"count({quoted})", "count(*)"
         select = (
-            f"{events} AS events, count({quoted}) AS n, count(*) AS n_rows, "
-            f"CASE WHEN count({quoted}) = 0 THEN NULL ELSE {events} / count({quoted}) END AS {share}"
+            f"{events} AS events, {n} AS n, {n_rows} AS n_rows, "
+            f"CASE WHEN {n} = 0 THEN NULL ELSE {events} / {n} END AS {share}"
         )
         if group is None:
             return f"SELECT {select} FROM _cohort_in"
@@ -2891,12 +2984,15 @@ class SemanticLayer:
         # Execute based on intent
         if plan.intent == "COUNT":
             # COUNT: Use entity_key or group_by
+            entity_key = self._count_entity_key(plan)
             if plan.group_by:
-                # Count by group
-                result = view.group_by(plan.group_by).aggregate(_.count().name("count")).order_by(plan.group_by)
-            elif plan.entity_key:
-                # Count distinct entities
-                result = view.select(plan.entity_key).distinct().count()
+                # Count by group: patients per group once rows are visits (QueryService checks
+                # each patient has one group value, so the groups add up to the patients).
+                counted = view[entity_key].nunique() if entity_key else _.count()
+                result = view.group_by(plan.group_by).aggregate(counted.name("count")).order_by(plan.group_by)
+            elif entity_key:
+                # Count distinct entities; a row with no ID is not one more (see _base_count).
+                result = view[entity_key].nunique()
             else:
                 # Total count
                 result = view.count()
@@ -2922,6 +3018,9 @@ class SemanticLayer:
                 if is_categorical:
                     # Frequency table
                     result = view.group_by(plan.metric).aggregate(_.count().name("count")).order_by(plan.metric)
+                elif view[plan.metric].type().is_string():
+                    # Mean/median of text would raise inside DuckDB; refuse in plain words instead.
+                    raise CohortStepError(_text_statistic_message(plan.statistic or "mean", plan.metric))
                 else:
                     # Descriptive statistics
                     metric_col = view[plan.metric]
@@ -2963,6 +3062,15 @@ class SemanticLayer:
 
         _log_ibis_sql_and_optional_explain(result, self.con.con)
         return result.execute()
+
+    def remap_levels(self, column: str, mapping: dict[str, str]) -> None:
+        """Read the spellings in ``mapping`` as one level from now on (a confirmed mapping:
+        "Male", "male", "M" -> "Male"). Rows and patients are unchanged; only labels merge."""
+        view = self.get_base_view()
+        self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
+        # The column's levels changed: its cached distinct count and value counts are stale.
+        self._base_counts.pop(column, None)
+        self._value_counts.pop(column, None)
 
     def _column_is_string(self, view: Any, column: str) -> bool:
         """From the schema: no rows are read."""

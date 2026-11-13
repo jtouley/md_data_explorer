@@ -70,7 +70,8 @@ class TestUserDatasetStorage:
         assert contract_path(data_dir, upload_id, version).is_file()
         report = latest_report(data_dir, upload_id, version)
         assert report is not None and report.summary == ["ldl: 5.8% missing"]
-        assert metadata["quality"] == {"status": "ran", "run_ts": report.run_ts, "failed": 0, "warnings": 1}
+        # ldl's 5.8% missing is listed, not flagged: it is not a named analysis variable (L1)
+        assert metadata["quality"] == {"status": "ran", "run_ts": report.run_ts, "failed": 0, "warnings": 0}
 
     @pytest.mark.parametrize("mapped_outcome", ["outcome", "mortality"])
     def test_save_upload_outcome_mapped_to_other_column_with_existing_outcome_succeeds(
@@ -2050,3 +2051,37 @@ class TestSaveUploadIntegration:
         assert success is True
         metadata = storage.get_upload_metadata(upload_id)
         assert "inferred_schema" in metadata
+
+
+def test_saveUpload_variableMappingHighMissing_clarifyingQuestionStillAsked(upload_storage, mock_semantic_layer):
+    """Uploads that send a variable_mapping (demo, wizard, headless) keep the validator's
+    high-missing warning, and the clarifying question for that variable is still asked."""
+    # Arrange: 40 of 100 ldl values are missing
+    from clinical_analytics.core.clarifying_questions import generate_clarifications
+    from clinical_analytics.core.nl_query_engine import QueryIntent
+
+    df = pl.DataFrame(
+        {
+            "patient_id": [f"P{i:03d}" for i in range(100)],
+            "outcome": [0, 1] * 50,
+            "ldl": [None] * 40 + [100.0 + i for i in range(60)],
+        }
+    )
+    metadata = {
+        "dataset_name": "missing_ldl",
+        "variable_mapping": {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["ldl"]},
+    }
+    success, message, upload_id = upload_storage.save_upload(
+        file_bytes=df.write_csv().encode("utf-8"), original_filename="missing_ldl.csv", metadata=metadata
+    )
+    assert success is True, message
+
+    # Act
+    warnings = upload_storage.get_upload_metadata(upload_id)["validation"]["quality_warnings"]
+    layer = mock_semantic_layer(quality_warnings=warnings)
+    intent = QueryIntent(intent_type="DESCRIBE", confidence=0.4, primary_variable="ldl")
+    clarifications = generate_clarifications(intent, layer, available_columns=["ldl"])
+
+    # Assert
+    assert any(w.get("type") == "high_missing" and w.get("column") == "ldl" for w in warnings)
+    assert [c.question_type for c in clarifications if c.variable_name == "ldl"] == ["quality_warning"]

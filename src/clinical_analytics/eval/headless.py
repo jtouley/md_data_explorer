@@ -14,6 +14,7 @@ from typing import Any, Literal, TypeAlias
 
 import polars as pl
 
+from clinical_analytics.analysis.grouping import FOLD_LABELS
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.query_service import QueryService
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
@@ -193,10 +194,18 @@ def plan_limits(plan: Any) -> list[Limit]:
     return sorted(limits, key=repr)
 
 
-def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str, Any]:
-    """Parse and execute one question. Returns the service result plus plan fields."""
+def ask(dataset_id: str, query: str, workspace: Path | None = None, confirm: bool = False) -> dict[str, Any]:
+    """Parse and execute one question. Returns the service result plus plan fields.
+
+    ``confirm``: when the question is held, confirm the plan it was held on (as the doctor does
+    by pressing confirm), so a probe can grade the answer given after the confirmation.
+    """
     service = service_for(dataset_id, workspace)
     result = service.ask(query, dataset_id=dataset_id, dataset_version="golden")
+    if confirm and result.requires_confirmation and result.plan_hash:
+        result = service.ask(
+            query, dataset_id=dataset_id, dataset_version="golden", confirmed=True, confirm_plan_hash=result.plan_hash
+        )
     plan = result.plan
     payload = result.result if isinstance(result.result, dict) else None
     issues = list(result.issues)
@@ -258,7 +267,7 @@ def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) ->
 
 HIDDEN = "hidden"
 _PRESENTED_TOLERANCE = 1e-4  # table cells are rounded to 4 decimals
-_TOTAL_COUNT = re.compile(r"^Total count: (\S+?)\.$")
+_TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: patients| visits)?\.(?: |$)")
 _STAT_NAMES = ("mean", "median", "std", "min", "max")
 
 
@@ -287,7 +296,32 @@ def presented_answer(presentation: dict[str, Any] | None) -> Any:
     value_column = next((c for c in columns[1:] if c == "rate" or c == "count" or c.split(" ")[0] in _STAT_NAMES), None)
     if value_column is None:
         return _crosstab(columns, rows)
-    return {str(row[columns[0]]): _shown(row[value_column]) for row in rows}
+    # The folded "Other" row stands for small groups, never for one group: it is hidden.
+    return {
+        str(row[columns[0]]): HIDDEN if row[columns[0]] in FOLD_LABELS else _shown(row[value_column]) for row in rows
+    }
+
+
+def shown_labels(presentation: dict[str, Any] | None) -> set[str]:
+    """Every group or level label a reader sees: table headers past the first, and row labels."""
+    table = (presentation or {}).get("table") or {}
+    columns = list(table.get("columns") or [])
+    if not columns:
+        return set()
+    return {str(c) for c in columns[1:]} | {str(row.get(columns[0])) for row in table.get("rows") or []}
+
+
+def small_level_labels(frame: pl.DataFrame, columns: list[str], threshold: int) -> set[str]:
+    """Labels the app would give levels of ``columns`` held by 1..threshold-1 rows."""
+    labels: set[str] = set()
+    for column in columns:
+        if column not in frame.columns:
+            continue
+        # Fixed field names, so a column named "count" does not collide with the count.
+        counts = frame.get_column(column).drop_nulls().alias("value").value_counts(name="__n")
+        small = counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value")
+        labels |= {display_level(column, value) for value in small.to_list()}
+    return labels
 
 
 def _shown(value: Any) -> Any:
@@ -296,7 +330,13 @@ def _shown(value: Any) -> Any:
 
 def _crosstab(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """A contingency table (first column the level, one column per group) as {group: {level: n}}."""
-    return {group: {str(row[columns[0]]): _shown(row[group]) for row in rows} for group in columns[1:]}
+    return {
+        group: {
+            str(row[columns[0]]): HIDDEN if {group, row[columns[0]]} & FOLD_LABELS else _shown(row[group])
+            for row in rows
+        }
+        for group in columns[1:]
+    }
 
 
 def _is_hidden(value: Any) -> bool:

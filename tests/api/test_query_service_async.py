@@ -13,7 +13,9 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
+from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS, is_small_level
 from clinical_analytics.api.services.query_service import AsyncQueryService
+from clinical_analytics.core.result_presentation import to_json_safe
 
 # ============================================================================
 # Fixtures
@@ -646,6 +648,65 @@ class TestQueryResultSmallCells:
         leaked = sorted({n for n in _numbers_in(body) if n in forbidden or round(n, 4) in forbidden})
         assert leaked == [], f"GET body {body} shows {leaked}"
 
+    @pytest.mark.parametrize(
+        ("groups", "small"),
+        [
+            pytest.param({f"{80 + i / 10:.1f}": 1 for i in range(289)}, None, id="exact_ldl_values_289_columns"),
+            pytest.param({"North": 60, "South": 50, "Rare": 3}, "Rare", id="site_with_3_patients"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_get_query_result_crosstabOfSmallLevels_payloadCarriesNoSmallLabel(
+        self, async_query_service, mock_core_query_service, groups, small
+    ):
+        # Arrange: on main "compare treatment between ldl groups" stored one column per exact LDL
+        # value (drug hidden, placebo 0), naming single patients' values and arm
+        from fastapi.testclient import TestClient
+
+        from clinical_analytics.api.main import app
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        analysis = {
+            "type": "comparison",
+            "test_type": "chi_square",
+            "outcome_col": "treatment",
+            "group_col": "ldl" if small is None else "site",
+            "groups": list(groups),
+            "group_sizes": groups,
+            "contingency": [
+                {"treatment": "drug", **{g: n - n // 2 for g, n in groups.items()}},
+                {"treatment": "placebo", **{g: n // 2 for g, n in groups.items()}},
+            ],
+            "p_value": 0.15,
+            "n_used": sum(groups.values()),
+            "n_excluded": 0,
+        }
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=MagicMock(),
+            issues=[],
+            result={"success": True, "result": pl.DataFrame({"x": [1]})},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis=analysis,
+        )
+        stored = await async_query_service.execute_query(query="compare treatment by group", dataset_id="ds")
+
+        async def found(_query_id: str) -> tuple[Any, Any]:
+            return async_query_service, stored
+
+        # Act
+        with patch("clinical_analytics.api.routes.queries.find_query_result", side_effect=found):
+            body = TestClient(app).get(f"/api/queries/{stored.query_id}").json()
+
+        # Assert: the payload itself, not only the claim; the stored result is the same object
+        events = [to_json_safe(getattr(e, "data", e)) for e in async_query_service._events.get(stored.query_id, [])]
+        text = json.dumps(body) + json.dumps(to_json_safe(stored.result)) + json.dumps(events, default=str)
+        forbidden = [g for g in groups if is_small_level(groups[g])] if small else ["ldl=80.0", "ldl=80.1"]
+        assert not any(f'"{label}"' in text for label in forbidden), text[:500]
+        table = (body.get("result_data") or {}).get("table")
+        assert table is None or len(table["columns"]) <= MAX_GROUP_LEVELS + 1
+
     @pytest.mark.asyncio
     async def test_get_query_result_heldQuery_bodyHasNoRawResult(self, async_query_service, mock_core_query_service):
         # Arrange: a held query whose execution result carries raw rows and analysis keys
@@ -688,3 +749,31 @@ class TestQueryResultSmallCells:
         text = json.dumps(body)
         assert not any(key in text for key in ('"result"', '"contingency"', '"group_proportions"', '"died"'))
         assert not {7.0, 3.0, 0.7, 0.3} & set(_numbers_in(body)), body
+
+
+class TestVersionLookupOffEventLoop:
+    """The dataset version is read from disk in the worker thread, never on the event loop."""
+
+    @pytest.mark.asyncio
+    async def test_executeQuery_versionLookup_runsInWorkerThread(self, async_query_service, mock_core_query_service):
+        # Arrange
+        import threading
+
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=None, issues=[], result=None, confidence=0.9, run_key=None, context=None
+        )
+        threads: list[threading.Thread] = []
+
+        def lookup(dataset_id: str) -> str:
+            threads.append(threading.current_thread())
+            return "v1"
+
+        # Act
+        with patch("clinical_analytics.api.services.query_service.active_dataset_version", lookup):
+            await async_query_service.execute_query(query="how many patients", dataset_id="ds1")
+
+        # Assert
+        assert threads and threads[0] is not threading.main_thread()
+        assert mock_core_query_service.ask.call_args.kwargs["dataset_version"] == "v1"

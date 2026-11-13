@@ -1000,7 +1000,17 @@ def mock_semantic_layer():
         # Filter validation checks if column exists in view.columns
         base_view_mock = MagicMock()
         base_view_mock.columns = list(column_map.values())  # Use actual column names
+        # The query service's data checks (core.answer_checks) read column types and counts: a
+        # 3-row view of non-text, non-numeric columns with one patient per row, so they find
+        # nothing to hold and the flow under test runs as before.
+        column_mock = MagicMock()
+        column_mock.type.return_value.is_string.return_value = False
+        column_mock.type.return_value.is_numeric.return_value = False
+        column_mock.count.return_value.execute.return_value = 3
+        base_view_mock.__getitem__.return_value = column_mock
         mock.get_base_view.return_value = base_view_mock
+        mock._base_count.return_value = 3
+        mock.count_entity_key = None
 
         # Optional: only set when a test needs them (otherwise MagicMock defaults apply)
         if dimensions is not None:
