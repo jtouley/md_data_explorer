@@ -11,7 +11,6 @@ import yaml
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.builder import find_plausibility_range, implausible_values, range_for
 from clinical_analytics.contracts.quality import run_quality
-from clinical_analytics.contracts.service import analysis_columns_from_metadata
 
 N = 200
 IDS = [f"P{i:03d}" for i in range(N)]
@@ -129,23 +128,22 @@ def test_runQuality_spellingOfFewRows_notNamed(make_contract: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    ("analysis", "missing", "status"),
+    ("missing", "status"),
     [
-        pytest.param((), 100, "passed", id="optional_column_half_missing_not_flagged"),
-        pytest.param((), N, "warning", id="optional_column_all_missing_flagged"),
-        pytest.param(("ldl",), 12, "warning", id="analysis_variable_above_5pct_flagged"),
-        pytest.param(("ldl",), 0, "passed", id="analysis_variable_complete"),
+        pytest.param(100, "warning", id="half_missing_flagged"),
+        pytest.param(N, "warning", id="all_missing_flagged"),
+        pytest.param(12, "warning", id="above_5pct_flagged"),
+        pytest.param(5, "review", id="below_5pct_count_hidden_never_passed"),
+        pytest.param(0, "passed", id="complete"),
     ],
 )
-def test_runQuality_missingness_flaggedOnlyForAnalysisVariables(
-    make_contract: Any, analysis: tuple[str, ...], missing: int, status: str
-) -> None:
-    # Arrange
+def test_runQuality_missingness_incompleteColumnNeverPassed(make_contract: Any, missing: int, status: str) -> None:
+    # Arrange: on main a column the upload did not name as an analysis variable "passed" at 50% empty
     ldl = pl.Series("ldl", [None] * missing + [100.0] * (N - missing), dtype=pl.Float64)
     df = pl.DataFrame({"patient_id": IDS, "ldl": ldl})
 
     # Act
-    check = _checks(run_quality(df.lazy(), make_contract(df, analysis_columns=analysis)))["ldl_missing"]
+    check = _checks(run_quality(df.lazy(), make_contract(df)))["ldl_missing"]
 
     # Assert
     assert check.status == status
@@ -206,7 +204,7 @@ def test_runQuality_missingTokens_onlyForNumericText(make_contract: Any, values:
     df = pl.DataFrame({"patient_id": IDS, "x": values})
 
     # Act
-    check = _checks(run_quality(df.lazy(), make_contract(df, analysis_columns=("x",))))["x_missing"]
+    check = _checks(run_quality(df.lazy(), make_contract(df)))["x_missing"]
 
     # Assert
     assert check.count == missing
@@ -242,26 +240,6 @@ def test_runQuality_tinyTableIdColumn_notScannedAsCategory(make_contract: Any) -
 
     # Assert
     assert "patient_id_spellings" not in _checks(report)
-
-
-@pytest.mark.parametrize(
-    ("metadata", "expected"),
-    [
-        pytest.param(
-            {"variable_mapping": {"outcome": "died", "time_variables": {"time_zero": "admit_date", "event": "dod"}}},
-            ("died", "admit_date", "dod"),
-            id="time_variables_dict_flattened",
-        ),
-        pytest.param({"variable_mapping": {"predictors": ["age", ["bmi"]]}}, ("age", "bmi"), id="nested_list"),
-        pytest.param({"variable_mapping": {"patient_id": "pid"}}, (), id="id_not_analysis"),
-        pytest.param({}, (), id="empty"),
-    ],
-)
-def test_analysisColumnsFromMetadata_nestedValues_flattened(
-    metadata: dict[str, Any], expected: tuple[str, ...]
-) -> None:
-    # Act / Assert
-    assert analysis_columns_from_metadata(metadata) == expected
 
 
 @pytest.mark.parametrize(

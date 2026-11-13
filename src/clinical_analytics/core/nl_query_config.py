@@ -225,6 +225,13 @@ OLLAMA_JSON_MODE: bool = _config["ollama_json_mode"]
 
 # Tier 3 confidence thresholds (Phase 0 success vs Phase 3 execution gate)
 TIER_3_MIN_CONFIDENCE: float = _config["tier_3_min_confidence"]
+
+# Shown when the language-model step raised: the question is refused with this, never answered
+# from a low-confidence DESCRIBE stub that looks like a normal parse.
+MODEL_STEP_FAILED_REASON: str = (
+    "The local language model couldn’t be used for this question, so it was not answered. "
+    "Ask again naming the columns you mean, or restart the app if it keeps happening."
+)
 TIER_3_EXECUTION_THRESHOLD: float = _config["tier_3_execution_threshold"]
 
 # ADR009: LLM Feature-Specific Timeout Configuration (Pre-Phase)

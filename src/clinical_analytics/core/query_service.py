@@ -33,7 +33,7 @@ from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisInte
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.log_redaction import error_fields
-from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
+from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD, MODEL_STEP_FAILED_REASON
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason, plan_values
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
@@ -436,6 +436,18 @@ class QueryService:
                 confidence=0.0,
                 run_key=None,
                 context=None,
+            )
+
+        if getattr(query_intent, "model_step_failed", False) is True:
+            # The language-model tier raised (logged there): say so, never run its stub.
+            return QueryResult(
+                plan=None,
+                issues=[{"message": MODEL_STEP_FAILED_REASON, "severity": "error"}],
+                result=None,
+                confidence=0.0,
+                run_key=None,
+                context=None,
+                failure_reason=MODEL_STEP_FAILED_REASON,
             )
 
         # Convert QueryIntent to QueryPlan
@@ -847,7 +859,8 @@ class QueryService:
         """
         disclosed = (analysis.get("implausible") or {}).get("column")
         notes = [n for n in findings.notes if not (disclosed and n.startswith(f"{short_name(disclosed)} has "))]
-        unit = _unit_of(analysis, plan, findings) if findings.keyed else None
+        # Without a patient key every n counts rows (the upload's row number is never a key).
+        unit = _unit_of(analysis, plan, findings)
         extra: dict[str, Any] = {"unit": unit} if unit else {}
         if notes:
             extra["data_notes"] = notes

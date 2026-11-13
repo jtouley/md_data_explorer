@@ -178,7 +178,7 @@ class TestEnsurePatientId:
         df = pl.DataFrame(
             {
                 "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous type
             }
         )
@@ -206,9 +206,10 @@ class TestEnsurePatientId:
 
         result_df, metadata = VariableTypeDetector.ensure_patient_id(df)
 
-        assert metadata["patient_id_source"] is None
-        # DataFrame should be returned unchanged (no patient_id added)
-        assert "patient_id" not in result_df.columns or result_df["patient_id"].is_null().all()
+        # No patient ID is made up: rows are numbered, and answers count rows
+        assert metadata["patient_id_source"] == "row_index"
+        assert "patient_id" not in result_df.columns
+        assert result_df["row_number"].to_list() == [1, 2, 3]
 
     def test_ensure_patient_id_with_pandas_input(self):
         """Test that pandas DataFrame is handled correctly."""
@@ -236,8 +237,8 @@ class TestCompositeIdentifierIntegration:
         # Dataset where no single column is >95% unique, but combination is 100% unique
         df = pl.DataFrame(
             {
-                "Race": ["Black", "Black", "White", "White", "Black", "Black"],  # 33% unique
-                "Gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "Race": ["Black", "Black", "White", "White", "Asian", "Asian"],  # 50% unique
+                "Gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "Age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous (not identifier type)
             }
         )
@@ -259,7 +260,7 @@ class TestCompositeIdentifierIntegration:
         df = pl.DataFrame(
             {
                 "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "age": [50, 51, 52, 53, 54, 55],  # All unique but continuous
             }
         )
@@ -322,7 +323,7 @@ class TestEnsurePatientIdLogging:
         df3 = pl.DataFrame(
             {
                 "race": ["A", "A", "B", "B", "C", "C"],  # 50% unique
-                "gender": ["M", "F", "M", "F", "M", "F"],  # 33% unique
+                "gender": ["M", "F", "X", "M", "F", "X"],  # 50% unique, 3 levels (categorical)
                 "age": [50, 51, 52, 53, 54, 55],  # 100% unique but continuous (not identifier type)
             }
         )
@@ -331,11 +332,10 @@ class TestEnsurePatientIdLogging:
         # Age might be detected as identifier, or composite might be used
         # Check for either path
         has_single = any("Found single-column identifier" in record.message for record in caplog.records)
-        has_composite = any("Creating composite identifier" in record.message for record in caplog.records)
-        has_success = any("Successfully created composite patient_id" in record.message for record in caplog.records)
+        has_composite = any("Creating composite row key" in record.message for record in caplog.records)
 
-        # Either single column or composite should be logged
-        assert has_single or (has_composite and has_success)
+        # age is a measurement, never an ID: the (race, gender) row key is used
+        assert has_composite and not has_single
 
 
 class TestPatientIdNeverFromMeasurements:

@@ -43,9 +43,9 @@ import {
 } from './sessionSidebar.js';
 import {
   normalizeUploadResponse,
-  readyHeadline,
   renderUploadArea,
-  uploadStatusText,
+  uploadIsUsable,
+  uploadResultText,
 } from './uploadPanel.js';
 import {
   dataCheckNeedsReview,
@@ -1766,14 +1766,16 @@ async function handleLoadSample() {
   try {
     const raw = await window.clinicalAPI.loadSampleDataset();
     const result = normalizeUploadResponse(raw);
-    if (result.status === 'ready' && result.upload_id) {
+    if (uploadIsUsable(result)) {
       setDatasetStatus(
-        uploadStatusText(
-          result.dataset_name ? readyHeadline(result.dataset_name) : 'The sample cohort is ready.',
-          dataCheckStatusNote(result.quality)
+        uploadResultText(
+          result,
+          result.dataset_name,
+          dataCheckStatusNote(result.quality),
+          'The sample cohort is ready.'
         ),
         'ok',
-        { showDetails: dataCheckNeedsReview(result.quality) }
+        { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
     } else {
@@ -1799,14 +1801,15 @@ async function handleFileUpload(file) {
     const raw = await window.clinicalAPI.uploadDataset(file);
     const result = normalizeUploadResponse(raw);
 
-    if (result.status === 'ready') {
+    if (uploadIsUsable(result)) {
       setDatasetStatus(
-        uploadStatusText(
-          readyHeadline(result.dataset_name || file.name),
+        uploadResultText(
+          result,
+          result.dataset_name || file.name,
           dataCheckStatusNote(result.quality)
         ),
         'ok',
-        { showDetails: dataCheckNeedsReview(result.quality) }
+        { showDetails: result.status === 'needs_review' || dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
     } else {

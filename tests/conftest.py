@@ -1884,3 +1884,85 @@ try:
 except ImportError:
     # Plugin not available, skip
     pass
+
+
+# ============================================================================
+# Synthetic long-format population estimates (aggregate rates, no patients)
+# ============================================================================
+
+
+@pytest.fixture
+def make_population_estimates():
+    """Factory: a synthetic long-format mortality-rate table shaped like a population-estimate
+    export (measure, location_name, FIPS, cause_name, sex incl. "Both", age, year, metric, mx,
+    upper, lower). Every row is one location x cause x sex x year cell, so nothing in it
+    identifies a patient. Values are generated, never fetched.
+
+    Options: ``causes`` (2: cause_name is binary, so no combination of columns is a key; 3 or
+    more: location x cause x sex x year is unique on every row), ``rounded`` (mx/upper/lower as
+    whole numbers), ``unique_upper`` (mx rounded, upper left unique to 6 decimals),
+    ``null_every`` (mx empty on every n-th row), ``inverted_every`` (upper below mx on every
+    n-th row).
+    """
+
+    def _make(
+        *,
+        locations: int = 4,
+        causes: int = 2,
+        years: int = 25,
+        rounded: bool = False,
+        unique_upper: bool = False,
+        null_every: int | None = None,
+        inverted_every: int | None = None,
+    ) -> pl.DataFrame:
+        cells = (
+            pl.DataFrame({"location_name": ["State"] + [f"County {i}" for i in range(1, locations)]})
+            .with_columns(FIPS=pl.int_range(0, pl.len()).cast(pl.Int64) + 8000)
+            .join(
+                pl.DataFrame({"cause_name": ["Cardiovascular diseases", "Neoplasms", "Injuries", "Diabetes"][:causes]}),
+                how="cross",
+            )
+            .join(pl.DataFrame({"sex": ["Male", "Female", "Both"]}), how="cross")
+            .join(pl.DataFrame({"year": list(range(1990, 1990 + years))}), how="cross")
+            .with_row_index("_i")
+        )
+        mx = (pl.col("_i").cast(pl.Float64) * 0.618034 % 1.0) * 300 + 5 + pl.col("_i").cast(pl.Float64) * 1e-6
+        frame = cells.with_columns(
+            measure=pl.lit("Deaths"),
+            age=pl.lit("Age-standardized"),
+            metric=pl.lit("Rate"),
+            mx=mx,
+            upper=mx * 1.1,
+            lower=mx * 0.9,
+        )
+        if rounded:
+            frame = frame.with_columns(pl.col("mx", "upper", "lower").round(0).cast(pl.Int64))
+        if unique_upper:
+            frame = frame.with_columns(pl.col("mx").round(0).cast(pl.Int64))
+        if inverted_every:
+            frame = frame.with_columns(
+                pl.when(pl.col("_i") % inverted_every == 0)
+                .then(pl.col("mx") * 0.5)
+                .otherwise(pl.col("upper"))
+                .alias("upper")
+            )
+        if null_every:
+            frame = frame.with_columns(
+                pl.when(pl.col("_i") % null_every == 0).then(None).otherwise(pl.col("mx")).alias("mx")
+            )
+        columns = [
+            "measure",
+            "location_name",
+            "FIPS",
+            "cause_name",
+            "sex",
+            "age",
+            "year",
+            "metric",
+            "mx",
+            "upper",
+            "lower",
+        ]
+        return frame.select(columns)
+
+    return _make

@@ -66,14 +66,14 @@ schema:
       maximum: 122
     quality:
     - id: age_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: sex
     physicalType: String
     physicalName: sex
@@ -84,14 +84,14 @@ schema:
     logicalType: string
     quality:
     - id: sex_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: treatment
     physicalType: String
     physicalName: treatment
@@ -102,14 +102,14 @@ schema:
     logicalType: string
     quality:
     - id: treatment_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: site
     physicalType: String
     physicalName: site
@@ -120,14 +120,14 @@ schema:
     logicalType: string
     quality:
     - id: site_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: ldl
     physicalType: Float64
     physicalName: ldl
@@ -145,14 +145,14 @@ schema:
       minimum: 0
     quality:
     - id: ldl_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: hdl
     physicalType: Float64
     physicalName: hdl
@@ -170,14 +170,14 @@ schema:
       minimum: 0
     quality:
     - id: hdl_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: bmi
     physicalType: Float64
     physicalName: bmi
@@ -196,14 +196,14 @@ schema:
       maximum: 90
     quality:
     - id: bmi_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: diabetes
     physicalType: Int64
     physicalName: diabetes
@@ -214,14 +214,14 @@ schema:
     logicalType: integer
     quality:
     - id: diabetes_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: statin_use
     physicalType: Int64
     physicalName: 'Statin use 1: Yes 2: No'
@@ -238,14 +238,14 @@ schema:
       label: 'No'
     quality:
     - id: statin_use_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
     - id: statin_use_invalid
       description: Values must be codes the codebook documents
       dimension: conformity
@@ -275,14 +275,14 @@ schema:
       label: Osteoporosis
     quality:
     - id: dexa_result_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
     - id: dexa_result_invalid
       description: Values must be codes the codebook documents
       dimension: conformity
@@ -305,14 +305,14 @@ schema:
     logicalType: integer
     quality:
     - id: outcome_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: followup_days
     physicalType: Int64
     physicalName: followup_days
@@ -325,14 +325,14 @@ schema:
     logicalType: integer
     quality:
     - id: followup_days_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   - name: event
     physicalType: Int64
     physicalName: event
@@ -343,14 +343,14 @@ schema:
     logicalType: integer
     quality:
     - id: event_missing
-      description: Share of empty values, listed; flagged only when every value is
-        empty or for analysis variables
+      description: Share of empty values; any empty value is flagged (answers on the
+        column leave those rows out)
       dimension: completeness
       severity: warning
       type: library
       unit: percent
       metric: nullValues
-      mustBeLessThan: 100.0
+      mustBeLessOrEqualTo: 0.0
   quality:
   - id: row_count_min
     description: Below the small-cell threshold every count is suppressed

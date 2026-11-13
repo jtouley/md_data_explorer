@@ -129,6 +129,7 @@ class QueryIntent:
     parsing_tier: str | None = None  # "pattern_match", "semantic_match", "llm_fallback"
     parsing_attempts: list[dict[str, Any]] = field(default_factory=list)  # What was tried
     failure_reason: str | None = None  # Why it failed
+    model_step_failed: bool = False  # the language-model tier raised: refuse, never run the stub
     suggestions: list[str] = field(default_factory=list)  # How to improve query
     # ADR009 Phase 1: LLM-generated follow-up questions
     follow_ups: list[str] = field(default_factory=list)  # Context-aware follow-up questions
@@ -672,6 +673,7 @@ class NLQueryEngine:
         # try to inherit intent from previous query
         if (
             intent
+            and not intent.model_step_failed
             and intent.confidence < 0.5
             and intent.intent_type == "DESCRIBE"
             and conversation_history
@@ -747,7 +749,10 @@ class NLQueryEngine:
                     parsing_attempts=parsing_attempts,
                 )
             else:
-                intent.failure_reason = "All parsing tiers failed"
+                # A failed model step keeps its own reason (the user is told the model failed)
+                intent.failure_reason = (
+                    intent.failure_reason if intent.model_step_failed else "All parsing tiers failed"
+                )
                 intent.suggestions = self._generate_suggestions(query)
                 intent.parsing_attempts = parsing_attempts
 
@@ -2534,16 +2539,25 @@ Fix the errors and return a corrected query intent as JSON.
             return intent
 
         except Exception as e:
-            # Blast shield: catch everything, log, return stub
-            # This is the only place where broad exception catching is correct
-            logger.warning(
-                "llm_parse_exception_fallback_to_stub",
+            # Blast shield: catch everything, log it with the traceback, and refuse visibly. This
+            # is the only place where broad exception catching is correct. The intent says the
+            # model step failed, so the question is refused with MODEL_STEP_FAILED_REASON and
+            # never answered from a stub that looks like a normal parse.
+            from clinical_analytics.core.nl_query_config import MODEL_STEP_FAILED_REASON
+
+            logger.exception(
+                "llm_parse_exception",
                 error_type=type(e).__name__,
-                error=str(e),
                 query_hash=_stable_hash(query),
                 query_len=len(query),
             )
-            return QueryIntent(intent_type="DESCRIBE", confidence=0.3, parsing_tier="llm_fallback")
+            return QueryIntent(
+                intent_type="DESCRIBE",
+                confidence=0.0,
+                parsing_tier="llm_fallback",
+                failure_reason=MODEL_STEP_FAILED_REASON,
+                model_step_failed=True,
+            )
 
     def _is_refinement_query(self, query: str) -> bool:
         """
