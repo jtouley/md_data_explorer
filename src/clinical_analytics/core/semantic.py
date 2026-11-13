@@ -254,8 +254,9 @@ def _analysis_columns(
 def _apply_duckdb_limits(raw: Any) -> None:
     """Set the configured memory limit and thread count on one layer's DuckDB connection.
 
-    The limits apply per layer: every SemanticLayer is its own in-memory DuckDB. Both values
-    were validated when nl_query_config was imported (a parsed number and unit, an int).
+    Every SemanticLayer is its own in-memory DuckDB, so the memory limit is this layer's share
+    of the total budget (budget / semantic_layer_cache_size). Both values were validated when
+    nl_query_config was imported (a parsed number and unit, an int).
     """
     raw.execute(f"SET memory_limit = '{nl_query_config.DUCKDB_MEMORY_LIMIT.sql}'")
     raw.execute(f"SET threads = {int(nl_query_config.DUCKDB_THREADS)}")

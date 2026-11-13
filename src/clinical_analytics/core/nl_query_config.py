@@ -78,8 +78,9 @@ class DuckdbMemoryLimit:
         return f"{self.amount:.6f}".rstrip("0").rstrip(".") + self.unit
 
 
-def parse_duckdb_memory_limit(value: object) -> DuckdbMemoryLimit:
-    """Parse ``"20%"``, ``"2GB"`` or ``"512 MiB"`` into a number and a unit.
+def parse_duckdb_memory_limit(value: object, name: str = "duckdb_memory_budget") -> DuckdbMemoryLimit:
+    """Parse ``"20%"``, ``"2GB"`` or ``"512 MiB"`` into a number and a unit. ``name`` is the
+    setting named in the error.
 
     Raises:
         ValueError: not a size or a percentage, zero or less (DuckDB accepts "0GB" and then
@@ -88,14 +89,14 @@ def parse_duckdb_memory_limit(value: object) -> DuckdbMemoryLimit:
     text = value.strip() if isinstance(value, str) else ""
     match = _MEMORY_LIMIT.fullmatch(text)
     if match is None:
-        raise ValueError(f"duckdb_memory_limit must be a size such as '2GB' or a share such as '20%', got {value!r}")
+        raise ValueError(f"{name} must be a size such as '2GB' or a share such as '20%', got {value!r}")
     amount = float(match.group(1))
     raw_unit = match.group(2)
     unit: MemoryUnit = "%" if raw_unit == "%" else _UNITS[raw_unit.upper()]
     if amount <= 0:
-        raise ValueError(f"duckdb_memory_limit must be above 0, got {value!r}")
+        raise ValueError(f"{name} must be above 0, got {value!r}")
     if unit == "%" and amount > 100:
-        raise ValueError(f"duckdb_memory_limit must be at most 100%, got {value!r}")
+        raise ValueError(f"{name} must be at most 100%, got {value!r}")
     return DuckdbMemoryLimit(amount, unit)
 
 
@@ -116,10 +117,84 @@ def resolve_duckdb_threads(value: object) -> int:
     return threads or max(1, (os.cpu_count() or 2) // 2)
 
 
-# DuckDB limits PER SEMANTIC LAYER, applied in SemanticLayer.__init__. Each layer is its own
-# in-memory DuckDB, so N open layers may use N times these. Validated here, at import, so a bad
-# setting stops the process at startup instead of failing the first question on each dataset.
-DUCKDB_MEMORY_LIMIT: DuckdbMemoryLimit = parse_duckdb_memory_limit(_config["duckdb_memory_limit"])
+_BYTES_PER_UNIT: dict[str, int] = {
+    "KB": 1000,
+    "MB": 1000**2,
+    "GB": 1000**3,
+    "TB": 1000**4,
+    "KiB": 1024,
+    "MiB": 1024**2,
+    "GiB": 1024**3,
+    "TiB": 1024**4,
+}
+# Below these a layer's DuckDB cannot hold a dataset's working set: every question would fail.
+MIN_LAYER_MEMORY_BYTES: int = 64 * 1024**2
+MIN_LAYER_MEMORY_PERCENT: float = 1.0
+
+
+def resolve_semantic_layer_cache_size(value: object) -> int:
+    """How many semantic layers (one in-memory DuckDB per dataset) the API keeps open: 1 or more.
+
+    Raises:
+        ValueError: not a whole number (a YAML boolean included), or below 1. There is no
+            "unbounded" value: the DuckDB memory budget is split across this many layers.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise ValueError(f"semantic_layer_cache_size must be a whole number of 1 or more, got {value!r}")
+    try:
+        size = int(value)
+    except ValueError:
+        raise ValueError(f"semantic_layer_cache_size must be a whole number of 1 or more, got {value!r}") from None
+    if size < 1:
+        raise ValueError(f"semantic_layer_cache_size must be 1 or more, got {size}")
+    return size
+
+
+def per_layer_memory_limit(budget: DuckdbMemoryLimit, cache_size: int) -> DuckdbMemoryLimit:
+    """Each open layer's DuckDB memory_limit: the total budget shared evenly by ``cache_size``
+    layers, so the layers the cache keeps open use at most the budget together.
+
+    Raises:
+        ValueError: the share is too small to answer questions (under 64 MiB, or under 1% of RAM).
+    """
+    limit = DuckdbMemoryLimit(budget.amount / cache_size, budget.unit)
+    too_small = (
+        limit.amount < MIN_LAYER_MEMORY_PERCENT
+        if limit.unit == "%"
+        else limit.amount * _BYTES_PER_UNIT[limit.unit] < MIN_LAYER_MEMORY_BYTES
+    )
+    if too_small:
+        raise ValueError(
+            f"duckdb_memory_budget {budget.sql} shared by {cache_size} open datasets leaves {limit.sql} each, "
+            "too little to answer questions: raise the budget or lower semantic_layer_cache_size"
+        )
+    return limit
+
+
+def _setting(key: str) -> object:
+    """A setting's raw value: its environment variable if set, else the YAML (or default) value.
+
+    Read raw so a bad environment value is rejected here, not replaced by the default.
+    """
+    env_value = os.environ.get(key.upper())
+    return env_value if env_value is not None else _config[key]
+
+
+if os.environ.get("DUCKDB_MEMORY_LIMIT") is not None or "duckdb_memory_limit" in _config:
+    # Was a per-layer limit; it is now a total. Ignoring it would silently change the memory used.
+    raise ValueError(
+        "duckdb_memory_limit (DUCKDB_MEMORY_LIMIT) was replaced by duckdb_memory_budget "
+        "(DUCKDB_MEMORY_BUDGET), a total shared by all open datasets: set that instead"
+    )
+
+# The API keeps at most this many semantic layers (datasets) open; see api/layer_cache.py.
+SEMANTIC_LAYER_CACHE_SIZE: int = resolve_semantic_layer_cache_size(_setting("semantic_layer_cache_size"))
+# DuckDB memory for ALL open layers together. Each layer is its own in-memory DuckDB, so each
+# gets DUCKDB_MEMORY_LIMIT = budget / cache size (applied in SemanticLayer.__init__). Threads
+# are per layer. Validated here, at import, so a bad setting stops the process at startup
+# instead of failing the first question on each dataset.
+DUCKDB_MEMORY_BUDGET: DuckdbMemoryLimit = parse_duckdb_memory_limit(_setting("duckdb_memory_budget"))
+DUCKDB_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE)
 DUCKDB_THREADS: int = resolve_duckdb_threads(_config["duckdb_threads"])
 
 # Performance/timeout settings

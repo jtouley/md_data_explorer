@@ -15,7 +15,9 @@ from clinical_analytics.core import nl_query_config, semantic
 from clinical_analytics.core.nl_query_config import (
     DuckdbMemoryLimit,
     parse_duckdb_memory_limit,
+    per_layer_memory_limit,
     resolve_duckdb_threads,
+    resolve_semantic_layer_cache_size,
 )
 
 
@@ -95,10 +97,94 @@ def test_resolveDuckdbThreads_badValue_raisesValueError(value: object) -> None:
         resolve_duckdb_threads(value)
 
 
+def _import_config_with(env_overrides: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    env = {key: value for key, value in os.environ.items() if not key.startswith("DUCKDB_")}
+    env.update(env_overrides)
+    return subprocess.run(
+        [sys.executable, "-c", "import clinical_analytics.core.nl_query_config"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("budget", "size", "expected"),
+    [
+        (DuckdbMemoryLimit(60.0, "%"), 4, DuckdbMemoryLimit(15.0, "%")),
+        (DuckdbMemoryLimit(50.0, "%"), 1, DuckdbMemoryLimit(50.0, "%")),
+        (DuckdbMemoryLimit(2.0, "GB"), 4, DuckdbMemoryLimit(0.5, "GB")),
+        (DuckdbMemoryLimit(100.0, "%"), 3, DuckdbMemoryLimit(100.0 / 3, "%")),
+    ],
+)
+def test_perLayerMemoryLimit_totalBudget_splitEvenlyAcrossTheCache(
+    budget: DuckdbMemoryLimit, size: int, expected: DuckdbMemoryLimit
+) -> None:
+    # Arrange / Act
+    limit = per_layer_memory_limit(budget, size)
+
+    # Assert
+    assert limit == expected
+    assert limit.amount * size == pytest.approx(budget.amount)
+
+
+@pytest.mark.parametrize(
+    "budget",
+    [DuckdbMemoryLimit(100.0, "MB"), DuckdbMemoryLimit(0.2, "GiB"), DuckdbMemoryLimit(1.0, "%")],
+)
+def test_perLayerMemoryLimit_shareTooSmallToAnswer_raisesValueError(budget: DuckdbMemoryLimit) -> None:
+    # Arrange / Act / Assert: under 64 MiB, or under 1% of RAM, per layer
+    with pytest.raises(ValueError, match="duckdb_memory_budget"):
+        per_layer_memory_limit(budget, 4)
+
+
+@pytest.mark.parametrize(("value", "expected"), [(1, 1), (4, 4), ("6", 6)])
+def test_resolveSemanticLayerCacheSize_positive_keptAsGiven(value: object, expected: int) -> None:
+    # Arrange / Act / Assert
+    assert resolve_semantic_layer_cache_size(value) == expected
+
+
+@pytest.mark.parametrize("value", [0, -1, True, False, "many", 2.5, None])
+def test_resolveSemanticLayerCacheSize_badValue_raisesValueError(value: object) -> None:
+    # Arrange / Act / Assert: 0 would mean "close every layer at once", never "unbounded"
+    with pytest.raises(ValueError, match="semantic_layer_cache_size"):
+        resolve_semantic_layer_cache_size(value)
+
+
+def test_configImport_defaults_perLayerLimitIsBudgetOverCacheSize() -> None:
+    # Arrange / Act
+    expected = per_layer_memory_limit(nl_query_config.DUCKDB_MEMORY_BUDGET, nl_query_config.SEMANTIC_LAYER_CACHE_SIZE)
+
+    # Assert
+    assert nl_query_config.DUCKDB_MEMORY_LIMIT == expected
+    assert nl_query_config.SEMANTIC_LAYER_CACHE_SIZE == 4
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"DUCKDB_MEMORY_BUDGET": "0GB"}, "duckdb_memory_budget"),
+        ({"DUCKDB_MEMORY_BUDGET": "500%"}, "duckdb_memory_budget"),
+        ({"DUCKDB_MEMORY_BUDGET": "100MB"}, "duckdb_memory_budget"),
+        ({"SEMANTIC_LAYER_CACHE_SIZE": "0"}, "semantic_layer_cache_size"),
+        # The old per-layer setting: silently ignoring it would change the memory used.
+        ({"DUCKDB_MEMORY_LIMIT": "20%"}, "duckdb_memory_budget"),
+    ],
+)
+def test_configImport_badBudgetOrCacheSize_failsAtStartup(env: dict[str, str], message: str) -> None:
+    # Arrange / Act
+    completed = _import_config_with(env)
+
+    # Assert
+    assert completed.returncode != 0
+    assert message in completed.stderr
+
+
 @pytest.mark.parametrize("value", ["0GB", "0%", "500%"])
 def test_configImport_badMemoryLimit_failsAtStartup(value: str) -> None:
     # Arrange
-    env = {**os.environ, "DUCKDB_MEMORY_LIMIT": value}
+    env = {**os.environ, "DUCKDB_MEMORY_BUDGET": value}
 
     # Act
     completed = subprocess.run(
@@ -111,7 +197,7 @@ def test_configImport_badMemoryLimit_failsAtStartup(value: str) -> None:
 
     # Assert
     assert completed.returncode != 0
-    assert "duckdb_memory_limit" in completed.stderr
+    assert "duckdb_memory_budget" in completed.stderr
 
 
 def test_semanticLayerInit_anyPath_limitsApplied(make_semantic_layer, monkeypatch) -> None:

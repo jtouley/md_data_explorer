@@ -170,3 +170,36 @@ def uploaded_test_dataset(tmp_path):
     )
 
     return upload_id, storage
+
+
+@pytest.fixture
+def fresh_layer_cache():
+    """The API's semantic-layer cache, empty and private to the test (4 layers, real builder).
+
+    Yields the LayerCache; pending background closes are drained and its thread stopped after.
+    """
+    from unittest.mock import patch
+
+    from clinical_analytics.api import dependencies
+    from clinical_analytics.api.layer_cache import LayerCache
+
+    cache = LayerCache(4, dependencies._build_semantic_layer)
+    with patch.object(dependencies, "_layer_cache", cache):
+        yield cache
+    cache.shutdown()
+
+
+@pytest.fixture
+def seed_layer_cache(fresh_layer_cache):
+    """Put a layer in the private cache as if a question had built it: seed(dataset_id, layer)."""
+
+    def _seed(dataset_id, layer):
+        build = fresh_layer_cache._build
+        fresh_layer_cache._build = lambda _id: layer
+        try:
+            fresh_layer_cache.lease(dataset_id).release()
+        finally:
+            fresh_layer_cache._build = build
+        return layer
+
+    return _seed

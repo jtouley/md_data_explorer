@@ -310,13 +310,12 @@ class TestDatasetUploadEndpoint:
         assert requested[0]["filename_len"] == len(filename)
         assert requested[0]["filename_ext"] == expected_ext
 
-    def test_datasets_upload_success_invalidatesCachedSemanticLayer(self, test_client):
+    def test_datasets_upload_success_invalidatesCachedSemanticLayer(
+        self, test_client, seed_layer_cache, fresh_layer_cache
+    ):
         """A save that reuses an upload_id must not keep serving the previous upload's layer."""
         # Arrange
-        from clinical_analytics.api import dependencies
-
-        stale_layer = MagicMock()
-        dependencies._semantic_layer_cache["upload_reused"] = stale_layer
+        seed_layer_cache("upload_reused", MagicMock())
 
         with patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls:
             mock_cls.return_value.save_upload.return_value = (True, "Upload successful", "upload_reused")
@@ -329,7 +328,7 @@ class TestDatasetUploadEndpoint:
 
         # Assert
         assert response.status_code == 200
-        assert "upload_reused" not in dependencies._semantic_layer_cache
+        assert fresh_layer_cache.cached_layer("upload_reused") is None
 
     def test_datasets_upload_xlsx_creates_dataset(self, test_client):
         """Uploading a valid Excel file creates a dataset."""
@@ -436,14 +435,14 @@ class TestDatasetSampleEndpoint:
         assert data["dataset_name"] == "Demo Sample"
         mock_storage.save_upload.assert_called_once()
 
-    def test_datasets_sample_reload_invalidatesCachedSemanticLayer(self, test_client, tmp_path):
+    def test_datasets_sample_reload_invalidatesCachedSemanticLayer(
+        self, test_client, tmp_path, seed_layer_cache, fresh_layer_cache
+    ):
         """Reloading the sample overwrites the same upload_id, so its cached layer must go."""
         # Arrange
-        from clinical_analytics.api import dependencies
-
         demo_csv = tmp_path / "sample_cohort.csv"
         demo_csv.write_text("patient_id,outcome\n1,0\n", encoding="utf-8")
-        dependencies._semantic_layer_cache["upload_sample_1"] = MagicMock()
+        seed_layer_cache("upload_sample_1", MagicMock())
 
         with (
             patch("clinical_analytics.api.routes.datasets.UserDatasetStorage") as mock_cls,
@@ -456,4 +455,4 @@ class TestDatasetSampleEndpoint:
 
         # Assert
         assert response.status_code == 200
-        assert "upload_sample_1" not in dependencies._semantic_layer_cache
+        assert fresh_layer_cache.cached_layer("upload_sample_1") is None
