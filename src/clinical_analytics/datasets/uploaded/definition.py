@@ -637,7 +637,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": inferred_schema.get("categorical_columns", []),
             },
             # Include variable_types metadata for column type detection
-            "variable_types": safe_get(self.metadata, "variable_types"),
+            "variable_types": safe_get(self.metadata, "variable_types") or {},
         }
         return config
 
@@ -740,7 +740,7 @@ class UploadedDataset(ClinicalDataset):
                 "categorical_variables": categorical_variables,
             },
             # Include variable_types metadata for column type detection
-            "variable_types": metadata_dict.get("variable_types"),
+            "variable_types": metadata_dict.get("variable_types") or {},
         }
         return config
 

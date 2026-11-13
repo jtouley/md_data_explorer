@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import polars as pl
 import pytest
 
 from clinical_analytics.datasets.uploaded.definition import UploadedDataset
@@ -572,3 +573,35 @@ class TestMaybeInitSemantic:
         assert dataset.semantic is not None
         assert dataset.semantic.config["init_params"]["source_path"] == str(Path(converted).resolve())
         assert Path(expected_absolute_path).is_file()  # the legacy CSV is left in place
+
+
+class TestConfigVariableTypesNeverNone:
+    """Metadata without variable_types gives {} in config: a None there crashed the LLM tier
+    (autocontext read config.get("variable_types", {}) and got None)."""
+
+    @pytest.mark.parametrize("variable_types", [None, "absent"], ids=["none", "absent"])
+    @pytest.mark.parametrize("builder", ["inferred_schema", "variable_mapping"])
+    def test_build_config_noVariableTypes_isEmptyDict(self, upload_storage, builder, variable_types):
+        # Arrange: metadata as written by an upload that recorded no variable types
+        metadata: dict = {
+            "upload_id": "test_upload_no_types",
+            "upload_timestamp": "2024-01-01T00:00:00",
+        }
+        if variable_types is None:
+            metadata["variable_types"] = None
+        pl.DataFrame({"patient_id": ["P001", "P002"], "age": [50, 60]}).write_csv(
+            upload_storage.raw_dir / "test_upload_no_types.csv"
+        )
+        dataset = UploadedDataset(upload_id="test_upload_no_types", storage=upload_storage, metadata=metadata)
+        dataset.load()
+
+        # Act
+        if builder == "inferred_schema":
+            config = dataset._build_config_from_inferred_schema({"column_mapping": {"patient_id": "patient_id"}})
+        else:
+            config = dataset._build_config_from_variable_mapping(
+                {"patient_id": "patient_id", "outcome": None, "time_variables": {}, "predictors": []}
+            )
+
+        # Assert
+        assert config["variable_types"] == {}
