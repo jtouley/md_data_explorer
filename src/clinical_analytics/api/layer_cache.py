@@ -10,6 +10,9 @@ Rules, each one a failure of the first bounded cache (PR #97):
   for a layer's DuckDB lock, so neither a re-upload (called on the event loop) nor a cold load
   of another dataset waits for a question that is running.
 - Only the dataset being built waits for its build; other datasets build in parallel.
+- What is built per layer for questions (the query core: parser, value caches) is the layer's
+  companion: it lives in the cache entry, so it goes when the layer is closed, and nothing
+  outside the cache keeps a closed layer reachable.
 - Eviction takes the least recently used layer that no request holds. When every layer is held
   the cache runs over capacity for a while rather than build a second copy of a dataset, and
   trims back as leases are released.
@@ -23,9 +26,9 @@ from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import wait as wait_futures
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import TracebackType
-from typing import Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 import duckdb
 import structlog
@@ -48,6 +51,7 @@ class Closable(Protocol):
 
 
 LayerT = TypeVar("LayerT", bound=Closable)
+CompanionT = TypeVar("CompanionT")
 
 
 @dataclass(eq=False)
@@ -58,6 +62,8 @@ class _Entry(Generic[LayerT]):
     leases: int = 0
     retired: bool = False  # evicted or invalidated: closed once leases reaches 0
     close_scheduled: bool = False
+    companion: Any = None  # built once per layer by LayerLease.companion, dropped on close
+    companion_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class LayerLease(Generic[LayerT]):
@@ -87,6 +93,27 @@ class LayerLease(Generic[LayerT]):
     @property
     def released(self) -> bool:
         return self._released
+
+    def companion(self, build: Callable[[LayerT], CompanionT]) -> CompanionT:
+        """The object built once for this layer (the query core), built now if it is not yet.
+
+        It belongs to the layer: every lease on the layer gets the same one, and the cache
+        drops it when it closes the layer. Blocking (the first call builds it, and a second
+        call on the same layer waits for that build): call it off the event loop. Only callers
+        on this layer ever wait here.
+
+        Raises:
+            LayerCacheError: the lease was released.
+        """
+        layer = self.layer
+        entry = self._entry
+        existing = entry.companion
+        if existing is not None:
+            return cast(CompanionT, existing)
+        with entry.companion_lock:
+            if entry.companion is None:
+                entry.companion = build(layer)
+            return cast(CompanionT, entry.companion)
 
     def release(self) -> None:
         """Give the layer back. A second call does nothing, so it never counts twice."""
@@ -265,4 +292,8 @@ class LayerCache(Generic[LayerT]):
             # The layer is out of the cache either way; a failed close leaks memory, not answers.
             logger.error("semantic_layer_close_failed", dataset_id=entry.dataset_id, **error_fields(e))
             return
+        finally:
+            # No lease is left, so nothing uses the companion: drop it with the layer.
+            with entry.companion_lock:
+                entry.companion = None
         logger.info("semantic_layer_closed", dataset_id=entry.dataset_id)

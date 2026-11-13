@@ -5,18 +5,39 @@ across questions on one layer, while every DuckDB call still runs with the lock 
 from __future__ import annotations
 
 import threading
+import time
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock
 
-from clinical_analytics.core.connection_lock import ConnectionLock
-from clinical_analytics.core.query_service import QueryService
+import polars as pl
+import pytest
+
+from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, MemoryDeclarationStore
+from clinical_analytics.core.query_service import MAX_PARSE_ATTEMPTS, STATE_KEPT_CHANGING_REASON, QueryService
 
 _WAIT_S = 5.0
+_FAST_S = 1.0
+
+
+def _held_by_caller(lock: Any) -> bool:
+    """Whether the calling thread holds ``lock``: another thread cannot take it at once."""
+    taken: list[bool] = []
+
+    def probe() -> None:
+        if lock.acquire(blocking=False):
+            taken.append(True)
+            lock.release()
+
+    other = threading.Thread(target=probe)
+    other.start()
+    other.join()
+    return not taken
 
 
 def _mock_layer_service() -> tuple[MagicMock, QueryService]:
     layer = MagicMock()
-    layer._con_lock = ConnectionLock()
+    layer._con_lock = threading.RLock()
     layer.state_generation = 0
     service = QueryService(layer)
     service.conversation_manager.normalize_query = lambda question: question.strip()  # type: ignore[method-assign]
@@ -51,14 +72,15 @@ def test_ask_twoQuestionsParsingAtOnce_parsesOverlap() -> None:
     assert overlapped == [True, True]
 
 
-def test_ask_levelsMergedWhileParsing_parsedAgainUnderTheLock() -> None:
+def test_ask_levelsMergedWhileParsing_parsedAgainWithoutTheLock() -> None:
     # Arrange: while this question parses unlocked, another question merges levels (the layer's
-    # state_generation moves). Its first parse read the old levels, so it must not be executed.
+    # state_generation moves). Its first parse read the old levels, so it must not be executed,
+    # and the second parse must not hold the lock either (an LLM parse can take seconds).
     layer, service = _mock_layer_service()
     parses_locked: list[bool] = []
 
     def parse_query(*_args: Any, **_kwargs: Any) -> None:
-        parses_locked.append(layer._con_lock.held_by_current_thread())
+        parses_locked.append(_held_by_caller(layer._con_lock))
         if len(parses_locked) == 1:
             layer.state_generation += 1
         return None
@@ -69,8 +91,55 @@ def test_ask_levelsMergedWhileParsing_parsedAgainUnderTheLock() -> None:
     result = service.ask("how many patients", dataset_id="ds")
 
     # Assert
-    assert parses_locked == [False, True]
+    assert parses_locked == [False, False]
     assert result.plan is None
+    assert result.failure_reason is None
+
+
+def test_ask_stateChangesDuringEveryParse_givesUpWithPlainRetryMessage() -> None:
+    # Arrange: another question changes the layer during every one of this question's parses.
+    layer, service = _mock_layer_service()
+    parses_locked: list[bool] = []
+
+    def parse_query(*_args: Any, **_kwargs: Any) -> None:
+        parses_locked.append(_held_by_caller(layer._con_lock))
+        layer.state_generation += 1
+        return None
+
+    service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
+
+    # Act
+    result = service.ask("how many patients", dataset_id="ds")
+
+    # Assert
+    assert parses_locked == [False] * MAX_PARSE_ATTEMPTS
+    assert result.requires_confirmation is False
+    assert result.failure_reason == STATE_KEPT_CHANGING_REASON
+    assert result.run_key is None
+
+
+def test_ask_declarationsStoredElsewhereWhileParsing_preparedAndParsedAgain() -> None:
+    # Arrange: another process stores a declaration (no generation on this layer moves).
+    layer, service = _mock_layer_service()
+    store = MemoryDeclarationStore()
+    service.declarations = store
+    parses = 0
+
+    def parse_query(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal parses
+        parses += 1
+        if parses == 1:
+            grain = GrainDeclaration(key="patient_id", rows=2, patients=1, dataset_version="v1")
+            store.save("ds", Declarations(grain=grain))
+        return None
+
+    service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
+
+    # Act
+    service.ask("how many patients", dataset_id="ds")
+
+    # Assert
+    assert parses == 2
 
 
 class _LockCheckedConnection:
@@ -83,7 +152,7 @@ class _LockCheckedConnection:
         object.__setattr__(self, "unlocked_uses", [])
 
     def __getattr__(self, name: str) -> Any:
-        if not self._lock.held_by_current_thread():
+        if not _held_by_caller(self._lock):
             self.unlocked_uses.append(name)
         return getattr(self._raw, name)
 
@@ -127,41 +196,119 @@ def test_ask_realLayer_everyDuckdbCallHoldsTheLayerLock(make_semantic_layer: Any
     assert checked.unlocked_uses == []
 
 
-def test_connectionLock_heldByCurrentThread_onlyForTheHolder() -> None:
-    # Arrange
-    lock = ConnectionLock()
-    seen_elsewhere: list[bool] = []
+# --- PR #99 review: cache hits never wait for another question's DuckDB step ----------------
+
+
+def _cached_reads(layer: Any, service: QueryService) -> dict[str, Callable[[], Any]]:
+    engine = service.nl_engine
+    columns = list(layer.get_base_view().columns)
+    return {
+        "distinct_values": lambda: engine._distinct_values("sex"),
+        "refresh_value_index": lambda: engine.refresh_value_index(columns),
+        "base_value_counts": lambda: layer.base_value_counts("sex"),
+        "base_missing_count": lambda: layer.base_missing_count("patient_id"),
+        "base_count": lambda: layer._base_count(None),
+        "base_count_by_key": lambda: layer._base_count("patient_id"),
+    }
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        "distinct_values",
+        "refresh_value_index",
+        "base_value_counts",
+        "base_missing_count",
+        "base_count",
+        "base_count_by_key",
+    ],
+)
+def test_cachedRead_whileAnotherQuestionHoldsTheLock_returnsWithoutWaiting(make_semantic_layer: Any, read: str) -> None:
+    # Arrange: the value is cached; then another question runs a long DuckDB step.
+    layer = make_semantic_layer(dataset_name="clinic", data=_clinic_frame_data())
+    service = QueryService(layer)
+    call = _cached_reads(layer, service)[read]
+    call()
+    held, release = threading.Event(), threading.Event()
+
+    def long_execution() -> None:
+        with layer._con_lock:
+            held.set()
+            release.wait(_WAIT_S)
+
+    other = threading.Thread(target=long_execution)
+    other.start()
+    assert held.wait(_WAIT_S)
 
     # Act
-    with lock, lock:
-        held_nested = lock.held_by_current_thread()
-        other = threading.Thread(target=lambda: seen_elsewhere.append(lock.held_by_current_thread()))
-        other.start()
+    started = time.monotonic()
+    try:
+        call()
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
         other.join()
-    held_after = lock.held_by_current_thread()
 
     # Assert
-    assert held_nested is True
-    assert seen_elsewhere == [False]
-    assert held_after is False
+    assert elapsed < _FAST_S
 
 
-def test_connectionLock_releasedByAnotherThread_raises() -> None:
-    # Arrange
-    lock = ConnectionLock()
-    errors: list[type[BaseException]] = []
+# --- PR #99 review: a confirmation stored while a question parses ----------------------------
 
-    def release_elsewhere() -> None:
-        try:
-            lock.release()
-        except RuntimeError as e:
-            errors.append(type(e))
+
+def _visit_rows() -> pl.DataFrame:
+    """80 visit rows of 60 patients; sex is written four ways (three of them one category)."""
+    ids = [f"P{i:03d}" for i in range(60)] + [f"P{i:03d}" for i in range(20)]
+    sexes = ["Male", "male", "M", "Female"]
+    return pl.DataFrame(
+        {
+            "patient_id": ids,
+            "age": [30 + (int(pid[1:]) * 7) % 50 for pid in ids],
+            "sex": [sexes[int(pid[1:]) % 4] for pid in ids],
+        }
+    )
+
+
+def _shown(result: Any) -> tuple[bool, str | None, str | None]:
+    return (result.requires_confirmation, result.failure_reason, result.claim)
+
+
+def test_ask_grainConfirmedWhileParsing_answeredWithTheConfirmationNotHeldAgain(make_semantic_layer: Any) -> None:
+    # Arrange: A is prepared before B confirms that rows are visits, and checked after.
+    layer = make_semantic_layer(dataset_name="clinic", data=_visit_rows())
+    service = QueryService(layer, declarations=MemoryDeclarationStore())
+    held = service.ask("how many patients", dataset_id="clinic", dataset_version="v1")
+    parse = service.nl_engine.parse_query
+    a_parsing, b_confirmed = threading.Event(), threading.Event()
+    answers: dict[str, Any] = {}
+
+    def parse_query(*args: Any, **kwargs: Any) -> Any:
+        if threading.current_thread().name == "A" and not b_confirmed.is_set():
+            a_parsing.set()
+            assert b_confirmed.wait(_WAIT_S)
+        return parse(*args, **kwargs)
+
+    service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
+
+    def ask_a() -> None:
+        answers["A"] = service.ask("how many patients over 50", dataset_id="clinic", dataset_version="v1")
+
+    asker = threading.Thread(target=ask_a, name="A")
 
     # Act
-    with lock:
-        other = threading.Thread(target=release_elsewhere)
-        other.start()
-        other.join()
+    asker.start()
+    assert a_parsing.wait(_WAIT_S)
+    confirmed = service.ask(
+        "how many patients", dataset_id="clinic", dataset_version="v1", confirmed=True, confirm_plan_hash=held.plan_hash
+    )
+    b_confirmed.set()
+    asker.join(_WAIT_S)
+    later = service.ask("how many patients", dataset_id="clinic", dataset_version="v1")
 
-    # Assert
-    assert errors == [RuntimeError]
+    # Assert: A counted patients, as it would have alone after the confirmation; the shared
+    # layer still counts patients for the next question.
+    assert held.requires_confirmation is True
+    assert _shown(confirmed) == (False, None, "Total count: 60 patients.")
+    assert _shown(answers["A"]) == (False, None, "Total count: 34 patients.")
+    assert _shown(later) == (False, None, "Total count: 60 patients.")
+    assert layer.count_entity_key == "patient_id"

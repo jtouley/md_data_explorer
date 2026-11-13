@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import duckdb
 import ibis
@@ -152,13 +154,81 @@ def test_resolveSemanticLayerCacheSize_badValue_raisesValueError(value: object) 
         resolve_semantic_layer_cache_size(value)
 
 
-def test_configImport_defaults_perLayerLimitIsBudgetOverCacheSize() -> None:
+def test_configImport_defaults_cachedLayerLimitIsBudgetOverCacheSize() -> None:
     # Arrange / Act
     expected = per_layer_memory_limit(nl_query_config.DUCKDB_MEMORY_BUDGET, nl_query_config.SEMANTIC_LAYER_CACHE_SIZE)
 
-    # Assert
-    assert nl_query_config.DUCKDB_MEMORY_LIMIT == expected
+    # Assert: the API's cached layers share the budget; every other layer keeps 20%.
+    assert nl_query_config.CACHED_LAYER_MEMORY_LIMIT == expected
+    assert nl_query_config.DUCKDB_MEMORY_LIMIT == DuckdbMemoryLimit(20.0, "%")
     assert nl_query_config.SEMANTIC_LAYER_CACHE_SIZE == 4
+
+
+def _import_config_with_yaml(tmp_path: Path, yaml_text: str) -> subprocess.CompletedProcess[str]:
+    """Import nl_query_config in a fresh process whose nl_query.yaml is ``yaml_text``."""
+    config = tmp_path / "nl_query.yaml"
+    config.write_text(yaml_text)
+    script = (
+        "from pathlib import Path\n"
+        "import clinical_analytics.core.config_loader as loader\n"
+        "load = loader.load_nl_query_config\n"
+        f"loader.load_nl_query_config = lambda config_path=None: load(Path({str(config)!r}))\n"
+        "import clinical_analytics.core.nl_query_config\n"
+    )
+    env = {key: value for key, value in os.environ.items() if not key.startswith(("DUCKDB_", "SEMANTIC_LAYER_"))}
+    return subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, check=False)
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "message"),
+    [
+        ('semantic_layer_cache_size: "four"\n', "semantic_layer_cache_size"),
+        ("semantic_layer_cache_size: 2.5\n", "semantic_layer_cache_size"),
+        ("semantic_layer_cache_size: true\n", "semantic_layer_cache_size"),
+        ("duckdb_memory_budget: 0.6\n", "duckdb_memory_budget"),
+        ('duckdb_memory_budget: "lots"\n', "duckdb_memory_budget"),
+        ("duckdb_threads: 1.5\n", "duckdb_threads"),
+    ],
+)
+def test_configImport_badYamlBudgetOrCacheSize_failsAtStartup(tmp_path: Path, yaml_text: str, message: str) -> None:
+    # Arrange / Act: a YAML value is validated as written, never coerced to the default's type
+    completed = _import_config_with_yaml(tmp_path, yaml_text)
+
+    # Assert
+    assert completed.returncode != 0
+    assert message in completed.stderr
+
+
+def test_configImport_goodYamlCacheSize_used(tmp_path: Path) -> None:
+    # Arrange / Act
+    completed = _import_config_with_yaml(tmp_path, 'semantic_layer_cache_size: "2"\nduckdb_memory_budget: "40%"\n')
+
+    # Assert
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_cachedLayer_builtByTheApi_getsItsShareOthersKeepStandalone(make_semantic_layer, monkeypatch) -> None:
+    # Arrange
+    from clinical_analytics.api import dependencies
+
+    monkeypatch.setattr(nl_query_config, "DUCKDB_MEMORY_LIMIT", DuckdbMemoryLimit(2.0, "GiB"))
+    monkeypatch.setattr(nl_query_config, "CACHED_LAYER_MEMORY_LIMIT", DuckdbMemoryLimit(1.0, "GiB"))
+    probe = make_semantic_layer(workspace_name="probe")
+    cached = make_semantic_layer(workspace_name="cached")
+    dataset = MagicMock()
+    dataset.get_semantic_layer.return_value = cached
+
+    # Act
+    with patch.object(dependencies.UploadedDatasetFactory, "create_dataset", return_value=dataset):
+        built = dependencies._build_semantic_layer("ds")
+
+    # Assert
+    def memory(layer: semantic.SemanticLayer) -> str:
+        return str(layer.con.con.execute("SELECT current_setting('memory_limit')").fetchone()[0])
+
+    assert built is cached
+    assert memory(cached) == "1.0 GiB"
+    assert memory(probe) == "2.0 GiB"
 
 
 @pytest.mark.parametrize(

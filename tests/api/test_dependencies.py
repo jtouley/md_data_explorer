@@ -143,26 +143,6 @@ class TestLeaseSemanticLayerConcurrency:
         assert all(layer is results[0] for layer in results)
 
 
-class TestLeasedSemanticLayerDependency:
-    def test_unit_routeDependency_releasesLeaseWhenRequestEnds(self, seed_layer_cache, fresh_layer_cache):
-        # Arrange
-        layer = seed_layer_cache("dataset_1", MagicMock())
-        dependency = dependencies.leased_semantic_layer("dataset_1")
-
-        # Act
-        served = next(dependency)
-        dependencies.invalidate_semantic_layer_cache("dataset_1")
-        fresh_layer_cache.wait_for_closes()
-        closed_during_request = layer.close.called
-        dependency.close()
-        fresh_layer_cache.wait_for_closes()
-
-        # Assert
-        assert served is layer
-        assert closed_during_request is False
-        layer.close.assert_called_once()
-
-
 class TestInvalidateSemanticLayerCache:
     """Tests for invalidate_semantic_layer_cache."""
 

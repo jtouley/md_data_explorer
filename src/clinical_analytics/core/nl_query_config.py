@@ -174,7 +174,8 @@ def per_layer_memory_limit(budget: DuckdbMemoryLimit, cache_size: int) -> Duckdb
 def _setting(key: str) -> object:
     """A setting's raw value: its environment variable if set, else the YAML (or default) value.
 
-    Read raw so a bad environment value is rejected here, not replaced by the default.
+    Both are raw (config_loader.RAW_VALIDATED_KEYS skips the YAML coercion), so a bad value is
+    rejected here, never replaced by the default or truncated ("four", 2.5).
     """
     env_value = os.environ.get(key.upper())
     return env_value if env_value is not None else _config[key]
@@ -189,13 +190,16 @@ if os.environ.get("DUCKDB_MEMORY_LIMIT") is not None or "duckdb_memory_limit" in
 
 # The API keeps at most this many semantic layers (datasets) open; see api/layer_cache.py.
 SEMANTIC_LAYER_CACHE_SIZE: int = resolve_semantic_layer_cache_size(_setting("semantic_layer_cache_size"))
-# DuckDB memory for ALL open layers together. Each layer is its own in-memory DuckDB, so each
-# gets DUCKDB_MEMORY_LIMIT = budget / cache size (applied in SemanticLayer.__init__). Threads
-# are per layer. Validated here, at import, so a bad setting stops the process at startup
-# instead of failing the first question on each dataset.
+# DuckDB memory for ALL the layers the API's cache keeps open together. Each layer is its own
+# in-memory DuckDB, so each cached layer gets CACHED_LAYER_MEMORY_LIMIT = budget / cache size
+# (set by the API when its cache builds the layer). Threads are per layer. Validated here, at
+# import, so a bad setting stops the process at startup instead of failing the first question.
 DUCKDB_MEMORY_BUDGET: DuckdbMemoryLimit = parse_duckdb_memory_limit(_setting("duckdb_memory_budget"))
-DUCKDB_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE)
-DUCKDB_THREADS: int = resolve_duckdb_threads(_config["duckdb_threads"])
+CACHED_LAYER_MEMORY_LIMIT: DuckdbMemoryLimit = per_layer_memory_limit(DUCKDB_MEMORY_BUDGET, SEMANTIC_LAYER_CACHE_SIZE)
+# Every other layer (an upload's probe, the Streamlit app, the CLI, evals) keeps the standalone
+# per-layer limit it had before the budget existed; applied in SemanticLayer.__init__.
+DUCKDB_MEMORY_LIMIT: DuckdbMemoryLimit = DuckdbMemoryLimit(20.0, "%")
+DUCKDB_THREADS: int = resolve_duckdb_threads(_setting("duckdb_threads"))
 
 # Performance/timeout settings
 TIER_TIMEOUT_SECONDS: float = _config["tier_timeout_seconds"]

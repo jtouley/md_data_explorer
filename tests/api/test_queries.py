@@ -365,7 +365,7 @@ class TestDataFrameEncoder:
 
 
 class TestQueryServiceCache:
-    """lease_query_service keeps one service per dataset and rebinds it to newer layers."""
+    """lease_query_service keeps one service per dataset; each layer gets its own core, once."""
 
     @pytest.fixture(autouse=True)
     def _clear_query_services(self):
@@ -378,7 +378,7 @@ class TestQueryServiceCache:
     @pytest.mark.parametrize(
         ("layer_changes", "expected_cores"),
         [(False, 1), (True, 2)],
-        ids=["same_layer_reuses_core", "rebuilt_layer_rebinds_core"],
+        ids=["same_layer_reuses_core", "rebuilt_layer_gets_new_core"],
     )
     def test_leaseQueryService_layerIdentity_sameServiceCoreRebuiltOnlyWhenLayerChanges(
         self, layer_changes, expected_cores, seed_layer_cache, fresh_layer_cache
@@ -389,42 +389,45 @@ class TestQueryServiceCache:
 
         first_layer, second_layer = MagicMock(), MagicMock()
         seed_layer_cache("dataset_1", first_layer)
+        make = MagicMock(side_effect=lambda layer: MagicMock(semantic_layer=layer))
 
         # Act
-        with patch.object(
-            AsyncQueryService, "_make_core", side_effect=lambda layer: MagicMock(semantic_layer=layer)
-        ) as make:
-            first, first_lease = queries.lease_query_service("dataset_1")
-            first_lease.release()
-            if layer_changes:
-                fresh_layer_cache.invalidate("dataset_1")
-                seed_layer_cache("dataset_1", second_layer)
-            second, second_lease = queries.lease_query_service("dataset_1")
-            second_lease.release()
+        first, first_lease = queries.lease_query_service("dataset_1")
+        first_core = first_lease.companion(make)
+        first_lease.release()
+        if layer_changes:
+            fresh_layer_cache.invalidate("dataset_1")
+            seed_layer_cache("dataset_1", second_layer)
+        second, second_lease = queries.lease_query_service("dataset_1")
+        second_core = second_lease.companion(make)
+        second_lease.release()
 
         # Assert: one service (results, events, history kept); a new core only for a new layer.
+        assert isinstance(first, AsyncQueryService)
         assert first is second
         assert make.call_count == expected_cores
-        assert second.semantic_layer is (second_layer if layer_changes else first_layer)
+        assert second_core.semantic_layer is (second_layer if layer_changes else first_layer)
+        assert (first_core is second_core) is not layer_changes
 
-    def test_leaseQueryService_olderLeaseAfterRebind_neverRebindsBack(self, seed_layer_cache, fresh_layer_cache):
-        # Arrange: an old lease is still held when the dataset is rebuilt and the service rebinds.
+    def test_leaseQueryService_olderLeaseAfterRebuild_runsOnItsOwnLayer(self, seed_layer_cache, fresh_layer_cache):
+        # Arrange: an old lease is still held when the dataset is rebuilt.
         from clinical_analytics.api.routes import queries
-        from clinical_analytics.api.services.query_service import AsyncQueryService
 
         old_layer, new_layer = MagicMock(), MagicMock()
         seed_layer_cache("dataset_1", old_layer)
-        with patch.object(AsyncQueryService, "_make_core", side_effect=lambda layer: MagicMock(semantic_layer=layer)):
-            service, old_lease = queries.lease_query_service("dataset_1")
-            fresh_layer_cache.invalidate("dataset_1")
-            seed_layer_cache("dataset_1", new_layer)
-            _service, new_lease = queries.lease_query_service("dataset_1")
+        make = MagicMock(side_effect=lambda layer: MagicMock(semantic_layer=layer))
+        service, old_lease = queries.lease_query_service("dataset_1")
+        fresh_layer_cache.invalidate("dataset_1")
+        seed_layer_cache("dataset_1", new_layer)
+        same_service, new_lease = queries.lease_query_service("dataset_1")
 
-            # Act
-            rebound_to_old = service.rebind(old_lease)
+        # Act
+        new_core = new_lease.companion(make)
+        old_core = old_lease.companion(make)
 
-        # Assert
-        assert rebound_to_old is False
-        assert service.semantic_layer is new_layer
+        # Assert: each lease reads the layer it holds; neither moves the other.
+        assert service is same_service
+        assert old_core.semantic_layer is old_layer
+        assert new_core.semantic_layer is new_layer
         old_lease.release()
         new_lease.release()

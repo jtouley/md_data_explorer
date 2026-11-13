@@ -946,7 +946,7 @@ class TestMergedLevelsOnParsedPlan:
 
 
 class TestOneLookupPerAsk:
-    def test_ask_afterConfirmation_declarationsLoadedOnce(self, make_semantic_layer: Any) -> None:
+    def test_ask_afterConfirmation_declarationsLoadedToPrepareAndToCheck(self, make_semantic_layer: Any) -> None:
         # Arrange
         class CountingStore(MemoryDeclarationStore):
             loads = 0
@@ -969,8 +969,9 @@ class TestOneLookupPerAsk:
         # Act
         _ask(service, plan)
 
-        # Assert
-        assert CountingStore.loads == 1
+        # Assert: read once to prepare, once more under the lock before the checks run (another
+        # question or process may have stored a confirmation while this one parsed).
+        assert CountingStore.loads == 2
 
     def test_baseValueCounts_cachedUntilLevelsRemapped(self, make_semantic_layer: Any) -> None:
         # Arrange

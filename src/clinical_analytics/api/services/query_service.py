@@ -11,11 +11,11 @@ import uuid
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 
-from clinical_analytics.api.layer_cache import LayerLease
+from clinical_analytics.api.layer_cache import LayerCacheError, LayerLease
 from clinical_analytics.api.models.schemas import SSEEvent
 from clinical_analytics.contracts.declarations import FileDeclarationStore
 from clinical_analytics.core.data_home import uploads_dir
@@ -40,17 +40,45 @@ UNEXPECTED_FAILURE_MESSAGE = (
 MAX_CONVERSATION_TURNS = 20
 
 
-def active_dataset_version(dataset_id: str) -> str | None:
-    """The dataset's active version from its upload metadata, so answers read that version's
-    quality report; None for a dataset without one (built-in samples)."""
-    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
-
-    try:
-        version = (UserDatasetStorage().get_upload_metadata(dataset_id) or {}).get("dataset_version")
-    except (OSError, ValueError) as e:
-        logger.warning("dataset_version_unreadable", dataset_id=dataset_id, **error_fields(e))
-        return None
+def leased_dataset_version(lease: LayerLease[SemanticLayer]) -> str | None:
+    """The upload version whose rows the leased layer holds, read once when the question is
+    submitted. Never read from the metadata later: a re-upload between the lease and the
+    answer would label the old layer's answer, and match its declarations, with the new
+    version. None for a dataset without one (built-in samples)."""
+    version = getattr(lease.layer, "loaded_version", None)
     return version if isinstance(version, str) and version else None
+
+
+class _LeaseHandoff:
+    """Who releases a question's lease, so it is held exactly as long as the layer is used.
+
+    The worker thread claims it when it starts and releases it in its ``finally``: cancelling
+    the awaiting task does not stop that thread, so a release on the event loop would let the
+    cache close the layer under it. If the thread never starts (the task was cancelled before
+    its first step, or the executor dropped the call), ``release_unclaimed`` releases it, and a
+    thread that starts after that refuses to touch the layer.
+    """
+
+    def __init__(self, lease: LayerLease[SemanticLayer]) -> None:
+        self.lease = lease
+        self._lock = threading.Lock()
+        self._state: Literal["waiting", "thread", "released"] = "waiting"
+
+    def claim(self) -> bool:
+        """Called first in the worker thread: True when that thread now owns the lease."""
+        with self._lock:
+            if self._state != "waiting":
+                return False
+            self._state = "thread"
+            return True
+
+    def release_unclaimed(self) -> None:
+        """Release the lease unless a worker thread owns it (that thread releases it). Idempotent."""
+        with self._lock:
+            if self._state != "waiting":
+                return
+            self._state = "released"
+        self.lease.release()
 
 
 def context_to_turn(context: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -99,10 +127,6 @@ class AsyncQueryResult:
     completed_at: datetime | None = None
 
 
-class StaleLayerLeaseError(RuntimeError):
-    """A question's lease is not on the layer its service is bound to (a newer one replaced it)."""
-
-
 class AsyncQueryService:
     """
     Async wrapper around core QueryService for API usage.
@@ -110,21 +134,14 @@ class AsyncQueryService:
     Supports async execution with SSE streaming of progress events.
     """
 
-    def __init__(self, semantic_layer: SemanticLayer, generation: int = 0) -> None:
-        """
-        Initialize async query service with semantic layer.
+    def __init__(self) -> None:
+        """A dataset's query state: results, SSE events and conversation history.
 
-        Args:
-            semantic_layer: SemanticLayer instance for query parsing and execution
-            generation: The layer's lease generation (api/layer_cache.py); rebind() moves the
-                service only to a newer one
+        It holds no layer and no core: each question runs on the core of the layer it leased
+        (``LayerLease.companion``), so a layer the cache closed is not kept reachable from here,
+        and a rebuilt layer gets its core lazily, on its first lease.
         """
-        self._bind_lock = threading.Lock()
-        self._semantic_layer = semantic_layer
-        self._generation = generation
-        self._core = self._make_core(semantic_layer)
         self._tasks: set[asyncio.Task[None]] = set()
-        # The state below outlives any one layer: rebind() swaps the core, never these.
         self._queries: dict[str, AsyncQueryResult] = {}
         self._events: dict[str, list[SSEEvent]] = {}
         self._history: dict[str, list[dict[str, Any]]] = {}
@@ -156,11 +173,6 @@ class AsyncQueryService:
         )
         del turns[:-MAX_CONVERSATION_TURNS]
 
-    @property
-    def semantic_layer(self) -> SemanticLayer:
-        """Semantic layer this service executes against."""
-        return self._semantic_layer
-
     def _make_core(self, semantic_layer: SemanticLayer) -> CoreQueryService:
         """A core service for one layer. Its parser caches belong to that layer, so a rebuilt
         layer gets a new core. Confirmed grain and category spellings persist next to the
@@ -168,34 +180,23 @@ class AsyncQueryService:
         data_dir = uploads_dir().parent
         return CoreQueryService(semantic_layer, declarations=FileDeclarationStore(data_dir), data_dir=data_dir)
 
-    def rebind(self, lease: LayerLease[SemanticLayer]) -> bool:
-        """Run new questions on the leased layer if it is newer than the bound one (the dataset
-        was evicted and rebuilt, or uploaded again). Results, SSE events and conversation
-        history stay; a question already running keeps the core it started on.
-
-        Returns:
-            True when this service now runs on the leased layer; False when the lease is older
-            than the bound layer (lease the dataset again).
-        """
-        with self._bind_lock:
-            if lease.generation > self._generation:
-                self._core = self._make_core(lease.layer)
-                self._semantic_layer = lease.layer
-                self._generation = lease.generation
-                logger.info("query_service_rebound", dataset_id=lease.dataset_id, generation=lease.generation)
-            return self._semantic_layer is lease.layer
-
-    def _core_for(self, lease: LayerLease[SemanticLayer] | None) -> CoreQueryService:
-        """The core a question runs on: the bound one, which must be the leased layer's.
+    def _ask_on_lease(
+        self, handoff: _LeaseHandoff, *, question: str, dataset_id: str, **kwargs: Any
+    ) -> CoreQueryResult:
+        """``ask`` on the leased layer's core, in the worker thread, which owns the lease from
+        its first step to its ``finally``. The core is built here on a layer's first question,
+        never on the event loop.
 
         Raises:
-            StaleLayerLeaseError: the service was rebound to a newer layer after this lease
-                was taken; the caller leases again.
+            LayerCacheError: the question had already ended (cancelled) before this thread ran.
         """
-        with self._bind_lock:
-            if lease is not None and lease.layer is not self._semantic_layer:
-                raise StaleLayerLeaseError(f"lease on '{lease.dataset_id}' is older than the bound layer")
-            return self._core
+        if not handoff.claim():
+            raise LayerCacheError(f"question on '{handoff.lease.dataset_id}' ended before it started")
+        try:
+            core: CoreQueryService = handoff.lease.companion(self._make_core)
+            return core.ask(question=question, dataset_id=dataset_id, **kwargs)
+        finally:
+            handoff.lease.release()
 
     def _generate_query_id(self) -> str:
         """Generate unique query ID."""
@@ -205,23 +206,26 @@ class AsyncQueryService:
         self,
         query: str,
         dataset_id: str,
+        *,
+        lease: LayerLease[SemanticLayer],
         session_id: str | None = None,
         context: Mapping[str, Any] | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
         confirm_plan_hash: str | None = None,
-        lease: LayerLease[SemanticLayer] | None = None,
     ) -> str:
         """
         Submit query for async execution, returns query_id immediately.
 
-        ``lease`` (the API always passes one) is the question's hold on its layer. This method
-        owns it from here: the background task releases it when the question ends, and it is
-        released at once if the question is rejected before it starts.
+        ``lease`` is the question's hold on its layer (required: there is no unleased path, so
+        no question can run on a closed layer). This method owns it from here: the worker
+        thread releases it when it is done with the layer, and it is released here if the
+        question ends before that thread starts (rejected, or its task cancelled).
 
         Args:
             query: Natural language query text
             dataset_id: Dataset to query
+            lease: The question's lease on the dataset's layer
             session_id: Optional session ID for conversation context
             confirmed: Release a held plan (only with confirm_plan_hash of that exact plan)
             confirm_plan_hash: Hash of the reviewed plan, from the hold
@@ -231,47 +235,48 @@ class AsyncQueryService:
 
         Raises:
             ValueError: If query is empty
-            StaleLayerLeaseError: the lease is older than the bound layer (lease again)
         """
+        handoff = _LeaseHandoff(lease)
         try:
             # Validate input
             if not query or not query.strip():
                 raise ValueError("Query cannot be empty")
-            core = self._core_for(lease)
-        except BaseException:
-            if lease is not None:
-                lease.release()
-            raise
+            dataset_version = leased_dataset_version(lease)
 
-        query_id = self._generate_query_id()
+            query_id = self._generate_query_id()
 
-        logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id, confirmed=confirmed)
+            logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id, confirmed=confirmed)
 
-        # Initialize query state
-        self._queries[query_id] = AsyncQueryResult(
-            query_id=query_id,
-            status="pending",
-        )
-        self._events[query_id] = []
-
-        # Start query execution in background; it releases the lease when the question ends.
-        # The task is kept referenced until done: the loop holds tasks only weakly.
-        task = asyncio.create_task(
-            self._execute_query_background(
-                query_id,
-                query,
-                dataset_id,
-                session_id,
-                context,
-                confirmed,
-                confirm_plan_line,
-                confirm_plan_hash,
-                core=core,
-                lease=lease,
+            # Initialize query state
+            self._queries[query_id] = AsyncQueryResult(
+                query_id=query_id,
+                status="pending",
             )
-        )
+            self._events[query_id] = []
+
+            # Start query execution in background. The task is kept referenced until done: the
+            # loop holds tasks only weakly. A task cancelled before its thread claimed the lease
+            # releases it in the done callback.
+            task = asyncio.create_task(
+                self._execute_query_background(
+                    query_id,
+                    query,
+                    dataset_id,
+                    session_id,
+                    context,
+                    confirmed,
+                    confirm_plan_line,
+                    confirm_plan_hash,
+                    handoff=handoff,
+                    dataset_version=dataset_version,
+                )
+            )
+        except BaseException:
+            handoff.release_unclaimed()
+            raise
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(lambda _task: handoff.release_unclaimed())
 
         return query_id
 
@@ -361,44 +366,34 @@ class AsyncQueryService:
         )
         logger.info("query_completed", query_id=query_id, intent_type=intent_type)
 
-    def _ask_active_version(
-        self, *, core: CoreQueryService, question: str, dataset_id: str, **kwargs: Any
-    ) -> CoreQueryResult:
-        """``ask`` on the dataset's active version, read here in the worker thread: the metadata
-        read is disk I/O and must never block the event loop."""
-        return core.ask(
-            question=question, dataset_id=dataset_id, dataset_version=active_dataset_version(dataset_id), **kwargs
-        )
-
     async def _execute_query_background(
         self,
         query_id: str,
         query: str,
         dataset_id: str,
-        session_id: str | None = None,
-        context: Mapping[str, Any] | None = None,
-        confirmed: bool = False,
-        confirm_plan_line: str | None = None,
-        confirm_plan_hash: str | None = None,
-        core: CoreQueryService | None = None,
-        lease: LayerLease[SemanticLayer] | None = None,
+        session_id: str | None,
+        context: Mapping[str, Any] | None,
+        confirmed: bool,
+        confirm_plan_line: str | None,
+        confirm_plan_hash: str | None,
+        *,
+        handoff: _LeaseHandoff,
+        dataset_version: str | None,
     ) -> None:
-        """Execute query in background and emit SSE events; release ``lease`` when done."""
-        try:
-            await self._run_query(
-                query_id,
-                query,
-                dataset_id,
-                session_id,
-                context,
-                confirmed,
-                confirm_plan_line,
-                confirm_plan_hash,
-                core if core is not None else self._core_for(None),
-            )
-        finally:
-            if lease is not None:
-                lease.release()
+        """Execute query in background and emit SSE events. The worker thread releases the
+        lease; submit_query's done callback releases it if that thread never ran."""
+        await self._run_query(
+            query_id,
+            query,
+            dataset_id,
+            session_id,
+            context,
+            confirmed,
+            confirm_plan_line,
+            confirm_plan_hash,
+            handoff,
+            dataset_version,
+        )
 
     async def _run_query(
         self,
@@ -410,7 +405,8 @@ class AsyncQueryService:
         confirmed: bool,
         confirm_plan_line: str | None,
         confirm_plan_hash: str | None,
-        core: CoreQueryService,
+        handoff: _LeaseHandoff,
+        dataset_version: str | None,
     ) -> None:
         try:
             # Emit started event
@@ -434,10 +430,11 @@ class AsyncQueryService:
             # session_id identifies the conversation, not the upload: it selects the history
             # passed to the parser, while dataset_id stays the data key.
             result: CoreQueryResult = await asyncio.to_thread(
-                self._ask_active_version,
-                core=core,
+                self._ask_on_lease,
+                handoff,
                 question=query,
                 dataset_id=dataset_id,
+                dataset_version=dataset_version,
                 conversation_history=self.conversation_history(session_id, context),
                 confirmed=confirmed,
                 confirm_plan_line=confirm_plan_line,
@@ -608,21 +605,23 @@ class AsyncQueryService:
         self,
         query: str,
         dataset_id: str,
+        *,
+        lease: LayerLease[SemanticLayer],
         session_id: str | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
         confirm_plan_hash: str | None = None,
-        lease: LayerLease[SemanticLayer] | None = None,
     ) -> AsyncQueryResult:
         """
-        Execute query synchronously (blocking) and return result. ``lease``, when given, is
-        released when this returns or raises.
+        Execute query synchronously (blocking) and return result. ``lease`` (required) is held
+        until the worker thread is done with the layer, even if this call is cancelled first.
 
         For use when SSE streaming is not needed.
 
         Args:
             query: Natural language query text
             dataset_id: Dataset to query
+            lease: The question's lease on the dataset's layer
             session_id: Optional session ID for conversation context
             confirmed: Release a held plan (only with confirm_plan_hash of that exact plan)
             confirm_plan_hash: Hash of the reviewed plan, from the hold
@@ -633,13 +632,13 @@ class AsyncQueryService:
         Raises:
             ValueError: If query is empty or dataset not found
         """
+        handoff = _LeaseHandoff(lease)
         try:
             return await self._execute_now(
-                query, dataset_id, session_id, confirmed, confirm_plan_line, confirm_plan_hash, lease
+                query, dataset_id, session_id, confirmed, confirm_plan_line, confirm_plan_hash, handoff
             )
         finally:
-            if lease is not None:
-                lease.release()
+            handoff.release_unclaimed()
 
     async def _execute_now(
         self,
@@ -649,23 +648,28 @@ class AsyncQueryService:
         confirmed: bool,
         confirm_plan_line: str | None,
         confirm_plan_hash: str | None,
-        lease: LayerLease[SemanticLayer] | None,
+        handoff: _LeaseHandoff,
     ) -> AsyncQueryResult:
         # Validate input
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
-        core = self._core_for(lease)
+        dataset_version = leased_dataset_version(handoff.lease)
 
         query_id = self._generate_query_id()
 
         logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id, confirmed=confirmed)
 
+        # Execute synchronously        query_id = self._generate_query_id()
+
+        logger.info("query_submitted", query_id=query_id, dataset_id=dataset_id, confirmed=confirmed)
+
         # Execute synchronously in thread pool
         result: CoreQueryResult = await asyncio.to_thread(
-            self._ask_active_version,
-            core=core,
+            self._ask_on_lease,
+            handoff,
             question=query,
             dataset_id=dataset_id,
+            dataset_version=dataset_version,
             conversation_history=self.conversation_history(session_id),
             confirmed=confirmed,
             confirm_plan_line=confirm_plan_line,

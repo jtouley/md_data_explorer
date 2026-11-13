@@ -8,6 +8,7 @@ Manages query parsing, validation, and execution without Streamlit dependencies.
 
 import dataclasses
 import hashlib
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,7 +30,6 @@ from clinical_analytics.contracts.quality import QualityReport
 from clinical_analytics.contracts.store import latest_report
 from clinical_analytics.core import answer_checks
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
-from clinical_analytics.core.connection_lock import ConnectionLock
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.log_redaction import error_fields
@@ -54,6 +54,13 @@ NO_MATCH_REASON = "No patients matched the question's limits, so there is no val
 CONFIRMATION_NOT_SAVED_REASON = (
     "I couldn't save your confirmation, so the question was not run. Try again; if it keeps "
     "happening, the dataset's saved settings may be damaged."
+)
+# Unlocked parses a question may make before it gives up because another question kept changing
+# what it reads (level merges, stored declarations). Never parsed under the lock: the LLM tier
+# can take seconds, and every other question on the dataset would wait for it.
+MAX_PARSE_ATTEMPTS = 3
+STATE_KEPT_CHANGING_REASON = (
+    "This dataset's confirmed settings changed while the question was being read, so it was not run. Ask it again."
 )
 INVALID_DATASET_KEY_REASON = (
     "This dataset's ID is not valid, so the question was not run. Open the dataset again from the list."
@@ -214,7 +221,7 @@ class _Prepared:
     declaration_key: str | None
     declarations: Declarations
     mappings: tuple[LevelMapping, ...]
-    generation: Any  # the layer's state_generation when the declarations were applied
+    generation: int  # the layer's state_generation when the declarations were applied
 
 
 class QueryService:
@@ -246,7 +253,6 @@ class QueryService:
         # holds for this service only, never under a key another dataset could share.
         self._unsaved = MemoryDeclarationStore()
         self.data_dir = data_dir
-        self._applied_levels: set[tuple[str, tuple[str, ...], str | None]] = set()
         self.nl_engine = NLQueryEngine(semantic_layer)
         self.conversation_manager = ConversationManager()
 
@@ -266,44 +272,71 @@ class QueryService:
         Three steps. Preparing (declarations, confirmed level merges) changes the layer, so it
         is locked. Parsing (pattern, embedding and LLM tiers) runs unlocked, so a slow parse
         never holds up another question on the dataset; the DuckDB reads it makes take the lock
-        themselves. Checking and executing are locked. If another question merged levels while
-        this one parsed (the layer's ``state_generation`` moved), the question is prepared and
-        parsed again under the lock, so it is answered exactly as if it had run alone.
+        themselves. Checking and executing are locked, and run only when nothing the parse read
+        has changed since it was prepared: the layer's ``state_generation`` (bumped by every
+        level merge and every stored declaration) and the stored declarations themselves. If
+        either moved, the question is prepared and parsed again, unlocked, up to
+        MAX_PARSE_ATTEMPTS times, so it is answered exactly as if it had run alone.
         """
         lock = self._connection_lock()
-        with lock:
-            prepared = self._prepare(question, dataset_id, upload_id, dataset_version)
-        if isinstance(prepared, QueryResult):
-            return prepared
-        query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history)
-        with lock:
-            if self._state_generation() != prepared.generation:
-                logger.info("question_reparsed_after_level_merge", dataset_id=dataset_id)
+        for attempt in range(1, MAX_PARSE_ATTEMPTS + 1):
+            with lock:
                 prepared = self._prepare(question, dataset_id, upload_id, dataset_version)
-                if isinstance(prepared, QueryResult):
-                    return prepared
-                query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history)
-            return self._finish(
-                prepared,
-                query_intent,
-                confirmed=confirmed,
-                confirm_plan_line=confirm_plan_line,
-                confirm_plan_hash=confirm_plan_hash,
-            )
+            if isinstance(prepared, QueryResult):
+                return prepared
+            query_intent = self._parse(prepared, dataset_id, upload_id, conversation_history)
+            with lock:
+                if self._still_current(prepared):
+                    return self._finish(
+                        prepared,
+                        query_intent,
+                        confirmed=confirmed,
+                        confirm_plan_line=confirm_plan_line,
+                        confirm_plan_hash=confirm_plan_hash,
+                    )
+            logger.info("question_reparsed_after_state_change", dataset_id=dataset_id, attempt=attempt)
+        logger.warning("question_state_kept_changing", dataset_id=dataset_id, attempts=MAX_PARSE_ATTEMPTS)
+        return QueryResult(
+            plan=None,
+            issues=[{"message": STATE_KEPT_CHANGING_REASON, "severity": "error"}],
+            result=None,
+            confidence=0.0,
+            run_key=None,
+            context=None,
+            failure_reason=STATE_KEPT_CHANGING_REASON,
+        )
+
+    def _still_current(self, prepared: _Prepared) -> bool:
+        """Under the lock: nothing the question's parse and checks read changed since _prepare.
+
+        The stored declarations are read again (another question, or another process, may have
+        stored a confirmation without touching this layer).
+        """
+        if self._state_generation() != prepared.generation:
+            return False
+        return self._load_declarations(prepared.declaration_key) == prepared.declarations
 
     def _connection_lock(self) -> Any:
         """The layer's DuckDB lock (a stand-in layer without one gets its own)."""
         lock = getattr(self.semantic_layer, "_con_lock", None)
         if lock is None or not hasattr(lock, "acquire"):
-            lock = ConnectionLock()
+            lock = threading.RLock()
             try:
                 self.semantic_layer._con_lock = lock
             except (AttributeError, TypeError):
                 pass
         return lock
 
-    def _state_generation(self) -> Any:
-        return getattr(self.semantic_layer, "state_generation", 0)
+    def _state_generation(self) -> int:
+        generation = getattr(self.semantic_layer, "state_generation", 0)
+        return generation if isinstance(generation, int) else 0
+
+    def _bump_state_generation(self) -> None:
+        """Tell questions parsed without the lock that what they read changed (locked)."""
+        try:
+            self.semantic_layer.state_generation = self._state_generation() + 1
+        except (AttributeError, TypeError):
+            pass  # a stand-in layer that cannot hold it: nothing parses beside it
 
     def _prepare(
         self,
@@ -520,6 +553,9 @@ class QueryService:
         # Data checks on the columns the plan reads: refuse what would be wrong whatever the
         # doctor says; hold what only they can settle (grain, category spellings, implausible
         # values) until they confirm this exact plan; otherwise note it on the answer.
+        # Layer-wide state comes from the stored declarations only: _still_current checked, under
+        # this lock hold, that the question's copy is the stored one.
+        self._sync_layer_state(declarations, dataset_version)
         findings = self._data_findings(query_plan, declaration_key, dataset_version, declarations)
         if confirmed and not findings.refusal:
             findings.refusal, declarations = self._declare(declaration_key, findings, declarations)
@@ -655,7 +691,6 @@ class QueryService:
         layer = self.semantic_layer
         grain = answer_checks.grain_of(layer)
         visits = grain.repeated and answer_checks.declared_visits(grain, declarations, dataset_version)
-        layer.count_entity_key = grain.key if visits else None
         findings.keyed, findings.visits = grain.key is not None, visits
         findings.key, findings.rows_are_patients = grain.key, grain.rows_are_patients
 
@@ -688,6 +723,13 @@ class QueryService:
         findings.notes.extend(answer_checks.report_notes(report, columns))
         findings.notes.extend(answer_checks.missingness_notes(layer, columns, answer_checks.flagged_columns(report)))
         return findings
+
+    def _sync_layer_state(self, stored: Declarations, dataset_version: str | None) -> None:
+        """Set what the layer counts by (patients once rows are declared visits) from the
+        dataset's STORED declarations. Locked; never called with a question's stale copy."""
+        grain = answer_checks.grain_of(self.semantic_layer)
+        visits = grain.repeated and answer_checks.declared_visits(grain, stored, dataset_version)
+        self.semantic_layer.count_entity_key = grain.key if visits else None
 
     def _latest_report(self, dataset_key: str | None, dataset_version: str | None) -> QualityReport | None:
         if self.data_dir is None or not dataset_version or dataset_key is None:
@@ -724,8 +766,11 @@ class QueryService:
         except ContractStoreError as e:
             logger.error("declarations_not_saved", dataset_key=dataset_key, **error_fields(e))
             return CONFIRMATION_NOT_SAVED_REASON, declarations
+        # Every stored declaration moves the generation, so a question prepared with the old
+        # declarations is prepared and parsed again instead of being checked with them.
+        self._bump_state_generation()
         if grain is not None:
-            self.semantic_layer.count_entity_key = grain.key
+            self._sync_layer_state(declarations, grain.dataset_version)
             findings.visits = True
         if levels:
             self._apply_levels(declarations.levels_for(levels[0].dataset_version))
@@ -747,15 +792,27 @@ class QueryService:
         if not mappings:
             return
         columns = set(self.semantic_layer.get_base_view().columns)
+        applied = self._applied_levels()
         for mapping in mappings:
             marker = (mapping.column, mapping.spellings, mapping.dataset_version)
-            if marker in self._applied_levels or mapping.column not in columns:
+            if marker in applied or mapping.column not in columns:
                 continue
             self.semantic_layer.remap_levels(mapping.column, {s: mapping.canonical for s in mapping.spellings})
-            self._applied_levels.add(marker)
+            applied.add(marker)
             cache: dict[str, list[Any]] | None = getattr(self.nl_engine, "_distinct_value_cache", None)
             if cache is not None:
                 cache.pop(mapping.column, None)
+
+    def _applied_levels(self) -> set[tuple[str, tuple[str, ...], str | None]]:
+        """The merges already applied to the layer: layer state, shared by every service on it."""
+        applied = getattr(self.semantic_layer, "applied_levels", None)
+        if not isinstance(applied, set):
+            applied = set()
+            try:
+                self.semantic_layer.applied_levels = applied
+            except (AttributeError, TypeError):
+                pass
+        return applied
 
     def _values_with_spellings(self, mappings: tuple[LevelMapping, ...]) -> Callable[[str], list[Any]]:
         """The column values word accounting checks a plan against: the merged levels, plus the

@@ -225,6 +225,11 @@ class NLQueryConfigDefaults:
         }
 
 
+# Kept as written in the YAML, never coerced to the default's type: nl_query_config validates
+# them at import and stops startup on a bad value ("four" or 2.5 must not become 4 or 2).
+RAW_VALIDATED_KEYS: frozenset[str] = frozenset({"semantic_layer_cache_size", "duckdb_memory_budget", "duckdb_threads"})
+
+
 def _is_critical_config(key: str) -> bool:
     """
     Check if a config key is critical (should raise ValueError on type coercion failure).
@@ -277,7 +282,9 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
                 yaml_data = yaml.safe_load(f) or {}
                 # Merge YAML data into defaults
                 for key, value in yaml_data.items():
-                    if key in defaults:
+                    if key in RAW_VALIDATED_KEYS:
+                        config[key] = value
+                    elif key in defaults:
                         # Coerce type based on default value type
                         target_type = type(defaults[key])
                         try:

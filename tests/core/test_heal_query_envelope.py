@@ -6,7 +6,6 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
-from clinical_analytics.core.connection_lock import ConnectionLock
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.query_service import QueryService
 
@@ -20,7 +19,7 @@ def _service(layer: MagicMock) -> QueryService:
 def test_ask_invalid_plan_error_key_becomes_an_issue() -> None:
     """Validation returns {valid: False, error: ...} with no issues list."""
     layer = MagicMock()
-    layer._con_lock = ConnectionLock()
+    layer._con_lock = threading.RLock()
     layer._generate_run_key.return_value = "run"
     layer._validate_query_plan.return_value = {
         "valid": False,
@@ -41,7 +40,7 @@ def test_ask_invalid_plan_error_key_becomes_an_issue() -> None:
 
 def test_ask_execution_success_false_is_an_error_issue() -> None:
     layer = MagicMock()
-    layer._con_lock = ConnectionLock()
+    layer._con_lock = threading.RLock()
     layer._generate_run_key.return_value = "run"
     layer._validate_query_plan.return_value = {"valid": True, "error": None}
     layer.execute_query_plan.return_value = {
@@ -61,7 +60,7 @@ def test_ask_execution_success_false_is_an_error_issue() -> None:
 
 def test_ask_holds_connection_lock_across_overlapping_executions() -> None:
     layer = MagicMock()
-    layer._con_lock = ConnectionLock()
+    layer._con_lock = threading.RLock()
     layer.state_generation = 0
     layer._validate_query_plan.return_value = {"valid": True, "error": None}
     service = _service(layer)

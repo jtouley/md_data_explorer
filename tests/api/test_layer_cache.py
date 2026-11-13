@@ -11,54 +11,17 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from clinical_analytics.api import layer_cache
 from clinical_analytics.api.layer_cache import LayerCache, LayerCacheError
-from clinical_analytics.core.connection_lock import ConnectionLock
+from tests.api.conftest import Builds, FakeLayer
 
 _FAST_S = 1.0  # what "returns at once" allows; the blocked work below waits far longer
 _BLOCKED_S = 10.0
-
-
-class FakeLayer:
-    """A layer with the parts the cache touches: a DuckDB lock and close()."""
-
-    def __init__(self, dataset_id: str, number: int) -> None:
-        self.dataset_id = dataset_id
-        self.number = number
-        self._con_lock = ConnectionLock()
-        self.closed = False
-        self.closed_on: str | None = None
-
-    def close(self) -> None:
-        with self._con_lock:
-            self.closed = True
-            self.closed_on = threading.current_thread().name
-
-
-class Builds:
-    """Counts builds per dataset and hands out a new FakeLayer each time."""
-
-    def __init__(self) -> None:
-        self.count: dict[str, int] = {}
-        self.layers: list[FakeLayer] = []
-        self.before_return: Callable[[str], None] | None = None
-
-    def __call__(self, dataset_id: str) -> FakeLayer:
-        self.count[dataset_id] = self.count.get(dataset_id, 0) + 1
-        layer = FakeLayer(dataset_id, self.count[dataset_id])
-        if self.before_return is not None:
-            self.before_return(dataset_id)
-        self.layers.append(layer)
-        return layer
-
-
-@pytest.fixture
-def builds() -> Builds:
-    return Builds()
 
 
 @pytest.fixture
@@ -75,7 +38,7 @@ def make_cache(builds: Builds) -> Iterator[Callable[[int], LayerCache[FakeLayer]
         cache.shutdown()
 
 
-def _hold_lock_in_thread(lock: ConnectionLock) -> tuple[threading.Event, threading.Thread]:
+def _hold_lock_in_thread(lock: Any) -> tuple[threading.Event, threading.Thread]:
     """Hold ``lock`` on another thread (a question's DuckDB step) until the event is set."""
     held, release = threading.Event(), threading.Event()
 

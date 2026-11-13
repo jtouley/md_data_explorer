@@ -13,9 +13,8 @@ import threading
 import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Annotated
 
-from fastapi import Depends, HTTPException, Path, status
+from fastapi import HTTPException, status
 
 from clinical_analytics.api.layer_cache import LayerCache, LayerCacheError, LayerLease
 from clinical_analytics.core import nl_query_config
@@ -54,7 +53,6 @@ def _build_semantic_layer(dataset_id: str) -> SemanticLayer:
         dataset = UploadedDatasetFactory.create_dataset(dataset_id)
         dataset.load()
         layer: SemanticLayer = dataset.get_semantic_layer()
-        return layer
     except StoreBusyError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STORE_BUSY_MESSAGE) from e
     except SemanticLayerBuildError as e:
@@ -75,6 +73,16 @@ def _build_semantic_layer(dataset_id: str) -> SemanticLayer:
         ) from e
     # Any other failure is a bug, not a client error: it propagates so FastAPI logs the
     # traceback and returns a generic 500 without leaking paths or internals.
+    # Only the layers this cache keeps share the budget; probes and other layers keep the
+    # standalone limit they were built with.
+    limited = False
+    try:
+        layer.set_memory_limit(nl_query_config.CACHED_LAYER_MEMORY_LIMIT)
+        limited = True
+    finally:
+        if not limited:
+            layer.close()  # never leave a layer over its share, or open behind a failed build
+    return layer
 
 
 # At most SEMANTIC_LAYER_CACHE_SIZE layers stay open; each gets budget / size of DuckDB memory.
@@ -98,18 +106,6 @@ def lease_semantic_layer(dataset_id: str) -> LayerLease[SemanticLayer]:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=DATASET_CHANGED_WHILE_LOADING
         ) from e
-
-
-def leased_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset ID")]) -> Iterator[SemanticLayer]:
-    """Route dependency: the dataset's layer, held for the request and released after it.
-
-    Example:
-        @app.get("/api/datasets/{dataset_id}/info")
-        def get_dataset_info(semantic_layer: SemanticLayerDep):
-            return semantic_layer.get_dataset_info()
-    """
-    with lease_semantic_layer(dataset_id) as lease:
-        yield lease.layer
 
 
 @contextmanager
@@ -159,11 +155,3 @@ def dataset_files_lock(dataset_id: str) -> Iterator[None]:
             _dataset_files_locks[dataset_id] = lock
     with lock:
         yield
-
-
-# ============================================================================
-# Type Aliases for Route Injection
-# ============================================================================
-
-# Semantic layer dependency annotation: leased for the request, released when it ends.
-SemanticLayerDep = Annotated[SemanticLayer, Depends(leased_semantic_layer)]

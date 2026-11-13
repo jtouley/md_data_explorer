@@ -13,6 +13,7 @@ import logging
 import operator
 import os
 import re
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,7 +27,6 @@ from ibis import _
 
 from clinical_analytics.analysis.numeric_text import is_missing_token, is_numeric_text, missing_token_sql
 from clinical_analytics.core import nl_query_config
-from clinical_analytics.core.connection_lock import ConnectionLock
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
 from clinical_analytics.core.mapper import load_dataset_config
@@ -260,11 +260,11 @@ def _analysis_columns(
 
 
 def _apply_duckdb_limits(raw: Any) -> None:
-    """Set the configured memory limit and thread count on one layer's DuckDB connection.
+    """Set the standalone memory limit and the thread count on one layer's DuckDB connection.
 
-    Every SemanticLayer is its own in-memory DuckDB, so the memory limit is this layer's share
-    of the total budget (budget / semantic_layer_cache_size). Both values were validated when
-    nl_query_config was imported (a parsed number and unit, an int).
+    Every SemanticLayer is its own in-memory DuckDB. A layer gets the standalone limit; the
+    API's layer cache lowers the layers it keeps to their share of the total budget
+    (``set_memory_limit``). Both values were validated when nl_query_config was imported.
     """
     raw.execute(f"SET memory_limit = '{nl_query_config.DUCKDB_MEMORY_LIMIT.sql}'")
     raw.execute(f"SET threads = {int(nl_query_config.DUCKDB_THREADS)}")
@@ -578,6 +578,10 @@ class SemanticLayer:
     # The patient key once the doctor has declared rows to be visits (set by QueryService):
     # COUNTs, shares and frequency tables then count distinct patients, not rows.
     count_entity_key: str | None = None
+    # The upload version whose rows this layer holds (set by the uploaded-dataset loader from
+    # the metadata it read the rows with); None for built-in datasets. A question labels its
+    # answer and matches declarations with this, never with metadata read later.
+    loaded_version: str | None = None
 
     def __init__(
         self,
@@ -623,10 +627,14 @@ class SemanticLayer:
             if not configured:
                 # Never leave an unconfigured in-memory database open behind a failed build.
                 self.con.disconnect()
-        self._con_lock = ConnectionLock()
-        # Bumped whenever what a parse reads changes (a level merge). A question parsed without
-        # the lock checks it under the lock and parses again if another question changed it.
+        # Re-entrant: DuckDB-reading helpers run on their own and inside a locked question step.
+        self._con_lock = threading.RLock()
+        # Bumped whenever what a parse or a check reads changes (a level merge, a stored
+        # declaration). A question parsed without the lock checks it under the lock and parses
+        # again if another question changed it.
         self.state_generation = 0
+        # Confirmed level merges already applied to this layer: (column, spellings, version).
+        self.applied_levels: set[tuple[str, tuple[str, ...], str | None]] = set()
         self._closed = False
         # Temporary views the current cohort query created; dropped once its rows are read.
         self._cohort_views: list[str] = []
@@ -891,6 +899,9 @@ class SemanticLayer:
         A row with no ID is not one more patient: SQL ``DISTINCT`` would keep NULL as a value, so
         the count is ``COUNT(DISTINCT key)``, which leaves it out (``base_missing_count`` counts it).
         """
+        cached = self._base_counts.get(entity_key)
+        if cached is not None:  # a hit never waits for another question's DuckDB step
+            return cached
         with self._con_lock:  # also read by a parse, which runs without the lock
             if entity_key not in self._base_counts:
                 view = self.get_base_view()
@@ -900,6 +911,9 @@ class SemanticLayer:
 
     def base_missing_count(self, column: str) -> int:
         """Rows of the base view with no value in ``column``, counted once."""
+        cached = self._base_missing.get(column)
+        if cached is not None:
+            return cached
         with self._con_lock:
             if column not in self._base_missing:
                 view = self.get_base_view()
@@ -909,6 +923,9 @@ class SemanticLayer:
     def base_value_counts(self, column: str) -> tuple[pl.Series, pl.Series]:
         """(distinct values of ``column`` named as the column, nulls included; rows holding each),
         counted in DuckDB once per column until ``remap_levels`` changes the levels."""
+        cached = self._value_counts.get(column)
+        if cached is not None:
+            return cached
         with self._con_lock:
             if column not in self._value_counts:
                 self._value_counts[column] = self._compute_value_counts(column)
@@ -3105,6 +3122,12 @@ class SemanticLayer:
             self._base_counts.pop(column, None)
             self._value_counts.pop(column, None)
             self.state_generation += 1
+
+    def set_memory_limit(self, limit: nl_query_config.DuckdbMemoryLimit) -> None:
+        """Lower (or raise) this layer's DuckDB memory limit: the API's layer cache gives the
+        layers it keeps their share of the total budget."""
+        with self._con_lock:
+            self.con.con.execute(f"SET memory_limit = '{limit.sql}'")
 
     def close(self) -> None:
         """Close this layer's in-memory DuckDB. Safe to call twice.

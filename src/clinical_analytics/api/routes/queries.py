@@ -8,6 +8,8 @@ Endpoints:
 """
 
 import asyncio
+import contextvars
+import functools
 import json
 import threading
 from typing import Annotated, Any
@@ -23,7 +25,6 @@ from clinical_analytics.api.models.schemas import QueryRequest, QueryResponse, Q
 from clinical_analytics.api.services.query_service import (
     UNEXPECTED_FAILURE_MESSAGE,
     AsyncQueryService,
-    StaleLayerLeaseError,
 )
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.semantic import SemanticLayer
@@ -42,45 +43,51 @@ class DataFrameEncoder(json.JSONEncoder):
 
 
 # One query service per dataset (keyed by dataset_id): its results, SSE events and conversation
-# history. A service is never dropped when its layer leaves the layer cache (evicted or
-# invalidated): the next question rebinds it to the new layer, so a poll, a stream or a
-# follow-up still finds its state. Only a dataset delete forgets it.
+# history, and nothing else. It holds no layer: each question runs on the core of the layer it
+# leased, which the layer cache drops when it closes the layer. So a service is never dropped
+# when its layer leaves the cache, and a poll, a stream or a follow-up still finds its state.
+# Only a dataset delete forgets it.
 _query_services: dict[str, AsyncQueryService] = {}
 _query_services_lock = threading.Lock()
 
-# Leases a question may find stale (rebound to a newer layer meanwhile) before giving up.
-_MAX_LEASE_ATTEMPTS = 3
-
 
 def lease_query_service(dataset_id: str) -> tuple[AsyncQueryService, LayerLease[SemanticLayer]]:
-    """The dataset's query service, bound to its current layer, and a lease on that layer.
+    """The dataset's query service and a lease on the dataset's current layer.
 
     The caller owns the lease: pass it to submit_query, or release it. Blocking (a cold layer
-    build reads the store): call it off the event loop.
+    build reads the store): call it off the event loop, through ``_lease_off_loop``.
 
     Raises:
         HTTPException: 404 if the dataset doesn't exist (raised by lease_semantic_layer).
     """
-    for _attempt in range(_MAX_LEASE_ATTEMPTS):
-        lease = lease_semantic_layer(dataset_id)
-        try:
-            with _query_services_lock:
-                service = _query_services.get(dataset_id)
-            if service is None:
-                # Built outside the lock (it loads the parser), then the first one stored wins.
-                candidate = AsyncQueryService(lease.layer, generation=lease.generation)
-                with _query_services_lock:
-                    service = _query_services.setdefault(dataset_id, candidate)
-                if service is candidate:
-                    logger.info("query_service_created", dataset_id=dataset_id)
-            if service.rebind(lease):
-                return service, lease
-        except BaseException:
-            lease.release()
-            raise
-        # Another request bound the service to a newer layer after this lease was taken.
-        lease.release()
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Dataset is reloading. Try again.")
+    lease = lease_semantic_layer(dataset_id)
+    with _query_services_lock:
+        service = _query_services.get(dataset_id)
+        if service is None:
+            service = _query_services[dataset_id] = AsyncQueryService()
+            logger.info("query_service_created", dataset_id=dataset_id)
+    return service, lease
+
+
+def _release_leased(future: "asyncio.Future[tuple[AsyncQueryService, LayerLease[SemanticLayer]]]") -> None:
+    """Release the lease a lease_query_service call took for a request that is gone."""
+    if future.cancelled() or future.exception() is not None:
+        return
+    _service, lease = future.result()
+    lease.release()
+
+
+async def _lease_off_loop(dataset_id: str) -> tuple[AsyncQueryService, LayerLease[SemanticLayer]]:
+    """lease_query_service in a worker thread. If the request is cancelled while it runs, the
+    thread still takes the lease; it is then released from the thread's result, never leaked."""
+    # As asyncio.to_thread does: the thread sees this request's context (its bound log fields).
+    call = functools.partial(contextvars.copy_context().run, lease_query_service, dataset_id)
+    future = asyncio.get_running_loop().run_in_executor(None, call)
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        future.add_done_callback(_release_leased)
+        raise
 
 
 def forget_query_service(dataset_id: str) -> bool:
@@ -156,31 +163,26 @@ async def submit_query(
 
 
 async def _submit_leased(request: QueryRequest) -> str:
-    """Lease the dataset's layer and submit the question on it; the question's task releases
-    the lease when it ends. Retried when the service was rebound to a newer layer meanwhile."""
-    for _attempt in range(_MAX_LEASE_ATTEMPTS):
-        # Building a semantic layer reads the store (and may wait for its build): not on the loop.
-        query_service, lease = await asyncio.to_thread(lease_query_service, request.dataset_id)
-        try:
-            return await query_service.submit_query(
-                query=request.query_text,
-                dataset_id=request.dataset_id,
-                session_id=request.session_id,
-                context=request.context,
-                confirmed=request.confirmed,
-                confirm_plan_line=request.confirm_plan_line,
-                confirm_plan_hash=request.confirm_plan_hash,
-                lease=lease,
-            )
-        except StaleLayerLeaseError:
-            lease.release()
-            continue
-        except BaseException:
-            # submit_query releases a lease it rejects; this covers anything raised before it
-            # took it. Release is idempotent, so the lease is never counted twice.
-            lease.release()
-            raise
-    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Dataset is reloading. Try again.")
+    """Lease the dataset's layer and submit the question on it; the question's worker thread
+    releases the lease when it is done with the layer."""
+    # Building a semantic layer reads the store (and may wait for its build): not on the loop.
+    query_service, lease = await _lease_off_loop(request.dataset_id)
+    try:
+        return await query_service.submit_query(
+            query=request.query_text,
+            dataset_id=request.dataset_id,
+            lease=lease,
+            session_id=request.session_id,
+            context=request.context,
+            confirmed=request.confirmed,
+            confirm_plan_line=request.confirm_plan_line,
+            confirm_plan_hash=request.confirm_plan_hash,
+        )
+    except BaseException:
+        # submit_query releases a lease it rejects; this covers anything raised before it
+        # took it. Release is idempotent, so the lease is never counted twice.
+        lease.release()
+        raise
 
 
 # ============================================================================

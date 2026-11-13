@@ -2747,7 +2747,13 @@ Fix the errors and return a corrected query intent as JSON.
         word accounting derive from them (core/value_index.py), so they are built once per
         layer rather than once per question. refresh_value_index drops them when the layer's
         columns or aliases change.
+
+        Double-checked: a hit never waits for another question's DuckDB step; only a fill (and
+        refresh_value_index swapping the cache) takes the layer's lock.
         """
+        cached = getattr(self, "_distinct_value_cache", {}).get(column)
+        if cached is not None:
+            return cached  # type: ignore[no-any-return]
         with self._duckdb_lock():
             cache: dict[str, list[Any]] = getattr(self, "_distinct_value_cache", {})
             if column in cache:
@@ -2794,6 +2800,8 @@ Fix the errors and return a corrected query intent as JSON.
             tuple(columns),
             tuple(sorted(aliases.items())) if isinstance(aliases, dict) else (),
         )
+        if getattr(self, "_value_index_signature", None) == signature:
+            return  # unchanged: no lock, so a parse never waits for another question's DuckDB step
         with self._duckdb_lock():  # never swapped out under a _distinct_values fill
             if getattr(self, "_value_index_signature", None) != signature:
                 if getattr(self, "_distinct_value_cache", None):
