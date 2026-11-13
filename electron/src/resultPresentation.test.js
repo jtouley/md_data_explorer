@@ -279,11 +279,16 @@ const API_CLAIMS = {
   describe: 'Mean ldl was 121.49 (SD 14.40; median 121.50; n=300).',
   smallExclusion:
     'Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; Welch t-test p<0.001; ' +
-    'n hidden; some excluded for missing data). Unadjusted comparison by treatment.',
+    'n hidden). Unadjusted comparison by treatment.',
+  hiddenExclusions:
+    'Mean ldl was 16.14 higher in placebo than drug (95% CI 13.44 to 18.83; Welch t-test p<0.001; ' +
+    'n=377; some excluded for missing data). Unadjusted comparison by treatment.',
   hiddenTopCount: 'Most common smoker: no (count hidden).',
   hiddenSurvivalMedian:
-    'Median time to event=1 (days) is not shown because n is hidden (n hidden; some excluded for missing data).',
+    'Median time to event=1 (days) is not shown because n is hidden (n hidden).',
   hiddenDescriptive: 'Statistics for ldl are not shown because n is hidden (n hidden).',
+  missingNSurvivalMedian: 'Median time to event=1 (days) is not shown because n is missing.',
+  missingNDescriptive: 'Statistics for ldl are not shown because n is missing.',
   count: 'Total count: 400.',
 };
 
@@ -324,17 +329,30 @@ describe('splitClaim', () => {
     [
       'smallExclusion',
       'Mean ldl was 16.14 higher in placebo than drug.',
-      ['95% CI 13.44 to 18.83', 'Welch t-test p<0.001', 'n hidden', 'some excluded for missing data'],
+      ['95% CI 13.44 to 18.83', 'Welch t-test p<0.001', 'n hidden'],
+      'Unadjusted comparison by treatment.',
+    ],
+    [
+      'hiddenExclusions',
+      'Mean ldl was 16.14 higher in placebo than drug.',
+      ['95% CI 13.44 to 18.83', 'Welch t-test p<0.001', 'n=377', 'some excluded for missing data'],
       'Unadjusted comparison by treatment.',
     ],
     ['hiddenTopCount', 'Most common smoker: no (count hidden).', [], ''],
     [
       'hiddenSurvivalMedian',
       'Median time to event=1 (days) is not shown because n is hidden.',
-      ['n hidden', 'some excluded for missing data'],
+      ['n hidden'],
       '',
     ],
     ['hiddenDescriptive', 'Statistics for ldl are not shown because n is hidden.', ['n hidden'], ''],
+    [
+      'missingNSurvivalMedian',
+      'Median time to event=1 (days) is not shown because n is missing.',
+      [],
+      '',
+    ],
+    ['missingNDescriptive', 'Statistics for ldl are not shown because n is missing.', [], ''],
     ['count', 'Total count: 400.', [], ''],
   ])('splitClaim_%s_headlineStatsNotes', (key, headline, stats, notes) => {
     // Arrange

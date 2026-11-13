@@ -52,17 +52,21 @@ def test_compute_analysis_withFilter_equalsAnalysisOfPrefilteredCohort(request, 
     context = request.getfixturevalue(context_fixture)
     prefiltered = filter_cohort.filter(pl.col("age") > AGE_FILTER.value)
     assert 0 < prefiltered.height < filter_cohort.height
-    expected = _stable(compute_analysis_by_type(prefiltered, context))
+    expected = compute_analysis_by_type(prefiltered, context)
     if via == "context_filters":
         context.filters = [AGE_FILTER]
     else:
         context.query_plan = QueryPlan(intent="DESCRIBE", filters=[AGE_FILTER], confidence=0.9)
 
     # Act
-    actual = _stable(compute_analysis_by_type(filter_cohort, context))
+    actual = compute_analysis_by_type(filter_cohort, context)
 
-    # Assert
-    assert actual == expected
+    # Assert: the same analysis; only the count of rows the filter removed differs
+    assert (actual.pop("n_filtered_out"), expected.pop("n_filtered_out")) == (
+        filter_cohort.height - prefiltered.height,
+        0,
+    )
+    assert _stable(actual) == _stable(expected)
 
 
 def test_compute_descriptive_withFilter_reportsExcludedRows(filter_cohort, sample_context_describe):

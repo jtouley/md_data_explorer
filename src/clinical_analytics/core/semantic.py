@@ -149,10 +149,17 @@ def plan_restriction_problem(plan: "QueryPlan", columns: list[str]) -> str | Non
     return None
 
 
-def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | None) -> dict[str, Any]:
+def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
+    """n_used, n_excluded (no recorded value) and n_filtered_out (removed by the question's
+    limits) from a frame with n and n_rows; the three add up to the dataset row count."""
+    used, rows = frame.select(pl.col("n").sum(), pl.col("n_rows").sum()).row(0)
+    used, rows = int(used or 0), int(rows or 0)
+    return {"n_used": used, "n_excluded": rows - used, "n_filtered_out": base_rows - rows}
+
+
+def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | None, base_rows: int) -> dict[str, Any]:
     """A proportion (group None) or a rate per group, with the counts suppression needs."""
-    totals = frame.select(pl.col("n").sum(), (pl.col("n_rows") - pl.col("n")).sum()).row(0)
-    base: dict[str, Any] = {"n_used": int(totals[0] or 0), "n_excluded": int(totals[1] or 0)}
+    base: dict[str, Any] = _sample_counts(frame, base_rows)
     if group is None:
         row = frame.row(0, named=True)
         return {
@@ -178,11 +185,10 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
     }
 
 
-def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan") -> dict[str, Any]:
+def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows: int) -> dict[str, Any]:
     """One statistic of the metric per group, as the plan computed it."""
     statistic = plan.statistic or "mean"
     group = str(plan.group_by)
-    totals = frame.select(pl.col("n").sum(), (pl.col("n_rows") - pl.col("n")).sum()).row(0)
     return {
         "type": "grouped_statistic",
         "statistic": statistic,
@@ -191,8 +197,7 @@ def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan") -> dict[st
         "groups": [
             {"group": row[group], "value": row[statistic], "n": int(row["n"])} for row in frame.iter_rows(named=True)
         ],
-        "n_used": int(totals[0] or 0),
-        "n_excluded": int(totals[1] or 0),
+        **_sample_counts(frame, base_rows),
     }
 
 
@@ -492,6 +497,9 @@ class SemanticLayer:
 
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
+        # Base-view counts, each counted once (the source does not change): rows under None,
+        # distinct values of an entity key under its column name.
+        self._base_counts: dict[str | None, int] = {}
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -710,6 +718,18 @@ class SemanticLayer:
             self._base_view = self.raw
 
         return self._base_view
+
+    def get_base_row_count(self) -> int:
+        """Rows in the base view (the dataset row count the app shows), counted once per layer."""
+        return self._base_count(None)
+
+    def _base_count(self, entity_key: str | None) -> int:
+        """Rows of the base view, or its distinct ``entity_key`` values; each counted once."""
+        if entity_key not in self._base_counts:
+            view = self.get_base_view()
+            counted = view.count() if entity_key is None else view.select(entity_key).distinct().count()
+            self._base_counts[entity_key] = int(counted.execute())
+        return self._base_counts[entity_key]
 
     def apply_filters(self, view, filters: dict[str, Any]) -> ibis.Table:
         """
@@ -2145,13 +2165,17 @@ class SemanticLayer:
         # Phase 3.3: Pass chart_spec to formatting methods
         # Shares and grouped statistics are already the answer: format the SQL frame as it is.
         if query_plan.proportion_column:
-            formatted = _format_share_result(result_df_pl, query_plan, None)
+            formatted = _format_share_result(result_df_pl, query_plan, None, self.get_base_row_count())
         elif query_plan.rate_column and query_plan.group_by:
-            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by)
+            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, self.get_base_row_count())
         elif query_plan.intent == "DESCRIBE" and query_plan.metric and query_plan.group_by:
-            formatted = _format_grouped_statistic(result_df_pl, query_plan)
+            formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
+            # What the filters removed, in the unit the total is counted in: distinct entities
+            # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
+            entity_key = query_plan.entity_key if not query_plan.group_by else None
+            formatted["n_filtered_out"] = self._base_count(entity_key) - formatted["total_count"]
         else:
             # The aggregated SQL frame is not renderer-shaped. Recompute from the
             # filtered base view the plan validated, not from get_cohort().
@@ -2170,6 +2194,14 @@ class SemanticLayer:
             if query_plan.intent == "DESCRIBE" and query_plan.statistic:
                 # The claim leads with the statistic the question asked for.
                 formatted["statistic"] = query_plan.statistic
+            if not formatted.get("error"):  # a failed result is never presented
+                # Rows the question's filters removed: by the plan's view here, plus by compute
+                # (its legacy context.filters path). The app shows the dataset's row count, so
+                # this is a count the reader can work out; the presenter suppresses it like the
+                # other counts.
+                formatted["n_filtered_out"] = (
+                    self.get_base_row_count() - base_rows.height + formatted.get("n_filtered_out", 0)
+                )
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec

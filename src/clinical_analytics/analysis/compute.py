@@ -4,12 +4,20 @@ Pure compute functions for analysis - Polars-first, return serializable dicts.
 These functions have no UI dependencies and can be tested independently.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.analysis.sample_floors import (
+    MIN_COMPARISON_N,
+    MIN_CORRELATION_N,
+    MIN_GROUP_N,
+    MIN_REGRESSION_N,
+    MIN_SURVIVAL_N,
+)
 from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, code_key, is_numeric_dtype
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
@@ -563,7 +571,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     n_used = analysis_df.height
     n_excluded = n_in_scope - n_used
 
-    if n_used < 2:
+    if n_used < MIN_COMPARISON_N:
         return {"type": "comparison", "error": "Not enough data for comparison"}
 
     outcome_series = analysis_df[outcome_col]
@@ -577,7 +585,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             analysis_df = _drop_missing(analysis_df.with_columns(converted.alias(outcome_col)))
             n_used = analysis_df.height
             n_excluded = n_in_scope - n_used
-            if n_used < 2:
+            if n_used < MIN_COMPARISON_N:
                 return {"type": "comparison", "error": "Not enough data for comparison"}
             outcome_series = analysis_df[outcome_col]
     outcome_kind = classify_variable(outcome_series)
@@ -612,16 +620,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
         if n_groups == 2:
             a, b = group_data
-            if min(len(a), len(b)) < 2:
-                return {**base, "error": "Each group needs at least 2 observations for a t-test"}
-            constant = _constant_groups(groups, group_data)
-            if constant:
+            if min(len(a), len(b)) < MIN_GROUP_N or _constant_groups(groups, group_data):
                 # Zero within-group variance: scipy returns p=0 with t=inf and the Welch df is NaN.
-                return {
-                    **base,
-                    "error": f"{outcome_col} values do not vary within a group ({', '.join(constant)}), so a "
-                    "t-test p-value and confidence interval cannot be calculated.",
-                }
+                return {**base, "error": _untestable_groups_message("A t-test", outcome_col, group_col, "each")}
             statistic, p_value = stats.ttest_ind(a, b, equal_var=False)
             var_a, var_b = np.var(a, ddof=1) / len(a), np.var(b, ddof=1) / len(b)
             se_diff = float(np.sqrt(var_a + var_b))
@@ -642,16 +643,10 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "group_means": group_means,
                 **headline,
             }
-        small = [str(g) for g, d in zip(groups, group_data, strict=True) if len(d) < 2]
-        if small:
-            return {**base, "error": f"Each group needs at least 2 observations for ANOVA ({', '.join(small)})"}
-        if len(_constant_groups(groups, group_data)) == n_groups:
+        too_small = any(len(d) < MIN_GROUP_N for d in group_data)
+        if too_small or len(_constant_groups(groups, group_data)) == n_groups:
             # No within-group variation: scipy returns F=inf and p=0.
-            return {
-                **base,
-                "error": f"{outcome_col} values do not vary within any {group_col} group, so an ANOVA p-value "
-                "cannot be calculated.",
-            }
+            return {**base, "error": _untestable_groups_message("An ANOVA", outcome_col, group_col, "at least one")}
         statistic, p_value = stats.f_oneway(*group_data)
         return {
             **base,
@@ -826,6 +821,19 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
     return filtered_df
 
 
+def _untestable_groups_message(test: str, outcome_col: str, group_col: str, varying: str) -> str:
+    """One message for "a group is too small" and "the values do not vary".
+
+    The message reaches the user outside the presenter, so it names no group and gives no
+    group's size: a group below the floor of 2 has exactly one patient, and saying which group
+    (or that this was the reason) would state a count of 1.
+    """
+    return (
+        f"{test} cannot be run on {outcome_col} by {group_col}. Every group needs at least {MIN_GROUP_N} "
+        f"observations, and the values must differ within {varying} group. Try groups with more data."
+    )
+
+
 def _apply_context_filters(df: pl.DataFrame, context: AnalysisContext) -> tuple[pl.DataFrame, list[FilterSpec]]:
     """
     Apply the question's filters (QueryPlan first, legacy context.filters as fallback).
@@ -941,20 +949,24 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
                 "available_columns": df.columns,
             }
 
-    if context.inferred_intent == AnalysisIntent.DESCRIBE:
-        return compute_descriptive_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
-        return compute_comparison_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
-        return compute_predictor_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
-        return compute_survival_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
-        return compute_relationship_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.COUNT:
-        return compute_count_analysis(df, context)
-    else:
+    analyses: dict[AnalysisIntent, Callable[[pl.DataFrame, AnalysisContext], dict[str, Any]]] = {
+        AnalysisIntent.DESCRIBE: compute_descriptive_analysis,
+        AnalysisIntent.COMPARE_GROUPS: compute_comparison_analysis,
+        AnalysisIntent.FIND_PREDICTORS: compute_predictor_analysis,
+        AnalysisIntent.EXAMINE_SURVIVAL: compute_survival_analysis,
+        AnalysisIntent.EXPLORE_RELATIONSHIPS: compute_relationship_analysis,
+        AnalysisIntent.COUNT: compute_count_analysis,
+    }
+    analysis = analyses.get(context.inferred_intent)
+    if analysis is None:
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
+    result = analysis(df, context)
+    # The rows the question's filters removed (plan filters or legacy context.filters), counted
+    # with the same filters each analysis applies: the reader knows the dataset row count, so
+    # this is a count too, and the presenter suppresses it like the others.
+    in_scope, _ = _apply_context_filters(df, context)
+    result["n_filtered_out"] = df.height - in_scope.height
+    return result
 
 
 def _needs_indicators(series: pl.Series) -> bool:
@@ -1019,8 +1031,8 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
         "n_excluded": n_in_scope - n_used,
     }
 
-    if n_used < 10:
-        return {**base, "error": "Need at least 10 complete observations"}
+    if n_used < MIN_REGRESSION_N:
+        return {**base, "error": f"Need at least {MIN_REGRESSION_N} complete observations"}
 
     outcome_series = analysis_df[outcome_col]
     n_unique = outcome_series.n_unique()
@@ -1115,8 +1127,8 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
         "n_excluded": n_in_scope - n_used,
     }
 
-    if n_used < 10:
-        return {**base, "error": "Need at least 10 complete observations"}
+    if n_used < MIN_SURVIVAL_N:
+        return {**base, "error": f"Need at least {MIN_SURVIVAL_N} complete observations"}
 
     unique_vals = sorted(analysis_df[event_col].unique().to_list(), key=str)
     if len(unique_vals) != 2:
@@ -1263,8 +1275,8 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
     # Calculate correlations using only numeric variables
     analysis_df = _drop_missing(df.select(numeric_variables))
 
-    if analysis_df.height < 3:
-        return {"type": "relationship", "error": "Need at least 3 observations with complete data"}
+    if analysis_df.height < MIN_CORRELATION_N:
+        return {"type": "relationship", "error": f"Need at least {MIN_CORRELATION_N} observations with complete data"}
 
     # Cast to numeric for correlation (should all be numeric now, but ensure Float64)
     numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in numeric_variables])
@@ -1304,4 +1316,5 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
         "strong_correlations": strong_correlations,
         "moderate_correlations": moderate_correlations,
         "n_observations": analysis_df.height,
+        "n_excluded": df.height - analysis_df.height,
     }
