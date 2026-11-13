@@ -232,13 +232,27 @@ function exitDescription({ code, signal }) {
 }
 
 /**
- * Text for the error window when the backend did not start. Every message says what happened
- * and what to do next; the wording follows the copy deck in docs/app/DESIGN.md ("analysis
- * engine", "on this computer").
+ * Developer output that must not be the sentence a clinician reads: file paths, shell or build
+ * commands, exit signals, Python tracebacks and log lines.
+ */
+const DEVELOPER_OUTPUT =
+  /`|(^|[\s("'])(\/|~\/|[A-Za-z]:\\)[^\s]+|\bmake\s+[a-z-]+|\bsignal\b|\bexit code\b|Traceback|\b[A-Z]\w*Error\b|\b(INFO|WARNING|ERROR|DEBUG)\b|uvicorn/;
+
+/** Exit status and the backend's last output, for "Copy details". */
+function exitDetails(failure, lines) {
+  const tail = lastLines(failure.stderrText || '', lines);
+  return `${exitDescription(failure)}.` + (tail ? `\n\nLast output:\n${tail}` : '');
+}
+
+/**
+ * Text for the error window when the backend did not start. `message` is one or two plain
+ * sentences that say what happened and what to do next, in the copy deck's words
+ * (docs/app/DESIGN.md: "analysis engine", "on this computer"). Paths, exit codes, signals and log
+ * lines go in `details`, which the window offers behind "Copy details".
  * @param {{ reason: 'exited' | 'timeout' | 'untrusted' | 'spawn' | 'config' | 'folder',
  *   code?: number | null, signal?: string | null, stderrText?: string, detail?: string,
  *   timeoutMs?: number, folder?: string }} failure
- * @returns {{ title: string, message: string }}
+ * @returns {{ title: string, message: string, details: string }}
  */
 export function startupFailureMessage(failure) {
   const title = 'Clinical Analytics could not start';
@@ -246,15 +260,21 @@ export function startupFailureMessage(failure) {
     const line = cannotStartLine(failure.stderrText || '');
     if (failure.code === STORE_CHECK_FAILED_EXIT && line) {
       // serve.py's own one-line reason (it already says what to do); the title carries the rest.
-      return { title, message: line.slice(CANNOT_START_PREFIX.length).trim() || line };
+      const reason = line.slice(CANNOT_START_PREFIX.length).trim() || line;
+      if (!DEVELOPER_OUTPUT.test(reason)) return { title, message: reason, details: '' };
+      return {
+        title,
+        message:
+          'A file the analysis engine needs is missing or can’t be read. Reinstall Clinical Analytics.',
+        details: reason,
+      };
     }
-    const tail = lastLines(failure.stderrText || '', 5);
     return {
       title,
       message:
-        `The analysis engine stopped before it was ready (${exitDescription(failure)}). ` +
-        `${START_AGAIN} If this keeps happening, reinstall the app.` +
-        (tail ? `\n\nLast output:\n${tail}` : ''),
+        `The analysis engine stopped before it was ready. ${START_AGAIN} ` +
+        'If this keeps happening, reinstall the app.',
+      details: exitDetails(failure, 5),
     };
   }
   if (failure.reason === 'timeout') {
@@ -263,6 +283,7 @@ export function startupFailureMessage(failure) {
       message:
         `The analysis engine was not ready after ${Math.round((failure.timeoutMs || 0) / 1000)} ` +
         `seconds. ${START_AGAIN}`,
+      details: '',
     };
   }
   if (failure.reason === 'untrusted') {
@@ -271,48 +292,48 @@ export function startupFailureMessage(failure) {
       message:
         'Another program is using the port Clinical Analytics chose for its analysis engine, ' +
         `so the app did not connect to it. ${START_AGAIN} It will choose a free port.`,
+      details: failure.detail || '',
     };
   }
   if (failure.reason === 'folder') {
     return {
       title,
       message:
-        `Clinical Analytics could not create its working folder "${failure.folder}" ` +
-        `(${failure.detail || 'unknown error'}). Check that this folder, and the folders around ` +
-        'it, can be written by your user account and that the disk is not full, then start ' +
-        'Clinical Analytics again.',
+        'Clinical Analytics could not create its working folder. Check that your user account ' +
+        'can write to the app’s folders and that the disk is not full, then start Clinical ' +
+        'Analytics again.',
+      details: `${failure.folder || ''} (${failure.detail || 'unknown error'})`,
     };
   }
   if (failure.reason === 'config') {
+    // Only developer launch settings get here; the setting's name is the way to fix it.
     return {
       title,
       message:
         `${failure.detail || 'A startup setting is not valid.'} ` +
         'Correct the setting, then start Clinical Analytics again.',
+      details: '',
     };
   }
   return {
     title,
-    message:
-      `The analysis engine could not be started (${failure.detail || 'unknown error'}). ` +
-      'Reinstall Clinical Analytics.',
+    message: 'The analysis engine could not be started. Reinstall Clinical Analytics.',
+    details: failure.detail || 'unknown error',
   };
 }
 
 /**
- * Text for the dialog when the backend dies after it was ready.
+ * Text for the dialog when the backend dies after it was ready. How it ended and its last
+ * output go in `details` (behind "Copy details"), never in the dialog's text.
  * @param {{ code?: number | null, signal?: string | null, stderrText?: string }} info
- * @returns {{ title: string, message: string, detail: string, buttons: string[] }}
+ * @returns {{ title: string, message: string, detail: string, details: string, buttons: string[] }}
  */
 export function unexpectedExitMessage(info) {
-  const tail = lastLines(info.stderrText || '', 3);
   return {
     title: 'Clinical Analytics',
     message: 'The analysis engine stopped.',
-    detail:
-      'Restart it to keep working. Your cohorts are still on this computer.' +
-      `\n\nDetails: ${exitDescription(info)}.` +
-      (tail ? `\n\nLast output:\n${tail}` : ''),
+    detail: 'Restart it to keep working. Your cohorts are still on this computer.',
+    details: exitDetails(info, 3),
     buttons: ['Restart engine', 'Quit'],
   };
 }

@@ -124,7 +124,7 @@ export function renderEnrichmentCards(container, suggestions, handlers) {
   if (!suggestions.length) {
     const empty = document.createElement('p');
     empty.className = 'enrichment-empty';
-    empty.textContent = 'No pending metadata suggestions for this dataset.';
+    empty.textContent = 'No suggestions for this cohort.';
     container.appendChild(empty);
     return;
   }

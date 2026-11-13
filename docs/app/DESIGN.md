@@ -223,7 +223,10 @@ use `font-variant-numeric: tabular-nums lining-nums`.
   no shadows, only a lighter surface plus a 1 px border.
 - Layout: sidebar 264 px; chat column max 760 px with 24 px side padding; dataset panel 440 px
   sheet from the right. Under 1000 px wide the sidebar narrows to 232 px; the column stays
-  fluid.
+  fluid. Under 700 CSS px (the 800 × 600 minimum window at 200% zoom is 400 px wide) the sidebar
+  folds behind a "Cohort and conversations" toggle (Escape closes it) and both banners can be
+  dismissed, so the composer stays on screen. The composer shows the same 2 px `--focus-ring`
+  outline as every other control on `:focus-within`.
 
 ### Motion (after Kowalski)
 
@@ -259,15 +262,15 @@ Choreography:
 
 | State | Shape | Label / icon | Copy |
 |---|---|---|---|
-| Answered | No box; caption, serif headline, stats line, caveats, table, footnote | Analysis type as caption | Claim text from the API, unchanged |
-| Held | Tinted draft card with border | Clock icon + "Check this plan before it runs" | API reason, then the plan as a labelled list, the exact plan text on demand, buttons "Run this analysis" / "Not what I meant" |
-| Confirmed | Held card, buttons replaced | "You approved this plan." | Result streams below |
+| Answered | No box; caption, serif headline (an `h3`; the message is an `article` labelled by its question), stats line, what was computed, caveats, table, footnote | Analysis type as caption | Claim text from the API, unchanged; under it the plan from `plan_line` as a small list that always shows who was included ("Age over 83") and what was counted ("Rows" or "Patients (each Patient ID once)"). The footnote appears whenever anything is hidden, in the table or in the claim ("Total count hidden."). A table whose every value is hidden is not drawn; a table with more than 20 groups is never drawn ("The table isn’t shown because it has N groups…"). Table numbers use the claim's precision (p-values aside); "outcome=0" reads "Outcome: 0". The live region reads "Answer: {headline}". |
+| Held | Tinted draft card with border | Clock icon + "Check this plan before it runs" | API reason, a next step (for words it couldn't place: "This cohort has LDL and HDL. If you meant one of them, choose “Not what I meant” and ask again using its name."), then the plan as a labelled list (a missing value reads "Not set"; internal flags are not shown), the exact plan text on demand, buttons "Run this analysis" / "Not what I meant" ("Not what I meant" is the primary button when words were left out) |
+| Confirmed | Held card, buttons replaced | "You approved this plan. The answer is below." | Result streams below. If the answer below is a refusal or an error: "Not run — see below." |
 | Rejected | Held card, buttons replaced | "Not run." | "Not run. Rephrase your question below." |
 | Refused | Neutral notice | Info icon + "Not answered" | API reason, then "Your question is back in the box below so you can change it." |
-| Error | Danger-tinted notice | Alert icon + "Something went wrong" | API message or a plain fallback; question restored |
+| Error | Danger-tinted notice | Alert icon + "Something went wrong" | A plain sentence, never engine or exception text ("Execution error: …" is an error, not a refusal). When nothing came back: "Couldn't reach the analysis engine. Ask again; if it keeps happening, restart the app." The engine's exact words only behind "Copy details"; question restored |
 | Loading | Dots + stage text | — | "Reading your question", "Running the analysis", "· 4 s" after 3 s |
 | Streaming | Send becomes Stop; composer stays editable | Stop icon | Enter while busy: "Wait for this answer, or press Stop." |
-| Stopped | Muted note | "Stopped" | "Stopped waiting for this answer." After an approved plan was sent, its card settles ("You approved this plan and it was sent.") and is never offered again. |
+| Stopped | Muted note | "Stopped" | "Stopped waiting for this answer.", shown the moment Stop is pressed, even before the question reached the engine (the request is aborted). After an approved plan, its card settles ("You approved this plan, then stopped waiting. Ask again to see an answer.") and is never offered again. |
 | Empty (no cohort) | Centred | — | "Choose a cohort to begin." + Upload / Use the sample cohort |
 | Empty (cohort chosen) | Centred serif greeting + chips | — | "What would you like to know about {cohort}?" + three questions built from its columns (fill the box, never auto-send) |
 | Offline | Banner at the top of the main column; empty state explains | Alert icon | "Can't reach the analysis engine on this computer." + Try again; empty state "Waiting for the analysis engine." |
@@ -320,7 +323,7 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Session delete | ✕ + window.confirm | Icon button "Delete conversation: {title}", in-row confirm "Delete this conversation? It can't be recovered." Keep / Delete (focus on Keep; Escape keeps) |
 | Dataset select placeholder | Select a dataset... | Choose a cohort… |
 | Dataset meta | 400 rows • 14 columns | 400 rows · 14 variables (sidebar; opens the details panel) |
-| Upload | Upload dataset / Load sample / ✓ x uploaded / ✗ Upload failed: | Upload a file… / Use the sample cohort / "{name} is ready." / "Couldn't upload {file}: {reason}" |
+| Upload | Upload dataset / Load sample / ✓ x uploaded / ✗ Upload failed: | Upload a file… / Use the sample cohort / "The cohort “{name}” is ready." (plain text colour, not the accent) / "Couldn't upload “{file}”. {reason}" |
 | Delete | Delete dataset | Delete this cohort… (menu) |
 | Welcome | 📊 Welcome to Clinical Analytics … "Try asking:" | No cohort: "Choose a cohort to begin." With cohort: "What would you like to know about {cohort}?" |
 | Placeholder | Ask a question about your data... | Ask about {cohort}… |
@@ -329,7 +332,7 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Working | Processing… / Stage: planning | Reading your question… / Running the analysis… |
 | Claim | Claim: {claim} + title twice | {headline} / {stats line} / {caveats}; title once as caption |
 | Hidden cell | suppressed | hidden† / <11† + footnote |
-| Upload ready + data check | ✓ x uploaded | "{name} is ready." + "Data check found N things to review in cohort details." / "Data check found nothing to flag." / "Data check could not run." |
+| Upload ready + data check | ✓ x uploaded | "The cohort “{name}” is ready." + "Data check found N things to review in cohort details." and an "Open cohort details" button / "Data check found nothing to flag." / "Data check could not run." |
 | Cohort details: data check | (none) | Section "Data check": the API's lines as a list (suppressed counts read "some …; count hidden to protect privacy"), the data-check footnote; on failure "Data check could not run: {reason}. You can still ask questions." |
 | Hold heading | (none) | Check this plan before it runs |
 | Confirm / Reject | Confirm / Reject | Run this analysis / Not what I meant |
@@ -338,6 +341,9 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Refusal | Error: … / The question could not be answered: … | Not answered + reason + "Your question is back in the box below so you can change it." |
 | Crash | Sorry, I encountered an error: … | Something went wrong + message |
 | Lost stream | Connection lost. Please try again. | The connection to the analysis engine dropped before the answer arrived. Ask again. |
+| Busy hint | Working on your answer. Press Stop to stop waiting. | Wait for this answer, or press Stop. |
+| Native dialogs | Paths, exit signals, log lines, build commands | One plain sentence; the rest behind "Copy details" |
+| App menu | Electron default (Reload, Toggle Developer Tools) | File, Edit, View (zoom, full screen), Window; no Reload; developer tools only in development |
 | Session switched | Session restored. Switched to session sess_… | Continuing an earlier conversation. Earlier answers aren't shown here; new questions continue it. |
 
 ## Fonts and licences

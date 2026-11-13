@@ -57,7 +57,7 @@ export function renderPatchHistoryTable(container, patches, handlers) {
   if (!ordered.length) {
     const empty = document.createElement('p');
     empty.className = 'patch-history-empty';
-    empty.textContent = 'No patch history for this dataset.';
+    empty.textContent = 'No changes to this cohort yet.';
     container.appendChild(empty);
     return;
   }

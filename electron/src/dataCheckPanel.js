@@ -49,6 +49,15 @@ export function dataCheckStatusNote(check) {
 }
 
 /**
+ * True when the check found something to look at, so the status line offers the details sheet.
+ * @param {DataCheck | null} check
+ * @returns {boolean}
+ */
+export function dataCheckNeedsReview(check) {
+  return check?.status === 'ran' && check.count > 0;
+}
+
+/**
  * Sentence for a check that did not run, with the API's reason when it gave one.
  * @param {string | null} reason
  * @returns {string}

@@ -4,6 +4,7 @@ import { describe, test, expect, vi } from 'vitest';
 import {
   normalizeUploadResponse,
   uploadStatusText,
+  readyHeadline,
   formatFileSize,
   isAllowedExtension,
   renderUploadArea,
@@ -180,5 +181,20 @@ describe('renderUploadArea', () => {
     expect(container.querySelector('[data-testid="load-sample-btn"]').textContent).toBe(
       'Use the sample cohort'
     );
+  });
+});
+
+describe('readyHeadline (L1)', () => {
+  test.each([
+    ['cohort', 'The cohort “cohort” is ready.'],
+    ['Trial A', 'The cohort “Trial A” is ready.'],
+    ['', 'The cohort is ready.'],
+  ])('readyHeadline(%s) never starts with a lowercase file name', (name, expected) => {
+    // Act
+    const text = readyHeadline(name);
+
+    // Assert
+    expect(text).toBe(expected);
+    expect(text).toMatch(/^[A-Z]/);
   });
 });

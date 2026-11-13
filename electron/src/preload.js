@@ -19,6 +19,7 @@ import {
   withAuth,
 } from './apiAuth.js';
 import { THEME_GET_CHANNEL, THEME_SET_CHANNEL, isThemeSource, themeFromArgv } from './theme.js';
+import { plainFailureMessage } from './resultPresentation.js';
 
 // Backend API address: main always passes the one this launch uses (the backend it started, or
 // for an external dev backend VITE_API_URL / the default) and builds the CSP header from the same
@@ -74,6 +75,9 @@ async function apiFetch(url, init = {}) {
   const { token } = await getApiConfig();
   return fetch(url, { ...init, headers: withAuth(token, init.headers) });
 }
+
+/** Submits still waiting for an answer; Stop aborts them (cancelSubmit). */
+const pendingSubmits = new Set();
 
 /**
  * Clinical Analytics API - exposed to renderer process.
@@ -166,24 +170,42 @@ const clinicalAPI = {
     confirmPlanLine = null,
     confirmPlanHash = null
   ) {
-    const response = await apiFetch(`${API_BASE_URL}/api/queries`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-        dataset_id: datasetId,
-        query_text: queryText,
-        confirmed: Boolean(confirmed),
-        confirm_plan_line: confirmPlanLine,
-        confirm_plan_hash: confirmPlanHash,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to submit query: ${response.statusText}`);
+    const controller = new AbortController();
+    pendingSubmits.add(controller);
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/queries`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          dataset_id: datasetId,
+          query_text: queryText,
+          confirmed: Boolean(confirmed),
+          confirm_plan_line: confirmPlanLine,
+          confirm_plan_hash: confirmPlanHash,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        // The status stays in this context's log; the doctor reads a plain sentence.
+        console.error('[Preload] Query submit failed:', response.status);
+        const data = await response.json().catch(() => ({}));
+        throw new Error(plainFailureMessage(typeof data?.detail === 'string' ? data.detail : ''));
+      }
+      return await response.json();
+    } finally {
+      pendingSubmits.delete(controller);
     }
-    return await response.json();
+  },
+
+  /**
+   * Stop: abort every question submit still waiting for the server.
+   */
+  cancelSubmit() {
+    for (const controller of pendingSubmits) controller.abort();
+    pendingSubmits.clear();
   },
 
   /**

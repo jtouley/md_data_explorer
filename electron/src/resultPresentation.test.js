@@ -23,6 +23,14 @@ import {
   resultTitleForIntent,
   splitClaim,
   stageLabel,
+  ENGINE_UNREACHABLE_MESSAGE,
+  TABLE_LEVEL_LIMIT,
+  holdNextStep,
+  isFullyHiddenTable,
+  needsHiddenFootnote,
+  plainLevelLabel,
+  suggestColumns,
+  tableLevelCount,
 } from './resultPresentation.js';
 
 describe('normalizeIntentType', () => {
@@ -346,7 +354,12 @@ describe('splitClaim', () => {
       ['n hidden'],
       '',
     ],
-    ['hiddenDescriptive', 'Statistics for ldl are not shown because n is hidden.', ['n hidden'], ''],
+    [
+      'hiddenDescriptive',
+      'Statistics for ldl are not shown because n is hidden.',
+      ['n hidden'],
+      '',
+    ],
     [
       'missingNSurvivalMedian',
       'Median time to event=1 (days) is not shown because n is missing.',
@@ -516,7 +529,9 @@ describe('formatNumber', () => {
   });
 
   it.each([
-    ['Mean was 16.14 higher (p<0.001; n=377).', 3],
+    ['Mean was 16.14 higher (p<0.001; n=377).', 2],
+    ['Mean ldl was 16.97 higher (95% CI 13.96 to 19.99; Welch t-test p<0.001; n=377).', 2],
+    ['No difference (chi-square p=0.120; n=388).', 2],
     ['Mean age was 64.2 (n=190).', 1],
     ['Count was 12 (n=12).', 2],
     ['', 2],
@@ -600,10 +615,11 @@ describe('parsePlanLine', () => {
     expect(result).toEqual({
       analysis: 'Compare groups',
       items: [
-        { label: 'Outcome', value: 'LDL' },
-        { label: 'Compared across', value: 'Treatment' },
-        { label: 'Patients included', value: 'Age over 65' },
-        { label: 'Test', value: 'Welch t-test' },
+        { key: 'outcome', label: 'Outcome', value: 'LDL' },
+        { key: 'grouping', label: 'Compared across', value: 'Treatment' },
+        { key: 'included', label: 'Included', value: 'Age over 65' },
+        { key: 'counting', label: 'Counting', value: 'Rows' },
+        { key: 'test', label: 'Test', value: 'Welch t-test' },
       ],
     });
   });
@@ -635,22 +651,27 @@ describe('parsePlanLine', () => {
     // Arrange / Act
     const { items } = parsePlanLine(`DESCRIBE · filters ${filters}`);
     // Assert
-    expect(items[0]).toEqual({ label: 'Patients included', value: expected });
+    expect(items[0]).toEqual({ key: 'included', label: 'Included', value: expected });
   });
 
   it('parsePlanLine_predictors_eachLabelled', () => {
     // Arrange / Act
     const { items } = parsePlanLine('FIND_PREDICTORS · predictors age, ldl_mg_dl');
     // Assert
-    expect(items[0]).toEqual({ label: 'Predictors', value: 'Age, LDL (mg/dL) — ldl_mg_dl' });
+    expect(items[0]).toEqual({
+      key: 'predictors',
+      label: 'Predictors',
+      value: 'Age, LDL (mg/dL) — ldl_mg_dl',
+    });
   });
 
   it.each([
-    ['filters none', { label: 'Patients included', value: 'All patients' }],
-    ['grouping none', { label: 'Compared across', value: 'None' }],
-    ['time days', { label: 'Time', value: 'Days' }],
-    ['event died', { label: 'Event', value: 'Died' }],
-    ['weird part', { label: '', value: 'weird part' }],
+    ['grouping none', { key: 'grouping', label: 'Compared across', value: 'Not set' }],
+    ['outcome none', { key: 'outcome', label: 'Outcome', value: 'Not set' }],
+    ['time days', { key: 'time', label: 'Time', value: 'Days' }],
+    ['event died', { key: 'event', label: 'Event', value: 'Died' }],
+    ['statistic mean', { key: 'statistic', label: 'Statistic', value: 'Mean' }],
+    ['weird part', { key: 'other', label: 'Other', value: 'weird part' }],
   ])('parsePlanLine_part_%s', (part, expected) => {
     // Arrange / Act
     const { items } = parsePlanLine(`DESCRIBE · ${part}`);
@@ -686,11 +707,16 @@ describe('describeQueryFailure', () => {
     [{}, 'error', 'The analysis stopped before it could answer.'],
     [null, 'error', 'The analysis stopped before it could answer.'],
     [{ failure_reason: '   ', error: 'Fallback' }, 'refused', 'Fallback'],
+    [
+      { failure_reason: "Execution error: 'StringColumn' object has no attribute 'mean'" },
+      'error',
+      'The analysis couldn’t finish this question. Ask again in other words, naming the variables you mean; if it keeps happening, restart the app.',
+    ],
   ])('describeQueryFailure_case%#', (data, kind, message) => {
     // Arrange / Act
     const result = describeQueryFailure(data);
     // Assert
-    expect(result).toEqual({ kind, message });
+    expect(result).toMatchObject({ kind, message });
   });
 
   it('describeQueryFailure_engineWording_plainMessageWithExactDetail', () => {
@@ -845,5 +871,336 @@ describe('re-audit follow-ups', () => {
 
     // Assert
     expect(text).not.toBe(raw);
+  });
+});
+
+// Synthetic cohort columns (no real data): the variables a doctor's file might hold.
+const COHORT_COLUMNS = [
+  'patient_id',
+  'age',
+  'sex',
+  'treatment',
+  'site',
+  'ldl',
+  'hdl',
+  'bmi',
+  'diabetes',
+  'outcome',
+  'followup_days',
+  'event',
+];
+
+describe('answer plan (H1, H5)', () => {
+  it('parsePlanLine_filteredCount_limitAndPatientUnitAlwaysShown', () => {
+    // Arrange
+    const line =
+      'COUNT · outcome none · grouping none · filters age > 83 · counting distinct patient_id · test count';
+
+    // Act
+    const { analysis, items } = parsePlanLine(line, { omitUnset: true });
+
+    // Assert
+    expect(analysis).toBe('Count');
+    expect(items).toEqual([
+      { key: 'included', label: 'Included', value: 'Age over 83' },
+      { key: 'counting', label: 'Counting', value: 'Patients (each Patient ID once)' },
+    ]);
+  });
+
+  it.each([
+    ['filters none', 'All rows'],
+    ['filters none · counting distinct patient_id', 'All patients'],
+  ])('parsePlanLine_noLimits_%s_saysWhoWasIncluded', (parts, expected) => {
+    // Arrange / Act
+    const { items } = parsePlanLine(`COUNT · ${parts}`, { omitUnset: true });
+
+    // Assert
+    expect(items.find((i) => i.key === 'included').value).toBe(expected);
+  });
+
+  it('parsePlanLine_rowsNotPatients_whenNoDistinctCount', () => {
+    // Arrange / Act
+    const { items } = parsePlanLine('COUNT · grouping sex · filters age > 82 · test count');
+
+    // Assert
+    expect(items).toContainEqual({ key: 'counting', label: 'Counting', value: 'Rows' });
+  });
+
+  it.each([
+    ['limits in order 1) patient_id = S0001', 'Patient ID (patient_id) is S0001'],
+    ['limits in order 1) age > 65; 2) ldl ≥ 130', 'Age over 65, then LDL at least 130'],
+    ['limits in order 1) ldl is recorded', 'LDL is recorded'],
+    [
+      'limits in order 1) bmi above its median among the patients so far',
+      'BMI above its median among the patients so far',
+    ],
+  ])('parsePlanLine_limits_%s_inWords', (part, expected) => {
+    // Arrange / Act
+    const { items } = parsePlanLine(`DESCRIBE · filters none · ${part}`);
+
+    // Assert
+    const included = items.find((i) => i.key === 'included');
+    expect(included.value).toBe(expected);
+    expect(items.map((i) => i.value).join(' ')).not.toMatch(/limits in order|\d\)/);
+  });
+
+  it('parsePlanLine_filtersThenLimits_bothInOrder', () => {
+    // Arrange / Act
+    const { items } = parsePlanLine('DESCRIBE · filters sex == F · limits in order 1) age > 65');
+
+    // Assert
+    expect(items.filter((i) => i.key === 'included')).toEqual([
+      { key: 'included', label: 'Included', value: 'Sex is F, then Age over 65' },
+    ]);
+  });
+
+  it.each([
+    ['test count'],
+    ['test not selected'],
+    ['scope filtered'],
+    ['filters required'],
+    ['grouping required'],
+  ])('parsePlanLine_internalPart_%s_isNotShown', (part) => {
+    // Arrange / Act
+    const { items } = parsePlanLine(`COUNT · ${part}`);
+
+    // Assert
+    expect(items).toEqual([]);
+  });
+
+  it('parsePlanLine_testLabel_sentenceCase', () => {
+    // Arrange / Act
+    const { items } = parsePlanLine('DESCRIBE · test descriptive statistics');
+
+    // Assert
+    expect(items).toEqual([{ key: 'test', label: 'Test', value: 'Descriptive statistics' }]);
+  });
+
+  it('parsePlanLine_neverShowsNone', () => {
+    // Arrange
+    const line =
+      'SURVIVAL · outcome none · grouping none · time none · event none · filters none · test Kaplan–Meier';
+
+    // Act
+    const shown = parsePlanLine(line)
+      .items.map((i) => i.value)
+      .join(' | ');
+    const answer = parsePlanLine(line, { omitUnset: true })
+      .items.map((i) => i.key)
+      .join(',');
+
+    // Assert
+    expect(shown).not.toMatch(/\bNone\b|\bnone\b/);
+    expect(shown).toContain('Not set');
+    expect(answer).toBe('included,counting,test');
+  });
+
+  it('buildQueryCompletedPresentation_keepsPlanLine', () => {
+    // Arrange
+    const planLine = 'COUNT · filters age > 83 · test count';
+
+    // Act
+    const pres = buildQueryCompletedPresentation('COUNT', {}, 'Total count hidden.', planLine);
+
+    // Assert
+    expect(pres.result.planLine).toBe(planLine);
+  });
+});
+
+describe('hidden counts and table guards (H2, M5, B1)', () => {
+  it.each([
+    ['Total count hidden.', false, true],
+    ['15 total across 2 sex groups (n hidden).', false, true],
+    ['Total count: <11.', false, true],
+    ['Total count: 400.', false, false],
+    ['Mean age was 58.2 (n=400).', true, true],
+    ['Age band <65 was most common (n=200).', false, false],
+    [null, false, false],
+  ])('needsHiddenFootnote_%s_table%s_is_%s', (claim, tableHasHidden, expected) => {
+    // Arrange / Act / Assert
+    expect(needsHiddenFootnote(claim, tableHasHidden)).toBe(expected);
+  });
+
+  it.each([
+    [
+      {
+        columns: ['outcome', 'F', 'M'],
+        rows: [
+          { outcome: 'outcome=0', F: 'suppressed', M: 'suppressed' },
+          { outcome: 'outcome=1', F: '<11', M: 'suppressed' },
+        ],
+      },
+      true,
+    ],
+    [
+      {
+        columns: ['sex', 'n'],
+        rows: [
+          ['F', 'suppressed'],
+          ['M', 204],
+        ],
+      },
+      false,
+    ],
+    [{ columns: ['sex', 'n'], rows: [] }, false],
+    [{ columns: ['sex', 'n'], rows: [['F', null]] }, false],
+  ])('isFullyHiddenTable_case%#', (table, expected) => {
+    // Arrange / Act / Assert
+    expect(isFullyHiddenTable(table)).toBe(expected);
+  });
+
+  it.each([
+    [
+      {
+        columns: ['treatment', ...Array.from({ length: 289 }, (_, i) => `ldl=${80 + i}`)],
+        rows: [[], []],
+      },
+      289,
+    ],
+    [{ columns: ['sex', 'n'], rows: Array.from({ length: 30 }, () => ['x', 12]) }, 30],
+    [
+      {
+        columns: ['sex', 'mean age', 'n'],
+        rows: [
+          ['F', 58, 204],
+          ['M', 59, 196],
+        ],
+      },
+      2,
+    ],
+    [null, 0],
+  ])('tableLevelCount_case%#_is_%s', (table, expected) => {
+    // Arrange / Act / Assert
+    expect(tableLevelCount(table)).toBe(expected);
+  });
+
+  it('TABLE_LEVEL_LIMIT_is_about_twenty', () => {
+    expect(TABLE_LEVEL_LIMIT).toBe(20);
+  });
+
+  it.each([
+    ['outcome=0', 'Outcome: 0'],
+    ['ldl=80.9', 'LDL: 80.9'],
+    ['drug', 'drug'],
+    ['a = b', 'a = b'],
+    ['', ''],
+  ])('plainLevelLabel_%s_is_%s', (raw, expected) => {
+    // Arrange / Act / Assert
+    expect(plainLevelLabel(raw)).toBe(expected);
+  });
+});
+
+describe('caught messages (H3)', () => {
+  it.each([
+    ['Failed to fetch'],
+    ['Failed to submit query: Internal Server Error'],
+    ['Internal Server Error'],
+    ['TypeError: NetworkError when attempting to fetch resource.'],
+    [''],
+    [undefined],
+  ])('plainFailureMessage_%s_isTheEngineUnreachableFallback', (raw) => {
+    // Arrange / Act / Assert
+    expect(plainFailureMessage(raw)).toBe(ENGINE_UNREACHABLE_MESSAGE);
+  });
+
+  it('ENGINE_UNREACHABLE_MESSAGE_wording', () => {
+    expect(ENGINE_UNREACHABLE_MESSAGE).toBe(
+      "Couldn't reach the analysis engine. Ask again; if it keeps happening, restart the app."
+    );
+  });
+
+  it('plainFailureMessage_retryWord_canBeChangedForUploads', () => {
+    expect(plainFailureMessage('Failed to fetch', 'Try again')).toBe(
+      "Couldn't reach the analysis engine. Try again; if it keeps happening, restart the app."
+    );
+  });
+
+  it.each([
+    ["Execution error: 'StringColumn' object has no attribute 'mean'"],
+    ['Execution failed: unsupported operand type(s) for +'],
+    ["'NoneType' object is not subscriptable"],
+    ['Binder Error: Referenced column "x" not found'],
+  ])('plainFailureMessage_exception_%s_isNeverShownRaw', (raw) => {
+    // Arrange / Act
+    const text = plainFailureMessage(raw);
+
+    // Assert
+    expect(text).not.toMatch(/StringColumn|attribute|operand|NoneType|Binder|Execution/);
+  });
+
+  it('describeQueryFailure_executionError_isAnErrorWithDetailForCopying', () => {
+    // Arrange
+    const raw = "Execution error: 'StringColumn' object has no attribute 'mean'";
+
+    // Act
+    const result = describeQueryFailure({ failure_reason: raw });
+
+    // Assert
+    expect(result.kind).toBe('error');
+    expect(result.detail).toBe(raw);
+    expect(result.message).not.toContain('StringColumn');
+  });
+});
+
+describe('hold next step (H5)', () => {
+  it.each([
+    ['cholesterol', ['ldl', 'hdl']],
+    ['diabete', ['diabetes']],
+    ['gender', ['sex']],
+    ['average', []],
+    ['by', []],
+    ['ids', []],
+  ])('suggestColumns_%s_is_%o', (word, expected) => {
+    // Arrange / Act / Assert
+    expect(suggestColumns([word], COHORT_COLUMNS)).toEqual(expected);
+  });
+
+  it('suggestColumns_neverSuggestsIdentifiers_andCapsAtThree', () => {
+    // Arrange / Act
+    const out = suggestColumns(['patient', 'cholesterol', 'diabetes', 'gender'], COHORT_COLUMNS);
+
+    // Assert
+    expect(out).not.toContain('patient_id');
+    expect(out.length).toBeLessThanOrEqual(3);
+  });
+
+  it('holdNextStep_unplacedWords_namesClosestColumns_andRejectIsPrimary', () => {
+    // Arrange
+    const reason =
+      "I couldn't place the words 'average' and 'cholesterol', so they are not in the plan.";
+
+    // Act
+    const step = holdNextStep(reason, COHORT_COLUMNS);
+
+    // Assert
+    expect(step.dropped).toBe(true);
+    expect(step.text).toBe(
+      'This cohort has LDL and HDL. If you meant one of them, choose “Not what I meant” and ask again using its name.'
+    );
+  });
+
+  it('holdNextStep_unplacedWordWithNoMatch_pointsToVariableNames', () => {
+    // Arrange
+    const reason = "I couldn't place the word 'recently', so it is not in the plan.";
+
+    // Act
+    const step = holdNextStep(reason, COHORT_COLUMNS);
+
+    // Assert
+    expect(step.dropped).toBe(true);
+    expect(step.text).toBe(
+      'If that word matters, choose “Not what I meant” and ask again using the cohort’s variable names (see cohort details).'
+    );
+  });
+
+  it('holdNextStep_confidenceHold_saysWhatToCheck', () => {
+    // Arrange / Act
+    const step = holdNextStep('Confirmation required before execution.', COHORT_COLUMNS);
+
+    // Assert
+    expect(step.dropped).toBe(false);
+    expect(step.text).toBe(
+      'If the plan below matches your question, run it. If not, choose “Not what I meant” and ask again in other words.'
+    );
   });
 });

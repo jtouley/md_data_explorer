@@ -71,7 +71,7 @@ test.describe('Re-audit fixes', () => {
     await expect(drugRow.locator('td').first()).toHaveText('190');
   });
 
-  test('engine wording is replaced by a plain sentence, exact text behind a disclosure', async ({
+  test('engine wording is replaced by a plain sentence; the exact text is only copied, never shown', async ({
     page,
   }) => {
     // Act
@@ -80,11 +80,10 @@ test.describe('Re-audit fixes', () => {
     // Assert
     const notice = page.getByTestId('refused-notice');
     await expect(notice.locator('.notice-body')).toContainText('didn’t name what to summarise');
-    await expect(notice.locator('.notice-body')).not.toContainText(/DESCRIBE|primary_variable|LLM/);
-    const detail = notice.locator('details');
-    await expect(detail.locator('summary')).toHaveText('Exact message');
-    await detail.locator('summary').click();
-    await expect(detail).toContainText(ENGINE_FAILURE);
+    await expect(notice).not.toContainText(/DESCRIBE|primary_variable|LLM/);
+    await expect(notice.locator('details')).toHaveCount(0);
+    await expect(notice.getByRole('button', { name: 'Copy details' })).toBeVisible();
+    expect(ENGINE_FAILURE).toMatch(/primary_variable/);
   });
 
   test('held plan rows read as words, keep exact names, and the toggle is at least 24px', async ({
@@ -118,6 +117,40 @@ test.describe('Re-audit fixes', () => {
     // Assert
     await expect(page.locator('#dataset-select')).toHaveValue('ds_sample');
     await expect(page.locator('#query-input')).toBeFocused();
+  });
+});
+
+test.describe('Narrow windows (H6)', () => {
+  test('the minimum window at 200% zoom: composer reachable, sidebar behind a toggle', async ({
+    page,
+  }) => {
+    // Arrange: 800×600 at 200% zoom is a 400×286 CSS viewport
+    await setupStreamingMock(page);
+    await page.locator('#dataset-select').selectOption('ds_cohort');
+    await page.setViewportSize({ width: 400, height: 286 });
+
+    // Assert: the sidebar is folded and the composer is fully on screen
+    await expect(page.getByTestId('session-sidebar')).toBeHidden();
+    const box = await page.locator('.query-form').boundingBox();
+    expect(box.y + box.height).toBeLessThanOrEqual(286);
+    expect(box.width).toBeGreaterThan(300);
+
+    // Act: open the sidebar, then close it with Escape
+    const toggle = page.getByTestId('sidebar-toggle');
+    await toggle.click();
+    await expect(page.getByTestId('session-sidebar')).toBeVisible();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await page.keyboard.press('Escape');
+
+    // Assert
+    await expect(page.getByTestId('session-sidebar')).toBeHidden();
+    await expect(toggle).toBeFocused();
+  });
+
+  test('wide windows do not show the toggle', async ({ page }) => {
+    await setupStreamingMock(page);
+    await expect(page.getByTestId('sidebar-toggle')).toBeHidden();
+    await expect(page.getByTestId('session-sidebar')).toBeVisible();
   });
 });
 

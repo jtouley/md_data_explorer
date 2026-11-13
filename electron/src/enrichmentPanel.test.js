@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
+/** @vitest-environment jsdom */
 import { describe, expect, it, vi } from 'vitest';
 import {
   createEnrichmentPanelGate,
   normalizePendingResponse,
+  renderEnrichmentCards,
   runEnrichmentDecision,
   suggestionToRows,
 } from './enrichmentPanel.js';
@@ -315,5 +317,18 @@ describe('createEnrichmentPanelGate', () => {
     // Assert
     expect(gate.mayWriteHint(load, 'suggestions')).toBe(true);
     expect(gate.mayWriteHint(load, 'history')).toBe(true);
+  });
+});
+
+describe('renderEnrichmentCards empty state (M5)', () => {
+  it('renderEnrichmentCards_none_saysCohortOnce', () => {
+    // Arrange
+    const container = document.createElement('div');
+
+    // Act
+    renderEnrichmentCards(container, [], { onAccept: () => {}, onReject: () => {} });
+
+    // Assert
+    expect(container.textContent).toBe('No suggestions for this cohort.');
   });
 });

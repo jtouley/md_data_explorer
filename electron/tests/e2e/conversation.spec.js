@@ -24,6 +24,20 @@ test.describe('Conversation states', () => {
       '95% CI 13.44 to 18.83 · Welch t-test p<0.001 · n=377 · 23 excluded for missing data'
     );
     await expect(page.locator('.result-notes')).toHaveText('Unadjusted comparison by treatment.');
+    // H1: what was computed sits under the claim, limits always visible
+    const plan = page.getByTestId('answer-plan');
+    await expect(plan).toBeVisible();
+    await expect(plan).toContainText('Age over 65');
+    await expect(plan).toContainText('Rows');
+    // M3: the answer is an article labelled by its question, the claim its heading
+    const article = page.getByRole('article', { name: 'Compare LDL by treatment' });
+    await expect(article).toBeVisible();
+    await expect(article.getByRole('heading', { level: 3 })).toHaveText(
+      'Mean ldl was 16.14 higher in placebo than drug.'
+    );
+    await expect(page.locator('#sr-status')).toHaveText(
+      'Answer: Mean ldl was 16.14 higher in placebo than drug.'
+    );
     await expect(page.getByTestId('result-card-title')).toHaveCount(1);
     await expect(page.locator('.message-assistant').last()).toHaveAttribute(
       'data-state',
@@ -89,7 +103,8 @@ test.describe('Conversation states', () => {
     await ask(page, 'Compare LDL by treatment in older patients seen recently');
     const card = page.getByTestId('result-confirm-card');
     await expect(card).toContainText('Check this plan before it runs');
-    await expect(card.locator('.plan-list')).toContainText('Patients included');
+    await expect(card.locator('.plan-list')).toContainText('Included');
+    await expect(card.locator('.plan-list')).not.toContainText(/\bNone\b/);
     await card.getByTestId('confirm-query-btn').click();
 
     // Assert
@@ -146,7 +161,10 @@ test.describe('Conversation states', () => {
 
     // Assert: the approval was sent once and the card cannot send it again
     await expect(page.getByTestId('stopped-notice')).toBeVisible();
-    await expect(card).toContainText('You approved this plan and it was sent.');
+    await expect(card).toContainText(
+      'You approved this plan, then stopped waiting. Ask again to see an answer.'
+    );
+    await expect(card).not.toContainText('it was sent');
     await expect(card.getByTestId('confirm-query-btn')).toHaveCount(0);
     const confirmed = await page.evaluate(
       () => window.__calls.filter((c) => c[0] === 'submitQuery' && c[4] === true).length
@@ -231,6 +249,32 @@ test.describe('Conversation states', () => {
       return r.top >= c.top && r.bottom <= c.bottom;
     });
     expect(inView).toBe(true);
+  });
+
+  test('Stop before the question reaches the engine shows Stopped at once (M2)', async ({
+    page,
+  }) => {
+    // Arrange: the submit itself takes 5 s
+    await page.evaluate(() => {
+      window.__submitMs = 5000;
+    });
+    await ask(page, 'Compare LDL by treatment');
+    const submit = page.locator('#submit-btn');
+    await expect(submit).toHaveAttribute('aria-label', 'Stop');
+
+    // Act
+    await submit.click();
+
+    // Assert: acknowledged well before the request returns, and the request was cancelled
+    await expect(page.getByTestId('stopped-notice')).toBeVisible({ timeout: 1000 });
+    await expect(page.getByTestId('thinking-indicator')).toHaveCount(0);
+    await expect(submit).toHaveAttribute('aria-label', 'Ask');
+    const cancels = await page.evaluate(
+      () => window.__calls.filter((c) => c[0] === 'cancelSubmit').length
+    );
+    expect(cancels).toBe(1);
+    await page.waitForTimeout(5500);
+    await expect(page.getByTestId('result-claim')).toHaveCount(0);
   });
 
   test('example chips fill the box without sending', async ({ page }) => {
