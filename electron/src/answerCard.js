@@ -21,6 +21,7 @@ import {
   plainLevelLabel,
   splitClaim,
   tableLevelCount,
+  isGroupLevelTable,
   tableWithheldMessage,
 } from './resultPresentation.js';
 
@@ -77,12 +78,16 @@ const NOTICE_LABELS = {
   stopped: { word: 'Stopped', icon: 'stop' },
 };
 
+export const COPY_DONE = 'Details copied. Paste them to whoever supports the app.';
+export const COPY_FAILED = 'Couldn’t copy the details. Restart the app and try again.';
+
 /**
  * Refusal, error or stopped notice: a word and an icon, never colour alone. The engine's exact
  * words, when the notice reworded them, are offered for copying and never shown.
  * @param {'refused' | 'error' | 'stopped'} kind
  * @param {string} text
- * @param {{ hint?: string, detail?: string, copy?: (text: string) => void }} [opts]
+ * @param {{ hint?: string, detail?: string, copy?: (text: string) => Promise<unknown> | unknown }} [opts]
+ *   `copy` resolves when the text is on the clipboard; a rejection or `false` means it isn't.
  * @returns {HTMLElement}
  */
 export function buildNotice(kind, text, opts = {}) {
@@ -100,8 +105,22 @@ export function buildNotice(kind, text, opts = {}) {
     const done = el('span', 'notice-copied');
     done.setAttribute('role', 'status');
     copyBtn.addEventListener('click', () => {
-      opts.copy(/** @type {string} */ (opts.detail));
-      done.textContent = 'Copied. Paste them to whoever supports the app.';
+      done.textContent = '';
+      // Say "copied" only once the clipboard has the text; otherwise say it didn't work.
+      let pending;
+      try {
+        pending = Promise.resolve(opts.copy?.(/** @type {string} */ (opts.detail)));
+      } catch (error) {
+        pending = Promise.reject(error);
+      }
+      pending.then(
+        (copied) => {
+          done.textContent = copied === false ? COPY_FAILED : COPY_DONE;
+        },
+        () => {
+          done.textContent = COPY_FAILED;
+        }
+      );
     });
     const row = el('div', 'notice-actions');
     row.append(copyBtn, done);
@@ -271,7 +290,7 @@ export function renderAnswerCard(result, opts = {}) {
   let tableHasHidden = false;
   if (result.table) {
     const levels = tableLevelCount(result.table);
-    if (levels > TABLE_LEVEL_LIMIT) {
+    if (levels > TABLE_LEVEL_LIMIT && isGroupLevelTable(result.table, result.analysisType)) {
       // Guard: a table with this many groups can name single patients in its labels.
       const withheld = el('p', 'result-withheld', tableWithheldMessage(levels));
       withheld.dataset.testid = 'table-withheld';

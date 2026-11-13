@@ -70,7 +70,7 @@ export function renderPatchHistoryTable(container, patches, handlers) {
 
   const thead = document.createElement('thead');
   const hr = document.createElement('tr');
-  for (const label of ['Column', 'Operation', 'Value', 'Status', 'Created', '']) {
+  for (const label of ['Variable', 'Operation', 'Value', 'Status', 'Created', '']) {
     const th = document.createElement('th');
     th.textContent = label;
     hr.appendChild(th);

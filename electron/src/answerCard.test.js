@@ -193,6 +193,49 @@ describe('renderAnswerCard: table guard (B1)', () => {
   });
 });
 
+describe('renderAnswerCard: level guard scope (round 2)', () => {
+  it.each([
+    ['relationship', ['variable 1', 'variable 2', 'r']],
+    ['predictor', ['variable', 'odds ratio', 'p']],
+  ])('renderAnswerCard_%s_withMoreThanTwentyRows_isDrawn', (analysisType, columns) => {
+    // Arrange: 21 correlation pairs or predictors are variables, not groups
+    const rows = Array.from({ length: 21 }, (_, i) => [`v${i}`, `w${i}`, 0.2]);
+    const result = {
+      intentType: 'correlations',
+      analysisType,
+      title: 'Correlations',
+      claim: 'r=0.2.',
+      table: { columns, rows },
+    };
+
+    // Act
+    const card = renderAnswerCard(result);
+
+    // Assert
+    expect(card.querySelector('table')).not.toBeNull();
+    expect(testid(card, 'table-withheld')).toBeNull();
+  });
+
+  it('renderAnswerCard_groupedCountWithMoreThanTwentyGroups_isWithheld', () => {
+    // Arrange
+    const rows = Array.from({ length: 21 }, (_, i) => [`site ${i}`, 20 + i]);
+    const result = {
+      intentType: 'count',
+      analysisType: 'count',
+      title: 'Counts',
+      claim: 'n=800.',
+      table: { columns: ['site', 'n'], rows },
+    };
+
+    // Act
+    const card = renderAnswerCard(result);
+
+    // Assert
+    expect(card.querySelector('table')).toBeNull();
+    expect(testid(card, 'table-withheld')).not.toBeNull();
+  });
+});
+
 describe('answer structure for screen readers (M3)', () => {
   it('renderAnswerCard_claimIsAHeading', () => {
     // Arrange / Act
@@ -259,6 +302,66 @@ describe('buildNotice: no raw engine text on screen (H3)', () => {
     expect(notice.textContent).not.toContain('StringColumn');
     expect(button.textContent).toBe('Copy details');
     expect(copy).toHaveBeenCalledWith(raw);
+  });
+});
+
+describe('buildNotice: copy feedback (round 2)', () => {
+  const raw = "Execution error: 'StringColumn' object has no attribute 'mean'";
+
+  it('buildNotice_copySucceeds_saysCopied', async () => {
+    // Arrange
+    const notice = buildNotice('error', 'The analysis couldn’t finish this question.', {
+      detail: raw,
+      copy: () => Promise.resolve(),
+    });
+
+    // Act
+    notice.querySelector('button').click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Assert
+    expect(notice.querySelector('.notice-copied').textContent).toBe(
+      'Details copied. Paste them to whoever supports the app.'
+    );
+  });
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('denied'))],
+    [
+      'throws',
+      () => {
+        throw new Error('no clipboard');
+      },
+    ],
+    ['returns false', () => Promise.resolve(false)],
+  ])('buildNotice_copy%s_saysItFailed_neverCopied', async (_name, copy) => {
+    // Arrange
+    const notice = buildNotice('error', 'The analysis couldn’t finish this question.', {
+      detail: raw,
+      copy,
+    });
+
+    // Act
+    notice.querySelector('button').click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Assert
+    const status = notice.querySelector('.notice-copied').textContent;
+    expect(status).not.toMatch(/^Details copied/);
+    expect(status).toBe('Couldn’t copy the details. Restart the app and try again.');
+  });
+
+  it('buildNotice_beforeTheCopySettles_saysNothing', () => {
+    // Arrange
+    const notice = buildNotice('error', 'x', { detail: raw, copy: () => new Promise(() => {}) });
+
+    // Act
+    notice.querySelector('button').click();
+
+    // Assert
+    expect(notice.querySelector('.notice-copied').textContent).toBe('');
   });
 });
 

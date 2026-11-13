@@ -335,7 +335,7 @@ test.describe('Integration: error resilience', () => {
     await expect(options).toHaveCount(1);
     await expect(options.first()).toHaveText('Choose a cohort…');
     await expect(page.getByTestId('upload-status')).toHaveText(
-      "Couldn't load the list of cohorts."
+      'Couldn’t load the list of cohorts.'
     );
   });
 
@@ -363,7 +363,7 @@ test.describe('Integration: error resilience', () => {
     await page.locator('#dataset-select').selectOption('ds_abc');
 
     const hint = page.getByTestId('enrichment-hint');
-    await expect(hint).toContainText("Couldn't load column suggestions");
+    await expect(hint).toContainText('Couldn’t load variable suggestions');
   });
 });
 

@@ -53,10 +53,75 @@ describe('native dialogs keep developer output behind Copy details (M1)', () => 
     // Assert
     expect(show.mock.calls[0][0].buttons).toEqual(['Quit']);
   });
+});
 
-  it('showWithCopyDetailsSync_copyKeepsBeingPressed_stopsAfterAFewRounds', () => {
+describe('native Copy details confirms and never answers for the user (round 2)', () => {
+  it('showWithCopyDetailsSync_afterCopy_reShowsWithConfirmation', () => {
+    // Arrange: Copy details, then Quit
+    const show = vi.fn().mockReturnValueOnce(1).mockReturnValueOnce(0);
+
+    // Act
+    showWithCopyDetailsSync(show, vi.fn(), {
+      options: { message: 'Plain sentence.', detail: 'Check the folder.', buttons: ['Quit'] },
+      details: 'd',
+    });
+
+    // Assert
+    expect(show.mock.calls[0][0].detail).toBe('Check the folder.');
+    expect(show.mock.calls[1][0].detail).toBe(
+      'Check the folder.\n\nDetails copied. Paste them to whoever supports the app.'
+    );
+    expect(show.mock.calls[1][0].message).toBe('Plain sentence.');
+  });
+
+  it('showWithCopyDetails_copyFails_saysSo', async () => {
     // Arrange
-    const show = vi.fn().mockReturnValue(1);
+    const show = vi
+      .fn()
+      .mockResolvedValueOnce({ response: 1 })
+      .mockResolvedValueOnce({ response: 0 });
+    const copy = vi.fn(() => {
+      throw new Error('clipboard unavailable');
+    });
+
+    // Act
+    await showWithCopyDetails(show, copy, {
+      options: { message: 'x', buttons: ['Quit'] },
+      details: 'd',
+    });
+
+    // Assert
+    expect(show.mock.calls[1][0].detail).toBe(
+      'Couldn’t copy the details. Restart the app and try again.'
+    );
+  });
+
+  it('showWithCopyDetails_crashDialogCopyPressedManyTimes_neverReturnsQuit', async () => {
+    // Arrange: the crash dialog (Restart = 0, Quit = 1, cancelId 1). The user presses Copy
+    // details over and over, then Restart engine once the button is gone.
+    let calls = 0;
+    const show = vi.fn(async (options) => {
+      calls += 1;
+      if (options.buttons.includes(COPY_DETAILS)) return { response: 2 };
+      return { response: 0 };
+    });
+
+    // Act
+    const response = await showWithCopyDetails(show, vi.fn(), {
+      options: { message: 'Stopped.', buttons: ['Restart engine', 'Quit'], cancelId: 1 },
+      details: 'signal SIGKILL',
+    });
+
+    // Assert: the answer is the button the user pressed, never the cancel button
+    expect(response).toBe(0);
+    expect(calls).toBe(4);
+    const last = show.mock.calls[show.mock.calls.length - 1][0];
+    expect(last.buttons).toEqual(['Restart engine', 'Quit']);
+  });
+
+  it('showWithCopyDetailsSync_copyKeepsBeingPressed_dropsTheButtonInsteadOfAnswering', () => {
+    // Arrange
+    const show = vi.fn((options) => (options.buttons.includes(COPY_DETAILS) ? 1 : 0));
 
     // Act
     const response = showWithCopyDetailsSync(show, vi.fn(), {
@@ -66,6 +131,6 @@ describe('native dialogs keep developer output behind Copy details (M1)', () => 
 
     // Assert
     expect(response).toBe(0);
-    expect(show.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(show.mock.calls[show.mock.calls.length - 1][0].buttons).toEqual(['Quit']);
   });
 });

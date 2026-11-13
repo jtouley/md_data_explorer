@@ -232,11 +232,41 @@ function exitDescription({ code, signal }) {
 }
 
 /**
- * Developer output that must not be the sentence a clinician reads: file paths, shell or build
- * commands, exit signals, Python tracebacks and log lines.
+ * Developer-only sentences in a serve.py reason: tracebacks, log lines and build commands. They go
+ * to "Copy details"; everything else (paths and folder names included) is the recovery step the
+ * clinician needs and stays in the message.
  */
-const DEVELOPER_OUTPUT =
-  /`|(^|[\s("'])(\/|~\/|[A-Za-z]:\\)[^\s]+|\bmake\s+[a-z-]+|\bsignal\b|\bexit code\b|Traceback|\b[A-Z]\w*Error\b|\b(INFO|WARNING|ERROR|DEBUG)\b|uvicorn/;
+const DEVELOPER_SENTENCE =
+  /`|\bmake\s+[a-z][\w-]*|Traceback|^\s*File "|^(INFO|WARNING|ERROR|DEBUG|CRITICAL)\b/;
+
+/** The bundled model is missing or damaged: the one reason reinstalling fixes. */
+const MISSING_BUNDLED_FILE =
+  /^The embedding model\b.*\b(is missing from|does not match its pinned)\b/;
+
+/**
+ * serve.py's one-line reason as the message, with only developer sentences moved to details.
+ * @param {string} reason
+ * @returns {{ message: string, details: string }}
+ */
+function storeCheckReason(reason) {
+  if (MISSING_BUNDLED_FILE.test(reason)) {
+    return {
+      message:
+        'A file the analysis engine needs is missing or can’t be read. Reinstall Clinical Analytics.',
+      details: reason,
+    };
+  }
+  const sentences = reason.split(/(?<=\.)\s+(?=\S)/);
+  const kept = sentences.filter((sentence) => !DEVELOPER_SENTENCE.test(sentence));
+  const moved = sentences.filter((sentence) => DEVELOPER_SENTENCE.test(sentence));
+  if (!kept.length) {
+    return {
+      message: `The analysis engine stopped before it was ready. ${START_AGAIN}`,
+      details: reason,
+    };
+  }
+  return { message: kept.join(' '), details: moved.join('\n') };
+}
 
 /** Exit status and the backend's last output, for "Copy details". */
 function exitDetails(failure, lines) {
@@ -261,13 +291,7 @@ export function startupFailureMessage(failure) {
     if (failure.code === STORE_CHECK_FAILED_EXIT && line) {
       // serve.py's own one-line reason (it already says what to do); the title carries the rest.
       const reason = line.slice(CANNOT_START_PREFIX.length).trim() || line;
-      if (!DEVELOPER_OUTPUT.test(reason)) return { title, message: reason, details: '' };
-      return {
-        title,
-        message:
-          'A file the analysis engine needs is missing or can’t be read. Reinstall Clinical Analytics.',
-        details: reason,
-      };
+      return { title, ...storeCheckReason(reason) };
     }
     return {
       title,
@@ -298,11 +322,12 @@ export function startupFailureMessage(failure) {
   if (failure.reason === 'folder') {
     return {
       title,
+      // The folder is what the user has to fix, so it stays in the sentence; the OS error doesn't.
       message:
-        'Clinical Analytics could not create its working folder. Check that your user account ' +
-        'can write to the app’s folders and that the disk is not full, then start Clinical ' +
-        'Analytics again.',
-      details: `${failure.folder || ''} (${failure.detail || 'unknown error'})`,
+        `Clinical Analytics couldn’t create its working folder “${failure.folder || ''}”. Check ` +
+        'that your user account can write to it and that the disk isn’t full, then start ' +
+        'Clinical Analytics again.',
+      details: failure.detail || '',
     };
   }
   if (failure.reason === 'config') {

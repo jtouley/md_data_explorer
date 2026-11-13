@@ -147,7 +147,7 @@ export function buildIntentSummary(normalizedIntent, resultPreview, rowCount) {
       parts.push(`N=${rowCount}`);
     }
     if (numericColumns.length > 0) {
-      parts.push(`Columns: ${numericColumns.join(', ')}`);
+      parts.push(`Variables: ${numericColumns.join(', ')}`);
     }
     return parts.length > 0 ? parts.join(' | ') : null;
   }
@@ -235,8 +235,11 @@ export function buildQueryCompletedPresentation(intentRaw, resultPreview, claimA
     return { content, result: null };
   }
 
+  const analysisType =
+    typeof resultPreview?.analysis_type === 'string' ? resultPreview.analysis_type : null;
   const result = {
     intentType,
+    ...(analysisType ? { analysisType } : {}),
     title,
     summary,
     ...(claim ? { claim } : {}),
@@ -328,7 +331,7 @@ export function isHiddenCellMarker(s) {
 
 export const HIDDEN_CELL_FOOTNOTE =
   `Hidden to protect privacy: counts from 1 to ${SMALL_CELL_THRESHOLD - 1} are not shown, ` +
-  "and some other cells are hidden so those counts can't be worked out from totals.";
+  'and some other cells are hidden so those counts can’t be worked out from totals.';
 
 /** "hidden" or the API's "<11" anywhere in the claim (the stats line is part of the claim). */
 const CLAIM_HIDES_A_COUNT = new RegExp(`\\bhidden\\b|(^|[^\\w<])${SMALL_CELL_TOKEN}(?!\\d)`, 'i');
@@ -396,6 +399,26 @@ export function tableLevelCount(table) {
   const columns = Array.isArray(table?.columns) ? table.columns.length : 0;
   const rows = Array.isArray(table?.rows) ? table.rows.length : 0;
   return Math.max(columns - 1, rows, 0);
+}
+
+/** Analyses whose table rows are variables, never levels of a grouping variable. */
+const VARIABLE_ROW_ANALYSES = new Set(['relationship', 'predictor']);
+
+/**
+ * Whether a table's rows or columns are levels of a grouping variable (cross-tabs, group
+ * comparisons, grouped counts), so the level limit applies. Correlation pairs, predictors and
+ * the per-variable overview list variables, not groups. An unknown analysis is treated as
+ * grouped. This is defence in depth: the server applies the real rule before the table is sent.
+ * @param {{ columns?: unknown[], rows?: unknown[] } | null | undefined} table
+ * @param {string | null | undefined} analysisType the payload's `analysis_type`
+ * @returns {boolean}
+ */
+export function isGroupLevelTable(table, analysisType) {
+  if (!table) return false;
+  if (analysisType && VARIABLE_ROW_ANALYSES.has(analysisType)) return false;
+  const first = Array.isArray(table.columns) ? String(table.columns[0] ?? '') : '';
+  if (analysisType === 'descriptive' && first === 'variable') return false;
+  return true;
 }
 
 /**
@@ -907,12 +930,12 @@ const ENGINE_MESSAGES = [
   [
     /(?:Filter )?[Cc]olumn '([^']+)' not found/,
     (m) =>
-      `This cohort has no column called ${quoteColumn(m[1])}. Check the spelling, or open the cohort details to see its columns.`,
+      `This cohort has no variable called ${quoteColumn(m[1])}. Check the spelling, or open the cohort details to see its variables.`,
   ],
   [
     /Type mismatch for column '([^']+)'.*got string '([^']*)'/,
     (m) =>
-      `${quoteColumn(m[2])} isn't a number, but ${columnLabel(m[1])} holds numbers. Ask again with a number, for example “over 65”.`,
+      `${quoteColumn(m[2])} isn’t a number, but ${columnLabel(m[1])} holds numbers. Ask again with a number, for example “over 65”.`,
   ],
   [
     /\bDESCRIBE\b.*requires/,
@@ -927,12 +950,12 @@ const ENGINE_MESSAGES = [
   [
     /requires grouping/,
     () =>
-      'The question asks for a breakdown but doesn’t say by what. Add “by” and a column, for example “by sex”.',
+      'The question asks for a breakdown but doesn’t say by what. Add “by” and a variable, for example “by sex”.',
   ],
   [
     /Cannot group by entity key/,
     () =>
-      'That column identifies individual patients, so it can’t form groups. Choose a column such as sex or treatment.',
+      'That variable identifies individual patients, so it can’t form groups. Choose a variable such as sex or treatment.',
   ],
   [
     /Time and event variables required/,
@@ -956,7 +979,7 @@ const ENGINE_MESSAGES = [
   [
     /All parsing tiers failed/,
     () =>
-      'The question couldn’t be matched to an analysis. Ask again using a column name from the cohort.',
+      'The question couldn’t be matched to an analysis. Ask again using a variable name from the cohort.',
   ],
 ];
 
@@ -998,56 +1021,191 @@ const EXECUTION_FAILURE_MESSAGE =
   'The analysis couldn’t finish this question. Ask again in other words, naming the variables ' +
   'you mean; if it keeps happening, restart the app.';
 
-/** The request never got an answer from the engine (network, HTTP 5xx, aborted fetch). */
+/** The request never got an answer from the engine: network failures and aborted fetches only. */
 const ENGINE_UNREACHABLE = new RegExp(
   [
     'Failed to fetch',
     'NetworkError',
     'Load failed',
-    'Internal Server Error',
-    'Bad Gateway',
-    'Service Unavailable',
-    'Gateway Timeout',
     'ECONNREFUSED',
     'ECONNRESET',
     'ETIMEDOUT',
     'socket hang up',
     'net::ERR_',
-    '^Failed to (submit|list|load|get|create|delete)\\b',
-    '^Stream failed',
+    '^Stream failed$',
   ].join('|'),
   'i'
 );
+
+/** HTTP 5xx status text with no status attached: the engine answered, then failed. */
+const SERVER_FAILURE_TEXT =
+  /\b(Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\b/i;
+
+/** "[HTTP 404] Dataset not found: abc": how preload hands a failed response to the renderer. */
+const HTTP_FAILURE = /^\[HTTP (\d{3})\]\s*([\s\S]*)$/;
+
+/**
+ * Server sentences already written for people. They are kept as written (with any exception
+ * text after them cut), before the jargon test, so their recovery step reaches the user.
+ */
+const SERVER_SENTENCES = [
+  /^(Dataset only partly deleted, try again)\b/,
+  /^(Dataset files deleted but its chats were not; try the delete again)\b/,
+  /^(The saved data contract for this cohort is damaged)\b/,
+];
+
+/** 404 details naming what no longer exists, and what to say instead. */
+const GONE = [
+  [
+    /\bDataset\b.*\bnot found\b|\bdataset_version not found\b/i,
+    'This cohort no longer exists. Choose another cohort, or refresh the list of cohorts.',
+  ],
+  [/\bSession\b.*\bnot found\b/i, 'This conversation no longer exists. Start a new question.'],
+  [/\bQuery\b.*\bnot found\b/i, 'This answer is no longer available. Ask the question again.'],
+  [
+    /\bPatch not found\b/i,
+    'That change no longer exists. Reopen the cohort details to see its changes.',
+  ],
+];
+
+/** @typedef {'question' | 'upload' | 'delete' | 'panel'} FailureContext */
+
+/** What the user names when a request field is missing or empty, by request field. */
+const FIELD_WORDS = {
+  query_text: ['The question is empty.', 'Type a question'],
+  dataset_id: ['No cohort was chosen.', 'Choose a cohort'],
+  session_id: ['No conversation was open.', 'Start a new question'],
+  file: ['No file was chosen.', 'Choose a file'],
+};
+
+/**
+ * Encode a failed HTTP response so the status survives the context bridge (only an Error's
+ * message crosses it). A FastAPI validation list is kept as JSON.
+ * @param {number} status
+ * @param {unknown} detail the response's `detail`
+ * @returns {string}
+ */
+export function httpFailureText(status, detail) {
+  let reason = '';
+  if (typeof detail === 'string') reason = detail.trim();
+  else if (Array.isArray(detail)) reason = JSON.stringify(detail);
+  return reason ? `[HTTP ${status}] ${reason}` : `[HTTP ${status}]`;
+}
+
+/**
+ * A FastAPI/Pydantic 422 list in plain words, or '' when no entry is recognised.
+ * @param {string} reason JSON from httpFailureText
+ * @param {string} retry
+ * @returns {string}
+ */
+function validationInWords(reason, retry) {
+  let items;
+  try {
+    items = JSON.parse(reason);
+  } catch {
+    return '';
+  }
+  if (!Array.isArray(items)) return '';
+  for (const item of items) {
+    const loc = Array.isArray(item?.loc) ? item.loc : [];
+    const field = String(loc[loc.length - 1] ?? '');
+    const type = String(item?.type ?? '');
+    if (type === 'extra_forbidden') {
+      return `The analysis engine didn’t accept the request from the app. Restart the app, then ${retry.toLowerCase()}.`;
+    }
+    const words = FIELD_WORDS[field];
+    if (words && /missing|too_short|string_type|none_required/.test(type)) {
+      return `${words[0]} ${words[1]}, then ${retry.toLowerCase()}.`;
+    }
+  }
+  return `The analysis engine didn’t accept the request from the app. Restart the app, then ${retry.toLowerCase()}.`;
+}
 
 /**
  * @param {string} retry what to do first ("Ask again", "Try again")
  * @returns {string}
  */
 function engineUnreachable(retry) {
-  return `Couldn't reach the analysis engine. ${retry}; if it keeps happening, restart the app.`;
+  return `Couldn’t reach the analysis engine. ${retry}; if it keeps happening, restart the app.`;
 }
+
+/**
+ * @param {FailureContext} context
+ * @returns {string}
+ */
+function serverFailure(context) {
+  return context === 'question'
+    ? 'The analysis engine ran into a problem with this question. Ask again in other words; if ' +
+        'it keeps happening, restart the app.'
+    : 'The analysis engine ran into a problem. Try again; if it keeps happening, restart the app.';
+}
+
+/** Exception text outside a question: what to check, for the action the user took. */
+const CONTEXT_FALLBACK = {
+  upload:
+    'The file couldn’t be read. Check that it is a CSV, Excel or SPSS file with a header row, then try again.',
+  delete:
+    'The analysis engine couldn’t finish the delete. Try again; if it keeps happening, restart the app.',
+  panel: 'Try again; if it keeps happening, restart the app.',
+};
 
 /** Shown when a request to the engine failed without a message written for people. */
 export const ENGINE_UNREACHABLE_MESSAGE = engineUnreachable('Ask again');
 
 /**
- * Any message on its way to the screen, in plain language. Engine and validator wording gets
- * its own sentence with a next step; exception text gets a generic sentence; a failed or empty
- * request gets the "couldn't reach the analysis engine" fallback. Text already written for
- * people (a refusal, an upload error from the API) is kept as written.
+ * Any message on its way to the screen, in plain language, for the action that failed.
+ * Network failures get "couldn't reach"; an HTTP 5xx gets "ran into a problem"; a 404 says what
+ * no longer exists; a 422 gives the request's problem in words. Server sentences written for
+ * people are kept. Engine wording gets its own sentence only for questions; elsewhere exception
+ * text gets a fallback about that action, never about "this question".
  * @param {unknown} text
- * @param {string} [retry] first step in the fallback ("Ask again" for questions)
+ * @param {{ context?: FailureContext }} [opts]
  * @returns {string}
  */
-export function plainFailureMessage(text, retry = 'Ask again') {
-  const raw = typeof text === 'string' ? text.trim() : '';
-  if (!raw || ENGINE_UNREACHABLE.test(raw)) return engineUnreachable(retry);
-  if (EXECUTION_FAILURE.test(raw)) return EXECUTION_FAILURE_MESSAGE;
-  for (const [pattern, toPlain] of ENGINE_MESSAGES) {
-    const match = pattern.exec(raw);
-    if (match) return toPlain(match);
+export function plainFailureMessage(text, opts = {}) {
+  const context = opts.context ?? 'question';
+  const retry = context === 'question' ? 'Ask again' : 'Try again';
+  let raw = typeof text === 'string' ? text.trim() : '';
+  let status = 0;
+  const http = HTTP_FAILURE.exec(raw);
+  if (http) {
+    status = Number(http[1]);
+    raw = http[2].trim();
   }
-  return ENGINE_JARGON.test(raw) ? GENERIC_ENGINE_MESSAGE : raw;
+  if (!status && (!raw || ENGINE_UNREACHABLE.test(raw))) return engineUnreachable(retry);
+
+  for (const pattern of SERVER_SENTENCES) {
+    const match = pattern.exec(raw);
+    if (match) return `${match[1]}.`;
+  }
+  if (status === 404) {
+    for (const [pattern, words] of GONE) if (pattern.test(raw)) return words;
+  }
+  if (status === 422) {
+    const words = validationInWords(raw, retry);
+    if (words) return words;
+  }
+  if (status >= 500 && (!raw || SERVER_FAILURE_TEXT.test(raw))) return serverFailure(context);
+  if (!status && SERVER_FAILURE_TEXT.test(raw)) return serverFailure(context);
+  if (!raw) {
+    return status >= 400 && status < 500 && context !== 'question'
+      ? CONTEXT_FALLBACK[context]
+      : serverFailure(context);
+  }
+
+  if (context === 'question') {
+    if (EXECUTION_FAILURE.test(raw)) return EXECUTION_FAILURE_MESSAGE;
+    for (const [pattern, toPlain] of ENGINE_MESSAGES) {
+      const match = pattern.exec(raw);
+      if (match) return toPlain(match);
+    }
+    if (ENGINE_JARGON.test(raw)) return GENERIC_ENGINE_MESSAGE;
+  } else if (ENGINE_JARGON.test(raw) || EXECUTION_FAILURE.test(raw) || /\bnot found\b/.test(raw)) {
+    return status >= 500 && context !== 'upload'
+      ? serverFailure(context)
+      : CONTEXT_FALLBACK[context];
+  }
+  return raw;
 }
 
 /**
@@ -1076,7 +1234,7 @@ export function stageLabel(data) {
   const d = asRecord(data);
   const stage = typeof d.stage === 'string' ? d.stage.toLowerCase() : '';
   if (/pars|read/.test(stage)) return 'Reading your question';
-  if (/plan/.test(stage)) return 'Choosing the columns and the test';
+  if (/plan/.test(stage)) return 'Choosing the variables and the test';
   if (/exec|run/.test(stage)) return 'Running the analysis';
   return typeof d.message === 'string' ? d.message : '';
 }
@@ -1225,11 +1383,11 @@ export function suggestColumns(words, columns, limit = 3) {
 const DROPPED_WORDS =
   /couldn't place the words?\s+(.+?),\s+so\s+(?:it is|they are)\s+not in the plan/i;
 
+const LIST_FORMAT = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' });
+
 /** "A", "A and B", "A, B and C". */
 function listed(items) {
-  return items.length <= 1
-    ? items.join('')
-    : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+  return LIST_FORMAT.format(items);
 }
 
 /**
@@ -1253,10 +1411,17 @@ export function holdNextStep(reason, columns) {
   }
   const words = [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
   const suggestions = suggestColumns(words, columns);
-  const text = suggestions.length
-    ? `This cohort has ${listed(suggestions.map((c) => columnLabel(c)))}. If you meant one of ` +
-      'them, choose “Not what I meant” and ask again using its name.'
-    : `If ${words.length === 1 ? 'that word matters' : 'those words matter'}, choose “Not what ` +
+  // The name the engine accepts is shown with its label: "LDL (mg/dL) (ldl_mg_dl)".
+  const names = listed(suggestions.map((c) => nameInWords(c)));
+  let text;
+  if (suggestions.length === 1) {
+    text = `This cohort has ${names}. If you meant it, choose “Not what I meant” and ask again using that name.`;
+  } else if (suggestions.length) {
+    text = `This cohort has ${names}. If you meant one of them, choose “Not what I meant” and ask again using its name.`;
+  } else {
+    text =
+      `If ${words.length === 1 ? 'that word matters' : 'those words matter'}, choose “Not what ` +
       'I meant” and ask again using the cohort’s variable names (see cohort details).';
+  }
   return { dropped: true, words, suggestions, text };
 }

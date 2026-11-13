@@ -363,23 +363,114 @@ describe('port selection', () => {
 });
 
 describe('startup failure messages', () => {
-  test('a folder that cannot be created: plain sentence, the folder only in the details', () => {
+  test('a folder that cannot be created: names the folder, only the OS error in the details', () => {
     // Act
     const { message, details } = startupFailureMessage({
       reason: 'folder',
       folder: '/Users/dr/Library/Application Support/Clinical Analytics/backend',
-      detail: 'EACCES',
+      detail: 'EACCES: permission denied',
     });
 
     // Assert
     expect(message).toBe(
-      'Clinical Analytics could not create its working folder. Check that your user account ' +
-        'can write to the app’s folders and that the disk is not full, then start Clinical ' +
-        'Analytics again.'
+      'Clinical Analytics couldn’t create its working folder ' +
+        '“/Users/dr/Library/Application Support/Clinical Analytics/backend”. Check that your user ' +
+        'account can write to it and that the disk isn’t full, then start Clinical Analytics again.'
     );
-    expect(message).not.toMatch(/reinstall|\/Users|EACCES/i);
-    expect(details).toContain('/Users/dr/Library/Application Support/Clinical Analytics/backend');
-    expect(details).toContain('EACCES');
+    expect(message).not.toMatch(/reinstall|EACCES/i);
+    expect(details).toBe('EACCES: permission denied');
+  });
+
+  test.each([
+    [
+      'The data folder /Users/dr/.clinical-analytics is owned by another user account, which could ' +
+        "read the data in it. Use a folder you own: set CLINICAL_ANALYTICS_HOME or fix the folder's owner.",
+    ],
+    [
+      'DuckDB v1.1.0 cannot open the data store (written by a newer DuckDB, or damaged) (IOException) ' +
+        'A copy taken just before the check is kept at: /Users/dr/.clinical-analytics/analytics.duckdb.bak. ' +
+        'The check normally leaves the store as it was, so start the app version you used before. Copy ' +
+        'it back over analytics.duckdb only if that version cannot open the store either. Then delete ' +
+        'the copy: it holds patient data.',
+    ],
+    [
+      'A deleted dataset is still in the data store (analytics.duckdb.compact is present) and the store ' +
+        'rewrite failed (OSError). Free disk space or fix the permissions of the data folder and start ' +
+        'again; if the store still cannot be opened, quit, move analytics.duckdb and every ' +
+        'analytics.duckdb.* file out of /Users/dr/.clinical-analytics, delete them, and start again.',
+    ],
+  ])('a store-check reason with its recovery steps is shown as written: %s', (reason) => {
+    // Act
+    const { message, details } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `INFO starting\nClinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe(reason);
+    expect(message).not.toMatch(/Reinstall/);
+    expect(details).toBe('');
+  });
+
+  test('a store-check reason with a traceback or a log line: only those go to the details', () => {
+    // Arrange
+    const reason =
+      'Could not check the data store before starting (Permission denied). Traceback (most recent call last): x. ' +
+      'ERROR uvicorn.error: boom.';
+
+    // Act
+    const { message, details } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `Clinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe('Could not check the data store before starting (Permission denied).');
+    expect(details).toContain('Traceback');
+    expect(details).toContain('ERROR uvicorn.error: boom.');
+  });
+
+  test('an unreadable bundled model keeps its own steps; reinstall is offered there by the server', () => {
+    // Arrange
+    const reason =
+      'The embedding model in /opt/app/models could not be read (Permission denied). Check that ' +
+      "the app's files can be read by your account, or reinstall the app.";
+
+    // Act
+    const { message } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `Clinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe(reason);
+  });
+
+  test('a damaged bundled model file: reinstall, the make command only in the details', () => {
+    // Arrange
+    const reason =
+      'The embedding model file model.onnx in /opt/app/models does not match its pinned SHA-256 ' +
+      '(damaged or replaced). Run `make fetch-embedding-model` when building the app again, or reinstall the app.';
+
+    // Act
+    const { message, details } = startupFailureMessage({
+      reason: 'exited',
+      code: STORE_CHECK_FAILED_EXIT,
+      signal: null,
+      stderrText: `Clinical Analytics cannot start: ${reason}\n`,
+    });
+
+    // Assert
+    expect(message).toBe(
+      'A file the analysis engine needs is missing or can’t be read. Reinstall Clinical Analytics.'
+    );
+    expect(details).toBe(reason);
   });
 
   test('a serve.py reason with a path or a make command: plain sentence, the line in the details', () => {

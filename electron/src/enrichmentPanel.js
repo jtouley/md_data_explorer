@@ -21,7 +21,7 @@ export function normalizePendingResponse(raw) {
 export function suggestionToRows(s) {
   return [
     ['Operation', String(s?.operation ?? '')],
-    ['Column', String(s?.column ?? '')],
+    ['Variable', String(s?.column ?? '')],
     ['Suggested', String(s?.suggested_value ?? '')],
     ['Current', s?.current_value != null && s.current_value !== '' ? String(s.current_value) : '—'],
     ['Confidence', String(s?.confidence ?? '')],
@@ -137,7 +137,8 @@ export function renderEnrichmentCards(container, suggestions, handlers) {
     card.className = 'enrichment-card';
     card.dataset.patchId = patchId;
 
-    const title = document.createElement('h3');
+    // h4: each card sits under the section's h3 ("Variable suggestions").
+    const title = document.createElement('h4');
     title.className = 'enrichment-card-title';
     title.textContent = `${s.operation ?? '?'} · ${s.column ?? '?'}`;
     card.appendChild(title);
@@ -145,7 +146,7 @@ export function renderEnrichmentCards(container, suggestions, handlers) {
     const dl = document.createElement('dl');
     dl.className = 'enrichment-dl';
     for (const [dt, dd] of suggestionToRows(s)) {
-      if (dt === 'Operation' || dt === 'Column') continue;
+      if (dt === 'Operation' || dt === 'Variable') continue;
       const dti = document.createElement('dt');
       dti.textContent = dt;
       const ddi = document.createElement('dd');

@@ -371,6 +371,39 @@ class TestAsyncQueryServiceAnalysisPayload:
         plan_line = completed.data["plan_line"]
         assert expected_part in plan_line
         assert plan_line == (held_plan_line or format_plan_line(plan, None))
+        # The stored result (GET /api/queries/{id}) carries the same line as the stream.
+        stored = await async_query_service.get_result(query_id)
+        assert stored.plan_line == plan_line
+
+    @pytest.mark.asyncio
+    async def test_execute_query_notHeld_returnsTheComputedPlanLine(self, async_query_service, mock_core_query_service):
+        # Arrange: a filtered count that was not held, so the core result has no plan line
+        from clinical_analytics.core.execution_gate import format_plan_line
+        from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
+        from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
+
+        plan = QueryPlan(
+            intent="COUNT",
+            filters=[FilterSpec(column="age", operator=">", value=83)],
+            entity_key="patient_id",
+            scope="filtered",
+        )
+        mock_core_query_service.ask.return_value = CoreQueryResult(
+            plan=plan,
+            issues=[],
+            result={"success": True},
+            confidence=0.9,
+            run_key="run_key",
+            context=None,
+            analysis={"type": "count", "total_count": 50},
+            plan_line=None,
+        )
+
+        # Act
+        result = await async_query_service.execute_query(query="how many older than 83?", dataset_id="ds")
+
+        # Assert: the sync route describes the same computed plan as the stream
+        assert result.plan_line == format_plan_line(plan, None)
 
     @pytest.mark.asyncio
     async def test_execute_query_withoutAnalysis_returnsNoRawRows(self, async_query_service, mock_core_query_service):

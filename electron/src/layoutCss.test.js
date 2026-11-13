@@ -60,9 +60,51 @@ describe('narrow windows (H6)', () => {
     expect(rule(css, '.sidebar-toggle')).toMatch(/display:\s*none/);
   });
 
-  it('html_hasTheToggleAndDismissibleBanners', () => {
+  it('html_hasTheToggleAndADismissibleModelBanner', () => {
     expect(html).toMatch(/id="sidebar-toggle"[^>]*aria-controls="session-sidebar"/);
-    expect(html.match(/class="btn-icon banner-dismiss"/g)).toHaveLength(2);
+    expect(html.match(/class="btn-icon banner-dismiss"/g)).toHaveLength(1);
+  });
+});
+
+describe('narrow-window drawer and offline banner (round 2)', () => {
+  /** The markup between an element's opening tag and its closing tag. */
+  function element(id, tag) {
+    const start = html.indexOf(`id="${id}"`);
+    return html.slice(start, html.indexOf(`</${tag}>`, start));
+  }
+
+  it('offlineBanner_keepsItsRetryButton_andCannotBeDismissed', () => {
+    // Arrange / Act
+    const banner = element('offline-banner', 'div');
+
+    // Assert
+    expect(banner).toMatch(/id="retry-connection"/);
+    expect(banner).not.toMatch(/banner-dismiss/);
+  });
+
+  it('drawer_hasACloseButtonWithAName', () => {
+    // Arrange / Act
+    const sidebar = element('session-sidebar', 'aside');
+
+    // Assert
+    expect(sidebar).toMatch(
+      /<button[^>]*id="sidebar-close"[^>]*aria-label="Close cohort and conversations"/
+    );
+  });
+
+  it('openDrawer_containsItsOwnScroll', () => {
+    // Arrange / Act
+    const block = mediaBlock('(max-width: 699px)');
+
+    // Assert
+    expect(block).toMatch(
+      /\.app-container\.sidebar-open \.sidebar\s*\{[^}]*overscroll-behavior:\s*contain/
+    );
+    expect(block).toMatch(/\.sidebar-close\s*\{[^}]*display:\s*inline-flex/);
+  });
+
+  it('wideWindows_hideTheDrawerCloseButton', () => {
+    expect(rule(css, '.sidebar-close')).toMatch(/display:\s*none/);
   });
 });
 

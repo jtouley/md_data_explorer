@@ -224,8 +224,11 @@ use `font-variant-numeric: tabular-nums lining-nums`.
 - Layout: sidebar 264 px; chat column max 760 px with 24 px side padding; dataset panel 440 px
   sheet from the right. Under 1000 px wide the sidebar narrows to 232 px; the column stays
   fluid. Under 700 CSS px (the 800 × 600 minimum window at 200% zoom is 400 px wide) the sidebar
-  folds behind a "Cohort and conversations" toggle (Escape closes it) and both banners can be
-  dismissed, so the composer stays on screen. The composer shows the same 2 px `--focus-ring`
+  folds behind a "Cohort and conversations" toggle (`aria-expanded`). The open drawer is not
+  modal: its close button and Escape return focus to the toggle; a click outside it or focus
+  moving out of it closes it; its scroll is contained. The language model banner can be
+  dismissed so the composer stays on screen; the offline banner cannot, because its "Try again"
+  is the only way to reconnect. The composer shows the same 2 px `--focus-ring`
   outline as every other control on `:focus-within`.
 
 ### Motion (after Kowalski)
@@ -267,7 +270,7 @@ Choreography:
 | Confirmed | Held card, buttons replaced | "You approved this plan. The answer is below." | Result streams below. If the answer below is a refusal or an error: "Not run — see below." |
 | Rejected | Held card, buttons replaced | "Not run." | "Not run. Rephrase your question below." |
 | Refused | Neutral notice | Info icon + "Not answered" | API reason, then "Your question is back in the box below so you can change it." |
-| Error | Danger-tinted notice | Alert icon + "Something went wrong" | A plain sentence, never engine or exception text ("Execution error: …" is an error, not a refusal). When nothing came back: "Couldn't reach the analysis engine. Ask again; if it keeps happening, restart the app." The engine's exact words only behind "Copy details"; question restored |
+| Error | Danger-tinted notice | Alert icon + "Something went wrong" | A plain sentence, never engine or exception text ("Execution error: …" is an error, not a refusal). A network failure: "Couldn’t reach the analysis engine. Ask again; if it keeps happening, restart the app." An HTTP 5xx: "The analysis engine ran into a problem with this question. Ask again in other words; if it keeps happening, restart the app." A 4xx keeps the server’s reason in plain words (a 404 for a deleted cohort: "This cohort no longer exists…"). Upload, delete and panel errors never mention "this question" The engine's exact words only behind "Copy details"; question restored |
 | Loading | Dots + stage text | — | "Reading your question", "Running the analysis", "· 4 s" after 3 s |
 | Streaming | Send becomes Stop; composer stays editable | Stop icon | Enter while busy: "Wait for this answer, or press Stop." |
 | Stopped | Muted note | "Stopped" | "Stopped waiting for this answer.", shown the moment Stop is pressed, even before the question reached the engine (the request is aborted). After an approved plan, its card settles ("You approved this plan, then stopped waiting. Ask again to see an answer.") and is never offered again. |
@@ -302,7 +305,7 @@ Choreography:
   theme switch.
 - **Main**: the chat column and the docked composer only. An offline banner appears only when
   the engine cannot be reached; the "Backend connected" badge is gone.
-- **Dataset panel**: a sheet from the right with the preview table, column suggestions and
+- **Dataset panel**: a sheet from the right with the preview table, variable suggestions and
   change history. Opened from the ⋯ menu or the meta line; Escape or the close button returns
   focus to where it came from.
 
@@ -342,7 +345,7 @@ say "patients" where it has counted patients), no internal ids on screen.
 | Crash | Sorry, I encountered an error: … | Something went wrong + message |
 | Lost stream | Connection lost. Please try again. | The connection to the analysis engine dropped before the answer arrived. Ask again. |
 | Busy hint | Working on your answer. Press Stop to stop waiting. | Wait for this answer, or press Stop. |
-| Native dialogs | Paths, exit signals, log lines, build commands | One plain sentence; the rest behind "Copy details" |
+| Native dialogs | Paths, exit signals, log lines, build commands | One plain sentence (a folder or data path the user must act on stays in it); tracebacks, log lines and build commands behind "Copy details", which re-shows the dialog with "Details copied. Paste them to whoever supports the app." |
 | App menu | Electron default (Reload, Toggle Developer Tools) | File, Edit, View (zoom, full screen), Window; no Reload; developer tools only in development |
 | Session switched | Session restored. Switched to session sess_… | Continuing an earlier conversation. Earlier answers aren't shown here; new questions continue it. |
 

@@ -36,6 +36,7 @@ import { STOPPED, createStopController } from './stopControl.js';
 import { bindBannerDismiss, bindSidebarToggle } from './layoutControls.js';
 import { closeDatasetDeleteConfirm, renderDatasetDeleteConfirm } from './datasetDeletePanel.js';
 import {
+  ensureServerSession,
   normalizeSessionListResponse,
   renderSessionList,
   titleFromQuestion,
@@ -134,6 +135,9 @@ const state = {
   sessionId: generateSessionId(),
   /** True once the session exists in the API (created or picked from the list). */
   sessionOnServer: false,
+  /** The session creation still in flight, so asking again never creates a second session. */
+  /** @type {Promise<void> | null} */
+  sessionCreating: null,
   /** @type {ChatMessage[]} */
   messages: [],
   /** @type {{ close: () => void, stop?: () => void } | null} */
@@ -239,13 +243,14 @@ function setDatasetStatus(text, tone = 'info', { showDetails = false } = {}) {
 /**
  * Put text on the clipboard (the "Copy details" buttons). Never shown on screen.
  * @param {string} text
+ * @returns {Promise<void>} rejects when nothing was copied, so the button can say so
  */
 function copyText(text) {
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text).catch((error) => {
-      console.warn('Could not copy the details:', error?.name);
-    });
-  }
+  if (!navigator.clipboard?.writeText) return Promise.reject(new Error('No clipboard'));
+  return navigator.clipboard.writeText(text).catch((error) => {
+    console.warn('Could not copy the details:', error?.name);
+    throw error;
+  });
 }
 
 // ============================================================================
@@ -284,9 +289,9 @@ function updateLlmBanner(health) {
   }
 
   const text = !reachable
-    ? "Some questions need the local language model, which isn't running. " +
+    ? 'Some questions need the local language model, which isn’t running. ' +
       'Simple questions still work.'
-    : `The local language model "${model}" isn't installed, so some questions won't work. ` +
+    : `The local language model “${model}” isn’t installed, so some questions won’t work. ` +
       'Simple questions still work.';
   // Dismissed: stays away until it has something different to say.
   if (state.llmBannerDismissedText === text) return;
@@ -359,7 +364,7 @@ function setQueryInputEnabled(enabled) {
     ? 'Enter to ask · Shift+Enter for a new line'
     : state.connected
       ? 'Choose a cohort to begin.'
-      : "Can't reach the analysis engine on this computer.";
+      : 'Can’t reach the analysis engine on this computer.';
 
   // Return focus to the box after an answer, but never pull it out of the sidebar or a panel.
   const active = document.activeElement;
@@ -708,7 +713,7 @@ function renderWelcome(mode) {
       el(
         'p',
         'welcome-text',
-        'It runs on this computer. When it can be reached, your cohorts appear in the sidebar.'
+        'It runs on this computer. When it can be reached, you can choose a cohort and ask questions.'
       )
     );
   } else if (mode === 'no-dataset') {
@@ -742,7 +747,7 @@ function renderWelcome(mode) {
       el(
         'p',
         'welcome-text',
-        "Earlier answers aren't shown here; new questions continue this conversation."
+        'Earlier answers aren’t shown here; new questions continue this conversation.'
       )
     );
   } else {
@@ -906,7 +911,7 @@ async function loadDatasetOverview() {
       renderWelcome('dataset');
     }
   } catch (error) {
-    datasetOverviewSummary.textContent = `Couldn't load this cohort's first rows. ${plainFailureMessage(error?.message, 'Try again')}`;
+    datasetOverviewSummary.textContent = `Couldn’t load this cohort’s first rows. ${plainFailureMessage(error?.message, { context: 'panel' })}`;
     renderDatasetPreview([], []);
   }
 }
@@ -930,7 +935,10 @@ async function loadDataCheck(datasetId) {
   try {
     check = normalizeQuality(await window.clinicalAPI.getDatasetQuality(datasetId));
   } catch (error) {
-    check = { status: 'not_run', reason: plainFailureMessage(error?.message, 'Try again') };
+    check = {
+      status: 'not_run',
+      reason: plainFailureMessage(error?.message, { context: 'panel' }),
+    };
   }
   if (datasetId !== state.currentDatasetId) return;
   renderDataCheck(parts, check);
@@ -969,7 +977,7 @@ async function loadDatasets() {
     console.log(`Loaded ${datasets.length} datasets`);
   } catch (error) {
     console.error('Failed to load datasets:', error?.message);
-    setDatasetStatus("Couldn't load the list of cohorts.", 'error');
+    setDatasetStatus('Couldn’t load the list of cohorts.', 'error');
   }
 }
 
@@ -1050,7 +1058,7 @@ async function loadEnrichmentPanel() {
   const hasHistory = typeof window.clinicalAPI?.getEnrichmentHistory === 'function';
 
   if (!hasPending && !hasHistory) {
-    enrichmentHint.textContent = 'Column suggestions are not available.';
+    enrichmentHint.textContent = 'Variable suggestions are not available.';
     renderEnrichmentCards(enrichmentList, [], {
       onAccept: noopEnrichment,
       onReject: noopEnrichment,
@@ -1097,13 +1105,13 @@ async function loadEnrichmentPanel() {
   } catch (error) {
     console.error('Failed to load enrichments / history:', error?.message);
     if (!enrichmentPanelGate.isLatestLoad(load)) return;
-    enrichmentHint.textContent = `Couldn't load column suggestions. ${plainFailureMessage(error?.message, 'Try again')}`;
+    enrichmentHint.textContent = `Couldn’t load variable suggestions. ${plainFailureMessage(error?.message, { context: 'panel' })}`;
     renderEnrichmentCards(enrichmentList, [], {
       onAccept: noopEnrichment,
       onReject: noopEnrichment,
     });
     if (patchHistoryHint) {
-      patchHistoryHint.textContent = `Couldn't load the change history. ${plainFailureMessage(error?.message, 'Try again')}`;
+      patchHistoryHint.textContent = `Couldn’t load the change history. ${plainFailureMessage(error?.message, { context: 'panel' })}`;
     }
     if (patchHistoryBody) {
       renderPatchHistoryTable(patchHistoryBody, [], { onRevert: noopEnrichment });
@@ -1203,19 +1211,6 @@ async function loadSessionList() {
  * Make the current conversation a real API session before its first question, so it appears
  * in the sidebar titled by that question.
  */
-async function ensureServerSession() {
-  if (state.sessionOnServer || typeof window.clinicalAPI?.createSession !== 'function') return;
-  try {
-    const res = await window.clinicalAPI.createSession(state.currentDatasetId);
-    if (res?.session_id) {
-      state.sessionId = res.session_id;
-      state.sessionOnServer = true;
-    }
-  } catch (error) {
-    console.warn('Could not create a session; continuing without one:', error?.message);
-  }
-}
-
 /**
  * Point the app at a dataset.
  * @param {string} datasetId
@@ -1240,6 +1235,7 @@ function applyDataset(datasetId, { resetChat }) {
     // A conversation belongs to one cohort: a new cohort starts a new conversation.
     state.sessionId = generateSessionId();
     state.sessionOnServer = false;
+    state.sessionCreating = null;
     resetChatUI();
   } else {
     setQueryInputEnabled(!!datasetId);
@@ -1260,6 +1256,7 @@ function handleSessionSelect(sessionId, sessions) {
 
   state.sessionId = sessionId;
   state.sessionOnServer = true;
+  state.sessionCreating = null;
   state.messages = [];
   state.isProcessing = false;
   state.stopControl = null;
@@ -1302,7 +1299,7 @@ async function handleSessionDelete(sessionId) {
     }
   } catch (error) {
     console.error('Delete session failed:', error?.message);
-    announce("Couldn't delete the conversation.");
+    announce('Couldn’t delete the conversation.');
     await loadSessionList();
   }
 }
@@ -1320,9 +1317,12 @@ function focusSessionRowAt(index) {
 
 async function handleNewChat() {
   if (!state.currentDatasetId) return;
+  // A creation still in flight belonged to the old conversation.
+  state.sessionCreating = null;
   if (typeof window.clinicalAPI?.createSession !== 'function') {
     state.sessionId = generateSessionId();
     state.sessionOnServer = false;
+    state.sessionCreating = null;
     resetChatUI();
     return;
   }
@@ -1330,12 +1330,14 @@ async function handleNewChat() {
     const res = await window.clinicalAPI.createSession(state.currentDatasetId);
     state.sessionId = res.session_id;
     state.sessionOnServer = true;
+    state.sessionCreating = null;
     resetChatUI();
     await loadSessionList();
   } catch (error) {
     console.error('Create session failed:', error?.message);
     state.sessionId = generateSessionId();
     state.sessionOnServer = false;
+    state.sessionCreating = null;
     resetChatUI();
   }
 }
@@ -1378,7 +1380,7 @@ function handleDeleteDatasetClick() {
         console.error('Delete dataset failed:', error?.message);
         panel.setBusy(false);
         panel.setError(
-          `Couldn't delete this cohort. ${plainFailureMessage(error?.message, 'Try again')}`
+          `Couldn’t delete this cohort. ${plainFailureMessage(error?.message, { context: 'delete' })}`
         );
         return;
       }
@@ -1445,7 +1447,7 @@ async function handleQuerySubmit(event) {
   const assistantMessageId = addWorkingMessage(questionId);
   const stopControl = beginProcessing(assistantMessageId);
 
-  await stopControl.race(ensureServerSession());
+  await stopControl.race(ensureServerSession(state, window.clinicalAPI));
   if (!state.sessionTitles.has(state.sessionId)) {
     state.sessionTitles.set(state.sessionId, titleFromQuestion(queryText));
   }
@@ -1776,14 +1778,14 @@ async function handleLoadSample() {
       await selectNewDataset(result.upload_id);
     } else {
       setDatasetStatus(
-        `Couldn't load the sample cohort. ${plainFailureMessage(result.message, 'Try again')}`,
+        `Couldn’t load the sample cohort. ${plainFailureMessage(result.message, { context: 'upload' })}`,
         'error'
       );
     }
   } catch (error) {
     console.error('Sample load failed:', error?.message);
     setDatasetStatus(
-      `Couldn't load the sample cohort. ${plainFailureMessage(error?.message, 'Try again')}`,
+      `Couldn’t load the sample cohort. ${plainFailureMessage(error?.message, { context: 'upload' })}`,
       'error'
     );
   }
@@ -1809,14 +1811,14 @@ async function handleFileUpload(file) {
       await selectNewDataset(result.upload_id);
     } else {
       setDatasetStatus(
-        `Couldn't upload “${file.name}”. ${plainFailureMessage(result.message, 'Try again')}`,
+        `Couldn’t upload “${file.name}”. ${plainFailureMessage(result.message, { context: 'upload' })}`,
         'error'
       );
     }
   } catch (error) {
     console.error('Upload failed:', error?.message);
     setDatasetStatus(
-      `Couldn't upload “${file.name}”. ${plainFailureMessage(error?.message, 'Try again')}`,
+      `Couldn’t upload “${file.name}”. ${plainFailureMessage(error?.message, { context: 'upload' })}`,
       'error'
     );
   }
@@ -2028,10 +2030,8 @@ function bindEvents() {
       container: elements.appContainer,
       toggle: /** @type {HTMLButtonElement} */ (elements.sidebarToggle),
       sidebar: elements.sessionSidebar,
+      closeButton: document.getElementById('sidebar-close'),
     });
-  }
-  if (elements.offlineBanner) {
-    bindBannerDismiss(elements.offlineBanner, { focusAfter: queryInput });
   }
   if (elements.llmBanner) {
     bindBannerDismiss(elements.llmBanner, {

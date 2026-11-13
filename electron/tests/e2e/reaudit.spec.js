@@ -147,6 +147,44 @@ test.describe('Narrow windows (H6)', () => {
     await expect(toggle).toBeFocused();
   });
 
+  test('the open drawer has a close button, closes on an outside click, and keeps its scroll', async ({
+    page,
+  }) => {
+    // Arrange
+    await setupStreamingMock(page);
+    await page.locator('#dataset-select').selectOption('ds_cohort');
+    await page.setViewportSize({ width: 400, height: 286 });
+    const toggle = page.getByTestId('sidebar-toggle');
+    const sidebar = page.getByTestId('session-sidebar');
+
+    // Act: open, then the close button inside the drawer
+    await toggle.click();
+    const close = page.getByRole('button', { name: 'Close cohort and conversations' });
+    await expect(close).toBeVisible();
+    await expect(sidebar).toHaveCSS('overscroll-behavior-y', 'contain');
+    if (process.env.SHOTS_DIR) {
+      await page.screenshot({ path: `${process.env.SHOTS_DIR}/narrow-drawer-open.png` });
+    }
+    await close.click();
+
+    // Assert: closed, focus back on the toggle
+    await expect(sidebar).toBeHidden();
+    await expect(toggle).toBeFocused();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    // Act: open again, click the conversation beside the drawer
+    await toggle.click();
+    await expect(sidebar).toBeVisible();
+    await page.mouse.click(390, 150);
+
+    // Assert
+    await expect(sidebar).toBeHidden();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    if (process.env.SHOTS_DIR) {
+      await page.screenshot({ path: `${process.env.SHOTS_DIR}/narrow-drawer-closed.png` });
+    }
+  });
+
   test('wide windows do not show the toggle', async ({ page }) => {
     await setupStreamingMock(page);
     await expect(page.getByTestId('sidebar-toggle')).toBeHidden();

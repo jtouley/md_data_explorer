@@ -205,7 +205,8 @@ class AsyncQueryService:
         self._queries[query_id].claim = result.claim
         self._queries[query_id].requires_confirmation = result.requires_confirmation
         self._queries[query_id].failure_reason = result.failure_reason
-        self._queries[query_id].plan_line = result.plan_line
+        plan_line = self._plan_line_of(result)
+        self._queries[query_id].plan_line = plan_line
         self._queries[query_id].plan_hash = result.plan_hash
         self._queries[query_id].completed_at = datetime.now(UTC)
 
@@ -220,7 +221,7 @@ class AsyncQueryService:
                     "query_id": query_id,
                     "intent_type": intent_type,
                     "failure_reason": result.failure_reason,
-                    "plan_line": result.plan_line,
+                    "plan_line": plan_line,
                     "plan_hash": result.plan_hash,
                     "confidence": result.confidence,
                 },
@@ -268,8 +269,7 @@ class AsyncQueryService:
                 "result_preview": self._preview_of(payload),
                 "claim": claim,
                 # What was computed (limits included), shown under the claim in the app.
-                "plan_line": result.plan_line
-                or (format_plan_line(result.plan, result.context) if isinstance(result.plan, QueryPlan) else None),
+                "plan_line": plan_line,
             },
         )
         logger.info("query_completed", query_id=query_id, intent_type=intent_type)
@@ -365,6 +365,18 @@ class AsyncQueryService:
             # Plan-derived (chart type and column names), no data values.
             "chart_spec": to_json_safe(result.analysis.get("chart_spec")),
         }
+
+    @staticmethod
+    def _plan_line_of(result: CoreQueryResult) -> str | None:
+        """The plan line an answer was computed from: the held line, else formatted from the plan.
+
+        Computed once per result so the stored result, the SSE event and the sync route agree.
+        """
+        if result.plan_line:
+            return result.plan_line
+        if isinstance(result.plan, QueryPlan):
+            return format_plan_line(result.plan, result.context)
+        return None
 
     def _preview_of(self, payload: dict[str, Any] | None) -> dict[str, Any] | None:
         """SSE preview: the claim-first payload without the full analysis dict."""
@@ -544,7 +556,7 @@ class AsyncQueryService:
             claim=result.claim,
             requires_confirmation=result.requires_confirmation,
             failure_reason=result.failure_reason,
-            plan_line=result.plan_line,
+            plan_line=self._plan_line_of(result),
             plan_hash=result.plan_hash,
             error=(
                 "; ".join(i["message"] for i in result.issues if i.get("severity") == "error")

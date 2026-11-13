@@ -45,7 +45,7 @@ describe('suggestionToRows', () => {
       model_id: 'm1',
     });
     expect(rows).toContainEqual(['Operation', 'SET']);
-    expect(rows).toContainEqual(['Column', 'age']);
+    expect(rows).toContainEqual(['Variable', 'age']);
     expect(rows).toContainEqual(['Suggested', 'numeric']);
     expect(rows).toContainEqual(['Current', '—']);
     expect(rows).toContainEqual(['Confidence', '0.9']);
@@ -330,5 +330,21 @@ describe('renderEnrichmentCards empty state (M5)', () => {
 
     // Assert
     expect(container.textContent).toBe('No suggestions for this cohort.');
+  });
+});
+
+describe('heading levels (round 2)', () => {
+  it('renderEnrichmentCards_cardTitle_isH4UnderTheSectionH3', () => {
+    // Arrange
+    const container = document.createElement('div');
+
+    // Act
+    renderEnrichmentCards(container, [{ patch_id: 'p1', operation: 'rename', column: 'age' }], {
+      onAccept: () => {},
+      onReject: () => {},
+    });
+
+    // Assert
+    expect(container.querySelector('.enrichment-card-title').tagName).toBe('H4');
   });
 });

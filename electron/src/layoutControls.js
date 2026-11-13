@@ -8,15 +8,22 @@
 const FOCUSABLE = 'button:not([disabled]), select:not([disabled]), [href], input:not([disabled])';
 
 /**
- * @param {{ container: HTMLElement, toggle: HTMLButtonElement, sidebar: HTMLElement }} parts
+ * The open drawer is not modal, so it never traps focus. It closes, and never strands anyone,
+ * when its own close button is pressed (focus returns to the toggle), on Escape inside it or on
+ * the toggle, on a pointer press outside it, and when focus moves out of it (focus stays where
+ * it went).
+ * @param {{ container: HTMLElement, toggle: HTMLButtonElement, sidebar: HTMLElement,
+ *   closeButton?: HTMLElement | null }} parts
  * @returns {{ open: () => void, close: (opts?: { focus?: boolean }) => void, isOpen: () => boolean }}
  */
-export function bindSidebarToggle({ container, toggle, sidebar }) {
+export function bindSidebarToggle({ container, toggle, sidebar, closeButton = null }) {
   const isOpen = () => container.classList.contains('sidebar-open');
   const open = () => {
     container.classList.add('sidebar-open');
     toggle.setAttribute('aria-expanded', 'true');
-    /** @type {HTMLElement | null} */ (sidebar.querySelector(FOCUSABLE))?.focus();
+    // The first control the user came for, not the close button.
+    const first = [...sidebar.querySelectorAll(FOCUSABLE)].find((node) => node !== closeButton);
+    /** @type {HTMLElement | undefined} */ (first)?.focus();
   };
   const close = ({ focus = true } = {}) => {
     if (!isOpen()) return;
@@ -24,12 +31,26 @@ export function bindSidebarToggle({ container, toggle, sidebar }) {
     toggle.setAttribute('aria-expanded', 'false');
     if (focus) toggle.focus();
   };
+  /** @param {EventTarget | null} target */
+  const outside = (target) =>
+    target instanceof Node && !sidebar.contains(target) && !toggle.contains(target);
+
   toggle.addEventListener('click', () => (isOpen() ? close() : open()));
-  sidebar.addEventListener('keydown', (event) => {
+  closeButton?.addEventListener('click', () => close());
+  const onEscape = (/** @type {KeyboardEvent} */ event) => {
     if (event.key === 'Escape' && isOpen()) {
       event.stopPropagation();
       close();
     }
+  };
+  sidebar.addEventListener('keydown', onEscape);
+  toggle.addEventListener('keydown', onEscape);
+  const doc = container.ownerDocument;
+  doc.addEventListener('pointerdown', (event) => {
+    if (isOpen() && outside(event.target)) close({ focus: false });
+  });
+  doc.addEventListener('focusin', (event) => {
+    if (isOpen() && outside(event.target)) close({ focus: false });
   });
   return { open, close, isOpen };
 }

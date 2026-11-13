@@ -196,7 +196,7 @@ describe('renderPatchHistoryTable', () => {
     expect(rows).toHaveLength(2);
     const headers = container.querySelectorAll('thead th');
     expect(headers).toHaveLength(6);
-    expect(headers[0].textContent).toBe('Column');
+    expect(headers[0].textContent).toBe('Variable');
     expect(headers[3].textContent).toBe('Status');
   });
 
