@@ -59,6 +59,36 @@ class DictionaryMetadata:
         return None
 
 
+# Names that say "this column identifies the patient", compared after lower-casing and removing
+# everything but letters and digits. The patient key is chosen by this role, never by how unique
+# the values are: repeated IDs are visit-level data, not a reason to lose the key (DQ B1).
+PATIENT_KEY_NAMES: frozenset[str] = frozenset(
+    {
+        "patientid",
+        "patientno",
+        "patientnumber",
+        "patient",
+        "subjectid",
+        "subject",
+        "participantid",
+        "participant",
+        "studyid",
+        "mrn",
+        "medicalrecordnumber",
+        "pid",
+        "id",
+    }
+)
+
+
+def patient_key_by_name(columns: list[str]) -> str | None:
+    """The first column whose name is a patient-ID role name (``PATIENT_KEY_NAMES``), or None."""
+    for col in columns:
+        if re.sub(r"[^a-z0-9]", "", col.lower()) in PATIENT_KEY_NAMES:
+            return col
+    return None
+
+
 @dataclass
 class InferredSchema:
     """
@@ -368,9 +398,11 @@ class SchemaInferenceEngine:
         Detect patient ID column using Polars operations.
 
         Strategy:
-        1. Check name patterns (patient_id, subject_id, etc.)
-        2. Verify high uniqueness (>95% unique values)
-        3. Check for null values (ID should have none)
+        1. A column named for the role (``PATIENT_KEY_NAMES``) is the key, unique or not: repeated
+           IDs mean visit-level rows, which the contract's exact duplicate check reports and
+           answers hold on until the grain is confirmed
+        2. Otherwise a name containing an ID pattern, if its values are over 90% unique
+        3. Otherwise the most unique column with no nulls, if over 95% unique
 
         Args:
             df: Polars DataFrame
@@ -378,6 +410,13 @@ class SchemaInferenceEngine:
         Returns:
             Tuple of (column_name, confidence_score)
         """
+        # By role first: an ID-named column is the key whether or not its values repeat. The
+        # exact duplicate check runs on it later (contract), so repeats are reported, not hidden.
+        named = patient_key_by_name(list(df.columns))
+        if named is not None:
+            complete = df[named].null_count() == 0 and df[named].n_unique() == df.height
+            return named, 0.95 if complete else 0.6
+
         for col in df.columns:
             col_lower = col.lower()
 

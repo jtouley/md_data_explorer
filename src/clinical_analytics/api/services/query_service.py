@@ -15,6 +15,8 @@ from typing import Any
 import structlog
 
 from clinical_analytics.api.models.schemas import SSEEvent
+from clinical_analytics.contracts.declarations import FileDeclarationStore
+from clinical_analytics.core.data_home import uploads_dir
 from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
 from clinical_analytics.core.query_service import QueryService as CoreQueryService
@@ -32,6 +34,19 @@ UNEXPECTED_FAILURE_MESSAGE = (
 
 # Turns kept per session for refinement parsing ("now by site", "remove the n/a").
 MAX_CONVERSATION_TURNS = 20
+
+
+def active_dataset_version(dataset_id: str) -> str | None:
+    """The dataset's active version from its upload metadata, so answers read that version's
+    quality report; None for a dataset without one (built-in samples)."""
+    from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+
+    try:
+        version = (UserDatasetStorage().get_upload_metadata(dataset_id) or {}).get("dataset_version")
+    except (OSError, ValueError) as e:
+        logger.warning("dataset_version_unreadable", dataset_id=dataset_id, **error_fields(e))
+        return None
+    return version if isinstance(version, str) and version else None
 
 
 def context_to_turn(context: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -95,7 +110,10 @@ class AsyncQueryService:
             semantic_layer: SemanticLayer instance for query parsing and execution
         """
         self._semantic_layer = semantic_layer
-        self._core = CoreQueryService(semantic_layer)
+        # Confirmed grain and category spellings persist next to the dataset's contracts, and
+        # answers read the dataset's latest quality report from the same data directory.
+        data_dir = uploads_dir().parent
+        self._core = CoreQueryService(semantic_layer, declarations=FileDeclarationStore(data_dir), data_dir=data_dir)
         self._queries: dict[str, AsyncQueryResult] = {}
         self._events: dict[str, list[SSEEvent]] = {}
         self._history: dict[str, list[dict[str, Any]]] = {}
@@ -306,6 +324,7 @@ class AsyncQueryService:
                 self._core.ask,
                 question=query,
                 dataset_id=dataset_id,
+                dataset_version=active_dataset_version(dataset_id),
                 conversation_history=self.conversation_history(session_id, context),
                 confirmed=confirmed,
                 confirm_plan_line=confirm_plan_line,
@@ -500,6 +519,7 @@ class AsyncQueryService:
             self._core.ask,
             question=query,
             dataset_id=dataset_id,
+            dataset_version=active_dataset_version(dataset_id),
             conversation_history=self.conversation_history(session_id),
             confirmed=confirmed,
             confirm_plan_line=confirm_plan_line,

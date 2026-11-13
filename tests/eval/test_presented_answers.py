@@ -30,6 +30,7 @@ from clinical_analytics.eval.headless import (
     small_level_labels,
 )
 from tests.eval.adversarial_probes import own_frame, probes
+from tests.eval.dq_probes import DQ_QUESTIONS, dq_frames
 from tests.eval.reviewer_probes import PROBES
 
 
@@ -192,6 +193,13 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
     for query in PRIVACY_QUERIES:
         result = ask("cohort", query, project_root)
         record("privacy", query, _held(result) if not result["success"] else "answered", "no small labels", result)
+
+    # Data-quality probe files: held or refused, never a number (see tests/eval/dq_probes.py).
+    for name, frame in dq_frames().items():
+        register_frame(f"dq_{name}", frame)
+    for name, query in DQ_QUESTIONS:
+        result = ask(f"dq_{name}", query)
+        record("dq", f"{name}: {query}", _held(result), "held or refused", result)
 
     own = own_frame()
     register_frame("probe_coh", cohort)

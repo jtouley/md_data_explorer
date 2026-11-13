@@ -37,6 +37,26 @@ def id_column_from_metadata(metadata: dict[str, Any]) -> str | None:
     return next((col for col, role in mapping.items() if role == "patient_id"), None)
 
 
+def analysis_columns_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
+    """Columns the upload names as analysis variables (outcomes, predictors, time and event).
+
+    Only these get the 5% missingness warning; other columns' missingness is listed, not flagged.
+    """
+    found: list[str] = []
+    mapping = metadata.get("variable_mapping") or {}
+    for role, value in mapping.items():
+        if role == "patient_id":
+            continue
+        for column in value if isinstance(value, list) else [value]:
+            if isinstance(column, str) and column not in found:
+                found.append(column)
+    outcomes = (metadata.get("inferred_schema") or {}).get("outcomes") or {}
+    for column in outcomes if isinstance(outcomes, dict) else []:
+        if isinstance(column, str) and column not in found:
+            found.append(column)
+    return tuple(found)
+
+
 def accepted_patch_ids(patches: list[Patch]) -> tuple[str, ...]:
     """Ids whose latest log row is ACCEPTED (same rule as ``metadata_resolver``), sorted."""
     latest: dict[str, Patch] = {p.patch_id: p for p in patches}
@@ -100,6 +120,7 @@ def check_upload(
             dataset_version=dataset_version,
             dataset_name=str(metadata.get("dataset_name") or upload_id),
             id_column=id_column_from_metadata(metadata),
+            analysis_columns=analysis_columns_from_metadata(metadata),
             source_file_sha256=metadata.get("source_file_sha256"),
             resolved=_resolve(df, patches) if accepted else None,
             accepted_patch_ids=accepted,

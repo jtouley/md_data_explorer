@@ -8,14 +8,23 @@ Manages query parsing, validation, and execution without Streamlit dependencies.
 
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import polars as pl
+import structlog
 
 from clinical_analytics.analysis.grouping import grouping_problem
+from clinical_analytics.analysis.variable_types import short_name
+from clinical_analytics.contracts.declarations import Declarations, DeclarationStore, MemoryDeclarationStore
+from clinical_analytics.contracts.errors import ContractError, ContractStoreError
+from clinical_analytics.contracts.quality import QualityReport
+from clinical_analytics.contracts.store import latest_report
+from clinical_analytics.core import answer_checks
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
+from clinical_analytics.core.log_redaction import error_fields
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.plan_values import absent_value_reason
@@ -25,6 +34,7 @@ from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import hold_reason, unjustified_elements, unjustified_reason, unused_words
 
 _GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len", "n_rows", "n_pairs", "events"})
+logger = structlog.get_logger()
 NO_MATCH_REASON = "No patients matched the question's limits, so there is no value to report."
 
 
@@ -98,14 +108,25 @@ class QueryService:
     Zero Streamlit dependencies.
     """
 
-    def __init__(self, semantic_layer: SemanticLayer) -> None:
+    def __init__(
+        self,
+        semantic_layer: SemanticLayer,
+        declarations: DeclarationStore | None = None,
+        data_dir: Path | None = None,
+    ) -> None:
         """
         Initialize query service with semantic layer.
 
         Args:
             semantic_layer: SemanticLayer instance for query parsing and execution
+            declarations: Where confirmed grain and category mappings are stored (default: this
+                process only; the API passes the data directory's file store)
+            data_dir: Data directory holding quality reports; None: answers carry no report notes
         """
         self.semantic_layer = semantic_layer
+        self.declarations: DeclarationStore = declarations if declarations is not None else MemoryDeclarationStore()
+        self.data_dir = data_dir
+        self._applied_levels: set[tuple[str, tuple[str, ...]]] = set()
         self.nl_engine = NLQueryEngine(semantic_layer)
         self.conversation_manager = ConversationManager()
 
@@ -283,12 +304,32 @@ class QueryService:
                 failure_reason=grouping_refusal,
             )
 
+        # Data checks on the columns the plan reads: refuse what would be wrong whatever the
+        # doctor says; hold what only they can settle (grain, category spellings, implausible
+        # values) until they confirm this exact plan; otherwise note it on the answer.
+        declaration_key = dataset_id or upload_id or "dataset"
+        findings, unit = self._data_findings(query_plan, declaration_key, dataset_version)
+        if findings.refusal:
+            return QueryResult(
+                plan=query_plan,
+                issues=[*issues, {"message": findings.refusal, "severity": "error"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=context,
+                failure_reason=findings.refusal,
+            )
+        if confirmed:
+            self._declare(declaration_key, findings)
+
         # Word accounting (all tiers): a plan that leaves a word of the question unused answers
         # a different question. Hold it for review regardless of confidence; only the user's
         # confirmation of this exact plan (by hash) releases it.
         # Reverse accounting: every element of the plan must also be asked for by the question.
+        # The data-check holds join the same hold, so one confirmation covers what was shown.
         if not confirmed:
-            accounting_reason = self._accounting_hold_reason(normalized_query, query_plan, context)
+            accounting = self._accounting_hold_reason(normalized_query, query_plan, context)
+            accounting_reason = " ".join([r for r in [accounting, *findings.holds] if r]) or None
             if accounting_reason:
                 return QueryResult(
                     plan=query_plan,
@@ -337,6 +378,7 @@ class QueryService:
                         if analysis.get("error"):
                             issues.append({"message": str(analysis["error"]), "severity": "error"})
                         else:
+                            analysis = self._with_findings(analysis, findings, unit)
                             claim = present_analysis(analysis).get("claim")
         except CohortStepError as e:
             # Already plain language: say why the limit could not be applied.
@@ -359,6 +401,107 @@ class QueryService:
             plan_line=plan_line,
             plan_hash=plan_hash,
         )
+
+    def _data_findings(
+        self, plan: QueryPlan, dataset_key: str, dataset_version: str | None
+    ) -> tuple[answer_checks.Findings, str | None]:
+        """Run the data checks for ``plan``; returns the findings and what n counts.
+
+        Stored declarations are applied first (count patients once rows are visits; merge
+        confirmed spellings), so a confirmed question is not held again.
+        """
+        findings = answer_checks.Findings()
+        try:
+            declarations = self.declarations.load(dataset_key)
+        except ContractStoreError as e:
+            logger.error("declarations_unreadable", dataset_key=dataset_key, **error_fields(e))
+            declarations = Declarations()
+        self._apply_levels(declarations)
+        layer = self.semantic_layer
+        grain = answer_checks.grain_of(layer)
+        visits = grain.repeated and answer_checks.declared_visits(grain, declarations)
+        layer.count_entity_key = grain.key if visits else None  # type: ignore[attr-defined]
+        # A COUNT counts patients (distinct key once rows are visits); every other answer,
+        # shares included, is over rows: visits at visit grain.
+        counts_patients = plan.intent == "COUNT" and not (plan.proportion_column or plan.rate_column)
+        unit = None if grain.key is None else ("visits" if visits and not counts_patients else "patients")
+
+        columns = answer_checks.plan_columns(plan)
+        known = [c for c in [*columns, *([grain.key] if grain.key else [])] if c in layer.get_base_view().columns]
+        frame = layer.get_base_view().select(*dict.fromkeys(known)).to_polars() if known else pl.DataFrame()
+
+        findings.refusal = answer_checks.metric_refusal(plan, frame)
+        if findings.refusal:
+            return findings, unit
+        if grain.repeated and grain.key is not None and not visits:
+            findings.holds.append(answer_checks.grain_hold_reason(grain.key))
+            findings.grain_to_declare = grain.declaration()
+            unit = "patients" if counts_patients else "visits"
+        if grain.repeated and grain.key and plan.intent == "COUNT" and plan.group_by:
+            findings.refusal = answer_checks.grouped_count_refusal(frame, grain.key, plan.group_by)
+            if findings.refusal:
+                return findings, unit
+        for _column, mapping, sentence in answer_checks.variant_findings(plan, frame, declarations):
+            findings.holds.append(sentence)
+            findings.levels_to_declare.append(mapping)
+        for _column, hold, note in answer_checks.implausible_sentences(plan, frame):
+            findings.holds.append(hold)
+            findings.notes.append(note)
+        findings.notes.extend(answer_checks.report_notes(self._latest_report(dataset_key, dataset_version), columns))
+        return findings, unit
+
+    def _latest_report(self, dataset_key: str, dataset_version: str | None) -> QualityReport | None:
+        if self.data_dir is None or not dataset_version:
+            return None
+        try:
+            return latest_report(self.data_dir, dataset_key, dataset_version)
+        except (ContractError, ValueError) as e:
+            logger.error("quality_report_unreadable", dataset_key=dataset_key, **error_fields(e))
+            return None
+
+    def _declare(self, dataset_key: str, findings: answer_checks.Findings) -> None:
+        """Store what the doctor confirmed by confirming this plan, and apply it now."""
+        if findings.grain_to_declare is None and not findings.levels_to_declare:
+            return
+        declarations = self.declarations.load(dataset_key)
+        if findings.grain_to_declare is not None:
+            declarations = declarations.with_grain(findings.grain_to_declare)
+            self.semantic_layer.count_entity_key = findings.grain_to_declare.key  # type: ignore[attr-defined]
+        for mapping in findings.levels_to_declare:
+            declarations = declarations.with_levels(mapping)
+        self.declarations.save(dataset_key, declarations)
+        self._apply_levels(declarations)
+        logger.info(
+            "data_declarations_confirmed",
+            dataset_key=dataset_key,
+            grain=findings.grain_to_declare is not None,
+            level_mappings=len(findings.levels_to_declare),
+        )
+
+    def _apply_levels(self, declarations: Declarations) -> None:
+        """Merge each confirmed set of spellings into one level, once per layer."""
+        columns = set(self.semantic_layer.get_base_view().columns)
+        for mapping in declarations.levels:
+            marker = (mapping.column, mapping.spellings)
+            if marker in self._applied_levels or mapping.column not in columns:
+                continue
+            self.semantic_layer.remap_levels(mapping.column, {s: mapping.canonical for s in mapping.spellings})
+            self._applied_levels.add(marker)
+
+    @staticmethod
+    def _with_findings(analysis: dict[str, Any], findings: answer_checks.Findings, unit: str | None) -> dict[str, Any]:
+        """The analysis with what n counts and the data-check notes the answer must carry.
+
+        A column whose implausible values the analysis already discloses gets no second note.
+        """
+        disclosed = (analysis.get("implausible") or {}).get("column")
+        notes = [n for n in findings.notes if not (disclosed and n.startswith(f"{short_name(disclosed)} has "))]
+        extra: dict[str, Any] = {}
+        if unit is not None:
+            extra["unit"] = unit
+        if notes:
+            extra["data_notes"] = notes
+        return {**analysis, **extra}
 
     def _grouping_refusal(self, plan: QueryPlan) -> str | None:
         """Why the plan's grouping column cannot split patients into groups, or None.

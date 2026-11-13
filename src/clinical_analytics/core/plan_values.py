@@ -87,6 +87,13 @@ def _outside_plausible_range(column: str, value: Any) -> str | None:
         number = float(value)
     except (TypeError, ValueError):
         return f"I couldn't find '{_text(value)}' in {short_name(column)}."
+    if bounds.maximum is None:
+        if number >= bounds.minimum:
+            return None
+        return (
+            f"{_text(value)} is outside the plausible range for {short_name(column)} "
+            f"(at least {bounds.minimum:g}, {bounds.unit})."
+        )
     if bounds.minimum <= number <= bounds.maximum:
         return None
     return (

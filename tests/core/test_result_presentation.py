@@ -405,9 +405,14 @@ class TestSmallCellSuppression:
         assert "%" not in presentation["claim"].split("withheld")[0]
         assert "withheld" in presentation["claim"]
         cells = {(row["y"], key): value for row in presentation["table"]["rows"] for key, value in row.items()}
-        # Every cell is hidden (95 too, as the complement in its row), so every arm and level
-        # folds into Other: no label is left beside a hidden cell
-        assert cells == {(OTHER_LABEL, "y"): OTHER_LABEL, (OTHER_LABEL, OTHER_LABEL): "suppressed"}
+        # Every cell is hidden (95 too, as the complement in its row), so every arm folds into
+        # Other; the outcome levels then stand beside hidden cells only and keep their labels
+        assert cells == {
+            ("y=0", "y"): "y=0",
+            ("y=0", OTHER_LABEL): "suppressed",
+            ("y=1", "y"): "y=1",
+            ("y=1", OTHER_LABEL): "suppressed",
+        }
 
     def test_present_survival_ungrouped_showsSummaryNotEventTimes(self):
         # Arrange

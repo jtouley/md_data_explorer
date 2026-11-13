@@ -45,6 +45,7 @@ import structlog
 from open_data_contract_standard.model import DataQuality, OpenDataContractStandard, SchemaProperty
 from pydantic import BaseModel, ConfigDict, Field
 
+from clinical_analytics.analysis.numeric_text import censored_expr, missing_token_expr
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import QualityCheckError
 
@@ -54,7 +55,10 @@ CheckStatus: TypeAlias = Literal["passed", "warning", "failed", "review", "not_r
 HIDDEN_NOTE = "count hidden to protect privacy"
 ROWS_KEY = "__rows"
 RANGE_METRIC = "range"
-_BAD_VALUE_METRICS = frozenset({"invalidValues", "duplicateValues", RANGE_METRIC})
+CENSORED_METRIC = "censoredValues"
+TYPE_METRIC = "logicalType"
+LEVEL_VARIANTS_METRIC = "levelVariants"
+_BAD_VALUE_METRICS = frozenset({"invalidValues", "duplicateValues", RANGE_METRIC, CENSORED_METRIC})
 _OPERATORS = (
     "mustBe",
     "mustNotBe",
@@ -173,8 +177,19 @@ def _compile_property_rule(rule: DataQuality, prop: SchemaProperty, schema: pl.S
         return _not_run(base, "column not in the data")
     col = pl.col(column)
     if metric == "nullValues":
-        missing = (col.is_null() | col.is_nan()).sum() if schema[column].is_float() else col.null_count()
+        # The same missing-value tokens the analysis treats as missing ("n/a", "."), so the
+        # report and the answers agree on what is missing (contracts.config.MISSING_VALUE_TOKENS).
+        if schema[column].is_float():
+            missing = (col.is_null() | col.is_nan()).sum()
+        elif schema[column] == pl.String:
+            missing = (col.is_null() | missing_token_expr(column)).sum()
+        else:
+            missing = col.null_count()
         return CompiledCheck(**base, expr=missing, percent=rule.unit == "percent")
+    if metric == CENSORED_METRIC:
+        if schema[column] != pl.String:
+            return _not_run(base, "column is not stored as text")
+        return CompiledCheck(**base, expr=censored_expr(column).fill_null(False).sum())
     if metric == "duplicateValues":
         return CompiledCheck(**base, expr=col.drop_nulls().len() - col.drop_nulls().n_unique())
     if metric == "invalidValues":
@@ -356,6 +371,8 @@ def _message(check: CompiledCheck, count: int, shown: int | str, percent: float 
         return f"{name}: {amount} values are not in the codebook ({check.detail}){note}"
     if check.metric == RANGE_METRIC:
         return f"{name}: {amount} values outside {check.detail}{note}"
+    if check.metric == CENSORED_METRIC:
+        return f"{name}: {amount} values recorded as a limit (like '<5'), not as numbers{note}"
     return f"{name}: {amount} rows flagged{note}"
 
 
@@ -525,10 +542,106 @@ def _custom_value(contract: OpenDataContractStandard, prop: str) -> Any:
     return next((c.value for c in contract.customProperties or [] if c.property == prop), None)
 
 
+def type_results(contract: OpenDataContractStandard, schema: pl.Schema) -> list[QualityCheckResult]:
+    """Type conformance: each property's ``logicalType`` against the data's type (schema only,
+    no counts). A column the contract expects as a number but the data holds as text is how a
+    range check stops running without anyone noticing (DQ M5)."""
+    from clinical_analytics.contracts.builder import logical_type
+
+    if not contract.schema_:
+        return []
+    results = []
+    for prop in contract.schema_[0].properties or []:
+        column = prop.physicalName or prop.name
+        if column is None or prop.logicalType is None:
+            continue
+        common: dict[str, Any] = {
+            "id": f"{prop.name}{config.TYPE_RULE_SUFFIX}",
+            "column": _display(prop),
+            "metric": TYPE_METRIC,
+            "dimension": "conformity",
+            "severity": "error",
+            "count": None,
+            "percent": None,
+        }
+        if column not in schema:
+            results.append(
+                QualityCheckResult(
+                    **common, status="not_run", message=f"{_display(prop)}: not checked (column not in the data)"
+                )
+            )
+            continue
+        actual = logical_type(schema[column])
+        if actual == prop.logicalType:
+            results.append(
+                QualityCheckResult(**common, status="passed", message=f"{_display(prop)}: stored as {actual}")
+            )
+        else:
+            results.append(
+                QualityCheckResult(
+                    **common,
+                    status="failed",
+                    message=f"{_display(prop)}: stored as {actual}, but the contract expects {prop.logicalType}",
+                )
+            )
+    return results
+
+
+def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) -> list[QualityCheckResult]:
+    """Text columns whose levels include spellings of one category (Male / male / M).
+
+    A warning at upload; a question that groups or limits on such a level is held until the
+    doctor confirms the spellings are one. The message names only spellings held by at least
+    ``MIN_CELL_SIZE`` rows, so it never shows a label of a level with 1 to 10 rows.
+    """
+    from clinical_analytics.analysis.grouping import level_variants
+
+    if not contract.schema_:
+        return []
+    schema = lf.collect_schema()
+    ids = {
+        p.physicalName or p.name for p in contract.schema_[0].properties or [] if p.primaryKey or p.unique is not None
+    }
+    props = {p.physicalName or p.name: p for p in contract.schema_[0].properties or []}
+    text = [c for c, dtype in schema.items() if dtype == pl.String and c not in ids and c in props]
+    if not text:
+        return []
+    levels = lf.select([pl.col(c).drop_nulls().value_counts().implode().alias(c) for c in text]).collect()
+    results = []
+    for column in text:
+        counts = {row[column]: row["count"] for row in levels.get_column(column)[0].to_list()}
+        groups = level_variants(list(counts))
+        if not groups:
+            continue
+        prop = props[column]
+        named = [s for group in groups for s in group if counts[s] >= config.MIN_CELL_SIZE]
+        example = f" (for example {', '.join(named[:4])})" if len(named) >= 2 else ""
+        results.append(
+            QualityCheckResult(
+                id=f"{prop.name}{config.LEVEL_VARIANTS_RULE_SUFFIX}",
+                column=_display(prop),
+                metric=LEVEL_VARIANTS_METRIC,
+                dimension="consistency",
+                severity="warning",
+                status="warning",
+                count=None,
+                percent=None,
+                message=(
+                    f"{_display(prop)}: some values may be one category written differently{example}; "
+                    "questions on them are held until you confirm"
+                ),
+            )
+        )
+    return results
+
+
 def run_quality(lf: pl.LazyFrame, contract: OpenDataContractStandard, run_at: datetime | None = None) -> QualityReport:
-    """Check ``lf`` against ``contract`` (one collect) and build the suppressed report."""
-    checks = compile_contract(contract, lf.collect_schema())
-    report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at)
+    """Check ``lf`` against ``contract`` and build the suppressed report: the counted checks in one
+    collect, then type conformance (schema only) and category spellings (one more collect)."""
+    schema = lf.collect_schema()
+    checks = compile_contract(contract, schema)
+    extra = [*type_results(contract, schema), *level_variant_results(lf, contract)]
+    report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at, extra=extra)
     logger.info(
         "quality_run_completed",
         upload_id=report.upload_id,
@@ -545,12 +658,16 @@ def report_from_counts(
     checks: list[CompiledCheck],
     raw: dict[str, int],
     run_at: datetime | None = None,
+    extra: list[QualityCheckResult] | None = None,
 ) -> QualityReport:
-    """The suppressed report for raw counts (``measure`` output). Pure: no data is read."""
+    """The suppressed report for raw counts (``measure`` output). Pure: no data is read.
+
+    ``extra``: results that carry no count (type conformance, category spellings), added as they are.
+    """
     shown_counts = _shown_counts(checks, raw)
     rows = raw[ROWS_KEY]
     tiny = _is_tiny(rows)
-    results = [_result(c, raw, shown_counts, tiny) for c in checks]
+    results = [_result(c, raw, shown_counts, tiny) for c in checks] + list(extra or [])
     ts = (run_at or datetime.now(UTC)).astimezone(UTC)
     report = QualityReport(
         upload_id=str(_custom_value(contract, "uploadId") or contract.id),

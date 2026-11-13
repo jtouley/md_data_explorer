@@ -13,6 +13,7 @@ import polars as pl
 from scipy import stats
 
 from clinical_analytics.analysis.grouping import grouping_problem
+from clinical_analytics.analysis.numeric_text import AmbiguousNumberFormatError, parse_numeric_text
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
     MIN_CORRELATION_N,
@@ -21,8 +22,10 @@ from clinical_analytics.analysis.sample_floors import (
     MIN_SURVIVAL_N,
 )
 from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, code_key, is_numeric_dtype
+from clinical_analytics.contracts.builder import find_plausibility_range
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
+from clinical_analytics.core.result_presentation import line_count_text
 
 
 def _normalize_column_name(name: str) -> str:
@@ -129,75 +132,6 @@ def _find_matching_column(target_name: str, available_columns: list[str]) -> str
     return best_match
 
 
-def _try_convert_to_numeric(series: pl.Series) -> pl.Series | None:
-    """
-    Try to convert a string series to numeric.
-
-    Handles:
-    - European comma format: "-1,8" -> -1.8 (comma as decimal separator)
-    - US thousands format: "1,234.5" -> 1234.5 (comma as thousands separator)
-    - Below detection limit: "<20" -> 20 (uses upper bound, extracts numeric part)
-    - Above detection limit: ">100" -> 100 (uses lower bound, extracts numeric part)
-    - Empty strings and whitespace -> null
-    - Non-numeric values -> null
-
-    Returns None if conversion fails or results in all nulls.
-    """
-    if series.dtype != pl.Utf8:
-        return None
-
-    try:
-        # Step 1: Extract numeric part (handles "<20", ">100", etc.)
-        # This pattern extracts digits, commas, dots, and minus signs
-        # It will extract "20" from "<20", "1234.5" from "1,234.5", etc.
-        extracted = series.str.extract(r"([\d,\.\-]+)", 1)
-
-        # Step 2: Clean based on format detection
-        # Strategy: Use map_elements for complex logic that Polars string ops can't handle easily
-        def clean_numeric(s: str | None) -> str | None:
-            if s is None:
-                return None
-            s = s.strip()
-            if not s:
-                return None
-
-            # Check if it looks like US format (has both comma and dot)
-            # In US format: "1,234.5" -> comma is thousands, dot is decimal -> remove comma
-            if "," in s and "." in s:
-                # US format: remove commas (thousands separator)
-                return s.replace(",", "")
-            # Check if it looks like European format (comma but no dot)
-            # In European format: "1,8" -> comma is decimal -> replace with dot
-            elif "," in s and "." not in s:
-                # European format: replace comma with dot (decimal separator)
-                return s.replace(",", ".")
-            # No comma, use as-is
-            return s
-
-        # Apply cleaning using map_elements
-        cleaned = extracted.map_elements(clean_numeric, return_dtype=pl.Utf8)
-
-        # Step 3: Try to cast to float
-        numeric = cleaned.cast(pl.Float64, strict=False)
-
-        # Step 4: Check if we got any valid values
-        if numeric.null_count() == len(numeric):
-            # Fallback: try direct conversion on original series
-            # Remove all commas (assume thousands separator) and try again
-            cleaned_direct = (
-                series.str.strip_chars()
-                .str.replace(",", "")  # Remove commas
-                .str.replace_all(r"^\s*$", "")  # Empty strings
-            )
-            numeric = cleaned_direct.cast(pl.Float64, strict=False)
-            if numeric.null_count() == len(numeric):
-                return None
-
-        return numeric
-    except Exception:
-        return None
-
-
 def _drop_missing(df: pl.DataFrame) -> pl.DataFrame:
     """Rows with no null and no NaN/inf in any column.
 
@@ -232,54 +166,40 @@ def _constant_groups(groups: list[Any], group_data: list[np.ndarray]) -> list[st
     ]
 
 
-# "inf" is a non-finite value, missing like NaN, not a category label.
-_MISSING_TOKENS = (
-    "", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?", "inf", "+inf", "-inf", "infinity",
-    "+infinity", "-infinity",
-)  # fmt: skip
-_NUMERIC_TEXT = r"^\s*[<>]?\s*-?\d[\d,]*(\.\d+)?\s*$"
-
-
-class AmbiguousNumberFormatError(ValueError):
-    """Text numbers whose comma could be a decimal or a thousands separator."""
-
-
-def _numeric_text_or_none(series: pl.Series) -> pl.Series | None:
-    """Numbers stored as text, or None when any non-missing value is not a plain number.
-
-    "Grade 2" or "1/2" stay text (categorical). "<20" reads as 20. Missing tokens ("n/a", ".")
-    become null. Commas: "1,8" is a decimal comma and "1,234.5" / "12,345,678" use thousands
-    separators; "1,234" with no other evidence could be either, so it raises
-    AmbiguousNumberFormatError instead of guessing.
-    """
-    cleaned = series.str.strip_chars()
-    is_missing = cleaned.is_null() | cleaned.str.to_lowercase().is_in(list(_MISSING_TOKENS))
-    text = pl.select(pl.when(is_missing).then(None).otherwise(cleaned)).to_series()
-    present = text.drop_nulls()
-    if present.len() == 0 or not present.str.contains(_NUMERIC_TEXT).all():
-        return None
-    bare = text.str.replace(r"^[<>]\s*", "")
-    with_comma = bare.drop_nulls().filter(bare.drop_nulls().str.contains(","))
-    if with_comma.len() == 0:
-        return bare.cast(pl.Float64, strict=False)
-    thousands = r"^-?\d{1,3}(,\d{3})+(\.\d+)?$"
-    if with_comma.str.contains(thousands).all():
-        unambiguous = (
-            with_comma.str.contains(r"\.").any()
-            or with_comma.str.contains(r",\d{3},").any()
-            or bare.drop_nulls().str.contains(r"^-?\d+\.\d+$").any()
-        )
-        if not unambiguous:
-            raise AmbiguousNumberFormatError(
-                f"{series.name} has values like '{with_comma[0]}' where the comma could mean thousands or a "
-                "decimal point. Store the column as numbers, or use a dot for decimals."
-            )
-        return bare.str.replace_all(",", "").cast(pl.Float64, strict=False)
-    if with_comma.str.contains(r"^-?\d+,\d+$").all() and not bare.drop_nulls().str.contains(r"\.").any():
-        return bare.str.replace(",", ".").cast(pl.Float64, strict=False)
-    raise AmbiguousNumberFormatError(
-        f"{series.name} mixes comma formats (e.g. '{with_comma[0]}'), so its numbers cannot be read reliably."
+def _censored_message(column: str, count: int, line: list[int], what: str) -> str:
+    """Refusal for a statistic over a column with values recorded as a limit ("<5")."""
+    amount = line_count_text(count, line)
+    return (
+        f"{column} has {amount} values recorded as a limit, such as '<5', so its {what} would be wrong. "
+        f"Replace the limits with measured values in the file, or ask for a count by {column}."
     )
+
+
+def _implausible(series: pl.Series) -> dict[str, Any] | None:
+    """Values outside the column's plausibility range (contracts.config), as a disclosure.
+
+    None when the column has no configured range or no value is outside it. ``count`` and
+    ``line_total`` (the values the statistic used) let the presenter apply the small-cell rule.
+    """
+    bounds = find_plausibility_range(series.name)
+    if bounds is None or not is_numeric_dtype(series.dtype):
+        return None
+    values = series.drop_nulls()
+    if values.dtype.is_float():
+        values = values.filter(values.is_finite())
+    outside = values < bounds.minimum
+    if bounds.maximum is not None:
+        outside = outside | (values > bounds.maximum)
+    count = int(outside.sum())
+    if count == 0:
+        return None
+    upper = "" if bounds.maximum is None else f"–{bounds.maximum:g}"
+    return {
+        "column": series.name,
+        "count": count,
+        "line_total": int(values.len()),
+        "bounds": f"{bounds.minimum:g}{upper} {bounds.unit}" if upper else f"below {bounds.minimum:g} {bounds.unit}",
+    }
 
 
 def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
@@ -352,15 +272,30 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             row_count=row_count,
         )
 
-        # Try to convert string columns to numeric (handles European comma format, etc.)
+        if series.null_count() == row_count:
+            return {
+                "type": "descriptive",
+                "error": f"Every value of {col} is missing, so there is nothing to describe.",
+            }
+        # Numbers stored as text: one rule for every path (analysis.numeric_text).
         numeric_series = None
         if series.dtype == pl.Utf8:
-            numeric_series = _try_convert_to_numeric(series)
-            logger.debug(
-                "compute_descriptive_conversion",
-                col=col,
-                conversion_success=numeric_series is not None,
-            )
+            try:
+                parsed = parse_numeric_text(series)
+            except AmbiguousNumberFormatError as exc:
+                return {"type": "descriptive", "error": str(exc)}
+            if parsed is not None and parsed.n_censored:
+                present = row_count - series.null_count() - parsed.n_missing_tokens
+                line = [parsed.n_censored, present - parsed.n_censored]
+                return {"type": "descriptive", "error": _censored_message(col, parsed.n_censored, line, "mean")}
+            if parsed is not None:
+                if parsed.values.null_count() == row_count:
+                    return {
+                        "type": "descriptive",
+                        "error": f"Every value of {col} is missing, so there is nothing to describe.",
+                    }
+                numeric_series = parsed.values
+            logger.debug("compute_descriptive_conversion", col=col, conversion_success=numeric_series is not None)
 
         # Use converted series if successful, otherwise original
         analysis_series = numeric_series if numeric_series is not None else series
@@ -407,6 +342,9 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
                 result["min"] = float(min_val) if min_val is not None else 0.0  # type: ignore[arg-type]
                 result["max"] = float(max_val) if max_val is not None else 0.0  # type: ignore[arg-type]
                 result["is_numeric"] = True
+                implausible = _implausible(clean_series)
+                if implausible:
+                    result["implausible"] = implausible
 
                 # Add headline answer for the query
                 result["headline"] = f"The average {col} is **{result['mean']:.2f}**"
@@ -506,37 +444,6 @@ def _compute_headline_answer(
     }
 
 
-def _try_numeric_conversion(series: pl.Series) -> tuple[pl.Series | None, bool]:
-    """
-    Try to convert a string series to numeric, handling common patterns.
-
-    Returns (converted_series, success).
-    """
-    if is_numeric_dtype(series.dtype):
-        return series, True
-
-    if series.dtype != pl.Utf8:
-        return None, False
-
-    try:
-        # Try direct cast first
-        numeric = series.cast(pl.Float64)
-        if numeric.null_count() < series.len() * 0.5:  # Less than 50% nulls
-            return numeric, True
-    except Exception:
-        pass
-
-    try:
-        # Try extracting numeric part (handles "<20" -> 20, ">100" -> 100)
-        numeric = series.str.extract(r"(\d+\.?\d*)").cast(pl.Float64)
-        if numeric.null_count() < series.len() * 0.5:
-            return numeric, True
-    except Exception:
-        pass
-
-    return None, False
-
-
 def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
     """
     Compare an outcome across groups, choosing the test from what the outcome measures.
@@ -579,9 +486,17 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     outcome_series = analysis_df[outcome_col]
     if outcome_series.dtype == pl.Utf8:
         try:
-            converted = _numeric_text_or_none(outcome_series)
+            parsed = parse_numeric_text(outcome_series)
         except AmbiguousNumberFormatError as exc:
             return {"type": "comparison", "error": str(exc)}
+        if parsed is not None and parsed.n_censored:
+            present = outcome_series.len() - parsed.n_missing_tokens
+            line = [parsed.n_censored, present - parsed.n_censored]
+            return {
+                "type": "comparison",
+                "error": _censored_message(outcome_col, parsed.n_censored, line, "comparison"),
+            }
+        converted = parsed.values if parsed is not None else None
         if converted is not None:
             # Missing-value tokens ("n/a", ".") became null: exclude and count them.
             analysis_df = _drop_missing(analysis_df.with_columns(converted.alias(outcome_col)))
@@ -623,6 +538,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
     }
 
     if outcome_kind == "continuous":
+        implausible = _implausible(analysis_df[outcome_col])
+        if implausible:
+            base["implausible"] = implausible
         values = analysis_df.with_columns(pl.col(outcome_col).cast(pl.Float64))
         group_data = [values.filter(pl.col(group_col) == g)[outcome_col].to_numpy() for g in groups]
         group_means = {str(g): float(np.mean(d)) for g, d in zip(groups, group_data, strict=True)}

@@ -339,15 +339,9 @@ class TestComputeComparisonAnalysis:
         assert "error" in result
 
     def test_comparison_analysis_with_string_numeric_outcome(self):
-        """Test that string numeric columns are converted and means computed."""
-        # Arrange: String numeric outcome with "<20" style values
-        df = pl.DataFrame(
-            {
-                "Treatment": ["A", "A", "B", "B"],
-                "Viral Load": ["<20", "120", "200", "150"],
-            }
-        )
-
+        """String numbers are read as numbers and their means compared."""
+        # Arrange
+        df = pl.DataFrame({"Treatment": ["A", "A", "B", "B"], "Viral Load": ["20", "120", "200", "150"]})
         context = AnalysisContext()
         context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
         context.primary_variable = "Viral Load"
@@ -356,23 +350,27 @@ class TestComputeComparisonAnalysis:
         # Act
         result = compute_comparison_analysis(df, context)
 
-        # Assert: Verify group means were computed (not counts)
-        assert "group_statistics" not in result  # This key doesn't exist in current implementation
-        assert "group_means" in result or "group1_mean" in result
-        # Treatment A: mean of [20, 120] = 70
-        # Treatment B: mean of [200, 150] = 175
-        # (Note: "<20" converts to 20 as upper bound)
-        if "group_means" in result:
-            assert result["group_means"]["A"] == pytest.approx(70, rel=0.01)
-            assert result["group_means"]["B"] == pytest.approx(175, rel=0.01)
-        elif "group1_mean" in result and "group2_mean" in result:
-            # Check that means are approximately correct (order may vary)
-            means = [result["group1_mean"], result["group2_mean"]]
-            assert 70 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 70) < 1 for m in means)
-            assert 175 in [pytest.approx(m, rel=0.01) for m in means] or any(abs(m - 175) < 1 for m in means)
+        # Assert
+        assert result["test_type"] == "welch_t_test"
+        assert result["group_means"]["A"] == pytest.approx(70)
+        assert result["group_means"]["B"] == pytest.approx(175)
 
-        # Verify test type is numeric (Welch t-test or ANOVA)
-        assert result["test_type"] in ["welch_t_test", "anova"]
+    @pytest.mark.parametrize("limit", ["<20", "> 500"], ids=["below", "above"])
+    def test_comparisonAnalysis_valueRecordedAsLimit_refusesNotSubstitutes(self, limit):
+        """A value recorded as a limit is not its limit: main read "<20" as 20 (DQ review H4)."""
+        # Arrange
+        df = pl.DataFrame({"Treatment": ["A", "A", "B", "B"], "Viral Load": [limit, "120", "200", "150"]})
+        context = AnalysisContext()
+        context.inferred_intent = AnalysisIntent.COMPARE_GROUPS
+        context.primary_variable = "Viral Load"
+        context.grouping_variable = "Treatment"
+
+        # Act
+        result = compute_comparison_analysis(df, context)
+
+        # Assert
+        assert "group_means" not in result
+        assert "recorded as a limit" in result["error"]
 
     def test_comparison_analysis_with_european_comma_format(self):
         """Test European comma format conversion (e.g., '1,234.5')."""
@@ -409,14 +407,14 @@ class TestComputeComparisonAnalysis:
         single_file_df = pl.DataFrame(
             {
                 "Treatment": ["A", "A", "B", "B"],
-                "Viral Load": ["<20", "120", "200", "150"],
+                "Viral Load": ["20", "120", "200", "150"],
             }
         )
 
         multi_table_df = pl.DataFrame(
             {
                 "Treatment": ["A", "A", "B", "B"],
-                "Viral Load": ["<20", "120", "200", "150"],
+                "Viral Load": ["20", "120", "200", "150"],
             }
         )
 

@@ -13,11 +13,14 @@ another group's 0 pins those patients. So:
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from typing import Final
 
 import numpy as np
 
 from clinical_analytics.analysis.variable_types import short_name
+from clinical_analytics.contracts.config import LEVEL_SYNONYMS, LEVEL_VARIANT_MAX_LEVELS
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 
 # About 20 rows is what a reader can scan, and far fewer groups than patients in any cohort the
@@ -53,3 +56,24 @@ def is_small_level(count: object) -> bool:
     if isinstance(count, bool) or not isinstance(count, int | np.integer):
         return True
     return 0 < int(count) < SMALL_CELL_THRESHOLD
+
+
+def normalised_level(text: str) -> str:
+    """A category spelling as compared for variants: case, spacing and known synonyms removed."""
+    key = re.sub(r"\s+", " ", text.strip()).casefold()
+    return LEVEL_SYNONYMS.get(key, key)
+
+
+def level_variants(levels: Sequence[object]) -> list[tuple[str, ...]]:
+    """Groups of two or more distinct text levels that are the same after ``normalised_level``.
+
+    "Male", "male" and "M" are one group. A column with more than ``LEVEL_VARIANT_MAX_LEVELS``
+    levels is free text, not a category, and has none. Nulls and non-text values are ignored.
+    """
+    texts = sorted({level for level in levels if isinstance(level, str)})
+    if len(texts) > LEVEL_VARIANT_MAX_LEVELS:
+        return []
+    groups: dict[str, list[str]] = {}
+    for text in texts:
+        groups.setdefault(normalised_level(text), []).append(text)
+    return [tuple(group) for _, group in sorted(groups.items()) if len(group) > 1]

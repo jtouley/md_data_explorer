@@ -50,6 +50,8 @@ class ContractInputs:
     resolved: ResolvedDatasetMetadata | None = None
     accepted_patch_ids: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
+    # Columns the upload names as analysis variables: only their missingness is flagged (L1).
+    analysis_columns: tuple[str, ...] = ()
     created_at: datetime | None = None
     extra_custom_properties: dict[str, Any] = field(default_factory=dict)
 
@@ -128,20 +130,59 @@ def _custom(prop: str, value: Any) -> dict[str, Any]:
     return {"property": prop, "value": value}
 
 
-def _missing_rule(name: str) -> dict[str, Any]:
+def _missing_rule(name: str, flagged: bool) -> dict[str, Any]:
+    """Missingness of a column: flagged above 5% for an analysis variable, else measured only."""
+    if flagged:
+        operator, limit, description = (
+            "mustBeLessOrEqualTo",
+            config.MISSINGNESS_WARN_PERCENT,
+            "Share of empty values (Jakobsen et al. 2017: above ~5% complete-case analysis is doubtful)",
+        )
+    else:
+        operator, limit, description = (
+            "mustBeLessThan",
+            config.MISSINGNESS_MEASURE_ONLY_PERCENT,
+            "Share of empty values, listed; flagged only when every value is empty or for analysis variables",
+        )
     return {
         "id": f"{name}_missing",
         "type": "library",
         "metric": "nullValues",
         "unit": "percent",
-        "mustBeLessOrEqualTo": config.MISSINGNESS_WARN_PERCENT,
+        operator: limit,
         "dimension": "completeness",
         "severity": config.SEVERITY_MISSING,
-        "description": "Share of empty values (Jakobsen et al. 2017: above ~5% complete-case analysis is doubtful)",
+        "description": description,
     }
 
 
+def _censored_rule(name: str) -> dict[str, Any]:
+    """Values recorded as a limit ("<5") in a column of numbers stored as text."""
+    return {
+        "id": f"{name}{config.CENSORED_RULE_SUFFIX}",
+        "type": "library",
+        "metric": "censoredValues",
+        "mustBe": 0,
+        "dimension": "accuracy",
+        "severity": config.SEVERITY_RANGE,
+        "description": "Values recorded as a limit (like '<5') are not numbers; answers refuse or disclose them",
+    }
+
+
+def _is_numeric_text(series: pl.Series) -> bool:
+    """A text column whose values are numbers, limits or missing tokens (analysis.numeric_text)."""
+    from clinical_analytics.analysis.numeric_text import AmbiguousNumberFormatError, parse_numeric_text
+
+    try:
+        return parse_numeric_text(series) is not None
+    except AmbiguousNumberFormatError:
+        return True
+
+
 def _id_rules(name: str) -> list[dict[str, Any]]:
+    """Identifier rules. The exact duplicate check always runs; a repeat is reported, and answers
+    ask whether rows are visits before counting patients. Wording and severity do not depend on
+    the data, so a tiny table's report (every count hidden) does not tell whether IDs repeat."""
     return [
         {
             "id": f"{name}_not_null",
@@ -159,7 +200,7 @@ def _id_rules(name: str) -> list[dict[str, Any]]:
             "mustBe": 0,
             "dimension": "uniqueness",
             "severity": config.SEVERITY_ID,
-            "description": "One row per identifier",
+            "description": "One row per identifier; repeats mean rows may be visits, confirmed before counting",
         },
     ]
 
@@ -216,11 +257,24 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
 
     quality: list[dict[str, Any]] = []
     if is_id:
-        prop.update({"primaryKey": True, "primaryKeyPosition": 1, "required": True, "unique": True})
+        present = series.drop_nulls()
+        repeated = present.n_unique() < present.len()  # exact, every row
+        # A repeated identifier is not a key: the contract says one row per identifier only
+        # when that is true of the data (patient grain), never for visit-level rows. A tiny
+        # table states neither (its report hides every count, so the contract must not tell).
+        prop["required"] = True
+        if df_is_tiny(series.len()):
+            pass
+        elif repeated:
+            prop["unique"] = False
+        else:
+            prop.update({"primaryKey": True, "primaryKeyPosition": 1, "unique": True})
         prop["criticalDataElement"] = True
         quality.extend(_id_rules(name))
     else:
-        quality.append(_missing_rule(name))
+        quality.append(_missing_rule(name, column in inputs.analysis_columns))
+        if dtype == pl.String and _is_numeric_text(series):
+            quality.append(_censored_rule(name))
     if is_id or (meta and meta.is_phi):
         prop["classification"] = "restricted"
         prop["tags"] = ["phi"]
@@ -249,8 +303,13 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
 
     bounds = find_plausibility_range(column)
     # Codes are not measurements ("Age 1: young 2: old"): a coded column gets no range check.
+    if bounds is None and not is_id and "enum" not in prop and dtype.is_numeric() and dtype != pl.Boolean:
+        if series.null_count() < series.len() and classify_variable(series) == "continuous":
+            custom.append(_custom(config.PLAUSIBILITY_RANGE_PROPERTY, config.NO_RANGE_KNOWN))
     if bounds is not None and not is_id and "enum" not in prop:
-        limits = {"minimum": bounds.minimum, "maximum": bounds.maximum}
+        limits = {"minimum": bounds.minimum}
+        if bounds.maximum is not None:
+            limits["maximum"] = bounds.maximum
         if dtype.is_numeric():
             prop["logicalTypeOptions"] = limits
         else:
@@ -264,6 +323,23 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         prop["customProperties"] = custom
     prop["quality"] = quality
     return prop
+
+
+def df_is_tiny(rows: int) -> bool:
+    """Tables of 1..MAX_ROWS_NO_COUNTS rows: the report hides every count, zeros included."""
+    return 0 < rows <= config.MAX_ROWS_NO_COUNTS
+
+
+def _granularity(df: pl.DataFrame, id_column: str | None) -> str:
+    """The grain the data shows: one row per identifier, or several (rows may be visits)."""
+    if id_column is None:
+        return "One row per record as uploaded; no identifier column"
+    if df_is_tiny(df.height):
+        return "One row per record as uploaded; too few rows to state the grain"
+    present = df.get_column(id_column).drop_nulls()
+    if present.n_unique() < present.len():
+        return f"Several rows per {id_column} (rows may be visits); not one row per patient"
+    return f"One row per {id_column}"
 
 
 def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContractStandard:
@@ -311,7 +387,7 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
                 "name": config.UNIFIED_OBJECT_NAME,
                 "physicalName": config.UNIFIED_OBJECT_NAME,
                 "logicalType": "object",
-                "dataGranularityDescription": "One row per record as uploaded",
+                "dataGranularityDescription": _granularity(df, inputs.id_column),
                 "quality": [
                     *([] if inputs.id_column else _unidentified_id_rules()),
                     {

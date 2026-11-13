@@ -2175,7 +2175,7 @@ class SemanticLayer:
             formatted = self._format_count_result(result_df_pl, query_plan, context)
             # What the filters removed, in the unit the total is counted in: distinct entities
             # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
-            entity_key = query_plan.entity_key if not query_plan.group_by else None
+            entity_key = self._count_entity_key(query_plan) if not query_plan.group_by else None
             formatted["n_filtered_out"] = self._base_count(entity_key) - formatted["total_count"]
         else:
             # The aggregated SQL frame is not renderer-shaped. Recompute from the
@@ -2263,10 +2263,16 @@ class SemanticLayer:
                 "headline": f"Total count: **{total_count}**",
             }
 
+    def _count_entity_key(self, plan: "QueryPlan") -> str | None:
+        """What a COUNT counts: the plan's entity key, else the patient key once the doctor has
+        declared rows to be visits (``count_entity_key``, set by QueryService), else rows."""
+        return plan.entity_key or getattr(self, "count_entity_key", None)
+
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
         if plan.intent == "COUNT":
-            # A COUNT with neither entity_key nor group_by is a row count ("how many patients?").
+            # A COUNT with neither entity_key nor group_by counts rows, or patients (distinct
+            # patient key) once rows are declared visits: see _count_entity_key.
             pass
         elif plan.intent == "DESCRIBE":
             # DESCRIBE requires metric (primary_variable)
@@ -2703,12 +2709,15 @@ class SemanticLayer:
         # Execute based on intent
         if plan.intent == "COUNT":
             # COUNT: Use entity_key or group_by
+            entity_key = self._count_entity_key(plan)
             if plan.group_by:
-                # Count by group
-                result = view.group_by(plan.group_by).aggregate(_.count().name("count")).order_by(plan.group_by)
-            elif plan.entity_key:
+                # Count by group: patients per group once rows are visits (QueryService checks
+                # each patient has one group value, so the groups add up to the patients).
+                counted = view[entity_key].nunique() if entity_key else _.count()
+                result = view.group_by(plan.group_by).aggregate(counted.name("count")).order_by(plan.group_by)
+            elif entity_key:
                 # Count distinct entities
-                result = view.select(plan.entity_key).distinct().count()
+                result = view.select(entity_key).distinct().count()
             else:
                 # Total count
                 result = view.count()
@@ -2732,6 +2741,9 @@ class SemanticLayer:
                 if is_categorical:
                     # Frequency table
                     result = view.group_by(plan.metric).aggregate(_.count().name("count")).order_by(plan.metric)
+                elif view[plan.metric].type().is_string():
+                    # Mean/median of text would raise inside DuckDB; refuse in plain words instead.
+                    raise CohortStepError(_text_statistic_message(plan.statistic or "mean", plan.metric))
                 else:
                     # Descriptive statistics
                     metric_col = view[plan.metric]
@@ -2773,6 +2785,12 @@ class SemanticLayer:
 
         _log_ibis_sql_and_optional_explain(result, self.con.con)
         return result.execute()
+
+    def remap_levels(self, column: str, mapping: dict[str, str]) -> None:
+        """Read the spellings in ``mapping`` as one level from now on (a confirmed mapping:
+        "Male", "male", "M" -> "Male"). Rows and patients are unchanged; only labels merge."""
+        view = self.get_base_view()
+        self._base_view = view.mutate(**{column: view[column].substitute(mapping)})
 
     def _column_is_string(self, view: Any, column: str) -> bool:
         """From the schema: no rows are read."""

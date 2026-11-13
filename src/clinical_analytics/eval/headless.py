@@ -231,7 +231,7 @@ def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) ->
 
 HIDDEN = "hidden"
 _PRESENTED_TOLERANCE = 1e-4  # table cells are rounded to 4 decimals
-_TOTAL_COUNT = re.compile(r"^Total count: (\S+?)\.$")
+_TOTAL_COUNT = re.compile(r"^Total count: (\S+?)(?: patients| visits)?\.(?: |$)")
 _STAT_NAMES = ("mean", "median", "std", "min", "max")
 
 

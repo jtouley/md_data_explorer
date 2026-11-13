@@ -1,0 +1,174 @@
+"""Contract checks added for the independent DQ review (B1, H4, M1, M2, M5, L1)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import polars as pl
+import pytest
+import yaml
+
+from clinical_analytics.contracts import config
+from clinical_analytics.contracts.quality import run_quality
+
+N = 200
+IDS = [f"P{i:03d}" for i in range(N)]
+
+
+def _props(contract: Any) -> dict[str, dict[str, Any]]:
+    doc = yaml.safe_load(contract.to_yaml())
+    return {p["physicalName"]: p for p in doc["schema"][0]["properties"]}
+
+
+def _checks(report: Any) -> dict[str, Any]:
+    return {c.id: c for c in report.checks}
+
+
+def test_buildContract_repeatedIds_doesNotAssertUnique(make_contract: Any) -> None:
+    # Arrange: 200 rows, 170 IDs (visit-level rows)
+    df = pl.DataFrame({"patient_id": IDS[:170] + IDS[:30], "age": [40] * N})
+
+    # Act
+    contract = make_contract(df)
+
+    # Assert
+    prop = _props(contract)["patient_id"]
+    assert prop["unique"] is False
+    assert "primaryKey" not in prop
+    granularity = yaml.safe_load(contract.to_yaml())["schema"][0]["dataGranularityDescription"]
+    assert granularity.startswith("Several rows per patient_id")
+
+
+def test_runQuality_repeatedIds_exactDuplicateCheckRuns(make_contract: Any) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": IDS[:170] + IDS[:30], "age": [40] * N})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    check = _checks(report)["patient_id_no_duplicates"]
+    assert (check.count, check.status) == (30, "failed")
+
+
+def test_runQuality_contractExpectsNumberDataIsText_typeCheckFails(make_contract: Any) -> None:
+    # Arrange: the contract was built on integer ages; the data checked now holds them as text
+    built_on = pl.DataFrame({"patient_id": IDS, "age": [40] * N})
+    checked = pl.DataFrame({"patient_id": IDS, "age": ["40"] * N})
+
+    # Act
+    report = run_quality(checked.lazy(), make_contract(built_on))
+
+    # Assert
+    check = _checks(report)["age_type"]
+    assert check.status == "failed"
+    assert check.message == "age: stored as string, but the contract expects integer"
+
+
+@pytest.mark.parametrize(
+    ("limits", "count", "status"),
+    [
+        pytest.param(0, 0, "passed", id="none"),
+        pytest.param(3, config.COUNT_HIDDEN, config.HIDDEN_STATUS, id="small_hidden"),
+        pytest.param(30, 30, "warning", id="shown"),
+    ],
+)
+def test_runQuality_valuesRecordedAsLimit_countedNotSilent(
+    make_contract: Any, limits: int, count: Any, status: str
+) -> None:
+    # Arrange: on main the upload summary for 30 "<5" values was empty
+    crp = ["<5"] * limits + [str(20 + i % 7) for i in range(N - limits)]
+    df = pl.DataFrame({"patient_id": IDS, "crp": crp})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    check = _checks(report)["crp_censored"]
+    assert (check.count, check.status) == (count, status)
+
+
+def test_runQuality_missingTokens_countedAsMissingLikeTheAnalysis(make_contract: Any) -> None:
+    # Arrange: "N/A" and "." are missing for the analysis; on main the report said 0 missing
+    crp = ["N/A"] * 15 + ["."] * 15 + [str(20 + i % 7) for i in range(N - 30)]
+    df = pl.DataFrame({"patient_id": IDS, "crp": crp})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    assert _checks(report)["crp_missing"].count == 30
+
+
+def test_runQuality_categorySpellings_warnedAtUpload(make_contract: Any) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": IDS, "sex": ["Male"] * 60 + ["male"] * 50 + ["M"] * 40 + ["Female"] * 50})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    check = _checks(report)["sex_spellings"]
+    assert check.status == "warning"
+    assert "(for example M, Male, male)" in check.message
+    assert check.message in report.summary
+
+
+def test_runQuality_spellingOfFewRows_notNamed(make_contract: Any) -> None:
+    # Arrange: "m" is held by 3 rows; its label is not shown
+    df = pl.DataFrame({"patient_id": IDS, "sex": ["Male"] * 97 + ["m"] * 3 + ["Female"] * 100})
+
+    # Act
+    check = _checks(run_quality(df.lazy(), make_contract(df)))["sex_spellings"]
+
+    # Assert
+    assert check.status == "warning"
+    assert "for example" not in check.message  # only one spelling has 11+ rows: none is named
+
+
+@pytest.mark.parametrize(
+    ("analysis", "missing", "status"),
+    [
+        pytest.param((), 100, "passed", id="optional_column_half_missing_not_flagged"),
+        pytest.param((), N, "warning", id="optional_column_all_missing_flagged"),
+        pytest.param(("ldl",), 12, "warning", id="analysis_variable_above_5pct_flagged"),
+        pytest.param(("ldl",), 0, "passed", id="analysis_variable_complete"),
+    ],
+)
+def test_runQuality_missingness_flaggedOnlyForAnalysisVariables(
+    make_contract: Any, analysis: tuple[str, ...], missing: int, status: str
+) -> None:
+    # Arrange
+    ldl = pl.Series("ldl", [None] * missing + [100.0] * (N - missing), dtype=pl.Float64)
+    df = pl.DataFrame({"patient_id": IDS, "ldl": ldl})
+
+    # Act
+    check = _checks(run_quality(df.lazy(), make_contract(df, analysis_columns=analysis)))["ldl_missing"]
+
+    # Assert
+    assert check.status == status
+
+
+def test_buildContract_measurementWithoutRange_markedNoRangeKnown(make_contract: Any) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": IDS, "ferritin": [float(i) for i in range(N)]})
+
+    # Act
+    prop = _props(make_contract(df))["ferritin"]
+
+    # Assert
+    custom = {c["property"]: c["value"] for c in prop["customProperties"]}
+    assert custom[config.PLAUSIBILITY_RANGE_PROPERTY] == config.NO_RANGE_KNOWN
+
+
+@pytest.mark.parametrize(
+    "column",
+    [pytest.param(r.variable, id=r.variable) for r in config.PLAUSIBILITY_RANGES],
+)
+def test_plausibilityRanges_everyRange_hasUnitAndSource(column: str) -> None:
+    # Arrange
+    bounds = next(r for r in config.PLAUSIBILITY_RANGES if r.variable == column)
+
+    # Act / Assert
+    assert bounds.unit and bounds.source
+    assert bounds.maximum is None or bounds.maximum > bounds.minimum

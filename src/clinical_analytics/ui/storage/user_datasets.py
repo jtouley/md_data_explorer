@@ -27,6 +27,9 @@ from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 logger = logging.getLogger(__name__)
 
 # Common ID column names stored as text (prevents integer overflow, keeps schemas consistent)
+# A UI progress callback is best-effort; these are the failures it may raise (DQ review L2).
+_PROGRESS_CALLBACK_ERRORS = (RuntimeError, ValueError, TypeError, OSError)
+
 ID_COLUMN_NAMES = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
 
 # Cross-dataset dedup key: compute_dataset_version over the dataset as stored (its Parquet files),
@@ -149,7 +152,7 @@ def file_lock(file_path: Path, timeout: float = 10.0):
                 import fcntl
 
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        except Exception:
+        except _PROGRESS_CALLBACK_ERRORS:
             pass  # Best-effort unlock
 
         f.close()
@@ -480,8 +483,10 @@ def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> i
         logger.debug("No clear header row detected, using row 0")
         return 0
 
-    except Exception as e:
-        logger.warning(f"Header detection failed: {e}, using default row 0")
+    except (ValueError, TypeError, KeyError, OSError, zipfile.BadZipFile) as e:
+        # Only the error type is logged: the message can quote cell values. Any other error
+        # propagates (fail loud) instead of silently reading row 0 as the header.
+        logger.warning("Header detection failed (%s), using default row 0", type(e).__name__)
         return 0
 
 
@@ -1732,7 +1737,7 @@ class UserDatasetStorage:
         if progress_cb:
             try:
                 progress_cb(5, "Validating file security and format...")
-            except Exception:
+            except _PROGRESS_CALLBACK_ERRORS:
                 pass  # Best-effort: continue even if callback fails
 
         valid, error = UploadSecurityValidator.validate(original_filename, file_bytes)
@@ -1740,7 +1745,7 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(100, f"❌ Validation failed: {error}")
-                except Exception:
+                except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
             return False, error, None
 
@@ -1850,7 +1855,7 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(10, "Generating unique upload identifier...")
-                except Exception:
+                except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
 
             # Phase 4.2: Use existing upload_id if overwriting
@@ -1863,7 +1868,7 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(20, "Normalizing upload to table list...")
-                except Exception:
+                except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
@@ -1988,91 +1993,15 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(70, "Validating data schema and quality...")
-                except Exception:
+                except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
 
-            variable_mapping = metadata.get("variable_mapping", {})
             schema_validation_result = None
             internal_validation_result = None  # Store for quality_warnings extraction
 
-            if variable_mapping:
-                # Check if the mapped columns exist and validate schema
-                from clinical_analytics.core.schema import (
-                    UnifiedCohort,
-                )
-
-                # Create a view with renamed columns to validate schema
-                cohort_df = df.copy()
-
-                # Apply column mapping if patient_id is mapped
-                patient_id_col = variable_mapping.get("patient_id")
-                outcome_col = variable_mapping.get("outcome")
-
-                # Rename columns to UnifiedCohort schema
-                rename_map = {}
-                if patient_id_col and patient_id_col in cohort_df.columns:
-                    rename_map[patient_id_col] = UnifiedCohort.PATIENT_ID
-
-                if outcome_col and outcome_col in cohort_df.columns:
-                    rename_map[outcome_col] = UnifiedCohort.OUTCOME
-
-                # Add time_zero if specified
-                time_vars = variable_mapping.get("time_variables", {})
-                if time_vars:
-                    time_zero_col = time_vars.get("time_zero")
-                    if time_zero_col and time_zero_col in cohort_df.columns:
-                        rename_map[time_zero_col] = UnifiedCohort.TIME_ZERO
-
-                if rename_map:
-                    # Drop pre-existing columns that already carry a canonical name but are not the
-                    # mapped source (e.g. a raw "outcome" column when the user maps outcome -> "mortality").
-                    # Renaming onto them would create duplicate column names and crash validation.
-                    colliding = [
-                        target
-                        for source, target in rename_map.items()
-                        if target != source and target in cohort_df.columns and target not in rename_map
-                    ]
-                    if colliding:
-                        logger.info(f"Dropping columns shadowed by canonical schema names for validation: {colliding}")
-                        cohort_df = cohort_df.drop(columns=colliding)
-                    cohort_df = cohort_df.rename(columns=rename_map)
-
-                    # Add outcome_label if not present
-                    if UnifiedCohort.OUTCOME_LABEL not in cohort_df.columns:
-                        cohort_df[UnifiedCohort.OUTCOME_LABEL] = outcome_col or "outcome"
-
-                    # Add time_zero placeholder if not present
-                    if UnifiedCohort.TIME_ZERO not in cohort_df.columns:
-                        from datetime import datetime as dt
-
-                        cohort_df[UnifiedCohort.TIME_ZERO] = dt.now()
-
-                    # Validate the cohort schema using complete validator
-                    from clinical_analytics.ui.components.data_validator import DataQualityValidator
-
-                    # Run complete validation (schema-first, granularity unknown by default)
-                    validation_result = DataQualityValidator.validate_complete(
-                        cohort_df,
-                        id_column=patient_id_col,
-                        outcome_column=outcome_col,
-                        granularity="unknown",  # Default granularity
-                    )
-
-                    # Store for later use (quality_warnings extraction)
-                    internal_validation_result = validation_result
-
-                    schema_validation_result = {
-                        "is_valid": validation_result["is_valid"],
-                        "errors": validation_result["schema_errors"],
-                    }
-
-                    if not validation_result["is_valid"]:
-                        # Log validation errors but don't fail - warn user
-                        logger.warning(
-                            "Schema validation warnings for upload %s: %s",
-                            upload_id,
-                            validation_result["schema_errors"],
-                        )
+            # DataQualityValidator was removed (DQ review L3): it needed a variable_mapping the API
+            # never sends, so it never ran. The data contract check (contracts.service.check_upload)
+            # is the upload's quality check; schema_validation stays None for old readers.
 
             # Extract validation_result from metadata BEFORE merging
             # This prevents duplication - canonical location is metadata["validation"]
@@ -2128,7 +2057,7 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(85, "Saving dataset files and metadata...")
-                except Exception:
+                except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
 
             success, message = save_table_list(self, tables, upload_id, metadata, progress_cb)
@@ -2158,7 +2087,7 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(100, f"✅ Upload complete! Dataset '{dataset_name}' ready to use.")
-                except Exception:
+                except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
 
             # Phase 1: Include duplicate warning in success message (if any)
@@ -2172,7 +2101,7 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(100, f"Error: {str(e)}")
-                except Exception:
+                except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
             return False, f"Error saving upload: {str(e)}", None
 

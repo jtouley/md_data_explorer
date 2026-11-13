@@ -77,17 +77,59 @@ NO_ID_COLUMN_REASON: Final = "no ID column identified"
 PLAUSIBILITY_RANGE_PROPERTY: Final = "plausibilityRange"
 
 
+# One list of text that means "no value", used by the quality report (nullValues on text columns)
+# and by the analysis (numbers stored as text). Compared after strip() and lower(). "inf" is a
+# non-finite value, missing like NaN, not a category label.
+MISSING_VALUE_TOKENS: Final[tuple[str, ...]] = (
+    "", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?", "inf", "+inf", "-inf", "infinity",
+    "+infinity", "-infinity",
+)  # fmt: skip
+
+# A value recorded as a limit ("<5", "> 100", "<=0.1"): censored, never the limit itself.
+CENSORED_TEXT_PATTERN: Final = r"^\s*(<=|>=|<|>|≤|≥)\s*-?\d[\d,]*(\.\d+)?\s*$"
+CENSORED_RULE_SUFFIX: Final = "_censored"
+
+# Missingness is flagged (above MISSINGNESS_WARN_PERCENT) only for the columns the upload names
+# as analysis variables. Every other column's missingness is measured and listed, not flagged:
+# an optional column (a second phone number) is not a data-quality problem (L1).
+MISSINGNESS_MEASURE_ONLY_PERCENT: Final = 100.0
+
+# Contract logicalType versus the data's type: a column checked as one type and queried as
+# another is how a check passes on data the answers never read.
+TYPE_RULE_SUFFIX: Final = "_type"
+
+# Category spellings that are the same level once case, spacing and these synonyms are
+# normalised (Male / male / M). Flagged at upload; a query on such a level is held until the
+# doctor confirms the levels are one.
+LEVEL_SYNONYMS: Final[dict[str, str]] = {
+    "m": "male",
+    "man": "male",
+    "f": "female",
+    "woman": "female",
+    "y": "yes",
+    "true": "yes",
+    "n": "no",
+    "false": "no",
+}
+LEVEL_VARIANT_MAX_LEVELS: Final = 50  # a column with more levels is free text, not a category
+LEVEL_VARIANTS_RULE_SUFFIX: Final = "_spellings"
+
+
 @dataclass(frozen=True)
 class PlausibilityRange:
     """Bounds outside which a value is almost certainly an entry error, not a rare patient.
 
-    These are not reference ranges. A column matches by its normalized short name.
+    These are not reference ranges. A column matches by its normalized short name. ``unit`` is
+    the unit the bounds hold in; when a variable is stored in more than one unit and the column
+    does not say which, the bounds are the widest across those units (so only values impossible
+    in every unit are flagged) and ``unit`` names them all. ``maximum`` None: no upper bound is
+    known, only the physical lower one.
     """
 
     variable: str
     aliases: frozenset[str]
     minimum: float
-    maximum: float
+    maximum: float | None
     unit: str
     source: str
 
@@ -115,7 +157,74 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
         source="Lower: Collins, Nat Med 1995;1:810 (survival below BMI 12). "
         "Upper: Lin et al., JAMIA Open 2022;5(4):ooac089 (adult EHR BMI 15-90)",
     ),
+    PlausibilityRange(
+        variable="glucose",
+        aliases=frozenset({"glucose", "bloodglucose", "plasmaglucose", "fastingglucose", "glu", "fbg", "fpg"}),
+        # Lower: a concentration cannot be negative. Upper: 2,656 mg/dL (147.6 mmol/L), the
+        # highest blood glucose on record (Guinness World Records, 2008). Unit unknown: the
+        # mg/dL bound, which also admits every mmol/L value.
+        minimum=0,
+        maximum=2656,
+        unit="mg/dL or mmol/L",
+        source="Lower: physical (no negative concentration). Upper: Guinness World Records 2008, "
+        "highest recorded blood glucose 2,656 mg/dL (147.6 mmol/L)",
+    ),
+    PlausibilityRange(
+        variable="temperature",
+        aliases=frozenset({"temperature", "temp", "bodytemperature", "bodytemp"}),
+        # Lower: survival from accidental hypothermia at 13.7 C (Gilbert M et al., Lancet
+        # 2000;355:375-376); the bound sits below it. Upper: 47 C (116.6 F), above the highest
+        # recorded survived body temperature, 46.5 C (Guinness World Records, 1980). Unit
+        # unknown: from the C lower bound to the F upper bound.
+        minimum=10,
+        maximum=117,
+        unit="°C or °F",
+        source="Lower: Gilbert et al., Lancet 2000;355:375 (survival at 13.7 °C). "
+        "Upper: Guinness World Records 1980 (46.5 °C survived), as °F",
+    ),
+    PlausibilityRange(
+        variable="spo2",
+        aliases=frozenset({"spo2", "sao2", "oxygensaturation", "o2sat", "o2saturation"}),
+        minimum=0,
+        maximum=100,
+        unit="%",
+        source="Physical: a saturation is a percentage (0-100)",
+    ),
+    PlausibilityRange(
+        variable="hba1c",
+        aliases=frozenset({"hba1c", "a1c", "glycatedhaemoglobin", "glycatedhemoglobin"}),
+        # % (NGSP) and mmol/mol (IFCC) share the header, so only the physical lower bound applies.
+        minimum=0,
+        maximum=None,
+        unit="% or mmol/mol",
+        source="Physical: a proportion cannot be negative (no upper bound: % and mmol/mol share a name)",
+    ),
+    *(
+        PlausibilityRange(
+            variable=name,
+            aliases=frozenset(aliases),
+            minimum=0,
+            maximum=None,
+            unit="concentration (unit unknown)",
+            source="Physical: a concentration cannot be negative. No upper bound is configured: "
+            "the unit (mg/dL, mmol/L, µmol/L) changes it by up to ~90x",
+        )
+        for name, aliases in (
+            ("ldl", {"ldl", "ldlc", "ldlcholesterol"}),
+            ("hdl", {"hdl", "hdlc", "hdlcholesterol"}),
+            ("cholesterol", {"cholesterol", "totalcholesterol", "tc", "chol"}),
+            ("triglycerides", {"triglycerides", "triglyceride", "tg", "trig"}),
+            ("creatinine", {"creatinine", "creat", "scr", "serumcreatinine"}),
+            ("crp", {"crp", "creactiveprotein", "hscrp"}),
+            ("sodium", {"sodium", "na"}),
+            ("potassium", {"potassium", "k"}),
+            ("haemoglobin", {"haemoglobin", "hemoglobin", "hb", "hgb"}),
+            ("albumin", {"albumin", "alb"}),
+            ("bilirubin", {"bilirubin", "bili", "tbili"}),
+            ("urea", {"urea", "bun"}),
+        )
+    ),
 )
 
-# Lipids and other labs are unit-dependent (mg/dL vs mmol/L differ ~39x for cholesterol), so they
-# get no range unless a unit is known. Not configured yet: deferred until units are captured.
+# Numeric columns with no configured range are marked so in the contract, never silently passed.
+NO_RANGE_KNOWN: Final = "no range known"

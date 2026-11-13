@@ -9,9 +9,7 @@ import io
 
 import pandas as pd
 import polars as pl
-import pytest
 
-from clinical_analytics.ui.components.data_validator import _ensure_polars
 from clinical_analytics.ui.storage.user_datasets import _detect_excel_header_row
 
 
@@ -85,71 +83,6 @@ class TestPolarsExcelReading:
         assert "patient_id" in df_polars.columns
 
 
-class TestEnsurePolarsErrorHandling:
-    """Tests for _ensure_polars error handling with mixed types.
-
-    Basic pass-through/conversion cases (polars passthrough, normal pandas
-    conversion) are covered once, canonically, in
-    tests/ui/test_data_validator.py::TestEnsurePolars — this class covers
-    only the error-handling/fallback branches that file doesn't.
-    """
-
-    def test_ensure_polars_with_mixed_types_fallback(self):
-        """Test that mixed types trigger fallback to string conversion."""
-        # Create pandas DataFrame with mixed types that would cause ArrowInvalid
-        df_pandas = pd.DataFrame(
-            {
-                "id": [1, 2, 3],
-                "value": [100.5, " ", "<20"],  # Mixed types
-            }
-        )
-        # Force pandas to infer numeric type for value column
-        df_pandas["value"] = pd.to_numeric(df_pandas["value"], errors="coerce")
-
-        # This should trigger the error handling path
-        result = _ensure_polars(df_pandas)
-
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 3
-
-    def test_ensure_polars_with_nan_strings(self):
-        """Test that 'nan' strings are properly converted to nulls."""
-        df_pandas = pd.DataFrame(
-            {
-                "id": [1, 2, 3],
-                "value": ["10", "nan", "20"],  # String 'nan'
-            }
-        )
-
-        result = _ensure_polars(df_pandas)
-
-        assert isinstance(result, pl.DataFrame)
-        # Check that 'nan' was converted to null
-        null_count = result.filter(pl.col("value").is_null()).height
-        assert null_count >= 0  # At least one null from 'nan'
-
-    def test_ensure_polars_with_empty_strings(self):
-        """Test that empty strings are converted to nulls in fallback."""
-        df_pandas = pd.DataFrame(
-            {
-                "id": [1, 2, 3],
-                "value": ["10", "", "20"],  # Empty string
-            }
-        )
-
-        result = _ensure_polars(df_pandas)
-
-        assert isinstance(result, pl.DataFrame)
-        # Empty strings should be converted to nulls in fallback path
-        assert result.height == 3
-
-    def test_ensure_polars_raises_other_errors(self):
-        """Test that non-conversion errors are re-raised."""
-        # Pass something that's not a DataFrame
-        with pytest.raises(Exception):
-            _ensure_polars("not a dataframe")
-
-
 class TestExcelReadingIntegration:
     """Integration tests for Excel reading in upload workflow."""
 
@@ -189,14 +122,9 @@ class TestExcelReadingIntegration:
 
         # Read with Polars
         df_polars = pl.read_excel(excel_path, engine="openpyxl")
-        # Convert to pandas (for preview)
-        df_pandas = df_polars.to_pandas()
-        # Convert back to Polars (for validation)
-        df_final = _ensure_polars(df_pandas)
-
-        assert isinstance(df_final, pl.DataFrame)
-        assert df_final.height == 3
-        assert "viral_load" in df_final.columns
+        # The pandas round trip through the removed DataQualityValidator is gone; Polars reads it.
+        assert df_polars.height == 3
+        assert "viral_load" in df_polars.columns
 
 
 class TestExcelHeaderDetection:
