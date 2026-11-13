@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 LLM Enrichment Suggestion Generation for ADR011.
 

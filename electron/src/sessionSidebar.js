@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Session sidebar helpers (Phase 7) — pure functions + DOM rendering.
  *

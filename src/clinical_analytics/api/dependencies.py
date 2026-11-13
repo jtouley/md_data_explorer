@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """FastAPI dependency injection providers.
 
 Provides reusable dependencies for routes:

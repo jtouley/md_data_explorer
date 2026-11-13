@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Result interpretation with LLM (ADR009 Phase 3).
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 DataStore Class - Persistent DuckDB Storage
 

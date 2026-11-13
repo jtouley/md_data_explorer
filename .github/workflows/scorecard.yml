@@ -1,0 +1,53 @@
+# OpenSSF Scorecard supply-chain checks: https://github.com/ossf/scorecard/blob/main/docs/checks.md
+# With publish_results the scorecard API rejects results unless: no workflow-level env, defaults
+# or write permissions; id-token: write only on the scorecard job; that job uses only approved
+# actions (checkout, upload-artifact, codeql upload-sarif, scorecard-action, harden-runner).
+# https://github.com/ossf/scorecard-action#workflow-restrictions
+name: Scorecard supply-chain security
+
+on:
+  # Branch-Protection reads the default branch's ruleset with the default GITHUB_TOKEN.
+  branch_protection_rule:
+  schedule:
+    - cron: "27 7 * * 1"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    # A job-level block replaces the top-level one, so contents: read is listed again.
+    permissions:
+      contents: read
+      # Upload the SARIF results to the repository's code-scanning dashboard.
+      security-events: write
+      # OIDC token that publish_results uses to prove where the results came from.
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: results.sarif

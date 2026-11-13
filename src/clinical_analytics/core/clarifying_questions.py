@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Clarifying Questions Engine for refining low-confidence NL queries.
 
 Pure Python logic for generating clarification requests.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Metadata Resolver for ADR011 - LLM-Assisted Metadata Enrichment.
 

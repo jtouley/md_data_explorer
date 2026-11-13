@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Theme choice shared by main, preload and renderer (no Node or DOM APIs here).
  *

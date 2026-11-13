@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Metadata Patch Model for ADR011 - LLM-Assisted Metadata Enrichment.
 

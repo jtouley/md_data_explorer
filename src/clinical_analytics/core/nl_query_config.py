@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """NL Query Engine Configuration Constants.
 
 Single source of truth for confidence thresholds and parsing parameters.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Type aliases for consistent type annotations across codebase."""
 
 from typing import Any

@@ -1,14 +1,10 @@
 """Tests for scripts/check_no_data_files.py (tracked-data guard)."""
 
 import importlib.util
-from pathlib import Path
 
 import pytest
 
-_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check_no_data_files.py"
-_spec = importlib.util.spec_from_file_location("check_no_data_files", _SCRIPT)
-check_no_data_files = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(check_no_data_files)
+from scripts import check_no_data_files, git_tracked
 
 
 @pytest.mark.parametrize(
@@ -119,7 +115,7 @@ def test_localOnlyViolations_path_flaggedWithReason(path, reason):
 
 def test_localOnlyViolations_trackedRepoFiles_noFalsePositives():
     # Arrange
-    paths = check_no_data_files.tracked_files()
+    paths = git_tracked.tracked_files(git_tracked.repo_root())
 
     # Act
     result = check_no_data_files.local_only_violations(paths) + check_no_data_files.violations(paths)
@@ -180,7 +176,7 @@ def test_contentViolations_sourceHashYaml_flaggedUnlessTaggedSynthetic(path, tex
 def test_contentViolations_committedSyntheticContract_passes():
     # Arrange
     path = "tests/fixtures/synthetic/contracts/cohort.odcs.yaml"
-    root = Path(__file__).resolve().parents[2]
+    root = git_tracked.repo_root()
 
     # Act
     result = check_no_data_files.content_violations([path], lambda p: (root / p).read_text(encoding="utf-8"))
@@ -267,8 +263,8 @@ def test_contentViolations_odcsShapedFile_flaggedOutsideTaggedSyntheticFixtures(
 
 def test_contentViolations_trackedRepoFiles_noFalsePositives():
     # Arrange: every file git tracks today (the committed synthetic contract included).
-    root = Path(__file__).resolve().parents[2]
-    paths = check_no_data_files.tracked_files()
+    root = git_tracked.repo_root()
+    paths = git_tracked.tracked_files(root)
 
     def read(p: str) -> str | None:
         try:
@@ -333,3 +329,57 @@ def test_localOnlyViolations_contractsAndReports_flaggedWithReason(path, reason)
 
     # Assert
     assert result == ([] if reason is None else [(path, reason)])
+
+
+# --- Run location: the guard must not depend on the current directory -----------------------
+
+_CONTRACT_YAML = b"apiVersion: v3.0.0\nkind: DataContract\nid: real\n"
+
+
+@pytest.mark.parametrize("cwd", [".", "src", "src/pkg", "docs"], ids=["root", "src", "nested", "sibling_dir"])
+def test_trackedFiles_fromSubdirectory_returnsRepoRelativePaths(make_git_repo, cwd):
+    # Arrange
+    root = make_git_repo({"src/pkg/a.py": b"x = 1\n", "docs/index.md": b"# Docs\n", "data/x.csv": b"a\n1\n"})
+
+    # Act
+    found_root = git_tracked.repo_root(root / cwd)
+    result = git_tracked.tracked_files(found_root)
+
+    # Assert
+    assert found_root == root.resolve()
+    assert sorted(result) == ["data/x.csv", "docs/index.md", "src/pkg/a.py"]
+
+
+def test_repoRoot_outsideRepository_raisesGitQueryError(tmp_path):
+    # Arrange
+    outside = tmp_path / "not_a_repo"
+    outside.mkdir()
+
+    # Act / Assert
+    with pytest.raises(git_tracked.GitQueryError, match="rev-parse"):
+        git_tracked.repo_root(outside)
+
+
+@pytest.mark.parametrize("cwd", [".", "src", "src/pkg"], ids=["root", "src", "nested"])
+@pytest.mark.parametrize(
+    ("files", "flagged_path"),
+    [
+        ({"data/extract.csv": b"a\n1\n"}, "data/extract.csv"),
+        ({"notes/real.yaml": _CONTRACT_YAML}, "notes/real.yaml"),
+        ({}, None),
+    ],
+    ids=["data_file", "contract_by_content", "clean"],
+)
+def test_main_runFromAnyDirectory_flagsByRepoPath(make_git_repo, monkeypatch, capsys, cwd, files, flagged_path):
+    # Arrange
+    root = make_git_repo({"src/pkg/a.py": b"x = 1\n", **files})
+    monkeypatch.chdir(root / cwd)
+
+    # Act
+    code = check_no_data_files.main()
+
+    # Assert
+    err = capsys.readouterr().err
+    assert code == (0 if flagged_path is None else 1)
+    if flagged_path is not None:
+        assert f"  {flagged_path}  [" in err

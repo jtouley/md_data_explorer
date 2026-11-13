@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Column Parser - Extract metadata from column names.
 

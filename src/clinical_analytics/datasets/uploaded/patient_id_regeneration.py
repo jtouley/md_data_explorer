@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Patient ID Regeneration Logic - Single Source of Truth.
 

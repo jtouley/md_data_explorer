@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Database configuration and session management.
 
 Provides SQLAlchemy engine, session factory, and dependency injection

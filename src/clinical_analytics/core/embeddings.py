@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Sentence embeddings with ONNX Runtime and HF ``tokenizers`` (no torch, no network).
 
 Reproduces ``SentenceTransformer("all-MiniLM-L6-v2").encode()`` exactly in structure:

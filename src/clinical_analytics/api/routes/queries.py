@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Query execution API routes with SSE streaming.
 
 Endpoints:

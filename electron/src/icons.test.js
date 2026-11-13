@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** @vitest-environment jsdom */
 import { describe, expect, it } from 'vitest';
 import { ICON_NAMES, icon } from './icons.js';

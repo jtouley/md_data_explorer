@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Lightweight Ollama reachability probe for GET /health (Electron + ops)."""
 
 from __future__ import annotations

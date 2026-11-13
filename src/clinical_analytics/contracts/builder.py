@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Build an ODCS v3.2.0 data contract for one uploaded dataset version.
 
 Inputs are the stored (post-normalization) frame, the identifier column from schema inference,

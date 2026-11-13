@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """FastAPI backend for clinical analytics platform.
 
 This module provides a REST API and Server-Sent Events (SSE) interface

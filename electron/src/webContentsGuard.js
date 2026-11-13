@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Keep a window on the app's own page: no navigation elsewhere (main frame or subframe), no new
  * windows, no webviews. Kept out of main.js so it can be unit-tested without Electron.

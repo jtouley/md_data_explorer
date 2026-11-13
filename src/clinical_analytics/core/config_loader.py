@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Centralized configuration loader for YAML-based configuration.
 
 This module provides functions to load configuration from YAML files with:

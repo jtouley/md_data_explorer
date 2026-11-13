@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Analysis Types - Pure Python data structures for analysis context.
 

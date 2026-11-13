@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Run a natural-language question against a golden dataset CSV without the UI.
 
 Dev and test use only: results carry raw rows with no small-cell suppression, so this

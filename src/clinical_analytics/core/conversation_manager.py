@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 ConversationManager - Pure Python conversation state management.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 AnalysisExecutor - Orchestration for analysis execution pipeline.
 

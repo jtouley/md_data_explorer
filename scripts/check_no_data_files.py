@@ -20,13 +20,17 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, TypeAlias
 
 import yaml
+
+if __package__:  # imported as scripts.check_no_data_files (tests)
+    from scripts.git_tracked import GitQueryError, repo_root, tracked_files
+else:  # run as a file: scripts/ is sys.path[0]
+    from git_tracked import GitQueryError, repo_root, tracked_files
 
 DATA_EXTENSIONS = (
     ".duckdb",
@@ -49,11 +53,6 @@ ALLOWLIST = (
     "src/clinical_analytics/resources/demo/*.csv",  # synthetic demo cohort shipped with the app
     "tests/fixtures/synthetic/*",
 )
-
-
-def tracked_files() -> list[str]:
-    out = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout
-    return [p for p in out.decode().split("\0") if p]
 
 
 def violations(paths: list[str]) -> list[str]:
@@ -278,18 +277,24 @@ def content_violations(paths: list[str], read_text: Callable[[str], str | None])
     return bad
 
 
-def _read_working_tree(path: str) -> str | None:
+def _read_working_tree(path: Path) -> str | None:
     try:
-        return Path(path).read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError):
         return None  # deleted in the working tree, a directory entry, or binary
 
 
 def main() -> int:
-    paths = tracked_files()
+    try:
+        # Repo-relative paths read from the top level, whatever directory this is run from.
+        root = repo_root()
+        paths = tracked_files(root)
+    except GitQueryError as exc:
+        print(f"check_no_data_files: {exc}", file=sys.stderr)
+        return 2
     reasons: dict[str, str] = {path: "data_file" for path in violations(paths)}
     reasons.update(dict(local_only_violations(paths)))
-    reasons.update(dict(content_violations(paths, _read_working_tree)))
+    reasons.update(dict(content_violations(paths, lambda p: _read_working_tree(root / p))))
     if reasons:
         print("Tracked data or local-only files are not allowed (patient data must stay out of git):", file=sys.stderr)
         for path in sorted(reasons):

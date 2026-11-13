@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Classify a variable by what it measures, not how it is stored.
 
 Test choice depends on this: a t-test needs a continuous outcome; a 0/1 flag or a coded

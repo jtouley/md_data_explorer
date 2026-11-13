@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Enrichment pending suggestions — pure helpers and DOM rendering (ADR011 / Phase 6b).
  */

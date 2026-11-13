@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 LLM Client for local Ollama integration (ADR003 Phase 0).
 

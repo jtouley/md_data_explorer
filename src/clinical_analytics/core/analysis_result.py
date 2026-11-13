@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 AnalysisResult - Typed domain model for analysis execution results.
 

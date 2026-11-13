@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Centralized logging configuration for Streamlit UI.
 

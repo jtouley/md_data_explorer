@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Data Profiling Module - Generate dataset statistics and quality metrics.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * The small window shown while the backend starts (main process). A self-contained data: page:
  * no script, no network (its CSP is default-src 'none'), tokens and type from docs/app/DESIGN.md

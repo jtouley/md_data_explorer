@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Start the API with uvicorn's own logging config turned off.
 
 uvicorn installs handlers (and levels) for its ``uvicorn.error`` / ``uvicorn.access`` loggers

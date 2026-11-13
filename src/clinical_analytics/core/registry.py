@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Dataset Registry - Auto-discovery and factory for clinical datasets.
 

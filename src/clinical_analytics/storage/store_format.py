@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Keep analytics.duckdb readable across DuckDB upgrades and rollbacks.
 
 DuckDB reads files written in older storage formats and keeps their format when it writes to

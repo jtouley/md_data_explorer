@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Remove every on-disk trace of one uploaded dataset.
 
 An upload leaves data in several places under the data home (``<data home>/data``):

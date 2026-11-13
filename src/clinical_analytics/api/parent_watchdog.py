@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Stop the backend when the app that started it is gone or asks it to (no orphaned servers).
 
 Electron starts the API as a sidecar. Two lifelines tie the backend to it:

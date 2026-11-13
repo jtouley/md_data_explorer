@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Value presence: a limit on a value its column does not hold is held, never run.
 
 A plan can pass word accounting and still name a value that is not in the data: "type 2"

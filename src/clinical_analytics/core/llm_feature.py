@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 LLMFeature enum and unified call_llm() wrapper.
 

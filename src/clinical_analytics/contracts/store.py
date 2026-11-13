@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Contracts and quality reports in the data home.
 
 Layout under the data directory (``<data home>/data``, the parent of ``uploads/``)::

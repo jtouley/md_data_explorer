@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Overlay Store for ADR011 - LLM-Assisted Metadata Enrichment.
 

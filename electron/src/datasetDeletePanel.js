@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * In-page confirmation for deleting a dataset (no window.confirm: the panel names exactly
  * what will be removed and keeps keyboard focus inside the page).

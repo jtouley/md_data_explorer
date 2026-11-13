@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 QueryService - Pure Python query execution service.
 

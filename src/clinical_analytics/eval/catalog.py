@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Generated golden questions for the committed synthetic cohorts.
 
 Ground truth is computed from the frame at load time and never stored, so the suite

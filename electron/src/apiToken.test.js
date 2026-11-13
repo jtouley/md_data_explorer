@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { describe, test, expect } from 'vitest';
 import path from 'node:path';
 import {
