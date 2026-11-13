@@ -7,6 +7,7 @@ import {
   DATA_CHECK_PRIVACY_HINT,
   dataCheckNotRunText,
   dataCheckStatusNote,
+  dataCheckNeedsReview,
   normalizeQuality,
   renderDataCheck,
 } from './dataCheckPanel.js';
@@ -89,5 +90,16 @@ describe('renderDataCheck', () => {
     expect(dataCheckNotRunText(null)).toBe(
       'Data check could not run. You can still ask questions.'
     );
+  });
+});
+
+describe('dataCheckNeedsReview (L1)', () => {
+  test.each([
+    [null, false],
+    [{ status: 'not_run', reason: null }, false],
+    [{ status: 'ran', lines: [], count: 0 }, false],
+    [{ status: 'ran', lines: ['a'], count: 1 }, true],
+  ])('%j -> %s', (check, expected) => {
+    expect(dataCheckNeedsReview(check)).toBe(expected);
   });
 });

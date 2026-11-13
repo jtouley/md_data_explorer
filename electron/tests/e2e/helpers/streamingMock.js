@@ -23,13 +23,23 @@ const WIDE_COLUMNS = [
   'mean_sbp',
   'p_value',
 ];
+const ANSWER_PLAN_LINE =
+  'COMPARE_GROUPS · outcome ldl · grouping treatment · filters age > 65 · test Welch t-test';
 const REFUSAL =
   'This would list individual patients. I can only report group-level statistics; try asking for counts or averages.';
 
-function installMock({ answerClaim, planLine, refusal, engineFailure, wideColumns }) {
+function installMock({
+  answerClaim,
+  answerPlanLine,
+  planLine,
+  refusal,
+  engineFailure,
+  wideColumns,
+}) {
   const calls = [];
   window.__calls = calls;
   window.__streamMs = 150;
+  window.__submitMs = 0;
   const pending = {};
   const now = new Date().toISOString();
   window.clinicalAPI = {
@@ -77,8 +87,12 @@ function installMock({ answerClaim, planLine, refusal, engineFailure, wideColumn
     },
     getPendingEnrichments: async () => ({ suggestions: [], total: 0 }),
     getEnrichmentHistory: async () => ({ patches: [], total: 0 }),
+    cancelSubmit: () => {
+      calls.push(['cancelSubmit']);
+    },
     submitQuery: async (sessionId, datasetId, text, confirmed, plan) => {
       calls.push(['submitQuery', sessionId, datasetId, text, confirmed, plan ?? null]);
+      if (window.__submitMs) await new Promise((r) => setTimeout(r, window.__submitMs));
       const id = `q${calls.length}`;
       const t = text.toLowerCase();
       pending[id] = confirmed
@@ -167,6 +181,7 @@ function installMock({ answerClaim, planLine, refusal, engineFailure, wideColumn
           {
             intent_type: 'COMPARE_GROUPS',
             claim: answerClaim,
+            plan_line: answerPlanLine,
             result_preview: {
               table: {
                 columns: ['treatment', 'mean ldl', 'n'],
@@ -194,6 +209,7 @@ function installMock({ answerClaim, planLine, refusal, engineFailure, wideColumn
 async function setupStreamingMock(page) {
   await page.addInitScript(installMock, {
     answerClaim: ANSWER_CLAIM,
+    answerPlanLine: ANSWER_PLAN_LINE,
     planLine: PLAN_LINE,
     refusal: REFUSAL,
     engineFailure: ENGINE_FAILURE,
