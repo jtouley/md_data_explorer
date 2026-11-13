@@ -87,8 +87,10 @@ def preview_csv(
         if not success or not upload_id:
             raise RuntimeError(f"Upload failed: {message}")
 
-        stored = storage.raw_dir / f"{upload_id}.csv"
-        lf = pl.scan_csv(stored)
+        # The typed Parquet the semantic layer reads (the one stored source of truth).
+        lf = storage.get_upload_data(upload_id)
+        if lf is None:
+            raise RuntimeError(f"Stored data missing for {upload_id}")
         schema = lf.collect_schema()
         row_count = lf.select(pl.len()).collect().item()
         preview = lf.head(preview_rows).collect().to_dicts()

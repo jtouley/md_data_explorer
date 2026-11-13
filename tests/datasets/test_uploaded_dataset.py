@@ -5,6 +5,7 @@ Phase 1: Tests for _build_config_from_variable_mapping() method.
 """
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -480,14 +481,14 @@ class TestMaybeInitSemantic:
         _ = storage.get_upload_data(upload_id)  # Triggers migration
         semantic_layer = dataset.get_semantic_layer()
 
-        # Assert: Semantic layer created, tables directory created by migration
+        # Assert: semantic layer created from the typed Parquet the conversion wrote
         assert semantic_layer is not None
-        # Verify tables directory was created by migration (Fix #2)
-        assert tables_dir.exists()
-        # Verify metadata was updated with tables list
         updated_metadata = storage.get_upload_metadata(upload_id)
+        assert updated_metadata["storage_layout"] == "typed_parquet_v1"
         assert "tables" in updated_metadata
-        assert updated_metadata.get("migrated_to_v2", False)
+        assert semantic_layer.config["init_params"]["source_path"] == str(
+            Path(updated_metadata["cohort_parquet"]).resolve()
+        )
 
     def test_maybe_init_semantic_without_schema_or_mapping_raises_valueerror(self, upload_storage):
         """Test that missing both schema and mapping raises ValueError."""
@@ -565,9 +566,9 @@ class TestMaybeInitSemantic:
         # Act: Call get_semantic_layer()
         semantic_layer = dataset.get_semantic_layer()
 
-        # Assert: config["init_params"]["source_path"] is set to absolute path of CSV file
+        # Assert: the layer reads the typed Parquet converted from the legacy CSV (absolute path)
+        converted = storage.get_upload_metadata(upload_id)["cohort_parquet"]
         assert semantic_layer is not None
         assert dataset.semantic is not None
-        assert "init_params" in dataset.semantic.config
-        assert "source_path" in dataset.semantic.config["init_params"]
-        assert dataset.semantic.config["init_params"]["source_path"] == expected_absolute_path
+        assert dataset.semantic.config["init_params"]["source_path"] == str(Path(converted).resolve())
+        assert Path(expected_absolute_path).is_file()  # the legacy CSV is left in place

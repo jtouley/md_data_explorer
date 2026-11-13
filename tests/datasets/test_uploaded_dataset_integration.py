@@ -5,6 +5,7 @@ Phase 3: Integration tests for NL query flow with single-table uploads.
 """
 
 import json
+from pathlib import Path
 
 import pandas as pd
 
@@ -248,6 +249,8 @@ class TestUploadedDatasetSemanticLayerIntegration:
         assert "init_params" in config
         assert "source_path" in config["init_params"]
         source_path = config["init_params"]["source_path"]
-        assert source_path == expected_absolute_path
+        # The legacy CSV is converted once to typed Parquet, which the layer reads.
+        assert expected_absolute_path.endswith(".csv")
+        assert source_path == str(Path(storage.get_upload_metadata(upload_id)["cohort_parquet"]).resolve())
         # Verify it's an absolute path (starts with / on Unix, or drive letter on Windows)
         assert source_path.startswith("/") or (len(source_path) > 1 and source_path[1] == ":")

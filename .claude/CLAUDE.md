@@ -14,7 +14,13 @@ You are a thought partner, not a yes-machine. Accuracy over politeness.
 
 - **Polars only**. Pandas requires explicit justification comment. NEVER use map_elements.
 - **Lazy by default**: `scan_*`, single `collect()` at pipeline end
-- **Delta Lake** for persistence, medallion architecture (Bronze/Silver/Gold)
+- **Typed Parquet** for persistence (no Delta Lake; do not add it). The layers of one uploaded dataset version:
+  1. **Raw landing**: the uploaded bytes as received, `uploads/raw/{upload_id}/{dataset_version}{ext}`.
+  2. **Staged/stored**: each table read as text and typed once, column by column over the whole file (`storage/staging.py`), written as `parquet/{upload_id}_{table}_{dataset_version}.parquet`.
+  3. **Unified cohort**: the single table, or for a ZIP the joined cohort `parquet/{upload_id}__cohort_{dataset_version}.parquet`.
+  4. **Semantic layer**: in-memory DuckDB built with `read_parquet` on that cohort (`core/semantic.py`), probed at upload.
+  - The cohort Parquet is the one source of truth: queries, previews and the contract/quality checks all read it. `analytics.duckdb` holds only pre-Parquet uploads until they are deleted.
+  - Every data and metadata write goes through `storage/atomic.py` (`*.part`, fsync, `os.replace`). Data files are named by `dataset_version` and never replaced; the metadata JSON is written last, as the commit point.
 - **Pydantic** for external data validation at boundaries
 
 ## Code Standards

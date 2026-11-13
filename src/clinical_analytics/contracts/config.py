@@ -56,6 +56,30 @@ TOO_FEW_ROWS_NOTE: Final = "too few rows to report counts"
 # Fewer rows than the small-cell threshold: every count would be suppressed.
 MIN_ROW_COUNT: Final = MIN_CELL_SIZE
 
+# Cell values that mean "missing" in clinical exports (R NA, SAS/Stata ".", Excel #N/A, ...),
+# matched case-insensitively after strip. Staging nulls them only in a column that otherwise
+# types as numbers or dates; a text column keeps every value ("None" can be a category level).
+# Same constant as PR #96 (answer side) plus "#n/a".
+MISSING_VALUE_TOKENS: Final[tuple[str, ...]] = (
+    "",
+    "na",
+    "n/a",
+    "nan",
+    "null",
+    "none",
+    "missing",
+    ".",
+    "-",
+    "?",
+    "inf",
+    "+inf",
+    "-inf",
+    "infinity",
+    "+infinity",
+    "-infinity",
+    "#n/a",
+)
+
 # Upload notice length: a short list; the full result is in the report's checks.
 SUMMARY_MAX_LINES: Final = 8
 
