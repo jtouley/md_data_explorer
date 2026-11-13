@@ -296,3 +296,28 @@ def test_llm_parse_fallback_to_stub_on_error(sample_semantic_layer_metadata):
         assert isinstance(intent, QueryIntent)
         assert intent.confidence == pytest.approx(0.3, rel=1e-2)
         assert intent.intent_type == "DESCRIBE"
+
+
+@pytest.mark.parametrize("error", [RuntimeError("boom"), AttributeError("'NoneType' object has no attribute 'get'")])
+def test_llmParse_tierRaises_visibleFailureLoggedNotStub(sample_semantic_layer_metadata, error: Exception) -> None:
+    """A raising model step is logged with its traceback and refused visibly, never a 0.3 stub."""
+    # Arrange
+    from structlog.testing import capture_logs
+
+    from clinical_analytics.core.nl_query_config import MODEL_STEP_FAILED_REASON
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    engine = NLQueryEngine(sample_semantic_layer_metadata)
+
+    # Act
+    with patch.object(engine, "_get_ollama_client", side_effect=error), capture_logs() as logs:
+        intent = engine._llm_parse("What is the average age?")
+
+    # Assert
+    assert intent.model_step_failed is True
+    assert intent.failure_reason == MODEL_STEP_FAILED_REASON
+    assert intent.confidence == 0.0
+    failed = [entry for entry in logs if entry["event"] == "llm_parse_exception"]
+    assert failed and failed[0]["log_level"] == "error"
+    assert failed[0]["error_type"] == type(error).__name__
+    assert failed[0].get("exc_info") is True

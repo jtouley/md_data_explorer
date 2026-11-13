@@ -9,7 +9,8 @@ not come from the values themselves, so checking the data against it at upload i
 * the identifier column must be present and unique,
 * coded columns must hold only codes their codebook documents,
 * clinical variables must lie inside plausibility bounds (``contracts.config``),
-* missingness per column is measured and flagged above a threshold,
+* missingness per column is measured, and any empty value is flagged,
+* a value with interval bounds must lie inside them (lower <= value <= upper),
 * the row count must clear the small-cell threshold.
 
 Observed values (levels, min/max) are never written into the contract: they would make the
@@ -33,6 +34,7 @@ from clinical_analytics.analysis.numeric_text import is_numeric_text
 from clinical_analytics.analysis.variable_types import classify_variable, code_labels, short_name
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import ContractValidationError
+from clinical_analytics.core.identifier_rules import Interval, find_intervals
 from clinical_analytics.core.metadata_patch import ResolvedColumnMetadata, ResolvedDatasetMetadata
 
 _SLUG_STRIP = re.compile(r"[^A-Za-z0-9]+")
@@ -52,8 +54,6 @@ class ContractInputs:
     resolved: ResolvedDatasetMetadata | None = None
     accepted_patch_ids: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
-    # Columns the upload names as analysis variables: only their missingness is flagged (L1).
-    analysis_columns: tuple[str, ...] = ()
     created_at: datetime | None = None
     extra_custom_properties: dict[str, Any] = field(default_factory=dict)
 
@@ -232,29 +232,32 @@ def _custom(prop: str, value: Any) -> dict[str, Any]:
     return {"property": prop, "value": value}
 
 
-def _missing_rule(name: str, flagged: bool) -> dict[str, Any]:
-    """Missingness of a column: flagged above 5% for an analysis variable, else measured only."""
-    if flagged:
-        operator, limit, description = (
-            "mustBeLessOrEqualTo",
-            config.MISSINGNESS_WARN_PERCENT,
-            "Share of empty values (Jakobsen et al. 2017: above ~5% complete-case analysis is doubtful)",
-        )
-    else:
-        operator, limit, description = (
-            "mustBeLessThan",
-            config.MISSINGNESS_MEASURE_ONLY_PERCENT,
-            "Share of empty values, listed; flagged only when every value is empty or for analysis variables",
-        )
+def _missing_rule(name: str) -> dict[str, Any]:
+    """Missingness of a column: any empty value is a warning, so an incomplete column never passes."""
     return {
         "id": f"{name}_missing",
         "type": "library",
         "metric": "nullValues",
         "unit": "percent",
-        operator: limit,
+        "mustBeLessOrEqualTo": config.MISSINGNESS_ALLOWED_PERCENT,
         "dimension": "completeness",
         "severity": config.SEVERITY_MISSING,
-        "description": description,
+        "description": "Share of empty values; any empty value is flagged (answers on the column leave those rows out)",
+    }
+
+
+def _interval_rule(interval: Interval, names: dict[str, str]) -> dict[str, Any]:
+    """lower <= value <= upper on every row where all three are present (table level: three columns)."""
+    value, lower, upper = names[interval.value], names[interval.lower], names[interval.upper]
+    return {
+        "id": f"{value}{config.INTERVAL_RULE_SUFFIX}",
+        "type": "library",
+        "metric": "intervalOrder",
+        "arguments": {"properties": [lower, value, upper]},
+        "mustBe": 0,
+        "dimension": "consistency",
+        "severity": config.SEVERITY_INTERVAL,
+        "description": f"{interval.lower} <= {interval.value} <= {interval.upper} where all three are present",
     }
 
 
@@ -364,7 +367,7 @@ def _property(column: str, series: pl.Series, name: str, inputs: ContractInputs)
         prop["criticalDataElement"] = True
         quality.extend(_id_rules(name))
     else:
-        quality.append(_missing_rule(name, column in inputs.analysis_columns))
+        quality.append(_missing_rule(name))
         if dtype == pl.String and is_numeric_text(series):
             quality.append(_censored_rule(name))
     if is_id or (meta and meta.is_phi):
@@ -478,6 +481,7 @@ def build_contract(df: pl.DataFrame, inputs: ContractInputs) -> OpenDataContract
                 "dataGranularityDescription": _granularity(df, inputs.id_column),
                 "quality": [
                     *([] if inputs.id_column else _unidentified_id_rules()),
+                    *(_interval_rule(interval, names) for interval in find_intervals(df.schema)),
                     {
                         "id": "row_count_min",
                         "type": "library",

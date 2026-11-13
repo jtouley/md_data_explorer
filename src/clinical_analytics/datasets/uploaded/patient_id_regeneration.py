@@ -71,7 +71,7 @@ def validate_synthetic_id_metadata(
         )
 
     # Validate patient_id_source if present
-    valid_sources = {"composite", "single_column", "existing"}
+    valid_sources = {"composite", "single_column", "existing", "row_index"}
     source = patient_id_meta.get("patient_id_source")
     if source is not None and source not in valid_sources:
         raise PatientIdRegenerationError(

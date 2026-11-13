@@ -417,6 +417,10 @@ class SchemaInferenceEngine:
         2. Otherwise a name containing an ID pattern, if its values are over 90% unique
         3. Otherwise the most unique column with no nulls, if over 95% unique
 
+        Steps 2 and 3 take only columns that may name patients (``can_identify_patients``:
+        integers or text, never a float, fractional or measurement column), and never the row
+        number added for a dataset without an identifier.
+
         Args:
             df: Polars DataFrame
 
@@ -432,7 +436,10 @@ class SchemaInferenceEngine:
             complete = df[named].null_count() == 0 and df[named].n_unique() == df.height
             return named, 0.95 if complete else 0.6
 
-        for col in df.columns:
+        from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN, can_identify_patients
+
+        eligible = [c for c in df.columns if c.lstrip("_") != ROW_NUMBER_COLUMN and can_identify_patients(df[c])]
+        for col in eligible:
             col_lower = col.lower()
 
             # Check name patterns
@@ -454,7 +461,7 @@ class SchemaInferenceEngine:
         best_col = None
         best_ratio = 0.0
 
-        for col in df.columns:
+        for col in eligible:
             unique_count = df[col].n_unique()
             total_count = df.height
             null_count = df[col].null_count()

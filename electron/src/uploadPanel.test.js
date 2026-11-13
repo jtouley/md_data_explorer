@@ -8,6 +8,8 @@ import {
   formatFileSize,
   isAllowedExtension,
   renderUploadArea,
+  uploadIsUsable,
+  uploadResultText,
 } from './uploadPanel.js';
 import { dataCheckStatusNote } from './dataCheckPanel.js';
 
@@ -26,6 +28,7 @@ describe('normalizeUploadResponse', () => {
       dataset_name: '',
       status: 'failed',
       message: '',
+      failed_checks: [],
       quality: null,
     });
     expect(normalizeUploadResponse(undefined)).toEqual({
@@ -33,6 +36,7 @@ describe('normalizeUploadResponse', () => {
       dataset_name: '',
       status: 'failed',
       message: '',
+      failed_checks: [],
       quality: null,
     });
   });
@@ -196,5 +200,53 @@ describe('readyHeadline (L1)', () => {
     // Assert
     expect(text).toBe(expected);
     expect(text).toMatch(/^[A-Z]/);
+  });
+});
+
+describe('needs_review uploads', () => {
+  const review = {
+    upload_id: 'u_1',
+    status: 'needs_review',
+    message:
+      'Uploaded, but a data check failed: patient_id: 127 repeated values. Questions that count patients will first ask you to confirm that rows are visits.',
+  };
+
+  test.each([
+    [{ upload_id: 'u_1', status: 'ready' }, true],
+    [{ upload_id: 'u_1', status: 'needs_review' }, true],
+    [{ upload_id: '', status: 'needs_review' }, false],
+    [{ upload_id: 'u_1', status: 'failed' }, false],
+  ])('uploadIsUsable(%o) is %s', (result, expected) => {
+    expect(uploadIsUsable(result)).toBe(expected);
+  });
+
+  test('normalizeUploadResponse keeps failed check ids and drops non-strings', () => {
+    const result = normalizeUploadResponse({
+      ...review,
+      failed_checks: ['patient_id_no_duplicates', 3],
+    });
+    expect(result.failed_checks).toEqual(['patient_id_no_duplicates']);
+  });
+
+  test('the status line names the cohort and the failed check, never "ready"', () => {
+    const text = uploadResultText(
+      review,
+      'deaths',
+      'Data check found 2 things to review in cohort details.'
+    );
+    expect(text).toBe(`The cohort “deaths” needs review. ${review.message}`);
+    expect(text).not.toMatch(/ready/);
+  });
+
+  test('a needs_review upload without a message still says how to see the check', () => {
+    expect(uploadResultText({ status: 'needs_review', message: ' ' }, '', null)).toBe(
+      'The cohort needs review. A data check failed. Open the cohort details to see it.'
+    );
+  });
+
+  test('a ready upload without a name uses the given sentence', () => {
+    expect(
+      uploadResultText({ status: 'ready', message: '' }, '', null, 'The sample cohort is ready.')
+    ).toBe('The sample cohort is ready.');
   });
 });

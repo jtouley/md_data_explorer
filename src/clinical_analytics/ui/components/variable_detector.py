@@ -10,7 +10,8 @@ Types detected:
 - Categorical (limited unique values)
 - Binary (exactly 2 unique values)
 - Datetime (date/time types)
-- High-cardinality identifier (potential ID column)
+- High-cardinality identifier (potential ID column): integers or text only, never a measurement
+  (``core.identifier_rules``)
 """
 
 from __future__ import annotations
@@ -21,7 +22,17 @@ from typing import Any
 
 import polars as pl
 
+from clinical_analytics.core.identifier_rules import ROW_NUMBER_COLUMN, can_identify_patients
+
 logger = logging.getLogger(__name__)
+
+
+def _is_measurement(df: pl.DataFrame, column: str) -> bool:
+    """A measurement (a rate, a bound, a lab value) is never an identifier: an ID built from it
+    changes when the value is re-estimated, and renaming it to patient_id deletes the measurement
+    from the dataset. Floats, fractional numbers stored as text, and columns named as an estimate,
+    bound or rate (``core.identifier_rules``) all count, so a rate rounded to integers does too."""
+    return not can_identify_patients(df.get_column(column))
 
 
 def _ensure_polars_df(df: Any) -> pl.DataFrame:
@@ -91,8 +102,9 @@ class VariableTypeDetector:
             }
 
         # Check for high-cardinality identifier (potential ID column)
-        # Criteria: >95% unique AND no/few nulls
-        if uniqueness_ratio > cls.ID_UNIQUENESS_THRESHOLD and n_null == 0:
+        # Criteria: >95% unique, no nulls, and integers or text that is not a measurement: a unique
+        # float (a rate to 6 decimals) is a value, never an ID.
+        if uniqueness_ratio > cls.ID_UNIQUENESS_THRESHOLD and n_null == 0 and can_identify_patients(series):
             return "identifier", {
                 "unique_count": n_unique,
                 "uniqueness": float(uniqueness_ratio),
@@ -220,7 +232,7 @@ class VariableTypeDetector:
             if best_id_col:
                 suggestions["patient_id"] = best_id_col
             else:
-                # Try composite identifier
+                # Try composite identifier (a row key: answers on it count rows)
                 df_polars = _ensure_polars_df(df)
                 composite_cols = cls.find_composite_identifier_candidates(df_polars)
                 if composite_cols:
@@ -257,10 +269,11 @@ class VariableTypeDetector:
         Find combination of columns that together create a unique identifier.
 
         Uses data-driven heuristics only - no hardcoded values.
-        Tries combinations of 2-4 columns, prioritizing:
-        - Low missing values (<10%)
-        - High cardinality
-        - Categorical or continuous types
+        Tries combinations of 2-4 columns. Parts are categorical, continuous (a year) or
+        identifier columns with low missing values (<10%), never a measurement (float,
+        fractional, or named as an estimate, bound or rate: a rate with 6 decimals makes any
+        combination unique). The combination must be unique on every row: a key with repeats
+        would merge different rows into one.
 
         Args:
             df: Polars DataFrame
@@ -282,6 +295,8 @@ class VariableTypeDetector:
 
             # Skip if too many missing values
             if missing_pct > 10:
+                continue
+            if _is_measurement(df, col):
                 continue
 
             # Prefer categorical, continuous, or identifier types
@@ -306,11 +321,8 @@ class VariableTypeDetector:
                     ).alias("_composite_key")
                 )
 
-                n_unique = composite["_composite_key"].n_unique()
-                uniqueness = n_unique / n_rows if n_rows > 0 else 0
-
-                # If >95% unique, this is a good candidate
-                if uniqueness > cls.ID_UNIQUENESS_THRESHOLD:
+                # Exactly unique, or not a key
+                if composite["_composite_key"].n_unique() == n_rows:
                     return combo_cols
 
         return None
@@ -345,21 +357,27 @@ class VariableTypeDetector:
     @classmethod
     def ensure_patient_id(cls, df: Any) -> tuple[pl.DataFrame, dict[str, Any]]:
         """
-        Ensure DataFrame has a patient_id column, creating synthetic one if needed.
+        Ensure the DataFrame has a patient_id column, or a row number when nothing identifies rows.
 
-        Only creates synthetic ID if:
-        - No existing 'patient_id' column exists
-        - No single column with >95% uniqueness found
-        - A composite combination of columns is found that's >95% unique
+        In order:
+        - An existing 'patient_id' column is kept.
+        - Else the most unique identifier column (integers or text, never a measurement) is
+          copied to 'patient_id'; the source column stays, so it can still be queried.
+        - Else a combination of columns unique on every row is hashed into 'patient_id'
+          (source 'composite'). It is a row key (location x cause x sex x year), not a patient:
+          answers on it count rows.
+        - Else a row number column (``ROW_NUMBER_COLUMN``, 1..n) is added and no 'patient_id'
+          exists (source 'row_index'): answers count rows.
 
         Args:
             df: DataFrame (pandas or polars - converted internally)
 
         Returns:
-            Tuple of (DataFrame with patient_id, metadata dict)
+            Tuple of (DataFrame, metadata dict)
             Metadata includes:
-            - 'patient_id_source': 'existing' | 'single_column' | 'composite' | None
-            - 'patient_id_columns': list of source columns
+            - 'patient_id_source': 'existing' | 'single_column' | 'composite' | 'row_index'
+            - 'patient_id_columns': list of source columns (None for 'existing' and 'row_index')
+            - 'row_number_column': the added row number column ('row_index' only)
         """
         df = _ensure_polars_df(df)
         from clinical_analytics.core.type_aliases import OptionalList, OptionalStr
@@ -367,7 +385,7 @@ class VariableTypeDetector:
         metadata: dict[str, OptionalStr | OptionalList] = {"patient_id_source": None, "patient_id_columns": None}
         n_rows = df.height
 
-        logger.debug(f"ensure_patient_id: Starting with {n_rows} rows, columns: {list(df.columns)}")
+        logger.debug(f"ensure_patient_id: Starting with {n_rows} rows, {df.width} columns")
 
         # CONDITION 1: Check if patient_id already exists
         if "patient_id" in df.columns:
@@ -382,37 +400,32 @@ class VariableTypeDetector:
         best_uniqueness = 0.0
 
         for col, info in variable_info.items():
-            if info["type"] == "identifier":
+            if info["type"] == "identifier" and not _is_measurement(df, col):
                 uniqueness = info["metadata"].get("uniqueness", 0)
                 if uniqueness > best_uniqueness:
                     best_uniqueness = uniqueness
                     best_id_col = col
 
-        # If single column found, use it (no synthetic ID)
+        # Copied, never renamed: the source column stays queryable under its own name.
         if best_id_col:
-            logger.info(f"Found single-column identifier: '{best_id_col}' with {best_uniqueness * 100:.1f}% uniqueness")
+            logger.info(f"Found single-column identifier with {best_uniqueness * 100:.1f}% uniqueness")
             metadata["patient_id_source"] = "single_column"
             metadata["patient_id_columns"] = [best_id_col]
-            return df.rename({best_id_col: "patient_id"}), metadata
+            return df.with_columns(pl.col(best_id_col).alias("patient_id")), metadata
 
-        # CONDITION 3: Only if no single column found, try composite
-        logger.debug("No single-column identifier found, searching for composite identifier...")
+        # CONDITION 3: a combination unique on every row: a synthesized row key
         composite_cols = cls.find_composite_identifier_candidates(df)
-
         if composite_cols:
-            # Only now create synthetic ID
-            logger.info(f"Creating composite identifier from columns: {composite_cols} (DataFrame shape: {df.shape})")
-            df_with_id = cls.create_synthetic_patient_id(df, composite_cols)
-            n_unique = df_with_id["patient_id"].n_unique()
-            logger.info(
-                f"Successfully created composite patient_id: {n_unique} unique values "
-                f"from {n_rows} rows ({n_unique / n_rows * 100:.1f}% unique)"
-            )
+            logger.info(f"Creating composite row key from {len(composite_cols)} columns ({n_rows} rows)")
             metadata["patient_id_source"] = "composite"
             metadata["patient_id_columns"] = composite_cols
-            return df_with_id, metadata
+            return cls.create_synthetic_patient_id(df, composite_cols), metadata
 
-        # CONDITION 4: No identifier found at all
-        logger.warning(f"No identifier found for DataFrame with {n_rows} rows, columns: {list(df.columns)}")
-        metadata["patient_id_source"] = None
-        return df, metadata
+        # CONDITION 4: Nothing identifies a row: number the rows (unit "rows", not "patients")
+        row_column = ROW_NUMBER_COLUMN
+        while row_column in df.columns:
+            row_column = f"_{row_column}"
+        logger.info(f"No identifier among {df.width} columns; added row number column for {n_rows} rows")
+        metadata["patient_id_source"] = "row_index"
+        metadata["row_number_column"] = row_column
+        return df.with_row_index(row_column, offset=1).with_columns(pl.col(row_column).cast(pl.Int64)), metadata

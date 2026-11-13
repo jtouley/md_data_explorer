@@ -256,8 +256,9 @@ class TestQueryServiceAnalysis:
         # Act
         result = service.ask("compare ldl by treatment", dataset_id="ds")
 
-        # Assert
-        assert result.analysis == formatted
+        # Assert: the mock layer has no patient key, so an n there counts rows
+        assert {k: v for k, v in result.analysis.items() if k != "unit"} == formatted
+        assert result.analysis.get("unit") in (None, "rows")
         assert layer.format_execution_result.call_args.args[0] == execution_result
         assert layer.format_execution_result.call_args.args[1] is result.context
         assert [i["message"] for i in result.issues if i["severity"] == "error"] == expected_errors

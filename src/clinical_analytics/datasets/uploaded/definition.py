@@ -17,6 +17,7 @@ import structlog
 from ibis.common.exceptions import IbisError
 
 from clinical_analytics.core.dataset import ClinicalDataset, Granularity
+from clinical_analytics.core.identifier_rules import ROW_KEY_CONFIG_FLAG, patient_id_is_row_key
 from clinical_analytics.core.schema import UnifiedCohort
 from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
     PatientIdRegenerationError,
@@ -638,6 +639,8 @@ class UploadedDataset(ClinicalDataset):
             },
             # Include variable_types metadata for column type detection
             "variable_types": safe_get(self.metadata, "variable_types"),
+            # A synthesized patient_id keys rows: answers say "rows", never "patients".
+            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(self.metadata or {}),
         }
         return config
 
@@ -741,6 +744,8 @@ class UploadedDataset(ClinicalDataset):
             },
             # Include variable_types metadata for column type detection
             "variable_types": metadata_dict.get("variable_types"),
+            # A synthesized patient_id keys rows: answers say "rows", never "patients".
+            ROW_KEY_CONFIG_FLAG: patient_id_is_row_key(metadata_dict),
         }
         return config
 
