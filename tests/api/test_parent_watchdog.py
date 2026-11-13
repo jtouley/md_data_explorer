@@ -224,6 +224,8 @@ def test_main_lifelineFlags_startWatchdogsBoundToTheServerTheyStop(argv, parent,
         patch.object(serve, "start_stdin_watchdog") as stdin_watch,
         patch.object(serve.uvicorn, "Server") as server_cls,
         patch.object(serve.uvicorn, "run") as run,
+        # A real hard-exit timer would os._exit this test process 120 s later.
+        patch.object(parent_watchdog.threading, "Timer") as timer,
     ):
         server_cls.return_value.started = True
 
@@ -242,6 +244,7 @@ def test_main_lifelineFlags_startWatchdogsBoundToTheServerTheyStop(argv, parent,
     if parent is not None:
         assert parent_watch.call_args.args == (parent,)
     assert server_cls.return_value.should_exit is True
+    timer.assert_called_once()
 
 
 def test_main_noLifelineFlags_plainUvicornRunNoWatchdogs():
