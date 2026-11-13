@@ -9,6 +9,7 @@ mapping logic - just define your logic in YAML and let Ibis compile to SQL.
 import hashlib
 import json
 import logging
+import operator
 import os
 import re
 import threading
@@ -31,9 +32,173 @@ if TYPE_CHECKING:
     from clinical_analytics.core.query_plan import QueryPlan
 
 # Phase 3.3: Import chart_spec generation function
-from clinical_analytics.core.query_plan import generate_chart_spec
+from clinical_analytics.core.query_plan import (
+    SUPPORTED_COHORT_OPS,
+    CohortStep,
+    CohortStepError,
+    generate_chart_spec,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _sql_literal(value: Any) -> str:
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if value is None:
+        return "NULL"
+    return str(value)
+
+
+_SUPPORTED_FILTER_OPS = frozenset({"==", "!=", "IN", "NOT_IN", ">", ">=", "<", "<="})
+
+
+def _missing_column_message(column: str) -> str:
+    return (
+        f"Cannot limit the patients by '{column}': that column is not in this dataset. "
+        "Answering without the limit would include patients the question excludes."
+    )
+
+
+def _unsupported_step_message(op: str, column: str) -> str:
+    return (
+        f"Cannot apply the limit '{op}' on '{column}': that kind of limit is not supported. "
+        "Answering without it would include patients the question excludes."
+    )
+
+
+def cohort_step_problem(step: CohortStep, columns: list[str]) -> str | None:
+    """Plain-language reason a cohort step cannot be applied, or None when it can."""
+    if step.column not in columns:
+        return _missing_column_message(step.column)
+    if step.op not in SUPPORTED_COHORT_OPS:
+        return _unsupported_step_message(step.op, step.column)
+    return None
+
+
+def _text_value_message(column: str, value: Any) -> str:
+    return (
+        f"Cannot limit the patients to '{column}' = {_number_text(value)}: that column holds text, "
+        "and this value is not one of its values. Ask again using a value the column holds."
+    )
+
+
+def _numeric_value_message(column: str, value: Any) -> str:
+    return (
+        f"Cannot limit the patients to '{column}' = '{value}': that column holds numbers, "
+        "not text. Ask again using a number."
+    )
+
+
+def _yes_no_value_message(column: str, value: Any) -> str:
+    return (
+        f"Cannot limit the patients to '{column}' = '{value}': that column holds yes/no values. "
+        "Ask again using yes or no."
+    )
+
+
+def _text_order_message(column: str) -> str:
+    return (
+        f"Cannot compare '{column}' with a number: that column holds text, not numbers. "
+        "Ask again using one of its values."
+    )
+
+
+def _ungrouped_rate_message(column: str) -> str:
+    return (
+        f"Cannot compare the rate of '{column}': the question does not say which groups to compare. "
+        "Ask again naming the groups, for example 'by sex'."
+    )
+
+
+def _text_statistic_message(statistic: str, column: str) -> str:
+    return (
+        f"Cannot compute the {statistic} of '{column}': that column holds text, not numbers. "
+        f"Ask for a count by '{column}' instead."
+    )
+
+
+def _number_text(value: Any) -> str:
+    """A number as a stored label would spell it: 1.0 -> '1', 2.5 -> '2.5'."""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def plan_restriction_problem(plan: "QueryPlan", columns: list[str]) -> str | None:
+    """First filter or cohort step in the plan that cannot be applied, as a refusal reason."""
+    if plan.rate_column and not plan.group_by:
+        return _ungrouped_rate_message(plan.rate_column)
+    for filter_spec in plan.filters:
+        if plan.group_by and filter_spec.column == plan.group_by:
+            continue
+        if filter_spec.column not in columns:
+            return _missing_column_message(filter_spec.column)
+        if filter_spec.operator not in _SUPPORTED_FILTER_OPS:
+            return _unsupported_step_message(filter_spec.operator, filter_spec.column)
+    for step in plan.cohort_steps:
+        problem = cohort_step_problem(step, columns)
+        if problem:
+            return problem
+    return None
+
+
+def _sample_counts(frame: pl.DataFrame, base_rows: int) -> dict[str, int]:
+    """n_used, n_excluded (no recorded value) and n_filtered_out (removed by the question's
+    limits) from a frame with n and n_rows; the three add up to the dataset row count."""
+    used, rows = frame.select(pl.col("n").sum(), pl.col("n_rows").sum()).row(0)
+    used, rows = int(used or 0), int(rows or 0)
+    return {"n_used": used, "n_excluded": rows - used, "n_filtered_out": base_rows - rows}
+
+
+def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | None, base_rows: int) -> dict[str, Any]:
+    """A proportion (group None) or a rate per group, with the counts suppression needs."""
+    base: dict[str, Any] = _sample_counts(frame, base_rows)
+    if group is None:
+        row = frame.row(0, named=True)
+        return {
+            "type": "proportion",
+            "column": plan.proportion_column,
+            "value": plan.proportion_value,
+            "proportion": row["proportion"],
+            "events": int(row["events"]),
+            "limited": bool(plan.cohort_steps or plan.filters),
+            **base,
+        }
+    groups = [
+        {"group": row[group], "rate": row["rate"], "events": int(row["events"]), "n": int(row["n"])}
+        for row in frame.iter_rows(named=True)
+    ]
+    return {
+        "type": "rate",
+        "column": plan.rate_column,
+        "value": plan.rate_value,
+        "group_col": group,
+        "groups": groups,
+        **base,
+    }
+
+
+def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows: int) -> dict[str, Any]:
+    """One statistic of the metric per group, as the plan computed it."""
+    statistic = plan.statistic or "mean"
+    group = str(plan.group_by)
+    return {
+        "type": "grouped_statistic",
+        "statistic": statistic,
+        "metric": plan.metric,
+        "group_col": group,
+        "groups": [
+            {"group": row[group], "value": row[statistic], "n": int(row["n"])} for row in frame.iter_rows(named=True)
+        ],
+        **_sample_counts(frame, base_rows),
+    }
 
 
 class TypeValidationError(Exception):
@@ -1829,6 +1994,55 @@ class SemanticLayer:
             }
         )
 
+        # Fail closed before execution: a restriction that cannot be applied would
+        # silently widen the cohort.
+        base_columns = list(self.get_base_view().columns)
+        refusal = plan_restriction_problem(plan, base_columns)
+        if refusal:
+            logger.warning("cohort_restriction_refused reason=%s", refusal)
+            warnings.append(refusal)
+            steps.append({"status": "error", "text": "Query refused", "details": {"error": refusal}})
+            return {
+                "success": False,
+                "result": None,
+                "run_key": run_key,
+                "warnings": warnings,
+                "error": refusal,
+                "failure_reason": refusal,
+                "steps": steps,
+                "chart_spec": chart_spec,
+            }
+
+        if query_text:
+            from clinical_analytics.core.cohort_constraints import unapplied_constraints
+
+            gap_columns = list(self.get_base_view().columns)
+            gaps = unapplied_constraints(query_text, plan, gap_columns)
+            if gaps:
+                quoted = ", ".join(f"'{gap}'" for gap in gaps)
+                message = (
+                    f"Part of the question could not be applied ({quoted}), so the answer would "
+                    "not match what you asked. Rephrase it using the dataset's columns and values."
+                )
+                warnings.append(message)
+                steps.append(
+                    {
+                        "status": "error",
+                        "text": "Query failed",
+                        "details": {"error": message},
+                    }
+                )
+                return {
+                    "success": False,
+                    "result": None,
+                    "run_key": run_key,
+                    "warnings": warnings,
+                    "error": message,
+                    "failure_reason": message,
+                    "steps": steps,
+                    "chart_spec": chart_spec,
+                }
+
         # Step 8: Execute query with retry logic (Phase 2.5.2)
         try:
             result_df = self._execute_plan_with_retry(plan)
@@ -1856,6 +2070,21 @@ class SemanticLayer:
                 "warnings": warnings,
                 "steps": steps,  # Phase 2.5.1: Core provides step data
                 "chart_spec": chart_spec,  # Phase 3.3: Chart specification for visualization
+            }
+        except CohortStepError as e:
+            # Plain language already: a limit that cannot be applied refuses the query.
+            reason = str(e)
+            warnings.append(reason)
+            steps.append({"status": "error", "text": "Query refused", "details": {"error": reason}})
+            return {
+                "success": False,
+                "result": None,
+                "run_key": run_key,
+                "warnings": warnings,
+                "error": reason,
+                "failure_reason": reason,
+                "steps": steps,
+                "chart_spec": chart_spec,
             }
         except Exception as e:
             logger.error(f"Query execution failed: {e}", exc_info=True)
@@ -1934,7 +2163,14 @@ class SemanticLayer:
 
         # Format based on intent
         # Phase 3.3: Pass chart_spec to formatting methods
-        if query_plan.intent == "COUNT":
+        # Shares and grouped statistics are already the answer: format the SQL frame as it is.
+        if query_plan.proportion_column:
+            formatted = _format_share_result(result_df_pl, query_plan, None, self.get_base_row_count())
+        elif query_plan.rate_column and query_plan.group_by:
+            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, self.get_base_row_count())
+        elif query_plan.intent == "DESCRIBE" and query_plan.metric and query_plan.group_by:
+            formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
+        elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
             # What the filters removed, in the unit the total is counted in: distinct entities
             # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
@@ -1955,6 +2191,9 @@ class SemanticLayer:
                     query_plan.intent,
                 )
             formatted = compute_analysis_by_type(base_rows, context)
+            if query_plan.intent == "DESCRIBE" and query_plan.statistic:
+                # The claim leads with the statistic the question asked for.
+                formatted["statistic"] = query_plan.statistic
             if not formatted.get("error"):  # a failed result is never presented
                 # Rows the question's filters removed: by the plan's view here, plus by compute
                 # (its legacy context.filters path). The app shows the dataset's row count, so
@@ -2204,8 +2443,7 @@ class SemanticLayer:
         for filter_spec in effective_filters:
             column = filter_spec.column
             if column not in view.columns:
-                logger.warning(f"Filter column '{column}' not found in view, skipping filter")
-                continue
+                raise CohortStepError(_missing_column_message(column))
 
             col_expr = view[column]
 
@@ -2314,24 +2552,159 @@ class SemanticLayer:
             elif filter_spec.operator == "<=":
                 view = view.filter(col_expr <= filter_spec.value)
             else:
-                logger.warning(f"Unsupported filter operator: {filter_spec.operator}, skipping")
+                raise CohortStepError(_unsupported_step_message(filter_spec.operator, column))
 
             # Handle exclude_nulls
             if filter_spec.exclude_nulls:
                 view = view.filter(~col_expr.isnull())
 
+        for step in plan.cohort_steps:
+            view = self._apply_cohort_step(view, step)
+
         return view
 
-    def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame:
+    def _apply_cohort_step(self, view: Any, step: Any) -> Any:
+        """Apply one cohort restriction. Cutoffs run in DuckDB so they match the SQL oracle."""
+        column = step.column
+        problem = cohort_step_problem(step, list(view.columns))
+        if problem:
+            raise CohortStepError(problem)
+        if step.op == "eq":
+            return self._filter_equal(view, column, step.value)
+        if step.op in {"gt", "lt", "ge", "le"}:
+            if not view[column].type().is_numeric():
+                raise CohortStepError(_text_order_message(column))
+            bound = float(step.value)
+            compare = {"gt": operator.gt, "lt": operator.lt, "ge": operator.ge, "le": operator.le}[step.op]
+            return view.filter(compare(view[column], bound))
+        if step.op == "not_null":
+            return view.filter(view[column].notnull())
+        if step.op == "gt_median":
+            sql = (
+                "WITH cut AS (SELECT median({col}) AS m FROM _cohort_in) "
+                "SELECT i.* FROM _cohort_in i, cut WHERE i.{col} > cut.m"
+            )
+            return self._cohort_sql(view, sql, column)
+        if step.op == "ge_percent_rank":
+            quantile = 0.9 if step.quantile is None else step.quantile
+            sql = (
+                "WITH cut AS (SELECT quantile_cont({col}, " + str(quantile) + ") AS q FROM _cohort_in) "
+                "SELECT i.* FROM _cohort_in i, cut WHERE i.{col} >= cut.q"
+            )
+            return self._cohort_sql(view, sql, column)
+        raise CohortStepError(_unsupported_step_message(step.op, column))
+
+    def _filter_equal(self, view: Any, column: str, value: Any) -> Any:
+        return view.filter(view[column] == self._equality_value(view, column, value))
+
+    def _equality_value(self, view: Any, column: str, value: Any) -> Any:
+        """``value`` in the column's own type, so the comparison never casts the column.
+
+        A number on a text column is compared as text only when the column stores that text
+        ("1" in a column of "1"/"2"); otherwise it would match no patient and report a false
+        zero, so the query is refused. Text on a number column must read as a number.
+        """
+        if value is None or isinstance(value, bool):
+            return value
+        dtype = view[column].type()
+        if dtype.is_string() and not isinstance(value, str):
+            text = _number_text(value)
+            if text in self._stored_text(column):
+                return text
+            raise CohortStepError(_text_value_message(column, value))
+        if dtype.is_boolean() and isinstance(value, str):
+            truth = {"true": True, "yes": True, "false": False, "no": False}.get(value.strip().lower())
+            if truth is None:
+                raise CohortStepError(_yes_no_value_message(column, value))
+            return truth
+        if dtype.is_numeric() and isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                raise CohortStepError(_numeric_value_message(column, value)) from None
+        return value
+
+    def _stored_text(self, column: str) -> set[str]:
+        """Distinct stored values of a text column, deduplicated in DuckDB."""
+        base = self.get_base_view()
+        frame = base.select(column).distinct().to_polars()
+        return {str(value) for value in frame.get_column(column).to_list() if value is not None}
+
+    def _cohort_sql(self, view: Any, sql_template: str, column: str) -> Any:
+        quoted = '"' + column.replace('"', '""') + '"'
+        frame = view.to_pyarrow()
+        raw = self.con.con
+        raw.register("_cohort_in", frame)
+        try:
+            raw.execute("DROP TABLE IF EXISTS _cohort_out")
+            raw.execute("CREATE TEMP TABLE _cohort_out AS " + sql_template.format(col=quoted))
+        finally:
+            raw.unregister("_cohort_in")
+        return self.con.table("_cohort_out")
+
+    def _duck_aggregate(self, view: Any, sql: str) -> pl.DataFrame:
+        frame = view.to_pyarrow()
+        raw = self.con.con
+        raw.register("_cohort_in", frame)
+        try:
+            # Arrow straight into Polars: no pandas round trip.
+            table = raw.execute(sql).to_arrow_table()
+            frame_out = pl.from_arrow(table)
+            if not isinstance(frame_out, pl.DataFrame):
+                raise TypeError("DuckDB aggregate did not return a table")
+            return frame_out
+        finally:
+            raw.unregister("_cohort_in")
+
+    def _share_sql(self, view: Any, column: str, value: Any, group: str | None) -> str:
+        """Share of patients whose ``column`` equals ``value``, among those with it recorded.
+
+        Patients missing the column are left out of the denominator (n) and counted in
+        n_rows, so the presentation can report them as excluded. Grouped: one row per group.
+        """
+        quoted = _quote_ident(column)
+        literal = _sql_literal(self._equality_value(view, column, value))
+        events = f"count(*) FILTER (WHERE {quoted} = {literal})"
+        share = "rate" if group else "proportion"
+        select = (
+            f"{events} AS events, count({quoted}) AS n, count(*) AS n_rows, "
+            f"CASE WHEN count({quoted}) = 0 THEN NULL ELSE {events} / count({quoted}) END AS {share}"
+        )
+        if group is None:
+            return f"SELECT {select} FROM _cohort_in"
+        by = _quote_ident(group)
+        return f"SELECT {by}, {select} FROM _cohort_in GROUP BY 1 ORDER BY 1 NULLS LAST"
+
+    def _execute_plan(self, plan: "QueryPlan") -> pd.DataFrame | pl.DataFrame:
         """Execute QueryPlan and return results DataFrame."""
         view = self._filtered_view(plan)
+
+        if plan.proportion_column:
+            return self._duck_aggregate(
+                view, self._share_sql(view, plan.proportion_column, plan.proportion_value, None)
+            )
+        if plan.rate_column:
+            if not plan.group_by:
+                # A rate needs groups to compare; the plain count would answer a different question.
+                raise CohortStepError(_ungrouped_rate_message(plan.rate_column))
+            return self._duck_aggregate(view, self._share_sql(view, plan.rate_column, plan.rate_value, plan.group_by))
+        if plan.intent == "CORRELATIONS" and plan.metric and plan.group_by:
+            if self._column_is_string(view, plan.metric) or self._column_is_string(view, plan.group_by):
+                raise TypeError(f"Correlation requires numeric columns, got {plan.metric} and {plan.group_by}")
+            left = _quote_ident(plan.metric)
+            right = _quote_ident(plan.group_by)
+            return self._duck_aggregate(
+                view,
+                f"SELECT corr({left}, {right}) AS corr, count(*) AS n_rows, "
+                f"count(*) FILTER (WHERE {left} IS NOT NULL AND {right} IS NOT NULL) AS n_pairs FROM _cohort_in",
+            )
 
         # Execute based on intent
         if plan.intent == "COUNT":
             # COUNT: Use entity_key or group_by
             if plan.group_by:
                 # Count by group
-                result = view.group_by(plan.group_by).aggregate(_.count().name("count"))
+                result = view.group_by(plan.group_by).aggregate(_.count().name("count")).order_by(plan.group_by)
             elif plan.entity_key:
                 # Count distinct entities
                 result = view.select(plan.entity_key).distinct().count()
@@ -2340,12 +2713,24 @@ class SemanticLayer:
                 result = view.count()
         elif plan.intent == "DESCRIBE":
             # DESCRIBE: Type-aware aggregation
-            if plan.metric:
+            if plan.metric and plan.group_by:
+                statistic = plan.statistic or "mean"
+                if not view[plan.metric].type().is_numeric():
+                    raise CohortStepError(_text_statistic_message(statistic, plan.metric))
+                metric_col = view[plan.metric]
+                # The statistic the plan carries, per group, with each group's count of values.
+                aggregate = getattr(metric_col, statistic)()
+                result = (
+                    view.group_by(plan.group_by)
+                    .aggregate([aggregate.name(statistic), metric_col.count().name("n"), _.count().name("n_rows")])
+                    .order_by(plan.group_by)
+                )
+            elif plan.metric:
                 # Detect if categorical or numeric
                 is_categorical = self._detect_categorical_encoding(view[plan.metric])
                 if is_categorical:
                     # Frequency table
-                    result = view.group_by(plan.metric).aggregate(_.count().name("count"))
+                    result = view.group_by(plan.metric).aggregate(_.count().name("count")).order_by(plan.metric)
                 else:
                     # Descriptive statistics
                     metric_col = view[plan.metric]
@@ -2356,16 +2741,41 @@ class SemanticLayer:
                             metric_col.std().name("std"),
                             metric_col.min().name("min"),
                             metric_col.max().name("max"),
+                            _.count().name("n_rows"),
                         ]
                     )
             else:
                 result = view
+        elif plan.intent == "COMPARE_GROUPS" and plan.metric and plan.group_by:
+            if self._column_is_string(view, plan.metric):
+                group = _quote_ident(plan.group_by)
+                metric = _quote_ident(plan.metric)
+                return self._duck_aggregate(
+                    view,
+                    f"SELECT {group}, {metric}, count(*) AS n FROM _cohort_in GROUP BY 1, 2",
+                )
+            metric_col = view[plan.metric]
+            # Ordered by group: the same plan returns the same rows in the same order.
+            result = (
+                view.group_by(plan.group_by)
+                .aggregate(
+                    [
+                        metric_col.mean().name("mean"),
+                        _.count().name("n"),
+                    ]
+                )
+                .order_by(plan.group_by)
+            )
         else:
             # Other intents: return base view for now
             result = view
 
         _log_ibis_sql_and_optional_explain(result, self.con.con)
         return result.execute()
+
+    def _column_is_string(self, view: Any, column: str) -> bool:
+        """From the schema: no rows are read."""
+        return bool(view[column].type().is_string())
 
     def _detect_categorical_encoding(self, column: Any) -> bool:
         """
