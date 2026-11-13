@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import polars as pl
@@ -17,7 +18,9 @@ import pytest
 
 from clinical_analytics.contracts.config import LEVEL_VARIANT_MAX_LEVELS
 from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
+from clinical_analytics.core.query_plan import QueryPlan
+from clinical_analytics.core.query_service import QueryService
+from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
 from clinical_analytics.eval.catalog import questions_for_dataset
 from clinical_analytics.eval.hard_questions import all_hard_questions, oracle_value
 from clinical_analytics.eval.headless import (
@@ -26,6 +29,7 @@ from clinical_analytics.eval.headless import (
     classify_presented,
     classify_presented_generic,
     frame_for,
+    layer_for,
     presented_answer,
     register_frame,
     shown_labels,
@@ -150,6 +154,44 @@ def _label_leak(result: dict[str, Any], workspace: Path | None) -> str | None:
     return f"{result['query']!r} shows labels of small levels: {sorted(leaked)[:5]}" if leaked else None
 
 
+def _ask_plan(dataset_id: str, plan: QueryPlan, confirm: bool) -> dict[str, Any]:
+    """Ask with ``plan`` fixed (the parser is not under test) and grade what the app shows."""
+    service = QueryService(layer_for(dataset_id))
+    intent = SimpleNamespace(
+        confidence=0.99,
+        intent_type=plan.intent,
+        primary_variable=plan.metric,
+        grouping_variable=plan.group_by,
+        predictor_variables=[],
+        time_variable=None,
+        event_variable=None,
+        filters=[],
+    )
+    service.nl_engine.parse_query = lambda *args, **kwargs: intent  # type: ignore[method-assign]
+    service.nl_engine._intent_to_plan = lambda *args: plan  # type: ignore[method-assign]
+    result = service.ask("fixed plan", dataset_id=dataset_id, dataset_version="golden")
+    if confirm and result.requires_confirmation:
+        result = service.ask(
+            "fixed plan",
+            dataset_id=dataset_id,
+            dataset_version="golden",
+            confirmed=True,
+            confirm_plan_hash=result.plan_hash,
+        )
+    errors = [i for i in result.issues if i.get("severity") == "error"]
+    success = result.analysis is not None and not result.requires_confirmation and not errors
+    return {
+        "dataset_id": dataset_id,
+        "query": str(plan),
+        "success": success,
+        "held": result.requires_confirmation,
+        "failure_reason": result.failure_reason,
+        "group_by": plan.group_by,
+        "metric": plan.metric,
+        "presentation": present_analysis(result.analysis) if success else {"claim": None, "table": None},
+    }
+
+
 def _hold_leak(result: dict[str, Any], frame: pl.DataFrame) -> str | None:
     """A held question whose sentence names a level held by 1-10 rows, or None."""
     reason = str(result.get("failure_reason") or "")
@@ -229,7 +271,10 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
     register_frame("dq_fold", fold_frame())
     register_frame("dq_visits_died", visits_died_frame())
     for name, query, confirm, expected in SHOWN_PROBES:
-        result = ask(f"dq_{name}", query, confirm=confirm)
+        if isinstance(query, QueryPlan):
+            result = _ask_plan(f"dq_{name}", query, confirm)
+        else:
+            result = ask(f"dq_{name}", query, confirm=confirm)
         presentation = result["presentation"]
         shown = presented_answer(presentation) if isinstance(expected, dict) else presentation["claim"]
         record("dq_shown", f"{name}: {query}", "answered" if shown == expected else "wrong", expected, result)
