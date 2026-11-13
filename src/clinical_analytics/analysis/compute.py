@@ -4,6 +4,7 @@ Pure compute functions for analysis - Polars-first, return serializable dicts.
 These functions have no UI dependencies and can be tested independently.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -619,16 +620,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         headline = _compute_headline_answer(group_means, outcome_col, group_col, "lowest")
         if n_groups == 2:
             a, b = group_data
-            if min(len(a), len(b)) < MIN_GROUP_N:
-                return {**base, "error": f"Each group needs at least {MIN_GROUP_N} observations for a t-test"}
-            constant = _constant_groups(groups, group_data)
-            if constant:
+            if min(len(a), len(b)) < MIN_GROUP_N or _constant_groups(groups, group_data):
                 # Zero within-group variance: scipy returns p=0 with t=inf and the Welch df is NaN.
-                return {
-                    **base,
-                    "error": f"{outcome_col} values do not vary within a group ({', '.join(constant)}), so a "
-                    "t-test p-value and confidence interval cannot be calculated.",
-                }
+                return {**base, "error": _untestable_groups_message("A t-test", outcome_col, group_col, "each")}
             statistic, p_value = stats.ttest_ind(a, b, equal_var=False)
             var_a, var_b = np.var(a, ddof=1) / len(a), np.var(b, ddof=1) / len(b)
             se_diff = float(np.sqrt(var_a + var_b))
@@ -649,19 +643,10 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 "group_means": group_means,
                 **headline,
             }
-        small = [str(g) for g, d in zip(groups, group_data, strict=True) if len(d) < MIN_GROUP_N]
-        if small:
-            return {
-                **base,
-                "error": f"Each group needs at least {MIN_GROUP_N} observations for ANOVA ({', '.join(small)})",
-            }
-        if len(_constant_groups(groups, group_data)) == n_groups:
+        too_small = any(len(d) < MIN_GROUP_N for d in group_data)
+        if too_small or len(_constant_groups(groups, group_data)) == n_groups:
             # No within-group variation: scipy returns F=inf and p=0.
-            return {
-                **base,
-                "error": f"{outcome_col} values do not vary within any {group_col} group, so an ANOVA p-value "
-                "cannot be calculated.",
-            }
+            return {**base, "error": _untestable_groups_message("An ANOVA", outcome_col, group_col, "at least one")}
         statistic, p_value = stats.f_oneway(*group_data)
         return {
             **base,
@@ -836,6 +821,19 @@ def _apply_filters(df: pl.DataFrame, filters: list[FilterSpec]) -> pl.DataFrame:
     return filtered_df
 
 
+def _untestable_groups_message(test: str, outcome_col: str, group_col: str, varying: str) -> str:
+    """One message for "a group is too small" and "the values do not vary".
+
+    The message reaches the user outside the presenter, so it names no group and gives no
+    group's size: a group below the floor of 2 has exactly one patient, and saying which group
+    (or that this was the reason) would state a count of 1.
+    """
+    return (
+        f"{test} cannot be run on {outcome_col} by {group_col}. Every group needs at least {MIN_GROUP_N} "
+        f"observations, and the values must differ within {varying} group. Try groups with more data."
+    )
+
+
 def _apply_context_filters(df: pl.DataFrame, context: AnalysisContext) -> tuple[pl.DataFrame, list[FilterSpec]]:
     """
     Apply the question's filters (QueryPlan first, legacy context.filters as fallback).
@@ -951,20 +949,24 @@ def compute_analysis_by_type(df: pl.DataFrame, context: AnalysisContext) -> dict
                 "available_columns": df.columns,
             }
 
-    if context.inferred_intent == AnalysisIntent.DESCRIBE:
-        return compute_descriptive_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.COMPARE_GROUPS:
-        return compute_comparison_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.FIND_PREDICTORS:
-        return compute_predictor_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.EXAMINE_SURVIVAL:
-        return compute_survival_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.EXPLORE_RELATIONSHIPS:
-        return compute_relationship_analysis(df, context)
-    elif context.inferred_intent == AnalysisIntent.COUNT:
-        return compute_count_analysis(df, context)
-    else:
+    analyses: dict[AnalysisIntent, Callable[[pl.DataFrame, AnalysisContext], dict[str, Any]]] = {
+        AnalysisIntent.DESCRIBE: compute_descriptive_analysis,
+        AnalysisIntent.COMPARE_GROUPS: compute_comparison_analysis,
+        AnalysisIntent.FIND_PREDICTORS: compute_predictor_analysis,
+        AnalysisIntent.EXAMINE_SURVIVAL: compute_survival_analysis,
+        AnalysisIntent.EXPLORE_RELATIONSHIPS: compute_relationship_analysis,
+        AnalysisIntent.COUNT: compute_count_analysis,
+    }
+    analysis = analyses.get(context.inferred_intent)
+    if analysis is None:
         return {"type": "unknown", "error": f"Unknown intent: {context.inferred_intent}"}
+    result = analysis(df, context)
+    # The rows the question's filters removed (plan filters or legacy context.filters), counted
+    # with the same filters each analysis applies: the reader knows the dataset row count, so
+    # this is a count too, and the presenter suppresses it like the others.
+    in_scope, _ = _apply_context_filters(df, context)
+    result["n_filtered_out"] = df.height - in_scope.height
+    return result
 
 
 def _needs_indicators(series: pl.Series) -> bool:

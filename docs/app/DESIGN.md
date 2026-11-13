@@ -106,11 +106,14 @@ tables. The footnote says what is true for both: "Hidden to protect privacy: cou
 are not shown, and some other cells are hidden so those counts can't be worked out from totals."
 Within one answer the API uses one marker: when the table hides a count, the claim does not write
 "<11" for it either. It says "n hidden" (n, the exclusions and any rows a filter removed add up to
-the dataset's row count, so n is hidden when any of them is small, together with every group
-size; with n hidden the clause never mentions exclusions, even when their count is large enough
-to show: "n hidden; 50 excluded" would tell a small n apart from a small exclusion count),
-"n=377; some excluded for missing data" (only the exclusions hidden), "count hidden", or "Total
-count hidden." for a filtered count.
+the dataset's row count, and n plus the exclusions is the filtered cohort a COUNT shows, so n is
+hidden when any of them is small, together with every group size; with n hidden the clause never
+mentions exclusions, even when their count is large enough to show: "n hidden; 50 excluded" would
+tell a small n apart from a small exclusion count, and "n=377; some excluded" would give the
+exclusions away to a second COUNT), "count hidden", or "Total count hidden." for a filtered count.
+The semantic layer sends the rows the filters removed (`n_filtered_out`, counted where compute
+filtered them, in the unit of the total: patients for a distinct-patient count), so the presenter
+never works it out per analysis type.
 A statistic that can be one patient's value (a mean, a median, min and max, a group's mean or
 median) is shown only when the count beside it is present, is a whole number and is not hidden.
 If the count is missing or is text or a decimal, the statistic is hidden as well, and the claim

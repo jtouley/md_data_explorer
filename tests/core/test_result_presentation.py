@@ -2,7 +2,6 @@
 
 import json
 import math
-import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from clinical_analytics.core import result_presentation
 from clinical_analytics.core.result_presentation import (
     SECONDARY_SUPPRESSED,
     _single_value,
@@ -860,6 +860,36 @@ class TestHiddenNStatistics:
             assert "Statistics for ldl are not shown because n is hidden (n hidden)." in answer
 
     @pytest.mark.parametrize(
+        ("missing", "shown"),
+        [(1, False), (2, True), (10, True)],
+        ids=["cohort_of_twelve", "cohort_of_thirteen", "cohort_of_twenty_one"],
+    )
+    def test_present_descriptive_filteredCohortKnown_statisticsDoNotPinN(self, missing, shown):
+        # Arrange: n=11 with a small missing count, 20 rows filtered out. A COUNT with the same
+        # filter shows the cohort (n + missing); a shown mean says n >= 11, so with a cohort of
+        # 12 it would pin n=11 and 1 missing
+        analysis = {
+            "type": "descriptive",
+            "focused_variable": "ldl",
+            "is_numeric": True,
+            "mean": 121.49,
+            "median": 121.5,
+            "std": 14.4,
+            "min": 83.0,
+            "max": 159.0,
+            "non_null_count": 11,
+            "null_count": missing,
+            "n_filtered_out": 20,
+        }
+
+        # Act
+        claim = present_analysis(analysis)["claim"]
+
+        # Assert
+        assert ("121.49" in claim) == shown, claim
+        assert "n hidden" in claim
+
+    @pytest.mark.parametrize(
         ("n_used", "n_events", "n_excluded", "shown"),
         [
             (1, 1, 0, False),
@@ -929,7 +959,7 @@ def _box(
 
 def _ttest_filtered(cells: tuple[int, ...]) -> dict[str, Any]:
     drug, placebo, excluded, filtered = cells
-    return {**_two_group_comparison((drug, placebo, excluded)), "dataset_row_count": sum(cells)}
+    return {**_two_group_comparison((drug, placebo, excluded)), "n_filtered_out": filtered}
 
 
 def _anova(cells: tuple[int, ...]) -> dict[str, Any]:
@@ -951,12 +981,12 @@ def _anova(cells: tuple[int, ...]) -> dict[str, Any]:
 
 def _predictor_filtered(cells: tuple[int, ...]) -> dict[str, Any]:
     n_used, excluded, filtered = cells
-    return {**_predictor((n_used, excluded)), "dataset_row_count": sum(cells)}
+    return {**_predictor((n_used, excluded)), "n_filtered_out": filtered}
 
 
 def _count_filtered(cells: tuple[int, ...]) -> dict[str, Any]:
     total, filtered = cells
-    return {"type": "count", "total_count": total, "dataset_row_count": total + filtered}
+    return {"type": "count", "total_count": total, "n_filtered_out": filtered}
 
 
 def _grouped_count3(cells: tuple[int, ...]) -> dict[str, Any]:
@@ -1181,6 +1211,19 @@ class TestMissingCountsFailClosed:
         assert claim.startswith("The distribution of y differed by arm")
 
 
+class TestFilteredOutFailsClosed:
+    @pytest.mark.parametrize("filtered", [-3, -1, 2.5, "unknown"], ids=["negative", "minus_one", "float", "text"])
+    def test_present_count_unreadableFilteredOut_hidesTotal(self, filtered):
+        # Arrange: a filtered-out value that is not a non-negative count cannot be checked
+        analysis = {"type": "count", "total_count": 400, "n_filtered_out": filtered}
+
+        # Act
+        claim = present_analysis(analysis)["claim"]
+
+        # Assert
+        assert claim == "Total count hidden."
+
+
 class TestNClauseHiddenN:
     @pytest.mark.parametrize(
         ("cells", "filtered"),
@@ -1190,14 +1233,31 @@ class TestNClauseHiddenN:
     def test_present_tTest_hiddenN_doesNotSayWhetherRowsWereExcluded(self, cells, filtered):
         # Arrange: n is hidden while the exclusion count (50 or 11) is large enough to show
         analysis = _two_group_comparison(cells)
-        if filtered:
-            analysis["dataset_row_count"] = sum(cells) + filtered
+        analysis["n_filtered_out"] = filtered
 
         # Act
         claim = present_analysis(analysis)["claim"]
 
         # Assert
         assert "; n hidden). Unadjusted" in claim
+        assert "excluded" not in claim
+
+    @pytest.mark.parametrize(
+        ("cells", "filtered"),
+        [((200, 177, 3), 20), ((200, 177, 1), 11), ((200, 177, 10), 500)],
+        ids=["three_excluded", "one_excluded", "ten_excluded"],
+    )
+    def test_present_tTest_smallExclusionsWithFilter_hidesN(self, cells, filtered):
+        # Arrange: a COUNT with the same filter shows n + excluded (380 for the first case), so
+        # "n=377; some excluded" would give the exclusions away
+        analysis = {**_two_group_comparison(cells), "n_filtered_out": filtered}
+
+        # Act
+        claim = present_analysis(analysis)["claim"]
+
+        # Assert
+        assert "; n hidden). Unadjusted" in claim
+        assert "n=377" not in claim
         assert "excluded" not in claim
 
 
@@ -1295,19 +1355,53 @@ class TestCellsHiddenThroughAnotherLine:
             {"y": "y=1", "A": "suppressed", "B": "suppressed", "C": "suppressed", "D": 70},
         ]
 
-    @pytest.mark.parametrize("scale", [1, 1_000_000], ids=["reviewer_example", "millions_of_rows"])
-    def test_suppress_count_matrix_largeHiddenCell_runsInConstantTime(self, scale):
-        # Arrange: the interval check must not loop over every value up to the row count
+    @pytest.mark.parametrize("scale", [1, 1_000, 1_000_000], ids=["reviewer_example", "thousands", "millions"])
+    def test_suppress_count_matrix_largeHiddenCell_workDoesNotGrowWithCounts(self, scale, monkeypatch):
+        # Arrange: count the interval checks instead of timing them; the closed form does the
+        # same work whatever the size of the counts
+        calls: list[tuple[int, ...]] = []
+        original = result_presentation._feasible
+
+        def counting(*args: int) -> int:
+            calls.append(args)
+            return original(*args)
+
+        monkeypatch.setattr(result_presentation, "_feasible", counting)
         rows = [[5, 50 * scale, 20 * scale, 30 * scale], [40 * scale, 8, 60 * scale, 70 * scale]]
+        reference = [[5, 50, 20, 30], [40, 8, 60, 70]]
 
         # Act
-        started = time.perf_counter()
         hidden = suppress_count_matrix(rows)
-        elapsed = time.perf_counter() - started
+        scaled_calls = len(calls)
+        calls.clear()
+        suppress_count_matrix(reference)
 
         # Assert
         assert hidden == {(i, j) for i in range(2) for j in range(3)}
-        assert elapsed < 0.5, f"suppression took {elapsed:.2f}s"
+        assert scaled_calls == len(calls)
+
+    @pytest.mark.parametrize("size", [10, 30, 60], ids=["10x10", "30x30", "60x60"])
+    def test_suppress_count_matrix_largeTable_checksEachLineOncePerNewHiddenCell(self, size, monkeypatch):
+        # Arrange: one small cell per row on the diagonal, so every row and column needs a
+        # complement; count the line checks instead of timing them
+        checks: list[int] = []
+        original = result_presentation._Lines.exposed
+
+        def counting(self: Any, i: int) -> bool:
+            checks.append(i)
+            return original(self, i)
+
+        monkeypatch.setattr(result_presentation._Lines, "exposed", counting)
+        rows = [[3 if i == j else 20 + i + j for j in range(size)] for i in range(size)]
+
+        # Act
+        hidden = suppress_count_matrix(rows)
+
+        # Assert: a line is checked again only after it gains a hidden cell, so the checks grow
+        # with lines times hidden cells, not with passes over the whole table
+        lines = 2 * size
+        assert {(i, i) for i in range(size)} <= hidden
+        assert len(checks) <= lines + 2 * 2 * len(hidden)
 
 
 def _single_value_by_enumeration(

@@ -22,6 +22,15 @@ from clinical_analytics.analysis.compute import (
 )
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 
+UNTESTABLE_T_TEST = (
+    "A t-test cannot be run on score by category. Every group needs at least 2 observations, and the "
+    "values must differ within each group. Try groups with more data."
+)
+UNTESTABLE_ANOVA = (
+    "An ANOVA cannot be run on score by category. Every group needs at least 2 observations, and the "
+    "values must differ within at least one group. Try groups with more data."
+)
+
 # All fixtures moved to conftest.py - use shared fixtures
 # sample_numeric_df, sample_categorical_df, sample_mixed_df
 # sample_context_describe, sample_context_compare, sample_context_predictor
@@ -1044,7 +1053,7 @@ class TestComputeMissingAndDegenerateInputs:
         result = compute_comparison_analysis(df, sample_context_compare)
 
         # Assert
-        assert f"values do not vary within a group ({constant})" in result["error"]
+        assert result["error"] == UNTESTABLE_T_TEST
         assert "p_value" not in result
         assert "ci_lower" not in result
 
@@ -1101,7 +1110,7 @@ class TestComputeDegenerateGroupsReview:
         result = compute_comparison_analysis(df, sample_context_compare)
 
         # Assert
-        assert "values do not vary within a group (A, B)" in result["error"]
+        assert result["error"] == UNTESTABLE_T_TEST
         assert "p_value" not in result
 
     def test_compute_comparison_smallRealSpreadWelch_isNotRefused(self, sample_context_compare):
@@ -1116,25 +1125,23 @@ class TestComputeDegenerateGroupsReview:
         assert np.isfinite(result["p_value"])
 
     @pytest.mark.parametrize(
-        ("values", "groups", "message"),
+        ("values", "groups"),
         [
-            ([10.0] * 5 + [20.0] * 5 + [30.0] * 5, ["A"] * 5 + ["B"] * 5 + ["C"] * 5, "do not vary within any"),
-            ([10.0, 20.0, 30.0], ["A", "B", "C"], "at least 2 observations for ANOVA (A, B, C)"),
-            ([10.0, 11.0, 20.0, 21.0, 30.0], ["A", "A", "B", "B", "C"], "at least 2 observations for ANOVA (C)"),
+            ([10.0] * 5 + [20.0] * 5 + [30.0] * 5, ["A"] * 5 + ["B"] * 5 + ["C"] * 5),
+            ([10.0, 20.0, 30.0], ["A", "B", "C"]),
+            ([10.0, 11.0, 20.0, 21.0, 30.0], ["A", "A", "B", "B", "C"]),
         ],
         ids=["all_constant", "one_per_group", "one_small_group"],
     )
-    def test_compute_comparison_degenerateAnova_refusesWithoutPValue(
-        self, values, groups, message, sample_context_compare
-    ):
+    def test_compute_comparison_degenerateAnova_refusesWithoutPValue(self, values, groups, sample_context_compare):
         # Arrange
         df = pl.DataFrame({"score": values, "category": groups})
 
         # Act
         result = compute_comparison_analysis(df, sample_context_compare)
 
-        # Assert
-        assert message in result["error"]
+        # Assert: one message for every cause, so it does not say a group has one patient
+        assert result["error"] == UNTESTABLE_ANOVA
         assert "p_value" not in result
 
     @pytest.mark.parametrize(
@@ -1266,14 +1273,16 @@ def test_compute_comparison_infTextInNumericOutcome_excludedAsMissing(token, sam
             "sample_context_compare",
             "MIN_GROUP_N",
             {"score": [5.0, 5.5, 6.0, 6.5], "category": ["A", "A", "B", "B"]},
-            "Each group needs at least 7 observations for a t-test",
+            "A t-test cannot be run on score by category. Every group needs at least 7 observations, and the "
+            "values must differ within each group. Try groups with more data.",
         ),
         (
             compute_comparison_analysis,
             "sample_context_compare",
             "MIN_GROUP_N",
             {"score": [5.0, 5.5, 6.0, 6.5, 7.0, 7.5], "category": ["A", "A", "B", "B", "C", "C"]},
-            "Each group needs at least 7 observations for ANOVA (A, B, C)",
+            "An ANOVA cannot be run on score by category. Every group needs at least 7 observations, and the "
+            "values must differ within at least one group. Try groups with more data.",
         ),
     ],
     ids=["regression", "survival", "correlation", "t_test", "anova"],
@@ -1290,3 +1299,52 @@ def test_compute_analysis_belowSampleFloor_errorNamesTheFloorConstant(
 
     # Assert: the message quotes the constant, not a number written into the string
     assert result["error"] == expected
+
+
+@pytest.mark.parametrize(
+    ("values", "groups", "expected"),
+    [
+        ([5.0, 5.5, 6.0, 6.5, 7.0], ["A", "A", "B", "B", "C"], UNTESTABLE_ANOVA),
+        ([5.0, 6.0, 7.0], ["A", "B", "C"], UNTESTABLE_ANOVA),
+        ([5.0, 5.5, 6.0, 9.0], ["A", "A", "A", "B"], UNTESTABLE_T_TEST),
+        ([5.0, 9.0], ["A", "B"], UNTESTABLE_T_TEST),
+    ],
+    ids=["anova_one_patient_group", "anova_one_patient_each", "t_test_one_patient_group", "t_test_one_patient_each"],
+)
+def test_compute_comparison_onePatientGroup_errorNamesNoGroupAndNoCount(
+    values, groups, expected, sample_context_compare
+):
+    # Arrange: a group below the floor of 2 has exactly one patient; the error reaches the user
+    # as an issue, outside the presenter, so naming the group would state that count
+    df = pl.DataFrame({"score": values, "category": groups})
+
+    # Act
+    error = compute_comparison_analysis(df, sample_context_compare)["error"]
+
+    # Assert: the same words as for groups whose values do not vary, and no group label
+    assert error == expected
+    assert "(" not in error
+
+
+@pytest.mark.parametrize(
+    ("plan_filtered", "expected"), [(False, 4), (True, 0)], ids=["legacy_context_filters", "already_filtered_rows"]
+)
+def test_compute_analysis_by_type_contextFilters_reportRowsFilteredOut(plan_filtered, expected):
+    # Arrange: 12 synthetic rows, 8 aged 50 or over; the filter rides on context.filters only
+    from clinical_analytics.core.query_plan import FilterSpec
+
+    df = pl.DataFrame({"age": [40, 45, 50, 55, 60, 65] * 2, "ldl": [float(v) for v in range(12)]})
+    if plan_filtered:
+        df = df.filter(pl.col("age") >= 50)
+    context = AnalysisContext(
+        primary_variable="ldl",
+        inferred_intent=AnalysisIntent.DESCRIBE,
+        filters=[FilterSpec(column="age", operator=">=", value=50)],
+    )
+
+    # Act
+    result = compute_analysis_by_type(df, context)
+
+    # Assert
+    assert result["n_filtered_out"] == expected
+    assert result["row_count"] == 8
