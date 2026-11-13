@@ -392,7 +392,7 @@ def rank_by_similarity(scores: npt.ArrayLike, top_k: int = 1, tolerance: float =
     ranked: list[int] = []
     for _ in range(min(top_k, values.size)):
         # argmax of a boolean array is the first True: the lowest index among the tied best
-        pick = int(np.argmax(remaining >= remaining.max() - tolerance))
+        pick = int(np.argmax(remaining >= float(np.max(remaining)) - tolerance))
         ranked.append(pick)
         remaining[pick] = -np.inf
     return ranked

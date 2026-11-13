@@ -8,7 +8,7 @@
 repos:
   # Ruff for formatting and linting (replaces black, flake8, isort, etc.)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.8
+    rev: v0.17.5
     hooks:
       # Format code (auto-fix)
       - id: ruff-format
@@ -25,7 +25,7 @@ repos:
 
   # MyPy for type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.0
+    rev: v2.4.1
     hooks:
       - id: mypy
         name: mypy type check

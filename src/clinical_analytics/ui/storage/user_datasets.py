@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 # Common ID column names stored as text (prevents integer overflow, keeps schemas consistent)
 ID_COLUMN_NAMES = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
 
+# Cross-dataset dedup key: compute_dataset_version over the dataset as stored (its Parquet files),
+# so it matches for identical data whatever Polars version or upload path produced it. It sits
+# beside dataset_version, which is never rewritten (it is part of the persistence keys) and, for
+# uploads made before PR #83, hashes Parquet bytes that name the Polars version.
+CONTENT_HASH_KEY = "content_hash"
+CONTENT_HASH_SCHEME_KEY = "content_hash_scheme"
+
 
 class SchemaDriftPolicy(Enum):
     """Policy for handling schema drift during overwrites."""
@@ -1000,6 +1007,30 @@ def apply_schema_drift_policy(
         return False, message, warnings
 
 
+def compute_stored_content_hash(metadata: dict[str, Any]) -> str:
+    """
+    Content hash of a dataset from its own stored Parquet files, in ``metadata["tables"]`` order.
+
+    Args:
+        metadata: Dataset metadata with ``tables`` and ``parquet_paths``
+
+    Returns:
+        16-character hex hash (storage.versioning.compute_dataset_version)
+
+    Raises:
+        ValueError: If a table has no stored Parquet path
+        OSError, polars.exceptions.PolarsError: If a Parquet file is missing or unreadable
+    """
+    from clinical_analytics.storage.versioning import compute_dataset_version
+
+    parquet_paths: dict[str, str] = metadata.get("parquet_paths") or {}
+    table_names: list[str] = metadata.get("tables") or list(parquet_paths)
+    missing = [name for name in table_names if name not in parquet_paths]
+    if not table_names or missing:
+        raise ValueError(f"No stored Parquet for tables {missing or '(none listed)'}")
+    return compute_dataset_version([pl.scan_parquet(parquet_paths[name]).collect() for name in table_names])
+
+
 def assert_metadata_invariants(metadata: dict[str, Any]) -> None:
     """
     Assert critical metadata invariants.
@@ -1224,6 +1255,11 @@ def save_table_list(
         finally:
             datastore.close()
 
+        # 4.6. Dedup hash over what was just stored (the same input a backfill of an older upload reads)
+        from clinical_analytics.storage.versioning import CONTENT_HASH_SCHEME
+
+        content_hash = compute_stored_content_hash({"tables": table_names, "parquet_paths": parquet_paths})
+
         # 5. Infer schema for unified cohort (if not already present)
         if "inferred_schema" not in metadata:
             from clinical_analytics.core.schema_inference import SchemaInferenceEngine
@@ -1390,6 +1426,8 @@ def save_table_list(
             **metadata,
             "upload_id": upload_id,
             "dataset_version": dataset_version,  # Phase 1: Content-based version
+            CONTENT_HASH_KEY: content_hash,
+            CONTENT_HASH_SCHEME_KEY: CONTENT_HASH_SCHEME,
             "tables": table_names,
             "table_counts": {t["name"]: t["data"].height for t in tables},
             "row_count": unified_df.height,
@@ -1570,15 +1608,20 @@ class UserDatasetStorage:
         """
         return f"user_upload_{uuid.uuid4().hex}"
 
-    def find_datasets_by_content_hash(self, dataset_version: str) -> list[dict[str, Any]]:
+    def find_datasets_by_content_hash(
+        self, content_hash: str, exclude_upload_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """
-        Find all datasets with matching content hash (dataset_version).
+        Find all datasets whose stored content hash (CONTENT_HASH_KEY) matches.
 
         Used for cross-dataset deduplication to warn users about duplicate content
-        with different names.
+        with different names. A dataset stored before the content hash existed, or under an
+        older CONTENT_HASH_SCHEME, gets it backfilled from its own Parquet files first
+        (_ensure_content_hash), so old and new uploads of the same data match.
 
         Args:
-            dataset_version: Content hash to search for
+            content_hash: Hash from compute_stored_content_hash
+            exclude_upload_id: Upload to leave out (the one just saved)
 
         Returns:
             List of metadata dicts for matching datasets
@@ -1589,15 +1632,76 @@ class UserDatasetStorage:
             try:
                 with open(metadata_file) as f:
                     metadata = json.load(f)
-
-                # Check if dataset_version matches
-                if metadata.get("dataset_version") == dataset_version:
-                    matching_datasets.append(metadata)
-            except Exception as e:
-                logger.warning(f"Error reading metadata file {metadata_file}: {e}")
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning("Skipping unreadable metadata file %s: %s", metadata_file.name, type(e).__name__)
+                continue
+            if not isinstance(metadata, dict):
                 continue
 
+            metadata = self._ensure_content_hash(metadata_file, metadata)
+            if exclude_upload_id is not None and metadata.get("upload_id") == exclude_upload_id:
+                continue
+            if metadata.get(CONTENT_HASH_KEY) == content_hash:
+                matching_datasets.append(metadata)
+
         return matching_datasets
+
+    def _ensure_content_hash(self, metadata_path: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+        """
+        Backfill CONTENT_HASH_KEY for a dataset stored before it existed (or under an older scheme).
+
+        The hash is computed from the dataset's own stored Parquet and written next to the
+        untouched dataset_version. Idempotent: a dataset that already has a current-scheme hash
+        is returned as is. A dataset whose data cannot be read is logged and returned unchanged
+        (it cannot be matched, but it must not block an upload). Logs ids and error types only,
+        never row values.
+
+        Args:
+            metadata_path: The dataset's metadata JSON
+            metadata: Its parsed contents
+
+        Returns:
+            Metadata, with the content hash when it could be computed
+        """
+        from clinical_analytics.storage.versioning import CONTENT_HASH_SCHEME
+
+        if metadata.get(CONTENT_HASH_SCHEME_KEY) == CONTENT_HASH_SCHEME and metadata.get(CONTENT_HASH_KEY):
+            return metadata
+        upload_id = metadata.get("upload_id", metadata_path.stem)
+        if not metadata.get("parquet_paths"):
+            # Pre-Parquet legacy upload: nothing stored to hash until it is migrated and re-saved.
+            logger.debug("No stored Parquet to backfill content_hash for upload %s", upload_id)
+            return metadata
+
+        try:
+            content_hash = compute_stored_content_hash(metadata)
+        except (OSError, ValueError, pl.exceptions.PolarsError) as e:
+            logger.warning(
+                "content_hash backfill skipped for upload %s: stored data unreadable (%s)",
+                upload_id,
+                type(e).__name__,
+            )
+            return metadata
+
+        try:
+            with file_lock(metadata_path, timeout=10.0) as f:
+                f.seek(0)
+                current = json.load(f)
+                if current.get("parquet_paths") != metadata.get("parquet_paths"):
+                    # Overwritten since we read it: that save stored its own hash; keep it.
+                    return dict(current)
+                current[CONTENT_HASH_KEY] = content_hash
+                current[CONTENT_HASH_SCHEME_KEY] = CONTENT_HASH_SCHEME
+                f.seek(0)
+                f.truncate()
+                json.dump(current, f, indent=2)
+                f.flush()
+        except FileLockTimeoutError:
+            logger.warning("content_hash backfill for upload %s not saved: metadata lock timed out", upload_id)
+            return {**metadata, CONTENT_HASH_KEY: content_hash, CONTENT_HASH_SCHEME_KEY: CONTENT_HASH_SCHEME}
+
+        logger.info("Backfilled content_hash for upload %s", upload_id)
+        return dict(current)
 
     def save_upload(
         self,
@@ -1841,29 +1945,6 @@ class UserDatasetStorage:
                 for version_entry in existing_version_history:
                     version_entry["is_active"] = False
 
-            # Phase 1: Compute dataset_version early for cross-dataset deduplication
-            from clinical_analytics.storage.versioning import compute_dataset_version
-
-            table_dfs = [t["data"] for t in tables]
-            dataset_version = compute_dataset_version(table_dfs)
-            logger.info(f"Computed dataset_version: {dataset_version}")
-
-            # Phase 1: Check for duplicate content with different names (warn, don't block)
-            duplicate_datasets = self.find_datasets_by_content_hash(dataset_version)
-            duplicate_warning = None
-            if duplicate_datasets:
-                # Check if any duplicates have different names
-                different_name_duplicates = [d for d in duplicate_datasets if d.get("dataset_name") != dataset_name]
-                if different_name_duplicates:
-                    # Warn about duplicate content (UX polish - clinicians may intentionally duplicate)
-                    dup_names = [d.get("dataset_name") for d in different_name_duplicates if d.get("dataset_name")]
-                    duplicate_warning = (
-                        f"⚠️ Warning: This file has the same content as existing dataset(s): "
-                        f"{', '.join(str(n) for n in dup_names if n)}. "
-                        f"Upload will proceed, but you may want to use the existing dataset instead."
-                    )
-                    logger.info(f"Duplicate content detected: {dup_names}")
-
             # For single-table uploads, ensure patient_id exists (transparent to user)
             if len(tables) == 1:
                 from clinical_analytics.ui.components.variable_detector import VariableTypeDetector
@@ -2054,6 +2135,25 @@ class UserDatasetStorage:
 
             if not success:
                 return False, message, None
+
+            # Phase 1: Check for duplicate content with different names (warn, don't block). Runs on
+            # the stored content hash, after the save, so it compares data in the form every dataset
+            # is stored in (patient_id added, ID columns as text), old uploads included.
+            saved_hash = (self.get_upload_metadata(upload_id) or {}).get(CONTENT_HASH_KEY)
+            duplicate_warning = None
+            duplicate_datasets = (
+                self.find_datasets_by_content_hash(saved_hash, exclude_upload_id=upload_id) if saved_hash else []
+            )
+            different_name_duplicates = [d for d in duplicate_datasets if d.get("dataset_name") != dataset_name]
+            if different_name_duplicates:
+                # Warn about duplicate content (UX polish - clinicians may intentionally duplicate)
+                dup_names = [d.get("dataset_name") for d in different_name_duplicates if d.get("dataset_name")]
+                duplicate_warning = (
+                    f"⚠️ Warning: This file has the same content as existing dataset(s): "
+                    f"{', '.join(str(n) for n in dup_names if n)}. "
+                    f"Upload will proceed, but you may want to use the existing dataset instead."
+                )
+                logger.info("Duplicate content detected for upload %s: %d dataset(s)", upload_id, len(dup_names))
 
             if progress_cb:
                 try:

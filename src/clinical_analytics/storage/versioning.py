@@ -16,6 +16,12 @@ INVARIANT (Core Contract):
 
     Persistence key format: {upload_id}_{table_name}_{dataset_version}
 
+    The version is a hash of canonical Arrow IPC bytes (canonical_table_bytes), so it depends
+    on the data and its types only, not on the Polars version that computed it. Versions
+    computed before PR #83 hashed Parquet bytes, whose footer names the Polars version; those
+    stay as stored (they are part of persistence keys), and dedup uses the separately stored
+    content_hash instead (ui/storage/user_datasets.py).
+
 MVP scope: Basic content hashing with canonicalization.
 Deferred to Phase 5+: Perfect deduplication, re-upload detection, cross-user storage reuse.
 """
@@ -25,6 +31,12 @@ import io
 from typing import Any
 
 import polars as pl
+import polars.selectors as cs
+
+# Names the byte form compute_dataset_version hashes. Stored next to each dataset's
+# content_hash so a future change of the form is detected and backfilled, never compared
+# across forms. Bump it whenever canonical_table_bytes changes its output.
+CONTENT_HASH_SCHEME = "arrow-ipc-oldest-v1"
 
 
 def compute_dataset_version(tables: list[pl.DataFrame]) -> str:
@@ -54,11 +66,8 @@ def compute_dataset_version(tables: list[pl.DataFrame]) -> str:
         if isinstance(table, pl.LazyFrame):
             raise TypeError("compute_dataset_version requires materialized DataFrame, not LazyFrame")
 
-        # Canonicalize: Sort columns alphabetically, then sort rows by all columns
-        canonical = _canonicalize_dataframe(table)
-
-        # Compute table hash using Parquet serialization (handles all data types correctly)
-        table_hash = _hash_dataframe(canonical)
+        # Canonical Arrow IPC bytes: independent of row/column order and of the Polars version
+        table_hash = _hash_dataframe(table)
         table_hashes.append(table_hash)
 
     # Aggregate table hashes into single dataset version
@@ -72,9 +81,12 @@ def _canonicalize_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """
     Canonicalize DataFrame for content-based hashing.
 
-    Makes hash order-independent:
+    Makes hash order- and layout-independent:
+    - Categorical/Enum columns become String: their physical codes depend on dictionary
+      order (and on the string cache), and Polars tags them with its own field metadata
     - Sorts columns alphabetically
     - Sorts rows by all columns (lexicographic order)
+    - Rechunks into one chunk, so how the frame was built does not change the bytes
 
     Args:
         df: Input DataFrame
@@ -82,39 +94,47 @@ def _canonicalize_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     Returns:
         Canonicalized DataFrame (same data, deterministic order)
     """
-    # Sort columns alphabetically
+    df = df.with_columns(cs.categorical().cast(pl.String), cs.enum().cast(pl.String))
+
     sorted_cols = sorted(df.columns)
-    df = df.select(sorted_cols)
+    return df.select(sorted_cols).sort(by=sorted_cols).rechunk()
 
-    # Sort rows by all columns (stable, deterministic)
-    # Use sorted_cols to ensure lexicographic ordering
-    df = df.sort(by=sorted_cols)
 
-    return df
+def canonical_table_bytes(df: pl.DataFrame) -> bytes:
+    """
+    Serialize a DataFrame to the byte form that content hashes are taken over.
+
+    Arrow IPC stream at the oldest Polars compatibility level, uncompressed. Unlike Parquet,
+    whose footer records ``created_by: Polars (python) <version>``, the stream holds only the
+    schema (names and Arrow types) and the column buffers, which the Arrow spec fixes. The
+    oldest compat level keeps Polars from switching a type's Arrow encoding (e.g. string views)
+    in a later release. Verified equal under Polars 1.35.2 and 2.1.0 (PR #83);
+    tests/storage/test_versioning.py pins the value for the synthetic cohort.
+
+    Args:
+        df: Any DataFrame; it is canonicalized first
+
+    Returns:
+        Bytes to hash. Do not persist them: they are a hashing input, not a storage format.
+    """
+    buffer = io.BytesIO()
+    _canonicalize_dataframe(df).write_ipc_stream(
+        buffer, compression="uncompressed", compat_level=pl.CompatLevel.oldest()
+    )
+    return buffer.getvalue()
 
 
 def _hash_dataframe(df: pl.DataFrame) -> str:
     """
-    Compute content hash of DataFrame using Parquet serialization.
-
-    Parquet serialization correctly handles:
-    - All Polars data types (including nested types)
-    - Null values
-    - Schema information (column names + types)
+    Compute content hash of DataFrame from its canonical bytes.
 
     Args:
-        df: Canonicalized DataFrame
+        df: DataFrame (canonicalized inside canonical_table_bytes)
 
     Returns:
         16-character hex hash
     """
-    # Serialize to Parquet (in-memory)
-    buffer = io.BytesIO()
-    df.write_parquet(buffer)
-    parquet_bytes = buffer.getvalue()
-
-    # Hash Parquet bytes
-    return hashlib.sha256(parquet_bytes).hexdigest()[:16]
+    return hashlib.sha256(canonical_table_bytes(df)).hexdigest()[:16]
 
 
 def compute_table_fingerprint(df: pl.DataFrame, table_name: str) -> dict[str, Any]:
@@ -131,8 +151,7 @@ def compute_table_fingerprint(df: pl.DataFrame, table_name: str) -> dict[str, An
     Returns:
         Dict with name, row_count, fingerprint
     """
-    canonical = _canonicalize_dataframe(df)
-    fingerprint = _hash_dataframe(canonical)
+    fingerprint = _hash_dataframe(df)
 
     return {
         "name": table_name,

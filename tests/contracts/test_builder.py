@@ -47,6 +47,37 @@ def test_syntheticContract_committedFile_matchesBuilderOutput():
     assert committed == regenerated
 
 
+def _dataset_version(contract_yaml: str) -> str:
+    props = yaml.safe_load(contract_yaml)["customProperties"]
+    return next(p["value"] for p in props if p["property"] == "datasetVersion")
+
+
+def test_syntheticContract_polarsWritesDifferentMetadata_datasetVersionUnchanged(monkeypatch):
+    # Arrange: simulate a Polars release that writes different file metadata and loads the
+    # cohort with another physical layout. The old Parquet-byte hash moved on exactly this.
+    committed_version = _dataset_version(_SYNTHETIC_CONTRACT.read_text(encoding="utf-8"))
+    real_write_parquet = pl.DataFrame.write_parquet
+    real_read_csv = pl.read_csv
+
+    def write_parquet_other_release(self, file, **kwargs):
+        return real_write_parquet(self, file, **{**kwargs, "metadata": {"created_by": "Polars (python) 99.0.0"}})
+
+    def read_csv_other_layout(source, **kwargs):
+        frame = real_read_csv(source, **kwargs)
+        return pl.concat([frame.head(1), frame.tail(frame.height - 1)], rechunk=False).with_columns(
+            pl.col("site").cast(pl.Categorical)
+        )
+
+    monkeypatch.setattr(pl.DataFrame, "write_parquet", write_parquet_other_release)
+    monkeypatch.setattr(pl, "read_csv", read_csv_other_layout)
+
+    # Act
+    regenerated_version = _dataset_version(make_synthetic_contract.synthetic_contract_yaml())
+
+    # Assert
+    assert regenerated_version == committed_version
+
+
 def test_syntheticContract_bundledOdcsJsonSchema_validates():
     # Arrange
     schema = json.loads(OpenDataContractStandard.json_schema())

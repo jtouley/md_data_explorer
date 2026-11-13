@@ -3,6 +3,7 @@ Tests for user dataset storage.
 """
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import polars as pl
@@ -812,6 +813,112 @@ class TestCrossDatasetDeduplication:
         assert success2 is True
         # Should not warn about duplicates
         assert "duplicate" not in msg2.lower(), f"Should not warn: {msg2}"
+
+
+# A dataset_version from before PR #83: a hash of Parquet bytes, which embed the Polars version.
+_PRE_UPGRADE_DATASET_VERSION = "0f886a1353ff3b37"
+
+
+def _dedup_csv_bytes() -> bytes:
+    frame = pl.DataFrame(
+        {
+            "patient_id": [f"P{i:03d}" for i in range(150)],
+            "age": [20 + i for i in range(150)],
+            "outcome": [i % 2 for i in range(150)],
+        }
+    )
+    return frame.write_csv().encode("utf-8")
+
+
+def _make_pre_upgrade(storage, upload_id: str) -> None:
+    """Rewrite stored metadata the way an upload made before the content-hash change looks."""
+    from clinical_analytics.ui.storage.user_datasets import CONTENT_HASH_KEY, CONTENT_HASH_SCHEME_KEY
+
+    path = storage.metadata_dir / f"{upload_id}.json"
+    metadata = json.loads(path.read_text())
+    metadata.pop(CONTENT_HASH_KEY, None)
+    metadata.pop(CONTENT_HASH_SCHEME_KEY, None)
+    metadata["dataset_version"] = _PRE_UPGRADE_DATASET_VERSION
+    path.write_text(json.dumps(metadata))
+
+
+class TestContentHashBackfill:
+    """Uploads stored before the Polars-independent hash still dedup against new uploads."""
+
+    def test_saveUpload_sameContentAsPreUpgradeDataset_warnsDuplicate(self, upload_storage):
+        # Arrange
+        storage = upload_storage
+        csv_bytes = _dedup_csv_bytes()
+        ok, msg, old_id = storage.save_upload(csv_bytes, "old.csv", {"dataset_name": "old_dataset"})
+        assert ok, msg
+        _make_pre_upgrade(storage, old_id)
+
+        # Act
+        ok2, msg2, new_id = storage.save_upload(csv_bytes, "new.csv", {"dataset_name": "new_dataset"})
+
+        # Assert
+        assert ok2, msg2
+        assert "old_dataset" in msg2
+        assert "same content" in msg2
+
+    def test_findDatasetsByContentHash_preUpgradeDataset_backfillsHashFromStoredData(self, upload_storage):
+        # Arrange
+        from clinical_analytics.storage.versioning import CONTENT_HASH_SCHEME
+        from clinical_analytics.ui.storage.user_datasets import CONTENT_HASH_KEY, CONTENT_HASH_SCHEME_KEY
+
+        storage = upload_storage
+        ok, msg, old_id = storage.save_upload(_dedup_csv_bytes(), "old.csv", {"dataset_name": "old_dataset"})
+        assert ok, msg
+        expected_hash = storage.get_upload_metadata(old_id)[CONTENT_HASH_KEY]
+        _make_pre_upgrade(storage, old_id)
+
+        # Act
+        matches = storage.find_datasets_by_content_hash(expected_hash)
+
+        # Assert: found, and the hash is now stored next to the untouched legacy version
+        assert [m["upload_id"] for m in matches] == [old_id]
+        stored = storage.get_upload_metadata(old_id)
+        assert stored[CONTENT_HASH_KEY] == expected_hash
+        assert stored[CONTENT_HASH_SCHEME_KEY] == CONTENT_HASH_SCHEME
+        assert stored["dataset_version"] == _PRE_UPGRADE_DATASET_VERSION
+
+    def test_findDatasetsByContentHash_backfillRunTwice_metadataUnchanged(self, upload_storage):
+        # Arrange
+        storage = upload_storage
+        ok, msg, old_id = storage.save_upload(_dedup_csv_bytes(), "old.csv", {"dataset_name": "old_dataset"})
+        assert ok, msg
+        _make_pre_upgrade(storage, old_id)
+        storage.find_datasets_by_content_hash("0" * 16)
+        after_first = storage.get_upload_metadata(old_id)
+
+        # Act
+        storage.find_datasets_by_content_hash("0" * 16)
+
+        # Assert
+        assert storage.get_upload_metadata(old_id) == after_first
+
+    @pytest.mark.parametrize("parquet_state", ["missing", "corrupt"])
+    def test_findDatasetsByContentHash_storedDataUnreadable_skippedWithoutBackfill(self, upload_storage, parquet_state):
+        # Arrange
+        from clinical_analytics.ui.storage.user_datasets import CONTENT_HASH_KEY
+
+        storage = upload_storage
+        ok, msg, old_id = storage.save_upload(_dedup_csv_bytes(), "old.csv", {"dataset_name": "old_dataset"})
+        assert ok, msg
+        expected_hash = storage.get_upload_metadata(old_id)[CONTENT_HASH_KEY]
+        _make_pre_upgrade(storage, old_id)
+        for parquet_path in storage.get_upload_metadata(old_id)["parquet_paths"].values():
+            if parquet_state == "missing":
+                Path(parquet_path).unlink()
+            else:
+                Path(parquet_path).write_bytes(b"not parquet")
+
+        # Act
+        matches = storage.find_datasets_by_content_hash(expected_hash)
+
+        # Assert
+        assert matches == []
+        assert CONTENT_HASH_KEY not in storage.get_upload_metadata(old_id)
 
 
 class TestEventStructure:
