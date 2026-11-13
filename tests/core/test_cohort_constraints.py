@@ -165,6 +165,25 @@ def test_attachCohort_parsedIntent_keepsItsConfidence(confidence: float) -> None
         pytest.param(
             ["Type 1", "Type 2", "None"], "how many patients with type diabetes?", None, id="tie_binds_nothing"
         ),
+        # "count" prefix-matches "county" in every value: a longer value must not win the tie.
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "count by sex",
+            None,
+            id="count_is_not_the_longest_county",
+        ),
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "average rate by county",
+            None,
+            id="county_names_no_one_county",
+        ),
+        pytest.param(
+            ["Colorado", "Adams County", "Las Animas County", "El Paso County"],
+            "count in las animas county",
+            "Las Animas County",
+            id="named_county_still_binds",
+        ),
     ],
 )
 def test_peelCohort_storedValues_bindMostSpecificAndNeverATie(

@@ -567,7 +567,7 @@ def _value_hits(
             found = _label_at(text, tokens, label.text, label.pattern())
             if found is None:
                 continue
-            found_values.append((found[0], -len(label.tokens), found[1], label.value))
+            found_values.append((found[0], -_named_parts(found[0], label.tokens, tokens), found[1], label.value))
         if not found_values:
             continue
         found_values.sort(key=lambda item: (item[0], item[1]))
@@ -580,6 +580,25 @@ def _value_hits(
         hits.append((column, best[3], best[2]))
     hits.sort(key=lambda item: item[2])
     return hits
+
+
+def _named_parts(rank: int, label_tokens: frozenset[str], tokens: set[str]) -> int:
+    """How many words of a value the question names: all of them at rank 0 or 1 (the whole value,
+    or an inflection of it), else those a question word starts or stem-matches. Counting every
+    word of the value instead made the longest value win a tie the question never broke: "count"
+    prefix-matches "county" in each "X County", and "Las Animas County" (three words) was bound."""
+    if rank < 2:
+        return len(label_tokens)
+    from clinical_analytics.core.word_accounting import stem_match
+
+    return sum(
+        1
+        for part in label_tokens
+        if any(
+            len(token) >= 4 and not token.isdigit() and (part.startswith(token) or stem_match(token, part))
+            for token in tokens
+        )
+    )
 
 
 class _Label:
