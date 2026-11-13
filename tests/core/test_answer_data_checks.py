@@ -21,13 +21,16 @@ from clinical_analytics.contracts.declarations import (
     Declarations,
     FileDeclarationStore,
     GrainDeclaration,
+    LevelMapping,
     MemoryDeclarationStore,
 )
+from clinical_analytics.contracts.errors import ContractStoreError
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
+from clinical_analytics.core.answer_checks import grain_of
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
-from clinical_analytics.core.query_service import QueryService
+from clinical_analytics.core.query_service import CONFIRMATION_NOT_SAVED_REASON, QueryService
 from clinical_analytics.core.result_presentation import present_analysis
-from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+from clinical_analytics.core.schema_inference import SchemaInferenceEngine, patient_key_by_name
 
 N = 200
 IDS = [f"P{i:03d}" for i in range(N)]
@@ -241,9 +244,7 @@ class TestGrain:
         "plan",
         [
             pytest.param(QueryPlan(intent="COUNT", confidence=0.99), id="row_count"),
-            pytest.param(
-                QueryPlan(intent="COUNT", proportion_column="died", proportion_value=1, confidence=0.99), id="share"
-            ),
+            pytest.param(QueryPlan(intent="DESCRIBE", metric="age", confidence=0.99), id="mean"),
         ],
     )
     def test_ask_repeatedIdsUndeclared_heldWithOneSentence(self, make_semantic_layer: Any, plan: QueryPlan) -> None:
@@ -257,8 +258,8 @@ class TestGrain:
         assert result.requires_confirmation
         assert "Confirm that rows are visits" in result.failure_reason
 
-    def test_ask_rowsConfirmedAsVisits_countsPatientsAndSharesSayVisits(self, make_semantic_layer: Any) -> None:
-        # Arrange
+    def test_ask_rowsConfirmedAsVisits_countsPatientsAndVaryingShareRefused(self, make_semantic_layer: Any) -> None:
+        # Arrange: in dupids, P000-P029 have died=0 at one visit and died=1 at another
         store = MemoryDeclarationStore()
         service = _service(make_semantic_layer, dupids(), declarations=store)
         count = QueryPlan(intent="COUNT", confidence=0.99)
@@ -269,17 +270,22 @@ class TestGrain:
         explicit = _ask(service, QueryPlan(intent="COUNT", entity_key="patient_id", confidence=0.99))
         share = _ask(service, QueryPlan(intent="COUNT", proportion_column="died", proportion_value=1, confidence=0.99))
 
-        # Assert: both counts agree on 170 patients; the share is over visits and says so
+        # Assert: both counts agree on 170 patients; "25.0% of visits had died=1" is never shown
         assert _shown(confirmed) == "ANSWER Total count: 170 patients."
         assert _shown(explicit) == "ANSWER Total count: 170 patients."
-        assert _shown(share) == "ANSWER 25.0% of visits had died=1 (n=200 visits)."
-        assert store.load("probe").grain == GrainDeclaration(key="patient_id", rows=200, patients=170)
+        assert _shown(share).startswith("REFUSED died differs between rows of the same patient")
+        assert store.load("probe").grain == GrainDeclaration(
+            key="patient_id", rows=200, patients=170, dataset_version="probe"
+        )
 
     def test_ask_visitGrainGroupVariesWithinPatient_groupedCountRefused(self, make_semantic_layer: Any) -> None:
         # Arrange: patient P000 has visits at two sites
         frame = dupids().with_columns(pl.Series("site", [("North", "South", "West")[i % 3] for i in range(N)]))
         store = MemoryDeclarationStore()
-        store.save("probe", Declarations(grain=GrainDeclaration(key="patient_id", rows=200, patients=170)))
+        store.save(
+            "probe",
+            Declarations(grain=GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="probe")),
+        )
         service = _service(make_semantic_layer, frame, declarations=store)
 
         # Act
@@ -409,3 +415,343 @@ class TestDataHolds:
         shown = _shown(result)
         assert shown.startswith("REFUSED")
         assert "StringColumn" not in shown
+
+
+# --- Review round (PR #96): visit-grain shares, units, merges, holds, keys, declarations --------
+
+
+def visits_died() -> pl.DataFrame:
+    """200 visit rows of 170 patients; died is one value per patient: 40 of 170 patients died."""
+    ids = IDS[:170] + IDS[:30]
+    return pl.DataFrame(
+        {
+            "patient_id": ids,
+            "died": [1 if int(pid[1:]) < 40 else 0 for pid in ids],
+            "sex": ["1: Male" if int(pid[1:]) % 2 else "2: Female" for pid in ids],
+        }
+    )
+
+
+def _visit_service(make_semantic_layer: Any, frame: pl.DataFrame) -> QueryService:
+    store = MemoryDeclarationStore()
+    rows, patients = frame.height, frame.get_column("patient_id").n_unique()
+    store.save(
+        "probe",
+        Declarations(grain=GrainDeclaration(key="patient_id", rows=rows, patients=patients, dataset_version="probe")),
+    )
+    return _service(make_semantic_layer, frame, declarations=store)
+
+
+class TestVisitGrainUnits:
+    def test_ask_shareOfPatientLevelEventAtVisitGrain_countsPatients(self, make_semantic_layer: Any) -> None:
+        # Arrange: by visits the share would be 70 of 200 (35.0%); by patients it is 40 of 170
+        service = _visit_service(make_semantic_layer, visits_died())
+        plan = QueryPlan(intent="COUNT", proportion_column="died", proportion_value=1, confidence=0.99)
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert
+        assert _shown(result) == "ANSWER 23.5% of patients had died=1 (n=170 patients)."
+
+    def test_ask_describeCategoricalAtVisitGrain_countsDistinctPatientsPerLevel(self, make_semantic_layer: Any) -> None:
+        # Arrange: each sex is 85 patients; Male has 100 visits (the row count the old line showed)
+        service = _visit_service(make_semantic_layer, visits_died())
+
+        # Act
+        result = _ask(service, QueryPlan(intent="DESCRIBE", metric="sex", confidence=0.99))
+
+        # Assert
+        assert _shown(result) == "ANSWER Most common sex: 1: Male (85 patients)."
+
+    def test_ask_describeLevelVaryingWithinPatient_refused(self, make_semantic_layer: Any) -> None:
+        # Arrange: a site per visit, so a patient can have two sites
+        sites = [("1: North", "2: South", "3: West")[i % 3] for i in range(N)]
+        frame = visits_died().with_columns(pl.Series("site", sites))
+        service = _visit_service(make_semantic_layer, frame)
+
+        # Act
+        result = _ask(service, QueryPlan(intent="DESCRIBE", metric="site", confidence=0.99))
+
+        # Assert
+        assert _shown(result).startswith("REFUSED site differs between rows of the same patient")
+
+
+class TestConfirmedSpellingMerge:
+    @pytest.mark.parametrize(
+        ("plan", "expected"),
+        [
+            pytest.param(
+                QueryPlan(
+                    intent="COUNT",
+                    filters=[FilterSpec(column="sex", operator="==", value="M")],
+                    scope="filtered",
+                    confidence=0.99,
+                ),
+                "ANSWER Total count: 150 patients.",
+                id="filter_non_canonical",
+            ),
+            pytest.param(
+                QueryPlan(
+                    intent="COUNT",
+                    filters=[FilterSpec(column="sex", operator="IN", value=["male"])],
+                    scope="filtered",
+                    confidence=0.99,
+                ),
+                "ANSWER Total count: 150 patients.",
+                id="in_list_non_canonical",
+            ),
+            pytest.param(
+                QueryPlan(intent="COUNT", proportion_column="sex", proportion_value="M", confidence=0.99),
+                "ANSWER 75.0% of patients had sex = Male (n=200 patients).",
+                id="share_non_canonical",
+            ),
+        ],
+    )
+    def test_ask_nonCanonicalSpellingAfterConfirmation_countsMergedLevel(
+        self, make_semantic_layer: Any, plan: QueryPlan, expected: str
+    ) -> None:
+        # Arrange: Male 60, male 50, M 40 are one level once confirmed (150 males)
+        service = _service(make_semantic_layer, sex_frame())
+        grouped = QueryPlan(intent="COUNT", group_by="sex", confidence=0.99)
+        held = _ask(service, grouped)
+        _ask(service, grouped, confirm_hash=held.plan_hash)
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert
+        assert _shown(result) == expected
+
+    def test_applyLevels_distinctValueCache_keepsSpellingsBesideMergedLevel(self, make_semantic_layer: Any) -> None:
+        # Arrange: the NL engine resolved "M" before the merge
+        service = _service(make_semantic_layer, sex_frame())
+        assert "M" in service.nl_engine._distinct_values("sex")
+        grouped = QueryPlan(intent="COUNT", group_by="sex", confidence=0.99)
+        held = _ask(service, grouped)
+
+        # Act
+        _ask(service, grouped, confirm_hash=held.plan_hash)
+
+        # Assert: "M" still resolves to a value; the plan then reads it as Male
+        assert {"M", "Male", "male", "Female"} <= set(service.nl_engine._distinct_values("sex"))
+
+
+class TestSpellingHoldPrivacy:
+    @pytest.mark.parametrize(
+        ("levels", "expected"),
+        [
+            pytest.param(
+                {"Male": 100, "male": 47, "M": 3, "Female": 50},
+                "sex has values that may be one category written differently (Male, male, and some rare "
+                "spellings). Confirm to count them together as Male.",
+                id="three_row_M_not_named",
+            ),
+            pytest.param(
+                {"Male": 147, "M": 3, "Female": 50},
+                "sex has values that may be one category written differently (including some rare spellings). "
+                "Confirm to count them together as Male.",
+                id="one_large_spelling_generic",
+            ),
+            pytest.param(
+                {"m": 4, "M": 3, "Female": 193},
+                "sex has values that may be one category written differently (including some rare spellings). "
+                "Confirm to count them together as one category.",
+                id="all_small_no_label",
+            ),
+        ],
+    )
+    def test_ask_spellingHold_namesOnlySpellingsOfElevenOrMore(
+        self, make_semantic_layer: Any, levels: dict[str, int], expected: str
+    ) -> None:
+        # Arrange
+        sexes = [level for level, count in levels.items() for _ in range(count)]
+        frame = pl.DataFrame({"patient_id": IDS, "sex": sexes})
+        service = _service(make_semantic_layer, frame)
+
+        # Act
+        result = _ask(service, QueryPlan(intent="COUNT", group_by="sex", confidence=0.99))
+
+        # Assert
+        assert result.failure_reason == expected
+
+
+class TestPlausibilityOnNumericText:
+    def test_ask_textGlucoseWithNegative_heldLikeFloat(self, make_semantic_layer: Any) -> None:
+        # Arrange: on the PR head, text glucose -5 was answered with only a trailing note
+        glucose = [str(round(4.0 + (i % 50) / 10, 1)) for i in range(N)]
+        glucose[0], glucose[1] = "-5", "n/a"
+        service = _service(make_semantic_layer, pl.DataFrame({"patient_id": IDS, "glucose": glucose}))
+
+        # Act
+        result = _ask(service, QueryPlan(intent="DESCRIBE", metric="glucose", confidence=0.99))
+
+        # Assert
+        assert result.requires_confirmation
+        assert "glucose has some values outside 0–2656 mg/dL or mmol/L" in result.failure_reason
+
+    @pytest.mark.parametrize(
+        ("token", "expected"),
+        [
+            pytest.param("pending", "REFUSED crp has values like 'pending' that are not numbers", id="named_word"),
+            pytest.param("BLQ", "REFUSED crp has some values recorded as a limit", id="censoring_word"),
+        ],
+    )
+    def test_ask_labWithUnreadableToken_refusesNotFrequencyTable(
+        self, make_semantic_layer: Any, token: str, expected: str
+    ) -> None:
+        # Arrange: one entry in 200 used to turn crp into a categorical frequency table
+        crp = [str(10 + i % 30) for i in range(N - 1)] + [token]
+        service = _service(make_semantic_layer, pl.DataFrame({"patient_id": IDS, "crp": crp}))
+
+        # Act
+        result = _ask(service, QueryPlan(intent="DESCRIBE", metric="crp", confidence=0.99))
+
+        # Assert
+        assert _shown(result).startswith(expected)
+
+
+class TestDeclarationKeys:
+    def test_ask_noDatasetId_confirmationNeverPersisted(self, make_semantic_layer: Any) -> None:
+        # Arrange
+        store = MemoryDeclarationStore()
+        service = _service(make_semantic_layer, dupids(), declarations=store)
+        plan = QueryPlan(intent="COUNT", confidence=0.99)
+        _ask(service, plan)
+        held = service.ask("q")  # no dataset id
+
+        # Act
+        service.ask("q", confirmed=True, confirm_plan_hash=held.plan_hash)
+
+        # Assert: nothing under a shared fallback key
+        assert store._items == {}
+
+    def test_ask_sameShapeOtherVersion_heldAgain(self, make_semantic_layer: Any) -> None:
+        # Arrange: declared on version v1 with the same 200 rows and 170 IDs
+        store = MemoryDeclarationStore()
+        store.save(
+            "probe",
+            Declarations(grain=GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="v1")),
+        )
+        service = _service(make_semantic_layer, dupids(), declarations=store)
+
+        # Act
+        result = _ask(service, QueryPlan(intent="COUNT", confidence=0.99))
+
+        # Assert
+        assert result.requires_confirmation
+
+    def test_ask_declarationsUnwritable_confirmRefusesPlainly(self, make_semantic_layer: Any) -> None:
+        # Arrange
+        class BrokenStore(MemoryDeclarationStore):
+            def update(self, dataset_id: str, change: Any) -> Declarations:
+                raise ContractStoreError("Could not write declarations: Read-only file system")
+
+        service = _service(make_semantic_layer, dupids(), declarations=BrokenStore())
+        plan = QueryPlan(intent="COUNT", confidence=0.99)
+        held = _ask(service, plan)
+
+        # Act
+        result = _ask(service, plan, confirm_hash=held.plan_hash)
+
+        # Assert
+        assert _shown(result) == f"REFUSED {CONFIRMATION_NOT_SAVED_REASON}"
+
+
+def test_fileDeclarationStore_corruptFile_updateRaisesContractStoreError(tmp_path: Any) -> None:
+    # Arrange
+    store = FileDeclarationStore(tmp_path)
+    store.save("upload_abc", Declarations())
+    store._path("upload_abc").write_text("{not json", encoding="utf-8")
+
+    # Act / Assert
+    with pytest.raises(ContractStoreError):
+        store.update("upload_abc", lambda d: d)
+
+
+def test_fileDeclarationStore_writeFails_leavesNoTempFile(tmp_path: Any, monkeypatch: Any) -> None:
+    # Arrange
+    store = FileDeclarationStore(tmp_path)
+
+    def failing_fsync(fd: int) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("clinical_analytics.contracts.declarations.os.fsync", failing_fsync)
+
+    # Act
+    with pytest.raises(ContractStoreError):
+        store.save("upload_abc", Declarations())
+
+    # Assert
+    assert list(store._path("upload_abc").parent.glob(".tmp-*.part")) == []
+
+
+def test_fileDeclarationStore_concurrentUpdates_keepBoth(tmp_path: Any) -> None:
+    # Arrange: two stores (two QueryService instances) on one dataset
+    import threading
+
+    first, second = FileDeclarationStore(tmp_path), FileDeclarationStore(tmp_path)
+    grain = GrainDeclaration(key="patient_id", rows=200, patients=170, dataset_version="v1")
+    level = LevelMapping(column="sex", spellings=("M", "Male"), canonical="Male", dataset_version="v1")
+
+    # Act
+    threads = [
+        threading.Thread(target=first.update, args=("upload_abc", lambda d: d.with_grain(grain))),
+        threading.Thread(target=second.update, args=("upload_abc", lambda d: d.with_levels(level))),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # Assert
+    stored = first.load("upload_abc")
+    assert (stored.grain, stored.levels) == (grain, (level,))
+
+
+class TestPatientKeyRanking:
+    @pytest.mark.parametrize(
+        "columns",
+        [
+            pytest.param(["id", "patient_id"], id="generic_first"),
+            pytest.param(["patient_id", "id"], id="specific_first"),
+        ],
+    )
+    def test_patientKeyByName_bothOrders_specificNameWins(self, columns: list[str]) -> None:
+        # Act / Assert
+        assert patient_key_by_name(columns) == "patient_id"
+
+    @pytest.mark.parametrize(
+        "columns",
+        [
+            pytest.param(["study_id", "subject_id"], id="study_first"),
+            pytest.param(["subject_id", "study_id"], id="subject_first"),
+        ],
+    )
+    def test_patientKeyByName_singleValuedStudyId_neverChosen(self, columns: list[str]) -> None:
+        # Arrange: study_id is the trial's one code on every row
+        distinct = {"study_id": 1, "subject_id": 170}
+
+        # Act / Assert
+        assert patient_key_by_name(columns, distinct=distinct.__getitem__) == "subject_id"
+
+    def test_patientKeyByName_onlySingleValuedCandidate_none(self) -> None:
+        # Act / Assert
+        assert patient_key_by_name(["study_id"], distinct=lambda column: 1) is None
+
+    @pytest.mark.parametrize(
+        "order",
+        [pytest.param(("id", "patient_id"), id="row_number_first"), pytest.param(("patient_id", "id"), id="key_first")],
+    )
+    def test_ask_rowNumberIdBesideRepeatedPatientId_heldOnGrain(
+        self, make_semantic_layer: Any, order: tuple[str, str]
+    ) -> None:
+        # Arrange: "id" is a unique row number; patient_id repeats (visit rows)
+        frame = dupids().with_columns(pl.Series("id", list(range(N)))).select(*order, "age", "died")
+        layer = make_semantic_layer(data=frame, config_overrides={"column_mapping": {}})
+
+        # Act
+        grain = grain_of(layer)
+
+        # Assert
+        assert (grain.key, grain.repeated) == ("patient_id", True)

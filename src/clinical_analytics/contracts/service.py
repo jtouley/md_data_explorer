@@ -37,18 +37,31 @@ def id_column_from_metadata(metadata: dict[str, Any]) -> str | None:
     return next((col for col, role in mapping.items() if role == "patient_id"), None)
 
 
+def _flatten_columns(value: Any) -> list[str]:
+    """Column names in a mapping value: a name, a list of names, or a dict of them
+    (``time_variables: {"time_zero": "admit_date"}``), nested to any depth."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [column for item in value.values() for column in _flatten_columns(item)]
+    if isinstance(value, list | tuple):
+        return [column for item in value for column in _flatten_columns(item)]
+    return []
+
+
 def analysis_columns_from_metadata(metadata: dict[str, Any]) -> tuple[str, ...]:
     """Columns the upload names as analysis variables (outcomes, predictors, time and event).
 
-    Only these get the 5% missingness warning; other columns' missingness is listed, not flagged.
+    Only these get the 5% missingness warning at upload; other columns' missingness is listed, and
+    an answer notes it for any column the question uses (``core.answer_checks.report_notes``).
     """
     found: list[str] = []
     mapping = metadata.get("variable_mapping") or {}
     for role, value in mapping.items():
         if role == "patient_id":
             continue
-        for column in value if isinstance(value, list) else [value]:
-            if isinstance(column, str) and column not in found:
+        for column in _flatten_columns(value):
+            if column not in found:
                 found.append(column)
     outcomes = (metadata.get("inferred_schema") or {}).get("outcomes") or {}
     for column in outcomes if isinstance(outcomes, dict) else []:

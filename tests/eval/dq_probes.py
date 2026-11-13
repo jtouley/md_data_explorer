@@ -29,6 +29,8 @@ def dq_frames() -> dict[str, pl.DataFrame]:
         crp[i] = "N/A"
     text_crp = [str(round(1 + (i % 80) / 10, 1)) for i in range(N)]
     text_crp[0], text_crp[1], text_crp[2], text_crp[4] = "<5", "N/A", ".", ">100"
+    text_glucose = [str(round(4.0 + (i % 50) / 10, 1)) for i in range(N)]
+    text_glucose[0], text_glucose[1] = "-5", "n/a"
     return {
         "dupids": pl.DataFrame(
             {"patient_id": IDS[:170] + IDS[:30], "age": [40] * 170 + [80] * 30, "died": [0] * 150 + [1] * 50}
@@ -42,7 +44,35 @@ def dq_frames() -> dict[str, pl.DataFrame]:
         "sex": pl.DataFrame(
             {"patient_id": IDS, "sex": ["Male"] * 60 + ["male"] * 50 + ["M"] * 40 + ["Female"] * 50, "age": [50] * N}
         ),
+        # Glucose stored as text ("n/a" keeps the column text): -5 must be held as it is for floats.
+        "textglucose": pl.DataFrame({"patient_id": IDS, "glucose": text_glucose}),
+        # A spelling held by 3 rows: a hold that names it shows the label of a 3-patient level.
+        "sex_rare": pl.DataFrame(
+            {"patient_id": IDS, "sex": ["Male"] * 100 + ["male"] * 47 + ["M"] * 3 + ["Female"] * 50, "age": [50] * N}
+        ),
     }
+
+
+def fold_frame() -> pl.DataFrame:
+    """Arms of 200, 150 and 5 patients: the 5 is primary-suppressed, the 150 its complement."""
+    arms = ["A"] * 200 + ["B"] * 150 + ["C"] * 5
+    return pl.DataFrame({"patient_id": [f"Q{i:03d}" for i in range(len(arms))], "arm": arms})
+
+
+def visits_died_frame() -> pl.DataFrame:
+    """200 visit rows of 170 patients; died is the same at every visit of a patient (40 of 170)."""
+    ids = IDS[:170] + IDS[:30]
+    died = [1 if int(pid[1:]) < 40 else 0 for pid in ids]
+    return pl.DataFrame({"patient_id": ids, "died": died, "age": [50] * N})
+
+
+# (frame, question, confirm, expected presented answer): graded on what the app shows.
+# The 150-patient arm keeps its own row, hidden, never the "groups under 11" label; after rows are
+# confirmed as visits the share of a patient-level event counts patients (40 of 170).
+SHOWN_PROBES: tuple[tuple[str, str, bool, object], ...] = (
+    ("fold", "how many patients by arm?", False, {"A": 200, "B": "hidden", "Other (groups under 11)": "hidden"}),
+    ("visits_died", "what percentage of patients died?", True, "23.5% of patients had died=1 (n=170 patients)."),
+)
 
 
 # (probe, question): every one must be held or refused, never answered.
@@ -59,4 +89,6 @@ DQ_QUESTIONS: tuple[tuple[str, str], ...] = (
     ("allnull", "average hba1c"),
     ("sex", "how many patients by sex?"),
     ("sex", "how many male patients are there?"),
+    ("textglucose", "average glucose"),
+    ("sex_rare", "how many patients by sex?"),
 )

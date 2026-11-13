@@ -30,7 +30,7 @@ _STEP_COMPARISON = frozenset({"gt", "ge", "lt", "le"})
 def absent_value_reason(plan: Any, columns: list[str], values_for: Callable[[str], list[Any]]) -> str | None:
     """One sentence naming the first plan value its column cannot hold, or None."""
     known = set(columns)
-    for column, value, compared in _plan_values(plan):
+    for column, value, compared in plan_values(plan):
         if column not in known or value is None:
             continue
         stored = [item for item in values_for(column) if item is not None]
@@ -43,8 +43,9 @@ def absent_value_reason(plan: Any, columns: list[str], values_for: Callable[[str
     return None
 
 
-def _plan_values(plan: Any) -> Iterator[tuple[str, Any, bool]]:
-    """(column, value, is a comparison) for every value the plan limits on, in plan order."""
+def plan_values(plan: Any) -> Iterator[tuple[str, Any, bool]]:
+    """(column, value, is a comparison) for every value the plan limits on, in plan order: filters,
+    cohort steps, and the proportion and rate values. The one extraction every check uses."""
     for spec in getattr(plan, "filters", None) or []:
         if spec.operator in _FILTER_EQUALITY or spec.operator in _FILTER_COMPARISON:
             for value in spec.value if isinstance(spec.value, list) else [spec.value]:

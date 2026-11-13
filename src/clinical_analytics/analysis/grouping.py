@@ -8,7 +8,9 @@ another group's 0 pins those patients. So:
 * a column with more than ``MAX_GROUP_LEVELS`` levels is never a grouping or crosstab
   dimension (``grouping_problem`` gives the refusal sentence);
 * a level with 1 to ``SMALL_CELL_THRESHOLD - 1`` patients is never shown under its own label:
-  the presenter merges such levels into one ``OTHER_LABEL`` row or column.
+  the presenter merges such levels into one ``OTHER_LABEL`` row or column. A level hidden only
+  as their complement keeps its own label (its values hidden), unless that would pin a small
+  count; then every hidden level folds under ``HIDDEN_GROUPS_LABEL``, which claims no size.
 """
 
 from __future__ import annotations
@@ -28,6 +30,11 @@ from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 MAX_GROUP_LEVELS: Final = 20
 
 OTHER_LABEL: Final = f"Other (groups under {SMALL_CELL_THRESHOLD})"
+# The fold's label when it must also take a group hidden only as a complement (keeping that
+# group's own row would tell a reader it is not small and pin the small one): it then claims no
+# size, so a 150-patient group is never labelled "under 11".
+HIDDEN_GROUPS_LABEL: Final = "Other groups (hidden)"
+FOLD_LABELS: Final = frozenset({OTHER_LABEL, HIDDEN_GROUPS_LABEL})
 
 
 def too_many_levels_message(column: str, levels: int) -> str:

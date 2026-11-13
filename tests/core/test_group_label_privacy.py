@@ -14,7 +14,13 @@ import polars as pl
 import pytest
 
 from clinical_analytics.analysis.compute import compute_comparison_analysis
-from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS, OTHER_LABEL, grouping_problem, is_small_level
+from clinical_analytics.analysis.grouping import (
+    FOLD_LABELS,
+    MAX_GROUP_LEVELS,
+    OTHER_LABEL,
+    grouping_problem,
+    is_small_level,
+)
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
@@ -216,7 +222,7 @@ class TestSmallLevelLabelsMerged:
         labels = _labels(dict(shown))
         assert not any("Rare" in label for label in labels)
         assert "Rare" not in (shown["claim"] or "")
-        assert OTHER_LABEL in labels
+        assert set(labels) & FOLD_LABELS
 
     @pytest.mark.parametrize("analysis", SMALL_LEVEL_CASES)
     def test_presentAnalysis_largestLevel_keepsItsOwnLabel(self, analysis: dict[str, Any]) -> None:
@@ -280,7 +286,8 @@ def test_presentAnalysis_mergedOtherCells_stillSuppressSmallCounts() -> None:
     # Assert
     table = shown["table"]
     assert table is not None
-    other_cells = [row[OTHER_LABEL] for row in table["rows"]]
+    other_cells = [cell for row in table["rows"] for key, cell in row.items() if key in FOLD_LABELS]
+    assert other_cells
     assert all(not (isinstance(cell, int) and 0 < cell < 11) for cell in other_cells)
 
 

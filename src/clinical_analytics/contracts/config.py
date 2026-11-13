@@ -77,17 +77,30 @@ NO_ID_COLUMN_REASON: Final = "no ID column identified"
 PLAUSIBILITY_RANGE_PROPERTY: Final = "plausibilityRange"
 
 
-# One list of text that means "no value", used by the quality report (nullValues on text columns)
-# and by the analysis (numbers stored as text). Compared after strip() and lower(). "inf" is a
-# non-finite value, missing like NaN, not a category label.
+# One list of text that means "no value" in a column of numbers stored as text, used by the
+# quality report (nullValues on numeric-text columns only) and by the analysis. Compared after
+# strip() and lower(). "inf" is a non-finite value, missing like NaN. In a categorical column
+# these are real levels ("None" = no complications) and are never counted as missing.
+# Kept identical to the same constant in PR #95.
 MISSING_VALUE_TOKENS: Final[tuple[str, ...]] = (
     "", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?", "inf", "+inf", "-inf", "infinity",
-    "+infinity", "-infinity",
+    "+infinity", "-infinity", "#n/a",
 )  # fmt: skip
 
-# A value recorded as a limit ("<5", "> 100", "<=0.1"): censored, never the limit itself.
-CENSORED_TEXT_PATTERN: Final = r"^\s*(<=|>=|<|>|≤|≥)\s*-?\d[\d,]*(\.\d+)?\s*$"
+# A value recorded as a limit ("<5", "> 100", "<=0.1", "< 0.5 mg/L"): censored, never the limit
+# itself. An optional unit may follow the number.
+CENSORED_TEXT_PATTERN: Final = (
+    r"(?i)^\s*(<=|>=|<|>|≤|≥)\s*[+-]?(\d[\d,]*(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*([a-zµμ%][a-zµμ%/0-9.]*)?\s*$"
+)
 CENSORED_RULE_SUFFIX: Final = "_censored"
+# Lab words for "below the limit of quantification / not detected": censored like "<5".
+# Compared after strip() and lower(). Configurable: add a site's own words here.
+CENSORED_TEXT_WORDS: Final[tuple[str, ...]] = ("blq", "bql", "nd", "<lod", "<loq", "not detected")
+# A text column whose present values are at least this share plain numbers (the rest neither a
+# limit nor a missing token, e.g. "pending") is numbers with unreadable entries: answers refuse
+# and name the entries, never read the column as categories.
+NEAR_NUMERIC_SHARE: Final = 0.95
+NAMED_UNREADABLE_MAX: Final = 3
 
 # Missingness is flagged (above MISSINGNESS_WARN_PERCENT) only for the columns the upload names
 # as analysis variables. Every other column's missingness is measured and listed, not flagged:
@@ -132,6 +145,27 @@ class PlausibilityRange:
     maximum: float | None
     unit: str
     source: str
+    # Aliases too short to trust alone ("na", "k", "tc": also "not applicable", "treatment code"):
+    # they match only with a unit in the header ("Na (mmol/L)" -> "nammoll").
+    hinted_aliases: frozenset[str] = frozenset()
+    # Per-unit bounds chosen from the column's median (temperature: °C below 50, else °F). When
+    # the median is unknown the wide bound applies and its text says the unit is unknown.
+    by_median: tuple[UnitBounds, ...] = ()
+
+
+@dataclass(frozen=True)
+class UnitBounds:
+    """Bounds in one unit, used when the column's median is below ``median_below`` (None: any)."""
+
+    unit: str
+    minimum: float
+    maximum: float
+    median_below: float | None
+
+
+# Header suffixes that name a lab unit (normalised: lower case, letters and digits only).
+UNIT_HINTS: Final[tuple[str, ...]] = ("mmoll", "mmol", "mgdl", "mgl", "meql", "meq", "gdl", "gl", "umoll", "µmoll")
+WIDE_BOUND_NOTE: Final = "unit unknown, wide bound"
 
 
 PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
@@ -159,7 +193,8 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
     ),
     PlausibilityRange(
         variable="glucose",
-        aliases=frozenset({"glucose", "bloodglucose", "plasmaglucose", "fastingglucose", "glu", "fbg", "fpg"}),
+        aliases=frozenset({"glucose", "bloodglucose", "plasmaglucose", "fastingglucose", "fbg", "fpg"}),
+        hinted_aliases=frozenset({"glu"}),
         # Lower: a concentration cannot be negative. Upper: 2,656 mg/dL (147.6 mmol/L), the
         # highest blood glucose on record (Guinness World Records, 2008). Unit unknown: the
         # mg/dL bound, which also admits every mmol/L value.
@@ -174,13 +209,18 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
         aliases=frozenset({"temperature", "temp", "bodytemperature", "bodytemp"}),
         # Lower: survival from accidental hypothermia at 13.7 C (Gilbert M et al., Lancet
         # 2000;355:375-376); the bound sits below it. Upper: 47 C (116.6 F), above the highest
-        # recorded survived body temperature, 46.5 C (Guinness World Records, 1980). Unit
-        # unknown: from the C lower bound to the F upper bound.
+        # recorded survived body temperature, 46.5 C (Guinness World Records, 1980). The unit
+        # is read from the median (a body temperature in °C is below 50, in °F above): 98.6 in a
+        # °C column is flagged. Median unknown: the wide bound, from the °C lower to the °F upper.
         minimum=10,
         maximum=117,
         unit="°C or °F",
         source="Lower: Gilbert et al., Lancet 2000;355:375 (survival at 13.7 °C). "
         "Upper: Guinness World Records 1980 (46.5 °C survived), as °F",
+        by_median=(
+            UnitBounds(unit="°C", minimum=10, maximum=47, median_below=50),
+            UnitBounds(unit="°F", minimum=50, maximum=117, median_below=None),
+        ),
     ),
     PlausibilityRange(
         variable="spo2",
@@ -203,25 +243,26 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
         PlausibilityRange(
             variable=name,
             aliases=frozenset(aliases),
+            hinted_aliases=frozenset(hinted),
             minimum=0,
             maximum=None,
             unit="concentration (unit unknown)",
             source="Physical: a concentration cannot be negative. No upper bound is configured: "
             "the unit (mg/dL, mmol/L, µmol/L) changes it by up to ~90x",
         )
-        for name, aliases in (
-            ("ldl", {"ldl", "ldlc", "ldlcholesterol"}),
-            ("hdl", {"hdl", "hdlc", "hdlcholesterol"}),
-            ("cholesterol", {"cholesterol", "totalcholesterol", "tc", "chol"}),
-            ("triglycerides", {"triglycerides", "triglyceride", "tg", "trig"}),
-            ("creatinine", {"creatinine", "creat", "scr", "serumcreatinine"}),
-            ("crp", {"crp", "creactiveprotein", "hscrp"}),
-            ("sodium", {"sodium", "na"}),
-            ("potassium", {"potassium", "k"}),
-            ("haemoglobin", {"haemoglobin", "hemoglobin", "hb", "hgb"}),
-            ("albumin", {"albumin", "alb"}),
-            ("bilirubin", {"bilirubin", "bili", "tbili"}),
-            ("urea", {"urea", "bun"}),
+        for name, aliases, hinted in (
+            ("ldl", {"ldl", "ldlc", "ldlcholesterol"}, set()),
+            ("hdl", {"hdl", "hdlc", "hdlcholesterol"}, set()),
+            ("cholesterol", {"cholesterol", "totalcholesterol", "chol"}, {"tc"}),
+            ("triglycerides", {"triglycerides", "triglyceride", "trig"}, {"tg"}),
+            ("creatinine", {"creatinine", "creat", "scr", "serumcreatinine"}, set()),
+            ("crp", {"crp", "creactiveprotein", "hscrp"}, set()),
+            ("sodium", {"sodium"}, {"na"}),
+            ("potassium", {"potassium"}, {"k"}),
+            ("haemoglobin", {"haemoglobin", "hemoglobin", "hgb"}, {"hb"}),
+            ("albumin", {"albumin"}, {"alb"}),
+            ("bilirubin", {"bilirubin", "bili", "tbili"}, set()),
+            ("urea", {"urea", "bun"}, set()),
         )
     ),
 )

@@ -1996,12 +1996,88 @@ class UserDatasetStorage:
                 except _PROGRESS_CALLBACK_ERRORS:
                     pass  # Best-effort
 
+            variable_mapping = metadata.get("variable_mapping", {})
             schema_validation_result = None
             internal_validation_result = None  # Store for quality_warnings extraction
 
-            # DataQualityValidator was removed (DQ review L3): it needed a variable_mapping the API
-            # never sends, so it never ran. The data contract check (contracts.service.check_upload)
-            # is the upload's quality check; schema_validation stays None for old readers.
+            if variable_mapping:
+                # Check if the mapped columns exist and validate schema
+                from clinical_analytics.core.schema import (
+                    UnifiedCohort,
+                )
+
+                # Create a view with renamed columns to validate schema
+                cohort_df = df.copy()
+
+                # Apply column mapping if patient_id is mapped
+                patient_id_col = variable_mapping.get("patient_id")
+                outcome_col = variable_mapping.get("outcome")
+
+                # Rename columns to UnifiedCohort schema
+                rename_map = {}
+                if patient_id_col and patient_id_col in cohort_df.columns:
+                    rename_map[patient_id_col] = UnifiedCohort.PATIENT_ID
+
+                if outcome_col and outcome_col in cohort_df.columns:
+                    rename_map[outcome_col] = UnifiedCohort.OUTCOME
+
+                # Add time_zero if specified
+                time_vars = variable_mapping.get("time_variables", {})
+                if time_vars:
+                    time_zero_col = time_vars.get("time_zero")
+                    if time_zero_col and time_zero_col in cohort_df.columns:
+                        rename_map[time_zero_col] = UnifiedCohort.TIME_ZERO
+
+                if rename_map:
+                    # Drop pre-existing columns that already carry a canonical name but are not the
+                    # mapped source (e.g. a raw "outcome" column when the user maps outcome -> "mortality").
+                    # Renaming onto them would create duplicate column names and crash validation.
+                    colliding = [
+                        target
+                        for source, target in rename_map.items()
+                        if target != source and target in cohort_df.columns and target not in rename_map
+                    ]
+                    if colliding:
+                        logger.info(f"Dropping columns shadowed by canonical schema names for validation: {colliding}")
+                        cohort_df = cohort_df.drop(columns=colliding)
+                    cohort_df = cohort_df.rename(columns=rename_map)
+
+                    # Add outcome_label if not present
+                    if UnifiedCohort.OUTCOME_LABEL not in cohort_df.columns:
+                        cohort_df[UnifiedCohort.OUTCOME_LABEL] = outcome_col or "outcome"
+
+                    # Add time_zero placeholder if not present
+                    if UnifiedCohort.TIME_ZERO not in cohort_df.columns:
+                        from datetime import datetime as dt
+
+                        cohort_df[UnifiedCohort.TIME_ZERO] = dt.now()
+
+                    # Validate the cohort schema using complete validator
+                    from clinical_analytics.ui.components.data_validator import DataQualityValidator
+
+                    # Run complete validation (schema-first, granularity unknown by default)
+                    validation_result = DataQualityValidator.validate_complete(
+                        cohort_df,
+                        id_column=patient_id_col,
+                        outcome_column=outcome_col,
+                        granularity="unknown",  # Default granularity
+                    )
+
+                    # Store for later use (quality_warnings extraction)
+                    internal_validation_result = validation_result
+
+                    schema_validation_result = {
+                        "is_valid": validation_result["is_valid"],
+                        "errors": validation_result["schema_errors"],
+                    }
+
+                    if not validation_result["is_valid"]:
+                        # Log validation errors but don't fail - warn user
+                        logger.warning(
+                            "Schema validation warnings for upload %s: %s",
+                            upload_id,
+                            validation_result["schema_errors"],
+                        )
 
             # Extract validation_result from metadata BEFORE merging
             # This prevents duplication - canonical location is metadata["validation"]

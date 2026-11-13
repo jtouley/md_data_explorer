@@ -13,7 +13,7 @@ import polars as pl
 from scipy import stats
 
 from clinical_analytics.analysis.grouping import grouping_problem
-from clinical_analytics.analysis.numeric_text import AmbiguousNumberFormatError, parse_numeric_text
+from clinical_analytics.analysis.numeric_text import statistic_refusal
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
     MIN_CORRELATION_N,
@@ -22,10 +22,9 @@ from clinical_analytics.analysis.sample_floors import (
     MIN_SURVIVAL_N,
 )
 from clinical_analytics.analysis.variable_types import binary_event_level, classify_variable, code_key, is_numeric_dtype
-from clinical_analytics.contracts.builder import find_plausibility_range
+from clinical_analytics.contracts.builder import implausible_values
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import FilterSpec
-from clinical_analytics.core.result_presentation import line_count_text
 
 
 def _normalize_column_name(name: str) -> str:
@@ -166,40 +165,11 @@ def _constant_groups(groups: list[Any], group_data: list[np.ndarray]) -> list[st
     ]
 
 
-def _censored_message(column: str, count: int, line: list[int], what: str) -> str:
-    """Refusal for a statistic over a column with values recorded as a limit ("<5")."""
-    amount = line_count_text(count, line)
-    return (
-        f"{column} has {amount} values recorded as a limit, such as '<5', so its {what} would be wrong. "
-        f"Replace the limits with measured values in the file, or ask for a count by {column}."
-    )
-
-
 def _implausible(series: pl.Series) -> dict[str, Any] | None:
-    """Values outside the column's plausibility range (contracts.config), as a disclosure.
-
-    None when the column has no configured range or no value is outside it. ``count`` and
-    ``line_total`` (the values the statistic used) let the presenter apply the small-cell rule.
-    """
-    bounds = find_plausibility_range(series.name)
-    if bounds is None or not is_numeric_dtype(series.dtype):
-        return None
-    values = series.drop_nulls()
-    if values.dtype.is_float():
-        values = values.filter(values.is_finite())
-    outside = values < bounds.minimum
-    if bounds.maximum is not None:
-        outside = outside | (values > bounds.maximum)
-    count = int(outside.sum())
-    if count == 0:
-        return None
-    upper = "" if bounds.maximum is None else f"–{bounds.maximum:g}"
-    return {
-        "column": series.name,
-        "count": count,
-        "line_total": int(values.len()),
-        "bounds": f"{bounds.minimum:g}{upper} {bounds.unit}" if upper else f"below {bounds.minimum:g} {bounds.unit}",
-    }
+    """Values outside the column's plausibility range, as the presenter's disclosure (one check
+    for every path: ``contracts.builder.implausible_values``)."""
+    found = implausible_values(series)
+    return found.disclosure() if found else None
 
 
 def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> dict[str, Any]:
@@ -272,30 +242,12 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             row_count=row_count,
         )
 
-        if series.null_count() == row_count:
-            return {
-                "type": "descriptive",
-                "error": f"Every value of {col} is missing, so there is nothing to describe.",
-            }
-        # Numbers stored as text: one rule for every path (analysis.numeric_text).
-        numeric_series = None
-        if series.dtype == pl.Utf8:
-            try:
-                parsed = parse_numeric_text(series)
-            except AmbiguousNumberFormatError as exc:
-                return {"type": "descriptive", "error": str(exc)}
-            if parsed is not None and parsed.n_censored:
-                present = row_count - series.null_count() - parsed.n_missing_tokens
-                line = [parsed.n_censored, present - parsed.n_censored]
-                return {"type": "descriptive", "error": _censored_message(col, parsed.n_censored, line, "mean")}
-            if parsed is not None:
-                if parsed.values.null_count() == row_count:
-                    return {
-                        "type": "descriptive",
-                        "error": f"Every value of {col} is missing, so there is nothing to describe.",
-                    }
-                numeric_series = parsed.values
-            logger.debug("compute_descriptive_conversion", col=col, conversion_success=numeric_series is not None)
+        # Numbers stored as text and empty columns: one rule and wording for every path.
+        refusal, parsed = statistic_refusal(series, "describe")
+        if refusal:
+            return {"type": "descriptive", "error": refusal}
+        numeric_series = parsed.values if parsed is not None else None
+        logger.debug("compute_descriptive_conversion", col=col, conversion_success=numeric_series is not None)
 
         # Use converted series if successful, otherwise original
         analysis_series = numeric_series if numeric_series is not None else series
@@ -359,7 +311,8 @@ def compute_descriptive_analysis(df: pl.DataFrame, context: AnalysisContext) -> 
             result["unique_count"] = series.n_unique()
 
             # Headline for categorical
-            top_value = value_counts[0] if len(value_counts) > 0 else None
+            # A row as a dict: a one-row DataFrame has no truth value (it raised here before).
+            top_value = value_counts.row(0, named=True) if value_counts.height > 0 else None
             if top_value:
                 top_val_name = top_value[col]
                 top_val_count = top_value["count"]
@@ -485,17 +438,9 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
 
     outcome_series = analysis_df[outcome_col]
     if outcome_series.dtype == pl.Utf8:
-        try:
-            parsed = parse_numeric_text(outcome_series)
-        except AmbiguousNumberFormatError as exc:
-            return {"type": "comparison", "error": str(exc)}
-        if parsed is not None and parsed.n_censored:
-            present = outcome_series.len() - parsed.n_missing_tokens
-            line = [parsed.n_censored, present - parsed.n_censored]
-            return {
-                "type": "comparison",
-                "error": _censored_message(outcome_col, parsed.n_censored, line, "comparison"),
-            }
+        refusal, parsed = statistic_refusal(outcome_series, "compare")
+        if refusal:
+            return {"type": "comparison", "error": refusal}
         converted = parsed.values if parsed is not None else None
         if converted is not None:
             # Missing-value tokens ("n/a", ".") became null: exclude and count them.

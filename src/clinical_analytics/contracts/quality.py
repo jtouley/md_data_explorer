@@ -159,6 +159,11 @@ def _not_run(base: dict[str, Any], reason: str) -> CompiledCheck:
     return CompiledCheck(**base, expr=None, not_run_reason=reason)
 
 
+def _is_numeric_text_property(prop: SchemaProperty) -> bool:
+    """The builder marks a column of numbers stored as text with a censored-values rule."""
+    return any((q.metric or "") == CENSORED_METRIC for q in prop.quality or [])
+
+
 def _compile_property_rule(rule: DataQuality, prop: SchemaProperty, schema: pl.Schema, index: int) -> CompiledCheck:
     column = prop.physicalName or prop.name
     metric = rule.metric or rule.rule or rule.type or "unknown"
@@ -177,11 +182,12 @@ def _compile_property_rule(rule: DataQuality, prop: SchemaProperty, schema: pl.S
         return _not_run(base, "column not in the data")
     col = pl.col(column)
     if metric == "nullValues":
-        # The same missing-value tokens the analysis treats as missing ("n/a", "."), so the
-        # report and the answers agree on what is missing (contracts.config.MISSING_VALUE_TOKENS).
+        # In a column of numbers stored as text (the contract gave it a censored rule), the
+        # missing-value tokens the analysis treats as missing ("n/a", ".") count as missing, so
+        # the report and the answers agree. In a categorical column "None" is a real level.
         if schema[column].is_float():
             missing = (col.is_null() | col.is_nan()).sum()
-        elif schema[column] == pl.String:
+        elif schema[column] == pl.String and _is_numeric_text_property(prop):
             missing = (col.is_null() | missing_token_expr(column)).sum()
         else:
             missing = col.null_count()
@@ -527,8 +533,11 @@ def _summary(results: list[QualityCheckResult]) -> list[str]:
     notable = [
         r
         for r in results
-        if r.status in ("failed", "warning", "review", "not_run")
-        or (r.metric == "nullValues" and r.count not in (0, None))
+        if not _deferred(r)
+        and (
+            r.status in ("failed", "warning", "review", "not_run")
+            or (r.metric == "nullValues" and r.count not in (0, None))
+        )
     ]
     notable.sort(key=lambda r: order[r.status])
     lines = [r.message for r in notable]
@@ -542,14 +551,41 @@ def _custom_value(contract: OpenDataContractStandard, prop: str) -> Any:
     return next((c.value for c in contract.customProperties or [] if c.property == prop), None)
 
 
-def type_results(contract: OpenDataContractStandard, schema: pl.Schema) -> list[QualityCheckResult]:
+def type_results(
+    contract: OpenDataContractStandard, schema: pl.Schema, data_version: str | None = None
+) -> list[QualityCheckResult]:
     """Type conformance: each property's ``logicalType`` against the data's type (schema only,
     no counts). A column the contract expects as a number but the data holds as text is how a
-    range check stops running without anyone noticing (DQ M5)."""
+    range check stops running without anyone noticing (DQ M5).
+
+    The check has evidence only when the data is another version than the one the contract was
+    built from (version N+1 against N's contract). Checked against its own version, the contract's
+    types were read off this data, so the check cannot fail: it is reported as not run, never as
+    a pass. ``data_version`` None: the data is the contract's own version.
+    """
     from clinical_analytics.contracts.builder import logical_type
 
     if not contract.schema_:
         return []
+    built_on = str(_custom_value(contract, "datasetVersion") or "")
+    if data_version is None or data_version == built_on:
+        # One line, not one per column: nothing was compared, so nothing passed.
+        return [
+            QualityCheckResult(
+                id=f"table{config.TYPE_RULE_SUFFIX}",
+                column=None,
+                metric=TYPE_METRIC,
+                dimension="conformity",
+                severity="error",
+                status="not_run",
+                count=None,
+                percent=None,
+                message=(
+                    "Column types: not checked (the contract was built from this version; they are "
+                    "checked when a new version is uploaded)"
+                ),
+            )
+        ]
     results = []
     for prop in contract.schema_[0].properties or []:
         column = prop.physicalName or prop.name
@@ -587,6 +623,16 @@ def type_results(contract: OpenDataContractStandard, schema: pl.Schema) -> list[
     return results
 
 
+def _is_id_property(prop: SchemaProperty) -> bool:
+    """The identifier column: the builder marks it critical and required (also for tiny tables,
+    where it states neither uniqueness nor a primary key)."""
+    return bool(prop.primaryKey or prop.criticalDataElement or prop.required)
+
+
+def _is_restricted(prop: SchemaProperty) -> bool:
+    return prop.classification == "restricted" or "phi" in (prop.tags or [])
+
+
 def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) -> list[QualityCheckResult]:
     """Text columns whose levels include spellings of one category (Male / male / M).
 
@@ -599,11 +645,11 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     if not contract.schema_:
         return []
     schema = lf.collect_schema()
-    ids = {
-        p.physicalName or p.name for p in contract.schema_[0].properties or [] if p.primaryKey or p.unique is not None
-    }
     props = {p.physicalName or p.name: p for p in contract.schema_[0].properties or []}
-    text = [c for c, dtype in schema.items() if dtype == pl.String and c not in ids and c in props]
+    # Never scanned: the ID column (marked by role, whatever its uniqueness) and restricted/PHI
+    # columns, whose values the report must not echo (a clinician or ward name).
+    skipped = {column for column, p in props.items() if _is_id_property(p) or _is_restricted(p)}
+    text = [c for c, dtype in schema.items() if dtype == pl.String and c not in skipped and c in props]
     if not text:
         return []
     levels = lf.select([pl.col(c).drop_nulls().value_counts().implode().alias(c) for c in text]).collect()
@@ -635,12 +681,21 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     return results
 
 
-def run_quality(lf: pl.LazyFrame, contract: OpenDataContractStandard, run_at: datetime | None = None) -> QualityReport:
+def run_quality(
+    lf: pl.LazyFrame,
+    contract: OpenDataContractStandard,
+    run_at: datetime | None = None,
+    data_version: str | None = None,
+) -> QualityReport:
     """Check ``lf`` against ``contract`` and build the suppressed report: the counted checks in one
-    collect, then type conformance (schema only) and category spellings (one more collect)."""
+    collect, then type conformance (schema only) and category spellings (one more collect).
+
+    ``data_version``: the version ``lf`` holds, when it is not the contract's own (type checks
+    run only then; see ``type_results``).
+    """
     schema = lf.collect_schema()
     checks = compile_contract(contract, schema)
-    extra = [*type_results(contract, schema), *level_variant_results(lf, contract)]
+    extra = [*type_results(contract, schema, data_version), *level_variant_results(lf, contract)]
     report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at, extra=extra)
     logger.info(
         "quality_run_completed",
@@ -688,4 +743,13 @@ def report_from_counts(
 
 def _tiny_summary(rows: int, results: list[QualityCheckResult]) -> list[str]:
     """One fixed line for a tiny table, plus checks that could not run (schema, not values)."""
-    return [f"{rows} rows: {config.TOO_FEW_ROWS_NOTE}", *(r.message for r in results if r.status == "not_run")]
+    return [
+        f"{rows} rows: {config.TOO_FEW_ROWS_NOTE}",
+        *(r.message for r in results if r.status == "not_run" and not _deferred(r)),
+    ]
+
+
+def _deferred(result: QualityCheckResult) -> bool:
+    """The type check of a contract's own version: not run (and counted so), but not a finding
+    for the upload notice, since it can only run on the next version."""
+    return result.metric == TYPE_METRIC and result.status == "not_run" and result.column is None

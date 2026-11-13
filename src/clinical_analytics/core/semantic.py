@@ -455,6 +455,10 @@ class SemanticLayer:
     DRY Principle: All datasets use this same class, just with different configs.
     """
 
+    # The patient key once the doctor has declared rows to be visits (set by QueryService):
+    # COUNTs, shares and frequency tables then count distinct patients, not rows.
+    count_entity_key: str | None = None
+
     def __init__(
         self,
         dataset_name: str,
@@ -501,6 +505,7 @@ class SemanticLayer:
         # Base-view counts, each counted once (the source does not change): rows under None,
         # distinct values of an entity key under its column name.
         self._base_counts: dict[str | None, int] = {}
+        self.count_entity_key = None
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -2165,10 +2170,13 @@ class SemanticLayer:
         # Format based on intent
         # Phase 3.3: Pass chart_spec to formatting methods
         # Shares and grouped statistics are already the answer: format the SQL frame as it is.
+        # Shares count patients once rows are declared visits (_share_sql), so the filtered-out
+        # count is in patients too.
         if query_plan.proportion_column:
-            formatted = _format_share_result(result_df_pl, query_plan, None, self.get_base_row_count())
+            formatted = _format_share_result(result_df_pl, query_plan, None, self._base_count(self.count_entity_key))
         elif query_plan.rate_column and query_plan.group_by:
-            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, self.get_base_row_count())
+            share_base = self._base_count(self.count_entity_key)
+            formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, share_base)
         elif query_plan.intent == "DESCRIBE" and query_plan.metric and query_plan.group_by:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
         elif query_plan.intent == "COUNT":
@@ -2203,10 +2211,35 @@ class SemanticLayer:
                 formatted["n_filtered_out"] = (
                     self.get_base_row_count() - base_rows.height + formatted.get("n_filtered_out", 0)
                 )
+                entity = self.count_entity_key
+                if entity and formatted.get("value_counts") is not None and not formatted.get("is_numeric"):
+                    formatted = self._entity_frequency(formatted, base_rows, entity)
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
         return formatted
+
+    def _entity_frequency(self, formatted: dict[str, Any], rows: pl.DataFrame, entity: str) -> dict[str, Any]:
+        """A frequency table that counts patients per level once rows are visits (distinct
+        ``entity`` per level), refused when a patient's level differs between visits: the levels
+        would then not add up to the patients."""
+        from clinical_analytics.core.answer_checks import varies_refusal
+
+        column = formatted.get("focused_variable")
+        if not column or column not in rows.columns or entity not in rows.columns:
+            return formatted
+        pairs = rows.select(entity, column).filter(pl.col(entity).is_not_null()).unique()
+        patients = pairs.get_column(entity).n_unique()
+        if pairs.height != patients:
+            return {"type": "descriptive", "error": varies_refusal(column, "level")}
+        counts = pairs.group_by(column).agg(pl.len().alias("count")).sort(["count", column], descending=[True, False])
+        return {
+            **formatted,
+            "value_counts": counts.head(10).to_dicts(),
+            "row_count": patients,
+            "unique_count": counts.height,
+            "n_filtered_out": self._base_count(entity) - patients,
+        }
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
         """Format COUNT result DataFrame to result dict format."""
@@ -2266,7 +2299,7 @@ class SemanticLayer:
     def _count_entity_key(self, plan: "QueryPlan") -> str | None:
         """What a COUNT counts: the plan's entity key, else the patient key once the doctor has
         declared rows to be visits (``count_entity_key``, set by QueryService), else rows."""
-        return plan.entity_key or getattr(self, "count_entity_key", None)
+        return plan.entity_key or self.count_entity_key
 
     def _check_plan_completeness(self, plan: "QueryPlan") -> tuple[bool, str]:
         """Check if QueryPlan has all required fields for its intent."""
@@ -2671,11 +2704,21 @@ class SemanticLayer:
         """
         quoted = _quote_ident(column)
         literal = _sql_literal(self._equality_value(view, column, value))
-        events = f"count(*) FILTER (WHERE {quoted} = {literal})"
         share = "rate" if group else "proportion"
+        entity = self.count_entity_key
+        if entity:
+            # Rows are visits: count patients (distinct key), as the COUNT answer does. The query
+            # service refuses first when the value differs between a patient's visits.
+            key = _quote_ident(entity)
+            events = f"count(DISTINCT {key}) FILTER (WHERE {quoted} = {literal})"
+            n = f"count(DISTINCT {key}) FILTER (WHERE {quoted} IS NOT NULL)"
+            # A missing key is one more distinct value, as SemanticLayer._base_count counts it.
+            n_rows = f"(count(DISTINCT {key}) + max(CASE WHEN {key} IS NULL THEN 1 ELSE 0 END))"
+        else:
+            events, n, n_rows = f"count(*) FILTER (WHERE {quoted} = {literal})", f"count({quoted})", "count(*)"
         select = (
-            f"{events} AS events, count({quoted}) AS n, count(*) AS n_rows, "
-            f"CASE WHEN count({quoted}) = 0 THEN NULL ELSE {events} / count({quoted}) END AS {share}"
+            f"{events} AS events, {n} AS n, {n_rows} AS n_rows, "
+            f"CASE WHEN {n} = 0 THEN NULL ELSE {events} / {n} END AS {share}"
         )
         if group is None:
             return f"SELECT {select} FROM _cohort_in"

@@ -9,7 +9,9 @@ import pytest
 import yaml
 
 from clinical_analytics.contracts import config
+from clinical_analytics.contracts.builder import find_plausibility_range, implausible_values, range_for
 from clinical_analytics.contracts.quality import run_quality
+from clinical_analytics.contracts.service import analysis_columns_from_metadata
 
 N = 200
 IDS = [f"P{i:03d}" for i in range(N)]
@@ -56,8 +58,8 @@ def test_runQuality_contractExpectsNumberDataIsText_typeCheckFails(make_contract
     built_on = pl.DataFrame({"patient_id": IDS, "age": [40] * N})
     checked = pl.DataFrame({"patient_id": IDS, "age": ["40"] * N})
 
-    # Act
-    report = run_quality(checked.lazy(), make_contract(built_on))
+    # Act: version v2 checked against v1's contract
+    report = run_quality(checked.lazy(), make_contract(built_on), data_version="v2")
 
     # Assert
     check = _checks(report)["age_type"]
@@ -172,3 +174,133 @@ def test_plausibilityRanges_everyRange_hasUnitAndSource(column: str) -> None:
     # Act / Assert
     assert bounds.unit and bounds.source
     assert bounds.maximum is None or bounds.maximum > bounds.minimum
+
+
+# --- Review round (PR #96) --------------------------------------------------------------------
+
+
+def test_runQuality_contractBuiltFromSameVersion_typeCheckNotRunNeverPassed(make_contract: Any) -> None:
+    # Arrange: on the PR head every type check "passed" on the data the contract was read from
+    df = pl.DataFrame({"patient_id": IDS, "age": [40] * N, "crp": ["<5"] * 10 + ["12"] * (N - 10)})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    types = [c for c in report.checks if c.metric == "logicalType"]
+    assert types and {c.status for c in types} == {"not_run"}
+    assert "built from this version" in types[0].message
+
+
+@pytest.mark.parametrize(
+    ("values", "missing"),
+    [
+        pytest.param(["None"] * 140 + ["Diabetes"] * 60, 0, id="categorical_none_is_a_level"),
+        pytest.param(["-"] * 30 + ["Smoker"] * 170, 0, id="categorical_dash_is_a_level"),
+        pytest.param(["#N/A"] * 20 + [str(10 + i % 9) for i in range(180)], 20, id="numeric_text_hash_na_missing"),
+        pytest.param(["None"] * 20 + [str(10 + i % 9) for i in range(180)], 20, id="numeric_text_none_missing"),
+    ],
+)
+def test_runQuality_missingTokens_onlyForNumericText(make_contract: Any, values: list[str], missing: int) -> None:
+    # Arrange
+    df = pl.DataFrame({"patient_id": IDS, "x": values})
+
+    # Act
+    check = _checks(run_quality(df.lazy(), make_contract(df, analysis_columns=("x",))))["x_missing"]
+
+    # Assert
+    assert check.count == missing
+
+
+def test_missingValueTokens_includeHashNa() -> None:
+    # Act / Assert: the same tuple as PR #95's constant
+    assert config.MISSING_VALUE_TOKENS[-1] == "#n/a"
+    assert len(set(config.MISSING_VALUE_TOKENS)) == len(config.MISSING_VALUE_TOKENS)
+
+
+def test_runQuality_restrictedColumn_spellingsNotScannedOrEchoed(make_contract: Any) -> None:
+    # Arrange: a clinician name column marked restricted (PHI)
+    df = pl.DataFrame({"patient_id": IDS, "clinician": ["Dr Smith"] * 100 + ["dr smith"] * 100})
+    contract = make_contract(df)
+    prop = next(p for p in contract.schema_[0].properties if p.name == "clinician")
+    prop.classification, prop.tags = "restricted", ["phi"]
+
+    # Act
+    report = run_quality(df.lazy(), contract)
+
+    # Assert
+    assert "clinician_spellings" not in _checks(report)
+    assert not any("Smith" in c.message for c in report.checks)
+
+
+def test_runQuality_tinyTableIdColumn_notScannedAsCategory(make_contract: Any) -> None:
+    # Arrange: 12 rows, so the builder states neither unique nor primaryKey for the ID
+    df = pl.DataFrame({"patient_id": ["M"] * 6 + ["m"] * 6, "age": [40] * 12})
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    assert "patient_id_spellings" not in _checks(report)
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        pytest.param(
+            {"variable_mapping": {"outcome": "died", "time_variables": {"time_zero": "admit_date", "event": "dod"}}},
+            ("died", "admit_date", "dod"),
+            id="time_variables_dict_flattened",
+        ),
+        pytest.param({"variable_mapping": {"predictors": ["age", ["bmi"]]}}, ("age", "bmi"), id="nested_list"),
+        pytest.param({"variable_mapping": {"patient_id": "pid"}}, (), id="id_not_analysis"),
+        pytest.param({}, (), id="empty"),
+    ],
+)
+def test_analysisColumnsFromMetadata_nestedValues_flattened(
+    metadata: dict[str, Any], expected: tuple[str, ...]
+) -> None:
+    # Act / Assert
+    assert analysis_columns_from_metadata(metadata) == expected
+
+
+@pytest.mark.parametrize(
+    ("column", "values", "expected"),
+    [
+        pytest.param("temperature", [37.0] * 199 + [98.6], "10–47 °C", id="celsius_by_median_flags_fahrenheit_value"),
+        pytest.param("temperature", [98.6] * 199 + [20.0], "50–117 °F", id="fahrenheit_by_median_flags_20"),
+    ],
+)
+def test_implausibleValues_temperature_unitFromMedian(column: str, values: list[float], expected: str) -> None:
+    # Act
+    found = implausible_values(pl.Series(column, values))
+
+    # Assert
+    assert found is not None and (found.count, found.bounds) == (1, expected)
+
+
+def test_rangeFor_medianUnknown_saysWideBound() -> None:
+    # Act
+    bounds = range_for("temperature", None)
+
+    # Assert
+    assert bounds is not None and bounds.unit == "°C or °F (unit unknown, wide bound)"
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [
+        pytest.param("na", None, id="bare_na_is_not_sodium"),
+        pytest.param("k", None, id="bare_k_is_not_potassium"),
+        pytest.param("tc", None, id="treatment_code_is_not_cholesterol"),
+        pytest.param("Na (mmol/L)", "sodium", id="na_with_unit_is_sodium"),
+        pytest.param("K mmol/L", "potassium", id="k_with_unit_is_potassium"),
+        pytest.param("sodium", "sodium", id="full_name"),
+    ],
+)
+def test_findPlausibilityRange_shortAlias_needsUnitHint(column: str, expected: str | None) -> None:
+    # Act
+    found = find_plausibility_range(column)
+
+    # Assert
+    assert (found.variable if found else None) == expected

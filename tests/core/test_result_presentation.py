@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from clinical_analytics.analysis.grouping import OTHER_LABEL
+from clinical_analytics.analysis.grouping import HIDDEN_GROUPS_LABEL
 from clinical_analytics.core import result_presentation
 from clinical_analytics.core.result_presentation import (
     SECONDARY_SUPPRESSED,
@@ -342,9 +342,10 @@ class TestPresentAnalysisStatisticalReporting:
         # Act
         table = present_analysis(analysis)["table"]
 
-        # Assert: the small cell is hidden, and so is the other one, or it is total minus 115;
-        # both labels fold into Other, so no label names the 5 patients
-        assert table["rows"] == [{"sex": OTHER_LABEL, "count": "suppressed"}]
+        # Assert: the small cell is hidden, and so is the other one, or it is total minus 115.
+        # With no count left visible, telling F (not small) from M would pin M: both fold, under
+        # a label that claims no size, so no label names the 5 patients
+        assert table["rows"] == [{"sex": HIDDEN_GROUPS_LABEL, "count": "suppressed"}]
 
 
 class TestSmallCellSuppression:
@@ -405,13 +406,14 @@ class TestSmallCellSuppression:
         assert "%" not in presentation["claim"].split("withheld")[0]
         assert "withheld" in presentation["claim"]
         cells = {(row["y"], key): value for row in presentation["table"]["rows"] for key, value in row.items()}
-        # Every cell is hidden (95 too, as the complement in its row), so every arm folds into
-        # Other; the outcome levels then stand beside hidden cells only and keep their labels
+        # Every cell is hidden (95 too, as the complement in its row), so every arm folds; the
+        # fold follows from the hidden markers and claims no size (B has 95 patients). The
+        # outcome levels then stand beside hidden cells only and keep their labels
         assert cells == {
             ("y=0", "y"): "y=0",
-            ("y=0", OTHER_LABEL): "suppressed",
+            ("y=0", HIDDEN_GROUPS_LABEL): "suppressed",
             ("y=1", "y"): "y=1",
-            ("y=1", OTHER_LABEL): "suppressed",
+            ("y=1", HIDDEN_GROUPS_LABEL): "suppressed",
         }
 
     def test_present_survival_ungrouped_showsSummaryNotEventTimes(self):
@@ -476,9 +478,12 @@ class TestSmallCellSuppression:
         # median would mark A as the large group and give B away as n - A
         assert "20.9" not in presentation["claim"]
         assert "300.0" not in presentation["claim"]
-        # Both labels fold into one Other row, so no label is shown for the 3 patients
-        assert f"{OTHER_LABEL} not shown (log-rank p=0.200; n=60)" in presentation["claim"]
-        assert presentation["table"]["rows"] == [{"arm": OTHER_LABEL, "n": "suppressed", "median days": "suppressed"}]
+        # Both labels fold into one row (no count is left visible, so A cannot keep its own row
+        # without pinning B); the row claims no size, as A has 57 patients
+        assert f"{HIDDEN_GROUPS_LABEL} not shown (log-rank p=0.200; n=60)" in presentation["claim"]
+        assert presentation["table"]["rows"] == [
+            {"arm": HIDDEN_GROUPS_LABEL, "n": "suppressed", "median days": "suppressed"}
+        ]
 
 
 # --- Brute-force recovery audit -------------------------------------------------------------
@@ -804,7 +809,7 @@ class TestSmallGroupStatistics:
         ("sizes", "expected_means"),
         [
             ((1, 1, 1), ["suppressed", "suppressed", "suppressed"]),
-            ((10, 50, 60), [30.0, "suppressed"]),
+            ((10, 50, 60), ["suppressed", 30.0, "suppressed"]),
             ((11, 11, 11), [10.0, 20.0, 30.0]),
             ((0, 50, 60), [10.0, 20.0, 30.0]),
         ],
@@ -1205,7 +1210,9 @@ class TestMissingCountsFailClosed:
 
         # Assert
         assert "20.9" not in json.dumps(presentation)
-        assert f"{OTHER_LABEL} not shown" in presentation["claim"]
+        # A size that is not a count cannot show the group is large: every hidden group folds,
+        # under a label that claims no size
+        assert f"{HIDDEN_GROUPS_LABEL} not shown" in presentation["claim"]
         assert "B not shown" not in presentation["claim"]
 
     @pytest.mark.parametrize("cell", [None, "3", 3.0], ids=["none", "text", "float"])
@@ -1362,8 +1369,8 @@ class TestCellsHiddenThroughAnotherLine:
 
         # Assert
         assert rows == [
-            {"y": "y=0", "D": 30, OTHER_LABEL: "suppressed"},
-            {"y": "y=1", "D": 70, OTHER_LABEL: "suppressed"},
+            {"y": "y=0", "D": 30, HIDDEN_GROUPS_LABEL: "suppressed"},
+            {"y": "y=1", "D": 70, HIDDEN_GROUPS_LABEL: "suppressed"},
         ]
 
     @pytest.mark.parametrize("scale", [1, 1_000, 1_000_000], ids=["reviewer_example", "thousands", "millions"])

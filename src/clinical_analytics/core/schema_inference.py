@@ -18,6 +18,7 @@ Key Principles:
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -60,31 +61,43 @@ class DictionaryMetadata:
 
 
 # Names that say "this column identifies the patient", compared after lower-casing and removing
-# everything but letters and digits. The patient key is chosen by this role, never by how unique
-# the values are: repeated IDs are visit-level data, not a reason to lose the key (DQ B1).
-PATIENT_KEY_NAMES: frozenset[str] = frozenset(
-    {
-        "patientid",
-        "patientno",
-        "patientnumber",
-        "patient",
-        "subjectid",
-        "subject",
-        "participantid",
-        "participant",
-        "studyid",
-        "mrn",
-        "medicalrecordnumber",
-        "pid",
-        "id",
-    }
+# everything but letters and digits, ranked: a specific name wins over a generic one whatever the
+# column order ("id" is often a row number, "study_id" the trial's one code). The patient key is
+# chosen by this role, never by how unique the values are: repeated IDs are visit-level data, not a
+# reason to lose the key (DQ B1).
+PATIENT_KEY_NAMES_SPECIFIC: tuple[str, ...] = (
+    "patientid",
+    "patientno",
+    "patientnumber",
+    "subjectid",
+    "participantid",
+    "mrn",
+    "medicalrecordnumber",
 )
+PATIENT_KEY_NAMES_GENERIC: tuple[str, ...] = ("patient", "subject", "participant", "pid", "studyid", "id")
+PATIENT_KEY_NAMES: frozenset[str] = frozenset(PATIENT_KEY_NAMES_SPECIFIC + PATIENT_KEY_NAMES_GENERIC)
+_PATIENT_KEY_RANK: dict[str, int] = {
+    name: rank for rank, name in enumerate(PATIENT_KEY_NAMES_SPECIFIC + PATIENT_KEY_NAMES_GENERIC)
+}
 
 
-def patient_key_by_name(columns: list[str]) -> str | None:
-    """The first column whose name is a patient-ID role name (``PATIENT_KEY_NAMES``), or None."""
-    for col in columns:
-        if re.sub(r"[^a-z0-9]", "", col.lower()) in PATIENT_KEY_NAMES:
+def patient_key_by_name(columns: list[str], distinct: Callable[[str], int] | None = None) -> str | None:
+    """The best-ranked column named for the patient-ID role (``PATIENT_KEY_NAMES_SPECIFIC`` before
+    ``PATIENT_KEY_NAMES_GENERIC``; column order breaks ties), or None.
+
+    ``distinct(column)`` gives a column's number of distinct values: a column with one value
+    (a trial's study_id on every row) is never the patient key, since counting it would say 1
+    patient. Without it, names alone decide.
+    """
+    ranked = sorted(
+        (
+            (_PATIENT_KEY_RANK[key], i, col)
+            for i, col in enumerate(columns)
+            if (key := re.sub(r"[^a-z0-9]", "", col.lower())) in _PATIENT_KEY_RANK
+        ),
+    )
+    for _rank, _index, col in ranked:
+        if distinct is None or distinct(col) > 1:
             return col
     return None
 
@@ -412,7 +425,9 @@ class SchemaInferenceEngine:
         """
         # By role first: an ID-named column is the key whether or not its values repeat. The
         # exact duplicate check runs on it later (contract), so repeats are reported, not hidden.
-        named = patient_key_by_name(list(df.columns))
+        named = patient_key_by_name(
+            list(df.columns), distinct=lambda c: df[c].drop_nulls().n_unique() if df.height > 1 else 2
+        )
         if named is not None:
             complete = df[named].null_count() == 0 and df[named].n_unique() == df.height
             return named, 0.95 if complete else 0.6

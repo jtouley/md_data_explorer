@@ -80,7 +80,8 @@ def test_runQuality_cohortWithDefects_statusesAndSuppressedMessages(cohort_with_
     assert checks["ldl_missing"].status == "warning"
     assert checks["ldl_missing"].message == "ldl: 5.7% missing"
     assert checks["statin_use_invalid"].status == "passed"
-    assert (report.failed, report.review, report.not_run) == (0, 2, 0)
+    # the one not-run check: column types, which can only be compared on the next version
+    assert (report.failed, report.review, report.not_run) == (0, 2, 1)
     assert "patient_id: some repeated values; count hidden to protect privacy" in report.summary
 
 
@@ -235,7 +236,7 @@ def test_runQuality_unsupportedRule_reportedNotRun(rule, reason):
     # Assert
     assert report.checks[0].status == "not_run"
     assert reason in report.checks[0].message
-    assert report.not_run == 1
+    assert report.not_run == 2  # the rule, and column types (compared only on a later version)
 
 
 @pytest.mark.parametrize(
@@ -402,7 +403,7 @@ def test_runQuality_noIdColumn_idChecksReportedNotRun(make_contract):
     report = run_quality(df.lazy(), make_contract(df, id_column=None))
 
     # Assert
-    not_run = {c.id: c.message for c in report.checks if c.status == "not_run"}
+    not_run = {c.id: c.message for c in report.checks if c.status == "not_run" and c.metric != TYPE_METRIC}
     assert not_run == {
         config.ID_NOT_NULL_RULE_ID: f"Identifier: not checked ({config.NO_ID_COLUMN_REASON})",
         config.ID_UNIQUE_RULE_ID: f"Identifier: not checked ({config.NO_ID_COLUMN_REASON})",

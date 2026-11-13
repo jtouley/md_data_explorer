@@ -4,15 +4,19 @@
 Each check ends in one of three ways, and never in a silent pass:
 
 * refuse: the answer would be wrong whatever the doctor says (a mean over values recorded as
-  "<5"; a column with no values; a group count where a patient has two groups);
+  "<5"; a column with no values; a group count or share where a patient has two values);
 * hold: the answer depends on something only the doctor can say (are rows visits? are "Male"
   and "M" one level? are ages of 400 entry errors?), and runs once they confirm;
 * note: a sentence added to the answer (implausible values the doctor chose to include, a
-  failed check in the dataset's latest quality report).
+  check of the dataset's latest quality report on a column the question uses).
+
+Every check is a DuckDB aggregate over the layer's base view (counts, a median, value counts of
+one column): no column is copied into Python per question. Row and patient counts reuse the
+layer's cached base counts.
 
 Counts in sentences follow the small-cell rule (``line_count_text``): a count from 1 to 10, or
 one whose neighbour in its line is, reads "some". Sentences name columns, ranges and category
-labels, never a patient's value.
+labels held by at least ``MIN_CELL_SIZE`` rows, never a patient's value.
 """
 
 from __future__ import annotations
@@ -24,24 +28,27 @@ from typing import Any
 import polars as pl
 
 from clinical_analytics.analysis.grouping import level_variants
-from clinical_analytics.analysis.numeric_text import AmbiguousNumberFormatError, parse_numeric_text
-from clinical_analytics.analysis.variable_types import is_numeric_dtype, short_name
-from clinical_analytics.contracts.builder import find_plausibility_range
+from clinical_analytics.analysis.numeric_text import all_missing_message, statistic_refusal
+from clinical_analytics.analysis.variable_types import short_name
+from clinical_analytics.contracts.builder import Implausible, find_plausibility_range, implausible_values, range_for
+from clinical_analytics.contracts.builder import range_text as plausibility_text
+from clinical_analytics.contracts.config import MIN_CELL_SIZE, MISSINGNESS_WARN_PERCENT
 from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping
 from clinical_analytics.contracts.quality import RANGE_METRIC, QualityReport
+from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import line_count_text
 from clinical_analytics.core.schema_inference import patient_key_by_name
 
-_EQUALITY_OPERATORS = frozenset({"==", "!=", "IN", "NOT_IN"})
 _STATISTIC_INTENTS = frozenset({"DESCRIBE", "COMPARE_GROUPS"})
 # Report checks an answer already handles itself (hold or disclosure), so not repeated as notes.
 _HANDLED_METRICS = frozenset({RANGE_METRIC, "duplicateValues", "censoredValues", "levelVariants"})
+_COUNT = "__n"
 
 
 @dataclass(frozen=True)
 class Grain:
-    """The patient key, rows, and distinct non-null keys of the dataset (None: no key)."""
+    """The patient key, rows, and distinct keys of the dataset (None: no key)."""
 
     key: str | None
     rows: int
@@ -51,10 +58,10 @@ class Grain:
     def repeated(self) -> bool:
         return self.patients is not None and self.patients < self.rows
 
-    def declaration(self) -> GrainDeclaration | None:
+    def declaration(self, dataset_version: str | None) -> GrainDeclaration | None:
         if self.key is None or self.patients is None:
             return None
-        return GrainDeclaration(key=self.key, rows=self.rows, patients=self.patients)
+        return GrainDeclaration(key=self.key, rows=self.rows, patients=self.patients, dataset_version=dataset_version)
 
 
 @dataclass
@@ -66,32 +73,36 @@ class Findings:
     notes: list[str] = field(default_factory=list)
     grain_to_declare: GrainDeclaration | None = None
     levels_to_declare: list[LevelMapping] = field(default_factory=list)
+    keyed: bool = False  # the dataset has a patient key, so every n can say what it counts
+    visits: bool = False  # rows are declared visits (on this dataset version)
 
 
 def patient_key(layer: Any) -> str | None:
-    """The base view's patient key: the column mapped to ``patient_id``, else one named for it."""
+    """The base view's patient key: the column mapped to ``patient_id``, else the best-ranked
+    column named for it that holds more than one value."""
     columns = list(layer.get_base_view().columns)
     mapping = (getattr(layer, "config", None) or {}).get("column_mapping") or {}
     if "patient_id" in mapping.values() and "patient_id" in columns:
         return "patient_id"
-    return patient_key_by_name(columns)
+    rows = layer._base_count(None)
+    return patient_key_by_name(columns, distinct=lambda column: layer._base_count(column) if rows > 1 else 2)
 
 
 def grain_of(layer: Any) -> Grain:
-    """Rows and distinct patient keys, counted exactly (``n_unique``, never a sample)."""
-    view = layer.get_base_view()
+    """Rows and distinct patient keys, counted exactly with the layer's cached base counts (the
+    same counts a COUNT answer reports, so the hold and the answer agree)."""
     key = patient_key(layer)
-    rows = int(view.count().execute())
+    rows = int(layer._base_count(None))
     if key is None:
         return Grain(key=None, rows=rows, patients=None)
-    patients = int(view[key].nunique().execute())  # nulls are not a patient
-    return Grain(key=key, rows=rows, patients=patients)
+    return Grain(key=key, rows=rows, patients=int(layer._base_count(key)))
 
 
-def declared_visits(grain: Grain, declarations: Declarations) -> bool:
-    """Whether the stored grain declaration matches the data as it is now."""
+def declared_visits(grain: Grain, declarations: Declarations, dataset_version: str | None) -> bool:
+    """Whether the stored grain declaration was made on this dataset version and still matches
+    its counts (a corrected re-upload of the same shape is a new version: asked again)."""
     stored = declarations.grain
-    return stored is not None and grain.declaration() == stored
+    return stored is not None and stored == grain.declaration(dataset_version)
 
 
 def grain_hold_reason(key: str) -> str:
@@ -117,138 +128,206 @@ def plan_columns(plan: QueryPlan) -> list[str]:
     return found
 
 
-def _plan_values(plan: QueryPlan) -> Iterator[tuple[str, Any]]:
-    """(column, value) for every equality limit of the plan."""
-    for spec in plan.filters:
-        if spec.operator in _EQUALITY_OPERATORS:
-            for value in spec.value if isinstance(spec.value, list) else [spec.value]:
-                yield spec.column, value
-    for step in plan.cohort_steps:
-        if step.op == "eq":
-            yield step.column, step.value
-    if plan.proportion_column:
-        yield plan.proportion_column, plan.proportion_value
-    if plan.rate_column:
-        yield plan.rate_column, plan.rate_value
+def _equality_values(plan: QueryPlan) -> Iterator[tuple[str, Any]]:
+    """(column, value) for every equality limit and share value of the plan."""
+    for column, value, compared in plan_values(plan):
+        if not compared:
+            yield column, value
 
 
-def metric_refusal(plan: QueryPlan, frame: pl.DataFrame) -> str | None:
-    """Why a mean or comparison of the plan's metric would be wrong, or None."""
+def value_counts(layer: Any, column: str) -> pl.DataFrame:
+    """Rows per distinct value of ``column`` (nulls included), counted in DuckDB: only the
+    distinct values cross into Polars. Columns: ``column`` and ``__n``."""
+    view = layer.get_base_view()
+    counted: pl.DataFrame = view.group_by(column).aggregate(**{_COUNT: view.count()}).to_polars()
+    return counted
+
+
+def _is_string(layer: Any, column: str) -> bool:
+    return bool(layer.get_base_view()[column].type().is_string())
+
+
+def metric_refusal(plan: QueryPlan, layer: Any) -> str | None:
+    """Why a statistic of the plan's metric would be wrong, or None (one wording for every path:
+    ``analysis.numeric_text.statistic_refusal``)."""
     metric = plan.metric
-    if plan.intent not in _STATISTIC_INTENTS or not metric or metric not in frame.columns:
+    view = layer.get_base_view()
+    if plan.intent not in _STATISTIC_INTENTS or not metric or metric not in view.columns:
         return None
-    series = frame.get_column(metric)
     what = "describe" if plan.intent == "DESCRIBE" else "compare"
-    if series.null_count() == series.len():
-        return f"Every value of {short_name(metric)} is missing, so there is nothing to {what}."
-    if series.dtype != pl.String:
+    rows = int(layer._base_count(None))
+    if not _is_string(layer, metric):
+        present = int(view[metric].count().execute())
+        return all_missing_message(metric, what) if present == 0 and rows else None
+    counts = value_counts(layer, metric)
+    return statistic_refusal(counts.get_column(metric), what, counts.get_column(_COUNT), rows)[0]
+
+
+def _implausible_numeric(layer: Any, column: str) -> Implausible | None:
+    """``implausible_values`` for a numeric column, as two DuckDB aggregates (median, then the
+    count outside the range the median selects)."""
+    view = layer.get_base_view()
+    values = view.filter(view[column].notnull())
+    if values[column].type().is_floating():
+        values = values.filter(~values[column].isnan() & ~values[column].isinf())
+    stats = values.aggregate(median=values[column].median(), present=values[column].count()).to_polars().row(0)
+    median, present = stats
+    bounds = range_for(column, float(median) if median is not None else None)
+    if bounds is None or not present:
         return None
-    try:
-        parsed = parse_numeric_text(series)
-    except AmbiguousNumberFormatError as exc:
-        return str(exc)
-    if parsed is None:
+    outside = values[column] < bounds.minimum
+    if bounds.maximum is not None:
+        outside = outside | (values[column] > bounds.maximum)
+    count = int(values.aggregate(k=outside.cast("int64").sum()).to_polars().item() or 0)
+    if count == 0:
         return None
-    if parsed.values.null_count() == series.len():
-        return f"Every value of {short_name(metric)} is missing, so there is nothing to {what}."
-    if parsed.n_censored:
-        present = series.len() - series.null_count() - parsed.n_missing_tokens
-        amount = line_count_text(parsed.n_censored, [present - parsed.n_censored])
-        return (
-            f"{short_name(metric)} has {amount} values recorded as a limit, such as '<5', so a statistic of it "
-            f"would be wrong. Replace the limits with measured values in the file, or ask for a count by "
-            f"{short_name(metric)}."
-        )
+    return Implausible(column=column, count=count, present=int(present), bounds=plausibility_text(bounds))
+
+
+def implausible_in_layer(layer: Any, column: str) -> Implausible | None:
+    """Values of ``column`` outside its plausibility range, numbers stored as text included."""
+    view = layer.get_base_view()
+    if find_plausibility_range(column) is None or column not in view.columns:
+        return None
+    dtype = view[column].type()
+    if dtype.is_string():
+        counts = value_counts(layer, column)
+        return implausible_values(counts.get_column(column), counts.get_column(_COUNT))
+    if dtype.is_numeric() and not dtype.is_boolean():
+        return _implausible_numeric(layer, column)
     return None
 
 
-def implausible_counts(frame: pl.DataFrame, column: str) -> tuple[int, int, str] | None:
-    """(values outside the range, values present, range text) for a numeric column with a range."""
-    bounds = find_plausibility_range(column)
-    if bounds is None or column not in frame.columns:
-        return None
-    series = frame.get_column(column)
-    if not is_numeric_dtype(series.dtype):
-        return None
-    values = series.drop_nulls()
-    if values.dtype.is_float():
-        values = values.filter(values.is_finite())
-    outside = values < bounds.minimum
-    if bounds.maximum is not None:
-        outside = outside | (values > bounds.maximum)
-    count = int(outside.sum())
-    if count == 0:
-        return None
-    text = (
-        f"{bounds.minimum:g}–{bounds.maximum:g} {bounds.unit}"
-        if bounds.maximum is not None
-        else f"below {bounds.minimum:g} {bounds.unit}"
-    )
-    return count, int(values.len()), text
-
-
-def implausible_sentences(plan: QueryPlan, frame: pl.DataFrame) -> list[tuple[str, str, str]]:
+def implausible_sentences(plan: QueryPlan, layer: Any) -> list[tuple[str, str, str]]:
     """(column, hold sentence, note sentence) for each plan column with implausible values."""
     found = []
     for column in plan_columns(plan):
-        counts = implausible_counts(frame, column)
-        if counts is None:
+        result = implausible_in_layer(layer, column)
+        if result is None:
             continue
-        count, present, bounds = counts
-        amount = line_count_text(count, [present - count])
+        amount = line_count_text(result.count, [result.present - result.count])
         name = short_name(column)
         hold = (
-            f"{name} has {amount} values outside {bounds}, which are likely entry errors. "
+            f"{name} has {amount} values outside {result.bounds}, which are likely entry errors. "
             f"Correct them in the file, or confirm to include them in the answer."
         )
-        note = f"{name} has {amount} values outside {bounds} (likely entry errors), included as recorded."
+        note = f"{name} has {amount} values outside {result.bounds} (likely entry errors), included as recorded."
         found.append((column, hold, note))
     return found
 
 
+def variant_sentence(column: str, group: tuple[str, ...], frequency: dict[str, int]) -> tuple[str, str]:
+    """(canonical spelling, hold sentence) for spellings that may be one category.
+
+    Only spellings held by at least ``MIN_CELL_SIZE`` rows are named, and the canonical one is
+    chosen from those: a label of a level with 1 to 10 rows is never shown. With fewer than two
+    such spellings the sentence names none.
+    """
+    large = [s for s in group if frequency.get(s, 0) >= MIN_CELL_SIZE]
+    pool = large or list(group)
+    canonical = max(pool, key=lambda spelling: (frequency.get(spelling, 0), spelling))
+    name = short_name(column)
+    if len(large) >= 2:
+        rare = ", and some rare spellings" if len(large) < len(group) else ""
+        shown = f"({', '.join(large)}{rare})"
+    else:
+        shown = "(including some rare spellings)"
+    target = canonical if large else "one category"
+    return canonical, (
+        f"{name} has values that may be one category written differently {shown}. "
+        f"Confirm to count them together as {target}."
+    )
+
+
 def variant_findings(
-    plan: QueryPlan, frame: pl.DataFrame, declarations: Declarations
+    plan: QueryPlan, layer: Any, declarations: Declarations, dataset_version: str | None
 ) -> list[tuple[str, LevelMapping, str]]:
-    """(column, proposed mapping, hold sentence) for a grouped or limited column whose levels
-    include spellings of one category the doctor has not confirmed as one."""
-    confirmed = {(m.column, m.spellings) for m in declarations.levels}
+    """(column, proposed mapping, hold sentence) for a grouped or limited text column whose levels
+    include spellings of one category the doctor has not confirmed as one (on this version)."""
+    confirmed = {(m.column, m.spellings) for m in declarations.levels if m.dataset_version == dataset_version}
     grouped = {plan.group_by} if plan.group_by else set()
     limited: dict[str, set[str]] = {}
-    for column, value in _plan_values(plan):
+    for column, value in _equality_values(plan):
         if isinstance(value, str) and column not in grouped:
             limited.setdefault(column, set()).add(value)
     asked: dict[str, set[str] | None] = {**limited, **dict.fromkeys(grouped)}
+    columns = set(layer.get_base_view().columns)
     found = []
     for column, values in asked.items():
-        if column not in frame.columns or frame.get_column(column).dtype != pl.String:
+        if column not in columns or not _is_string(layer, column):
             continue
-        counts = frame.get_column(column).drop_nulls().value_counts(sort=True)
-        frequency = dict(zip(counts.get_column(column).to_list(), counts.get_column("count").to_list(), strict=True))
+        counts = value_counts(layer, column).drop_nulls(column)
+        frequency = dict(zip(counts.get_column(column).to_list(), counts.get_column(_COUNT).to_list(), strict=True))
         for group in level_variants(list(frequency)):
             if (column, group) in confirmed or (values is not None and not values & set(group)):
                 continue
-            canonical = max(group, key=lambda spelling: (frequency[spelling], spelling))
-            shown = ", ".join(group)
-            sentence = (
-                f"{short_name(column)} has values that may be one category written differently ({shown}). "
-                f"Confirm to count them together as {canonical}."
-            )
-            found.append((column, LevelMapping(column=column, spellings=group, canonical=canonical), sentence))
+            canonical, sentence = variant_sentence(column, group, frequency)
+            mapping = LevelMapping(column=column, spellings=group, canonical=canonical, dataset_version=dataset_version)
+            found.append((column, mapping, sentence))
     return found
 
 
-def grouped_count_refusal(frame: pl.DataFrame, key: str, group: str) -> str | None:
-    """At visit grain, patients are counted once per group only if each has one group value."""
-    if key not in frame.columns or group not in frame.columns:
-        return None
-    pairs = frame.select(key, group).drop_nulls(key).unique()
-    if pairs.height == pairs.get_column(key).n_unique():
-        return None
+def varies_within_patient(layer: Any, key: str, column: str, nulls_are_values: bool) -> bool:
+    """Whether some patient's rows hold more than one value of ``column`` (a DuckDB aggregate).
+    ``nulls_are_values``: a missing value at one visit counts as a different value."""
+    view = layer.get_base_view()
+    keyed = view.filter(view[key].notnull())
+    distinct = keyed[column].nunique()
+    if nulls_are_values:
+        distinct = distinct + keyed[column].isnull().cast("int64").max()
+    per_patient = keyed.group_by(key).aggregate(d=distinct)
+    return int(per_patient.filter(per_patient.d > 1).count().execute()) > 0
+
+
+def varies_refusal(column: str, counted: str) -> str:
+    """The one sentence for a patient count that a value varying across visits would make wrong."""
+    name = short_name(column)
     return (
-        f"{short_name(group)} differs between rows of the same patient, so patients cannot be counted once per "
-        f"{short_name(group)} group. Ask for the number of visits by {short_name(group)}, or count patients without "
-        f"grouping."
+        f"{name} differs between rows of the same patient, so patients cannot be counted once per "
+        f"{name} {counted}. Ask for the number of visits by {name}, or count patients without it."
     )
+
+
+def grouped_count_refusal(layer: Any, key: str, group: str) -> str | None:
+    """At visit grain, patients are counted once per group only if each has one group value."""
+    if group not in layer.get_base_view().columns:
+        return None
+    return varies_refusal(group, "group") if varies_within_patient(layer, key, group, nulls_are_values=True) else None
+
+
+def share_refusal(layer: Any, key: str, plan: QueryPlan) -> str | None:
+    """At visit grain a share counts patients (distinct key per level), which is right only when
+    the outcome (and a rate's group) is one value per patient: died is a patient-level event, so
+    "25% of visits died" is never an answer."""
+    columns = set(layer.get_base_view().columns)
+    outcome = plan.proportion_column or plan.rate_column
+    if outcome and outcome in columns and varies_within_patient(layer, key, outcome, nulls_are_values=False):
+        return varies_refusal(outcome, "value")
+    if plan.rate_column and plan.group_by and plan.group_by in columns:
+        return grouped_count_refusal(layer, key, plan.group_by)
+    return None
+
+
+def missingness_notes(layer: Any, columns: list[str], already: set[str]) -> list[str]:
+    """A note for each plan column whose share of missing values is above
+    ``MISSINGNESS_WARN_PERCENT``, measured now, so any column a question
+    uses is flagged, whatever the upload named as analysis variables (a COUNT per plan column,
+    in DuckDB). The share is suppressed
+    with the rest of the line: a column with 1 to 10 missing (or present) rows reads "some"."""
+    view = layer.get_base_view()
+    known = [c for c in columns if c in view.columns and short_name(c) not in already]
+    rows = int(layer._base_count(None))
+    if not known or rows == 0:
+        return []
+    notes = []
+    for column in known:
+        missing = rows - int(view[column].count().execute() or 0)
+        if missing * 100 <= MISSINGNESS_WARN_PERCENT * rows:
+            continue
+        amount = line_count_text(missing, [rows - missing])
+        share = f"{100 * missing / rows:.1f}%" if amount != "some" else "some"
+        notes.append(f"Data check: {short_name(column)} has {share} of its values missing.")
+    return notes
 
 
 def report_notes(report: QualityReport | None, columns: list[str]) -> list[str]:
@@ -264,3 +343,14 @@ def report_notes(report: QualityReport | None, columns: list[str]) -> list[str]:
         if (check.column is None and check.status == "failed") or check.column in names:
             notes.append(f"Data check: {check.message}.")
     return notes
+
+
+def flagged_columns(report: QualityReport | None) -> set[str]:
+    """Columns whose missingness the report already flags (so it is not noted twice)."""
+    if report is None:
+        return set()
+    return {
+        str(c.column)
+        for c in report.checks
+        if c.metric == "nullValues" and c.status in ("failed", "warning", "review") and c.column
+    }
