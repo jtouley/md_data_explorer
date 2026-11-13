@@ -564,3 +564,39 @@ def test_settleSharedColumnTypes_sameTypes_unchanged():
     # Assert
     assert notes == []
     assert_frame_equal(settled["a"], frames["a"])
+
+
+def _with_declared_dimension(xlsx: bytes, ref: str) -> bytes:
+    """The workbook with its first sheet's <dimension> rewritten (as some exporters write it)."""
+    import re
+    import zipfile
+
+    src, out = zipfile.ZipFile(io.BytesIO(xlsx)), io.BytesIO()
+    with zipfile.ZipFile(out, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb'<dimension ref="[^"]*"', b'<dimension ref="' + ref.encode() + b'"', data)
+            dst.writestr(item, data)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("declared", ["A1:A1", "A1:B2", "A1:C4"])  # C4: true size, a no-regression case
+def test_read_excel_typed_wrongDeclaredDimension_readsEveryColumn(declared):
+    # Arrange: a title row above the header, and a sheet that declares itself smaller than it is
+    rows = [
+        ("Cardiovascular diseases", None, None),
+        ("Location", "FIPS", "Rate"),
+        ("Colorado", 8, 209.5),
+        ("Adams County, Colorado", 8001, 203.1),
+    ]
+    xlsx = _with_declared_dimension(_xlsx(rows), declared)
+
+    # Act
+    staged = read_excel_typed(xlsx)
+
+    # Assert: the header row is found and no column is cut off
+    expected = pl.DataFrame(
+        {"Location": ["Colorado", "Adams County, Colorado"], "FIPS": [8, 8001], "Rate": [209.5, 203.1]}
+    )
+    assert_frame_equal(staged.data, expected, check_dtypes=False)
