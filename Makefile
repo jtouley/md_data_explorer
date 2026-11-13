@@ -347,7 +347,9 @@ mutation-results: ensure-venv ## Summarise surviving mutants from the last mutat
 check-data: ensure-venv ## Fail if git tracks data files (patient data must stay out of the repo)
 	$(PYTHON_RUN) scripts/check_no_data_files.py
 
-GOLDEN_TESTS := tests/scripts/test_make_synthetic_data.py tests/scripts/test_check_no_data_files.py tests/analysis/test_golden_statistics.py tests/eval/test_golden_questions.py
+GOLDEN_TESTS := tests/scripts/test_make_synthetic_data.py tests/scripts/test_check_no_data_files.py tests/analysis/test_golden_statistics.py tests/eval/test_golden_questions.py \
+	tests/eval/test_golden_headless.py tests/eval/test_hard_questions.py tests/eval/test_adversarial_probes.py \
+	tests/eval/test_reviewer_probes.py
 
 golden: ensure-venv ## Synthetic golden kit: regenerate in a temp dir, diff against committed fixtures, run golden + data-guard tests
 	@echo "$(GREEN)Checking the synthetic kit against scripts/make_synthetic_data.py...$(NC)"

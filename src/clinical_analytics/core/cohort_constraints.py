@@ -24,8 +24,8 @@ _PRE_COMPARE = re.compile(
     re.IGNORECASE,
 )
 _POST_COMPARE = re.compile(
-    r"\b(?P<num>\d+(?:\.\d+)?)\s*(?P<dir>\+|plus\b|(?:or|and) (?:more|older|over|above|greater|higher|less|fewer|younger|"
-    r"under|below|lower)\b(?! than))",
+    r"\b(?P<num>\d+(?:\.\d+)?)\s*(?P<dir>\+|plus\b|(?:or|and) (?:more|older|over|above|greater|higher|less|fewer|"
+    r"younger|under|below|lower)\b(?! than))",
     re.IGNORECASE,
 )
 _PRE_OPS = {"at least": "ge", "at most": "le"}
