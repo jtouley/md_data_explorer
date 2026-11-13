@@ -133,3 +133,34 @@ def test_main_embeddingModelDamaged_plainMessageExit2NoServer(
     assert "does not match its pinned SHA-256" in err
     assert len(err.strip().splitlines()) == 1
     run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (PermissionError(13, "Permission denied"), "Permission denied"),
+        (OSError(5, "Input/output error"), "Input/output error"),
+        (OSError("locked by another program"), "OSError"),
+    ],
+    ids=["permission_denied", "io_error", "no_strerror"],
+)
+def test_main_embeddingModelUnreadable_plainMessageExit2NoServer(
+    capsys: pytest.CaptureFixture[str], error: OSError, expected: str
+) -> None:
+    # Arrange: the model is there but reading it fails (wrong ACL after install, a locked file)
+    with (
+        patch.object(serve, "prepare_store_for_engine", return_value=None),
+        patch.object(serve, "check_embedding_model", side_effect=error),
+        patch.object(serve.uvicorn, "run") as run,
+        pytest.raises(SystemExit) as exited,
+    ):
+        # Act
+        serve.main([])
+
+    # Assert: the one-line exit-2 path, with what to do, not a traceback and exit 1
+    err = capsys.readouterr().err
+    assert exited.value.code == serve.STORE_CHECK_FAILED_EXIT
+    assert err.startswith("Clinical Analytics cannot start: The embedding model in ")
+    assert expected in err and "could not be read" in err and "reinstall the app" in err
+    assert "Traceback" not in err and len(err.strip().splitlines()) == 1
+    run.assert_not_called()
