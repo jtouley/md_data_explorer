@@ -555,30 +555,19 @@ def _value_hits(
     """(column, value, position) of each stored value the question names, one value per column."""
     hits: list[tuple[str, Any, int]] = []
     tokens = _tokens(text, digits=True)
+    words = frozenset(re.findall(r"[a-z0-9]+", text))
     for column in columns:
         # Rank (exact word, inflection, prefix), then specificity (more words of the value
         # named: "North East" over "North"). Two values tied on both is ambiguous: bind
         # neither, so the unbound word holds the plan. Never decide by value order.
         found_values: list[tuple[int, int, int, Any]] = []
-        stored = values_for(column)
-        candidates: list[tuple[str, Any]] = [
-            (str(value).strip().lower(), value) for value in stored if value is not None and not isinstance(value, bool)
-        ]
-        # Coded columns name their values in the header ("DEXA result 1: Normal 2: Osteopenia").
-        for code, code_label in (parse_column_name(column).value_mapping or {}).items():
-            code_value = _code_value(stored, code)
-            if code_value is not None:
-                candidates.append((code_label.strip().lower(), code_value))
-        for label, value in candidates:
-            # A stored number is never named by a word: "2.2" splits into the token "2", which
-            # would bind "type 2 diabetes" to Creatinine = 2.2. Numbers bind only through an
-            # explicit comparison.
-            if not label or _NUMBER.fullmatch(label):
-                continue
-            found = _label_at(text, tokens, label)
+        # Only the labels the question could name are tried (_LabelIndex); each is then
+        # checked by _label_at exactly as if every label were tried.
+        for label in _label_index(column, values_for(column)).candidates(tokens, words):
+            found = _label_at(text, tokens, label.text, label.pattern())
             if found is None:
                 continue
-            found_values.append((found[0], -len(_tokens(label, digits=True)), found[1], value))
+            found_values.append((found[0], -len(label.tokens), found[1], label.value))
         if not found_values:
             continue
         found_values.sort(key=lambda item: (item[0], item[1]))
@@ -593,7 +582,95 @@ def _value_hits(
     return hits
 
 
-def _label_at(text: str, tokens: set[str], label: str) -> tuple[int, int] | None:
+class _Label:
+    """One label a column's value can be named by: the stored text, or a header code label."""
+
+    __slots__ = ("_pattern", "phrase", "text", "tokens", "value", "words")
+
+    def __init__(self, text: str, value: Any) -> None:
+        self.text = text
+        self.value = value
+        self.words = tuple(re.findall(r"[a-z0-9]+", text))
+        # "drug A", "Type 2": named only by those words in that order (see _label_at).
+        self.phrase = len(self.words) > 1 and any(len(word) == 1 or word.isdigit() for word in self.words)
+        self.tokens = frozenset(_tokens(text, digits=True))
+        self._pattern: re.Pattern[str] | None = None
+
+    def pattern(self) -> re.Pattern[str] | None:
+        """The phrase pattern _label_at searches for, compiled once and only when tried."""
+        if self.phrase and self._pattern is None:
+            self._pattern = _phrase_pattern(list(self.words))
+        return self._pattern
+
+
+class _LabelIndex:
+    """The labels of one column, indexed by the question words that can name them.
+
+    ``candidates`` returns, in label order, every label _label_at could find in a question
+    (a superset): a phrase whose words all occur; a label with a token among the question's
+    tokens (rank 0); an inflected label (rank 1); a label with a token that a question token
+    of four or more letters starts or stem-matches (rank 2).
+    """
+
+    def __init__(self, column: str, stored: list[Any]) -> None:
+        from clinical_analytics.core.value_index import StemIndex, matches_stored
+        from clinical_analytics.core.word_accounting import stem_match
+
+        pairs: list[tuple[str, Any]] = []
+        if matches_stored(stored):
+            pairs = [
+                (str(value).strip().lower(), value)
+                for value in stored
+                if value is not None and not isinstance(value, bool)
+            ]
+        # Coded columns name their values in the header ("DEXA result 1: Normal 2: Osteopenia").
+        for code, code_label in (parse_column_name(column).value_mapping or {}).items():
+            code_value = _code_value(stored, code)
+            if code_value is not None:
+                pairs.append((code_label.strip().lower(), code_value))
+        # A stored number is never named by a word: "2.2" splits into the token "2", which
+        # would bind "type 2 diabetes" to Creatinine = 2.2. Numbers bind only through an
+        # explicit comparison.
+        self.labels = [_Label(text, value) for text, value in pairs if text and not _NUMBER.fullmatch(text)]
+        self._phrases: dict[str, list[int]] = {}
+        self._by_token: dict[str, list[int]] = {}
+        self._inflected: list[int] = []
+        for at, label in enumerate(self.labels):
+            if label.phrase:
+                self._phrases.setdefault(label.words[0], []).append(at)
+                continue
+            for token in label.tokens:
+                self._by_token.setdefault(token, []).append(at)
+            if label.text in _VALUE_INFLECTIONS:
+                self._inflected.append(at)
+        self._parts = StemIndex(self._by_token, stem_match)
+
+    def candidates(self, tokens: set[str], words: frozenset[str]) -> list[_Label]:
+        found: set[int] = set(self._inflected)
+        for word in words & self._phrases.keys():
+            found.update(at for at in self._phrases[word] if all(part in words for part in self.labels[at].words))
+        for token in tokens:
+            found.update(self._by_token.get(token, ()))
+            if len(token) >= 4 and not token.isdigit():
+                for part in {*self._parts.starting_with(token), *self._parts.matches(token)}:
+                    found.update(self._by_token[part])
+        return [self.labels[at] for at in sorted(found)]
+
+
+def _label_index(column: str, stored: list[Any]) -> _LabelIndex:
+    from clinical_analytics.core.value_index import cached
+
+    return cached(stored, column, "label_index", lambda: _LabelIndex(column, stored))
+
+
+def _phrase_pattern(words: list[str]) -> re.Pattern[str]:
+    # "type 2" is not inside "type 2.2": the label ends where its last word ends.
+    return re.compile(r"\b" + r"[\s_-]+".join(re.escape(word) for word in words) + r"\b(?![.,]\d)")
+
+
+def _label_at(
+    text: str, tokens: set[str], label: str, phrase_pattern: re.Pattern[str] | None = None
+) -> tuple[int, int] | None:
     """(rank, position) of a stored value named in the question, or None.
 
     Rank 0 is every word of the value, 1 an English inflection, 2 a word that starts a
@@ -606,8 +683,7 @@ def _label_at(text: str, tokens: set[str], label: str) -> tuple[int, int] | None
 
     words = re.findall(r"[a-z0-9]+", label)
     if len(words) > 1 and any(len(word) == 1 or word.isdigit() for word in words):
-        # "type 2" is not inside "type 2.2": the label ends where its last word ends.
-        phrase = re.search(r"\b" + r"[\s_-]+".join(re.escape(word) for word in words) + r"\b(?![.,]\d)", text)
+        phrase = (phrase_pattern or _phrase_pattern(words)).search(text)
         return (0, phrase.start()) if phrase else None
     label_tokens = _tokens(label, digits=True)
     if label_tokens and label_tokens <= tokens:
@@ -701,6 +777,12 @@ _POSTFIX_REACH = 5
 
 
 def yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:
+    from clinical_analytics.core.value_index import cached
+
+    return cached(values, column, "yes_no", lambda: _yes_no_values(column, values))
+
+
+def _yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:
     present = [value for value in values if value is not None]
     for value in present:
         if value is True:
