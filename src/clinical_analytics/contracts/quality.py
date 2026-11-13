@@ -45,6 +45,7 @@ import structlog
 from open_data_contract_standard.model import DataQuality, OpenDataContractStandard, SchemaProperty
 from pydantic import BaseModel, ConfigDict, Field
 
+from clinical_analytics.analysis.grouping import is_small_level
 from clinical_analytics.analysis.numeric_text import censored_expr, missing_token_expr
 from clinical_analytics.contracts import config
 from clinical_analytics.contracts.errors import QualityCheckError
@@ -58,6 +59,7 @@ RANGE_METRIC = "range"
 CENSORED_METRIC = "censoredValues"
 TYPE_METRIC = "logicalType"
 LEVEL_VARIANTS_METRIC = "levelVariants"
+UNIT_MIX_METRIC = "unitMix"
 _BAD_VALUE_METRICS = frozenset({"invalidValues", "duplicateValues", RANGE_METRIC, CENSORED_METRIC})
 _OPERATORS = (
     "mustBe",
@@ -679,6 +681,77 @@ def level_variant_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) 
     return results
 
 
+def _unit_count(count: int, other: int, unclustered: int, rows: int) -> str:
+    """A cluster's count for the message, or "count hidden": in a tiny table, and whenever this
+    count, the other cluster's, or the values in neither (missing, unreadable) is 1 to 10, since
+    the row count is shown and the three add up to it."""
+    if config.is_tiny_table(rows) or any(is_small_level(n) for n in (count, other, unclustered)):
+        return "count hidden"
+    return f"{count} values"
+
+
+def unit_mix_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) -> list[QualityCheckResult]:
+    """Numeric columns of a variable with a known unit pair whose values look like a mix of the
+    two units (``contracts.unit_mix``): glucose in mg/dL and mmol/L has no meaningful mean.
+
+    A warning at upload; a statistic on the column is held until the doctor says which unit
+    each value is in. Counts follow the small-cell rule (``_unit_count``). Text columns are left
+    to the answer checks: their unreadable entries would make the counts add up to a count the
+    report hides.
+    """
+    from clinical_analytics.contracts.unit_mix import detect_unit_mix, unit_pair_for
+
+    if not contract.schema_:
+        return []
+    schema = lf.collect_schema()
+    props = {p.physicalName or p.name: p for p in contract.schema_[0].properties or []}
+    skipped = {column for column, p in props.items() if _is_id_property(p) or _is_restricted(p)}
+    numeric = [
+        c
+        for c, dtype in schema.items()
+        if c in props and c not in skipped and dtype.is_numeric() and unit_pair_for(c) is not None
+    ]
+    if not numeric:
+        return []
+    # One collect: each column's distinct values with their row counts, and the row count.
+    counted = lf.select(
+        pl.len().alias(ROWS_KEY),
+        *[pl.col(c).drop_nulls().alias("value").value_counts(name="__n").implode().alias(c) for c in numeric],
+    ).collect()
+    rows = int(counted.get_column(ROWS_KEY)[0])
+    results = []
+    for column in numeric:
+        levels = pl.DataFrame(
+            counted.get_column(column)[0].to_list(), schema={"value": schema[column], "__n": pl.UInt32}
+        )
+        mix = detect_unit_mix(column, levels.get_column("value").alias(column), levels.get_column("__n"))
+        if mix is None:
+            continue
+        prop = props[column]
+        target = mix.high_count if mix.target == mix.pair.high.unit else mix.low_count
+        other = mix.present - target
+        unclustered = rows - mix.present
+        results.append(
+            QualityCheckResult(
+                id=f"{prop.name}{config.UNIT_MIX_RULE_SUFFIX}",
+                column=_display(prop),
+                metric=UNIT_MIX_METRIC,
+                dimension="consistency",
+                severity="warning",
+                status="warning",
+                count=None,
+                percent=None,
+                message=(
+                    f"{_display(prop)}: values look like a mix of {mix.target} "
+                    f"({_unit_count(target, other, unclustered, rows)}) and {mix.other} "
+                    f"({_unit_count(other, target, unclustered, rows)}); statistics on it are held until you "
+                    "say which unit each value is in"
+                ),
+            )
+        )
+    return results
+
+
 def run_quality(
     lf: pl.LazyFrame,
     contract: OpenDataContractStandard,
@@ -687,7 +760,8 @@ def run_quality(
     previous_contract: OpenDataContractStandard | None = None,
 ) -> QualityReport:
     """Check ``lf`` against ``contract`` and build the suppressed report: the counted checks in one
-    collect, then type conformance (schema only) and category spellings (one more collect).
+    collect, then type conformance (schema only), category spellings and mixed units (one more
+    collect each).
 
     ``data_version``: the version ``lf`` holds. ``previous_contract``: the contract of the
     dataset's previous version, which the column types are checked against (version N+1 against
@@ -697,7 +771,11 @@ def run_quality(
     schema = lf.collect_schema()
     checks = compile_contract(contract, schema)
     typed_by = previous_contract if previous_contract is not None else contract
-    extra = [*type_results(typed_by, schema, data_version), *level_variant_results(lf, contract)]
+    extra = [
+        *type_results(typed_by, schema, data_version),
+        *level_variant_results(lf, contract),
+        *unit_mix_results(lf, contract),
+    ]
     report = report_from_counts(contract, checks, measure(lf, checks), run_at=run_at, extra=extra)
     logger.info(
         "quality_run_completed",

@@ -189,6 +189,13 @@ UNIT_HINTS: Final[tuple[str, ...]] = ("mmoll", "mmol", "mgdl", "mgl", "meql", "m
 WIDE_BOUND_NOTE: Final = "unit unknown, wide bound"
 
 
+# Body temperature per unit (sources on the temperature range below); also the per-unit ranges
+# of the °C/°F unit pair.
+TEMPERATURE_C: Final = UnitBounds(unit="°C", minimum=10, maximum=47, median_below=50)
+TEMPERATURE_F: Final = UnitBounds(unit="°F", minimum=50, maximum=117, median_below=None)
+GLUCOSE_MAX_MG_DL: Final = 2656.0  # Guinness World Records 2008 (source on the glucose range)
+
+
 PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
     PlausibilityRange(
         variable="age",
@@ -220,7 +227,7 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
         # highest blood glucose on record (Guinness World Records, 2008). Unit unknown: the
         # mg/dL bound, which also admits every mmol/L value.
         minimum=0,
-        maximum=2656,
+        maximum=GLUCOSE_MAX_MG_DL,
         unit="mg/dL or mmol/L",
         source="Lower: physical (no negative concentration). Upper: Guinness World Records 2008, "
         "highest recorded blood glucose 2,656 mg/dL (147.6 mmol/L)",
@@ -238,10 +245,7 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
         unit="°C or °F",
         source="Lower: Gilbert et al., Lancet 2000;355:375 (survival at 13.7 °C). "
         "Upper: Guinness World Records 1980 (46.5 °C survived), as °F",
-        by_median=(
-            UnitBounds(unit="°C", minimum=10, maximum=47, median_below=50),
-            UnitBounds(unit="°F", minimum=50, maximum=117, median_below=None),
-        ),
+        by_median=(TEMPERATURE_C, TEMPERATURE_F),
     ),
     PlausibilityRange(
         variable="spo2",
@@ -290,3 +294,181 @@ PLAUSIBILITY_RANGES: Final[tuple[PlausibilityRange, ...]] = (
 
 # Numeric columns with no configured range are marked so in the contract, never silently passed.
 NO_RANGE_KNOWN: Final = "no range known"
+
+
+# --- Mixed units (DQ M3) ------------------------------------------------------------------------
+# A lab recorded in two units in one column ("glucose" holding mg/dL and mmol/L values) has no
+# meaningful mean. It is found as two value clusters whose ratio is the unit pair's conversion
+# factor, each cluster plausible in its own unit. Only the pairs below are checked: a column
+# without a configured pair is never guessed at.
+
+
+@dataclass(frozen=True)
+class UnitPair:
+    """Two units of one variable: ``high = low * scale + offset`` (``low`` is the unit whose
+    numbers are smaller: mmol/L beside mg/dL, °C beside °F).
+
+    ``variable`` names the ``PlausibilityRange`` whose aliases find the column; ``aliases`` are
+    used instead for a variable with no plausibility range (weight, height). ``low`` and
+    ``high`` carry each unit's plausible bounds and the header suffixes that name it.
+    """
+
+    variable: str
+    low: UnitBounds
+    high: UnitBounds
+    scale: float
+    source: str
+    offset: float = 0.0
+    low_hints: tuple[str, ...] = ()
+    high_hints: tuple[str, ...] = ()
+    aliases: frozenset[str] = frozenset()
+
+
+# Header suffixes (normalised like UNIT_HINTS) that name each unit.
+_MG_DL: Final = ("mgdl",)
+_MMOL_L: Final = ("mmoll", "mmol")
+_UMOL_L: Final = ("umoll", "µmoll")
+
+
+def _lab(
+    variable: str,
+    low: tuple[str, tuple[str, ...]],
+    high: tuple[str, tuple[str, ...]],
+    scale: float,
+    high_maximum: float,
+    source: str,
+) -> UnitPair:
+    """A concentration in two units: physical lower bound 0 in both, the upper bound given in
+    ``high`` and converted for ``low`` (so both ranges describe the same patients)."""
+    return UnitPair(
+        variable=variable,
+        low=UnitBounds(unit=low[0], minimum=0, maximum=high_maximum / scale, median_below=None),
+        high=UnitBounds(unit=high[0], minimum=0, maximum=high_maximum, median_below=None),
+        scale=scale,
+        source=source,
+        low_hints=low[1],
+        high_hints=high[1],
+    )
+
+
+# Lab factors: mg/dL -> mmol/L is 10 / molar mass (g/mol); µmol/L adds a factor 1000. Source
+# for every lab factor: Young DS. Implementation of SI units for clinical laboratory data.
+# Ann Intern Med 1987;106:114-129 (conversion table). Upper bounds are margins above the
+# highest values clinicians report, not reference ranges: a cluster is "plausible in its unit"
+# when nearly all of it lies inside.
+_YOUNG_1987: Final = "Young, Ann Intern Med 1987;106:114 (SI conversion table)"
+# Homozygous familial hypercholesterolaemia: untreated LDL-C above 500 mg/dL (Cuchel M et al.,
+# Eur Heart J 2014;35:2146). Bound: 3x that.
+_FH_UPPER: Final = "Upper: 3x the untreated LDL-C of homozygous FH (Cuchel, Eur Heart J 2014;35:2146)"
+_MMOL: Final = ("mmol/L", _MMOL_L)
+_MGDL: Final = ("mg/dL", _MG_DL)
+UNIT_PAIRS: Final[tuple[UnitPair, ...]] = (
+    _lab(
+        "glucose",
+        _MMOL,
+        _MGDL,
+        18.016,
+        GLUCOSE_MAX_MG_DL,
+        f"{_YOUNG_1987}: glucose 180.16 g/mol, 1 mmol/L = 18.016 mg/dL. "
+        "Upper: highest recorded blood glucose (Guinness World Records 2008)",
+    ),
+    _lab("cholesterol", _MMOL, _MGDL, 38.67, 1500.0, f"{_YOUNG_1987}: 1 mmol/L = 38.67 mg/dL. {_FH_UPPER}"),
+    _lab("ldl", _MMOL, _MGDL, 38.67, 1500.0, f"{_YOUNG_1987}: 1 mmol/L = 38.67 mg/dL. {_FH_UPPER}"),
+    # CETP deficiency: HDL-C above 100 mg/dL (Inazu A et al., N Engl J Med 1990;323:1234).
+    _lab(
+        "hdl",
+        _MMOL,
+        _MGDL,
+        38.67,
+        300.0,
+        f"{_YOUNG_1987}: 1 mmol/L = 38.67 mg/dL. Upper: 3x the HDL-C of CETP deficiency "
+        "(Inazu, N Engl J Med 1990;323:1234)",
+    ),
+    _lab(
+        "triglycerides",
+        _MMOL,
+        _MGDL,
+        88.57,
+        30000.0,
+        f"{_YOUNG_1987}: triglycerides as triolein, 1 mmol/L = 88.57 mg/dL. "
+        "Upper: a margin above the >10,000 mg/dL of familial chylomicronaemia",
+    ),
+    _lab(
+        "creatinine",
+        _MGDL,
+        ("µmol/L", _UMOL_L),
+        88.4,
+        4420.0,
+        f"{_YOUNG_1987}: creatinine 113.12 g/mol, 1 mg/dL = 88.4 µmol/L. "
+        "Upper: 50 mg/dL, a margin above severe acute kidney injury",
+    ),
+    UnitPair(
+        variable="temperature",
+        low=TEMPERATURE_C,
+        high=TEMPERATURE_F,
+        scale=1.8,
+        offset=32.0,
+        # Definition of the degree Fahrenheit: NIST SP 811 (2008), B.9: t/°F = 1.8 t/°C + 32.
+        source="NIST SP 811 (2008) B.9: °F = 1.8 °C + 32. Bounds: the temperature plausibility range",
+        low_hints=("c", "degc", "celsius"),
+        high_hints=("f", "degf", "fahrenheit"),
+    ),
+    UnitPair(
+        variable="weight",
+        aliases=frozenset({"weight", "bodyweight", "weightkg", "weightlb", "weightlbs"}),
+        # The international pound is exactly 0.45359237 kg (NIST SP 811 (2008), B.9). Bounds:
+        # below the lightest surviving newborn (212 g, 2021) to above the heaviest recorded
+        # human (635 kg), both Guinness World Records.
+        low=UnitBounds(unit="kg", minimum=0.2, maximum=650, median_below=None),
+        high=UnitBounds(unit="lb", minimum=0.2 / 0.45359237, maximum=650 / 0.45359237, median_below=None),
+        scale=1 / 0.45359237,
+        source="NIST SP 811 (2008) B.9: 1 lb = 0.45359237 kg. Bounds: Guinness World Records "
+        "(lightest surviving newborn 212 g, heaviest human 635 kg)",
+        low_hints=("kg", "kgs"),
+        high_hints=("lb", "lbs", "pounds"),
+    ),
+    UnitPair(
+        variable="height",
+        aliases=frozenset({"height", "heightcm", "heightin", "stature"}),
+        # The inch is exactly 2.54 cm (NIST SP 811 (2008), B.9). Bounds: below newborn length
+        # to above the tallest recorded human (272 cm, Guinness World Records).
+        low=UnitBounds(unit="in", minimum=20 / 2.54, maximum=275 / 2.54, median_below=None),
+        high=UnitBounds(unit="cm", minimum=20, maximum=275, median_below=None),
+        scale=2.54,
+        source="NIST SP 811 (2008) B.9: 1 in = 2.54 cm. Bounds: below newborn length to above the "
+        "tallest recorded human, 272 cm (Guinness World Records)",
+        low_hints=("in", "inch", "inches"),
+        high_hints=("cm",),
+    ),
+)
+
+# Detection thresholds (contracts.unit_mix). The clusters are a two-component normal mixture
+# fitted to log values. Ashman's D above 2 is "clean separation" of two components (Ashman KM,
+# Bird CM, Zepf SE. Detecting bimodality in astronomical datasets. Astron J 1994;108:2348): a
+# single skewed distribution, however wide, fits two overlapping components (D below 2).
+UNIT_MIX_MIN_SEPARATION: Final = 2.0
+# The clusters' centres must differ by the unit factor within this ratio either way: patients
+# measured in one unit may be sicker than those in the other (centres 12.5 apart for glucose).
+UNIT_MIX_RATIO_TOLERANCE: Final = 1.5
+# ...and within this share of the factor on the log scale, which binds for the small factors
+# (kg/lb 2.2, cm/in 2.54, °C/°F): there a 1.5x slack would admit children beside adults.
+UNIT_MIX_RATIO_TOLERANCE_SHARE: Final = 0.25
+# Two components must explain the values better than one by a BIC difference of at least 10,
+# "very strong" evidence (Kass RE, Raftery AE. Bayes factors. J Am Stat Assoc 1995;90:773).
+UNIT_MIX_MIN_BIC_GAIN: Final = 10.0
+# Each cluster needs this many values; a column needs twice this many.
+UNIT_MIX_MIN_CLUSTER_VALUES: Final = 3
+# Share of each cluster that must lie inside its unit's bounds.
+UNIT_MIX_IN_RANGE_SHARE: Final = 0.95
+# Floor on a fitted component's log spread, so a cluster of identical values cannot collapse
+# the fit (log 1.02: values 2% apart).
+UNIT_MIX_MIN_LOG_SD: Final = 0.02
+UNIT_MIX_EM_ITERATIONS: Final = 200
+# A conversion rule is offered only when every value belongs to its cluster with at least this
+# posterior probability: no value sits in the valley where its unit cannot be told.
+UNIT_MIX_CLEAN_POSTERIOR: Final = 0.99
+# ...and the clusters leave an empty stretch of at least this share of the units' log distance
+# (glucose: the lowest mg/dL value at least 18 ** 0.25 = 2.1x the highest mmol/L one). Values in
+# a narrower valley could be either unit (30: 30 mmol/L or 30 mg/dL), which no cut point settles.
+UNIT_MIX_CLEAN_GAP_SHARE: Final = 0.25
+UNIT_MIX_RULE_SUFFIX: Final = "_units"

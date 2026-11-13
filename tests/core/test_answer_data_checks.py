@@ -25,6 +25,7 @@ from clinical_analytics.contracts.declarations import (
     MemoryDeclarationStore,
 )
 from clinical_analytics.contracts.errors import ContractStoreError
+from clinical_analytics.contracts.unit_mix import detect_unit_mix
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.answer_checks import grain_of
 from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
@@ -36,6 +37,7 @@ from clinical_analytics.core.query_service import (
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine, patient_key_by_name
 from clinical_analytics.core.semantic import ENTITY_KEY_MISSING_REASON
+from tests.eval.dq_probes import interleave, lab_frame, lognormal_values, mixed_glucose_frame, skewed_glucose_frame
 
 N = 200
 IDS = [f"P{i:03d}" for i in range(N)]
@@ -1082,3 +1084,200 @@ class TestEntityFrequencyNeedsKey:
 
         # Assert: never a row count labelled as patients
         assert result.get("error") == ENTITY_KEY_MISSING_REASON
+
+
+# --- Mixed units (DQ M3) ----------------------------------------------------------------------
+
+MIXED_HOLD = (
+    "glucose looks like it mixes mg/dL and mmol/L. Confirm that values below 30 are mmol/L to convert "
+    "them to mg/dL, or ask about one unit."
+)
+GLUCOSE_MEAN = QueryPlan(intent="DESCRIBE", metric="glucose", confidence=0.99)
+
+
+def _true_mixed_mean_mg_dl() -> float:
+    converted = mixed_glucose_frame().select(
+        pl.when(pl.col("glucose") < 30).then(pl.col("glucose") * 18.016).otherwise(pl.col("glucose"))
+    )
+    return float(converted.to_series().mean())
+
+
+class TestMixedUnits:
+    def test_ask_meanOfMixedGlucose_heldWithOneSentenceNoNumber(self, make_semantic_layer: Any) -> None:
+        # Arrange: on main "Mean glucose was ... n=200" averaged mg/dL with mmol/L
+        service = _service(make_semantic_layer, mixed_glucose_frame())
+
+        # Act
+        result = _ask(service, GLUCOSE_MEAN)
+
+        # Assert
+        assert result.requires_confirmation
+        assert result.failure_reason == MIXED_HOLD
+        assert result.claim is None and result.analysis is None
+
+    def test_ask_confirmRule_answersInMgDlAndPlanLineSaysSo(self, make_semantic_layer: Any) -> None:
+        # Arrange
+        store = MemoryDeclarationStore()
+        service = _service(make_semantic_layer, mixed_glucose_frame(), declarations=store)
+        held = _ask(service, GLUCOSE_MEAN)
+
+        # Act
+        answered = _ask(service, GLUCOSE_MEAN, confirm_hash=held.plan_hash)
+
+        # Assert
+        assert _shown(answered).startswith(f"ANSWER Mean glucose was {_true_mixed_mean_mg_dl():.2f}")
+        conversion = "glucose values below 30 read as mmol/L and converted to mg/dL (1 mmol/L = 18.016 mg/dL)"
+        assert answered.plan_line is not None and conversion in answered.plan_line
+        assert f"Data check: {conversion}." in answered.analysis["data_notes"]
+        rules = store.load("probe").units_for("probe")
+        assert [(r.column, r.cutoff, r.source_unit, r.target_unit) for r in rules] == [
+            ("glucose", 30.0, "mmol/L", "mg/dL")
+        ]
+
+    def test_ask_afterRuleConfirmed_nextQuestionAnsweredNoHold(self, make_semantic_layer: Any) -> None:
+        # Arrange: safe to run twice; a later question on the same version reads one unit
+        store = MemoryDeclarationStore()
+        service = _service(make_semantic_layer, mixed_glucose_frame(), declarations=store)
+        held = _ask(service, GLUCOSE_MEAN)
+        _ask(service, GLUCOSE_MEAN, confirm_hash=held.plan_hash)
+
+        # Act
+        again = _ask(service, GLUCOSE_MEAN)
+
+        # Assert
+        assert not again.requires_confirmation
+        assert _shown(again).startswith(f"ANSWER Mean glucose was {_true_mixed_mean_mg_dl():.2f}")
+        assert len(store.load("probe").units) == 1
+
+    def test_ask_ruleFromAnotherVersion_heldAgain(self, make_semantic_layer: Any) -> None:
+        # Arrange: a rule confirmed on another dataset version is not applied to this one
+        store = MemoryDeclarationStore()
+        mix = detect_unit_mix("glucose", mixed_glucose_frame().get_column("glucose"))
+        assert mix is not None and (rule := mix.rule("old_version")) is not None
+        store.save("probe", Declarations().with_unit(rule))
+        service = _service(make_semantic_layer, mixed_glucose_frame(), declarations=store)
+
+        # Act
+        result = _ask(service, GLUCOSE_MEAN)
+
+        # Assert
+        assert result.failure_reason == MIXED_HOLD
+
+    def test_ask_overlappingUnits_refusedWithNothingToConfirm(self, make_semantic_layer: Any) -> None:
+        # Arrange: values in the valley (24-30) could be either unit, so no rule is offered
+        values = mixed_glucose_frame().get_column("glucose").to_list() + [24.0, 27.0, 30.0]
+        service = _service(make_semantic_layer, lab_frame("glucose", values))
+
+        # Act
+        result = _ask(service, GLUCOSE_MEAN)
+
+        # Assert
+        refusal = (
+            "glucose looks like it mixes mg/dL and mmol/L. Correct the file so each value is in one unit, "
+            "or ask about one unit."
+        )
+        assert _shown(result) == f"REFUSED {refusal}"
+        assert not result.requires_confirmation and result.plan_hash is None  # no confirm releases it
+
+    def test_ask_skewedSingleUnit_answeredWithTrueMean(self, make_semantic_layer: Any) -> None:
+        # Arrange: wide, right-skewed mg/dL glucose (two clinical groups) is not a unit mix
+        frame = skewed_glucose_frame()
+        service = _service(make_semantic_layer, frame)
+
+        # Act
+        result = _ask(service, GLUCOSE_MEAN)
+
+        # Assert
+        assert _shown(result).startswith(f"ANSWER Mean glucose was {frame.get_column('glucose').mean():.2f}")
+        assert "mixes" not in (result.claim or "")
+
+    @pytest.mark.parametrize(
+        ("operator", "value", "kept"),
+        [
+            pytest.param(">=", 30, lambda v: v >= 30, id="mg_dl_only"),
+            pytest.param("<", 30, lambda v: v < 30, id="mmol_l_only"),
+        ],
+    )
+    def test_ask_statisticLimitedToOneUnit_answered(
+        self, make_semantic_layer: Any, operator: Any, value: int, kept: Any
+    ) -> None:
+        # Arrange: "ask about one unit"
+        frame = mixed_glucose_frame()
+        service = _service(make_semantic_layer, frame)
+        plan = QueryPlan(
+            intent="DESCRIBE",
+            metric="glucose",
+            filters=[FilterSpec(column="glucose", operator=operator, value=value)],
+            scope="filtered",
+            confidence=0.99,
+        )
+        truth = frame.get_column("glucose").filter(kept(frame.get_column("glucose"))).mean()
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert
+        assert _shown(result).startswith(f"ANSWER Mean glucose was {truth:.2f}")
+
+    @pytest.mark.parametrize(
+        "plan",
+        [
+            pytest.param(
+                QueryPlan(
+                    intent="COUNT",
+                    filters=[FilterSpec(column="glucose", operator=">", value=126)],
+                    scope="filtered",
+                    confidence=0.99,
+                ),
+                id="count_above_threshold_misses_mmol",
+            ),
+            pytest.param(
+                QueryPlan(intent="COMPARE_GROUPS", metric="glucose", group_by="arm", confidence=0.99), id="compare"
+            ),
+        ],
+    )
+    def test_ask_otherUsesOfMixedColumn_held(self, make_semantic_layer: Any, plan: QueryPlan) -> None:
+        # Arrange
+        frame = mixed_glucose_frame().with_columns(
+            pl.when(pl.int_range(pl.len()) % 2 == 0).then(pl.lit("A")).otherwise(pl.lit("B")).alias("arm")
+        )
+        service = _service(make_semantic_layer, frame)
+
+        # Act
+        result = _ask(service, plan)
+
+        # Assert
+        assert result.requires_confirmation
+        assert MIXED_HOLD in (result.failure_reason or "")
+
+    def test_ask_mixedTemperature_unitHoldOnlyNoEntryErrorHold(self, make_semantic_layer: Any) -> None:
+        # Arrange: °F values look implausible in °C; the unit hold covers them, once
+        values = interleave(lognormal_values(37.0, 0.02, 150), lognormal_values(98.6, 0.02, 50))
+        service = _service(make_semantic_layer, lab_frame("temperature", values))
+
+        # Act
+        result = _ask(service, QueryPlan(intent="DESCRIBE", metric="temperature", confidence=0.99))
+
+        # Assert
+        assert result.failure_reason == (
+            "temperature looks like it mixes °C and °F. Confirm that values of 60 and above are °F to "
+            "convert them to °C, or ask about one unit."
+        )
+
+
+def test_fileDeclarationStore_unitRuleRoundTrip_oldFilesStillLoad(tmp_path: Any) -> None:
+    # Arrange
+    store = FileDeclarationStore(tmp_path)
+    mix = detect_unit_mix("glucose", mixed_glucose_frame().get_column("glucose"))
+    assert mix is not None and (rule := mix.rule("v1")) is not None
+    old = tmp_path / "contracts" / "old" / "declarations.json"
+    old.parent.mkdir(parents=True)
+    old.write_text('{"grain": null, "levels": []}', encoding="utf-8")
+
+    # Act
+    store.update("ds", lambda d: d.with_unit(rule))
+    store.update("ds", lambda d: d.with_unit(rule))
+
+    # Assert
+    assert store.load("ds").units_for("v1") == (rule,)
+    assert store.load("old").units == ()

@@ -24,6 +24,7 @@ from clinical_analytics.contracts.declarations import (
     DeclarationStore,
     LevelMapping,
     MemoryDeclarationStore,
+    UnitRule,
 )
 from clinical_analytics.contracts.errors import ContractError, ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.quality import QualityReport
@@ -235,6 +236,7 @@ class QueryService:
         self._unsaved = MemoryDeclarationStore()
         self.data_dir = data_dir
         self._applied_levels: set[tuple[str, tuple[str, ...], str | None]] = set()
+        self._applied_units: set[UnitRule] = set()
         self.nl_engine = NLQueryEngine(semantic_layer)
         self.conversation_manager = ConversationManager()
 
@@ -324,6 +326,7 @@ class QueryService:
             )
         mappings = declarations.levels_for(dataset_version)
         self._apply_levels(mappings)
+        self._apply_units(declarations.units_for(dataset_version))
 
         # Parse query with NLQueryEngine
         query_intent = self.nl_engine.parse_query(
@@ -379,7 +382,11 @@ class QueryService:
         # The plan as parsed is what the question is checked against; a limit on a confirmed
         # spelling runs on the merged level ("M" -> "Male"), and the line shown says so.
         executed_plan = remapped_plan(query_plan, mappings)
-        shown_plan_line = format_plan_line(executed_plan, context, merged=merged_words(query_plan, mappings))
+        predictors = [str(p) for p in getattr(context, "predictor_variables", None) or []]
+        shown_plan_line = answer_checks.with_unit_rules(
+            format_plan_line(executed_plan, context, merged=merged_words(query_plan, mappings)),
+            answer_checks.applied_unit_rules(query_plan, declarations.units_for(dataset_version), predictors),
+        )
         plan_hash = confirmation_hash(query_plan, executed_plan, context)
         plan_changed = False
         if confirmed and confirm_plan_hash != plan_hash:
@@ -463,7 +470,7 @@ class QueryService:
         # Data checks on the columns the plan reads: refuse what would be wrong whatever the
         # doctor says; hold what only they can settle (grain, category spellings, implausible
         # values) until they confirm this exact plan; otherwise note it on the answer.
-        findings = self._data_findings(query_plan, declaration_key, dataset_version, declarations)
+        findings = self._data_findings(query_plan, declaration_key, dataset_version, declarations, predictors)
         if confirmed and not findings.refusal:
             findings.refusal, declarations = self._declare(declaration_key, findings, declarations)
         if findings.refusal:
@@ -541,6 +548,15 @@ class QueryService:
                         else:
                             analysis = self._with_findings(analysis, findings, query_plan)
                             claim = present_analysis(analysis).get("claim")
+                            # A converted unit changes what ran: the line shown with the answer says so.
+                            converted = answer_checks.applied_unit_rules(
+                                query_plan, declarations.units_for(dataset_version), predictors
+                            )
+                            if converted:
+                                plan_line = answer_checks.with_unit_rules(
+                                    format_plan_line(query_plan, context, merged=merged_words(query_plan, mappings)),
+                                    converted,
+                                )
         except CohortStepError as e:
             # Already plain language: say why the limit could not be applied.
             failure_reason = str(e)
@@ -585,7 +601,12 @@ class QueryService:
             return Declarations()
 
     def _data_findings(
-        self, plan: QueryPlan, dataset_key: str | None, dataset_version: str | None, declarations: Declarations
+        self,
+        plan: QueryPlan,
+        dataset_key: str | None,
+        dataset_version: str | None,
+        declarations: Declarations,
+        predictors: list[str] | None = None,
     ) -> answer_checks.Findings:
         """Run the data checks for ``plan``. ``findings.visits``: rows are declared visits on this
         dataset version.
@@ -605,6 +626,18 @@ class QueryService:
         findings.refusal = answer_checks.metric_refusal(plan, layer)
         if findings.refusal:
             return findings
+        # Mixed units (DQ M3): no statistic of two scales. Held when a cut point separates the
+        # units (confirming converts), refused when none does (only the file can be fixed).
+        mixed: set[str] = set()
+        for mix, rule, sentence in answer_checks.unit_mix_findings(plan, layer, dataset_version, predictors or []):
+            mixed.add(mix.column)
+            if rule is None:
+                findings.refusal = sentence
+                return findings
+            findings.holds.append(sentence)
+            findings.units_to_declare.append(rule)
+        for rule in answer_checks.applied_unit_rules(plan, declarations.units_for(dataset_version), predictors or []):
+            findings.notes.append(f"Data check: {answer_checks.unit_rule_text(rule)}.")
         if grain.repeated and grain.key is not None and not visits:
             findings.holds.append(answer_checks.grain_hold_reason(grain.key))
             findings.grain_to_declare = grain.declaration(dataset_version)
@@ -620,7 +653,9 @@ class QueryService:
         for _column, mapping, sentence in answer_checks.variant_findings(plan, layer, declarations, dataset_version):
             findings.holds.append(sentence)
             findings.levels_to_declare.append(mapping)
-        for _column, hold, note in answer_checks.implausible_sentences(plan, layer):
+        for column, hold, note in answer_checks.implausible_sentences(plan, layer):
+            if column in mixed:
+                continue  # one unit's values look implausible in the other: the unit hold covers it
             findings.holds.append(hold)
             findings.notes.append(note)
         null_keys = answer_checks.missing_key_note(grain, visits or grain.repeated)
@@ -650,15 +685,17 @@ class QueryService:
         cannot be stored: the answer would otherwise rest on a confirmation the next question
         does not know about.
         """
-        if findings.grain_to_declare is None and not findings.levels_to_declare:
+        if findings.grain_to_declare is None and not findings.levels_to_declare and not findings.units_to_declare:
             return None, declarations
-        grain, levels = findings.grain_to_declare, findings.levels_to_declare
+        grain, levels, units = findings.grain_to_declare, findings.levels_to_declare, findings.units_to_declare
 
         def change(declarations: Declarations) -> Declarations:
             if grain is not None:
                 declarations = declarations.with_grain(grain)
             for mapping in levels:
                 declarations = declarations.with_levels(mapping)
+            for rule in units:
+                declarations = declarations.with_unit(rule)
             return declarations
 
         store, key = self._store(dataset_key)
@@ -672,11 +709,15 @@ class QueryService:
             findings.visits = True
         if levels:
             self._apply_levels(declarations.levels_for(levels[0].dataset_version))
+        if units:
+            self._apply_units(declarations.units_for(units[0].dataset_version))
+            findings.notes.extend(f"Data check: {answer_checks.unit_rule_text(rule)}." for rule in units)
         logger.info(
             "data_declarations_confirmed",
             dataset_key=dataset_key,
             grain=grain is not None,
             level_mappings=len(levels),
+            unit_rules=len(units),
         )
         return None, declarations
 
@@ -699,6 +740,24 @@ class QueryService:
             cache: dict[str, list[Any]] | None = getattr(self.nl_engine, "_distinct_value_cache", None)
             if cache is not None:
                 cache.pop(mapping.column, None)
+
+    def _apply_units(self, rules: tuple[UnitRule, ...]) -> None:
+        """Convert each confirmed unit rule's values once per layer, so every later question reads
+        the column in one unit."""
+        if not rules:
+            return
+        columns = set(self.semantic_layer.get_base_view().columns)
+        for rule in rules:
+            if rule in self._applied_units or rule.column not in columns:
+                continue
+            self.semantic_layer.convert_units(
+                rule.column, rule.cutoff, below=rule.side == "below", scale=rule.scale, offset=rule.offset
+            )
+            self._applied_units.add(rule)
+            cache: dict[str, list[Any]] | None = getattr(self.nl_engine, "_distinct_value_cache", None)
+            if cache is not None:
+                cache.pop(rule.column, None)
+            logger.info("unit_rule_applied", column=rule.column, source_unit=rule.source_unit, target=rule.target_unit)
 
     def _values_with_spellings(self, mappings: tuple[LevelMapping, ...]) -> Callable[[str], list[Any]]:
         """The column values word accounting checks a plan against: the merged levels, plus the

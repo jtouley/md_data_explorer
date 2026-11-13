@@ -41,9 +41,13 @@ from tests.eval.dq_probes import (
     DQ_QUESTIONS,
     PREDICTOR_PROBES,
     SHOWN_PROBES,
+    UNIT_ANSWERED,
+    UNIT_HELD,
     dq_frames,
     fold_frame,
+    mixed_glucose_frame,
     predictor_frame,
+    skewed_glucose_frame,
     visits_died_frame,
 )
 from tests.eval.negation_probes import PROBES as SCOPE_PROBES
@@ -292,6 +296,20 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
         result = ask(f"dq_{name}", query)
         leak = _hold_leak(result, frames[name])
         record("dq", f"{name}: {query}", "wrong" if leak else _held(result), leak or "held or refused", result)
+
+    # Mixed units (DQ M3): held on a mg/dL + mmol/L file; answered, with the true mean, on a
+    # single-unit skewed one (a hold there is graded wrong: the check over-held).
+    register_frame("dq_mixed_glucose", mixed_glucose_frame())
+    for query in UNIT_HELD:
+        result = ask("dq_mixed_glucose", query)
+        record("dq_units", f"mixed_glucose: {query}", _held(result), "held", result)
+    skewed = skewed_glucose_frame()
+    register_frame("dq_skewed_glucose", skewed)
+    for query in UNIT_ANSWERED:
+        result = ask("dq_skewed_glucose", query)
+        truth = skewed.get_column("glucose").mean()
+        graded = classify_presented_generic(truth, result)
+        record("dq_units", f"skewed_glucose: {query}", "answered" if graded == "answered" else "wrong", truth, result)
 
     # Shown-answer probes: the exact table or claim the app shows (dq_probes.SHOWN_PROBES).
     register_frame("dq_fold", fold_frame())

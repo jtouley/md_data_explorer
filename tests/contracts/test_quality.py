@@ -14,12 +14,14 @@ from clinical_analytics.contracts.quality import (
     LEVEL_VARIANTS_METRIC,
     ROWS_KEY,
     TYPE_METRIC,
+    UNIT_MIX_METRIC,
     _passes,
     compile_contract,
     measure,
     run_quality,
 )
 from tests.contracts.conftest import DEXA, FIXED_TS, STATIN
+from tests.eval.dq_probes import lab_frame, mixed_glucose_frame, skewed_glucose_frame
 
 
 def _by_id(report: Any) -> dict[str, Any]:
@@ -927,3 +929,102 @@ def test_compileContract_tableDuplicateOnUncheckedColumns_stillRuns():
 
     # Assert
     assert checks["pair"].expr is not None
+
+
+# --- Mixed units (DQ M3) ----------------------------------------------------------------------
+
+
+def _unit_checks(df: pl.DataFrame, make_contract: Any) -> list[Any]:
+    report = run_quality(df.lazy(), make_contract(df))
+    return [c for c in report.checks if c.metric == UNIT_MIX_METRIC]
+
+
+def test_runQuality_mixedGlucose_warnsNamingColumnAndBothUnits(make_contract):
+    # Arrange
+    df = mixed_glucose_frame()
+
+    # Act
+    checks = _unit_checks(df, make_contract)
+
+    # Assert
+    assert [c.status for c in checks] == ["warning"]
+    assert checks[0].message == (
+        "glucose: values look like a mix of mg/dL (150 values) and mmol/L (50 values); "
+        "statistics on it are held until you say which unit each value is in"
+    )
+
+
+def test_runQuality_mixedGlucose_inUploadSummary(make_contract):
+    # Arrange
+    df = mixed_glucose_frame()
+
+    # Act
+    report = run_quality(df.lazy(), make_contract(df))
+
+    # Assert
+    assert any(line.startswith("glucose: values look like a mix of mg/dL") for line in report.summary)
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected"),
+    [
+        pytest.param(
+            mixed_glucose_frame(mmol_rows=4, mg_rows=196),
+            "mg/dL (count hidden) and mmol/L (count hidden)",
+            id="small_cluster_hides_both",
+        ),
+        pytest.param(
+            mixed_glucose_frame(mmol_rows=11, mg_rows=189),
+            "mg/dL (189 values) and mmol/L (11 values)",
+            id="boundary_11_shown",
+        ),
+        pytest.param(
+            mixed_glucose_frame().with_columns(
+                pl.when(pl.int_range(pl.len()) < 3).then(None).otherwise(pl.col("glucose")).alias("glucose")
+            ),
+            "(count hidden)",
+            id="three_missing_would_be_derivable",
+        ),
+    ],
+)
+def test_runQuality_mixedUnits_countsSuppressedUnder11(make_contract, frame, expected):
+    # Act
+    checks = _unit_checks(frame, make_contract)
+
+    # Assert
+    assert len(checks) == 1
+    assert expected in checks[0].message
+
+
+def test_runQuality_mixedUnitsTinyTable_noCounts(make_contract):
+    # Arrange: 12 rows (is_tiny_table): no count is reported
+    df = lab_frame("glucose", [5.5, 6.0, 6.4, 7.1, 110.0, 95.0, 120.0, 101.0, 99.0, 130.0, 105.0, 115.0])
+
+    # Act
+    checks = _unit_checks(df, make_contract)
+
+    # Assert
+    assert len(checks) == 1
+    assert "values)" not in checks[0].message
+    assert "(count hidden)" in checks[0].message
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        pytest.param(skewed_glucose_frame(), id="single_unit_skewed"),
+        pytest.param(lab_frame("crp", mixed_glucose_frame().get_column("glucose").to_list()), id="no_unit_pair"),
+        pytest.param(pl.DataFrame({"patient_id": ["a"] * 0, "glucose": pl.Series([], dtype=pl.Float64)}), id="empty"),
+    ],
+)
+def test_runQuality_noUnitMix_noWarning(make_contract, frame):
+    # Act / Assert
+    assert _unit_checks(frame, make_contract) == []
+
+
+def test_runQuality_cleanSyntheticCohort_noUnitWarning(load_synthetic_dataset, make_contract):
+    # Arrange: ldl and hdl have unit pairs; the cohort is in one unit
+    df = load_synthetic_dataset("cohort")
+
+    # Act / Assert
+    assert _unit_checks(df, make_contract) == []

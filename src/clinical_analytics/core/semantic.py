@@ -3096,6 +3096,18 @@ class SemanticLayer:
         self._base_counts.pop(column, None)
         self._value_counts.pop(column, None)
 
+    def convert_units(self, column: str, cutoff: float, below: bool, scale: float, offset: float) -> None:
+        """Read the values of ``column`` below ``cutoff`` (or at and above it, ``below`` False) as
+        ``value * scale + offset`` from now on (a confirmed unit rule: glucose below 30 is mmol/L,
+        read in mg/dL). Rows, missing values and the other values are unchanged."""
+        view = self.get_base_view()
+        values = view[column].cast("float64")
+        side = values < cutoff if below else values >= cutoff
+        self._base_view = view.mutate(**{column: side.ifelse(values * scale + offset, values)})
+        # The column's values changed: its cached distinct count and value counts are stale.
+        self._base_counts.pop(column, None)
+        self._value_counts.pop(column, None)
+
     def _column_is_string(self, view: Any, column: str) -> bool:
         """From the schema: no rows are read."""
         return bool(view[column].type().is_string())
