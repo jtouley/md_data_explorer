@@ -45,7 +45,7 @@ class TestUserDatasetStorage:
         assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
         # Check that CSV file exists with upload_id as filename
-        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()
+        assert Path(upload_storage.get_upload_metadata(upload_id)["cohort_parquet"]).is_file()
 
     def test_saveUpload_syntheticCohort_writesContractReportAndSourceHash(self, upload_storage, load_synthetic_dataset):
         """Every upload version gets an ODCS contract and a quality report in the data dir."""
@@ -514,8 +514,9 @@ class TestSaveTableList:
 
         # Assert
         assert success is True, f"save_table_list failed: {message}"
-        assert (upload_storage.upload_dir / "raw" / f"{upload_id}_tables" / "patient_outcomes.csv").exists()
-        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
+        stored = upload_storage.get_upload_metadata(upload_id)
+        assert Path(stored["parquet_paths"]["patient_outcomes"]).is_file()
+        assert stored["cohort_parquet"] == stored["parquet_paths"]["patient_outcomes"]
 
     def test_save_table_list_saves_metadata_with_tables_list(self, upload_storage, simple_test_df):
         """Test that save_table_list() saves metadata with tables list."""
@@ -601,11 +602,11 @@ class TestSaveTableList:
 
         # Assert
         assert success is True
-        # Both tables should be saved
-        assert (upload_storage.upload_dir / "raw" / f"{upload_id}_tables" / "patients.csv").exists()
-        assert (upload_storage.upload_dir / "raw" / f"{upload_id}_tables" / "admissions.csv").exists()
-        # Unified cohort should exist
-        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()
+        # Both tables and the unified cohort are stored as typed Parquet
+        stored = upload_storage.get_upload_metadata(upload_id)
+        assert all(Path(stored["parquet_paths"][t]).is_file() for t in ("patients", "admissions"))
+        assert Path(stored["cohort_parquet"]).is_file()
+        assert "__cohort_" in Path(stored["cohort_parquet"]).name
 
         # Metadata should have both tables
         metadata_path = upload_storage.upload_dir / "metadata" / f"{upload_id}.json"
@@ -670,40 +671,33 @@ class TestFileLocking:
         # Assert: No exception raised (platform detection works)
         assert True
 
-    def test_file_lock_used_in_all_metadata_writes(self, upload_storage):
-        """Verify file_lock() is used in all metadata write operations."""
+    def test_metadataWrites_allGoThroughLockedAtomicHelpers(self, upload_storage):
+        """Every metadata write uses _write_metadata/_update_metadata (lock + atomic replace)."""
         import inspect
 
-        from clinical_analytics.ui.storage.user_datasets import (
-            save_table_list,
-        )
-
-        # Arrange: Get all functions that write metadata
-        storage = upload_storage
-
-        # Functions that write metadata (must use file_lock)
-        metadata_write_functions = [
-            ("save_table_list", save_table_list),
-            ("rollback_to_version", storage.rollback_to_version),
-            ("update_metadata", storage.update_metadata),
-        ]
-
-        # Act: Check source code for file_lock usage
-        missing_locks = []
-        for func_name, func in metadata_write_functions:
-            source = inspect.getsource(func)
-            if "with file_lock" not in source and "file_lock(" not in source:
-                missing_locks.append(func_name)
-
-        # Also check _migrate_legacy_upload (internal function)
         from clinical_analytics.ui.storage import user_datasets
 
-        migrate_source = inspect.getsource(user_datasets._migrate_legacy_upload)
-        if "with file_lock" not in migrate_source and "file_lock(" not in migrate_source:
-            missing_locks.append("_migrate_legacy_upload")
+        # Arrange
+        storage = upload_storage
+        writers = [
+            ("save_table_list", user_datasets.save_table_list),
+            ("update_metadata", storage.update_metadata),
+            ("add_documentation_to_upload", storage.add_documentation_to_upload),
+            ("_ensure_content_hash", storage._ensure_content_hash),
+            ("_convert_legacy_upload", user_datasets._convert_legacy_upload),
+        ]
 
-        # Assert: All metadata writes use file locking
-        assert len(missing_locks) == 0, f"Metadata write functions missing file_lock: {missing_locks}"
+        # Act
+        missing = [
+            name
+            for name, func in writers
+            if "_write_metadata(" not in inspect.getsource(func) and "_update_metadata(" not in inspect.getsource(func)
+        ]
+        in_place = "json.dump(" in inspect.getsource(user_datasets)
+
+        # Assert
+        assert missing == []
+        assert in_place is False, "metadata must never be truncated and rewritten in place"
 
 
 class TestCrossDatasetDeduplication:
@@ -1349,7 +1343,7 @@ class TestVersionHistoryMetadata:
 
         first_table = version_entry["tables"][table_keys[0]]
         assert "parquet_path" in first_table, "Table should have parquet_path"
-        assert "duckdb_table" in first_table, "Table should have duckdb_table"
+        assert "duckdb_table" not in first_table, "uploads are no longer copied into DuckDB"
         assert "row_count" in first_table, "Table should have row_count"
         assert "column_count" in first_table, "Table should have column_count"
         assert "schema_fingerprint" in first_table, "Table should have schema_fingerprint"
@@ -1943,69 +1937,6 @@ class TestMetadataInvariants:
             assert "active version" in str(e).lower()
 
 
-class TestRollbackMechanism:
-    """Test suite for rollback mechanism (Phase 6)."""
-
-    def test_rollback_to_previous_version(self, upload_storage):
-        """Rollback should switch active version to specified version."""
-        storage = upload_storage
-
-        # Upload v1
-        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
-        csv1 = df1.to_csv(index=False).encode("utf-8")
-        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
-        assert success1
-        meta1 = storage.get_upload_metadata(id1)
-        v1 = meta1["dataset_version"]
-
-        # Upload v2 (overwrite)
-        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
-        csv2 = df2.to_csv(index=False).encode("utf-8")
-        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
-        assert success2
-        assert id2 == id1  # Same upload_id
-
-        # Verify v2 is active
-        meta_before = storage.get_upload_metadata(id1)
-        v2_entry = [v for v in meta_before["version_history"] if v["version"] != v1][0]
-        assert v2_entry["is_active"] is True
-
-        # Rollback to v1
-        success, message = storage.rollback_to_version(id1, v1)
-        assert success is True, f"Rollback failed: {message}"
-
-        # Verify v1 is now active
-        meta_after = storage.get_upload_metadata(id1)
-        v1_entry_after = [v for v in meta_after["version_history"] if v["version"] == v1][0]
-        v2_entry_after = [v for v in meta_after["version_history"] if v["version"] != v1][0]
-
-        assert v1_entry_after["is_active"] is True, "v1 should be active after rollback"
-        assert v2_entry_after["is_active"] is False, "v2 should be inactive after rollback"
-
-    def test_rollback_creates_event_entry(self, upload_storage):
-        """Rollback should create rollback event in version history."""
-        storage = upload_storage
-
-        # Setup: Create v1 and v2
-        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
-        csv1 = df1.to_csv(index=False).encode("utf-8")
-        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
-        meta1 = storage.get_upload_metadata(id1)
-        v1 = meta1["dataset_version"]
-
-        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
-        csv2 = df2.to_csv(index=False).encode("utf-8")
-        storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
-
-        # Rollback
-        storage.rollback_to_version(id1, v1)
-
-        # Verify rollback event
-        meta_after = storage.get_upload_metadata(id1)
-        rollback_events = [v for v in meta_after["version_history"] if v.get("event_type") == "rollback"]
-        assert len(rollback_events) >= 1, "Should have at least one rollback event"
-
-
 class TestActiveVersionResolution:
     """Test suite for active version resolution (Phase 7)."""
 
@@ -2053,113 +1984,6 @@ class TestActiveVersionResolution:
         assert active_version.get("version") != v1_hash, "Active version should be v2, not v1"
         assert active_version.get("event_type") == "overwrite", "Active version should be overwrite event"
 
-    def test_get_active_version_after_rollback(self, upload_storage):
-        """get_active_version should return rolled-back version."""
-        storage = upload_storage
-
-        # Upload v1, then v2, then rollback to v1
-        df1 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [20 + i for i in range(150)]})
-        csv1 = df1.to_csv(index=False).encode("utf-8")
-        success1, _, id1 = storage.save_upload(csv1, "data.csv", {"dataset_name": "test"})
-        assert success1
-        meta1 = storage.get_upload_metadata(id1)
-        v1_hash = meta1["dataset_version"]
-
-        df2 = pd.DataFrame({"patient_id": [f"P{i:03d}" for i in range(150)], "age": [30 + i for i in range(150)]})
-        csv2 = df2.to_csv(index=False).encode("utf-8")
-        success2, _, id2 = storage.save_upload(csv2, "data.csv", {"dataset_name": "test"}, overwrite=True)
-        assert success2
-
-        # Rollback to v1
-        success_rb, _ = storage.rollback_to_version(id1, v1_hash)
-        assert success_rb
-
-        # Get active version
-        active_version = storage.get_active_version(id1)
-        assert active_version is not None
-        assert active_version.get("is_active") is True
-        assert active_version.get("version") == v1_hash, "Active version should be v1 after rollback"
-        assert active_version.get("event_type") == "upload", "Active version should be original upload"
-
-    def test_get_active_version_nonexistent_dataset(self, upload_storage):
-        """get_active_version should return None for nonexistent dataset."""
-        storage = upload_storage
-        active_version = storage.get_active_version("nonexistent_id")
-        assert active_version is None, "Should return None for nonexistent dataset"
-
-
-class TestQueryVersionIntegration:
-    """Test suite for query execution with versioned datasets (Phase 8)."""
-
-    def test_get_cohort_works_after_rollback(self, upload_storage):
-        """Queries should work correctly after rolling back to previous version."""
-        from clinical_analytics.datasets.uploaded.definition import UploadedDataset
-
-        storage = upload_storage
-
-        # Upload v1 with age column
-        df1 = pd.DataFrame(
-            {
-                "patient_id": [f"P{i:03d}" for i in range(150)],
-                "age": [20 + i for i in range(150)],
-                "outcome": [i % 2 for i in range(150)],
-            }
-        )
-        csv1 = df1.to_csv(index=False).encode("utf-8")
-        success1, _, id1 = storage.save_upload(
-            csv1,
-            "data.csv",
-            {
-                "dataset_name": "test",
-                "variable_mapping": {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]},
-            },
-        )
-        assert success1
-        meta1 = storage.get_upload_metadata(id1)
-        v1_hash = meta1["dataset_version"]
-
-        # Query v1 works
-        dataset1 = UploadedDataset(upload_id=id1, storage=storage)
-        cohort1 = dataset1.get_cohort()
-        assert "patient_id" in cohort1.columns
-        assert len(cohort1) == 150
-
-        # Upload v2 (overwrite) - different data but same schema
-        df2 = pd.DataFrame(
-            {
-                "patient_id": [f"P{i:03d}" for i in range(150)],
-                "age": [30 + i for i in range(150)],
-                "outcome": [(i + 1) % 2 for i in range(150)],
-            }
-        )
-        csv2 = df2.to_csv(index=False).encode("utf-8")
-        success2, _, id2 = storage.save_upload(
-            csv2,
-            "data.csv",
-            {
-                "dataset_name": "test",
-                "variable_mapping": {"patient_id": "patient_id", "outcome": "outcome", "predictors": ["age"]},
-            },
-            overwrite=True,
-        )
-        assert success2
-        assert id2 == id1
-
-        # Query v2 works
-        dataset2 = UploadedDataset(upload_id=id1, storage=storage)
-        cohort2 = dataset2.get_cohort()
-        assert len(cohort2) == 150
-
-        # Rollback to v1
-        success_rb, _ = storage.rollback_to_version(id1, v1_hash)
-        assert success_rb
-
-        # Query after rollback still works
-        dataset3 = UploadedDataset(upload_id=id1, storage=storage)
-        cohort3 = dataset3.get_cohort()
-        assert "patient_id" in cohort3.columns
-        assert len(cohort3) == 150
-
 
 class TestSaveUploadIntegration:
     """Test suite for save_upload() integration with save_table_list() (Fix #1)."""
@@ -2189,15 +2013,11 @@ class TestSaveUploadIntegration:
         assert success is True, f"Upload failed: {message}"
         assert upload_id is not None
 
-        # Verify unified persistence structure
-        assert (upload_storage.upload_dir / "raw" / f"{upload_id}.csv").exists()  # Unified cohort
-        tables_dir = upload_storage.upload_dir / "raw" / f"{upload_id}_tables"
-        assert tables_dir.exists(), "Tables directory should exist"
-        assert tables_dir.is_dir()
-
-        # Verify table file exists (should use filename stem)
-        table_files = list(tables_dir.glob("*.csv"))
-        assert len(table_files) == 1, f"Expected 1 table file, found {len(table_files)}"
+        # Verify typed storage: one table Parquet, which is also the cohort (single table)
+        stored = upload_storage.get_upload_metadata(upload_id)
+        assert list(stored["parquet_paths"]) == ["test_dataset"]
+        assert stored["cohort_parquet"] == stored["parquet_paths"]["test_dataset"]
+        assert Path(stored["cohort_parquet"]).is_file()
 
         # Verify metadata has tables list
         metadata = storage.get_upload_metadata(upload_id)

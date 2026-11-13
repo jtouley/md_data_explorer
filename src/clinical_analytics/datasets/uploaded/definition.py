@@ -6,11 +6,15 @@ Dynamic dataset implementation for user-uploaded files.
 Integrates uploaded data with the existing registry system.
 """
 
-import logging
+from pathlib import Path
 from typing import Any
 
+import duckdb
 import pandas as pd
 import polars as pl
+import pyarrow as pa
+import structlog
+from ibis.common.exceptions import IbisError
 
 from clinical_analytics.core.dataset import ClinicalDataset, Granularity
 from clinical_analytics.core.schema import UnifiedCohort
@@ -20,9 +24,40 @@ from clinical_analytics.datasets.uploaded.patient_id_regeneration import (
     regenerate_patient_id,
     validate_synthetic_id_metadata,
 )
-from clinical_analytics.ui.storage.user_datasets import UserDatasetStorage
+from clinical_analytics.storage.staging import StagingError
+from clinical_analytics.ui.storage.user_datasets import StoredDataset, UserDatasetStorage
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
+
+
+class SemanticLayerBuildError(RuntimeError):
+    """The query view of a dataset version could not be built (never leaves a partial layer)."""
+
+
+# Errors a layer build can raise from DuckDB, Ibis, Arrow, Polars or the file system.
+_BUILD_ERRORS = (
+    duckdb.Error,
+    IbisError,
+    pa.ArrowException,
+    pl.exceptions.PolarsError,
+    OSError,
+    ValueError,
+    KeyError,
+    TypeError,
+)
+
+
+def _register_stored_table(con: duckdb.DuckDBPyConnection, table: str, source: Path | pl.DataFrame) -> None:
+    """Create ``table`` in the layer's in-memory DuckDB from a typed Parquet file or frame."""
+    if isinstance(source, pl.DataFrame):
+        con.register("_staged_table", source.to_arrow())
+        try:
+            con.execute(f"CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM _staged_table")
+        finally:
+            con.unregister("_staged_table")
+        return
+    con.execute(f"CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM read_parquet(?)", [str(source)])
+
 
 # Centralize categorical threshold (matches VariableTypeDetector)
 CATEGORICAL_THRESHOLD = 20  # If unique values <= this, likely categorical
@@ -52,13 +87,20 @@ class UploadedDataset(ClinicalDataset):
     the existing registry system and analysis infrastructure.
     """
 
-    def __init__(self, upload_id: str, storage: UserDatasetStorage | None = None):
+    def __init__(
+        self,
+        upload_id: str,
+        storage: UserDatasetStorage | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
         """
         Initialize uploaded dataset.
 
         Args:
             upload_id: Unique upload identifier
             storage: Storage manager (optional, will create if not provided)
+            metadata: Metadata to use instead of the stored file (the upload probe, before the
+                metadata is committed)
         """
         if storage is None:
             storage = UserDatasetStorage()
@@ -70,9 +112,10 @@ class UploadedDataset(ClinicalDataset):
         self.metadata: OptionalDict = None
         self.data: pl.LazyFrame | None = None
         self._semantic_initialized = False  # Track lazy init
+        self._stored: StoredDataset | None = None
 
         # Load metadata
-        self.metadata = storage.get_upload_metadata(upload_id)
+        self.metadata = metadata if metadata is not None else storage.get_upload_metadata(upload_id)
         if not self.metadata:
             raise ValueError(f"Upload {upload_id} not found")
 
@@ -97,40 +140,35 @@ class UploadedDataset(ClinicalDataset):
 
     def validate(self) -> bool:
         """
-        Check if upload data exists and is valid.
+        Check if upload data exists (the typed Parquet, or a legacy file still to convert).
 
         Returns:
             True if data is accessible
         """
-        # Primary: upload_id is the immutable storage key
-        csv_path = self.storage.raw_dir / f"{self.upload_id}.csv"
+        from clinical_analytics.ui.storage.user_datasets import (
+            COHORT_PARQUET_KEY,
+            STORAGE_LAYOUT,
+            STORAGE_LAYOUT_KEY,
+            _legacy_source_path,
+        )
 
-        # Backward compatibility: check for old friendly-name files
-        if not csv_path.exists() and self.metadata:
-            if "stored_relpath" in self.metadata:
-                legacy_path = self.storage.raw_dir / self.metadata["stored_relpath"]
-                if legacy_path.exists():
-                    csv_path = legacy_path
-            elif "stored_filename" in self.metadata:
-                legacy_path = self.storage.raw_dir / self.metadata["stored_filename"]
-                if legacy_path.exists():
-                    csv_path = legacy_path
-
-        return csv_path.exists()
+        if not self.metadata:
+            return False
+        if self.metadata.get(STORAGE_LAYOUT_KEY) == STORAGE_LAYOUT:
+            return Path(self.metadata[COHORT_PARQUET_KEY]).is_file()
+        return _legacy_source_path(self.storage, self.upload_id, self.metadata) is not None
 
     def load(self) -> None:
-        """Load uploaded data, normalized to LazyFrame internally."""
+        """Load the typed cohort as a LazyFrame (legacy uploads are converted on first load)."""
         if not self.validate():
             raise FileNotFoundError(f"Upload data not found: {self.upload_id}")
-
-        raw_data = self.storage.get_upload_data(self.upload_id, lazy=True)
-        if raw_data is None:
-            logger.error(f"Failed to load upload data for upload_id: {self.upload_id}")
-            raise ValueError(f"Failed to load upload data: {self.upload_id}")
-
-        # Normalize to LazyFrame (handles both CSV lazy scan and Excel eager→lazy conversion)
-        self.data = _to_lazy(raw_data)
-        logger.info(f"Loaded upload data as LazyFrame: {self.upload_id}")
+        try:
+            self._stored = self.storage.stored_dataset(self.upload_id, self.metadata)
+        except StagingError as e:
+            raise SemanticLayerBuildError(f"Stored data could not be read: {e}") from e
+        self.metadata = self._stored.metadata
+        self.data = self._stored.scan_cohort()
+        logger.info("upload_data_loaded", upload_id=self.upload_id, in_memory=self._stored.cohort_frame is not None)
 
     def get_cohort(self, granularity: Granularity = "patient_level", **filters) -> pd.DataFrame:
         """
@@ -493,19 +531,28 @@ class UploadedDataset(ClinicalDataset):
         """
         # Lazy initialize if not already done
         if not self._semantic_initialized:
-            self._maybe_init_semantic()
+            self._maybe_init_semantic()  # raises SemanticLayerBuildError; nothing is half-set
             self._semantic_initialized = True
 
         # Call parent to get semantic (or raise if None)
         return super().get_semantic_layer()
 
     def _maybe_init_semantic(self) -> None:
-        """Lazy initialization of semantic layer for all uploads (single-table and multi-table)."""
-        # Ensure metadata is not None (should be set in __init__)
+        """
+        Build the semantic layer from the stored typed data, all or nothing.
+
+        The cohort and every table are loaded from their typed Parquet (or, for a legacy upload
+        whose conversion could not be saved, from the staged frames in memory). Nothing reads
+        analytics.duckdb, so no read-only connection can clash with an upload's read-write one.
+        ``self.semantic`` is set only after every table is registered.
+
+        Raises:
+            ValueError: the metadata has no schema or mapping.
+            SemanticLayerBuildError: the layer could not be built.
+        """
         if self.metadata is None:
             raise ValueError("Metadata not initialized")
 
-        # Check for inferred_schema first (multi-table path)
         from clinical_analytics.core.type_guards import safe_get
 
         inferred_schema = safe_get(self.metadata, "inferred_schema")
@@ -513,135 +560,57 @@ class UploadedDataset(ClinicalDataset):
             config = self._build_config_from_inferred_schema(inferred_schema)
             schema_source = "inferred_schema"
         else:
-            # Check for variable_mapping (single-table path)
             variable_mapping = self.metadata.get("variable_mapping")
-            if variable_mapping:
-                config = self._build_config_from_variable_mapping(variable_mapping)
-                schema_source = "variable_mapping"
-            else:
-                # Explicit error: raise instead of silent return
+            if not variable_mapping:
                 raise ValueError(
                     f"No schema or mapping found for upload {self.upload_id}. "
                     "Upload must have either 'inferred_schema' (multi-table) or 'variable_mapping' (single-table)."
                 )
+            config = self._build_config_from_variable_mapping(variable_mapping)
+            schema_source = "variable_mapping"
 
-        csv_path = self.storage.raw_dir / f"{self.upload_id}.csv"
-        if not csv_path.exists():
-            logger.warning(f"Unified cohort CSV not found for upload {self.upload_id}")
-            return
+        if self._stored is None:
+            self.load()
+        stored = self._stored
+        assert stored is not None  # load() sets it
+        log = logger.bind(
+            upload_id=self.upload_id,
+            dataset_version=self.metadata.get("dataset_version"),
+            schema_source=schema_source,
+        )
 
+        from clinical_analytics.core.semantic import SemanticLayer, _safe_identifier
+
+        if stored.cohort_frame is not None:
+            config["init_params"] = {"frame": stored.cohort_frame}
+        else:
+            assert stored.cohort_path is not None
+            config["init_params"] = {"source_path": str(stored.cohort_path.resolve()), "source_format": "parquet"}
+
+        layer: SemanticLayer | None = None
         try:
-            from clinical_analytics.core.semantic import SemanticLayer, _safe_identifier
-
-            logger.info(f"Initializing semantic layer for upload: {self.upload_id}")
-            logger.info(f"Built semantic layer config from {schema_source}")
-
-            workspace_root = self.storage.upload_dir.parent.parent
-
-            # Use absolute path - SemanticLayer handles absolute paths correctly
-            config["init_params"] = {"source_path": str(csv_path.resolve())}
-
-            self.semantic = SemanticLayer(dataset_name=self.name, config=config, workspace_root=workspace_root)
-
-            # Register all individual tables from metadata (deterministic, not directory listing)
-            table_names = self.metadata.get("tables", [])
-            if not table_names:
-                logger.info(f"No tables list in metadata for {self.upload_id}, skipping table registration")
-                return
-
-            tables_dir = self.storage.raw_dir / f"{self.upload_id}_tables"
-            if not tables_dir.exists():
-                logger.warning(
-                    f"Tables directory missing for {self.upload_id}: {tables_dir}. "
-                    "Running in legacy single-table mode (cohort only)."
-                )
-                return
-
-            logger.info(f"Registering {len(table_names)} individual tables from metadata")
-
-            duckdb_con = self.semantic.con.con
+            layer = SemanticLayer(
+                dataset_name=self.name,
+                config=config,
+                workspace_root=self.storage.upload_dir.parent.parent,
+            )
             safe_dataset_name = _safe_identifier(self.name)
+            sources: dict[str, Path | pl.DataFrame] = {**stored.table_paths, **stored.table_frames}
+            for table_name in self.metadata.get("tables") or []:
+                source = sources.get(table_name)
+                if source is None:
+                    raise FileNotFoundError(f"No stored data for table '{table_name}'")
+                safe_table = _safe_identifier(f"{safe_dataset_name}_{table_name}")
+                _register_stored_table(layer.con.con, safe_table, source)
+        except _BUILD_ERRORS as e:
+            if layer is not None:
+                layer.con.disconnect()
+            # Type only: exception text can quote cell values.
+            log.error("semantic_layer_build_failed", error_type=type(e).__name__)
+            raise SemanticLayerBuildError(f"the query view could not be built ({type(e).__name__})") from e
 
-            # Phase 2: Try loading from persistent DuckDB first, fallback to CSV
-
-            db_path = self.storage.upload_dir.parent / "analytics.duckdb"
-            dataset_version = self.metadata.get("dataset_version")
-            use_persistent_duckdb = db_path.exists() and dataset_version
-
-            # Use separate DuckDB connection to read from persistent DB
-            # This avoids ATTACH conflicts when multiple SemanticLayers exist
-            persistent_con = None
-            if use_persistent_duckdb:
-                logger.info("Loading tables from the persistent DuckDB store")
-                from clinical_analytics.storage.datastore import open_store_connection
-
-                persistent_con = open_store_connection(db_path, read_only=True)
-
-            for table_name in table_names:  # Use metadata list, not directory listing
-                safe_table_name = _safe_identifier(f"{safe_dataset_name}_{table_name}")
-
-                # Phase 2: Try loading from persistent DuckDB first
-                if persistent_con is not None:
-                    # Table name in persistent DB: {upload_id}_{table_name}_{dataset_version}
-                    # Use SAME sanitization as DataStore.save_table() to match stored names
-                    from clinical_analytics.storage.datastore import _sanitize_table_name
-
-                    sanitized_table_name = _sanitize_table_name(table_name)
-                    persistent_table_name = f"{self.upload_id}_{sanitized_table_name}_{dataset_version}"
-
-                    # Check if table exists in persistent DB
-                    try:
-                        # Read from persistent DB, then create in in-memory DB
-                        data = persistent_con.execute(f"SELECT * FROM {persistent_table_name}").fetchdf()
-                        duckdb_con.register("_temp_table", data)
-                        duckdb_con.execute(f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS SELECT * FROM _temp_table")
-                        duckdb_con.unregister("_temp_table")
-                        logger.info(f"Registered table '{safe_table_name}' from persistent DuckDB")
-                        continue  # Successfully loaded from DuckDB, skip CSV fallback
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to load '{persistent_table_name}' from persistent DuckDB: {e}. "
-                            "Falling back to CSV."
-                        )
-
-                # Fallback: Load from CSV (migration path for old uploads)
-                table_path = tables_dir / f"{table_name}.csv"
-                if not table_path.exists():
-                    raise FileNotFoundError(
-                        f"Table file missing for upload {self.upload_id}, table '{table_name}': expected {table_path}"
-                    )
-
-                abs_path = str(table_path.resolve())
-
-                # CRITICAL FIX: Use IF NOT EXISTS instead of OR REPLACE
-                # Prevents data loss on semantic layer re-init within same session
-                duckdb_con.execute(
-                    f"CREATE TABLE IF NOT EXISTS {safe_table_name} AS SELECT * FROM read_csv_auto(?)",
-                    [abs_path],
-                )
-                logger.info(f"Registered table '{safe_table_name}' from CSV (fallback)")
-
-            # Close persistent connection if opened
-            if persistent_con is not None:
-                from clinical_analytics.storage.datastore import close_store_connection
-
-                close_store_connection(db_path, persistent_con)
-                persistent_con = None
-
-            logger.info(f"Created semantic layer for upload {self.upload_id} with {len(table_names)} tables")
-        except Exception as e:
-            # Close persistent connection on error
-            if "persistent_con" in locals() and persistent_con is not None:
-                from clinical_analytics.storage.datastore import close_store_connection
-
-                close_store_connection(db_path, persistent_con)
-            from clinical_analytics.storage.datastore import StoreBusyError
-
-            if isinstance(e, StoreBusyError):
-                raise  # the API turns this into a plain "try again" (503), not a broken dataset
-            # Type only: exception text can quote cell values; the traceback is redacted by the handler.
-            logger.warning(f"Failed to create semantic layer: {type(e).__name__}", exc_info=True)
-            # Leave self.semantic as None (class attribute default)
+        self.semantic = layer
+        log.info("semantic_layer_built", tables=len(self.metadata.get("tables") or []))
 
     def _build_config_from_inferred_schema(self, inferred_schema: dict[str, Any]) -> dict[str, Any]:
         """Build semantic layer config from inferred schema."""
@@ -837,6 +806,56 @@ class UploadedDataset(ClinicalDataset):
             "columns": self.metadata.get("columns"),
             "variable_mapping": self.metadata.get("variable_mapping"),
         }
+
+
+def _parquet_schema(path: Path) -> dict[str, pl.DataType]:
+    """Schema of a stored Parquet file, as Polars types."""
+    return dict(pl.read_parquet_schema(path))
+
+
+def probe_query_view(storage: UserDatasetStorage, upload_id: str, metadata: dict[str, Any], expected_rows: int) -> None:
+    """Build a dataset version's query view exactly as queries will, and read all of it once.
+
+    Runs at upload before the metadata is committed, so a version that cannot answer questions
+    is never reported ready. One aggregate counts every column of the view (a full scan, nothing
+    materialized), and the registered source table's types must equal the stored Parquet's, so
+    the data checked is the data queried.
+
+    Raises:
+        SemanticLayerBuildError: the view cannot be built or read, its row count is wrong, or its
+            types differ from the stored Parquet.
+    """
+    log = logger.bind(upload_id=upload_id, dataset_version=metadata.get("dataset_version"))
+    try:
+        dataset = UploadedDataset(upload_id, storage=storage, metadata=metadata)
+        dataset.load()
+        layer = dataset.get_semantic_layer()
+    except (ValueError, FileNotFoundError) as e:
+        raise SemanticLayerBuildError(f"the query view could not be built ({type(e).__name__})") from e
+    cohort_path = dataset._stored.cohort_path if dataset._stored is not None else None
+    try:
+        view = layer.get_base_view()
+        counts = [view.count().name("_rows"), *(view[c].count().name(f"_c{i}") for i, c in enumerate(view.columns))]
+        rows = int(view.aggregate(counts).to_pyarrow().column("_rows")[0].as_py())
+        view_schema = dict(pl.DataFrame(layer.raw.limit(0).to_pyarrow()).schema) if cohort_path else None
+    except _BUILD_ERRORS as e:
+        log.error("upload_probe_failed", error_type=type(e).__name__)
+        raise SemanticLayerBuildError(f"the query view could not be read ({type(e).__name__})") from e
+    finally:
+        layer.con.disconnect()
+    if rows != expected_rows:
+        log.error("upload_probe_row_mismatch", rows=rows, expected=expected_rows)
+        raise SemanticLayerBuildError("the query view does not hold every stored row")
+    if cohort_path is not None and view_schema != _parquet_schema(cohort_path):
+        stored_schema = _parquet_schema(cohort_path)
+        differing = sorted(
+            c for c in {*stored_schema, *(view_schema or {})} if stored_schema.get(c) != (view_schema or {}).get(c)
+        )
+        log.error("upload_probe_schema_mismatch", columns=len(differing))
+        raise SemanticLayerBuildError(
+            f"the query view's column types differ from the stored data ({', '.join(differing)})"
+        )
+    log.info("upload_probe_passed")
 
 
 class UploadedDatasetFactory:
