@@ -17,8 +17,8 @@ Key Principles:
 - Fail gracefully with user override options
 """
 
+import fnmatch
 import hashlib
-import logging
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,26 +27,66 @@ from typing import Any, Literal
 
 import duckdb
 import polars as pl
+import structlog
+
+from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 
 try:
     import ibis
 except ImportError:
     ibis = None  # Optional dependency
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Schema version for caching - increment when schema changes break compatibility
 SCHEMA_VERSION = "1.0"
 
+# Classification heuristic only: a table whose rows / distinct keys is at most this is treated as
+# "meant to be one row per key" (dimension). Whether it IS unique is judged exactly, never with this.
+NEAR_UNIQUE_RATIO = 1.05
+
 # Type aliases for clarity
 AggregationOp = Literal["count", "count_distinct", "min", "max", "mean", "sum", "last"]
 CodeColumnPattern = str  # Regex or glob pattern for code columns
+TableClass = Literal["dimension", "fact", "event", "bridge", "reference"]
+
+_NUMERIC_DTYPES = (
+    pl.Int8,
+    pl.Int16,
+    pl.Int32,
+    pl.Int64,
+    pl.UInt8,
+    pl.UInt16,
+    pl.UInt32,
+    pl.UInt64,
+    pl.Float32,
+    pl.Float64,
+)
+_TEMPORAL_DTYPES = (pl.Datetime, pl.Date)
 
 
 class AggregationPolicyError(ValueError):
     """Raised when aggregation policy is violated (e.g., mean on code column)."""
 
     pass
+
+
+class DataQualityError(ValueError):
+    """Raised when data breaks a grain invariant the cohort depends on (e.g. duplicate anchor keys)."""
+
+
+def describe_count(n: int) -> str:
+    """Return ``n`` as text, or "some" when it is below the small-cell threshold."""
+    return str(n) if n >= SMALL_CELL_THRESHOLD else "some"
+
+
+def duplicate_key_error(table_name: str, key: str, n_duplicates: int, context: str) -> DataQualityError:
+    """Build the error for a table that has repeated values in a key that must be unique."""
+    return DataQualityError(
+        f"Table '{table_name}' has {describe_count(n_duplicates)} duplicate rows on key '{key}' "
+        f"({context}). Each '{key}' must appear once, otherwise counts would include the same "
+        f"entity more than once. Remove the duplicate rows or choose a different key."
+    )
 
 
 @dataclass
@@ -62,8 +102,10 @@ class AggregationPolicy:
     Attributes:
         default_numeric: Aggregations always safe for numeric columns
         allow_mean: Enable mean/avg aggregations (requires normalized units)
-        allow_last: Enable last() aggregation (requires stable ordering)
-        code_column_patterns: Patterns identifying code columns (no mean/avg)
+        allow_last: Permit last() aggregation. It is only emitted for tables with a Date/Datetime
+            time column, and rows are sorted by that column first; without one it is off,
+            so file order never stands in for time.
+        code_column_patterns: Patterns identifying code/identifier columns (no mean/min/max)
     """
 
     default_numeric: list[AggregationOp] = field(default_factory=lambda: ["min", "max"])
@@ -100,8 +142,10 @@ class TableClassification:
         classification: Category based on cardinality and structure
         grain: Level of granularity (patient, admission, event)
         grain_key: Column name of the detected grain key
-        cardinality_ratio: rows / unique(grain_key), >1.1 indicates facts/events
-        is_unique_on_grain: True if grain_key is unique (cardinality_ratio ≈ 1.0)
+        cardinality_ratio: non-null rows / distinct non-null grain_key values (exact, whole table),
+            >1.1 indicates facts/events
+        is_unique_on_grain: True only if every row has its own grain_key value (exact, whole
+            table; two rows with a missing key are not unique)
         estimated_bytes: Total table size in bytes (rows * avg_row_bytes)
         relationship_degree: Number of foreign keys detected
         has_time_column: True if table has non-constant time column
@@ -137,6 +181,93 @@ class CohortMetadata:
     row_count: int
     materialized_at: datetime
     run_id: str  # Deterministic hash: sha256(config + schema_version + dataset_fingerprint)
+
+
+@dataclass(frozen=True)
+class ExcludedTable:
+    """A source table that is not part of the unified cohort, and why."""
+
+    table_name: str
+    classification: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class CohortBuildResult:
+    """Unified cohort plus what was left out, so callers can tell the user."""
+
+    data: pl.DataFrame
+    anchor_table: str
+    grain_key: str
+    excluded_tables: list[ExcludedTable]
+
+
+def is_code_column(col: str, patterns: list[CodeColumnPattern]) -> bool:
+    """True if ``col`` matches a code/identifier pattern (case-insensitive glob)."""
+    return any(fnmatch.fnmatch(col.lower(), pattern.lower()) for pattern in patterns)
+
+
+def aggregate_fact_table(
+    df: pl.DataFrame,
+    grain_key: str,
+    *,
+    time_column: str | None,
+    policy: AggregationPolicy,
+    table_name: str,
+) -> pl.LazyFrame:
+    """
+    Aggregate one fact/event table to one row per ``grain_key``.
+
+    Output columns, in order: ``grain_key``, ``count``, then per column ``{col}_count_distinct``,
+    and for numeric/temporal columns ``{col}_min``/``{col}_max`` (not for code/id columns),
+    ``{col}_mean`` (numeric, if allowed) and ``{col}_last``.
+
+    ``{col}_last`` is the value on the row with the latest ``time_column`` (nulls rank earliest;
+    ties keep file order). It is only produced when ``policy.allow_last`` is set and
+    ``time_column`` is a Date/Datetime column; otherwise there is no ordering to trust.
+
+    Raises:
+        AggregationPolicyError: mean requested on a code column.
+        ValueError: ``grain_key`` or ``time_column`` missing from ``df``.
+    """
+    if grain_key not in df.columns:
+        raise ValueError(f"Column '{grain_key}' not found in table '{table_name}'")
+    if time_column is not None and time_column not in df.columns:
+        raise ValueError(f"Time column '{time_column}' not found in table '{table_name}'")
+
+    sort_column = time_column if time_column is not None and df[time_column].dtype in _TEMPORAL_DTYPES else None
+    emit_last = policy.allow_last and sort_column is not None
+
+    agg_exprs: list[pl.Expr] = [pl.len().alias("count")]
+    for col in df.columns:
+        if col == grain_key:
+            continue
+        code_col = is_code_column(col, policy.code_column_patterns)
+        dtype = df[col].dtype
+        agg_exprs.append(pl.col(col).n_unique().alias(f"{col}_count_distinct"))
+
+        is_numeric = dtype in _NUMERIC_DTYPES
+        if not (is_numeric or dtype in _TEMPORAL_DTYPES):
+            continue  # strings: count distinct only
+
+        # min/max of an identifier or code is not a meaningful number
+        if not code_col:
+            agg_exprs.append(pl.col(col).min().alias(f"{col}_min"))
+            agg_exprs.append(pl.col(col).max().alias(f"{col}_max"))
+
+        if is_numeric and policy.allow_mean:
+            if code_col:
+                raise AggregationPolicyError(
+                    f"Cannot compute mean on code column '{col}' in table '{table_name}'. "
+                    f"Column matches pattern: {policy.code_column_patterns}. "
+                    f"Code columns should not be averaged."
+                )
+            agg_exprs.append(pl.col(col).mean().alias(f"{col}_mean"))
+
+        if emit_last:
+            agg_exprs.append(pl.col(col).sort_by(sort_column, maintain_order=True).last().alias(f"{col}_last"))
+
+    return df.lazy().group_by(grain_key).agg(agg_exprs)
 
 
 @dataclass
@@ -212,6 +343,10 @@ class MultiTableHandler:
         self.classifications: dict[str, TableClassification] = {}
         self.max_dimension_bytes = max_dimension_bytes
         self._ibis_connection: Any | None = None  # Cached Ibis DuckDB connection
+        self.last_build_result: CohortBuildResult | None = None
+        # Reasons for tables left out of the most recent build, keyed by table name
+        self._exclusion_reasons: dict[str, str] = {}
+        self._joined_dimensions: set[str] = set()
 
         # Normalize key column types across all tables
         self._normalize_key_columns()
@@ -461,31 +596,24 @@ class MultiTableHandler:
                 logger.warning(f"No grain key detected for table '{table_name}', skipping classification")
                 continue
 
-            # Calculate cardinality metrics using sampled data
+            # Grain metrics are exact over the whole table: a sample cannot prove uniqueness,
+            # and one repeated key is enough to count an entity twice.
             total_rows = df.height
+            key_col = df[grain_key]
+            null_count = key_col.null_count()
+            null_rate = null_count / total_rows if total_rows else 1.0
 
-            # Use sampled uniqueness to prevent expensive full table scans
-            sampled_unique, sampled_null_rate = self._compute_sampled_uniqueness(df, grain_key)
-
-            # Estimate cardinality ratio from sample
-            s = self._sample_df(df)
-            non_null_sample_rows = s.height - int(sampled_null_rate * s.height)
-
-            if sampled_unique > 0 and non_null_sample_rows > 0:
-                # Estimate total unique values from sample ratio
-                sample_uniq_ratio = sampled_unique / non_null_sample_rows
-                estimated_total_unique = int(total_rows * sample_uniq_ratio)
-
-                # Cardinality ratio: total_rows / unique_values
-                # If ratio is ~1.0, table is unique on grain (dimension)
-                # If ratio > 1.1, table has duplicates (fact/event)
-                cardinality_ratio = total_rows / max(estimated_total_unique, 1)
-                is_unique = cardinality_ratio <= 1.05  # Allow 5% tolerance for sampling error
+            if null_count < total_rows:
+                non_null_keys = key_col.drop_nulls()
+                cardinality_ratio = non_null_keys.len() / non_null_keys.n_unique()
+                # Exact: every row has its own key. Two rows with a missing key are not unique.
+                is_unique = key_col.n_unique() == total_rows
             else:
                 cardinality_ratio = float("inf")
                 is_unique = False
-
-            null_rate = sampled_null_rate
+            # Role heuristic: a table that is unique, or nearly so, is meant to be one row per key.
+            # Its duplicates are then reported as a data-quality error rather than hidden.
+            near_unique = cardinality_ratio <= NEAR_UNIQUE_RATIO
 
             # Estimate bytes
             estimated_bytes = self._estimate_table_bytes(df)
@@ -505,7 +633,7 @@ class MultiTableHandler:
             # Classify based on rules
             classification = self._classify_table_type(
                 cardinality_ratio=cardinality_ratio,
-                is_unique=is_unique,
+                is_unique=near_unique,
                 estimated_bytes=estimated_bytes,
                 has_time=has_time,
                 is_bridge=is_bridge,
@@ -934,15 +1062,17 @@ class MultiTableHandler:
         if not anchor_class:
             raise ValueError(f"Anchor table '{anchor_table}' not classified")
 
-        # Verify anchor is unique on grain
-        if not anchor_class.is_unique_on_grain:
-            raise ValueError(
-                f"Anchor table '{anchor_table}' is not unique on grain key "
-                f"'{anchor_class.grain_key}' (cardinality_ratio={anchor_class.cardinality_ratio:.2f})"
-            )
+        # Verify anchor is unique on grain (exact, whole table)
+        anchor_df = self.tables[anchor_table]
+        anchor_key = anchor_df[anchor_class.grain_key]
+        n_duplicates = anchor_df.height - anchor_key.n_unique()
+        if n_duplicates > 0:
+            context = "the cohort's anchor table"
+            if anchor_key.null_count() > 1:
+                context += f"; {describe_count(anchor_key.null_count())} rows have no key and count as repeats"
+            raise duplicate_key_error(anchor_table, anchor_class.grain_key, n_duplicates, context)
 
         # Start with anchor table as LazyFrame
-        anchor_df = self.tables[anchor_table]
         mart = anchor_df.lazy()
         joined_tables = {anchor_table}
 
@@ -991,28 +1121,19 @@ class MultiTableHandler:
                         )
                         continue
 
-                    # CRITICAL: Verify RHS join key is unique (enforce 1:1 or many:1)
+                    # CRITICAL: Verify RHS join key is unique (enforce 1:1 or many:1), exactly
                     next_df = self.tables[next_table]
-
-                    # Use sampled uniqueness to check if RHS key is unique
                     if join_key_right is None:
                         continue
-                    rhs_unique_count, rhs_null_rate = self._compute_sampled_uniqueness(next_df, join_key_right)
-                    s = self._sample_df(next_df)
-                    non_null_sample = s.height - int(rhs_null_rate * s.height)
-
-                    if non_null_sample > 0:
-                        rhs_uniq_ratio = rhs_unique_count / non_null_sample
-                    else:
-                        rhs_uniq_ratio = 0.0
-
-                    # Allow 5% tolerance for sampling error
-                    if rhs_uniq_ratio < 0.95:
-                        logger.warning(
-                            f"Skipping join to '{next_table}': RHS key '{join_key_right}' "
-                            f"is not unique (uniq_ratio={rhs_uniq_ratio:.2%}, "
-                            f"violates 1:1 or many:1 constraint)"
+                    rhs_key = next_df[join_key_right].drop_nulls()
+                    rhs_duplicates = rhs_key.len() - rhs_key.n_unique()
+                    if rhs_duplicates > 0:
+                        reason = (
+                            f"key '{join_key_right}' repeats on {describe_count(rhs_duplicates)} rows, "
+                            f"so joining it would duplicate cohort rows"
                         )
+                        self._exclusion_reasons[next_table] = reason
+                        logger.warning(f"Skipping join to '{next_table}': {reason}")
                         continue
 
                     # Join next dimension table
@@ -1033,15 +1154,13 @@ class MultiTableHandler:
                     queue.append(next_table)
                     join_count += 1
 
-                    logger.debug(
-                        f"Joined dimension '{next_table}' on {join_key_left}={join_key_right} "
-                        f"(rhs_uniq_ratio={rhs_uniq_ratio:.2%})"
-                    )
+                    logger.debug(f"Joined dimension '{next_table}' on {join_key_left}={join_key_right}")
 
         logger.info(
             f"Dimension mart built: anchor='{anchor_table}', "
             f"joined_dimensions={join_count}, total_tables={len(joined_tables)}"
         )
+        self._joined_dimensions = joined_tables
 
         return mart
 
@@ -1072,15 +1191,16 @@ class MultiTableHandler:
 
         Raises:
             AggregationPolicyError: If policy violation detected (e.g., mean on code)
-            ValueError: If grain_key not found in fact table
-        """
-        import fnmatch
 
+        Fact tables without ``grain_key`` are skipped and recorded as excluded (see
+        ``build_unified_cohort_with_report``).
+        """
         # Use default policy if not specified
         if policy is None:
             policy = AggregationPolicy()
 
-        logger.info(f"Aggregating fact/event tables by grain_key='{grain_key}'")
+        log = logger.bind(grain_key=grain_key)
+        log.info("Aggregating fact/event tables")
 
         # Ensure classifications exist
         if not self.classifications:
@@ -1092,7 +1212,7 @@ class MultiTableHandler:
         }
 
         if not fact_event_tables:
-            logger.warning("No fact/event tables found for aggregation")
+            log.warning("No fact/event tables found for aggregation")
             return {}
 
         feature_tables = {}
@@ -1100,89 +1220,27 @@ class MultiTableHandler:
         for table_name, cls in fact_event_tables.items():
             df = self.tables[table_name]
 
-            # Verify grain_key exists
+            # A fact table without the anchor key cannot be rolled up to the cohort grain
             if grain_key not in df.columns:
-                logger.warning(f"Skipping '{table_name}': grain_key '{grain_key}' not found in columns")
+                reason = (
+                    f"it has no '{grain_key}' column, so its rows cannot be linked to the cohort "
+                    f"(its own key is '{cls.grain_key}')"
+                )
+                self._exclusion_reasons[table_name] = reason
+                log.warning("Fact table left out of cohort", table_name=table_name, reason=reason)
                 continue
 
-            # Build aggregation expressions
-            agg_exprs = []
-
-            # Always include count
-            agg_exprs.append(pl.len().alias("count"))
-
-            for col in df.columns:
-                if col == grain_key:
-                    continue  # Skip grain key
-
-                # Check if column matches code patterns
-                is_code_col = any(
-                    fnmatch.fnmatch(col.lower(), pattern.lower()) for pattern in policy.code_column_patterns
-                )
-
-                dtype = df[col].dtype
-
-                # Count distinct for all columns
-                agg_exprs.append(pl.col(col).n_unique().alias(f"{col}_count_distinct"))
-
-                # Numeric aggregations
-                if dtype in [
-                    pl.Int8,
-                    pl.Int16,
-                    pl.Int32,
-                    pl.Int64,
-                    pl.UInt8,
-                    pl.UInt16,
-                    pl.UInt32,
-                    pl.UInt64,
-                    pl.Float32,
-                    pl.Float64,
-                ]:
-                    # Safe aggregations: min/max (always allowed)
-                    agg_exprs.append(pl.col(col).min().alias(f"{col}_min"))
-                    agg_exprs.append(pl.col(col).max().alias(f"{col}_max"))
-
-                    # Mean: only if allowed AND not a code column
-                    if policy.allow_mean:
-                        if is_code_col:
-                            raise AggregationPolicyError(
-                                f"Cannot compute mean on code column '{col}' in table '{table_name}'. "
-                                f"Column matches pattern: {policy.code_column_patterns}. "
-                                f"Code columns should not be averaged."
-                            )
-                        else:
-                            agg_exprs.append(pl.col(col).mean().alias(f"{col}_mean"))
-
-                    # Last: only if allowed
-                    if policy.allow_last:
-                        agg_exprs.append(pl.col(col).last().alias(f"{col}_last"))
-
-                # Time aggregations
-                elif dtype in [pl.Datetime, pl.Date]:
-                    agg_exprs.append(pl.col(col).min().alias(f"{col}_min"))
-                    agg_exprs.append(pl.col(col).max().alias(f"{col}_max"))
-
-                    # Last: only if allowed
-                    if policy.allow_last:
-                        agg_exprs.append(pl.col(col).last().alias(f"{col}_last"))
-
-                # String columns: only count distinct (no aggregations)
-                # Already added count_distinct above
-
-            # Build lazy aggregation
-            lazy_df = df.lazy()
-            aggregated = lazy_df.group_by(grain_key).agg(agg_exprs)
-
-            # Store with _features suffix
             feature_table_name = f"{table_name}_features"
-            feature_tables[feature_table_name] = aggregated
-
-            logger.debug(
-                f"Aggregated '{table_name}' → '{feature_table_name}': "
-                f"{len(agg_exprs)} aggregations on {len(df.columns)} columns"
+            feature_tables[feature_table_name] = aggregate_fact_table(
+                df,
+                grain_key,
+                time_column=cls.time_column_name,
+                policy=policy,
+                table_name=table_name,
             )
+            log.debug("Aggregated fact table", table_name=table_name, feature_table=feature_table_name)
 
-        logger.info(f"Created {len(feature_tables)} feature tables from fact/event tables")
+        log.info(f"Created {len(feature_tables)} feature tables from fact/event tables")
 
         return feature_tables
 
@@ -1192,28 +1250,43 @@ class MultiTableHandler:
         join_type: str = "left",
     ) -> pl.DataFrame:
         """
+        Build the unified cohort and return only the data.
+
+        Same as ``build_unified_cohort_with_report(...).data``. The full result, including the
+        tables that were left out and why, is kept on ``self.last_build_result``.
+        """
+        return self.build_unified_cohort_with_report(anchor_table=anchor_table, join_type=join_type).data
+
+    def build_unified_cohort_with_report(
+        self,
+        anchor_table: str | None = None,
+        join_type: str = "left",
+    ) -> CohortBuildResult:
+        """
         Build unified cohort using aggregate-before-join architecture.
 
         Strategy:
           1) classify + detect relationships
           2) choose anchor (centrality)
-          3) build dimension mart (1:1-ish joins only)
+          3) build dimension mart (1:1 joins only; anchor must be exactly unique on its key)
           4) aggregate fact/event tables to grain (one row per grain)
           5) join aggregated feature tables to mart (validate 1:1)
-          6) collect
+          6) collect, then assert one row per anchor key
 
         Args:
             anchor_table: Root table for joins (auto-detected if None)
             join_type: Type of join (left, inner, outer) - only affects dimension mart
 
         Returns:
-            Unified Polars DataFrame with all columns
+            CohortBuildResult with the cohort and every source table left out, with a reason
 
         Raises:
-            ValueError: If anchor not found, not unique on grain, or invalid join_type
+            DataQualityError: Anchor key has duplicates, or the result is not one row per key
+            ValueError: If anchor not found or invalid join_type
             AggregationPolicyError: If aggregation policy violation detected
         """
-        logger.info(f"Building unified cohort (anchor_table={anchor_table}, join_type={join_type})")
+        log = logger.bind(anchor_table=anchor_table, join_type=join_type)
+        log.info("Building unified cohort")
 
         # Normalize and validate join_type (fail-fast on invalid input)
         join_type = join_type.lower().strip()
@@ -1224,10 +1297,13 @@ class MultiTableHandler:
             self.classify_tables()
         if not self.relationships:
             self.detect_relationships()
+        self._exclusion_reasons = {}
+        self._joined_dimensions = set()
 
         if anchor_table is None:
             anchor_table = self._find_anchor_by_centrality()
-            logger.info(f"Auto-detected anchor table: {anchor_table}")
+            log = log.bind(anchor_table=anchor_table)
+            log.info("Auto-detected anchor table")
 
         if anchor_table not in self.tables:
             raise ValueError(f"Anchor table '{anchor_table}' not found in tables")
@@ -1239,39 +1315,25 @@ class MultiTableHandler:
         grain_key = anchor_class.grain_key
         if not grain_key:
             raise ValueError(f"Anchor table '{anchor_table}' has no detected grain_key")
+        log = log.bind(grain_key=grain_key)
 
-        logger.info(f"Anchor '{anchor_table}' grain_key='{grain_key}'")
-
-        # 1) Dimensions only (safe joins)
-        logger.info("Building dimension mart...")
+        # 1) Dimensions only (safe joins); raises DataQualityError on duplicate anchor keys
         mart = self._build_dimension_mart(anchor_table=anchor_table, join_type=join_type)
 
         # 2) Aggregate facts/events to grain
-        logger.info("Aggregating fact/event tables...")
         feature_tables = self._aggregate_fact_tables(grain_key=grain_key)
 
-        if not feature_tables:
-            logger.warning("No fact/event tables to aggregate; returning dimension mart only")
-            return mart.collect()
-
         # 3) Join features (must be 1 row per grain on both sides)
-        logger.info(f"Joining {len(feature_tables)} feature tables to mart...")
         for feature_name in sorted(feature_tables.keys()):
             feature_lazy = feature_tables[feature_name]
 
-            # Use collect_schema() instead of .schema (reliable on LazyFrame)
-            schema = feature_lazy.collect_schema()
-            names = schema.names()
-            if grain_key not in names:
-                logger.warning(f"Skipping '{feature_name}': grain_key '{grain_key}' not in schema (cols={names})")
-                continue
-
             # Enforce deterministic RHS column order (grain_key first, then sorted)
+            names = feature_lazy.collect_schema().names()
             rhs_cols = [grain_key] + sorted([c for c in names if c != grain_key])
             feature_lazy = feature_lazy.select(rhs_cols)
 
             # Extract base table name from feature_name (format: "{table_name}_features")
-            base_table_name = feature_name.replace("_features", "")
+            base_table_name = feature_name.removesuffix("_features")
 
             mart = mart.join(
                 feature_lazy,
@@ -1281,14 +1343,67 @@ class MultiTableHandler:
                 suffix=f"_{base_table_name}",  # Unique suffix per feature table
             )
 
-        logger.info("Collecting unified cohort...")
         result = mart.collect()
+        self._assert_cohort_grain(result, anchor_table, grain_key, join_type)
 
-        logger.info(
-            f"Unified cohort built: {result.height:,} rows, {result.width} cols "
-            f"(anchor={anchor_table}, grain={grain_key}, features={len(feature_tables)})"
+        joined = self._joined_dimensions | {name.removesuffix("_features") for name in feature_tables}
+        excluded = self._describe_excluded_tables(joined)
+        for table in excluded:
+            log.warning(
+                "Table left out of unified cohort",
+                table_name=table.table_name,
+                classification=table.classification,
+                reason=table.reason,
+            )
+
+        log.info(
+            "Unified cohort built",
+            rows=result.height,
+            cols=result.width,
+            features=len(feature_tables),
+            excluded=len(excluded),
         )
-        return result
+        self.last_build_result = CohortBuildResult(
+            data=result, anchor_table=anchor_table, grain_key=grain_key, excluded_tables=excluded
+        )
+        return self.last_build_result
+
+    def _assert_cohort_grain(self, result: pl.DataFrame, anchor_table: str, grain_key: str, join_type: str) -> None:
+        """Fail loudly unless the cohort is exactly one row per anchor key."""
+        anchor_keys = self.tables[anchor_table][grain_key].n_unique()
+        result_duplicates = result.height - result[grain_key].n_unique()
+        if result_duplicates > 0:
+            raise duplicate_key_error(anchor_table, grain_key, result_duplicates, "in the built cohort after joins")
+        # Left/outer joins keep every anchor row; an inner join may legitimately drop some
+        if join_type != "inner" and result.height != anchor_keys:
+            difference = abs(result.height - anchor_keys)
+            raise DataQualityError(
+                f"The cohort built from '{anchor_table}' has {describe_count(difference)} "
+                f"{'more' if result.height > anchor_keys else 'fewer'} rows than distinct '{grain_key}' "
+                f"values in the anchor table. Expected exactly one row per '{grain_key}'."
+            )
+
+    def _describe_excluded_tables(self, joined: set[str]) -> list[ExcludedTable]:
+        """List every source table not in the cohort, with the reason it was left out."""
+        default_reasons: dict[str, str] = {
+            "bridge": "it links two tables many-to-many, which cannot be joined at the cohort grain",
+            "reference": (
+                "its key repeats, so it was treated as a lookup table and not joined automatically "
+                "(small tables with repeated keys are not rolled up)"
+            ),
+            "dimension": "no detected relationship connects it to the anchor table",
+        }
+        excluded: list[ExcludedTable] = []
+        for table_name in sorted(self.tables):
+            if table_name in joined:
+                continue
+            cls = self.classifications.get(table_name)
+            classification = cls.classification if cls else "unclassified"
+            reason = self._exclusion_reasons.get(table_name) or default_reasons.get(
+                classification, "no key column was detected, so it cannot be linked to the cohort"
+            )
+            excluded.append(ExcludedTable(table_name=table_name, classification=classification, reason=reason))
+        return excluded
 
     def _get_ibis_connection(self) -> Any:
         """
@@ -1924,14 +2039,12 @@ class MultiTableHandler:
                 logger.debug(f"Excluding {name} from anchor candidates: null_rate={cls.null_rate_in_grain:.2%}")
                 continue
 
-            if not cls.is_unique_on_grain:
-                logger.debug(f"Excluding {name} from anchor candidates: not unique on grain")
-                continue
-
+            # A near-unique table with duplicate keys stays a candidate: if it wins, building the
+            # mart fails loudly. Dropping it here would silently anchor on a different table.
             candidates[name] = cls
 
         if not candidates:
-            raise ValueError("No suitable anchor table found. All dimensions have >50% NULLs or non-unique grain keys.")
+            raise ValueError("No suitable anchor table found. All dimensions have >50% NULLs in their grain key.")
 
         # Count relationships per table
         relationship_counts: dict[str, int] = {}
