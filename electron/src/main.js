@@ -10,7 +10,18 @@
  * - The per-launch API token goes only to that exact page (or the Vite dev server in dev).
  * - The window cannot navigate away from the app or open new windows; the renderer is sandboxed.
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, session } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  net,
+  protocol,
+  session,
+} from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -46,6 +57,8 @@ import {
   useExternalBackend,
 } from './backendSidecar.js';
 import { STARTUP_TITLE, STARTUP_WINDOW_SIZE, startupPageUrl } from './startupWindow.js';
+import { appMenuTemplate } from './appMenu.js';
+import { showWithCopyDetails, showWithCopyDetailsSync } from './nativeDialog.js';
 
 // Per-launch API token. scripts/run_app.sh generates it and passes it to both the backend and
 // this process (CLINICAL_ANALYTICS_API_TOKEN); started on its own, main generates one. Throws on
@@ -245,17 +258,25 @@ function closeStartupWindow() {
 /** The backend died after it was ready: offer a restart (new backend, new window) or quit. */
 async function handleBackendCrash(info) {
   const text = unexpectedExitMessage(info);
-  console.error(`${text.message} ${text.detail}`);
-  const { response } = await dialog.showMessageBox({
-    type: 'error',
-    title: text.title,
-    message: text.message,
-    detail: text.detail,
-    buttons: text.buttons,
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  });
+  console.error(`${text.message} ${text.details}`);
+  // The exit signal and log lines are for support: behind "Copy details", not in the dialog.
+  const response = await showWithCopyDetails(
+    (options) => dialog.showMessageBox(options),
+    (details) => clipboard.writeText(details),
+    {
+      options: {
+        type: 'error',
+        title: text.title,
+        message: text.message,
+        detail: text.detail,
+        buttons: text.buttons,
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      },
+      details: text.details,
+    }
+  );
   if (response !== 0) {
     app.quit();
     return;
@@ -271,10 +292,19 @@ async function handleBackendCrash(info) {
 
 /** Show why the backend did not start, then quit (stopping whatever was started). */
 function failStartup(failure) {
-  const { title, message } = startupFailureMessage(failure || { reason: 'spawn' });
-  console.error(`${title}: ${message}`);
+  const { title, message, details } = startupFailureMessage(failure || { reason: 'spawn' });
+  console.error(`${title}: ${message}${details ? ` (${details})` : ''}`);
   closeStartupWindow();
-  dialog.showErrorBox(title, message);
+  // Synchronous, like showErrorBox: the app must not quit under the dialog. Paths, exit codes and
+  // build commands are behind "Copy details".
+  showWithCopyDetailsSync(
+    (options) => dialog.showMessageBoxSync(options),
+    (text) => clipboard.writeText(text),
+    {
+      options: { type: 'error', title, message: title, detail: message, buttons: ['Quit'] },
+      details,
+    }
+  );
   app.quit();
 }
 
@@ -325,6 +355,12 @@ app.whenReady().then(async () => {
   console.log('🚀 Clinical Analytics Electron app starting...');
   // Before any window exists, so the startup window's first paint already uses the saved theme.
   nativeTheme.themeSource = parseThemeSetting(readSettingsText());
+  // A curated menu: no Reload (it would drop the conversation), developer tools only in dev.
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      appMenuTemplate({ isMac: process.platform === 'darwin', isDev: Boolean(devServerUrl) })
+    )
+  );
   if (externalBackend) {
     try {
       // The same build-time value the preload falls back to, so the CSP header allows it.

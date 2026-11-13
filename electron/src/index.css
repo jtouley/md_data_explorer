@@ -217,6 +217,7 @@ textarea {
 h1,
 h2,
 h3,
+h4,
 p,
 ul,
 dl,
@@ -420,6 +421,18 @@ ul {
   padding: var(--sp-4) var(--sp-3) var(--sp-3);
 }
 
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+/* The drawer's close button exists only while the sidebar is a drawer (narrow windows). */
+.sidebar-close {
+  display: none;
+}
+
 .brand-name {
   padding: var(--sp-1) var(--sp-1) 0;
   font-size: var(--fs-md);
@@ -515,7 +528,13 @@ ul {
 }
 
 .cohort-status[data-tone='ok'] {
-  color: var(--accent);
+  /* Plain text: the accent means "act here", and this line is news, not an action. */
+  color: var(--text-2);
+}
+
+.cohort-status-action {
+  align-self: flex-start;
+  margin: 0 var(--sp-1);
 }
 
 /* Cohort actions menu */
@@ -897,6 +916,25 @@ ul {
   flex: 1;
 }
 
+.banner-dismiss {
+  align-self: flex-start;
+  margin: -4px -4px -4px 0;
+}
+
+/* Only shown under 700 CSS px (see "Narrow windows") */
+.main-bar {
+  display: none;
+}
+
+.sidebar-toggle {
+  display: none;
+}
+
+.sidebar-toggle-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
 .banner--error {
   color: var(--danger);
   background: var(--danger-bg);
@@ -1068,6 +1106,7 @@ ul {
 
 .result-lead {
   font-size: var(--fs-body);
+  font-weight: 400;
   line-height: var(--lh-body);
   color: var(--text-1);
 }
@@ -1080,11 +1119,31 @@ ul {
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-.result-notes {
+.result-notes,
+.result-withheld {
   margin-top: var(--sp-2);
   font-size: var(--fs-md);
   line-height: var(--lh-md);
   color: var(--text-2);
+}
+
+/* What was computed, under the claim: always visible, quiet (text-3 on bg 5.37 / 6.19). */
+.answer-plan {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px var(--sp-4);
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+
+.answer-plan dt {
+  color: var(--text-3);
+}
+
+.answer-plan dd {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
 }
 
 .result-table-frame {
@@ -1233,6 +1292,13 @@ ul {
   color: var(--text-1);
 }
 
+.held-next {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
+  color: var(--text-1);
+}
+
 .result-plan-line {
   margin-top: var(--sp-4);
   padding-top: var(--sp-3);
@@ -1334,6 +1400,20 @@ ul {
   margin-top: var(--sp-1);
   font-size: var(--fs-md);
   line-height: var(--lh-md);
+  color: var(--text-2);
+}
+
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.notice-copied {
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   color: var(--text-2);
 }
 
@@ -1451,9 +1531,9 @@ ul {
 
 .query-form:focus-within {
   border-color: var(--accent);
-  box-shadow:
-    var(--shadow-1),
-    0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  /* The same 2px ring as every other control (accent on --bg: 5.47 light, 7.39 dark). */
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .query-input {
@@ -1601,6 +1681,10 @@ ul {
 
 .panel-hint {
   margin-bottom: var(--sp-2);
+}
+
+.panel-hint:empty {
+  display: none;
 }
 
 .enrichment-section {
@@ -1808,6 +1892,65 @@ ul {
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
+  }
+}
+
+/* Under 700 CSS px (the 800 px minimum window at 200% zoom is 400 px wide): the sidebar folds
+   behind a toggle and the chat column takes the full width, so the composer stays on screen. */
+@media (max-width: 699px) {
+  .app-container {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-container.has-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-container:not(.sidebar-open) .sidebar {
+    display: none;
+  }
+
+  .app-container.sidebar-open .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: min(var(--sidebar-w), calc(100vw - var(--sp-7)));
+    overflow-y: auto;
+    /* Scrolling past the drawer's end never scrolls the conversation behind it. */
+    overscroll-behavior: contain;
+    box-shadow: var(--shadow-2);
+  }
+
+  .sidebar-close {
+    display: inline-flex;
+  }
+
+  .main-bar {
+    display: flex;
+    padding: var(--sp-2) var(--sp-3) 0;
+  }
+
+  .sidebar-toggle {
+    display: inline-flex;
+  }
+
+  .banner {
+    width: calc(100% - 2 * var(--sp-3));
+    margin-top: var(--sp-2);
+  }
+
+  .chat-container {
+    padding: var(--sp-4) var(--sp-3) var(--sp-3);
+  }
+
+  .input-area {
+    padding: 0 var(--sp-3) var(--sp-2);
+  }
+
+  .dataset-panel {
+    width: 100vw;
   }
 }
 

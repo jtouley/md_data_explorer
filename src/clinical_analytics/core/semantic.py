@@ -2083,7 +2083,11 @@ class SemanticLayer:
             gap_columns = list(self.get_base_view().columns)
             gaps = unapplied_constraints(query_text, plan, gap_columns)
             if gaps:
-                quoted = ", ".join(f"'{gap}'" for gap in gaps)
+                # Each word once, in order. A stem ("diabete") is dropped only when an inflection of
+                # it ("diabetes") is listed; unrelated words sharing a prefix ("men", "menopause") stay.
+                unique = list(dict.fromkeys(gaps))
+                words = [w for w in unique if not any(o in (w + "s", w + "es") for o in unique)]
+                quoted = ", ".join(f"'{gap}'" for gap in words)
                 message = (
                     f"Part of the question could not be applied ({quoted}), so the answer would "
                     "not match what you asked. Rephrase it using the dataset's columns and values."

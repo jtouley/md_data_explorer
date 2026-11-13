@@ -14,28 +14,45 @@ import {
 } from './enrichmentPanel.js';
 import { normalizeHistoryResponse, renderPatchHistoryTable } from './patchHistoryPanel.js';
 import {
-  HIDDEN_CELL_FOOTNOTE,
   buildConfirmationHoldPresentation,
   buildExampleQuestions,
   buildQueryCompletedPresentation,
-  claimDecimals,
-  classifyCell,
   describeQueryFailure,
-  isNumericColumn,
-  isPValueColumn,
-  parsePlanLine,
-  splitClaim,
+  plainFailureMessage,
   stageLabel,
 } from './resultPresentation.js';
-import { buildConfirmRequest, submitConfirmation } from './confirmHold.js';
+import {
+  answerAnnouncement,
+  buildHeldCard,
+  buildNotice,
+  messageShell,
+  renderAnswerCard,
+  setCardButtonsDisabled,
+  setCardNote,
+  settleCard,
+} from './answerCard.js';
+import { approvedCardNote, buildConfirmRequest, submitConfirmation } from './confirmHold.js';
+import { STOPPED, createStopController } from './stopControl.js';
+import { bindBannerDismiss, bindSidebarToggle } from './layoutControls.js';
 import { closeDatasetDeleteConfirm, renderDatasetDeleteConfirm } from './datasetDeletePanel.js';
 import {
+  ensureServerSession,
   normalizeSessionListResponse,
   renderSessionList,
   titleFromQuestion,
 } from './sessionSidebar.js';
-import { normalizeUploadResponse, renderUploadArea, uploadStatusText } from './uploadPanel.js';
-import { dataCheckStatusNote, normalizeQuality, renderDataCheck } from './dataCheckPanel.js';
+import {
+  normalizeUploadResponse,
+  readyHeadline,
+  renderUploadArea,
+  uploadStatusText,
+} from './uploadPanel.js';
+import {
+  dataCheckNeedsReview,
+  dataCheckStatusNote,
+  normalizeQuality,
+  renderDataCheck,
+} from './dataCheckPanel.js';
 import { icon } from './icons.js';
 import { THEME_STORAGE_KEY, isThemeSource } from './theme.js';
 
@@ -56,6 +73,8 @@ const elements = {
   datasetMenu: document.getElementById('dataset-menu'),
   datasetMeta: document.getElementById('dataset-meta'),
   datasetStatus: document.getElementById('dataset-status'),
+  datasetStatusAction: document.getElementById('dataset-status-action'),
+  sidebarToggle: document.getElementById('sidebar-toggle'),
   openDatasetPanelBtn: document.getElementById('open-dataset-panel'),
   refreshDatasetsBtn: document.getElementById('refresh-datasets'),
   deleteDatasetBtn: document.getElementById('delete-dataset'),
@@ -106,6 +125,7 @@ const elements = {
  * @property {MessageKind} [kind] - What the assistant message is (see DESIGN.md "Message states")
  * @property {number} [startedAt] - When work on the answer started (ms)
  * @property {string} [detail] - The engine's exact words when the notice reworded them
+ * @property {string} [questionId] - The question this assistant message answers
  * @property {Date} timestamp - Message creation time
  */
 
@@ -115,12 +135,19 @@ const state = {
   sessionId: generateSessionId(),
   /** True once the session exists in the API (created or picked from the list). */
   sessionOnServer: false,
+  /** The session creation still in flight, so asking again never creates a second session. */
+  /** @type {Promise<void> | null} */
+  sessionCreating: null,
   /** @type {ChatMessage[]} */
   messages: [],
   /** @type {{ close: () => void, stop?: () => void } | null} */
   activeStream: null,
+  /** Stop for the question in flight, from the moment it is asked (before its request returns). */
+  /** @type {ReturnType<typeof createStopController> | null} */
+  stopControl: null,
+  /** The local language model banner was dismissed; it stays away until its message changes. */
+  llmBannerDismissedText: '',
   isProcessing: false,
-  stopRequested: false,
   /** @type {{ dataset_id: string, name: string, row_count?: number }[]} */
   datasets: [],
   /** @type {{ datasetId: string, rowCount: number, columns: string[], rows: object[], schema: Record<string, string> } | null} */
@@ -128,6 +155,10 @@ const state = {
   /** First question per session, this run only (never persisted: questions can identify patients). */
   sessionTitles: new Map(),
 };
+
+/** The narrow-window sidebar toggle (see layoutControls.js), once bound. */
+/** @type {ReturnType<typeof bindSidebarToggle> | null} */
+let sidebar = null;
 
 const NEAR_BOTTOM_PX = 80;
 const ELAPSED_VISIBLE_AFTER_S = 3;
@@ -153,17 +184,6 @@ function generateSessionId() {
  */
 function generateMessageId() {
   return `msg_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 5)}`;
-}
-
-/**
- * Escape HTML to prevent XSS.
- * @param {string} text
- * @returns {string}
- */
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 /**
@@ -212,11 +232,25 @@ function datasetName(datasetId) {
  * @param {string} text
  * @param {'info' | 'ok' | 'error'} [tone]
  */
-function setDatasetStatus(text, tone = 'info') {
-  const { datasetStatus } = elements;
+function setDatasetStatus(text, tone = 'info', { showDetails = false } = {}) {
+  const { datasetStatus, datasetStatusAction } = elements;
   if (!datasetStatus) return;
   datasetStatus.textContent = text;
   datasetStatus.dataset.tone = tone;
+  datasetStatusAction?.classList.toggle('hidden', !showDetails);
+}
+
+/**
+ * Put text on the clipboard (the "Copy details" buttons). Never shown on screen.
+ * @param {string} text
+ * @returns {Promise<void>} rejects when nothing was copied, so the button can say so
+ */
+function copyText(text) {
+  if (!navigator.clipboard?.writeText) return Promise.reject(new Error('No clipboard'));
+  return navigator.clipboard.writeText(text).catch((error) => {
+    console.warn('Could not copy the details:', error?.name);
+    throw error;
+  });
 }
 
 // ============================================================================
@@ -254,20 +288,16 @@ function updateLlmBanner(health) {
     return;
   }
 
-  llmBanner.classList.remove('hidden');
-
-  if (!reachable) {
-    llmBanner.classList.add('llm-banner--error');
-    llmBannerText.textContent =
-      "Some questions need the local language model, which isn't running. " +
+  const text = !reachable
+    ? 'Some questions need the local language model, which isn’t running. ' +
+      'Simple questions still work.'
+    : `The local language model “${model}” isn’t installed, so some questions won’t work. ` +
       'Simple questions still work.';
-    return;
-  }
-
-  llmBanner.classList.add('llm-banner--warn');
-  llmBannerText.textContent =
-    `The local language model "${model}" isn't installed, so some questions won't work. ` +
-    'Simple questions still work.';
+  // Dismissed: stays away until it has something different to say.
+  if (state.llmBannerDismissedText === text) return;
+  llmBanner.classList.add(reachable ? 'llm-banner--warn' : 'llm-banner--error');
+  llmBannerText.textContent = text;
+  llmBanner.classList.remove('hidden');
 }
 
 /**
@@ -320,7 +350,7 @@ function setQueryInputEnabled(enabled) {
     submitBtn.setAttribute('aria-label', 'Stop');
     submitBtn.title = 'Stop';
     submitBtn.innerHTML = icon('stop');
-    inputHintText.textContent = 'Working on your answer. Press Stop to stop waiting.';
+    inputHintText.textContent = 'Wait for this answer, or press Stop.';
     return;
   }
 
@@ -334,7 +364,7 @@ function setQueryInputEnabled(enabled) {
     ? 'Enter to ask · Shift+Enter for a new line'
     : state.connected
       ? 'Choose a cohort to begin.'
-      : "Can't reach the analysis engine on this computer.";
+      : 'Can’t reach the analysis engine on this computer.';
 
   // Return focus to the box after an answer, but never pull it out of the sidebar or a panel.
   const active = document.activeElement;
@@ -381,16 +411,29 @@ function stopElapsedTicker() {
   elapsedTicker = null;
 }
 
-function beginProcessing() {
+/**
+ * @param {string} [workingMessageId] the placeholder that Stop turns into "Stopped" at once
+ * @returns {ReturnType<typeof createStopController>}
+ */
+function beginProcessing(workingMessageId) {
   state.isProcessing = true;
-  state.stopRequested = false;
+  const stopControl = createStopController();
+  state.stopControl = stopControl;
+  stopControl.onStop(() => {
+    // Acknowledge at once, then stop whatever is still in flight.
+    if (state.activeStream?.stop) state.activeStream.stop();
+    else if (workingMessageId) markStopped(workingMessageId);
+    window.clinicalAPI?.cancelSubmit?.();
+    if (state.stopControl === stopControl) endProcessing();
+  });
   setQueryInputEnabled(true);
   startElapsedTicker();
+  return stopControl;
 }
 
 function endProcessing() {
   state.isProcessing = false;
-  state.stopRequested = false;
+  state.stopControl = null;
   state.activeStream = null;
   stopElapsedTicker();
   setQueryInputEnabled(!!state.currentDatasetId);
@@ -401,12 +444,7 @@ function endProcessing() {
  */
 function stopActiveQuery() {
   if (!state.isProcessing) return;
-  if (state.activeStream?.stop) {
-    state.activeStream.stop();
-  } else {
-    // The question has not reached the stream yet; stop as soon as it does.
-    state.stopRequested = true;
-  }
+  state.stopControl?.stop();
 }
 
 // ============================================================================
@@ -486,14 +524,9 @@ function messageKind(message) {
  * @param {ChatMessage} message
  */
 function renderMessage(message) {
-  const messageDiv = el('div', `message message-${message.role}`);
-  messageDiv.setAttribute('data-message-id', message.id);
-  messageDiv.setAttribute('data-testid', `${message.role}-message`);
+  const messageDiv = messageShell(message);
   messageDiv.dataset.state = messageKind(message);
-
-  const contentDiv = el('div', 'message-content');
-  fillMessageContent(contentDiv, message);
-  messageDiv.appendChild(contentDiv);
+  fillMessageContent(/** @type {HTMLElement} */ (messageDiv.lastElementChild), message);
   elements.chatContainer.appendChild(messageDiv);
 }
 
@@ -535,20 +568,20 @@ function fillMessageContent(contentDiv, message) {
     return;
   }
   const kind = messageKind(message);
-  if (kind === 'refused') {
+  if (kind === 'refused' || kind === 'error') {
     contentDiv.appendChild(
-      buildNotice('refused', message.content, RESTORED_QUESTION_HINT, message.detail)
-    );
-  } else if (kind === 'error') {
-    contentDiv.appendChild(
-      buildNotice('error', message.content, RESTORED_QUESTION_HINT, message.detail)
+      buildNotice(kind, message.content, {
+        hint: RESTORED_QUESTION_HINT,
+        detail: message.detail,
+        copy: copyText,
+      })
     );
   } else if (kind === 'stopped') {
     contentDiv.appendChild(buildNotice('stopped', message.content));
   } else if (message.result?.awaitingConfirmation) {
-    contentDiv.appendChild(buildHeldCard(message.result));
+    contentDiv.appendChild(buildHeldCard(message.result, heldCardHandlers(message)));
   } else if (message.result) {
-    contentDiv.appendChild(renderResultCard(message.result, message.content));
+    contentDiv.appendChild(renderAnswerCard(message.result, { content: message.content }));
   } else {
     contentDiv.appendChild(el('p', 'message-text', message.content));
   }
@@ -574,304 +607,38 @@ function buildThinking(message) {
   return wrap;
 }
 
-const NOTICE_LABELS = {
-  refused: { word: 'Not answered', icon: 'info' },
-  error: { word: 'Something went wrong', icon: 'alert' },
-  stopped: { word: 'Stopped', icon: 'stop' },
-};
-
-/**
- * Refusal, error or stopped notice: a word and an icon, never colour alone.
- * @param {'refused' | 'error' | 'stopped'} kind
- * @param {string} text
- * @param {string} [hint]
- * @param {string} [detail] the engine's exact words, behind a disclosure
- * @returns {HTMLElement}
- */
-function buildNotice(kind, text, hint, detail) {
-  const notice = el('div', `notice notice--${kind}`);
-  notice.dataset.testid = `${kind}-notice`;
-  const label = el('p', 'state-label');
-  label.innerHTML = `${icon(NOTICE_LABELS[kind].icon)}<span>${NOTICE_LABELS[kind].word}</span>`;
-  notice.appendChild(label);
-  if (text) notice.appendChild(el('p', 'notice-body', text));
-  if (hint) notice.appendChild(el('p', 'notice-hint', hint));
-  if (detail) {
-    const raw = el('details', 'plan-raw notice-detail');
-    raw.append(el('summary', '', 'Exact message'), el('p', 'plan-raw-text', detail));
-    notice.appendChild(raw);
-  }
-  return notice;
-}
-
-/**
- * Render a result card for analysis results: caption, headline, stats line, caveats, table.
- * @param {Object} result
- * @param {string} [content] the one-line message for results without a claim
- * @returns {HTMLElement}
- */
-function renderResultCard(result, content = '') {
-  const card = el('div', 'result-card answer');
-  card.setAttribute('data-testid', 'result-card');
-  if (result.intentType) {
-    card.setAttribute('data-intent', result.intentType);
-  }
-
-  if (result.title) {
-    const titleEl = el('p', 'result-card-title', result.title);
-    titleEl.setAttribute('data-testid', 'result-card-title');
-    card.appendChild(titleEl);
-  }
-
-  if (result.claim) {
-    const { headline, stats, notes } = splitClaim(result.claim);
-    const claimEl = el('p', 'result-claim', headline);
-    claimEl.setAttribute('data-testid', 'result-claim');
-    card.appendChild(claimEl);
-    if (stats.length) {
-      const statsEl = el('p', 'result-stats', stats.join(' · '));
-      statsEl.setAttribute('data-testid', 'result-stats');
-      card.appendChild(statsEl);
-    }
-    if (notes) card.appendChild(el('p', 'result-notes', notes));
-  } else {
-    const lead = content && content !== result.title ? content : '';
-    if (lead) card.appendChild(el('p', 'result-lead', lead));
-    if (result.summary) {
-      card.appendChild(el('p', 'result-stats', String(result.summary).replace(/ \| /g, ' · ')));
-    }
-  }
-
-  if (result.table) {
-    const { wrapper, hasHidden } = buildResultTable(result.table, {
-      decimals: claimDecimals(result.claim),
-      label: result.title ? `${result.title} table` : 'Results table',
-    });
-    card.appendChild(wrapper);
-    if (hasHidden) {
-      const foot = el('p', 'result-footnote');
-      foot.dataset.testid = 'hidden-cell-footnote';
-      foot.innerHTML = `<span aria-hidden="true">† </span>${escapeHtml(HIDDEN_CELL_FOOTNOTE)}`;
-      card.appendChild(foot);
-    }
-  }
-
-  return card;
-}
-
-/**
- * Normalize rows to arrays of scalars (API may send Polars to_dicts() row objects).
- * @param {string[]} columns
- * @param {unknown[]} rows
- * @returns {unknown[][]}
- */
-function normalizeTableRows(columns, rows) {
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return [];
-  }
-  return rows.map((row) => {
-    if (Array.isArray(row)) {
-      return row;
-    }
-    if (row && typeof row === 'object' && Array.isArray(columns)) {
-      return columns.map((col) => /** @type {Record<string, unknown>} */ (row)[col]);
-    }
-    return [];
-  });
-}
-
-/**
- * Mark a table frame while columns are out of view to the right (edge fade and hint).
- * @param {HTMLElement} frame
- * @param {HTMLElement} scroller
- * @param {HTMLElement} hint
- */
-function trackTableOverflow(frame, scroller, hint) {
-  const update = () => {
-    const overflowing = scroller.scrollWidth - scroller.clientWidth > 1;
-    const atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1;
-    frame.classList.toggle('has-more-right', overflowing && !atEnd);
-    hint.classList.toggle('hidden', !overflowing);
-  };
-  scroller.addEventListener('scroll', update, { passive: true });
-  if (typeof ResizeObserver === 'function') new ResizeObserver(update).observe(scroller);
-  window.requestAnimationFrame(update);
-}
-
-/**
- * Statistics table: body face, tabular figures, numbers right-aligned, hidden cells marked.
- * The scrolling box is a labelled, focusable region so the keyboard can scroll it; the first
- * column stays in view.
- * @param {{ columns?: string[], rows?: unknown[] }} tableData
- * @param {{ decimals?: number, label?: string }} [opts]
- * @returns {{ wrapper: HTMLElement, hasHidden: boolean }}
- */
-function buildResultTable(tableData, opts = {}) {
-  const frame = el('div', 'result-table-frame');
-  const wrapper = el('div', 'result-table-wrapper');
-  frame.appendChild(wrapper);
-  if (!tableData || !Array.isArray(tableData.columns) || !Array.isArray(tableData.rows)) {
-    wrapper.appendChild(el('p', 'result-error', 'No table was returned for this answer.'));
-    return { wrapper: frame, hasHidden: false };
-  }
-  wrapper.tabIndex = 0;
-  wrapper.setAttribute('role', 'region');
-  wrapper.setAttribute('aria-label', opts.label || 'Results table');
-  wrapper.dataset.testid = 'result-table-region';
-
-  const cols = tableData.columns;
-  const rows = normalizeTableRows(cols, tableData.rows);
-  const numeric = cols.map((_, i) => i > 0 && isNumericColumn(rows, i));
-  const formats = cols.map((col) => ({ decimals: opts.decimals, pValue: isPValueColumn(col) }));
-  let hasHidden = false;
-
-  const table = el('table', 'result-table');
-  const thead = el('thead');
-  const headRow = el('tr');
-  cols.forEach((col, i) => {
-    const th = el('th', numeric[i] ? 'num' : '', String(col));
-    th.scope = 'col';
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-
-  const tbody = el('tbody');
-  rows.forEach((row) => {
-    const tr = el('tr');
-    cols.forEach((_, i) => {
-      const cell = classifyCell(row[i], formats[i]);
-      const td = el(i === 0 ? 'th' : 'td', numeric[i] ? 'num' : '');
-      if (i === 0) td.scope = 'row';
-      if (cell.kind === 'hidden' || cell.kind === 'small') {
-        hasHidden = true;
-        const mark = el('span', `cell-hidden cell-hidden--${cell.kind}`);
-        mark.title = 'Hidden to protect privacy';
-        mark.innerHTML = `${escapeHtml(cell.text)}<sup aria-hidden="true">†</sup>`;
-        if (cell.kind === 'hidden') mark.setAttribute('aria-label', 'hidden for privacy');
-        td.appendChild(mark);
-      } else {
-        td.textContent = cell.text;
-      }
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-
-  table.append(thead, tbody);
-  wrapper.appendChild(table);
-  const fade = el('div', 'result-table-fade');
-  fade.setAttribute('aria-hidden', 'true');
-  const hint = el(
-    'p',
-    'result-table-hint hidden',
-    `Scroll sideways to see all ${cols.length} columns.`
-  );
-  hint.dataset.testid = 'result-table-hint';
-  frame.append(fade, hint);
-  trackTableOverflow(frame, wrapper, hint);
-  return { wrapper: frame, hasHidden };
-}
-
 // ============================================================================
 // Held plan (confirmation flow)
 // ============================================================================
 
 /**
- * A plan awaiting approval: the reason, the plan as a readable list, the exact plan text on
- * demand, and two plain-language actions.
- * @param {Object} held result from buildConfirmationHoldPresentation
- * @returns {HTMLElement}
+ * What the held card's two buttons do.
+ * @param {ChatMessage} message the held message
+ * @returns {{ columns: string[], onConfirm: (card: HTMLElement) => void, onReject: (card: HTMLElement) => void }}
  */
-function buildHeldCard(held) {
-  const card = el('div', 'result-card result-card-confirm');
-  card.setAttribute('data-testid', 'result-confirm-card');
-
-  const label = el('p', 'state-label state-label--held');
-  label.innerHTML = `${icon('clock')}<span>Check this plan before it runs</span>`;
-  card.appendChild(label);
-
-  if (held.failureReason) card.appendChild(el('p', 'held-reason', held.failureReason));
-
-  if (held.planLine) {
-    const planEl = el('div', 'result-plan-line');
-    planEl.setAttribute('data-testid', 'result-plan-line');
-    const { analysis, items } = parsePlanLine(held.planLine);
-    if (analysis) planEl.appendChild(el('p', 'plan-analysis', analysis));
-    const list = el('dl', 'plan-list');
-    items.forEach(({ label: term, value }) => {
-      const row = el('div', 'plan-row');
-      row.append(el('dt', '', term || 'Also'), el('dd', '', value));
-      list.appendChild(row);
-    });
-    planEl.appendChild(list);
-    const raw = el('details', 'plan-raw');
-    raw.append(el('summary', '', 'Exact plan text'), el('p', 'plan-raw-text', held.planLine));
-    planEl.appendChild(raw);
-    card.appendChild(planEl);
-  }
-
-  const actions = el('div', 'result-confirm-actions');
-  const confirmBtn = el('button', 'btn btn-primary btn-confirm', 'Run this analysis');
-  confirmBtn.type = 'button';
-  confirmBtn.dataset.testid = 'confirm-query-btn';
-  confirmBtn.addEventListener('click', () => {
-    if (state.isProcessing) {
-      // Another answer is still streaming; leave the hold actionable instead of greying it out.
-      setCardNote(card, 'Wait for the current answer to finish, then run this.');
-      return;
-    }
-    // One decision per held plan: a second click must not run it again.
-    setCardButtonsDisabled(card, true);
-    void handleConfirmPendingQuery(held, card);
-  });
-  const rejectBtn = el('button', 'btn btn-secondary btn-reject', 'Not what I meant');
-  rejectBtn.type = 'button';
-  rejectBtn.dataset.testid = 'reject-query-btn';
-  rejectBtn.addEventListener('click', () => {
-    setCardButtonsDisabled(card, true);
-    settleCard(card, 'Not run. Rephrase your question below.');
-    restoreQuestion(held.pendingQuery || '');
-    elements.queryInput.focus();
-  });
-  actions.append(confirmBtn, rejectBtn);
-  card.appendChild(actions);
-  card.appendChild(el('p', 'result-card-note hidden'));
-
-  return card;
-}
-
-/**
- * @param {HTMLElement} card
- * @param {boolean} disabled
- */
-function setCardButtonsDisabled(card, disabled) {
-  card.querySelectorAll('.result-confirm-actions button').forEach((b) => {
-    b.disabled = disabled;
-  });
-}
-
-/**
- * Show a one-line note on a held card.
- * @param {HTMLElement} card
- * @param {string} text
- */
-function setCardNote(card, text) {
-  const note = card.querySelector('.result-card-note');
-  if (!note) return;
-  note.textContent = text;
-  note.classList.remove('hidden');
-  note.setAttribute('role', 'status');
-}
-
-/**
- * The plan was decided: replace the buttons with what happened.
- * @param {HTMLElement} card
- * @param {string} text
- */
-function settleCard(card, text) {
-  card.querySelector('.result-confirm-actions')?.remove();
-  card.classList.add('is-settled');
-  setCardNote(card, text);
+function heldCardHandlers(message) {
+  const held = message.result;
+  const info = state.datasetInfo;
+  return {
+    columns:
+      info && info.datasetId === (held.datasetId || state.currentDatasetId) ? info.columns : [],
+    onConfirm: (card) => {
+      if (state.isProcessing) {
+        // Another answer is still streaming; leave the hold actionable instead of greying it out.
+        setCardNote(card, 'Wait for the current answer to finish, then run this.');
+        return;
+      }
+      // One decision per held plan: a second click must not run it again.
+      setCardButtonsDisabled(card, true);
+      void handleConfirmPendingQuery(held, card, message.questionId);
+    },
+    onReject: (card) => {
+      setCardButtonsDisabled(card, true);
+      settleCard(card, 'Not run. Rephrase your question below.');
+      restoreQuestion(held.pendingQuery || '');
+      elements.queryInput.focus();
+    },
+  };
 }
 
 /**
@@ -879,7 +646,7 @@ function settleCard(card, text) {
  * @param {Object} held
  * @param {HTMLElement} card
  */
-async function handleConfirmPendingQuery(held, card) {
+async function handleConfirmPendingQuery(held, card, questionId) {
   const built = buildConfirmRequest(held, {
     currentDatasetId: state.currentDatasetId,
     fallbackSessionId: state.sessionId,
@@ -891,30 +658,32 @@ async function handleConfirmPendingQuery(held, card) {
     return;
   }
   const { request } = built;
-  beginProcessing();
+  const assistantMessageId = addWorkingMessage(questionId);
+  const stopControl = beginProcessing(assistantMessageId);
 
-  const assistantMessageId = addWorkingMessage();
   let outcome = 'error';
   let sent = false;
   try {
-    const response = await submitConfirmation(window.clinicalAPI, request);
+    const response = await stopControl.race(submitConfirmation(window.clinicalAPI, request));
+    // Stopped before the request returned: it may have reached the server, so it counts as sent.
     sent = true;
-    outcome = await followQuery(response, assistantMessageId, request.queryText, {
-      datasetId: request.datasetId,
-      sessionId: request.sessionId,
-    });
+    outcome =
+      response === STOPPED
+        ? 'stopped'
+        : await followQuery(response, assistantMessageId, request.queryText, {
+            datasetId: request.datasetId,
+            sessionId: request.sessionId,
+          });
   } catch (error) {
     console.error('Confirmed plan failed:', error?.message);
-    showFailure(assistantMessageId, 'error', error?.message);
+    showFailure(assistantMessageId, 'error', plainFailureMessage(error?.message));
   } finally {
-    endProcessing();
+    if (state.stopControl === stopControl) endProcessing();
   }
 
-  if (outcome === 'completed' || outcome === 'held') {
-    settleCard(card, 'You approved this plan. The answer is below.');
-  } else if (sent) {
-    // The server accepted the approval, so it may have run: never offer to send it twice.
-    settleCard(card, 'You approved this plan and it was sent. Ask again to see a new answer.');
+  if (sent) {
+    // Never offer to send it twice, and never say it ran when the answer below is a refusal.
+    settleCard(card, approvedCardNote(/** @type {any} */ (outcome)));
   } else {
     // The approval never reached the server, so the held plan stays confirmable.
     setCardButtonsDisabled(card, false);
@@ -944,7 +713,7 @@ function renderWelcome(mode) {
       el(
         'p',
         'welcome-text',
-        'It runs on this computer. When it can be reached, your cohorts appear in the sidebar.'
+        'It runs on this computer. When it can be reached, you can choose a cohort and ask questions.'
       )
     );
   } else if (mode === 'no-dataset') {
@@ -978,14 +747,18 @@ function renderWelcome(mode) {
       el(
         'p',
         'welcome-text',
-        "Earlier answers aren't shown here; new questions continue this conversation."
+        'Earlier answers aren’t shown here; new questions continue this conversation.'
       )
     );
   } else {
     const name = datasetName(state.currentDatasetId);
     welcome.append(
       el('h2', 'welcome-title', `What would you like to know about ${name}?`),
-      el('p', 'welcome-text', 'Each answer names the test, the number of patients and any caveats.')
+      el(
+        'p',
+        'welcome-text',
+        'Each answer shows how it was worked out: who was included, what was counted and the test.'
+      )
     );
     const info = state.datasetInfo;
     const examples =
@@ -1023,6 +796,7 @@ function clearWelcomeMessage() {
 function resetChatUI() {
   state.messages = [];
   state.isProcessing = false;
+  state.stopControl = null;
   if (state.activeStream) {
     state.activeStream.close();
     state.activeStream = null;
@@ -1113,7 +887,7 @@ async function loadDatasetOverview() {
     const columns = Array.isArray(preview?.columns) ? preview.columns : [];
     const rows = Array.isArray(preview?.rows) ? preview.rows : [];
 
-    datasetOverviewSummary.textContent = `${rowCount} rows • ${columns.length} columns`;
+    datasetOverviewSummary.textContent = `${rowCount} rows · ${columns.length} variables`;
     renderDatasetPreview(columns, rows);
     void loadDataCheck(datasetId);
     if (datasetMeta) {
@@ -1137,7 +911,7 @@ async function loadDatasetOverview() {
       renderWelcome('dataset');
     }
   } catch (error) {
-    datasetOverviewSummary.textContent = `Couldn't load this cohort's first rows: ${error.message}`;
+    datasetOverviewSummary.textContent = `Couldn’t load this cohort’s first rows. ${plainFailureMessage(error?.message, { context: 'panel' })}`;
     renderDatasetPreview([], []);
   }
 }
@@ -1161,7 +935,10 @@ async function loadDataCheck(datasetId) {
   try {
     check = normalizeQuality(await window.clinicalAPI.getDatasetQuality(datasetId));
   } catch (error) {
-    check = { status: 'not_run', reason: error?.message || null };
+    check = {
+      status: 'not_run',
+      reason: plainFailureMessage(error?.message, { context: 'panel' }),
+    };
   }
   if (datasetId !== state.currentDatasetId) return;
   renderDataCheck(parts, check);
@@ -1200,7 +977,7 @@ async function loadDatasets() {
     console.log(`Loaded ${datasets.length} datasets`);
   } catch (error) {
     console.error('Failed to load datasets:', error?.message);
-    setDatasetStatus("Couldn't load the list of cohorts.", 'error');
+    setDatasetStatus('Couldn’t load the list of cohorts.', 'error');
   }
 }
 
@@ -1281,7 +1058,7 @@ async function loadEnrichmentPanel() {
   const hasHistory = typeof window.clinicalAPI?.getEnrichmentHistory === 'function';
 
   if (!hasPending && !hasHistory) {
-    enrichmentHint.textContent = 'Column suggestions are not available.';
+    enrichmentHint.textContent = 'Variable suggestions are not available.';
     renderEnrichmentCards(enrichmentList, [], {
       onAccept: noopEnrichment,
       onReject: noopEnrichment,
@@ -1304,10 +1081,9 @@ async function loadEnrichmentPanel() {
 
     const { suggestions, total } = normalizePendingResponse(pendingRaw);
     if (enrichmentPanelGate.mayWriteHint(load, 'suggestions')) {
+      // With none, the list's own empty state says so (once).
       enrichmentHint.textContent =
-        total === 0
-          ? 'No pending suggestions.'
-          : `${total} pending suggestion${total === 1 ? '' : 's'}.`;
+        total === 0 ? '' : `${total} pending suggestion${total === 1 ? '' : 's'}.`;
     }
     renderEnrichmentCards(enrichmentList, suggestions, {
       onAccept: (patchId) => handleEnrichmentAccept(patchId),
@@ -1318,7 +1094,7 @@ async function loadEnrichmentPanel() {
     if (patchHistoryHint && enrichmentPanelGate.mayWriteHint(load, 'history')) {
       patchHistoryHint.textContent =
         histTotal === 0
-          ? 'No changes yet.'
+          ? ''
           : `${histTotal} patch${histTotal === 1 ? '' : 'es'} in log (newest first).`;
     }
     if (patchHistoryBody) {
@@ -1329,13 +1105,13 @@ async function loadEnrichmentPanel() {
   } catch (error) {
     console.error('Failed to load enrichments / history:', error?.message);
     if (!enrichmentPanelGate.isLatestLoad(load)) return;
-    enrichmentHint.textContent = `Could not load enrichments: ${error.message}`;
+    enrichmentHint.textContent = `Couldn’t load variable suggestions. ${plainFailureMessage(error?.message, { context: 'panel' })}`;
     renderEnrichmentCards(enrichmentList, [], {
       onAccept: noopEnrichment,
       onReject: noopEnrichment,
     });
     if (patchHistoryHint) {
-      patchHistoryHint.textContent = `Couldn't load the change history: ${error.message}`;
+      patchHistoryHint.textContent = `Couldn’t load the change history. ${plainFailureMessage(error?.message, { context: 'panel' })}`;
     }
     if (patchHistoryBody) {
       renderPatchHistoryTable(patchHistoryBody, [], { onRevert: noopEnrichment });
@@ -1435,19 +1211,6 @@ async function loadSessionList() {
  * Make the current conversation a real API session before its first question, so it appears
  * in the sidebar titled by that question.
  */
-async function ensureServerSession() {
-  if (state.sessionOnServer || typeof window.clinicalAPI?.createSession !== 'function') return;
-  try {
-    const res = await window.clinicalAPI.createSession(state.currentDatasetId);
-    if (res?.session_id) {
-      state.sessionId = res.session_id;
-      state.sessionOnServer = true;
-    }
-  } catch (error) {
-    console.warn('Could not create a session; continuing without one:', error?.message);
-  }
-}
-
 /**
  * Point the app at a dataset.
  * @param {string} datasetId
@@ -1472,6 +1235,7 @@ function applyDataset(datasetId, { resetChat }) {
     // A conversation belongs to one cohort: a new cohort starts a new conversation.
     state.sessionId = generateSessionId();
     state.sessionOnServer = false;
+    state.sessionCreating = null;
     resetChatUI();
   } else {
     setQueryInputEnabled(!!datasetId);
@@ -1492,8 +1256,11 @@ function handleSessionSelect(sessionId, sessions) {
 
   state.sessionId = sessionId;
   state.sessionOnServer = true;
+  state.sessionCreating = null;
   state.messages = [];
   state.isProcessing = false;
+  state.stopControl = null;
+  sidebar?.close({ focus: false });
   if (state.activeStream) {
     state.activeStream.close();
     state.activeStream = null;
@@ -1532,7 +1299,7 @@ async function handleSessionDelete(sessionId) {
     }
   } catch (error) {
     console.error('Delete session failed:', error?.message);
-    announce("Couldn't delete the conversation.");
+    announce('Couldn’t delete the conversation.');
     await loadSessionList();
   }
 }
@@ -1550,9 +1317,12 @@ function focusSessionRowAt(index) {
 
 async function handleNewChat() {
   if (!state.currentDatasetId) return;
+  // A creation still in flight belonged to the old conversation.
+  state.sessionCreating = null;
   if (typeof window.clinicalAPI?.createSession !== 'function') {
     state.sessionId = generateSessionId();
     state.sessionOnServer = false;
+    state.sessionCreating = null;
     resetChatUI();
     return;
   }
@@ -1560,12 +1330,14 @@ async function handleNewChat() {
     const res = await window.clinicalAPI.createSession(state.currentDatasetId);
     state.sessionId = res.session_id;
     state.sessionOnServer = true;
+    state.sessionCreating = null;
     resetChatUI();
     await loadSessionList();
   } catch (error) {
     console.error('Create session failed:', error?.message);
     state.sessionId = generateSessionId();
     state.sessionOnServer = false;
+    state.sessionCreating = null;
     resetChatUI();
   }
 }
@@ -1607,7 +1379,9 @@ function handleDeleteDatasetClick() {
       } catch (error) {
         console.error('Delete dataset failed:', error?.message);
         panel.setBusy(false);
-        panel.setError(`Could not delete the dataset: ${error?.message || 'unknown error'}`);
+        panel.setError(
+          `Couldn’t delete this cohort. ${plainFailureMessage(error?.message, { context: 'delete' })}`
+        );
         return;
       }
       closeDatasetDeleteConfirm(datasetDeleteArea);
@@ -1660,19 +1434,20 @@ async function handleQuerySubmit(event) {
   // Clear input and update state
   queryInput.value = '';
   handleQueryInputChange(); // Reset textarea height
-  beginProcessing();
 
   clearWelcomeMessage();
 
+  const questionId = generateMessageId();
   addMessage({
-    id: generateMessageId(),
+    id: questionId,
     role: 'user',
     content: queryText,
     timestamp: new Date(),
   });
-  const assistantMessageId = addWorkingMessage();
+  const assistantMessageId = addWorkingMessage(questionId);
+  const stopControl = beginProcessing(assistantMessageId);
 
-  await ensureServerSession();
+  await stopControl.race(ensureServerSession(state, window.clinicalAPI));
   if (!state.sessionTitles.has(state.sessionId)) {
     state.sessionTitles.set(state.sessionId, titleFromQuestion(queryText));
   }
@@ -1684,24 +1459,27 @@ async function handleQuerySubmit(event) {
     queryLength: queryText.length,
   });
 
-  let outcome = 'error';
+  let outcome = stopControl.stopped ? 'stopped' : 'error';
   try {
-    const response = await window.clinicalAPI.submitQuery(
-      state.sessionId,
-      state.currentDatasetId,
-      queryText,
-      false
-    );
-    console.log('Query accepted:', response?.query_id);
-    outcome = await followQuery(response, assistantMessageId, queryText, {
-      datasetId: state.currentDatasetId,
-      sessionId: state.sessionId,
-    });
+    if (!stopControl.stopped) {
+      const response = await stopControl.race(
+        window.clinicalAPI.submitQuery(state.sessionId, state.currentDatasetId, queryText, false)
+      );
+      if (response === STOPPED) {
+        outcome = 'stopped';
+      } else {
+        console.log('Query accepted:', response?.query_id);
+        outcome = await followQuery(response, assistantMessageId, queryText, {
+          datasetId: state.currentDatasetId,
+          sessionId: state.sessionId,
+        });
+      }
+    }
   } catch (error) {
     console.error('Query failed:', error?.message);
-    showFailure(assistantMessageId, 'error', error?.message);
+    showFailure(assistantMessageId, 'error', plainFailureMessage(error?.message));
   } finally {
-    endProcessing();
+    if (state.stopControl === stopControl) endProcessing();
   }
 
   if (outcome === 'refused' || outcome === 'error') {
@@ -1715,7 +1493,7 @@ async function handleQuerySubmit(event) {
  * Placeholder assistant message shown while the answer is worked out.
  * @returns {string} message id
  */
-function addWorkingMessage() {
+function addWorkingMessage(questionId) {
   const id = generateMessageId();
   addMessage({
     id,
@@ -1724,6 +1502,7 @@ function addWorkingMessage() {
     isStreaming: true,
     startedAt: Date.now(),
     timestamp: new Date(),
+    ...(questionId ? { questionId } : {}),
   });
   return id;
 }
@@ -1735,6 +1514,8 @@ function addWorkingMessage() {
  * @param {string} [message]
  */
 function showFailure(messageId, kind, message, detail) {
+  const current = state.messages.find((m) => m.id === messageId);
+  if (current && !current.isStreaming) return; // already settled (e.g. Stopped)
   updateMessage(messageId, {
     content: message || 'The analysis stopped before it could answer.',
     isStreaming: false,
@@ -1753,10 +1534,6 @@ function showFailure(messageId, kind, message, detail) {
  * @returns {Promise<string>} outcome
  */
 async function followQuery(response, assistantMessageId, queryText, binding) {
-  if (state.stopRequested) {
-    markStopped(assistantMessageId);
-    return 'stopped';
-  }
   if (response?.stream_url || response?.query_id) {
     return subscribeToQueryStream(response.query_id, assistantMessageId, queryText, binding);
   }
@@ -1774,6 +1551,8 @@ async function followQuery(response, assistantMessageId, queryText, binding) {
  * @param {string} messageId
  */
 function markStopped(messageId) {
+  const current = state.messages.find((m) => m.id === messageId);
+  if (current && !current.isStreaming) return;
   updateMessage(messageId, {
     content: 'Stopped waiting for this answer.',
     isStreaming: false,
@@ -1827,7 +1606,8 @@ async function subscribeToQueryStream(
           const pres = buildQueryCompletedPresentation(
             data.intent_type,
             data.result_preview || {},
-            data.claim
+            data.claim,
+            data.plan_line
           );
 
           updateMessage(assistantMessageId, {
@@ -1836,7 +1616,7 @@ async function subscribeToQueryStream(
             isStreaming: false,
             kind: 'answered',
           });
-          announce('Answer ready.');
+          announce(answerAnnouncement(pres.result));
           finish('completed');
           break;
         }
@@ -1989,24 +1769,31 @@ async function handleLoadSample() {
     if (result.status === 'ready' && result.upload_id) {
       setDatasetStatus(
         uploadStatusText(
-          `${result.dataset_name || 'The sample cohort'} is ready.`,
+          result.dataset_name ? readyHeadline(result.dataset_name) : 'The sample cohort is ready.',
           dataCheckStatusNote(result.quality)
         ),
-        'ok'
+        'ok',
+        { showDetails: dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
     } else {
-      setDatasetStatus(`Couldn't load the sample cohort: ${result.message}`, 'error');
+      setDatasetStatus(
+        `Couldn’t load the sample cohort. ${plainFailureMessage(result.message, { context: 'upload' })}`,
+        'error'
+      );
     }
   } catch (error) {
     console.error('Sample load failed:', error?.message);
-    setDatasetStatus(`Couldn't load the sample cohort: ${error.message}`, 'error');
+    setDatasetStatus(
+      `Couldn’t load the sample cohort. ${plainFailureMessage(error?.message, { context: 'upload' })}`,
+      'error'
+    );
   }
 }
 
 async function handleFileUpload(file) {
   if (typeof window.clinicalAPI?.uploadDataset !== 'function') return;
-  setDatasetStatus(`Uploading ${file.name}…`);
+  setDatasetStatus(`Uploading “${file.name}”…`);
 
   try {
     const raw = await window.clinicalAPI.uploadDataset(file);
@@ -2015,18 +1802,25 @@ async function handleFileUpload(file) {
     if (result.status === 'ready') {
       setDatasetStatus(
         uploadStatusText(
-          `${result.dataset_name || file.name} is ready.`,
+          readyHeadline(result.dataset_name || file.name),
           dataCheckStatusNote(result.quality)
         ),
-        'ok'
+        'ok',
+        { showDetails: dataCheckNeedsReview(result.quality) }
       );
       await selectNewDataset(result.upload_id);
     } else {
-      setDatasetStatus(`Couldn't upload ${file.name}: ${result.message}`, 'error');
+      setDatasetStatus(
+        `Couldn’t upload “${file.name}”. ${plainFailureMessage(result.message, { context: 'upload' })}`,
+        'error'
+      );
     }
   } catch (error) {
     console.error('Upload failed:', error?.message);
-    setDatasetStatus(`Couldn't upload ${file.name}: ${error.message}`, 'error');
+    setDatasetStatus(
+      `Couldn’t upload “${file.name}”. ${plainFailureMessage(error?.message, { context: 'upload' })}`,
+      'error'
+    );
   }
 }
 
@@ -2196,6 +1990,9 @@ function bindEvents() {
     openDatasetPanel(datasetMenuBtn);
   });
   datasetMeta?.addEventListener('click', () => openDatasetPanel(datasetMeta));
+  elements.datasetStatusAction?.addEventListener('click', () =>
+    openDatasetPanel(elements.datasetStatusAction)
+  );
   closeDatasetPanelBtn?.addEventListener('click', closeDatasetPanel);
   datasetPanel?.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeDatasetPanel();
@@ -2222,8 +2019,28 @@ function bindEvents() {
   });
   queryInput.addEventListener('input', handleQueryInputChange);
 
-  newChatBtn?.addEventListener('click', () => void handleNewChat());
+  newChatBtn?.addEventListener('click', () => {
+    sidebar?.close({ focus: false });
+    void handleNewChat();
+  });
   retryConnectionBtn?.addEventListener('click', () => void connect());
+
+  if (elements.appContainer && elements.sidebarToggle && elements.sessionSidebar) {
+    sidebar = bindSidebarToggle({
+      container: elements.appContainer,
+      toggle: /** @type {HTMLButtonElement} */ (elements.sidebarToggle),
+      sidebar: elements.sessionSidebar,
+      closeButton: document.getElementById('sidebar-close'),
+    });
+  }
+  if (elements.llmBanner) {
+    bindBannerDismiss(elements.llmBanner, {
+      focusAfter: queryInput,
+      onDismiss: () => {
+        state.llmBannerDismissedText = elements.llmBannerText?.textContent || '';
+      },
+    });
+  }
 }
 
 /**

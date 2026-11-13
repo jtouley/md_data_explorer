@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 /** @vitest-environment jsdom */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   UNTITLED_SESSION,
+  ensureServerSession,
   formatRelativeTime,
   groupSessionsByDate,
   normalizeSessionListResponse,
@@ -376,5 +377,110 @@ describe('renderSessionList', () => {
     // Assert
     const headings = [...ul.querySelectorAll('.session-group-label')].map((h) => h.textContent);
     expect(headings).toEqual(['Today', 'Older']);
+  });
+});
+
+describe('ensureServerSession: one session per conversation (round 2)', () => {
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+
+  it('ensureServerSession_askAgainWhileTheFirstIsInFlight_createsOneSession', async () => {
+    // Arrange: Stop stopped waiting for the first creation; the user asks again before it returns
+    const pending = deferred();
+    const api = { createSession: vi.fn(() => pending.promise) };
+    const state = {
+      currentDatasetId: 'ds',
+      sessionId: 'local',
+      sessionOnServer: false,
+      sessionCreating: null,
+    };
+
+    // Act
+    const first = ensureServerSession(state, api);
+    const second = ensureServerSession(state, api);
+    pending.resolve({ session_id: 'server-1' });
+    await Promise.all([first, second]);
+
+    // Assert
+    expect(api.createSession).toHaveBeenCalledTimes(1);
+    expect(state.sessionId).toBe('server-1');
+    expect(state.sessionOnServer).toBe(true);
+    expect(state.sessionCreating).toBeNull();
+  });
+
+  it('ensureServerSession_conversationResetWhileInFlight_staleSessionIsIgnored', async () => {
+    // Arrange
+    const pending = deferred();
+    const api = { createSession: vi.fn(() => pending.promise) };
+    const state = {
+      currentDatasetId: 'ds',
+      sessionId: 'local',
+      sessionOnServer: false,
+      sessionCreating: null,
+    };
+    const first = ensureServerSession(state, api);
+
+    // Act: New chat or another cohort drops the in-flight creation
+    state.sessionCreating = null;
+    state.sessionId = 'local-2';
+    pending.resolve({ session_id: 'server-1' });
+    await first;
+
+    // Assert
+    expect(state.sessionId).toBe('local-2');
+    expect(state.sessionOnServer).toBe(false);
+  });
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('offline'))],
+    ['returns no id', () => Promise.resolve({})],
+  ])('ensureServerSession_creation%s_allowsATryNextTime', async (_name, create) => {
+    // Arrange
+    const api = { createSession: vi.fn(create) };
+    const state = {
+      currentDatasetId: 'ds',
+      sessionId: 'local',
+      sessionOnServer: false,
+      sessionCreating: null,
+    };
+
+    // Act
+    await ensureServerSession(state, api, { warn: () => {} });
+    await ensureServerSession(state, api, { warn: () => {} });
+
+    // Assert
+    expect(api.createSession).toHaveBeenCalledTimes(2);
+    expect(state.sessionOnServer).toBe(false);
+    expect(state.sessionCreating).toBeNull();
+  });
+
+  it('ensureServerSession_alreadyOnServer_createsNothing', async () => {
+    // Arrange
+    const api = { createSession: vi.fn() };
+
+    // Act
+    await ensureServerSession({ sessionOnServer: true, sessionCreating: null }, api);
+
+    // Assert
+    expect(api.createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('heading levels (round 2)', () => {
+  it('renderSessionList_dateGroups_areH2UnderTheAppH1', () => {
+    // Arrange
+    const ul = document.createElement('ul');
+    const sessions = [{ session_id: 's1', dataset_id: 'd1', updated_at: '2024-01-01' }];
+
+    // Act
+    renderSessionList(ul, sessions, null, { onSelect: () => {}, onDelete: () => {} });
+
+    // Assert: the sidebar's h1 is followed by h2, never a skipped level
+    expect(ul.querySelector('.session-group-label').tagName).toBe('H2');
   });
 });

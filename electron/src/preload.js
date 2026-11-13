@@ -14,6 +14,7 @@ import {
   createReplayFilter,
   decideAfterDrop,
   enrichmentDecisionResult,
+  httpFailureError,
   readSseStream,
   verifyBackendEnforcesAuth,
   withAuth,
@@ -75,6 +76,9 @@ async function apiFetch(url, init = {}) {
   return fetch(url, { ...init, headers: withAuth(token, init.headers) });
 }
 
+/** Submits still waiting for an answer; Stop aborts them (cancelSubmit). */
+const pendingSubmits = new Set();
+
 /**
  * Clinical Analytics API - exposed to renderer process.
  */
@@ -99,7 +103,7 @@ const clinicalAPI = {
   async listDatasets() {
     const response = await apiFetch(`${API_BASE_URL}/api/datasets`);
     if (!response.ok) {
-      throw new Error(`Failed to list datasets: ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
     return await response.json();
   },
@@ -113,7 +117,7 @@ const clinicalAPI = {
     const enc = encodeURIComponent(datasetId);
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}`);
     if (!response.ok) {
-      throw new Error(`Failed to load dataset details: ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
     return await response.json();
   },
@@ -128,7 +132,7 @@ const clinicalAPI = {
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/quality`);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data?.detail || `Failed to load data quality: ${response.statusText}`);
+      throw httpFailureError(response, data);
     }
     return data;
   },
@@ -143,7 +147,7 @@ const clinicalAPI = {
     const enc = encodeURIComponent(datasetId);
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/preview?limit=${limit}`);
     if (!response.ok) {
-      throw new Error(`Failed to load dataset preview: ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
     return await response.json();
   },
@@ -166,24 +170,42 @@ const clinicalAPI = {
     confirmPlanLine = null,
     confirmPlanHash = null
   ) {
-    const response = await apiFetch(`${API_BASE_URL}/api/queries`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        session_id: sessionId,
-        dataset_id: datasetId,
-        query_text: queryText,
-        confirmed: Boolean(confirmed),
-        confirm_plan_line: confirmPlanLine,
-        confirm_plan_hash: confirmPlanHash,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to submit query: ${response.statusText}`);
+    const controller = new AbortController();
+    pendingSubmits.add(controller);
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/queries`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          dataset_id: datasetId,
+          query_text: queryText,
+          confirmed: Boolean(confirmed),
+          confirm_plan_line: confirmPlanLine,
+          confirm_plan_hash: confirmPlanHash,
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        // The status stays in this context's log; the doctor reads a plain sentence.
+        console.error('[Preload] Query submit failed:', response.status);
+        const data = await response.json().catch(() => ({}));
+        throw httpFailureError(response, data);
+      }
+      return await response.json();
+    } finally {
+      pendingSubmits.delete(controller);
     }
-    return await response.json();
+  },
+
+  /**
+   * Stop: abort every question submit still waiting for the server.
+   */
+  cancelSubmit() {
+    for (const controller of pendingSubmits) controller.abort();
+    pendingSubmits.clear();
   },
 
   /**
@@ -194,7 +216,7 @@ const clinicalAPI = {
   async getQueryResult(queryId) {
     const response = await apiFetch(`${API_BASE_URL}/api/queries/${queryId}`);
     if (!response.ok) {
-      throw new Error(`Failed to get query result: ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
     return await response.json();
   },
@@ -235,7 +257,7 @@ const clinicalAPI = {
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
-        throw new Error(`Stream failed: ${response.status} ${response.statusText}`);
+        throw httpFailureError(response, await response.json().catch(() => ({})));
       }
       replay.startConnection();
       await readSseStream(response.body, (raw) => {
@@ -278,7 +300,7 @@ const clinicalAPI = {
           new Error(
             decision === 'gone'
               ? 'This answer is no longer available. Ask the question again.'
-              : 'Lost the connection to the analysis service.'
+              : 'Lost the connection to the analysis engine.'
           )
         );
       }
@@ -305,7 +327,7 @@ const clinicalAPI = {
     const enc = encodeURIComponent(datasetId);
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/enrichments/pending`);
     if (!response.ok) {
-      throw new Error(`Failed to load enrichments: ${response.status} ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
     return await response.json();
   },
@@ -363,7 +385,7 @@ const clinicalAPI = {
     const enc = encodeURIComponent(datasetId);
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}/enrichments/history`);
     if (!response.ok) {
-      throw new Error(`Failed to load patch history: ${response.status} ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
     return await response.json();
   },
@@ -404,7 +426,7 @@ const clinicalAPI = {
     const url = `${API_BASE_URL}/api/sessions${qs ? `?${qs}` : ''}`;
     const response = await apiFetch(url);
     if (!response.ok) {
-      throw new Error(`Failed to list sessions: ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
     return await response.json();
   },
@@ -422,7 +444,7 @@ const clinicalAPI = {
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      throw new Error(data?.detail || `Failed to create session: ${response.statusText}`);
+      throw httpFailureError(response, data);
     }
     return await response.json();
   },
@@ -438,7 +460,7 @@ const clinicalAPI = {
       method: 'DELETE',
     });
     if (!response.ok && response.status !== 204) {
-      throw new Error(`Failed to delete session: ${response.statusText}`);
+      throw httpFailureError(response, await response.json().catch(() => ({})));
     }
   },
 
@@ -458,7 +480,7 @@ const clinicalAPI = {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data?.detail || `Upload failed: ${response.statusText}`);
+      throw httpFailureError(response, data);
     }
     return data;
   },
@@ -473,7 +495,7 @@ const clinicalAPI = {
     const response = await apiFetch(`${API_BASE_URL}/api/datasets/${enc}`, { method: 'DELETE' });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data?.detail || `Delete failed: ${response.statusText}`);
+      throw httpFailureError(response, data);
     }
     return data;
   },
@@ -488,7 +510,7 @@ const clinicalAPI = {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(data?.detail || `Sample load failed: ${response.statusText}`);
+      throw httpFailureError(response, data);
     }
     return data;
   },
