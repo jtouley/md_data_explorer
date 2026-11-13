@@ -141,7 +141,7 @@ looked up relative to a project root or the working directory.
 ```python
 from clinical_analytics.core.resources import config_file, shipped_config_dir
 
-shipped_config_dir()          # .../site-packages/clinical_analytics/resources/config
+shipped_config_dir()  # .../site-packages/clinical_analytics/resources/config
 config_file("nl_query.yaml")  # one file in it (bare file names only)
 ```
 

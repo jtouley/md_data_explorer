@@ -346,7 +346,7 @@ customProperties:
 - property: uploadId
   value: cohort-synthetic
 - property: datasetVersion
-  value: e34cc258c8ba16e9
+  value: f8b375d4353ea823
 - property: metadataPatchIds
   value: []
 - property: minCellSize
