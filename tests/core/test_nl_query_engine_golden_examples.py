@@ -8,6 +8,7 @@ Following AGENTS.md guidelines:
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -192,3 +193,113 @@ class TestNLQueryEngineGoldenExamples:
         assert intent.intent_type == "DESCRIBE"
         # Variables should be extracted (either from golden or query)
         # Note: exact variable extraction depends on golden example metadata
+
+    @pytest.mark.parametrize("noisy_duplicate", [0, 1], ids=["first_scores_lower", "second_scores_lower"])
+    def test_semantic_match_duplicateGoldenQueryWithFloatNoise_sameExampleOnEveryMachine(
+        self, make_semantic_layer, mock_encoder, noisy_duplicate
+    ):
+        """Two golden examples with the same query must not be chosen between by ~1e-7 score noise."""
+        # Arrange: duplicates with different intents; one of them scores 1e-7 lower (CPU noise)
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(dataset_name="tie_check", data={"patient_id": [1, 2], "age": [30, 40]})
+        engine = NLQueryEngine(semantic)
+        noise_angle = np.sqrt(2e-7)  # cos(angle) ~ 1 - 1e-7
+        exact, noisy = [1.0, 0.0, 0.0], [np.cos(noise_angle), np.sin(noise_angle), 0.0]
+        golden_embeddings = np.array([exact, exact, [0.0, 0.0, 1.0]], dtype=np.float64)
+        golden_embeddings[noisy_duplicate] = noisy
+        engine._golden_embeddings = golden_embeddings
+        engine._golden_examples = [
+            {"query": "same text", "expected_intent": "COUNT"},
+            {"query": "same text", "expected_intent": "DESCRIBE"},
+            {"query": "other text", "expected_intent": "CORRELATIONS"},
+        ]
+        mock_encoder.encode.side_effect = lambda texts, *args, **kwargs: np.array([exact], dtype=np.float64)
+        engine.encoder = mock_encoder
+
+        # Act
+        intent = engine._semantic_match("same text")
+
+        # Assert: the first duplicate wins whichever of the two the noise favours
+        assert intent is not None
+        assert intent.intent_type == "COUNT"
+        assert intent.confidence == pytest.approx(1.0, abs=1e-6)
+
+
+def _duplicate_queries(questions: list[dict]) -> dict[str, list[str]]:
+    """Query text (case and surrounding/inner whitespace ignored) -> ids, for texts used more than once."""
+    ids_by_text: dict[str, list[str]] = {}
+    for question in questions:
+        text = " ".join(str(question["query"]).lower().split())
+        ids_by_text.setdefault(text, []).append(str(question.get("id")))
+    return {text: ids for text, ids in ids_by_text.items() if len(ids) > 1}
+
+
+@pytest.mark.parametrize(
+    ("queries", "expected"),
+    [
+        ([], {}),
+        (["how many patients?"], {}),
+        (["how many patients?", "average age"], {}),
+        (["remove the n/a", "remove the n/a"], {"remove the n/a": ["q0", "q1"]}),
+        (["Remove  the N/A ", "remove the n/a", "average age"], {"remove the n/a": ["q0", "q1"]}),
+    ],
+    ids=["empty", "single", "distinct", "exact_duplicate", "case_and_whitespace_duplicate"],
+)
+def test_duplicate_queries_syntheticQuestions_reportsRepeatedTextOnly(queries, expected):
+    # Arrange
+    questions = [{"id": f"q{i}", "query": query} for i, query in enumerate(queries)]
+
+    # Act
+    duplicates = _duplicate_queries(questions)
+
+    # Assert
+    assert duplicates == expected
+
+
+def test_shipped_golden_examples_queryText_isUnique():
+    """One query text, one example: retrieval picks an example by its text alone.
+
+    Two examples with the same text embed identically, so only the first can ever be retrieved;
+    when they carry different intents the second is a contradiction that float noise could select.
+    """
+    # Arrange
+    from clinical_analytics.core.config_loader import load_golden_examples_config
+
+    questions = load_golden_examples_config()["questions"]
+
+    # Act
+    duplicates = _duplicate_queries(questions)
+
+    # Assert
+    assert questions, "the shipped golden examples file is empty or missing"
+    assert duplicates == {}, f"duplicate query text in golden_examples.yaml (text -> ids): {duplicates}"
+
+
+@pytest.mark.usefixtures("cached_sentence_transformer")  # needs the real embedding model
+@pytest.mark.parametrize(
+    ("history", "expected_intent"),
+    [
+        ([{"query": "count patients by statin", "intent": "COUNT", "group_by": "statin", "metric": None}], "COUNT"),
+        (None, None),
+        ([], None),
+    ],
+    ids=["after_a_count", "no_history", "empty_history"],
+)
+def test_semantic_match_removeTheNa_refinesPreviousCountOnlyWithContext(make_semantic_layer, history, expected_intent):
+    """The one 'remove the n/a' example is the refinement of a count; without context it is not used."""
+    # Arrange
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    semantic = make_semantic_layer(
+        dataset_name="refinement_golden",
+        data={"patient_id": [1, 2, 3, 4], "statin": [0, 1, 2, 1], "age": [45, 52, 38, 61]},
+    )
+    engine = NLQueryEngine(semantic)
+
+    # Act
+    intent = engine._semantic_match("remove the n/a", conversation_history=history)
+
+    # Assert
+    matched = None if intent is None or intent.confidence < 0.99 else intent.intent_type
+    assert matched == expected_intent

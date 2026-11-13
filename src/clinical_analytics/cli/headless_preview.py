@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         "--csv",
         type=Path,
         default=None,
-        help="Path to CSV (default: bundled data/demo/sample_cohort.csv)",
+        help="Path to CSV (default: the bundled synthetic sample cohort)",
     )
     parser.add_argument(
         "--upload-dir",

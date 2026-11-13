@@ -1,4 +1,4 @@
-.PHONY: help check-data golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
+.PHONY: help smoke-installed fetch-embedding-model check-data golden mutation mutation-module mutation-results install install-dev install-pre-commit test test-serial test-unit test-unit-serial test-integration test-integration-serial test-cov test-cov-serial test-cov-term test-cov-term-serial test-cov-check test-cov-diff coverage-baseline coverage-report lint format type-check check check-serial clean run run-api validate ensure-venv diff test-analysis test-analysis-serial test-core test-core-serial test-contracts test-datasets test-datasets-serial test-e2e test-e2e-serial electron-npm-ready test-electron-e2e test-electron-e2e-native test-electron-quality test-loader test-loader-serial test-storage test-storage-serial test-ui test-ui-serial test-fast-serial test-performance test-performance-serial git-log-first git-log-rest git-log-export git-log-latest git-log-recent checkpoint-create checkpoint-resume sync-cursor-skills sync-cursor-skills-force cursor-packaged-skills benchmark-cursor-skills
 
 # Default target
 .DEFAULT_GOAL := help
@@ -50,6 +50,8 @@ help: ## Show this help message
 install: ## Install production dependencies
 	@echo "$(GREEN)Installing production dependencies...$(NC)"
 	$(UV) sync --no-dev --no-group dev
+	@# --no-sync: a plain `uv run` syncs first and would put the dev group back.
+	$(UV) run --no-sync python scripts/fetch_embedding_model.py
 
 install-dev: ## Install all dependencies including dev tools
 	@echo "$(GREEN)Installing development dependencies...$(NC)"
@@ -57,6 +59,7 @@ install-dev: ## Install all dependencies including dev tools
 	@echo "  • Dev tools: ruff, mypy, pytest, pytest-cov (from optional-dependencies)"
 	@echo "  • Docs tools: mkdocs and related packages (from dependency-groups)"
 	$(UV) sync --extra dev --group dev
+	$(PYTHON_RUN) scripts/fetch_embedding_model.py
 
 install-pre-commit: ensure-venv ## Install pre-commit hooks (run after install-dev)
 	@echo "$(GREEN)Installing pre-commit hooks...$(NC)"
@@ -184,6 +187,14 @@ test-ui-serial: ensure-venv ## Run UI module tests serially (for debugging)
 test-api: ensure-venv ## Run all API tests (unit + integration)
 	@echo "$(GREEN)Running all API tests...$(NC)"
 	$(PYTEST) $(TEST_DIR)/api -v --tb=short $(PYTEST_ARGS)
+
+fetch-embedding-model: ensure-venv ## Build step: fetch the pinned ONNX embedding model (SHA-256 checked) into the package
+	@echo "$(GREEN)Fetching embedding model...$(NC)"
+	$(PYTHON_RUN) scripts/fetch_embedding_model.py
+
+smoke-installed: ensure-venv fetch-embedding-model ## Default `uv build` (sdist, then wheel), install the wheel outside the repo and drive the API offline (slow)
+	@echo "$(GREEN)Running installed-wheel smoke test...$(NC)"
+	$(PYTEST) $(TEST_DIR)/install_smoke -v --tb=short -m "slow" $(PYTEST_ARGS)
 
 test-api-integration: ensure-venv ## Run API integration tests (with real server)
 	@echo "$(GREEN)Running API integration tests...$(NC)"

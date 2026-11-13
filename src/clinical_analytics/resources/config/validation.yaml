@@ -2,7 +2,7 @@
 # Config-driven prompts for LLM-based multi-layer validation (DBA/Analyst/Manager roles)
 #
 # Environment variables take precedence over YAML values.
-# See config/README.md for environment variable mapping.
+# See README.md in this directory for environment variable mapping.
 
 validation_layers:
   dba:

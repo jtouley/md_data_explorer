@@ -240,13 +240,10 @@ questions:
         value: "active"
     notes: "Conversational refinement - add filter while preserving grouping"
 
-  - id: refinement_without_context_low_confidence
-    query: "remove the n/a"
-    conversation_history: []  # NO context
-    expected_intent: DESCRIBE  # Falls back to generic
-    expected_metric: null
-    expected_group_by: null
-    notes: "Refinement WITHOUT context - should have low confidence (<0.75)"
+  # "remove the n/a" appears once, above (refinement_remove_na_with_context, COUNT). A query text
+  # maps to one example here: retrieval picks by text alone. With no conversation the engine does
+  # not use a refinement example at all, which gives the low confidence that case needs; it is
+  # covered as an eval case in tests/eval/golden_questions.yaml and tests/core/test_nl_query_refinement.py.
 
   # Real production queries from user logs
   - id: prod_statin_count_simple
@@ -262,13 +259,6 @@ questions:
     expected_metric: null
     expected_group_by: "statin"
     notes: "Real production query - count with exclusion filter and implicit ordering"
-
-  - id: prod_statin_breakdown
-    query: "what statins were those patients on, broken down by count of patients per statin?"
-    expected_intent: COUNT
-    expected_metric: null
-    expected_group_by: "statin"
-    notes: "Real production query - count by statin type"
 
   - id: prod_most_prescribed_statin
     query: "which statin was most prescribed?"

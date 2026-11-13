@@ -30,6 +30,7 @@ from clinical_analytics.analysis.compute import (
 )
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.result_presentation import present_analysis
+from clinical_analytics.datasets.demo import get_demo_csv_path
 
 DEXA = "DEXA result 1: Normal 2: Osteopenia 3: Osteoporosis"
 STATIN = "Statin use 1: Yes 2: No"
@@ -174,9 +175,9 @@ class TestGoldenComparison:
         assert result["n_excluded"] == df["ldl"].null_count()
         assert ref_means["North"] < ref_means["South"] < ref_means["West"]
 
-    def test_compare_demoOutcomeByHypertension_matchesContingencyReference(self, project_root):
-        # Arrange: the bundled "Load sample" cohort (data/demo, same generator)
-        df = pl.read_csv(project_root / "data" / "demo" / "sample_cohort.csv")
+    def test_compare_demoOutcomeByHypertension_matchesContingencyReference(self):
+        # Arrange: the bundled "Load sample" cohort (shipped in the package, same generator)
+        df = pl.read_csv(get_demo_csv_path())
         counts = df.group_by("outcome", "hypertension").len()
         table = np.array(
             [

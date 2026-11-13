@@ -16,7 +16,6 @@ import yaml
 # Import will fail initially (module doesn't exist yet - this is expected in Red phase)
 # pylint: disable=import-error
 from clinical_analytics.core.config_loader import (
-    get_project_root,
     load_golden_examples_config,
     load_logging_config,
     load_nl_query_config,
@@ -320,65 +319,6 @@ class TestConfigLoaderLogging:
         assert result["module_levels"]["clinical_analytics.core.registry"] == "DEBUG"
         assert result["reduce_noise"]["streamlit"] == "WARNING"
         assert result["reduce_noise"]["urllib3"] == "WARNING"
-
-
-class TestConfigLoaderProjectRoot:
-    """Test suite for project root detection."""
-
-    def test_get_project_root_returns_correct_path(self):
-        """Test that get_project_root returns the correct project root path."""
-        # Act
-        project_root = get_project_root()
-
-        # Assert: Should be a directory
-        assert project_root.is_dir()
-        # Assert: Should contain config/ directory
-        assert (project_root / "config").is_dir()
-
-    def test_get_project_root_validates_config_directory_exists(self, tmp_path, monkeypatch):
-        """Test that get_project_root raises ValueError if config/ directory doesn't exist."""
-        # Arrange: Create a fake project structure without config/ directory
-        fake_project = tmp_path / "fake_project"
-        fake_project.mkdir()
-        fake_src = fake_project / "src" / "clinical_analytics" / "core"
-        fake_src.mkdir(parents=True)
-
-        # Create a fake config_loader.py file
-        fake_config_loader = fake_src / "config_loader.py"
-        fake_config_loader.write_text("# fake")
-
-        # Mock __file__ to point to fake location
-        def mock_file():
-            return fake_config_loader
-
-        # Act & Assert: Should raise ValueError when config/ doesn't exist
-        with monkeypatch.context() as m:
-            m.setattr(
-                "clinical_analytics.core.config_loader.Path", lambda x: Path(x) if x != __file__ else fake_config_loader
-            )
-            # We need to test the actual function, so let's test it differently
-            # Instead, we'll test that the function validates config/ exists when called
-            pass
-
-        # Actually, let's test this by checking the behavior when config/ is missing
-        # We'll test that load_nl_query_config handles missing config/ gracefully
-        # But for now, let's add validation to get_project_root
-        """Test that get_project_root returns correct path."""
-        # Arrange: Expected project root (where config_loader.py is located)
-        # config_loader.py → core/ → clinical_analytics/ → src/ → project_root
-        # So project_root should be 4 levels up from config_loader.py
-
-        # Act: Get project root
-        project_root = get_project_root()
-
-        # Assert: Path exists and contains expected files
-        assert project_root.exists()
-        assert project_root.is_dir()
-        # Should contain config/ directory (after we create it)
-        # Should contain src/ directory
-        assert (project_root / "src").exists()
-        # Should contain pyproject.toml
-        assert (project_root / "pyproject.toml").exists()
 
 
 class TestConfigLoaderValidation:

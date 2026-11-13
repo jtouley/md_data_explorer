@@ -12,6 +12,56 @@
  */
 export const DEFAULT_API_BASE_URL = 'http://127.0.0.1:8000';
 
+/** Argument main passes to the preload with the sidecar backend's address (its port varies). */
+export const API_BASE_URL_ARG_PREFIX = '--clinical-api-base-url=';
+
+/**
+ * The one parser for a backend address: `http://127.0.0.1:<port>` with a port of 1-65535 and
+ * nothing else (no path, not "localhost"). The preload address and the CSP header both use it,
+ * so they can never disagree about which addresses are allowed.
+ * @param {unknown} value
+ * @returns {{ url: string, port: number } | null}
+ */
+export function parseLoopbackApiUrl(value) {
+  const match = /^http:\/\/127\.0\.0\.1:(\d{1,5})$/.exec(typeof value === 'string' ? value : '');
+  const port = match ? Number(match[1]) : 0;
+  return port >= 1 && port <= 65535 ? { url: `http://127.0.0.1:${port}`, port } : null;
+}
+
+/**
+ * The backend address main passed on the command line, or null. Only http://127.0.0.1:<port> is
+ * accepted, so the renderer can never be pointed anywhere but the loopback backend.
+ * @param {string[] | undefined} argv
+ * @returns {string | null}
+ */
+export function apiBaseUrlFromArgv(argv) {
+  const arg = (argv || []).find(
+    (a) => typeof a === 'string' && a.startsWith(API_BASE_URL_ARG_PREFIX)
+  );
+  if (!arg) return null;
+  return parseLoopbackApiUrl(arg.slice(API_BASE_URL_ARG_PREFIX.length))?.url ?? null;
+}
+
+/**
+ * Address of an external (dev) backend: VITE_API_URL when set, else the default. Main uses it
+ * for the CSP header and hands it to the preload, so both use one address. A value that is not
+ * http://127.0.0.1:<port> throws instead of falling back: the CSP would block every request to
+ * it, and "localhost" may resolve to ::1.
+ * @param {string | undefined} viteApiUrl - import.meta.env.VITE_API_URL
+ * @returns {string}
+ */
+export function externalApiBaseUrl(viteApiUrl) {
+  const configured = (viteApiUrl || '').trim();
+  if (!configured) return DEFAULT_API_BASE_URL;
+  const url = apiBaseUrlFromArgv([`${API_BASE_URL_ARG_PREFIX}${configured}`]);
+  if (!url) {
+    throw new Error(
+      `VITE_API_URL must be http://127.0.0.1:<port> (no path, not "localhost"), got "${configured}".`
+    );
+  }
+  return url;
+}
+
 /** IPC channel on which main hands { token, devNoAuth } to the preload script. */
 export const API_TOKEN_CHANNEL = 'clinical-api:token';
 

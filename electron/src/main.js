@@ -9,7 +9,7 @@
  * - The per-launch API token goes only to that exact page (or the Vite dev server in dev).
  * - The window cannot navigate away from the app or open new windows; the renderer is sandboxed.
  */
-import { app, BrowserWindow, ipcMain, nativeTheme, net, protocol } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, session } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,6 +18,7 @@ import {
   API_TOKEN_CHANNEL,
   APP_ENTRY_URL,
   APP_SCHEME,
+  contentSecurityPolicy,
   isTrustedRendererUrl,
   resolveApiToken,
   resolveAppFilePath,
@@ -33,13 +34,44 @@ import {
   parseThemeSetting,
   serializeThemeSetting,
 } from './theme.js';
+import { API_BASE_URL_ARG_PREFIX, externalApiBaseUrl } from './apiAuth.js';
+import {
+  BackendSidecar,
+  ensureBackendCwd,
+  resolvePythonExecutable,
+  resolveSidecarSettings,
+  startupFailureMessage,
+  unexpectedExitMessage,
+  useExternalBackend,
+} from './backendSidecar.js';
+import { STARTUP_TITLE, STARTUP_WINDOW_SIZE, startupPageUrl } from './startupWindow.js';
 
 // Per-launch API token. scripts/run_app.sh generates it and passes it to both the backend and
 // this process (CLINICAL_ANALYTICS_API_TOKEN); started on its own, main generates one. Throws on
 // a weak launcher token.
 const { token: apiToken, source: apiTokenSource } = resolveApiToken(process.env);
 // Explicit developer opt-out: only then may the preload use a backend that does not check tokens.
-const devNoAuth = resolveDevNoAuth(process.env);
+// Only meaningful for an external dev backend; the backend this app starts always checks tokens.
+const devNoAuth = resolveDevNoAuth(process.env) && useExternalBackend(process.env);
+
+// Electron owns the backend (started below) unless the dev flow runs its own API
+// (CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1: separate Vite + `make run-api`, or scripts/run_app.sh).
+const externalBackend = useExternalBackend(process.env);
+/** @type {BackendSidecar | null} */
+let sidecar = null;
+/**
+ * Address of the backend this launch uses: the one it started, or for an external dev backend
+ * VITE_API_URL / the default. Set before any page loads; the CSP header and the preload both get
+ * exactly this value, so they cannot disagree.
+ */
+let apiBaseUrl = null;
+/** Set once quitting has begun (before-quit): a backend that stops after this did not fail. */
+let backendStopped = false;
+/** @type {BrowserWindow | null} shown while the backend starts */
+let startupWindow = null;
+
+/** CSP for the app's page: connect-src is exactly the backend this launch uses (throws if unset). */
+const pageCsp = () => contentSecurityPolicy(apiBaseUrl);
 
 const devServerUrl =
   typeof MAIN_WINDOW_VITE_DEV_SERVER_URL === 'string' && MAIN_WINDOW_VITE_DEV_SERVER_URL
@@ -72,8 +104,28 @@ function registerAppProtocol() {
   protocol.handle(APP_SCHEME, (request) => {
     const file = resolveAppFilePath(request.url, rendererRoot);
     if (!file) return new Response('Not found', { status: 404 });
-    return net.fetch(pathToFileURL(file).toString());
+    return net.fetch(pathToFileURL(file).toString()).then((response) => {
+      const headers = new Headers(response.headers);
+      headers.set('Content-Security-Policy', pageCsp());
+      return new Response(response.body, { status: response.status, headers });
+    });
   });
+}
+
+/** Dev: the Vite dev server's responses get the same exact-port CSP header. */
+function registerDevServerCsp() {
+  const origin = new URL(devServerUrl).origin;
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: [`${origin}/*`] },
+    (details, callback) => {
+      const headers = { ...details.responseHeaders };
+      for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() === 'content-security-policy') delete headers[name];
+      }
+      headers['Content-Security-Policy'] = [pageCsp()];
+      callback({ responseHeaders: headers });
+    }
+  );
 }
 
 // ============================================================================
@@ -122,6 +174,10 @@ function registerThemeHandlers() {
  * @returns {BrowserWindow} The created window
  */
 const createWindow = () => {
+  const additionalArguments = [
+    `${THEME_ARG_PREFIX}${nativeTheme.themeSource}`,
+    `${API_BASE_URL_ARG_PREFIX}${apiBaseUrl}`,
+  ];
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -136,8 +192,9 @@ const createWindow = () => {
       sandbox: true, // preload uses only contextBridge + ipcRenderer (bundled, no Node APIs)
       webviewTag: false,
       preload: path.join(__dirname, 'preload.js'),
-      // The saved theme (settings.json), so the page's first paint matches nativeTheme.
-      additionalArguments: [`${THEME_ARG_PREFIX}${nativeTheme.themeSource}`],
+      // The saved theme (settings.json), so the page's first paint matches nativeTheme, and the
+      // address of the backend this launch uses (the same one the CSP header allows).
+      additionalArguments,
     },
   });
   lockDownWebContents(mainWindow.webContents, devServerUrl);
@@ -159,19 +216,136 @@ const createWindow = () => {
 // Application Lifecycle
 // ============================================================================
 
+/** Small window while the backend starts (closed once the main window exists). */
+function showStartupWindow() {
+  startupWindow = new BrowserWindow({
+    ...STARTUP_WINDOW_SIZE,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    title: STARTUP_TITLE,
+    backgroundColor: windowBackground(),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webviewTag: false,
+    },
+  });
+  lockDownWebContents(startupWindow.webContents);
+  startupWindow.loadURL(startupPageUrl());
+}
+
+function closeStartupWindow() {
+  if (startupWindow && !startupWindow.isDestroyed()) startupWindow.destroy();
+  startupWindow = null;
+}
+
+/** The backend died after it was ready: offer a restart (new backend, new window) or quit. */
+async function handleBackendCrash(info) {
+  const text = unexpectedExitMessage(info);
+  console.error(`${text.message} ${text.detail}`);
+  const { response } = await dialog.showMessageBox({
+    type: 'error',
+    title: text.title,
+    message: text.message,
+    detail: text.detail,
+    buttons: text.buttons,
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (response !== 0) {
+    app.quit();
+    return;
+  }
+  // The splash first, so closing the old window never leaves zero windows (that would quit).
+  showStartupWindow();
+  for (const win of BrowserWindow.getAllWindows()) if (win !== startupWindow) win.destroy();
+  if (await startBackend()) {
+    createWindow();
+    closeStartupWindow();
+  }
+}
+
+/** Show why the backend did not start, then quit (stopping whatever was started). */
+function failStartup(failure) {
+  const { title, message } = startupFailureMessage(failure || { reason: 'spawn' });
+  console.error(`${title}: ${message}`);
+  closeStartupWindow();
+  dialog.showErrorBox(title, message);
+  app.quit();
+}
+
+/**
+ * True when the backend stopped because the app is quitting (the user closed the startup window
+ * or quit while it was starting). That is what they asked for, so no error is shown.
+ */
+const stoppedByApp = (failure) => backendStopped || failure?.reason === 'stopped';
+
+/**
+ * Spawn the backend and wait until it is ready; false when it did not start (a failure was
+ * already shown; quitting during startup shows nothing).
+ */
+async function startBackend() {
+  try {
+    sidecar = new BackendSidecar({
+      python: resolvePythonExecutable(process.env, { appRoot: app.getAppPath() }),
+      token: apiToken,
+      env: process.env,
+      ...resolveSidecarSettings(process.env),
+      parentPid: process.pid,
+      // A folder of the app's own, not the home directory (see ensureBackendCwd and `-I`).
+      cwd: ensureBackendCwd(app.getPath('userData')),
+      log: (line) => console.log(line),
+      onUnexpectedExit: (info) => void handleBackendCrash(info),
+    });
+    apiBaseUrl = await sidecar.spawn();
+  } catch (failure) {
+    if (stoppedByApp(failure)) return false;
+    failStartup(failure instanceof Error ? { reason: 'spawn', detail: failure.message } : failure);
+    return false;
+  }
+  console.log(`📡 Backend starting at ${apiBaseUrl} (pid ${sidecar.child?.pid})`);
+  // The window opens only once the backend answers: the renderer checks the connection on load.
+  try {
+    await sidecar.waitUntilReady();
+  } catch (failure) {
+    if (stoppedByApp(failure)) return false;
+    failStartup(failure);
+    return false;
+  }
+  console.log('✅ Backend ready');
+  return true;
+}
+
 // Create window when app is ready
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   console.log('🚀 Clinical Analytics Electron app starting...');
-  console.log('📡 Backend API URL: http://127.0.0.1:8000');
+  // Before any window exists, so the startup window's first paint already uses the saved theme.
+  nativeTheme.themeSource = parseThemeSetting(readSettingsText());
+  if (externalBackend) {
+    try {
+      // The same build-time value the preload falls back to, so the CSP header allows it.
+      apiBaseUrl = externalApiBaseUrl(import.meta.env.VITE_API_URL);
+    } catch (error) {
+      failStartup({ reason: 'config', detail: error.message });
+      return;
+    }
+    console.log(
+      `📡 Using an already-running backend at ${apiBaseUrl} (CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1)`
+    );
+  } else {
+    showStartupWindow();
+    if (!(await startBackend())) return;
+  }
   console.log(
     `🔑 API token: ${apiTokenSource === 'env' ? 'from launcher' : 'generated (backend must use the same one)'}` +
       (devNoAuth ? ' — dev mode: an unauthenticated backend is accepted' : '')
   );
 
-  if (!devServerUrl) registerAppProtocol();
-
-  // Before the window exists, so its first paint already uses the saved theme.
-  nativeTheme.themeSource = parseThemeSetting(readSettingsText());
+  if (devServerUrl) registerDevServerCsp();
+  else registerAppProtocol();
   registerThemeHandlers();
 
   // Hand the token only to the app's own page, never to a page it was navigated to.
@@ -183,6 +357,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  closeStartupWindow();
 
   // macOS: Re-create window when dock icon is clicked
   app.on('activate', () => {
@@ -191,6 +366,25 @@ app.whenReady().then(() => {
     }
   });
 });
+
+// Stop the backend before quitting: SIGTERM, then a kill after the grace period. stop() always
+// settles (the wait after the forced kill is bounded), so quitting cannot hang here.
+app.on('before-quit', (event) => {
+  if (!sidecar || backendStopped) return;
+  event.preventDefault();
+  backendStopped = true;
+  sidecar
+    .stop()
+    .then((how) => {
+      if (how === 'not-stopped') console.error('Could not stop the backend; quitting anyway');
+      else console.log(`🛑 Backend stopped (${how})`);
+    })
+    .catch((error) => console.error('Could not stop the backend:', error?.message || error))
+    .finally(() => app.quit());
+});
+
+// Last resort if the process exits some other way: never leave the backend running.
+process.on('exit', () => sidecar?.killNow());
 
 // Quit when all windows are closed (except macOS)
 app.on('window-all-closed', () => {

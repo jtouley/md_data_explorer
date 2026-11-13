@@ -16,6 +16,7 @@ import structlog
 import yaml  # type: ignore
 
 from clinical_analytics.core.dataset import ClinicalDataset
+from clinical_analytics.core.resources import config_file
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
 # Import UploadedDataset for type comparison (not __name__ string check)
@@ -164,7 +165,7 @@ class DatasetRegistry:
             config_path: Path to datasets.yaml config file
         """
         if config_path is None:
-            config_path = Path(__file__).parent.parent.parent.parent / "config" / "datasets.yaml"
+            config_path = config_file("datasets.yaml")
 
         if not config_path.exists():
             print(f"Warning: Config file not found at {config_path}")

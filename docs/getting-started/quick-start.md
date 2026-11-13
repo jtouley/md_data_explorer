@@ -15,7 +15,7 @@ Assumes you have done the [Installation](installation.md) steps.
    cd electron && npm start        # second terminal
    ```
 
-2. In the desktop app, click **Load sample**. This loads the bundled synthetic sample cohort (`data/demo/sample_cohort.csv`; no real patients).
+2. In the desktop app, click **Load sample**. This loads the bundled synthetic sample cohort (`src/clinical_analytics/resources/demo/sample_cohort.csv`; no real patients).
 3. Ask `compare outcome by diabetes`, then `what predicts outcome`.
 4. To use your own data, click **Upload dataset**. See [Uploading data](uploading-data.md).
 

@@ -12,7 +12,7 @@ case where clinical data commonly breaks naive statistics:
 - sparse_cells.csv: a 2x2 table with expected counts below 5 (Fisher's exact test).
 - separation.csv: a predictor that perfectly separates the outcome (logistic regression is
   not estimable).
-- data/demo/sample_cohort.csv: the 80-row "Load sample" cohort the app ships, built from
+- src/clinical_analytics/resources/demo/sample_cohort.csv: the 80-row "Load sample" cohort the app ships, built from
   arithmetic patterns (no random draws) with two planted exceptions so the outcome is not a
   deterministic function of the predictors.
 
@@ -38,7 +38,7 @@ import polars as pl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYNTHETIC_DIR = Path("tests") / "fixtures" / "synthetic"
-DEMO_PATH = Path("data") / "demo" / "sample_cohort.csv"
+DEMO_PATH = Path("src") / "clinical_analytics" / "resources" / "demo" / "sample_cohort.csv"
 SEED = 20261103
 # Demo rows whose outcome breaks the "age >= 55 or diabetes" rule; without them a logistic
 # model on the demo cohort would face perfect separation.

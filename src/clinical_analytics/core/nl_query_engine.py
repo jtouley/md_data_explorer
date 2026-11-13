@@ -31,6 +31,17 @@ from clinical_analytics.core.query_plan import FilterSpec, QueryPlan
 
 logger = structlog.get_logger()
 
+
+def _golden_cache_key(config_path: Path) -> tuple[str, str, int, int] | None:
+    """Key for the shared golden-example embeddings: the file's resolved path, size and mtime (an
+    edited file is embedded again), or None when it cannot be read (nothing is cached)."""
+    try:
+        stat = config_path.stat()
+    except OSError:
+        return None
+    return ("golden_examples", str(config_path.resolve()), stat.st_size, stat.st_mtime_ns)
+
+
 # Valid intent types (single source of truth)
 VALID_INTENT_TYPES = [
     "DESCRIBE",
@@ -140,7 +151,7 @@ class NLQueryEngine:
 
     Args:
         semantic_layer: SemanticLayer instance for metadata access
-        embedding_model: sentence-transformers model name (default: all-MiniLM-L6-v2)
+        embedding_model: embedding model name; only the bundled all-MiniLM-L6-v2 is supported
 
     Example:
         >>> engine = NLQueryEngine(semantic_layer)
@@ -149,17 +160,18 @@ class NLQueryEngine:
         'FIND_PREDICTORS: mortality'
     """
 
-    def __init__(self, semantic_layer, embedding_model: str = "all-MiniLM-L6-v2"):
+    def __init__(self, semantic_layer: Any) -> None:
         """
         Initialize query engine.
 
         Args:
             semantic_layer: SemanticLayer instance for metadata access
-            embedding_model: sentence-transformers model name
         """
+        from clinical_analytics.core.embeddings import MODEL_NAME
+
         self.semantic_layer = semantic_layer
-        self.embedding_model_name = embedding_model
-        self.encoder = None  # Lazy load
+        self.embedding_model_name = MODEL_NAME  # the bundled model; there is no other
+        self.encoder = None  # Lazy load (the process-wide encoder, see core.embeddings.get_encoder)
         self.template_embeddings = None  # Lazy load
 
         # Overlay cache (mtime-based hot reload)
@@ -180,6 +192,20 @@ class NLQueryEngine:
         # Load golden examples for Tier 2 semantic matching
         self._load_golden_examples()
 
+    def _load_encoder(self) -> Any:
+        """The process-wide bundled ONNX sentence encoder, or None when it cannot be loaded.
+
+        Never downloads. serve.py refuses to start without the model; in library use a missing or
+        damaged model turns semantic matching off. get_encoder() logs the failure once per process
+        and remembers it, so asking again here costs a dictionary lookup, not another load.
+        """
+        from clinical_analytics.core.embeddings import ENCODER_LOAD_ERRORS, get_encoder
+
+        try:
+            return get_encoder()
+        except ENCODER_LOAD_ERRORS:
+            return None
+
     def _load_golden_examples(self) -> None:
         """
         Load and embed golden examples at startup.
@@ -193,10 +219,15 @@ class NLQueryEngine:
         if self._golden_embeddings is not None and self._golden_examples is not None:
             return
 
-        try:
-            from clinical_analytics.core.config_loader import load_golden_examples_config
+        from clinical_analytics.core.resources import ResourceNotFoundError
 
-            config = load_golden_examples_config(config_path=self._golden_config_path)
+        try:
+            from clinical_analytics.core import config_loader
+            from clinical_analytics.core.config_loader import load_golden_examples_config
+            from clinical_analytics.core.embeddings import encode_cached
+
+            config_path = self._golden_config_path or config_loader.config_file("golden_examples.yaml")
+            config = load_golden_examples_config(config_path=config_path)
             examples = config.get("questions", [])
 
             if not examples:
@@ -205,15 +236,9 @@ class NLQueryEngine:
                 self._golden_examples = None
                 return
 
-            # Embed all queries
-            queries = [ex["query"] for ex in examples]
-
             # Lazy load encoder if needed
             if self.encoder is None:
-                from sentence_transformers import SentenceTransformer
-
-                encoder_obj = SentenceTransformer(self.embedding_model_name)
-                self.encoder = encoder_obj  # type: ignore[assignment]
+                self.encoder = self._load_encoder()  # type: ignore[assignment]
 
             if self.encoder is None:
                 logger.warning("golden_examples_encoder_unavailable")
@@ -221,7 +246,14 @@ class NLQueryEngine:
                 self._golden_examples = None
                 return
 
-            self._golden_embeddings = self.encoder.encode(queries)
+            # Embed all queries once per process: every engine (one per dataset) reads the same
+            # file with the same encoder, so the embeddings are shared, not recomputed.
+            queries = [ex["query"] for ex in examples]
+            cache_key = _golden_cache_key(config_path)
+            if cache_key is None:
+                self._golden_embeddings = self.encoder.encode(queries)
+            else:
+                self._golden_embeddings = encode_cached(self.encoder, cache_key, queries)
             self._golden_examples = examples
 
             logger.info(
@@ -229,6 +261,8 @@ class NLQueryEngine:
                 count=len(examples),
                 embedding_shape=self._golden_embeddings.shape,
             )
+        except ResourceNotFoundError:
+            raise  # an incomplete install must fail, not run without its config
         except Exception as e:
             logger.warning(
                 "golden_examples_load_failed",
@@ -380,7 +414,7 @@ class NLQueryEngine:
         is provided, the LLM can detect refinement queries like "remove the n/a" that
         modify previous queries, and intelligently merge them.
 
-        Tier precedence (Phase 4): Parsing order can be configured via config/nl_query.yaml
+        Tier precedence (Phase 4): Parsing order can be configured via resources/config/nl_query.yaml
         to support A/B testing of semantic-first vs pattern-first approaches.
 
         Args:
@@ -898,7 +932,7 @@ class NLQueryEngine:
         """
         Tier 1: Regex pattern matching for common queries.
 
-        Uses config-driven patterns from config/nl_query_patterns.yaml.
+        Uses config-driven patterns from resources/config/nl_query_patterns.yaml.
         Patterns are loaded once and cached via load_patterns_config().
 
         Args:
@@ -1244,10 +1278,7 @@ class NLQueryEngine:
         try:
             # Lazy load encoder
             if self.encoder is None:
-                from sentence_transformers import SentenceTransformer
-
-                encoder_obj = SentenceTransformer(self.embedding_model_name)
-                self.encoder = encoder_obj  # type: ignore[assignment]
+                self.encoder = self._load_encoder()  # type: ignore[assignment]
 
             if self.encoder is None:
                 return None
@@ -1257,10 +1288,13 @@ class NLQueryEngine:
 
             from sklearn.metrics.pairwise import cosine_similarity
 
+            from clinical_analytics.core.embeddings import rank_by_similarity
+
             # First, check golden examples for high similarity
             if self._golden_embeddings is not None and self._golden_examples is not None:
                 golden_similarities = cosine_similarity(query_embedding, self._golden_embeddings)[0]
-                best_golden_idx = golden_similarities.argmax()
+                # Duplicate golden queries score the same up to float noise: lowest index wins on every CPU
+                best_golden_idx = rank_by_similarity(golden_similarities)[0]
                 best_golden_score = golden_similarities[best_golden_idx]
 
                 # If high similarity with golden example, use its intent
@@ -1340,14 +1374,19 @@ class NLQueryEngine:
             # Fallback: template matching (original behavior)
             # Lazy compute template embeddings
             if self.template_embeddings is None:
+                from clinical_analytics.core.embeddings import encode_cached, texts_key
+
+                # The templates are a fixed list: one encoding serves every engine in the process.
                 template_texts = [t["template"] for t in self.query_templates]
-                self.template_embeddings = self.encoder.encode(template_texts)
+                self.template_embeddings = encode_cached(
+                    self.encoder, texts_key("query_templates", template_texts), template_texts
+                )
 
             # Compute similarity with all templates
             similarities = cosine_similarity(query_embedding, self.template_embeddings)[0]
 
             # Get best match
-            best_idx = similarities.argmax()
+            best_idx = rank_by_similarity(similarities)[0]
             best_score = similarities[best_idx]
 
             if best_score > 0.7:  # Threshold
@@ -1977,7 +2016,7 @@ Filter extraction (ADR009 Phase 5):
         Config is loaded once and cached in the instance for subsequent calls.
 
         Returns:
-            Validation config dict from config/validation.yaml
+            Validation config dict from resources/config/validation.yaml
         """
         if self._validation_config is None:
             from clinical_analytics.core.config_loader import load_validation_config
@@ -1989,7 +2028,7 @@ Filter extraction (ADR009 Phase 5):
         """
         DBA validation layer - checks type safety and schema correctness.
 
-        Uses config-driven prompts from config/validation.yaml.
+        Uses config-driven prompts from resources/config/validation.yaml.
         Logs calls with structured observability (LLMFeature.DBA_VALIDATION).
 
         Args:
@@ -2087,7 +2126,7 @@ Validate this query intent for type safety. Return JSON:
         """
         Retry parsing with DBA feedback on previous errors.
 
-        Uses config-driven prompts from config/validation.yaml.
+        Uses config-driven prompts from resources/config/validation.yaml.
         Logs calls with structured observability (LLMFeature.VALIDATION_RETRY).
 
         Args:
