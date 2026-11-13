@@ -23,6 +23,17 @@ import {
   resultTitleForIntent,
   splitClaim,
   stageLabel,
+  ENGINE_UNREACHABLE_MESSAGE,
+  TABLE_LEVEL_LIMIT,
+  holdNextStep,
+  isFullyHiddenTable,
+  needsHiddenFootnote,
+  plainLevelLabel,
+  suggestColumns,
+  tableLevelCount,
+  httpFailureText,
+  isGroupLevelTable,
+  buildIntentSummary,
 } from './resultPresentation.js';
 
 describe('normalizeIntentType', () => {
@@ -346,7 +357,12 @@ describe('splitClaim', () => {
       ['n hidden'],
       '',
     ],
-    ['hiddenDescriptive', 'Statistics for ldl are not shown because n is hidden.', ['n hidden'], ''],
+    [
+      'hiddenDescriptive',
+      'Statistics for ldl are not shown because n is hidden.',
+      ['n hidden'],
+      '',
+    ],
     [
       'missingNSurvivalMedian',
       'Median time to event=1 (days) is not shown because n is missing.',
@@ -516,7 +532,9 @@ describe('formatNumber', () => {
   });
 
   it.each([
-    ['Mean was 16.14 higher (p<0.001; n=377).', 3],
+    ['Mean was 16.14 higher (p<0.001; n=377).', 2],
+    ['Mean ldl was 16.97 higher (95% CI 13.96 to 19.99; Welch t-test p<0.001; n=377).', 2],
+    ['No difference (chi-square p=0.120; n=388).', 2],
     ['Mean age was 64.2 (n=190).', 1],
     ['Count was 12 (n=12).', 2],
     ['', 2],
@@ -600,10 +618,11 @@ describe('parsePlanLine', () => {
     expect(result).toEqual({
       analysis: 'Compare groups',
       items: [
-        { label: 'Outcome', value: 'LDL' },
-        { label: 'Compared across', value: 'Treatment' },
-        { label: 'Patients included', value: 'Age over 65' },
-        { label: 'Test', value: 'Welch t-test' },
+        { key: 'outcome', label: 'Outcome', value: 'LDL' },
+        { key: 'grouping', label: 'Compared across', value: 'Treatment' },
+        { key: 'included', label: 'Included', value: 'Age over 65' },
+        { key: 'counting', label: 'Counting', value: 'Rows' },
+        { key: 'test', label: 'Test', value: 'Welch t-test' },
       ],
     });
   });
@@ -635,22 +654,27 @@ describe('parsePlanLine', () => {
     // Arrange / Act
     const { items } = parsePlanLine(`DESCRIBE · filters ${filters}`);
     // Assert
-    expect(items[0]).toEqual({ label: 'Patients included', value: expected });
+    expect(items[0]).toEqual({ key: 'included', label: 'Included', value: expected });
   });
 
   it('parsePlanLine_predictors_eachLabelled', () => {
     // Arrange / Act
     const { items } = parsePlanLine('FIND_PREDICTORS · predictors age, ldl_mg_dl');
     // Assert
-    expect(items[0]).toEqual({ label: 'Predictors', value: 'Age, LDL (mg/dL) — ldl_mg_dl' });
+    expect(items[0]).toEqual({
+      key: 'predictors',
+      label: 'Predictors',
+      value: 'Age, LDL (mg/dL) — ldl_mg_dl',
+    });
   });
 
   it.each([
-    ['filters none', { label: 'Patients included', value: 'All patients' }],
-    ['grouping none', { label: 'Compared across', value: 'None' }],
-    ['time days', { label: 'Time', value: 'Days' }],
-    ['event died', { label: 'Event', value: 'Died' }],
-    ['weird part', { label: '', value: 'weird part' }],
+    ['grouping none', { key: 'grouping', label: 'Compared across', value: 'Not set' }],
+    ['outcome none', { key: 'outcome', label: 'Outcome', value: 'Not set' }],
+    ['time days', { key: 'time', label: 'Time', value: 'Days' }],
+    ['event died', { key: 'event', label: 'Event', value: 'Died' }],
+    ['statistic mean', { key: 'statistic', label: 'Statistic', value: 'Mean' }],
+    ['weird part', { key: 'other', label: 'Other', value: 'weird part' }],
   ])('parsePlanLine_part_%s', (part, expected) => {
     // Arrange / Act
     const { items } = parsePlanLine(`DESCRIBE · ${part}`);
@@ -686,11 +710,16 @@ describe('describeQueryFailure', () => {
     [{}, 'error', 'The analysis stopped before it could answer.'],
     [null, 'error', 'The analysis stopped before it could answer.'],
     [{ failure_reason: '   ', error: 'Fallback' }, 'refused', 'Fallback'],
+    [
+      { failure_reason: "Execution error: 'StringColumn' object has no attribute 'mean'" },
+      'error',
+      'The analysis couldn’t finish this question. Ask again in other words, naming the variables you mean; if it keeps happening, restart the app.',
+    ],
   ])('describeQueryFailure_case%#', (data, kind, message) => {
     // Arrange / Act
     const result = describeQueryFailure(data);
     // Assert
-    expect(result).toEqual({ kind, message });
+    expect(result).toMatchObject({ kind, message });
   });
 
   it('describeQueryFailure_engineWording_plainMessageWithExactDetail', () => {
@@ -750,7 +779,7 @@ describe('describeQueryFailure', () => {
 describe('stageLabel', () => {
   it.each([
     [{ stage: 'parsing', message: 'Analyzing query...' }, 'Reading your question'],
-    [{ stage: 'plan' }, 'Choosing the columns and the test'],
+    [{ stage: 'plan' }, 'Choosing the variables and the test'],
     [{ stage: 'executing', message: 'Running analysis...' }, 'Running the analysis'],
     [{ stage: 'other', message: 'Custom' }, 'Custom'],
     [{}, ''],
@@ -845,5 +874,617 @@ describe('re-audit follow-ups', () => {
 
     // Assert
     expect(text).not.toBe(raw);
+  });
+});
+
+// Synthetic cohort columns (no real data): the variables a doctor's file might hold.
+const COHORT_COLUMNS = [
+  'patient_id',
+  'age',
+  'sex',
+  'treatment',
+  'site',
+  'ldl',
+  'hdl',
+  'bmi',
+  'diabetes',
+  'outcome',
+  'followup_days',
+  'event',
+];
+
+describe('answer plan (H1, H5)', () => {
+  it('parsePlanLine_filteredCount_limitAndPatientUnitAlwaysShown', () => {
+    // Arrange
+    const line =
+      'COUNT · outcome none · grouping none · filters age > 83 · counting distinct patient_id · test count';
+
+    // Act
+    const { analysis, items } = parsePlanLine(line, { omitUnset: true });
+
+    // Assert
+    expect(analysis).toBe('Count');
+    expect(items).toEqual([
+      { key: 'included', label: 'Included', value: 'Age over 83' },
+      { key: 'counting', label: 'Counting', value: 'Patients (each Patient ID once)' },
+    ]);
+  });
+
+  it.each([
+    ['filters none', 'All rows'],
+    ['filters none · counting distinct patient_id', 'All patients'],
+  ])('parsePlanLine_noLimits_%s_saysWhoWasIncluded', (parts, expected) => {
+    // Arrange / Act
+    const { items } = parsePlanLine(`COUNT · ${parts}`, { omitUnset: true });
+
+    // Assert
+    expect(items.find((i) => i.key === 'included').value).toBe(expected);
+  });
+
+  it('parsePlanLine_rowsNotPatients_whenNoDistinctCount', () => {
+    // Arrange / Act
+    const { items } = parsePlanLine('COUNT · grouping sex · filters age > 82 · test count');
+
+    // Assert
+    expect(items).toContainEqual({ key: 'counting', label: 'Counting', value: 'Rows' });
+  });
+
+  it.each([
+    ['limits in order 1) patient_id = S0001', 'Patient ID (patient_id) is S0001'],
+    ['limits in order 1) age > 65; 2) ldl ≥ 130', 'Age over 65, then LDL at least 130'],
+    ['limits in order 1) ldl is recorded', 'LDL is recorded'],
+    [
+      'limits in order 1) bmi above its median among the patients so far',
+      'BMI above its median among the patients so far',
+    ],
+  ])('parsePlanLine_limits_%s_inWords', (part, expected) => {
+    // Arrange / Act
+    const { items } = parsePlanLine(`DESCRIBE · filters none · ${part}`);
+
+    // Assert
+    const included = items.find((i) => i.key === 'included');
+    expect(included.value).toBe(expected);
+    expect(items.map((i) => i.value).join(' ')).not.toMatch(/limits in order|\d\)/);
+  });
+
+  it('parsePlanLine_filtersThenLimits_bothInOrder', () => {
+    // Arrange / Act
+    const { items } = parsePlanLine('DESCRIBE · filters sex == F · limits in order 1) age > 65');
+
+    // Assert
+    expect(items.filter((i) => i.key === 'included')).toEqual([
+      { key: 'included', label: 'Included', value: 'Sex is F, then Age over 65' },
+    ]);
+  });
+
+  it.each([
+    ['test count'],
+    ['test not selected'],
+    ['scope filtered'],
+    ['filters required'],
+    ['grouping required'],
+  ])('parsePlanLine_internalPart_%s_isNotShown', (part) => {
+    // Arrange / Act
+    const { items } = parsePlanLine(`COUNT · ${part}`);
+
+    // Assert
+    expect(items).toEqual([]);
+  });
+
+  it('parsePlanLine_testLabel_sentenceCase', () => {
+    // Arrange / Act
+    const { items } = parsePlanLine('DESCRIBE · test descriptive statistics');
+
+    // Assert
+    expect(items).toEqual([{ key: 'test', label: 'Test', value: 'Descriptive statistics' }]);
+  });
+
+  it('parsePlanLine_neverShowsNone', () => {
+    // Arrange
+    const line =
+      'SURVIVAL · outcome none · grouping none · time none · event none · filters none · test Kaplan–Meier';
+
+    // Act
+    const shown = parsePlanLine(line)
+      .items.map((i) => i.value)
+      .join(' | ');
+    const answer = parsePlanLine(line, { omitUnset: true })
+      .items.map((i) => i.key)
+      .join(',');
+
+    // Assert
+    expect(shown).not.toMatch(/\bNone\b|\bnone\b/);
+    expect(shown).toContain('Not set');
+    expect(answer).toBe('included,counting,test');
+  });
+
+  it('buildQueryCompletedPresentation_keepsPlanLine', () => {
+    // Arrange
+    const planLine = 'COUNT · filters age > 83 · test count';
+
+    // Act
+    const pres = buildQueryCompletedPresentation('COUNT', {}, 'Total count hidden.', planLine);
+
+    // Assert
+    expect(pres.result.planLine).toBe(planLine);
+  });
+});
+
+describe('hidden counts and table guards (H2, M5, B1)', () => {
+  it.each([
+    ['Total count hidden.', false, true],
+    ['15 total across 2 sex groups (n hidden).', false, true],
+    ['Total count: <11.', false, true],
+    ['Total count: 400.', false, false],
+    ['Mean age was 58.2 (n=400).', true, true],
+    ['Age band <65 was most common (n=200).', false, false],
+    [null, false, false],
+  ])('needsHiddenFootnote_%s_table%s_is_%s', (claim, tableHasHidden, expected) => {
+    // Arrange / Act / Assert
+    expect(needsHiddenFootnote(claim, tableHasHidden)).toBe(expected);
+  });
+
+  it.each([
+    [
+      {
+        columns: ['outcome', 'F', 'M'],
+        rows: [
+          { outcome: 'outcome=0', F: 'suppressed', M: 'suppressed' },
+          { outcome: 'outcome=1', F: '<11', M: 'suppressed' },
+        ],
+      },
+      true,
+    ],
+    [
+      {
+        columns: ['sex', 'n'],
+        rows: [
+          ['F', 'suppressed'],
+          ['M', 204],
+        ],
+      },
+      false,
+    ],
+    [{ columns: ['sex', 'n'], rows: [] }, false],
+    [{ columns: ['sex', 'n'], rows: [['F', null]] }, false],
+  ])('isFullyHiddenTable_case%#', (table, expected) => {
+    // Arrange / Act / Assert
+    expect(isFullyHiddenTable(table)).toBe(expected);
+  });
+
+  it.each([
+    [
+      {
+        columns: ['treatment', ...Array.from({ length: 289 }, (_, i) => `ldl=${80 + i}`)],
+        rows: [[], []],
+      },
+      289,
+    ],
+    [{ columns: ['sex', 'n'], rows: Array.from({ length: 30 }, () => ['x', 12]) }, 30],
+    [
+      {
+        columns: ['sex', 'mean age', 'n'],
+        rows: [
+          ['F', 58, 204],
+          ['M', 59, 196],
+        ],
+      },
+      2,
+    ],
+    [null, 0],
+  ])('tableLevelCount_case%#_is_%s', (table, expected) => {
+    // Arrange / Act / Assert
+    expect(tableLevelCount(table)).toBe(expected);
+  });
+
+  it('TABLE_LEVEL_LIMIT_is_about_twenty', () => {
+    expect(TABLE_LEVEL_LIMIT).toBe(20);
+  });
+
+  it.each([
+    ['outcome=0', 'Outcome: 0'],
+    ['ldl=80.9', 'LDL: 80.9'],
+    ['drug', 'drug'],
+    ['a = b', 'a = b'],
+    ['', ''],
+  ])('plainLevelLabel_%s_is_%s', (raw, expected) => {
+    // Arrange / Act / Assert
+    expect(plainLevelLabel(raw)).toBe(expected);
+  });
+});
+
+describe('caught messages (H3)', () => {
+  it.each([
+    ['Failed to fetch'],
+    ['TypeError: NetworkError when attempting to fetch resource.'],
+    [''],
+    [undefined],
+  ])('plainFailureMessage_%s_isTheEngineUnreachableFallback', (raw) => {
+    // Arrange / Act / Assert
+    expect(plainFailureMessage(raw)).toBe(ENGINE_UNREACHABLE_MESSAGE);
+  });
+
+  it('ENGINE_UNREACHABLE_MESSAGE_wording', () => {
+    expect(ENGINE_UNREACHABLE_MESSAGE).toBe(
+      'Couldn’t reach the analysis engine. Ask again; if it keeps happening, restart the app.'
+    );
+  });
+
+  it('plainFailureMessage_retryWord_followsTheContext', () => {
+    expect(plainFailureMessage('Failed to fetch', { context: 'upload' })).toBe(
+      'Couldn’t reach the analysis engine. Try again; if it keeps happening, restart the app.'
+    );
+  });
+
+  it.each([
+    ["Execution error: 'StringColumn' object has no attribute 'mean'"],
+    ['Execution failed: unsupported operand type(s) for +'],
+    ["'NoneType' object is not subscriptable"],
+    ['Binder Error: Referenced column "x" not found'],
+  ])('plainFailureMessage_exception_%s_isNeverShownRaw', (raw) => {
+    // Arrange / Act
+    const text = plainFailureMessage(raw);
+
+    // Assert
+    expect(text).not.toMatch(/StringColumn|attribute|operand|NoneType|Binder|Execution/);
+  });
+
+  it('describeQueryFailure_executionError_isAnErrorWithDetailForCopying', () => {
+    // Arrange
+    const raw = "Execution error: 'StringColumn' object has no attribute 'mean'";
+
+    // Act
+    const result = describeQueryFailure({ failure_reason: raw });
+
+    // Assert
+    expect(result.kind).toBe('error');
+    expect(result.detail).toBe(raw);
+    expect(result.message).not.toContain('StringColumn');
+  });
+});
+
+describe('hold next step (H5)', () => {
+  it.each([
+    ['cholesterol', ['ldl', 'hdl']],
+    ['diabete', ['diabetes']],
+    ['gender', ['sex']],
+    ['average', []],
+    ['by', []],
+    ['ids', []],
+  ])('suggestColumns_%s_is_%o', (word, expected) => {
+    // Arrange / Act / Assert
+    expect(suggestColumns([word], COHORT_COLUMNS)).toEqual(expected);
+  });
+
+  it('suggestColumns_neverSuggestsIdentifiers_andCapsAtThree', () => {
+    // Arrange / Act
+    const out = suggestColumns(['patient', 'cholesterol', 'diabetes', 'gender'], COHORT_COLUMNS);
+
+    // Assert
+    expect(out).not.toContain('patient_id');
+    expect(out.length).toBeLessThanOrEqual(3);
+  });
+
+  it('holdNextStep_unplacedWords_namesClosestColumns_andRejectIsPrimary', () => {
+    // Arrange
+    const reason =
+      "I couldn't place the words 'average' and 'cholesterol', so they are not in the plan.";
+
+    // Act
+    const step = holdNextStep(reason, COHORT_COLUMNS);
+
+    // Assert
+    expect(step.dropped).toBe(true);
+    expect(step.text).toBe(
+      'This cohort has LDL and HDL. If you meant one of them, choose “Not what I meant” and ask again using its name.'
+    );
+  });
+
+  it('holdNextStep_unplacedWordWithNoMatch_pointsToVariableNames', () => {
+    // Arrange
+    const reason = "I couldn't place the word 'recently', so it is not in the plan.";
+
+    // Act
+    const step = holdNextStep(reason, COHORT_COLUMNS);
+
+    // Assert
+    expect(step.dropped).toBe(true);
+    expect(step.text).toBe(
+      'If that word matters, choose “Not what I meant” and ask again using the cohort’s variable names (see cohort details).'
+    );
+  });
+
+  it('holdNextStep_confidenceHold_saysWhatToCheck', () => {
+    // Arrange / Act
+    const step = holdNextStep('Confirmation required before execution.', COHORT_COLUMNS);
+
+    // Assert
+    expect(step.dropped).toBe(false);
+    expect(step.text).toBe(
+      'If the plan below matches your question, run it. If not, choose “Not what I meant” and ask again in other words.'
+    );
+  });
+});
+
+describe('failure messages by context (round 2)', () => {
+  const JARGON = [
+    "Error saving upload: polars.exceptions.ComputeError: could not parse 'abc' as dtype i64",
+    "Execution error: 'StringColumn' object has no attribute 'mean'",
+    "Column 'LDL' not found in dataset",
+    'DESCRIBE intent requires metric (primary_variable)',
+  ];
+
+  it.each(['upload', 'delete', 'panel'].flatMap((context) => JARGON.map((raw) => [context, raw])))(
+    'plainFailureMessage_%s_%s_neverTalksAboutAQuestion',
+    (context, raw) => {
+      // Arrange / Act
+      const text = plainFailureMessage(raw, { context });
+
+      // Assert
+      expect(text).not.toMatch(/question/i);
+      expect(text).not.toBe(raw);
+      expect(text).toMatch(/[Tt]ry again/);
+    }
+  );
+
+  it('plainFailureMessage_uploadThatCannotBeParsed_saysCheckTheFile', () => {
+    // Arrange
+    const raw =
+      "Error saving upload: polars.exceptions.ComputeError: could not parse 'abc' as dtype i64";
+
+    // Act
+    const text = plainFailureMessage(raw, { context: 'upload' });
+
+    // Assert
+    expect(text).toBe(
+      'The file couldn’t be read. Check that it is a CSV, Excel or SPSS file with a header row, then try again.'
+    );
+  });
+
+  it.each([
+    [
+      httpFailureText(
+        500,
+        'Dataset only partly deleted, try again: OSError: [Errno 13] Permission denied'
+      ),
+      'Dataset only partly deleted, try again.',
+    ],
+    [
+      httpFailureText(500, 'Dataset files deleted but its chats were not; try the delete again'),
+      'Dataset files deleted but its chats were not; try the delete again.',
+    ],
+  ])('plainFailureMessage_serverSentenceForPeople_%s_isKept', (raw, expected) => {
+    // Arrange / Act
+    const text = plainFailureMessage(raw, { context: 'delete' });
+
+    // Assert
+    expect(text).toBe(expected);
+  });
+
+  it.each([
+    [httpFailureText(500, 'Internal Server Error')],
+    [httpFailureText(502, '')],
+    ['Internal Server Error'],
+    ['Failed to submit query: Internal Server Error'],
+  ])('plainFailureMessage_5xx_%s_isAProblemWithTheQuestion_notUnreachable', (raw) => {
+    // Arrange / Act
+    const text = plainFailureMessage(raw);
+
+    // Assert
+    expect(text).toBe(
+      'The analysis engine ran into a problem with this question. Ask again in other words; if it keeps happening, restart the app.'
+    );
+  });
+
+  it('plainFailureMessage_5xxOutsideAQuestion_saysTryAgain', () => {
+    // Arrange / Act
+    const text = plainFailureMessage(httpFailureText(500, ''), { context: 'panel' });
+
+    // Assert
+    expect(text).toBe(
+      'The analysis engine ran into a problem. Try again; if it keeps happening, restart the app.'
+    );
+  });
+
+  it.each([
+    [httpFailureText(404, 'Dataset not found: abc'), 'panel'],
+    [httpFailureText(404, "Dataset 'abc' not found"), 'delete'],
+    [httpFailureText(404, 'Dataset data not found: abc'), 'question'],
+  ])('plainFailureMessage_404ForACohort_%s_saysItNoLongerExists', (raw, context) => {
+    // Arrange / Act
+    const text = plainFailureMessage(raw, { context });
+
+    // Assert
+    expect(text).toBe(
+      'This cohort no longer exists. Choose another cohort, or refresh the list of cohorts.'
+    );
+  });
+
+  it.each([
+    [
+      [
+        {
+          type: 'string_too_short',
+          loc: ['body', 'query_text'],
+          msg: 'String should have at least 1 character',
+        },
+      ],
+      'The question is empty. Type a question, then ask again.',
+    ],
+    [
+      [{ type: 'missing', loc: ['body', 'dataset_id'], msg: 'Field required' }],
+      'No cohort was chosen. Choose a cohort, then ask again.',
+    ],
+    [
+      [
+        {
+          type: 'extra_forbidden',
+          loc: ['body', 'surprise'],
+          msg: 'Extra inputs are not permitted',
+        },
+      ],
+      'The analysis engine didn’t accept the request from the app. Restart the app, then ask again.',
+    ],
+  ])('plainFailureMessage_422_%#_givesTheReasonInPlainWords', (detail, expected) => {
+    // Arrange
+    const raw = httpFailureText(422, detail);
+
+    // Act
+    const text = plainFailureMessage(raw);
+
+    // Assert
+    expect(text).toBe(expected);
+    expect(text).not.toMatch(/reach/);
+  });
+
+  it('plainFailureMessage_4xxWithAReasonForPeople_keepsTheReason', () => {
+    // Arrange
+    const raw = httpFailureText(
+      400,
+      "File extension '.txt' not allowed. Accepted: .csv, .sav, .xls, .xlsx"
+    );
+
+    // Act
+    const text = plainFailureMessage(raw, { context: 'upload' });
+
+    // Assert
+    expect(text).toBe("File extension '.txt' not allowed. Accepted: .csv, .sav, .xls, .xlsx");
+  });
+
+  it.each([
+    ['Failed to load dataset preview: Not Found'],
+    ['Failed to list sessions: Bad Request'],
+  ])('plainFailureMessage_failedToPrefix_%s_isNotUnreachable', (raw) => {
+    // Arrange / Act / Assert
+    expect(plainFailureMessage(raw, { context: 'panel' })).not.toMatch(/reach/);
+  });
+
+  it('httpFailureText_encodesStatusAndReason', () => {
+    // Arrange / Act / Assert
+    expect(httpFailureText(404, 'Dataset not found: abc')).toBe(
+      '[HTTP 404] Dataset not found: abc'
+    );
+    expect(httpFailureText(500, null)).toBe('[HTTP 500]');
+  });
+
+  it.each([
+    'This cohort has no variable',
+    'The question asks for a breakdown',
+    'That variable identifies',
+    'using a variable name',
+  ])('engineMessages_useVariableNotColumn_%s', (start) => {
+    // Arrange
+    const raws = [
+      "Column 'LDL' not found in dataset",
+      'This query requires grouping, but no grouping_variable provided.',
+      "Cannot group by entity key 'patient_id'.",
+      'All parsing tiers failed',
+    ];
+
+    // Act
+    const texts = raws.map((raw) => plainFailureMessage(raw));
+
+    // Assert
+    const text = texts.find((t) => t.includes(start));
+    expect(text).toBeDefined();
+    expect(text).not.toMatch(/\bcolumns?\b/);
+  });
+
+  it('stageLabel_planning_saysVariables', () => {
+    expect(stageLabel({ stage: 'planning' })).toBe('Choosing the variables and the test');
+  });
+
+  it.each([
+    [httpFailureText(500, '')],
+    ['Failed to fetch'],
+    ["Execution error: 'x'"],
+    ['DESCRIBE intent requires metric (primary_variable)'],
+  ])('plainFailureMessage_%s_usesCurlyApostrophes', (raw) => {
+    // Arrange / Act / Assert
+    expect(plainFailureMessage(raw)).not.toContain("'");
+  });
+});
+
+describe('single suggestion and lists (round 2)', () => {
+  it('holdNextStep_oneSuggestion_saysItAndShowsTheAcceptedName', () => {
+    // Arrange
+    const reason = "I couldn't place the word 'cholesterol', so it is not in the plan.";
+
+    // Act
+    const step = holdNextStep(reason, ['ldl_mg_dl', 'age']);
+
+    // Assert
+    expect(step.text).toBe(
+      'This cohort has LDL (mg/dL) (ldl_mg_dl). If you meant it, choose “Not what I meant” and ask again using that name.'
+    );
+  });
+
+  it('holdNextStep_threeSuggestions_listsThemWithIntl', () => {
+    // Arrange
+    const reason =
+      "I couldn't place the words 'cholesterol' and 'diabete', so they are not in the plan.";
+
+    // Act
+    const step = holdNextStep(reason, ['ldl', 'hdl', 'diabetes']);
+
+    // Assert
+    expect(step.text).toBe(
+      'This cohort has LDL, HDL and Diabetes. If you meant one of them, choose “Not what I meant” and ask again using its name.'
+    );
+  });
+});
+
+describe('level guard scope (round 2)', () => {
+  const pairs = {
+    columns: ['variable 1', 'variable 2', 'r'],
+    rows: Array.from({ length: 21 }, (_, i) => [`v${i}`, `w${i}`, 0.1]),
+  };
+  const crossTab = {
+    columns: ['treatment', ...Array.from({ length: 30 }, (_, i) => `ldl=${80 + i}`)],
+    rows: [[], []],
+  };
+  const overview = {
+    columns: ['variable', 'mean', 'n'],
+    rows: Array.from({ length: 25 }, (_, i) => [`v${i}`, 1, 400]),
+  };
+
+  it.each([
+    ['relationship', pairs, false],
+    ['predictor', { columns: ['variable', 'odds ratio'], rows: pairs.rows }, false],
+    ['descriptive', overview, false],
+    ['comparison', crossTab, true],
+    ['count', { columns: ['site', 'count'], rows: pairs.rows }, true],
+    ['grouped_statistic', { columns: ['site', 'mean age', 'n'], rows: pairs.rows }, true],
+    [undefined, crossTab, true],
+  ])('isGroupLevelTable_%s_case%#', (analysisType, table, expected) => {
+    // Arrange / Act / Assert
+    expect(isGroupLevelTable(table, analysisType)).toBe(expected);
+  });
+
+  it('buildQueryCompletedPresentation_keepsTheAnalysisType', () => {
+    // Arrange / Act
+    const pres = buildQueryCompletedPresentation(
+      'CORRELATIONS',
+      { analysis_type: 'relationship', claim: 'r=0.1.', table: pairs },
+      null,
+      null
+    );
+
+    // Assert
+    expect(pres.result.analysisType).toBe('relationship');
+  });
+});
+
+describe('vocabulary in summaries (round 2)', () => {
+  it('buildIntentSummary_describe_namesVariables', () => {
+    // Arrange / Act
+    const text = buildIntentSummary(
+      'describe',
+      { summary: { sample_size: 400, numeric_columns: ['age', 'ldl'] } },
+      0
+    );
+
+    // Assert
+    expect(text).toBe('N=400 | Variables: age, ldl');
   });
 });

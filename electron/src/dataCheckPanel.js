@@ -8,7 +8,7 @@
 export const DATA_CHECK_STILL_USABLE = 'You can still ask questions.';
 export const DATA_CHECK_NOTHING_FLAGGED = 'Nothing flagged.';
 export const DATA_CHECK_PRIVACY_HINT =
-  "Hidden to protect privacy: counts from 1 to 10 are not shown, and some larger counts are hidden too so those can't be worked out from the totals. A hidden count is never zero.";
+  'Hidden to protect privacy: counts from 1 to 10 are not shown, and some larger counts are hidden too so those can’t be worked out from the totals. A hidden count is never zero.';
 export const DATA_CHECK_LOADING = 'Checking…';
 
 const MORE_LINE = /^…and (\d+) more$/;
@@ -46,6 +46,15 @@ export function dataCheckStatusNote(check) {
   if (check.count === 0) return 'Data check found nothing to flag.';
   const things = check.count === 1 ? '1 thing' : `${check.count} things`;
   return `Data check found ${things} to review in cohort details.`;
+}
+
+/**
+ * True when the check found something to look at, so the status line offers the details sheet.
+ * @param {DataCheck | null} check
+ * @returns {boolean}
+ */
+export function dataCheckNeedsReview(check) {
+  return check?.status === 'ran' && check.count > 0;
 }
 
 /**

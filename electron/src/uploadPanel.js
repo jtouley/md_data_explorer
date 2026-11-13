@@ -35,6 +35,17 @@ export function uploadStatusText(headline, note) {
 }
 
 /**
+ * "The cohort “ward 7” is ready.": the name is quoted as typed, so a lowercase file name never
+ * starts the sentence.
+ * @param {string} name
+ * @returns {string}
+ */
+export function readyHeadline(name) {
+  const shown = String(name || '').trim();
+  return shown ? `The cohort “${shown}” is ready.` : 'The cohort is ready.';
+}
+
+/**
  * @param {number} bytes
  * @returns {string}
  */
