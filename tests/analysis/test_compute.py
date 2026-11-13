@@ -442,13 +442,16 @@ class TestComputePredictorAnalysis:
 
     def test_compute_predictor_analysis_returns_serializable_dict(self, sample_context_predictor):
         """Test that compute_predictor_analysis returns serializable dict."""
-        # Arrange: Binary outcome with predictors
+        # Arrange: Binary outcome with predictors; at least 11 patients on each side of the
+        # outcome, or the model is refused (its odds ratios would rest on a few patients)
         df = pl.DataFrame(
             {
-                "outcome": [0, 0, 0, 1, 1, 1, 0, 1, 0, 1],
-                "age": [25, 30, 35, 40, 45, 50, 55, 60, 65, 70],
+                "outcome": [0, 0, 0, 1, 1, 1, 0, 1, 0, 1] * 3,
+                "age": [25 + i for i in range(0, 50, 5)]
+                + [27 + i for i in range(0, 50, 5)]
+                + [29 + i for i in range(0, 50, 5)],
                 # Not a linear function of age (collinear predictors cannot be estimated separately)
-                "score": [40, 10, 70, 20, 90, 30, 60, 100, 50, 80],
+                "score": [40, 10, 70, 20, 90, 30, 60, 100, 50, 80] * 3,
             }
         )
 

@@ -36,6 +36,19 @@ OTHER_LABEL: Final = f"Other (groups under {SMALL_CELL_THRESHOLD})"
 HIDDEN_GROUPS_LABEL: Final = "Other groups (hidden)"
 FOLD_LABELS: Final = frozenset({OTHER_LABEL, HIDDEN_GROUPS_LABEL})
 
+# A model whose predictor level, 0/1 predictor or outcome value is held by 1 to
+# SMALL_CELL_THRESHOLD - 1 patients. It names no column or level: for a 0/1 predictor the column
+# is the label of its level, so naming it would tell the reader a few patients have it.
+SMALL_VALUE_MODEL_REFUSAL: Final = (
+    f"A predictor or outcome value is held by fewer than {SMALL_CELL_THRESHOLD} patients, so this model can't be "
+    f"shown without identifying them. Try fewer or broader variables."
+)
+# A stored model whose group sizes are missing (a payload from before they were recorded): it is
+# withheld (fail closed), but no value is small, so none is blamed.
+UNRECORDED_SIZES_MODEL_REFUSAL: Final = (
+    "This model can't be shown because its group sizes weren't recorded; ask again to recompute."
+)
+
 
 def too_many_levels_message(column: str, levels: int) -> str:
     """Plain refusal for grouping by a column with too many levels."""

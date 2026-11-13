@@ -20,6 +20,7 @@ Polars expressions only (no per-value Python).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 import polars as pl
 
@@ -30,6 +31,23 @@ from clinical_analytics.contracts.config import (
     NAMED_UNREADABLE_MAX,
     NEAR_NUMERIC_SHARE,
 )
+
+# Unicode White_Space, exactly what Polars ``str.strip_chars()`` strips (Rust ``char::is_whitespace``):
+# missing_token_sql trims these, so DuckDB and Polars agree on "N/A\u00a0" (an Excel export's NBSP).
+_WHITESPACE_CODES: Final = (
+    *range(0x09, 0x0E),
+    0x20,
+    0x85,
+    0xA0,
+    0x1680,
+    *range(0x2000, 0x200B),
+    0x2028,
+    0x2029,
+    0x202F,
+    0x205F,
+    0x3000,
+)
+WHITESPACE: Final = "".join(chr(code) for code in _WHITESPACE_CODES)
 
 _NUMBER = r"[+-]?(\d[\d,]*(\.\d*)?|\.\d+)([eE][+-]?\d+)?"
 _PLAIN_NUMBER = rf"^{_NUMBER}$"
@@ -60,8 +78,13 @@ class NumericText:
 
 
 def missing_token_expr(column: str) -> pl.Expr:
-    """True where a text value is a missing token (not where it is null)."""
+    """True where a text value is a missing token (not where it is null). Trims ``WHITESPACE``."""
     return pl.col(column).str.strip_chars().str.to_lowercase().is_in(list(MISSING_VALUE_TOKENS))
+
+
+def is_missing_token(value: object) -> bool:
+    """Whether one asked value is a missing token, by the rule of ``missing_token_expr``."""
+    return isinstance(value, str) and value.strip(WHITESPACE).lower() in MISSING_VALUE_TOKENS
 
 
 def censored_expr(column: str) -> pl.Expr:
@@ -132,6 +155,27 @@ def parse_numeric_text(series: pl.Series, weights: pl.Series | None = None) -> N
         n_unreadable=n_other,
         unreadable=tuple(sorted(words.to_list())[:NAMED_UNREADABLE_MAX]),
     )
+
+
+def is_numeric_text(series: pl.Series, weights: pl.Series | None = None) -> bool:
+    """Whether ``series`` is numbers stored as text (numbers, limits or missing tokens).
+
+    A comma whose meaning cannot be told is still numeric text: its missing tokens are missing.
+    ``weights`` as for ``parse_numeric_text``.
+    """
+    try:
+        return parse_numeric_text(series, weights) is not None
+    except AmbiguousNumberFormatError:
+        return True
+
+
+def missing_token_sql(quoted: str) -> str:
+    """DuckDB form of ``missing_token_expr``: true where the text in ``quoted`` (an identifier
+    already quoted) is a missing token once trimmed of ``WHITESPACE`` (the Unicode whitespace
+    Polars trims, NBSP included) and lowercased."""
+    tokens = ", ".join("'" + token.replace("'", "''") + "'" for token in MISSING_VALUE_TOKENS)
+    whitespace = " || ".join(f"chr({ord(char)})" for char in WHITESPACE)
+    return f"lower(trim({quoted}, {whitespace})) IN ({tokens})"
 
 
 def all_missing_message(column: str, what: str) -> str:

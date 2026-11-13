@@ -25,6 +25,7 @@ import pandas as pd
 import polars as pl
 from ibis import _
 
+from clinical_analytics.analysis.numeric_text import is_missing_token, is_numeric_text, missing_token_sql
 from clinical_analytics.core import nl_query_config
 from clinical_analytics.core.execution_gate import evaluate_execution_gate
 from clinical_analytics.core.log_redaction import stable_hash
@@ -148,6 +149,13 @@ def _ungrouped_rate_message(column: str) -> str:
     return (
         f"Cannot compare the rate of '{column}': the question does not say which groups to compare. "
         "Ask again naming the groups, for example 'by sex'."
+    )
+
+
+def _missing_token_share_message(column: str, value: Any) -> str:
+    return (
+        f"Cannot give the share of '{column}' = '{value}': '{value}' marks a missing value in '{column}', and "
+        "patients with it missing are left out of every share. Ask how many patients have it missing instead."
     )
 
 
@@ -2388,7 +2396,7 @@ class SemanticLayer:
                     True,
                     query_plan.intent,
                 )
-            formatted = compute_analysis_by_type(base_rows, context)
+            formatted = compute_analysis_by_type(base_rows, context, self.count_entity_key)
             if query_plan.intent == "DESCRIBE" and query_plan.statistic:
                 # The claim leads with the statistic the question asked for.
                 formatted["statistic"] = query_plan.statistic
@@ -2927,22 +2935,38 @@ class SemanticLayer:
         """Share of patients whose ``column`` equals ``value``, among those with it recorded.
 
         Patients missing the column are left out of the denominator (n) and counted in
-        n_rows, so the presentation can report them as excluded. Grouped: one row per group.
+        n_rows, so the presentation can report them as excluded. Missing is the rule every
+        analysis uses (``analysis.numeric_text``): null, and in numbers stored as text a missing
+        token ("N/A", "."). A text category keeps every level ("None" is an answer there).
+        Grouped: one row per group.
         """
         quoted = _quote_ident(column)
         literal = _sql_literal(self._equality_value(view, column, value))
         share = "rate" if group else "proportion"
+        recorded = f"{quoted} IS NOT NULL"
+        if view[column].type().is_string() and is_numeric_text(*self.base_value_counts(column)):
+            if is_missing_token(value):
+                # "N/A" is missing here, so it is outside n: its share would count events that
+                # are not in the denominator (above 1 when tokens outnumber values).
+                raise CohortStepError(_missing_token_share_message(column, value))
+            recorded += f" AND NOT ({missing_token_sql(quoted)})"
+        # Events are recorded rows only, so events never exceed n.
+        asked = f"{quoted} = {literal} AND {recorded}"
         entity = self.count_entity_key
         if entity:
             # Rows are visits: count patients (distinct key), as the COUNT answer does. The query
             # service refuses first when the value differs between a patient's visits.
             key = _quote_ident(entity)
-            events = f"count(DISTINCT {key}) FILTER (WHERE {quoted} = {literal})"
-            n = f"count(DISTINCT {key}) FILTER (WHERE {quoted} IS NOT NULL)"
+            events = f"count(DISTINCT {key}) FILTER (WHERE {asked})"
+            n = f"count(DISTINCT {key}) FILTER (WHERE {recorded})"
             # A row with no ID is no patient, as SemanticLayer._base_count counts them.
             n_rows = f"count(DISTINCT {key})"
         else:
-            events, n, n_rows = f"count(*) FILTER (WHERE {quoted} = {literal})", f"count({quoted})", "count(*)"
+            events, n, n_rows = (
+                f"count(*) FILTER (WHERE {asked})",
+                f"count(*) FILTER (WHERE {recorded})",
+                "count(*)",
+            )
         select = (
             f"{events} AS events, {n} AS n, {n_rows} AS n_rows, "
             f"CASE WHEN {n} = 0 THEN NULL ELSE {events} / {n} END AS {share}"
