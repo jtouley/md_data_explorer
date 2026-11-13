@@ -118,9 +118,19 @@ def test_ask_stateChangesDuringEveryParse_givesUpWithPlainRetryMessage() -> None
     assert result.run_key is None
 
 
-def test_ask_declarationsStoredElsewhereWhileParsing_preparedAndParsedAgain() -> None:
-    # Arrange: another process stores a declaration (no generation on this layer moves).
-    layer, service = _mock_layer_service()
+@pytest.mark.parametrize(
+    ("stored_version", "expected_parses"),
+    [
+        pytest.param("v1", 2, id="this_version_parsedAgain"),
+        pytest.param("v0", 1, id="retired_version_notParsedAgain"),
+    ],
+)
+def test_ask_declarationStoredElsewhereWhileParsing_parsedAgainOnlyForItsVersion(
+    stored_version: str, expected_parses: int
+) -> None:
+    # Arrange: another process (or a retired layer after a re-upload) stores a grain while this
+    # v1 question parses; no generation on this layer moves.
+    _layer, service = _mock_layer_service()
     store = MemoryDeclarationStore()
     service.declarations = store
     parses = 0
@@ -129,17 +139,17 @@ def test_ask_declarationsStoredElsewhereWhileParsing_preparedAndParsedAgain() ->
         nonlocal parses
         parses += 1
         if parses == 1:
-            grain = GrainDeclaration(key="patient_id", rows=2, patients=1, dataset_version="v1")
-            store.save("ds", Declarations(grain=grain))
+            grain = GrainDeclaration(key="patient_id", rows=2, patients=1, dataset_version=stored_version)
+            store.save("ds", Declarations(grains=(grain,)))
         return None
 
     service.nl_engine.parse_query = parse_query  # type: ignore[method-assign]
 
     # Act
-    service.ask("how many patients", dataset_id="ds")
+    service.ask("how many patients", dataset_id="ds", dataset_version="v1")
 
     # Assert
-    assert parses == 2
+    assert parses == expected_parses
 
 
 class _LockCheckedConnection:

@@ -23,11 +23,11 @@ import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import pydantic
 import structlog
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from clinical_analytics.contracts.errors import ContractStoreError, InvalidDeclarationKeyError
 from clinical_analytics.contracts.store import contracts_root
@@ -67,11 +67,31 @@ class LevelMapping(BaseModel):
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    grain: GrainDeclaration | None = None
+    # Keyed by dataset version, like ``levels``: a confirmation that finishes on a retired layer
+    # after a re-upload stores its own version's grain and never replaces the current version's.
+    grains: tuple[GrainDeclaration, ...] = ()
     levels: tuple[LevelMapping, ...] = ()
 
+    @model_validator(mode="before")
+    @classmethod
+    def _read_single_grain(cls, data: Any) -> Any:
+        """Read a file written before grains were kept per version (one ``grain`` slot)."""
+        if isinstance(data, dict) and "grain" in data:
+            if "grains" in data:
+                raise ValueError("declarations hold both 'grain' and 'grains'")
+            data = dict(data)
+            legacy = data.pop("grain")
+            data["grains"] = () if legacy is None else (legacy,)
+        return data
+
     def with_grain(self, grain: GrainDeclaration) -> Declarations:
-        return self.model_copy(update={"grain": grain})
+        """These declarations with ``grain`` as its version's grain (other versions' are kept)."""
+        kept = tuple(g for g in self.grains if g.dataset_version != grain.dataset_version)
+        return self.model_copy(update={"grains": (*kept, grain)})
+
+    def grain_for(self, dataset_version: str | None) -> GrainDeclaration | None:
+        """The grain confirmed on ``dataset_version``, or None (others belong to other data)."""
+        return next((g for g in self.grains if g.dataset_version == dataset_version), None)
 
     def with_levels(self, mapping: LevelMapping) -> Declarations:
         kept = tuple(
@@ -88,6 +108,11 @@ class Declarations(BaseModel):
     def levels_for(self, dataset_version: str | None) -> tuple[LevelMapping, ...]:
         """The level mappings confirmed on ``dataset_version`` (others belong to other data)."""
         return tuple(m for m in self.levels if m.dataset_version == dataset_version)
+
+    def for_version(self, dataset_version: str | None) -> Declarations:
+        """Only what was confirmed on ``dataset_version``: all a question on that version reads."""
+        grain = self.grain_for(dataset_version)
+        return Declarations(grains=() if grain is None else (grain,), levels=self.levels_for(dataset_version))
 
 
 class DeclarationStore(Protocol):
@@ -181,7 +206,7 @@ class FileDeclarationStore:
             finally:
                 if tmp is not None:
                     Path(tmp).unlink(missing_ok=True)
-        logger.info("declarations_saved", dataset_id=dataset_id, grain=bool(declarations.grain))
+        logger.info("declarations_saved", dataset_id=dataset_id, grains=len(declarations.grains))
 
     def update(self, dataset_id: str, change: Callable[[Declarations], Declarations]) -> Declarations:
         """Load, apply ``change`` and save as one step under the store lock.

@@ -18,13 +18,15 @@ from collections.abc import Callable, Iterator
 from typing import Any
 from unittest.mock import patch
 
+import polars as pl
 import pytest
 
 from clinical_analytics.api import dependencies
 from clinical_analytics.api.layer_cache import LayerCache
-from clinical_analytics.api.models.schemas import QueryRequest
+from clinical_analytics.api.models.schemas import QueryRequest, QueryResult
 from clinical_analytics.api.routes import queries
 from clinical_analytics.api.services.query_service import AsyncQueryService
+from clinical_analytics.core.nl_query_engine import NLQueryEngine
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
 from tests.api.conftest import Builds, FakeLayer
@@ -455,3 +457,74 @@ async def test_question_reuploadBetweenLeaseAndFinish_labelledWithItsLayersVersi
     # Assert: each answer is labelled, and matched to declarations, with the rows it read.
     versions = {item["question"]: item["dataset_version"] for item in FakeCore.asked}
     assert versions == {"on v1": "v1", "on v2": "v2"}
+
+
+# --- PR #99 review: a confirmation that finishes on a retired layer after a re-upload ---------
+
+
+def _visit_rows_of(patients: int) -> pl.DataFrame:
+    """Two visit rows per patient, so a count is held until rows are confirmed as visits."""
+    ids = [f"P{i // 2:03d}" for i in range(2 * patients)]
+    return pl.DataFrame({"patient_id": ids, "age": [30 + int(pid[1:]) for pid in ids]})
+
+
+async def _answered(request: QueryRequest) -> QueryResult:
+    query_id = (await queries.submit_query(request)).query_id
+    await _completed(query_id)
+    return await queries.get_query_result(query_id)
+
+
+def _confirming(question: QueryRequest, held: QueryResult) -> QueryRequest:
+    """``question`` again, confirming the plan ``held`` showed."""
+    return QueryRequest(
+        **question.model_dump(exclude={"confirmed", "confirm_plan_hash", "confirm_plan_line"}),
+        confirmed=True,
+        confirm_plan_hash=held.plan_hash,
+        confirm_plan_line=held.plan_line,
+    )
+
+
+async def test_confirmation_finishesOnRetiredLayerAfterReupload_currentVersionStaysConfirmed(
+    fresh_layer_cache: LayerCache[Any], make_semantic_layer: Callable[..., Any]
+) -> None:
+    # Arrange: real layers for v1 (10 patients) and v2 (20 patients), two visit rows each.
+    dataset_id = "stale_grain"
+    queries._query_services.pop(dataset_id, None)
+    layers: dict[str, Any] = {}
+    for version, patients in (("v1", 10), ("v2", 20)):
+        layer = make_semantic_layer(dataset_name="clinic", data=_visit_rows_of(patients), workspace_name=version)
+        layer.loaded_version = version
+        layers[version] = layer
+    current = {"version": "v1"}
+    fresh_layer_cache._build = lambda _id: layers[current["version"]]
+    question = QueryRequest(session_id="sess", dataset_id=dataset_id, query_text="how many patients")
+    held_v1 = await _answered(question)
+    # The v1 confirmation leases v1's layer and is held in its (unlocked) parse.
+    real_parse = NLQueryEngine.parse_query
+    v1_parsing, v1_released = threading.Event(), threading.Event()
+
+    def parse_query(engine: NLQueryEngine, *args: Any, **kwargs: Any) -> Any:
+        if engine.semantic_layer is layers["v1"] and not v1_released.is_set():
+            v1_parsing.set()
+            assert v1_released.wait(_BLOCKED_S)
+        return real_parse(engine, *args, **kwargs)
+
+    with patch.object(NLQueryEngine, "parse_query", parse_query):
+        v1_confirmation = asyncio.ensure_future(_answered(_confirming(question, held_v1)))
+        assert await asyncio.to_thread(v1_parsing.wait, _BLOCKED_S)
+        current["version"] = "v2"
+        dependencies.invalidate_semantic_layer_cache(dataset_id)  # the re-upload
+        held_v2 = await _answered(question)
+        confirmed_v2 = await _answered(_confirming(question, held_v2))
+
+        # Act: the v1 confirmation finishes on its retired layer, then v2 is asked again.
+        v1_released.set()
+        finished_v1 = await v1_confirmation
+        asked_v2 = await _answered(question)
+
+    # Assert: each confirmation answered on its own version; v2's question is not held again.
+    assert (held_v1.status, held_v2.status) == ("awaiting_confirmation", "awaiting_confirmation")
+    assert (confirmed_v2.status, confirmed_v2.claim) == ("completed", "Total count: 20 patients.")
+    assert finished_v1.status == "completed"
+    assert (asked_v2.status, asked_v2.claim) == ("completed", "Total count: 20 patients.")
+    queries._query_services.pop(dataset_id, None)

@@ -310,11 +310,15 @@ class QueryService:
         """Under the lock: nothing the question's parse and checks read changed since _prepare.
 
         The stored declarations are read again (another question, or another process, may have
-        stored a confirmation without touching this layer).
+        stored a confirmation without touching this layer). Only the question's own version is
+        compared: a confirmation stored for another version (a retired layer finishing after a
+        re-upload) changes nothing this question reads.
         """
         if self._state_generation() != prepared.generation:
             return False
-        return self._load_declarations(prepared.declaration_key) == prepared.declarations
+        stored = self._load_declarations(prepared.declaration_key)
+        version = prepared.dataset_version
+        return stored is not None and stored.for_version(version) == prepared.declarations.for_version(version)
 
     def _connection_lock(self) -> Any:
         """The layer's DuckDB lock (a stand-in layer without one gets its own)."""
