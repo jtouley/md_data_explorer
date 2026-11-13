@@ -16,7 +16,18 @@ from typing import Any
 
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic
-from clinical_analytics.core.question_vocabulary import NO_LIMIT_WORDS, SUBJECT_WORDS
+from clinical_analytics.core.question_vocabulary import (
+    INVERSE_OP,
+    NEGATION_CUES,
+    NO_LIMIT_WORDS,
+    RANGE_PATTERN,
+    SUBJECT_WORDS,
+    NegationScope,
+    negation_scope,
+    postfix_negated,
+    range_ends,
+    range_in_order,
+)
 
 _OVER = re.compile(r"\b(?:over|above|older than)\s+(\d+(?:\.\d+)?)\b", re.IGNORECASE)
 # Comparisons: "<direction> N" and "N <direction>" ("65+", "65 or older", "at least 65").
@@ -30,13 +41,6 @@ _POST_COMPARE = re.compile(
     r"younger|under|below|lower)\b(?! than)(?!\s+\d))",
     re.IGNORECASE,
 )
-# A range, both ends included: "between 50 and 65", "aged 40 to 60", "40-60".
-_RANGE = re.compile(
-    r"\b(?:between\s+(?P<lo>\d+(?:\.\d+)?)\s+and\s+(?P<hi>\d+(?:\.\d+)?)"
-    r"|(?P<lo2>\d+(?:\.\d+)?)\s*(?:to|-)\s*(?P<hi2>\d+(?:\.\d+)?))\b",
-    re.IGNORECASE,
-)
-_INVERSE_OP = {"gt": "le", "lt": "ge", "ge": "lt", "le": "gt"}
 _PRE_OPS = {"at least": "ge", "at most": "le"}
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 _LOWER_WORDS = ("under", "below", "younger", "less", "fewer", "lower")
@@ -57,20 +61,11 @@ _COMPARE_SPLIT = re.compile(
 _BY_GROUP = re.compile(r"\bby\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
 # "in each site", "per site": the same grouping as "by site".
 _EACH_GROUP = re.compile(r"\b(?:each|per)\s+(?P<group>[a-z0-9 :]+?)\s*[?.]?$", re.IGNORECASE)
-# Words that turn "<value>" into "everyone except <value>". Binding the value as an
-# equality would answer for exactly the patients the question excludes.
-_NEGATION = re.compile(
-    r"\b(?:no longer|not|non|no|never|outside|remove|removing|exclude|excluding|without|except|drop|omit|"
-    r"other than|get rid of|don'?t want|do not want)\b",
-    re.IGNORECASE,
-)
 # Words that end the measure named after a statistic word and start a limit or a grouping.
 _METRIC_END = re.compile(
     r"\b(?:in|for|who|with|on|among|by|within|of|from|at|over|under|above|below|aged|older|younger|between|"
     r"excluding|except|outside|not|without)\b"
 )
-# "<value> non-users": the negation follows the value it excludes ("statin non-users").
-_NON_USERS = re.compile(r"[\s-]+non[\s-]*(?:users?|takers?|patients?)\b")
 # "proportion of <denominator> are/who/have ... <numerator>": the words before the verb name
 # the population, the words after it the thing being counted.
 _SHARE_SPLIT = re.compile(
@@ -187,13 +182,13 @@ def peel_cohort(
 
     age = _best_column(columns, {"age"})
     ranged: set[int] = set()
-    for match in _RANGE.finditer(lowered):
-        # Both ends belong to the column the words before the lower end name; unknown owner
-        # or a negated range: leave it unbound, so the plan holds.
-        lo_group = "lo" if match.group("lo") else "lo2"
-        hi_group = "hi" if match.group("hi") else "hi2"
+    for match in RANGE_PATTERN.finditer(lowered):
+        # Both ends belong to the column the words before the lower end name. Unknown owner,
+        # a negation anywhere before it, or a reversed range ("between 65 and 50"): leave it
+        # unbound, so the plan holds.
+        _low, _high, lo_group, hi_group = range_ends(match)
         ranged |= {match.start(lo_group), match.start(hi_group)}
-        if _negated(lowered, match.start()):
+        if _scope(lowered, match.start()) != "clear" or not range_in_order(match):
             continue
         tokens_before = _owner_tokens(lowered[: match.end(lo_group)])
         named = _owner_of(tokens_before, columns, values_for)
@@ -208,9 +203,13 @@ def peel_cohort(
             continue
         # The number belongs to the column the question names before it ("bmi over 30");
         # age only when the words say so. Unknown owner: leave it unbound, so the plan holds
-        # instead of guessing. "not over 65" is "65 or under".
-        if _negated(lowered, match.start()):
-            op = _INVERSE_OP[op]
+        # instead of guessing. "not over 65" is "65 or under". A negation that may or may not
+        # reach the comparison ("excluding those with ldl over 160"): never bind it as asked.
+        scope = _scope(lowered, match.start())
+        if scope == "uncertain":
+            continue
+        if scope == "negated":
+            op = INVERSE_OP[op]
         named = _number_owner(lowered, match, columns, values_for)
         if named:
             steps.append((0, CohortStep(op, named, float(match.group("num")))))  # type: ignore[arg-type]
@@ -274,12 +273,22 @@ def peel_cohort(
             bound_columns.add(grouping_column)
 
     for column, value, at in value_hits:
-        negated = _negated(lowered, at)
+        scope = _scope(lowered, at)
+        if scope == "uncertain":
+            # "without diabetes and hypertension", "excluding women on placebo": the negation
+            # may cover this value too. Unbound, so the plan holds.
+            continue
+        negated = scope == "negated"
         if negated and (isinstance(value, list) or (numerator_at is not None and at >= numerator_at)):
             # "not in the north or west", "share ... not on placebo": no single exclusion
             # step says that, so the value stays unbound and the plan holds.
             continue
-        if rate_at is not None and not negated and not isinstance(value, list):
+        if isinstance(value, list) and (rate_at is not None or (numerator_at is not None and at >= numerator_at)):
+            # "more likely to be in the north or west", "share ... in the north or west": a rate or
+            # share of several values at once is not a plan this layer computes, and the rate's
+            # own column must never become a cohort limit. Unbound, so the plan holds.
+            continue
+        if rate_at is not None and (at > rate_at or not negated):
             if at < rate_at:
                 rate_groups.add(column)
                 bound_columns.add(column)
@@ -357,7 +366,8 @@ def peel_cohort(
             continue
         steps.append((phase, CohortStep(op, column, polarity)))  # type: ignore[arg-type]
         bound_columns.add(column)
-    if len(numerators) == 1:
+    if len(numerators) == 1 and not isinstance(numerators[0][1], list):
+        # One numerator value only: a share of an "or" list is never a plan (left unbound above).
         proportion_column, proportion_value = numerators[0]
 
     locked_metric = None
@@ -539,10 +549,14 @@ def unapplied_constraints(
     comparing = re.search(r"\bcompare\b|\bby sex\b|\bby gender\b", text) is not None
 
     over = _OVER.search(text)
-    # "not over 65" is applied as "65 or under".
-    over_op = "le" if over and _negated(text, over.start()) else "gt"
-    if over and not any(
-        step.op == over_op and str(step.value) in {over.group(1), str(float(over.group(1)))} for step in steps
+    # "not over 65" is applied as "65 or under"; a negation that may not reach it is never applied.
+    over_scope = _scope(text, over.start()) if over else "clear"
+    over_op = "le" if over_scope == "negated" else "gt"
+    if over and (
+        over_scope == "uncertain"
+        or not any(
+            step.op == over_op and str(step.value) in {over.group(1), str(float(over.group(1)))} for step in steps
+        )
     ):
         gaps.append(f"over {over.group(1)}")
     if _DECILE.search(text) and not any(step.op == "ge_percent_rank" for step in steps):
@@ -732,7 +746,10 @@ def _binary_polarity(
     ("eq", "none").
     """
     yes, no = yes_no_values(column, values)
-    negated = _negated(text, at)
+    scope = _scope(text, at)
+    if scope == "uncertain":
+        return None
+    negated = scope == "negated"
     if yes is not None and no is not None:
         return ("eq", no) if negated else ("eq", yes)
     absent = absence_value(values)
@@ -755,7 +772,7 @@ def _names_a_subset(text: str, at: int) -> bool:
         return False
     if after and after[0] in SUBJECT_WORDS:
         return True
-    return bool(before) and (before[-1] in NO_LIMIT_WORDS or _NEGATION.fullmatch(before[-1]) is not None)
+    return bool(before) and (before[-1] in NO_LIMIT_WORDS or before[-1] in NEGATION_CUES)
 
 
 _ABSENCE_LABELS = frozenset({"none", "no", "never"})
@@ -788,44 +805,23 @@ def _qualified(text: str, at: int, columns: list[str], values_for: Callable[[str
     if not before:
         return False
     word = before[-1]
-    if word in NO_LIMIT_WORDS or word in _PLAIN_LEAD or word.isdigit() or _NEGATION.fullmatch(word):
+    if word in NO_LIMIT_WORDS or word in _PLAIN_LEAD or word.isdigit() or word in NEGATION_CUES:
         return False
     if any(_tokens(word) & _tokens(column) for column in columns):
         return False
     return not _value_hits(word, columns, values_for)
 
 
-def _postfix_non(window: str, match: re.Match[str]) -> bool:
-    """ "statin non-users": this "non" excludes the word before it, not the words after it."""
-    before = re.findall(r"[a-z0-9]+", window[: match.start()])
-    return (
-        match.group(0) == "non"
-        and _NON_USERS.match(window[match.start() - 1 :]) is not None
-        and bool(before)
-        and before[-1] not in NO_LIMIT_WORDS
-        and before[-1] not in _PLAIN_LEAD
-    )
+def _scope(text: str, at: int) -> NegationScope:
+    """Negation scope of the word at ``at``, by the rule the gate and the justifier share
+    (question_vocabulary.negation_scope); "statin non-users" negates "statin" from after it."""
+    from clinical_analytics.core.word_accounting import tokenize
 
-
-def _negated(text: str, at: int) -> bool:
-    """True when a negation word governs the word at position ``at``.
-
-    The negation must come before it with only words that carry no limit in between ("not on
-    placebo", "without a normal dexa result"), or follow it as "<value> non-users". A negation
-    that governs an earlier word ("not on placebo with diabetes") does not reach "diabetes":
-    the same scope the word-accounting gate gives a negation (its nearest content word).
-    """
-    window = text[max(0, at - 48) : at].replace("n't", " not")
-    last = None
-    for last in _NEGATION.finditer(window):
-        pass
-    if last is not None and not _postfix_non(window, last):
-        between = re.findall(r"[a-z0-9]+", window[last.end() :])
-        if all(word in NO_LIMIT_WORDS for word in between):
-            return True
-    word = re.match(r"[a-z0-9]+", text[at:])
-    end = at + (word.end() if word else 0)
-    return _NON_USERS.match(text[end:]) is not None
+    before = negation_scope(tokenize(text[:at]))
+    if not postfix_negated(tokenize(text[at:])):
+        return before
+    # "not statin non-users": two negations on one word; the words do not settle it.
+    return "negated" if before == "clear" else "uncertain"
 
 
 def yes_no_values(column: str, values: list[Any]) -> tuple[Any, Any]:

@@ -2293,6 +2293,18 @@ class SemanticLayer:
         if plan.group_by and plan.group_by not in available_columns:
             return {"valid": False, "error": f"Column '{plan.group_by}' not found in dataset"}
 
+        # A share counts one stored value; several at once ("north or west") is not computed here.
+        for share_column, share_value in (
+            (plan.proportion_column, plan.proportion_value),
+            (plan.rate_column, plan.rate_value),
+        ):
+            if share_column and isinstance(share_value, list | tuple | set):
+                return {
+                    "valid": False,
+                    "error": f"A share of several values of '{share_column}' at once is not supported; "
+                    "ask about one value at a time.",
+                }
+
         # Check filter columns exist and operators are valid
         valid_operators = {"==", "!=", ">", ">=", "<", "<=", "IN", "NOT_IN"}
         for filter_spec in plan.filters:

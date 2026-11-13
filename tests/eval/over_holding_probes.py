@@ -141,11 +141,6 @@ ANSWERED: tuple[Probe, ...] = (
     Probe("coh", "how many patients outside the west?", count(c("site") != "West")),
     Probe("coh", "how many patients except those in the west?", count(c("site") != "West")),
     Probe("coh", "how many patients without a normal dexa result?", count(c(DEXA) != 1)),
-    Probe(
-        "coh",
-        "how many patients not on placebo with diabetes?",
-        count((c("treatment") != "placebo") & (c("diabetes") == 1)),
-    ),
     Probe("coh", "how many patients in the north or west?", count(c("site").is_in(["North", "West"]))),
     Probe(
         "coh",
@@ -239,6 +234,8 @@ HELD: tuple[Probe, ...] = (
     Probe("coh", "how many patients in North and South sites?", None),
     Probe("coh", "how many patients under 40 or over 80?", None),
     Probe("coh", "how many patients not in the north or west?", None),
+    # A negation before two items may cover both: "not (on placebo with diabetes)".
+    Probe("coh", "how many patients not on placebo with diabetes?", None),
     Probe("own", "how many patients on a drug?", None),
     Probe("own", "what proportion of women are on statins?", None),
     # A grouping by a measurement (one group per exact LDL value) identifies patients.

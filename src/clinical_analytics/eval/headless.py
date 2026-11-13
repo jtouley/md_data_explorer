@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import polars as pl
 
@@ -168,6 +168,31 @@ def service_for(dataset_id: str, workspace: Path | None = None) -> QueryService:
     return _SERVICES[dataset_id]
 
 
+Limit: TypeAlias = tuple[str, str, Any]
+_FILTER_OPS = {"==": "eq", "!=": "ne", ">": "gt", ">=": "ge", "<": "lt", "<=": "le", "IN": "in", "NOT_IN": "not_in"}
+
+
+def _limit_value(value: Any) -> Any:
+    if isinstance(value, list | tuple):
+        return tuple(sorted((_limit_value(item) for item in value), key=repr))
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return value
+
+
+def plan_limits(plan: Any) -> list[Limit]:
+    """Every limit the plan applies, filters and cohort steps alike, as (op, column, value) in one
+    order: two plans that keep the same patients by the same limits compare equal."""
+    if plan is None:
+        return []
+    limits = [
+        (_FILTER_OPS.get(spec.operator, spec.operator), str(spec.column), _limit_value(spec.value))
+        for spec in plan.filters
+    ]
+    limits += [(str(step.op), str(step.column), _limit_value(step.value)) for step in plan.cohort_steps]
+    return sorted(limits, key=repr)
+
+
 def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str, Any]:
     """Parse and execute one question. Returns the service result plus plan fields."""
     service = service_for(dataset_id, workspace)
@@ -185,6 +210,9 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str,
         "intent": plan.intent if plan else None,
         "metric": plan.metric if plan else None,
         "group_by": plan.group_by if plan else None,
+        "limits": plan_limits(plan),
+        "proportion": (plan.proportion_column, plan.proportion_value) if plan and plan.proportion_column else None,
+        "rate": (plan.rate_column, plan.rate_value) if plan and plan.rate_column else None,
         "issues": issues,
         "confidence": result.confidence,
         "payload": payload,

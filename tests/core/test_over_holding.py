@@ -192,8 +192,8 @@ def test_peelCohort_labelDigit_neverBindsAStoredNumber(query: str, expected: lis
         pytest.param("how many patients outside the west?", [CohortStep("ne", "site", "West")], id="outside"),
         pytest.param(
             "how many patients not on placebo with diabetes?",
-            [CohortStep("ne", "treatment", "placebo"), CohortStep("eq", "diabetes", 1)],
-            id="negation_reaches_only_the_next_word",
+            [CohortStep("ne", "treatment", "placebo")],
+            id="negation_may_reach_the_next_item_unbound",
         ),
         pytest.param("how many patients with no diabetes?", [CohortStep("eq", "diabetes", 0)], id="no_indicator"),
     ],
@@ -614,7 +614,7 @@ def test_executeQueryPlan_compareMedianByGroup_computesMedians(make_semantic_lay
 
 def _many_values(column: str) -> list[Any]:
     if column == "ldl":
-        return [80.0 + index for index in range(40)]
+        return [80.5 + index for index in range(40)]
     return _VALUES[column]
 
 

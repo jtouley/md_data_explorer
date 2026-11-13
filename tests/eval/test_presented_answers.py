@@ -1,8 +1,8 @@
 """Grade what the app shows, not the raw execution frame.
 
-Every golden, hard, reviewer, adversarial and over-holding question that the app answers goes through the
-display path (QueryService.ask -> format_execution_result -> present_analysis) and the claim
-and table are read the way a clinician reads them. Safety property: an answered question
+Every golden, hard, reviewer, adversarial, over-holding and negation-scope question that the
+app answers goes through the display path (QueryService.ask -> format_execution_result ->
+present_analysis) and the claim and table are read the way a clinician reads them. Safety property: an answered question
 shows the true value, or hides it for small cells; it never shows a different value.
 """
 
@@ -26,8 +26,10 @@ from clinical_analytics.eval.headless import (
     register_frame,
 )
 from tests.eval.adversarial_probes import own_frame, probes
+from tests.eval.negation_probes import PROBES as SCOPE_PROBES
 from tests.eval.over_holding_probes import ANSWERED, HELD
 from tests.eval.reviewer_probes import PROBES
+from tests.eval.test_negation_probes import outcome as negation_outcome
 from tests.eval.test_over_holding_probes import outcome as over_holding_outcome
 
 
@@ -170,6 +172,10 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
     for probe in (*ANSWERED, *HELD):
         graded, result, expected = over_holding_outcome(probe)
         record("over-holding", probe.query, graded, expected, result)
+
+    for scope_probe in SCOPE_PROBES:
+        graded, result, expected = negation_outcome(scope_probe)
+        record("negation-scope", scope_probe.query, graded, expected, result)
     return tally, wrong
 
 
