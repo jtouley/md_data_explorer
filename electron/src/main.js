@@ -35,7 +35,7 @@ import {
   parseThemeSetting,
   serializeThemeSetting,
 } from './theme.js';
-import { API_BASE_URL_ARG_PREFIX, DEFAULT_API_BASE_URL } from './apiAuth.js';
+import { API_BASE_URL_ARG_PREFIX, externalApiBaseUrl } from './apiAuth.js';
 import {
   BackendSidecar,
   resolveHealthTimeoutMs,
@@ -60,14 +60,18 @@ const devNoAuth = resolveDevNoAuth(process.env) && useExternalBackend(process.en
 const externalBackend = useExternalBackend(process.env);
 /** @type {BackendSidecar | null} */
 let sidecar = null;
-/** Address of the backend this launch started (null: the preload default / dev override). */
+/**
+ * Address of the backend this launch uses: the one it started, or for an external dev backend
+ * VITE_API_URL / the default. Set before any page loads; the CSP header and the preload both get
+ * exactly this value, so they cannot disagree.
+ */
 let apiBaseUrl = null;
 let backendStopped = false;
 /** @type {BrowserWindow | null} shown while the backend starts */
 let startupWindow = null;
 
-/** CSP for the app's page: connect-src is exactly the backend this launch uses. */
-const pageCsp = () => contentSecurityPolicy(apiBaseUrl || DEFAULT_API_BASE_URL);
+/** CSP for the app's page: connect-src is exactly the backend this launch uses (throws if unset). */
+const pageCsp = () => contentSecurityPolicy(apiBaseUrl);
 
 const devServerUrl =
   typeof MAIN_WINDOW_VITE_DEV_SERVER_URL === 'string' && MAIN_WINDOW_VITE_DEV_SERVER_URL
@@ -170,8 +174,10 @@ function registerThemeHandlers() {
  * @returns {BrowserWindow} The created window
  */
 const createWindow = () => {
-  const additionalArguments = [`${THEME_ARG_PREFIX}${nativeTheme.themeSource}`];
-  if (apiBaseUrl) additionalArguments.push(`${API_BASE_URL_ARG_PREFIX}${apiBaseUrl}`);
+  const additionalArguments = [
+    `${THEME_ARG_PREFIX}${nativeTheme.themeSource}`,
+    `${API_BASE_URL_ARG_PREFIX}${apiBaseUrl}`,
+  ];
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -187,7 +193,7 @@ const createWindow = () => {
       webviewTag: false,
       preload: path.join(__dirname, 'preload.js'),
       // The saved theme (settings.json), so the page's first paint matches nativeTheme, and the
-      // address of the backend this launch started.
+      // address of the backend this launch uses (the same one the CSP header allows).
       additionalArguments,
     },
   });
@@ -308,7 +314,16 @@ app.whenReady().then(async () => {
   // Before any window exists, so the startup window's first paint already uses the saved theme.
   nativeTheme.themeSource = parseThemeSetting(readSettingsText());
   if (externalBackend) {
-    console.log('📡 Using an already-running backend (CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1)');
+    try {
+      // The same build-time value the preload falls back to, so the CSP header allows it.
+      apiBaseUrl = externalApiBaseUrl(import.meta.env.VITE_API_URL);
+    } catch (error) {
+      failStartup({ reason: 'config', detail: error.message });
+      return;
+    }
+    console.log(
+      `📡 Using an already-running backend at ${apiBaseUrl} (CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1)`
+    );
   } else {
     showStartupWindow();
     if (!(await startBackend())) return;

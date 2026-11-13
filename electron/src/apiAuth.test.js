@@ -255,6 +255,56 @@ describe('API address', () => {
   });
 });
 
+describe('external (dev) backend address: one value for the CSP header and the preload', () => {
+  test('VITE_API_URL on another port is the address the CSP header allows', async () => {
+    // Arrange
+    const { externalApiBaseUrl } = await import('./apiAuth.js');
+    const { contentSecurityPolicy } = await import('./apiToken.js');
+
+    // Act
+    const base = externalApiBaseUrl('http://127.0.0.1:8001');
+    const csp = contentSecurityPolicy(base);
+
+    // Assert
+    expect(base).toBe('http://127.0.0.1:8001');
+    expect(csp).toContain('connect-src http://127.0.0.1:8001');
+    expect(csp).not.toContain(':8000');
+  });
+
+  test.each([[undefined], [''], ['   ']])('VITE_API_URL %j: the default address', async (value) => {
+    const { externalApiBaseUrl } = await import('./apiAuth.js');
+    expect(externalApiBaseUrl(value)).toBe(DEFAULT_API_BASE_URL);
+  });
+
+  test.each([
+    ['http://localhost:8001'],
+    ['https://127.0.0.1:8001'],
+    ['http://127.0.0.1:8001/'],
+    ['http://127.0.0.1:8001/api'],
+    ['http://127.0.0.1:0'],
+    ['http://127.0.0.1:70000'],
+    ['http://192.168.1.5:8000'],
+    ['8001'],
+  ])('VITE_API_URL %j is refused loudly, never replaced by the default', async (value) => {
+    const { externalApiBaseUrl } = await import('./apiAuth.js');
+    expect(() => externalApiBaseUrl(value)).toThrow(
+      /VITE_API_URL must be http:\/\/127\.0\.0\.1:<port>/
+    );
+  });
+
+  test('main builds the CSP from the address it hands the preload, with no default of its own', async () => {
+    // Arrange
+    const { readFileSync } = await import('node:fs');
+    const main = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+
+    // Assert: one variable feeds both; an unset address throws in contentSecurityPolicy
+    expect(main).toContain('const pageCsp = () => contentSecurityPolicy(apiBaseUrl);');
+    expect(main).toContain('`${API_BASE_URL_ARG_PREFIX}${apiBaseUrl}`,');
+    expect(main).toContain('apiBaseUrl = externalApiBaseUrl(import.meta.env.VITE_API_URL);');
+    expect(main).not.toContain('DEFAULT_API_BASE_URL');
+  });
+});
+
 describe('contentSecurityPolicy (header from main)', () => {
   test('connect-src is exactly the backend origin of this launch', async () => {
     // Arrange

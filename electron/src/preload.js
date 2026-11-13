@@ -19,8 +19,9 @@ import {
 } from './apiAuth.js';
 import { THEME_GET_CHANNEL, THEME_SET_CHANNEL, isThemeSource, themeFromArgv } from './theme.js';
 
-// Backend API address: the port of the backend main started (it picks a free one), else the
-// dev-flow override or the default.
+// Backend API address: main always passes the one this launch uses (the backend it started, or
+// for an external dev backend VITE_API_URL / the default) and builds the CSP header from the same
+// value. The fallbacks only matter if the argument is missing.
 const API_BASE_URL =
   apiBaseUrlFromArgv(process.argv) || import.meta.env.VITE_API_URL || DEFAULT_API_BASE_URL;
 

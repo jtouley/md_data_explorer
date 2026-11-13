@@ -32,6 +32,27 @@ export function apiBaseUrlFromArgv(argv) {
   return port >= 1 && port <= 65535 ? `http://127.0.0.1:${port}` : null;
 }
 
+/**
+ * Address of an external (dev) backend: VITE_API_URL when set, else the default. Main uses it
+ * for the CSP header and hands it to the preload, so both use one address. A value that is not
+ * http://127.0.0.1:<port> throws instead of falling back: the CSP would block every request to
+ * it, and "localhost" may resolve to ::1.
+ * @param {string | undefined} viteApiUrl - import.meta.env.VITE_API_URL
+ * @returns {string}
+ */
+export function externalApiBaseUrl(viteApiUrl) {
+  const configured = (viteApiUrl || '').trim();
+  if (!configured) return DEFAULT_API_BASE_URL;
+  const url = apiBaseUrlFromArgv([`${API_BASE_URL_ARG_PREFIX}${configured}`]);
+  if (!url) {
+    throw new Error(
+      `VITE_API_URL must be http://127.0.0.1:<port> (no path, not "localhost"), got "${configured}". ` +
+        'Fix it and start the app again.'
+    );
+  }
+  return url;
+}
+
 /** IPC channel on which main hands { token, devNoAuth } to the preload script. */
 export const API_TOKEN_CHANNEL = 'clinical-api:token';
 
