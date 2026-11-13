@@ -332,6 +332,7 @@ class SemanticLayer:
 
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
+        self._base_row_count: int | None = None  # counted once: the source does not change
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -550,6 +551,12 @@ class SemanticLayer:
             self._base_view = self.raw
 
         return self._base_view
+
+    def get_base_row_count(self) -> int:
+        """Rows in the base view (the dataset row count the app shows), counted once per layer."""
+        if self._base_row_count is None:
+            self._base_row_count = int(self.get_base_view().count().execute())
+        return self._base_row_count
 
     def apply_filters(self, view, filters: dict[str, Any]) -> ibis.Table:
         """
@@ -1939,10 +1946,11 @@ class SemanticLayer:
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
-        if query_plan.filters:
+        if query_plan.filters and not formatted.get("error"):
             # The app shows the dataset's row count, so the rows a filter removed are a count
             # the reader can work out; the presenter suppresses it like the other counts.
-            formatted["dataset_row_count"] = int(self.get_base_view().count().execute())
+            # A failed result is never presented, so it does not need the count.
+            formatted["dataset_row_count"] = self.get_base_row_count()
         return formatted
 
     def _format_count_result(self, result_df: pl.DataFrame, query_plan: "QueryPlan", context: Any) -> dict[str, Any]:
