@@ -9,11 +9,18 @@ const ALLOWED_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls', '.sav']);
 
 /**
  * @param {Record<string, unknown>|null|undefined} raw
- * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality: import('./dataCheckPanel.js').DataCheck | null }}
+ * @returns {{ upload_id: string, dataset_name: string, status: string, message: string, quality: import('./dataCheckPanel.js').DataCheck | null, sheet_note: string }}
  */
 export function normalizeUploadResponse(raw) {
   if (!raw || typeof raw !== 'object') {
-    return { upload_id: '', dataset_name: '', status: 'failed', message: '', quality: null };
+    return {
+      upload_id: '',
+      dataset_name: '',
+      status: 'failed',
+      message: '',
+      quality: null,
+      sheet_note: '',
+    };
   }
   return {
     upload_id: String(raw.upload_id ?? ''),
@@ -21,17 +28,20 @@ export function normalizeUploadResponse(raw) {
     status: String(raw.status ?? 'failed'),
     message: String(raw.message ?? ''),
     quality: normalizeQuality(raw.quality),
+    // Excel: which sheet was read and which were not. Shown at upload, never dropped.
+    sheet_note: typeof raw.sheet_note === 'string' ? raw.sheet_note.trim() : '',
   };
 }
 
 /**
- * Status line with the data-check sentence appended ("{name} is ready. Data check found …").
+ * Status line with each note appended in order ("{name} is ready. Only the first sheet …
+ * Data check found …"). Empty notes are skipped.
  * @param {string} headline a full sentence
- * @param {string|null} note from dataCheckStatusNote
+ * @param {...(string|null|undefined)} notes full sentences: the sheet note, the data-check note
  * @returns {string}
  */
-export function uploadStatusText(headline, note) {
-  return note ? `${headline} ${note}` : headline;
+export function uploadStatusText(headline, ...notes) {
+  return [headline, ...notes.filter((note) => typeof note === 'string' && note)].join(' ');
 }
 
 /**

@@ -87,6 +87,7 @@ COHORT_PARQUET_KEY: Final = "cohort_parquet"
 RAW_LANDING_KEY: Final = "raw_landing"
 COLUMN_TYPES_KEY: Final = "column_types"
 COLUMN_UNITS_KEY: Final = "column_units"
+EXCEL_SHEETS_KEY: Final = "excel_sheets"  # Excel: the sheet read and the sheets with data left unread
 COHORT_BUILD_KEY: Final = "cohort_build"  # multi-table: tables left out of the cohort, and why
 LEGACY_UNTYPED_KEY: Final = "legacy_tables_untyped"  # legacy tables kept as old Parquet (no CSV)
 BASE_ACTIVE_VERSION_KEY: Final = "_base_active_version"  # active version when a save started
@@ -184,7 +185,15 @@ def normalize_upload_to_table_list(
         # Single-file: wrap in list (becomes multi-table with 1 table)
         staged = load_single_file_staged(file_bytes, filename)
         table_name = Path(filename).stem  # Use original filename stem
-        tables = [{"name": table_name, "data": staged.data, "notes": staged.notes, "units": staged.units}]
+        tables = [
+            {
+                "name": table_name,
+                "data": staged.data,
+                "notes": staged.notes,
+                "units": staged.units,
+                "sheets": staged.sheets,
+            }
+        ]
         doc_files = []  # No docs for single-file uploads by default
 
     # Handle external PDF/documentation files (standalone upload)
@@ -1179,6 +1188,7 @@ def save_table_list(
         column_units: dict[str, str] = {}
         for t in tables:
             column_units.update(t.get("units") or {})
+        excel_sheets = next((t["sheets"].as_dict() for t in tables if t.get("sheets") is not None), None)
 
         canonical_tables = {
             t["name"]: {
@@ -1229,6 +1239,7 @@ def save_table_list(
             RAW_LANDING_KEY: str(raw_landing) if raw_landing else None,
             COLUMN_TYPES_KEY: column_types,
             COLUMN_UNITS_KEY: column_units,
+            EXCEL_SHEETS_KEY: excel_sheets,
             COHORT_BUILD_KEY: cohort_build,
             "tables": table_names,
             "table_counts": {t["name"]: t["data"].height for t in tables},
