@@ -89,10 +89,11 @@ class TestQuerySubmitEndpoint:
         assert mock_async_query_service.submit_query.await_args.kwargs.get("confirmed") is False
 
     def test_queries_post_confirmed_true_forwards_to_service(self, test_client, mock_async_query_service):
-        """confirmed=true and the reviewed plan line are forwarded so the gate can release a hold."""
+        """confirmed=true and the reviewed plan's hash are forwarded so the gate can release a hold."""
         # Arrange
         mock_async_query_service.submit_query = AsyncMock(return_value="qry_confirm")
         plan_line = "COMPARE_GROUPS · outcome ldl · grouping sex · filters none · test group comparison"
+        plan_hash = "a" * 64
 
         # Act
         response = test_client.post(
@@ -103,6 +104,7 @@ class TestQuerySubmitEndpoint:
                 "query_text": "Compare LDL by sex",
                 "confirmed": True,
                 "confirm_plan_line": plan_line,
+                "confirm_plan_hash": plan_hash,
             },
         )
 
@@ -111,15 +113,22 @@ class TestQuerySubmitEndpoint:
         kwargs = mock_async_query_service.submit_query.await_args.kwargs
         assert kwargs.get("confirmed") is True
         assert kwargs.get("confirm_plan_line") == plan_line
+        assert kwargs.get("confirm_plan_hash") == plan_hash
 
-    @pytest.mark.parametrize("plan_line", [None, "", "   "], ids=["missing", "empty", "blank"])
-    def test_queries_post_confirmedWithoutPlanLine_rejected422(self, test_client, mock_async_query_service, plan_line):
-        """A confirmation must name the plan it covers; otherwise it could release any plan."""
+    @pytest.mark.parametrize("plan_hash", [None, "", "   "], ids=["missing", "empty", "blank"])
+    def test_queries_post_confirmedWithoutPlanHash_rejected422(self, test_client, mock_async_query_service, plan_hash):
+        """A confirmation must name the plan it covers by hash; a display line alone could release any plan."""
         # Arrange
         mock_async_query_service.submit_query = AsyncMock(return_value="qry_x")
-        body = {"session_id": "s", "dataset_id": "d", "query_text": "Compare LDL by sex", "confirmed": True}
-        if plan_line is not None:
-            body["confirm_plan_line"] = plan_line
+        body = {
+            "session_id": "s",
+            "dataset_id": "d",
+            "query_text": "Compare LDL by sex",
+            "confirmed": True,
+            "confirm_plan_line": "COMPARE_GROUPS · outcome ldl",
+        }
+        if plan_hash is not None:
+            body["confirm_plan_hash"] = plan_hash
 
         # Act
         response = test_client.post("/api/queries", json=body)

@@ -121,6 +121,7 @@ async def submit_query(
             context=request.context,
             confirmed=request.confirmed,
             confirm_plan_line=request.confirm_plan_line,
+            confirm_plan_hash=request.confirm_plan_hash,
         )
 
         return QueryResponse(
@@ -211,6 +212,7 @@ async def get_query_result(
         requires_confirmation=result.requires_confirmation,
         failure_reason=result.failure_reason,
         plan_line=result.plan_line,
+        plan_hash=result.plan_hash,
     )
 
 

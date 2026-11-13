@@ -256,13 +256,16 @@ export function buildQueryCompletedPresentation(intentRaw, resultPreview, claimA
 
 /**
  * Build a confirmation-hold presentation for low-confidence plans.
- * @param {{ plan_line?: string, failure_reason?: string, confidence?: number } | null | undefined} data
+ * @param {{ plan_line?: string, plan_hash?: string, failure_reason?: string, confidence?: number } | null | undefined} data
  * @param {string} pendingQuery
  * @param {{ datasetId?: string | null, sessionId?: string | null }} [binding] where the plan was held
- * @returns {{ content: string, result: { awaitingConfirmation: true, planLine: string, failureReason: string, pendingQuery: string, confidence: number | null } }}
+ * @returns {{ content: string, result: { awaitingConfirmation: true, planLine: string, planHash: string, failureReason: string, pendingQuery: string, confidence: number | null } }}
  */
 export function buildConfirmationHoldPresentation(data, pendingQuery, binding = {}) {
   const planLine = typeof data?.plan_line === 'string' ? data.plan_line : '';
+  // Hash of the exact executable plan on this card; Confirm sends it back and the backend
+  // releases only that plan.
+  const planHash = typeof data?.plan_hash === 'string' ? data.plan_hash : '';
   const failureReason =
     typeof data?.failure_reason === 'string' && data.failure_reason
       ? data.failure_reason
@@ -274,6 +277,7 @@ export function buildConfirmationHoldPresentation(data, pendingQuery, binding = 
     result: {
       awaitingConfirmation: true,
       planLine,
+      planHash,
       failureReason,
       pendingQuery: pendingQuery || '',
       confidence,

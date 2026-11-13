@@ -27,7 +27,8 @@ def test_executePlan_describeWholeNumberColumn_returnsSummaryStatistics(make_sem
     out = layer._execute_plan(QueryPlan(intent="DESCRIBE", metric="measure"))
 
     # Assert
-    assert list(out.columns) == STATS
+    # n_rows: patients who matched, so an all-missing measure is told apart from no match.
+    assert list(out.columns) == [*STATS, "n_rows"]
     assert out.shape[0] == 1
 
 

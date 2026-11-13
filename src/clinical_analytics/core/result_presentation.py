@@ -684,6 +684,17 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
                 stats = {k: _mask(v) for k, v in stats.items()}
                 reason = "n is hidden (n hidden)" if _is_count(n) else "n is missing"
                 claim = f"Statistics for {name} are not shown because {reason}."
+            elif (
+                str(analysis.get("statistic") or "mean") != "mean"
+                and stats.get(str(analysis.get("statistic"))) is not None
+            ):
+                # Lead with the statistic the question asked for; the table has the rest.
+                asked = str(analysis.get("statistic"))
+                claim = _with_details(
+                    f"{_STATISTIC_LABELS.get(asked, asked)} {name} was {_fmt(stats[asked])}",
+                    ["n hidden" if n_hidden else f"n={n}"],
+                )
+                claim += "."
             elif stats["mean"] is not None:
                 claim = _with_details(
                     f"Mean {name} was {_fmt(stats['mean'])}",
@@ -748,6 +759,117 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
     return {"claim": claim, "table": None}
 
 
+_STATISTIC_LABELS = {"mean": "Mean", "median": "Median", "min": "Minimum", "max": "Maximum", "std": "SD of"}
+
+
+def _group_label(column: str, level: Any) -> str:
+    return "missing" if level is None else display_level(column, level)
+
+
+def _counts_small(events: Any, n: Any) -> bool:
+    """A share events/n reveals both counts (with and without the value) once n is known.
+
+    True when either is from 1 to threshold-1, or when the counts are missing (fail closed).
+    """
+    if not _is_count(events) or not _is_count(n):
+        return True
+    return any(0 < count < _limit(None) for count in (int(events), int(n) - int(events)))
+
+
+def _percent(value: float) -> str:
+    return f"{_fmt(100 * value, 1)}%"
+
+
+def _present_proportion(analysis: Mapping[str, Any]) -> Presentation:
+    """Share of patients with a value. Hidden when either of its counts (with, without) is small:
+    the share and n together give both counts."""
+    column = str(analysis.get("column") or "value")
+    event = _event_phrase(column, analysis.get("value"))
+    share = _num(analysis.get("proportion"))
+    hidden_n = suppress_with_exclusions(analysis, {})
+    n_clause = _n_clause(analysis, hidden_n)
+    if share is None:
+        return {
+            "claim": f"No patient who matched has '{column}' recorded, so there is no share to report.",
+            "table": None,
+        }
+    n_used = analysis.get("n_used")
+    # Hidden too when n is hidden and that narrows it (as for any whole-sample statistic).
+    withheld = _counts_small(analysis.get("events"), n_used) or not _overall_statistics_shown(
+        n_used, N_USED in hidden_n, _cohort(analysis), 0
+    )
+    if withheld:
+        claim = _with_details(
+            f"The share with {event} is not shown because one of its counts is fewer than {_limit(None)} patients",
+            [n_clause],
+        )
+    else:
+        population = "patients who matched the limits" if analysis.get("limited") else "patients"
+        claim = _with_details(f"{_percent(share)} of {population} had {event}", [n_clause])
+    row = {
+        "proportion": SECONDARY_SUPPRESSED if withheld else share,
+        "n": SECONDARY_SUPPRESSED if N_USED in hidden_n else n_used,
+    }
+    return {"claim": claim + ".", "table": _table([row])}
+
+
+def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
+    """Rate of a value in each group. A group's n is suppressed as group sizes are; its rate is
+    hidden with its n, or when either of its counts (with, without) is small."""
+    column = str(analysis.get("column") or "value")
+    group_col = str(analysis.get("group_col") or "group")
+    event = _event_phrase(column, analysis.get("value"))
+    groups = list(analysis.get("groups") or [])
+    sizes = {str(g.get("group")): g.get("n") for g in groups}
+    hidden = suppress_with_exclusions(analysis, sizes)
+    n_clause = _n_clause(analysis, hidden)
+    rows, parts, withheld = [], [], False
+    for g in groups:
+        key, n, events = str(g.get("group")), g.get("n"), g.get("events")
+        rate = _num(g.get("rate"))
+        label = _group_label(group_col, g.get("group"))
+        rate_hidden = _unchecked(key, n, hidden) or _counts_small(events, n)
+        withheld = withheld or rate_hidden
+        rows.append(
+            {
+                group_col: label,
+                "rate": SECONDARY_SUPPRESSED if rate_hidden else rate,
+                "n": SECONDARY_SUPPRESSED if key in hidden else n,
+            }
+        )
+        parts.append(f"{label} {'not shown' if rate_hidden else ('no values' if rate is None else _percent(rate))}")
+    claim = _with_details(f"{event} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
+    if withheld:
+        claim += f" A rate is not shown when one of its counts is fewer than {_limit(None)} patients."
+    return {"claim": claim, "table": _table(rows)}
+
+
+def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
+    """One statistic per group. A group's value is hidden with its size: the median, minimum or
+    maximum of a few patients is one patient's value."""
+    statistic = str(analysis.get("statistic") or "mean")
+    metric = short_name(str(analysis.get("metric") or "value"))
+    group_col = str(analysis.get("group_col") or "group")
+    groups = list(analysis.get("groups") or [])
+    sizes = {str(g.get("group")): g.get("n") for g in groups}
+    hidden = suppress_with_exclusions(analysis, sizes)
+    n_clause = _n_clause(analysis, hidden)
+    value_column = f"{statistic} {metric}"
+    rows, parts = [], []
+    for g in groups:
+        key, value = str(g.get("group")), _num(g.get("value"))
+        label = _group_label(group_col, g.get("group"))
+        shown = SECONDARY_SUPPRESSED if _unchecked(key, g.get("n"), hidden) else value
+        rows.append({group_col: label, value_column: shown, "n": SECONDARY_SUPPRESSED if key in hidden else g.get("n")})
+        withheld = shown == SECONDARY_SUPPRESSED
+        parts.append(f"{label} {'not shown' if withheld else ('no values' if value is None else _fmt(value))}")
+    label = _STATISTIC_LABELS.get(statistic, statistic)
+    claim = _with_details(f"{label} {metric} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
+    if any(key in hidden for key in sizes):
+        claim += " Values are not shown for groups whose size is hidden to protect privacy."
+    return {"claim": claim, "table": _table(rows)}
+
+
 def _total_hidden(analysis: Mapping[str, Any], total: Any) -> bool:
     """A count total is hidden when it, or the rows the filters removed, is from 1 to 10."""
     if not _is_count(total):
@@ -771,6 +893,9 @@ _PRESENTERS = {
     "survival": _present_survival,
     "descriptive": _present_descriptive,
     "count": _present_count,
+    "proportion": _present_proportion,
+    "rate": _present_rate,
+    "grouped_statistic": _present_grouped_statistic,
 }
 
 

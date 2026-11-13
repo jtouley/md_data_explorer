@@ -9,14 +9,64 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+import polars as pl
+
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
-from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line
+from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
-from clinical_analytics.core.query_plan import QueryPlan
+from clinical_analytics.core.plan_values import absent_value_reason
+from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
+from clinical_analytics.core.word_accounting import hold_reason, unjustified_elements, unjustified_reason, unused_words
+
+_GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len", "n_rows", "n_pairs", "events"})
+NO_MATCH_REASON = "No patients matched the question's limits, so there is no value to report."
+
+
+def all_null_statistics_reason(result: Any, plan: QueryPlan) -> str | None:
+    """Plain-language refusal when every requested statistic came back empty, with the real cause.
+
+    A frame of null statistics is not an answer. The reason says why: no patient matched the
+    limits, the patients who matched have no recorded value, or (correlation) too few pairs or
+    a column that does not vary. Counts are exempt: zero patients is a real answer.
+    """
+    if result is None or (plan.intent == "COUNT" and not (plan.proportion_column or plan.rate_column)):
+        return None
+    frame = result if isinstance(result, pl.DataFrame) else _to_polars(result)
+    if frame is None:
+        return None
+    if frame.height == 0:
+        return NO_MATCH_REASON
+    stats = [
+        name for name in frame.columns if name not in {plan.group_by, plan.metric} and name not in _GROUP_SIZE_COLUMNS
+    ]
+    if not stats or not frame.select(pl.all_horizontal(pl.col(stats).is_null().all())).item():
+        return None
+    matched = int(frame.get_column("n_rows").sum()) if "n_rows" in frame.columns else None
+    if matched == 0:
+        return NO_MATCH_REASON
+    if plan.proportion_column or plan.rate_column:
+        column = plan.proportion_column or plan.rate_column
+        return f"No patient who matched has '{column}' recorded, so there is no share to report."
+    if "n_pairs" in frame.columns:
+        if int(frame.get_column("n_pairs").sum()) < 2:
+            return "Cannot compute the correlation: fewer than 2 patients who matched have both values recorded."
+        return (
+            "Cannot compute the correlation: one of the two columns has the same value for every patient who matched."
+        )
+    if plan.metric:
+        return f"Every patient who matched is missing '{plan.metric}', so there is no value to report."
+    return "The patients who matched have no recorded values to report."
+
+
+def _to_polars(result: Any) -> pl.DataFrame | None:
+    try:
+        return pl.from_pandas(result)
+    except (TypeError, ValueError, ImportError):
+        return None
 
 
 @dataclass
@@ -35,6 +85,7 @@ class QueryResult:
     requires_confirmation: bool = False  # Low-confidence hold
     failure_reason: str | None = None  # Hold or refuse reason
     plan_line: str | None = None  # One-line plan summary for confirm UI
+    plan_hash: str | None = None  # Canonical hash of the executable plan; a confirmation must return it
 
 
 class QueryService:
@@ -65,6 +116,7 @@ class QueryService:
         conversation_history: list[dict[str, Any]] | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
     ) -> QueryResult:
         """Parse and execute a query on this layer's single DuckDB connection."""
         lock = getattr(self.semantic_layer, "_con_lock", None)
@@ -83,6 +135,7 @@ class QueryService:
                 conversation_history=conversation_history,
                 confirmed=confirmed,
                 confirm_plan_line=confirm_plan_line,
+                confirm_plan_hash=confirm_plan_hash,
             )
 
     def _ask_unlocked(
@@ -94,6 +147,7 @@ class QueryService:
         conversation_history: list[dict[str, Any]] | None = None,
         confirmed: bool = False,
         confirm_plan_line: str | None = None,
+        confirm_plan_hash: str | None = None,
     ) -> QueryResult:
         """
         Parse and execute query, return structured result.
@@ -171,14 +225,15 @@ class QueryService:
         plan_line: str | None = None
         execution_run_key: str | None = run_key
 
-        # A confirmation covers the plan the user saw. Re-parsing (e.g. via the LLM tier) can
-        # yield a different plan; that one must be shown and confirmed on its own.
-        # A confirmation without the plan line it covers releases nothing.
+        # A confirmation covers exactly the executable plan the user reviewed: it is bound to
+        # the canonical plan hash, never to the display line (two plans can share a line).
+        # Re-parsing can yield a different plan; that one is held and shown on its own.
         shown_plan_line = format_plan_line(query_plan, context)
+        plan_hash = plan_fingerprint(query_plan, context)
         plan_changed = False
-        if confirmed and (not confirm_plan_line or shown_plan_line != confirm_plan_line):
+        if confirmed and confirm_plan_hash != plan_hash:
             confirmed = False
-            plan_changed = bool(confirm_plan_line)
+            plan_changed = True
 
         if not validation_result.get("valid", False):
             # Fail closed: an invalid plan is refused here and never reaches execution.
@@ -209,7 +264,28 @@ class QueryService:
                 requires_confirmation=True,
                 failure_reason=PLAN_CHANGED_REASON,
                 plan_line=shown_plan_line,
+                plan_hash=plan_hash,
             )
+
+        # Word accounting (all tiers): a plan that leaves a word of the question unused answers
+        # a different question. Hold it for review regardless of confidence; only the user's
+        # confirmation of this exact plan (by hash) releases it.
+        # Reverse accounting: every element of the plan must also be asked for by the question.
+        if not confirmed:
+            accounting_reason = self._accounting_hold_reason(normalized_query, query_plan, context)
+            if accounting_reason:
+                return QueryResult(
+                    plan=query_plan,
+                    issues=issues,
+                    result=None,
+                    confidence=query_intent.confidence,
+                    run_key=None,
+                    context=context,
+                    requires_confirmation=True,
+                    failure_reason=accounting_reason,
+                    plan_line=shown_plan_line,
+                    plan_hash=plan_hash,
+                )
 
         try:
             execution_result = self.semantic_layer.execute_query_plan(
@@ -235,12 +311,21 @@ class QueryService:
                     reason = failure_reason or ((execution_result.get("warnings") or ["Execution failed"])[0])
                     issues.append({"message": str(reason), "severity": "error"})
                 elif execution_result.get("success") is True:
-                    # Run the statistics for the plan's intent (t-test, regression, ...).
-                    analysis = self.semantic_layer.format_execution_result(execution_result, context)
-                    if analysis.get("error"):
-                        issues.append({"message": str(analysis["error"]), "severity": "error"})
+                    empty_reason = all_null_statistics_reason(execution_result.get("result"), query_plan)
+                    if empty_reason:
+                        failure_reason = empty_reason
+                        issues.append({"message": empty_reason, "severity": "error"})
                     else:
-                        claim = present_analysis(analysis).get("claim")
+                        # Run the statistics for the plan's intent (t-test, regression, ...).
+                        analysis = self.semantic_layer.format_execution_result(execution_result, context)
+                        if analysis.get("error"):
+                            issues.append({"message": str(analysis["error"]), "severity": "error"})
+                        else:
+                            claim = present_analysis(analysis).get("claim")
+        except CohortStepError as e:
+            # Already plain language: say why the limit could not be applied.
+            failure_reason = str(e)
+            issues.append({"message": failure_reason, "severity": "error"})
         except Exception as e:
             issues.append({"message": f"Execution failed: {str(e)}", "severity": "error"})
 
@@ -256,7 +341,27 @@ class QueryService:
             requires_confirmation=requires_confirmation,
             failure_reason=failure_reason,
             plan_line=plan_line,
+            plan_hash=plan_hash,
         )
+
+    def _accounting_hold_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
+        """Why this plan must be reviewed before it runs, or None when question and plan agree.
+
+        Forward: a word of the question the plan does not use. Reverse: an element of the plan
+        the question does not ask for. Then: a limit on a value its column does not hold.
+        """
+        columns = list(self.semantic_layer.get_base_view().columns)
+        raw_index = self.semantic_layer.get_column_alias_index()
+        alias_index = raw_index if isinstance(raw_index, dict) else None
+        values_for = self.nl_engine._distinct_values
+        unused = unused_words(question, plan, columns, values_for, alias_index=alias_index, context=context)
+        if unused:
+            return hold_reason(unused)
+        unasked = unjustified_elements(question, plan, columns, values_for, alias_index=alias_index, context=context)
+        if unasked:
+            return unjustified_reason(unasked)
+        # Value presence: a limit on a value the column does not hold would report "0 patients".
+        return absent_value_reason(plan, columns, values_for)
 
     def _generate_run_key(self, plan: QueryPlan, query_text: str) -> str:
         """
