@@ -104,3 +104,52 @@ def test_loaders_packageCopiedOutsideRepo_readShippedConfig(tmp_path):
     assert '"global": true' in out
     assert '"intents": true' in out
     assert '"demo": true' in out
+
+
+@pytest.fixture
+def package_without_config_dir(monkeypatch, tmp_path):
+    """An install whose resources package has no config directory (an incomplete wheel or bundle)."""
+    root = tmp_path / "clinical_analytics" / "resources"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(resources.resources, "files", lambda _pkg: root)
+    return root
+
+
+@pytest.mark.parametrize("config_entry", ["absent", "a_file"], ids=["no_config_dir", "config_is_a_file"])
+def test_shipped_config_dir_missingDirectory_raisesResourceNotFoundError(package_without_config_dir, config_entry):
+    # Arrange
+    if config_entry == "a_file":
+        (package_without_config_dir / resources.CONFIG_SUBDIR).write_text("not a directory")
+
+    # Act / Assert
+    with pytest.raises(resources.ResourceNotFoundError, match="config directory is missing.*reinstall the app"):
+        resources.shipped_config_dir()
+
+
+@pytest.mark.parametrize(
+    "loader_name",
+    [
+        "load_nl_query_config",
+        "load_ui_config",
+        "load_logging_config",
+        "load_patterns_config",
+        "load_golden_examples_config",
+        "load_validation_config",
+    ],
+)
+def test_config_loaders_missingConfigDirectory_raiseInsteadOfUsingDefaults(package_without_config_dir, loader_name):
+    # Arrange
+    from clinical_analytics.core import config_loader
+
+    loader = getattr(config_loader, loader_name)
+    loader = getattr(loader, "__wrapped__", loader)  # skip the lru_cache of load_patterns_config
+
+    # Act / Assert: an incomplete install fails; it does not run on built-in defaults
+    with pytest.raises(resources.ResourceNotFoundError, match="config directory is missing"):
+        loader()
+
+
+def test_config_file_missingConfigDirectory_raisesResourceNotFoundError(package_without_config_dir):
+    # Act / Assert
+    with pytest.raises(resources.ResourceNotFoundError):
+        resources.config_file("datasets.yaml")

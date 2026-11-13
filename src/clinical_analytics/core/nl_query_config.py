@@ -4,8 +4,8 @@ Single source of truth for confidence thresholds and parsing parameters.
 These are domain config, not code - adjust without code changes.
 
 Configuration is loaded from resources/config/nl_query.yaml via config_loader.
-Ollama configuration values are also in resources/config/nl_query.yaml
-(loaded from resources/config/ollama.yaml during migration).
+Ollama configuration values are also read from resources/config/nl_query.yaml
+(resources/config/ollama.yaml is a reference copy and is not read).
 Environment variables take precedence over YAML config.
 """
 

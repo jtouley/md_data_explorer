@@ -37,7 +37,8 @@ Logging configuration. Contains:
 - Noise reduction settings (loggers to set to WARNING)
 
 ### `ollama.yaml`
-Ollama LLM service configuration. Contains:
+Reference copy of the Ollama settings. The app does not read this file: the values it uses are
+the `ollama_*` keys in `nl_query.yaml` (and their environment variables). Contains:
 - Base URL
 - Default and fallback models
 - Timeout and retry settings
@@ -129,21 +130,24 @@ For example:
 - `ENABLE_CLARIFYING_QUESTIONS=0` → `False`
 - `ENABLE_CLARIFYING_QUESTIONS=no` → `False`
 
-## Project Root Detection
+## Where Config Files Are Found
 
-The config loader automatically detects the project root using this pattern:
+The files in this directory ship inside the installed package
+(`clinical_analytics/resources/config/`). The loaders find them with
+`clinical_analytics.core.resources.shipped_config_dir()`, which uses `importlib.resources`, so
+they are found the same way in a checkout, an installed wheel and the packaged app. Nothing is
+looked up relative to a project root or the working directory.
 
-```
-config_loader.py → core/ → clinical_analytics/ → src/ → project_root
-```
-
-Config files are located at: `{project_root}/config/*.yaml`
-
-This matches the existing codebase pattern used in `nl_query_config.py`:
 ```python
-current_file = Path(__file__)
-project_root = current_file.parent.parent.parent.parent
+from clinical_analytics.core.resources import config_file, shipped_config_dir
+
+shipped_config_dir()          # .../site-packages/clinical_analytics/resources/config
+config_file("nl_query.yaml")  # one file in it (bare file names only)
 ```
+
+If the directory is missing from the install (an incomplete wheel or bundle),
+`shipped_config_dir()` raises `ResourceNotFoundError`. The app does not start on built-in
+defaults in that case.
 
 ## Schema Validation
 
@@ -157,6 +161,9 @@ All YAML files are validated using dataclasses with type coercion (matching exis
 **Note**: Value range validation (e.g., confidence thresholds 0.0-1.0) is not currently implemented. The config loader focuses on type safety and graceful degradation.
 
 ## Error Handling
+
+### Missing Config Directory
+- Raises `ResourceNotFoundError` (the install is incomplete; nothing runs on defaults)
 
 ### Missing YAML File
 - Logs warning

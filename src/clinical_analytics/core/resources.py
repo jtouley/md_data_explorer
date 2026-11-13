@@ -32,8 +32,22 @@ def resources_root() -> Path:
 
 
 def shipped_config_dir() -> Path:
-    """Directory of the shipped YAML config files."""
-    return resources_root() / CONFIG_SUBDIR
+    """Directory of the shipped YAML config files.
+
+    Raises:
+        ResourceNotFoundError: the directory is not in the installed package (an incomplete wheel
+            or bundle). The config loaders fall back to built-in defaults for a single missing
+            file, so without this check a broken install would run with no patterns, no golden
+            examples and default thresholds instead of failing.
+    """
+    config_dir = resources_root() / CONFIG_SUBDIR
+    if not config_dir.is_dir():
+        raise ResourceNotFoundError(
+            f"The shipped config directory is missing from the installed package: {config_dir}. "
+            "The install is incomplete; reinstall the app (or rebuild the wheel with "
+            f"{RESOURCES_PACKAGE} included)."
+        )
+    return config_dir
 
 
 def _bare_name(name: str) -> str:

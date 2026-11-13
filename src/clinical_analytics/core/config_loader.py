@@ -4,7 +4,10 @@ This module provides functions to load configuration from YAML files with:
 - Environment variable overrides (env var → YAML → defaults)
 - Type coercion (string to float, bool, int)
 - Schema validation using dataclasses
-- Graceful degradation (missing files use defaults)
+- Graceful degradation (a missing file uses defaults)
+
+The shipped files live inside the package (``resources.shipped_config_dir()``). A missing config
+*directory* is an incomplete install and raises ``ResourceNotFoundError``; it never runs on defaults.
 """
 
 import logging
@@ -595,6 +598,11 @@ def load_patterns_config(config_path: Path | None = None) -> dict[str, list[dict
     return compiled
 
 
+def golden_examples_config_path() -> Path:
+    """Path of the shipped golden examples file (raises ResourceNotFoundError without a config dir)."""
+    return shipped_config_dir() / "golden_examples.yaml"
+
+
 def load_golden_examples_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     Load golden examples from config.
@@ -607,10 +615,11 @@ def load_golden_examples_config(config_path: Path | None = None) -> dict[str, An
 
     Raises:
         ValueError: If YAML is invalid
+        ResourceNotFoundError: If no path is given and the shipped config directory is missing
     """
     # Determine config file path
     if config_path is None:
-        config_path = shipped_config_dir() / "golden_examples.yaml"
+        config_path = golden_examples_config_path()
 
     # Load YAML if file exists
     if not config_path.exists():
