@@ -203,7 +203,14 @@ def _with_cohort_cte(view_sql: str, sql: str) -> str:
     return f"WITH {_COHORT_CTE} AS ({view_sql}) {body}"
 
 
-def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> list[str] | None:
+ENTITY_KEY_MISSING_REASON = (
+    "Patients could not be counted for this answer because the patient ID column was not read, so no answer is shown."
+)
+
+
+def _analysis_columns(
+    plan: "QueryPlan", context: Any, columns: list[str], entity_key: str | None = None
+) -> list[str] | None:
     """The view columns compute_analysis_by_type reads for this plan, in view order, or None.
 
     The analysis reads the context's variables and filter columns, nothing else, when each one
@@ -212,7 +219,8 @@ def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> li
     ``context.filters``. Otherwise (no variable, "all", a fuzzy name the analysis resolves
     against every column, a filter on a column the view lacks, or a ``context.query_plan`` that
     is not ``plan``) None: the whole view is passed, so the result, and any error it reports,
-    is what it always was.
+    is what it always was. ``entity_key``: the patient key a visit-grain frequency counts
+    distinct values of (``count_entity_key``), always kept.
     """
     context_plan = getattr(context, "query_plan", None)
     if context_plan is not None and context_plan is not plan and context_plan != plan:
@@ -237,7 +245,9 @@ def _analysis_columns(plan: "QueryPlan", context: Any, columns: list[str]) -> li
     filter_columns = [getattr(spec, "column", None) for spec in filters]
     if any(column not in columns for column in filter_columns):
         return None
-    wanted = {*named, *filter_columns}
+    if entity_key is not None and entity_key not in columns:
+        return None
+    wanted = {*named, *filter_columns, *([entity_key] if entity_key else [])}
     return [column for column in columns if column in wanted]
 
 
@@ -2369,7 +2379,7 @@ class SemanticLayer:
 
             with self._cohort_views_dropped():
                 view = self._filtered_view(query_plan)
-                needed = _analysis_columns(query_plan, context, list(view.columns))
+                needed = _analysis_columns(query_plan, context, list(view.columns), self.count_entity_key)
                 # Only the columns the analysis reads leave DuckDB, straight into Polars.
                 base_rows = (view.select(needed) if needed is not None else view).to_polars()
             if cohort is not None:
@@ -2406,7 +2416,13 @@ class SemanticLayer:
 
         column = formatted.get("focused_variable")
         if not column or column not in rows.columns or entity not in rows.columns:
-            return formatted
+            # Never fall back to row counts: they would be shown as patients (a wrong answer).
+            logger.error(
+                "entity_frequency_column_missing entity_present=%s level_present=%s",
+                entity in rows.columns,
+                bool(column) and column in rows.columns,
+            )
+            return {"type": "descriptive", "error": ENTITY_KEY_MISSING_REASON}
         pairs = rows.select(entity, column).filter(pl.col(entity).is_not_null()).unique()
         patients = pairs.get_column(entity).n_unique()
         if pairs.height != patients:

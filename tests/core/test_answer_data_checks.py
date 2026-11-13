@@ -35,6 +35,7 @@ from clinical_analytics.core.query_service import (
 )
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.schema_inference import SchemaInferenceEngine, patient_key_by_name
+from clinical_analytics.core.semantic import ENTITY_KEY_MISSING_REASON
 
 N = 200
 IDS = [f"P{i:03d}" for i in range(N)]
@@ -1067,3 +1068,17 @@ class TestInvalidDatasetId:
 
         # Assert
         assert _shown(result) == f"REFUSED {INVALID_DATASET_KEY_REASON}"
+
+
+class TestEntityFrequencyNeedsKey:
+    def test_entityFrequency_keyColumnMissing_refusesNotRowCounts(self, make_semantic_layer: Any) -> None:
+        # Arrange: rows reach the frequency without the patient key (a projection that dropped it)
+        layer = make_semantic_layer(data=visits_died())
+        rows = visits_died().drop("patient_id")
+        formatted = {"type": "descriptive", "focused_variable": "sex", "value_counts": [], "is_numeric": False}
+
+        # Act
+        result = layer._entity_frequency(formatted, rows, "patient_id")
+
+        # Assert: never a row count labelled as patients
+        assert result.get("error") == ENTITY_KEY_MISSING_REASON
