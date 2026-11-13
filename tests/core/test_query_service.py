@@ -373,3 +373,30 @@ class TestQueryServiceAnalysis:
         assert result.failure_reason == f"The plan uses {element}, which your question doesn't ask for."
         assert result.plan_line is not None
         layer.execute_query_plan.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("stored", "held"),
+        [
+            pytest.param(["drug", "placebo"], False, id="value_in_column_runs"),
+            pytest.param(["Drug", "Placebo"], True, id="value_not_in_column_held"),
+            pytest.param([], True, id="empty_column_held"),
+            pytest.param([None], True, id="all_null_column_held"),
+        ],
+    )
+    def test_ask_filterValueNotInColumn_holdsWithoutExecuting(self, mock_semantic_layer, stored, held):
+        """Every word and element agree, but the value is not in the column: say so, do not run."""
+        # Arrange
+        service, layer = self._service(mock_semantic_layer, {"success": True, "run_key": "rk"}, {"type": "count"})
+        plan = QueryPlan(intent="COUNT", filters=[FilterSpec("treatment", "==", "drug")], confidence=0.95)
+        service.nl_engine._intent_to_plan.return_value = plan
+        layer.get_base_view.return_value.columns = ["patient_id", "treatment"]
+        service.nl_engine._distinct_values = MagicMock(return_value=stored)
+
+        # Act
+        result = service.ask("how many patients on treatment drug", dataset_id="ds")
+
+        # Assert
+        assert result.requires_confirmation is held
+        assert (result.failure_reason == "I couldn't find 'drug' in treatment.") is held
+        assert (result.plan_line is not None) is held
+        assert layer.execute_query_plan.called is not held

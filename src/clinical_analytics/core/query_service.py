@@ -16,6 +16,7 @@ from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
 from clinical_analytics.core.nl_query_config import AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 from clinical_analytics.core.nl_query_engine import NLQueryEngine
+from clinical_analytics.core.plan_values import absent_value_reason
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
@@ -329,7 +330,7 @@ class QueryService:
         """Why this plan must be reviewed before it runs, or None when question and plan agree.
 
         Forward: a word of the question the plan does not use. Reverse: an element of the plan
-        the question does not ask for.
+        the question does not ask for. Then: a limit on a value its column does not hold.
         """
         columns = list(self.semantic_layer.get_base_view().columns)
         raw_index = self.semantic_layer.get_column_alias_index()
@@ -341,7 +342,8 @@ class QueryService:
         unasked = unjustified_elements(question, plan, columns, values_for, alias_index=alias_index, context=context)
         if unasked:
             return unjustified_reason(unasked)
-        return None
+        # Value presence: a limit on a value the column does not hold would report "0 patients".
+        return absent_value_reason(plan, columns, values_for)
 
     def _generate_run_key(self, plan: QueryPlan, query_text: str) -> str:
         """

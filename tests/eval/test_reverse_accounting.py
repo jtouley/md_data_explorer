@@ -119,3 +119,34 @@ def test_reverseProbe_namedCase_planHoldsExactlyTheAskedLimits(
 
     # Assert
     assert limits == expected
+
+
+@pytest.mark.slow
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("question", "reason"),
+    [
+        pytest.param(
+            "how many patients older than 200?",
+            "200 is outside the plausible range for age (0 to 122 years).",
+            id="age_above_range_held",
+        ),
+        pytest.param(
+            "how many patients with BMI over 300?",
+            "300 is outside the plausible range for BMI (10 to 90 kg/m2).",
+            id="bmi_above_range_held",
+        ),
+        pytest.param("how many patients older than 80?", None, id="age_inside_range_answered"),
+    ],
+)
+def test_reverseProbe_cutoffOutsidePlausibleRange_heldWithReason(question: str, reason: str | None) -> None:
+    # Arrange
+    _probes()
+
+    # Act
+    result = ask(_DATASET, question)
+
+    # Assert
+    assert result["failure_reason"] == reason
+    assert result["held"] is (reason is not None)
+    assert result["success"] is (reason is None)
