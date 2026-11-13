@@ -475,3 +475,23 @@ def test_peelCohort_shareQuestionWithoutClearDirection_setsNoProportion(query: s
 
     # Assert
     assert peeled.proportion_column is None
+
+
+def test_executeQueryPlan_unappliedWords_listedOnceEach(make_semantic_layer, monkeypatch) -> None:
+    # Arrange: the gap check reports each word (and a stem of one) more than once
+    from clinical_analytics.core import cohort_constraints
+
+    monkeypatch.setattr(
+        cohort_constraints,
+        "unapplied_constraints",
+        lambda *_args: ["treatment", "site", "diabetes", "diabete", "diabete", "diabetes", "site", "treatment"],
+    )
+    layer = make_semantic_layer(data=_LAYER_DATA)
+    plan = QueryPlan(intent="COUNT", confidence=0.95)
+
+    # Act
+    result = layer.execute_query_plan(plan, query_text="how many by site and diabetes and treatment")
+
+    # Assert
+    assert result["success"] is False
+    assert "('treatment', 'site', 'diabetes')" in result["failure_reason"]

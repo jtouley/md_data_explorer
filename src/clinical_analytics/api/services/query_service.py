@@ -15,7 +15,9 @@ from typing import Any
 import structlog
 
 from clinical_analytics.api.models.schemas import SSEEvent
+from clinical_analytics.core.execution_gate import format_plan_line
 from clinical_analytics.core.log_redaction import error_fields
+from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.query_service import QueryResult as CoreQueryResult
 from clinical_analytics.core.query_service import QueryService as CoreQueryService
 from clinical_analytics.core.result_presentation import present_analysis, to_json_safe
@@ -265,6 +267,9 @@ class AsyncQueryService:
                 "intent_type": intent_type,
                 "result_preview": self._preview_of(payload),
                 "claim": claim,
+                # What was computed (limits included), shown under the claim in the app.
+                "plan_line": result.plan_line
+                or (format_plan_line(result.plan, result.context) if isinstance(result.plan, QueryPlan) else None),
             },
         )
         logger.info("query_completed", query_id=query_id, intent_type=intent_type)
