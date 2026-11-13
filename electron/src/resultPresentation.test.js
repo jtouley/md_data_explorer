@@ -282,6 +282,8 @@ const API_CLAIMS = {
   hiddenSurvivalMedian:
     'Median time to event=1 (days) is not shown because n is hidden (n hidden).',
   hiddenDescriptive: 'Statistics for ldl are not shown because n is hidden (n hidden).',
+  missingNSurvivalMedian: 'Median time to event=1 (days) is not shown because n is missing.',
+  missingNDescriptive: 'Statistics for ldl are not shown because n is missing.',
   count: 'Total count: 400.',
 };
 
@@ -339,6 +341,13 @@ describe('splitClaim', () => {
       '',
     ],
     ['hiddenDescriptive', 'Statistics for ldl are not shown because n is hidden.', ['n hidden'], ''],
+    [
+      'missingNSurvivalMedian',
+      'Median time to event=1 (days) is not shown because n is missing.',
+      [],
+      '',
+    ],
+    ['missingNDescriptive', 'Statistics for ldl are not shown because n is missing.', [], ''],
     ['count', 'Total count: 400.', [], ''],
   ])('splitClaim_%s_headlineStatsNotes', (key, headline, stats, notes) => {
     // Arrange

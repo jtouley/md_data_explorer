@@ -2,6 +2,7 @@
 
 import json
 import math
+import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -9,7 +10,14 @@ from typing import Any
 import numpy as np
 import pytest
 
-from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis, to_json_safe
+from clinical_analytics.core.result_presentation import (
+    SECONDARY_SUPPRESSED,
+    _single_value,
+    _suppress_lines,
+    present_analysis,
+    suppress_count_matrix,
+    to_json_safe,
+)
 
 T_TEST = {
     "type": "comparison",
@@ -102,12 +110,12 @@ class TestPresentAnalysisClaims:
                 "The strongest correlation was moderate: age and ldl (r=-0.42; n=250).",
             ),
             (
-                {"type": "survival", "time_col": "days", "event_col": "death", "median_survival": 412.0},
-                "Median time to death was 412.0 (days).",
+                {"type": "survival", "time_col": "days", "event_col": "death", "median_survival": 412.0, "n_used": 120},
+                "Median time to death was 412.0 (days) (n=120).",
             ),
             (
-                {"type": "survival", "time_col": "days", "event_col": "death", "median_survival": None},
-                "Median time to death was not reached during follow-up (days).",
+                {"type": "survival", "time_col": "days", "event_col": "death", "median_survival": None, "n_used": 120},
+                "Median time to death was not reached during follow-up (days) (n=120).",
             ),
             (
                 {
@@ -1045,3 +1053,329 @@ class TestAlgorithmAwareRecovery:
         # Assert
         examples = [(cells, name, _answer(build(cells))) for cells, name in leaks[:3]]
         assert leaks == [], f"{len(leaks)} pinned cells, e.g. {examples}"
+
+
+# --- Review follow-ups (PR #79) ---------------------------------------------------------------
+
+
+class TestMissingCountsFailClosed:
+    """A statistic is shown only when the count that guards it is present and is a count."""
+
+    @pytest.mark.parametrize(
+        ("counts", "reason"),
+        [
+            ({"n_used": 5}, "n is hidden (n hidden)"),
+            ({"n_used": 5, "n_events": None}, "n is hidden (n hidden)"),
+            ({"n_used": np.int64(5), "n_events": 3}, "n is hidden (n hidden)"),
+            ({"n_events": 3}, "n is missing"),
+            ({"n_used": None, "n_events": 3}, "n is missing"),
+            ({"n_used": "120", "n_events": 3}, "n is missing"),
+            ({"n_used": 5.0, "n_events": 3}, "n is missing"),
+            ({"n_used": True, "n_events": 1}, "n is missing"),
+        ],
+        ids=[
+            "small_n_events_absent",
+            "small_n_events_none",
+            "small_n_numpy",
+            "n_absent",
+            "n_none",
+            "n_text",
+            "n_float",
+            "n_bool",
+        ],
+    )
+    def test_present_survival_ungroupedMissingCount_hidesMedian(self, counts, reason):
+        # Arrange: a median of five patients can be one patient's time
+        analysis = {
+            "type": "survival",
+            "time_col": "days",
+            "event_col": "event",
+            "event_level": "1",
+            "median_survival": 400.0,
+            **counts,
+        }
+
+        # Act
+        presentation = present_analysis(analysis)
+
+        # Assert
+        assert "400" not in json.dumps(presentation)
+        assert presentation["claim"] == f"Median time to event=1 (days) is not shown because {reason}."
+
+    @pytest.mark.parametrize("n", [None, "300", 300.0, True], ids=["none", "text", "float", "bool"])
+    def test_present_descriptive_missingN_hidesEveryStatistic(self, n):
+        # Arrange
+        analysis = {
+            "type": "descriptive",
+            "focused_variable": "ldl",
+            "is_numeric": True,
+            "mean": 121.49,
+            "median": 121.5,
+            "std": 14.4,
+            "min": 83.0,
+            "max": 159.0,
+            "non_null_count": n,
+        }
+
+        # Act
+        presentation = present_analysis(analysis)
+
+        # Assert
+        answer = json.dumps(presentation)
+        assert not any(value in answer for value in ("121.49", "121.5", "14.4", "83.0", "159.0")), answer
+        assert presentation["claim"] == "Statistics for ldl are not shown because n is missing."
+
+    @pytest.mark.parametrize(
+        "sizes",
+        [None, {"a": 40, "b": None, "c": 50}, {"a": 40, "b": "3", "c": 50}, {"a": 40, "b": 3.0, "c": 50}],
+        ids=["no_sizes", "size_none", "size_text", "size_float"],
+    )
+    def test_present_anova_missingGroupSize_hidesThatGroupMean(self, sizes):
+        # Arrange: group b's size is not a count, so its mean may be one patient's value
+        analysis = {
+            "type": "comparison",
+            "test_type": "anova",
+            "outcome_col": "ldl",
+            "group_col": "site",
+            "groups": ["a", "b", "c"],
+            "n_groups": 3,
+            "p_value": 0.03,
+            "group_means": {"a": 10.0, "b": 20.0, "c": 30.0},
+            "group_sizes": sizes,
+        }
+
+        # Act
+        rows = present_analysis(analysis)["table"]["rows"]
+
+        # Assert
+        assert rows[1]["mean ldl"] == SECONDARY_SUPPRESSED
+        assert all((row["mean ldl"] == SECONDARY_SUPPRESSED) == (not isinstance(row["n"], int)) for row in rows)
+
+    @pytest.mark.parametrize(
+        "sizes",
+        [None, {"A": 57, "B": None}, {"A": 57, "B": "3"}],
+        ids=["no_sizes", "size_none", "size_text"],
+    )
+    def test_present_survival_missingGroupSize_hidesThatGroupMedian(self, sizes):
+        # Arrange
+        analysis = {**_survival_grouped((57, 40, 0)), "group_sizes": sizes}
+
+        # Act
+        presentation = present_analysis(analysis)
+
+        # Assert
+        assert "20.9" not in json.dumps(presentation)
+        assert "B not shown" in presentation["claim"]
+
+    @pytest.mark.parametrize("cell", [None, "3", 3.0], ids=["none", "text", "float"])
+    def test_present_chiSquare_cellNotACount_withholdsPercentages(self, cell):
+        # Arrange: one cell of the table is not a count, so the shares cannot be checked
+        analysis = _chi_square((40, 50, 60, 70, 0))
+        analysis["contingency"][0]["A"] = cell
+
+        # Act
+        claim = present_analysis(analysis)["claim"]
+
+        # Assert
+        assert "%" not in claim
+        assert claim.startswith("The distribution of y differed by arm")
+
+
+class TestNClauseHiddenN:
+    @pytest.mark.parametrize(
+        ("cells", "filtered"),
+        [((2, 3, 50), 20), ((2, 3, 50), 0), ((12, 13, 50), 4), ((2, 3, 11), 300)],
+        ids=["small_n_filtered", "small_n_unfiltered", "n_complement_of_filtered_out", "exclusions_at_threshold"],
+    )
+    def test_present_tTest_hiddenN_doesNotSayWhetherRowsWereExcluded(self, cells, filtered):
+        # Arrange: n is hidden while the exclusion count (50 or 11) is large enough to show
+        analysis = _two_group_comparison(cells)
+        if filtered:
+            analysis["dataset_row_count"] = sum(cells) + filtered
+
+        # Act
+        claim = present_analysis(analysis)["claim"]
+
+        # Assert
+        assert "; n hidden). Unadjusted" in claim
+        assert "excluded" not in claim
+
+
+def _hidden_cells(rows: list[list[int]], columns_first: bool) -> set[tuple[int, int]]:
+    """Hidden cells of a count table, with its lines checked rows first or columns first."""
+    cells = {(i, j): value for i, row in enumerate(rows) for j, value in enumerate(row)}
+    by_row = [[(i, j) for j in range(len(row))] for i, row in enumerate(rows)]
+    by_column = [[(i, j) for i in range(len(rows))] for j in range(len(rows[0]))]
+    return _suppress_lines(cells, by_column + by_row if columns_first else by_row + by_column)
+
+
+def _matrix_view(rows: list[list[int]], columns_first: bool) -> tuple[Any, ...]:
+    """What a reader sees of a count table: the visible cells, the hidden mask, every line total."""
+    hidden = _hidden_cells(rows, columns_first)
+    shown = tuple(
+        tuple(None if (i, j) in hidden else value for j, value in enumerate(row)) for i, row in enumerate(rows)
+    )
+    return shown, tuple(sum(row) for row in rows), tuple(sum(column) for column in zip(*rows, strict=True))
+
+
+def _same_totals(rows: list[list[int]], hidden_columns: list[int]) -> Iterator[list[list[int]]]:
+    """Every two-row table with the same visible cells and the same row and column totals."""
+    top, bottom = rows
+    for values in _compositions(sum(top[j] for j in hidden_columns), (0,) * len(hidden_columns)):
+        first, second = list(top), list(bottom)
+        for j, value in zip(hidden_columns, values, strict=True):
+            first[j], second[j] = value, top[j] + bottom[j] - value
+        if min(second) >= 0:
+            yield [first, second]
+
+
+class TestCellsHiddenThroughAnotherLine:
+    """A cell hidden through its column can be larger than every visible cell of its row."""
+
+    @pytest.mark.parametrize(
+        ("rows", "columns_first", "hidden_columns"),
+        [
+            ([[5, 50, 20, 30], [40, 8, 60, 70]], True, [0, 1]),
+            ([[5, 50, 20, 30], [40, 8, 60, 70]], False, [0, 1, 2]),
+            ([[10, 50, 20, 30], [40, 10, 60, 70]], True, [0, 1]),
+            ([[10, 50, 20, 30], [40, 10, 60, 70]], False, [0, 1, 2]),
+            ([[1, 50, 20, 30], [40, 1, 60, 70]], True, [0, 1]),
+        ],
+        ids=[
+            "reviewer_example",
+            "reviewer_example_rows_first",
+            "boundary_ten",
+            "boundary_ten_rows_first",
+            "boundary_one",
+        ],
+    )
+    def test_suppress_lines_largeCellHiddenByColumn_keepsRowVisibleAndPinsNothing(
+        self, rows, columns_first, hidden_columns
+    ):
+        # Arrange: 50 is hidden as the complement of the small cell in its column, above the
+        # row's 20 and 30. Checked columns first, the row then has 5 and 50 hidden and 20 and 30
+        # visible; rows first, the row has already hidden 20 as its own complement. The reader
+        # knows every row and column total.
+        shown = _matrix_view(rows, columns_first)
+
+        # Act
+        hidden = _hidden_cells(rows, columns_first)
+        same_answer = [m for m in _same_totals(rows, hidden_columns) if _matrix_view(m, columns_first) == shown]
+
+        # Assert: 30 and 70 stay visible, and no small count has a single feasible value
+        assert hidden == {(i, j) for i in range(2) for j in hidden_columns}
+        for i, j in sorted(hidden):
+            feasible = {m[i][j] for m in same_answer}
+            assert rows[i][j] not in _SMALL or len(feasible) > 1, f"cell {(i, j)} pinned to {feasible}"
+
+    def test_present_chiSquare_largeCellHiddenByColumn_showsTheLargestGroup(self):
+        # Arrange: outcome levels as rows, four groups as columns (the reviewer's example).
+        # Rows are checked first, so the first row hides 20 as the complement of 5.
+        groups = ["A", "B", "C", "D"]
+        counts = [[5, 50, 20, 30], [40, 8, 60, 70]]
+        analysis = {
+            "type": "comparison",
+            "test_type": "chi_square",
+            "outcome_col": "y",
+            "group_col": "arm",
+            "groups": groups,
+            "group_sizes": {g: counts[0][j] + counts[1][j] for j, g in enumerate(groups)},
+            "contingency": [{"y": str(i), **dict(zip(groups, row, strict=True))} for i, row in enumerate(counts)],
+            "p_value": 0.03,
+            "n_used": 283,
+            "n_excluded": 0,
+        }
+
+        # Act
+        rows = present_analysis(analysis)["table"]["rows"]
+
+        # Assert
+        assert rows == [
+            {"y": "y=0", "A": "suppressed", "B": "suppressed", "C": "suppressed", "D": 30},
+            {"y": "y=1", "A": "suppressed", "B": "suppressed", "C": "suppressed", "D": 70},
+        ]
+
+    @pytest.mark.parametrize("scale", [1, 1_000_000], ids=["reviewer_example", "millions_of_rows"])
+    def test_suppress_count_matrix_largeHiddenCell_runsInConstantTime(self, scale):
+        # Arrange: the interval check must not loop over every value up to the row count
+        rows = [[5, 50 * scale, 20 * scale, 30 * scale], [40 * scale, 8, 60 * scale, 70 * scale]]
+
+        # Act
+        started = time.perf_counter()
+        hidden = suppress_count_matrix(rows)
+        elapsed = time.perf_counter() - started
+
+        # Assert
+        assert hidden == {(i, j) for i in range(2) for j in range(3)}
+        assert elapsed < 0.5, f"suppression took {elapsed:.2f}s"
+
+
+def _single_value_by_enumeration(
+    values: tuple[int, ...], floors: tuple[int, ...], caps: tuple[int, ...], limit: int, one_small: bool
+) -> bool:
+    """Reference for the closed form: list every assignment of the hidden cells a reader allows."""
+    from itertools import product
+
+    feasible = [
+        cells
+        for cells in product(*(range(floor, cap + 1) for floor, cap in zip(floors, caps, strict=True)))
+        if sum(cells) == sum(values) and (not one_small or min(cells) < limit)
+    ]
+    return any(len({cells[i] for cells in feasible}) < 2 for i in range(len(values)))
+
+
+class TestSingleValueClosedForm:
+    @pytest.mark.parametrize(
+        ("values", "floors", "caps", "one_small", "expected"),
+        [
+            ((10, 10), (1, 1), (10, 10), True, True),
+            ((11, 10, 10), (1, 1, 1), (31, 31, 31), True, False),
+            ((10, 1), (10, 1), (11, 11), True, True),
+            ((5, 50), (1, 1), (19, 19), True, True),
+            ((5, 50), (1, 1), (19, 60), False, False),
+            ((10, 50), (1, 1), (19, 50), False, False),
+            ((3, 20), (1, 1), (23, 23), True, False),
+        ],
+        ids=[
+            "tens_below_eleven",
+            "nothing_visible",
+            "floor_pins_n",
+            "cell_above_every_cap",
+            "cell_capped_by_its_column",
+            "column_cap_equals_cell",
+            "small_and_complement",
+        ],
+    )
+    def test_single_value_knownLines_matchesReaderModel(self, values, floors, caps, one_small, expected):
+        # Arrange
+        limit = 11
+
+        # Act
+        single = _single_value(list(values), list(floors), list(caps), limit, one_small)
+
+        # Assert
+        assert single is expected
+        assert _single_value_by_enumeration(values, floors, caps, limit, one_small) is expected
+
+    @pytest.mark.parametrize(
+        ("cells", "one_small"), [(2, True), (2, False), (3, True), (3, False)], ids=["two", "two_any", "three", "any"]
+    )
+    def test_single_value_everySmallLine_matchesEnumeration(self, cells, one_small):
+        # Arrange: every line of 2 or 3 hidden cells up to 7, threshold 4, floors 1-2, caps 3-8
+        from itertools import product
+
+        limit = 4
+        lines = [
+            (values, floors, caps)
+            for values in product(range(1, 8), repeat=cells)
+            for floors in product((1, 2), repeat=cells)
+            for caps in product((3, 5, 8), repeat=cells)
+            if all(f <= v for f, v in zip(floors, values, strict=True))
+        ]
+
+        # Act
+        closed = [_single_value(list(v), list(f), list(c), limit, one_small) for v, f, c in lines]
+        listed = [_single_value_by_enumeration(v, f, c, limit, one_small) for v, f, c in lines]
+
+        # Assert
+        assert closed == listed
