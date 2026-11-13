@@ -264,10 +264,10 @@ export function buildQueryCompletedPresentation(intentRaw, resultPreview, claimA
 
 /**
  * Build a confirmation-hold presentation for low-confidence plans.
- * @param {{ plan_line?: string, plan_hash?: string, failure_reason?: string, confidence?: number } | null | undefined} data
+ * @param {{ plan_line?: string, plan_hash?: string, failure_reason?: string, confidence?: number, confirm_options?: { label: string, plan_hash: string }[] } | null | undefined} data
  * @param {string} pendingQuery
  * @param {{ datasetId?: string | null, sessionId?: string | null }} [binding] where the plan was held
- * @returns {{ content: string, result: { awaitingConfirmation: true, planLine: string, planHash: string, failureReason: string, pendingQuery: string, confidence: number | null } }}
+ * @returns {{ content: string, result: { awaitingConfirmation: true, planLine: string, planHash: string, failureReason: string, pendingQuery: string, confidence: number | null, confirmOptions: { label: string, planHash: string }[] } }}
  */
 export function buildConfirmationHoldPresentation(data, pendingQuery, binding = {}) {
   const planLine = typeof data?.plan_line === 'string' ? data.plan_line : '';
@@ -279,6 +279,12 @@ export function buildConfirmationHoldPresentation(data, pendingQuery, binding = 
       ? data.failure_reason
       : 'Confirmation required before execution.';
   const confidence = typeof data?.confidence === 'number' ? data.confidence : null;
+  // A unit hold is settled by picking one option; each carries its own hash.
+  const confirmOptions = Array.isArray(data?.confirm_options)
+    ? data.confirm_options
+        .filter((o) => typeof o?.label === 'string' && typeof o?.plan_hash === 'string')
+        .map((o) => ({ label: o.label, planHash: o.plan_hash }))
+    : [];
   // The plan line renders once, inside the card; the message text carries only the reason.
   return {
     content: failureReason,
@@ -289,6 +295,7 @@ export function buildConfirmationHoldPresentation(data, pendingQuery, binding = 
       failureReason,
       pendingQuery: pendingQuery || '',
       confidence,
+      confirmOptions,
       // The dataset and session the plan was held for; Confirm must not run it anywhere else.
       datasetId: binding.datasetId || null,
       sessionId: binding.sessionId || null,

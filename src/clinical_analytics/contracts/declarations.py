@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """What the doctor confirmed about a dataset: its grain, which category spellings are one, and
-which unit a column's values are in where it mixes two.
+which unit a column's values are in where it looked like a mix of two (a conversion rule, or
+"these are all one unit").
 
 A declaration is made by confirming a held question and is stored so the next question does not
 ask again. Each one carries the dataset version it was made on and the facts it was made on (row
@@ -86,12 +87,26 @@ class UnitRule(BaseModel):
     dataset_version: str | None = None
 
 
+class OneUnitDeclaration(BaseModel):
+    """Every value of ``column`` is in ``unit``: the doctor's answer to a column that looked like
+    a mix of two units but is not (children beside adults, all in kg). Lifts the unit hold on
+    ``dataset_version``; no value is changed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str
+    unit: str
+    dataset_version: str | None = None
+
+
 class Declarations(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     grain: GrainDeclaration | None = None
     levels: tuple[LevelMapping, ...] = ()
+    # In the order confirmed: a rebuilt layer applies them in this order, as the live one did.
     units: tuple[UnitRule, ...] = ()
+    one_unit: tuple[OneUnitDeclaration, ...] = ()
 
     def with_grain(self, grain: GrainDeclaration) -> Declarations:
         return self.model_copy(update={"grain": grain})
@@ -113,15 +128,29 @@ class Declarations(BaseModel):
         return tuple(m for m in self.levels if m.dataset_version == dataset_version)
 
     def with_unit(self, rule: UnitRule) -> Declarations:
-        """``rule`` replacing any rule for its column on its version (one rule per column)."""
-        kept = tuple(
-            r for r in self.units if not (r.column == rule.column and r.dataset_version == rule.dataset_version)
-        )
-        return self.model_copy(update={"units": (*kept, rule)})
+        """``rule`` added after the rules already confirmed (once: confirming it again stores
+        nothing new). A second rule for the same column is kept beside the first, never in its
+        place: the live layer has applied both, in this order, so a rebuilt one must too."""
+        if rule in self.units:
+            return self
+        return self.model_copy(update={"units": (*self.units, rule)})
 
     def units_for(self, dataset_version: str | None) -> tuple[UnitRule, ...]:
-        """The unit rules confirmed on ``dataset_version`` (others belong to other data)."""
+        """The unit rules confirmed on ``dataset_version``, in the order confirmed."""
         return tuple(r for r in self.units if r.dataset_version == dataset_version)
+
+    def with_one_unit(self, declaration: OneUnitDeclaration) -> Declarations:
+        """``declaration`` replacing any one-unit declaration for its column on its version."""
+        kept = tuple(
+            d
+            for d in self.one_unit
+            if not (d.column == declaration.column and d.dataset_version == declaration.dataset_version)
+        )
+        return self.model_copy(update={"one_unit": (*kept, declaration)})
+
+    def one_unit_for(self, dataset_version: str | None) -> dict[str, str]:
+        """Column -> the one unit the doctor declared it in, on ``dataset_version``."""
+        return {d.column: d.unit for d in self.one_unit if d.dataset_version == dataset_version}
 
 
 class DeclarationStore(Protocol):
@@ -220,6 +249,7 @@ class FileDeclarationStore:
             dataset_id=dataset_id,
             grain=bool(declarations.grain),
             unit_rules=len(declarations.units),
+            one_unit=len(declarations.one_unit),
         )
 
     def update(self, dataset_id: str, change: Callable[[Declarations], Declarations]) -> Declarations:

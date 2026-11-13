@@ -93,6 +93,8 @@ class AsyncQueryResult:
     failure_reason: str | None = None
     plan_line: str | None = None
     plan_hash: str | None = None
+    # A unit hold's options ({"label", "plan_hash"}): confirming one sends its plan_hash.
+    confirm_options: list[dict[str, str]] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -226,6 +228,8 @@ class AsyncQueryService:
         plan_line = self._plan_line_of(result)
         self._queries[query_id].plan_line = plan_line
         self._queries[query_id].plan_hash = result.plan_hash
+        options = [{"label": o.label, "plan_hash": o.plan_hash} for o in result.confirm_options]
+        self._queries[query_id].confirm_options = options
         self._queries[query_id].completed_at = datetime.now(UTC)
 
         if result.requires_confirmation:
@@ -241,6 +245,7 @@ class AsyncQueryService:
                     "failure_reason": result.failure_reason,
                     "plan_line": plan_line,
                     "plan_hash": result.plan_hash,
+                    "confirm_options": options,
                     "confidence": result.confidence,
                 },
             )
@@ -583,6 +588,7 @@ class AsyncQueryService:
             failure_reason=result.failure_reason,
             plan_line=self._plan_line_of(result),
             plan_hash=result.plan_hash,
+            confirm_options=[{"label": o.label, "plan_hash": o.plan_hash} for o in result.confirm_options],
             error=(
                 "; ".join(i["message"] for i in result.issues if i.get("severity") == "error")
                 if status == "failed"

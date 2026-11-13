@@ -43,11 +43,14 @@ from tests.eval.dq_probes import (
     SHOWN_PROBES,
     UNIT_ANSWERED,
     UNIT_HELD,
+    UNIT_SMALL_HELD,
     dq_frames,
     fold_frame,
+    minority_glucose_frame,
     mixed_glucose_frame,
     predictor_frame,
     skewed_glucose_frame,
+    small_temperature_frame,
     visits_died_frame,
 )
 from tests.eval.negation_probes import PROBES as SCOPE_PROBES
@@ -303,6 +306,12 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
     for query in UNIT_HELD:
         result = ask("dq_mixed_glucose", query)
         record("dq_units", f"mixed_glucose: {query}", _held(result), "held", result)
+    register_frame("dq_minority_glucose", minority_glucose_frame())
+    register_frame("dq_small_temperature", small_temperature_frame())
+    for name, query in UNIT_SMALL_HELD:
+        # A plain confirmation never picks a unit, so it is held again: never an answer.
+        result = ask(name, query, confirm=True)
+        record("dq_units", f"{name}: {query}", _held(result), "held", result)
     skewed = skewed_glucose_frame()
     register_frame("dq_skewed_glucose", skewed)
     for query in UNIT_ANSWERED:

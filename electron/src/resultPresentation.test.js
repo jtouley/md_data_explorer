@@ -240,6 +240,26 @@ describe('buildConfirmationHoldPresentation', () => {
     expect(hold.content).toContain('Confirmation required');
   });
 
+  it('carries a unit hold options with their hashes, dropping malformed ones', () => {
+    const hold = buildConfirmationHoldPresentation(
+      {
+        plan_line: 'DESCRIBE · outcome weight',
+        plan_hash: 'plain',
+        confirm_options: [
+          { label: 'Every weight value is in kg', plan_hash: 'one_unit' },
+          { label: 'no hash' },
+        ],
+      },
+      'average weight'
+    );
+    expect(hold.result.confirmOptions).toEqual([
+      { label: 'Every weight value is in kg', planHash: 'one_unit' },
+    ]);
+    expect(
+      buildConfirmationHoldPresentation({ plan_line: 'p' }, 'q').result.confirmOptions
+    ).toEqual([]);
+  });
+
   it('keeps the plan line out of the message text so it renders once', () => {
     const hold = buildConfirmationHoldPresentation(
       {

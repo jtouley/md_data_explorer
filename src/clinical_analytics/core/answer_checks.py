@@ -6,8 +6,8 @@ Each check ends in one of three ways, and never in a silent pass:
 * refuse: the answer would be wrong whatever the doctor says (a mean over values recorded as
   "<5"; a column with no values; a group count or share where a patient has two values);
 * hold: the answer depends on something only the doctor can say (are rows visits? are "Male"
-  and "M" one level? are ages of 400 entry errors? are glucose values below 30 mmol/L?), and
-  runs once they confirm;
+  and "M" one level? are ages of 400 entry errors? are glucose values below 30 mmol/L, or all in
+  one unit? core.unit_checks), and runs once they confirm;
 * note: a sentence added to the answer (implausible values the doctor chose to include, a
   check of the dataset's latest quality report on a column the question uses).
 
@@ -34,9 +34,14 @@ from clinical_analytics.analysis.variable_types import short_name
 from clinical_analytics.contracts.builder import Implausible, find_plausibility_range, implausible_values, range_for
 from clinical_analytics.contracts.builder import range_text as plausibility_text
 from clinical_analytics.contracts.config import MIN_CELL_SIZE, MISSINGNESS_WARN_PERCENT
-from clinical_analytics.contracts.declarations import Declarations, GrainDeclaration, LevelMapping, UnitRule
+from clinical_analytics.contracts.declarations import (
+    Declarations,
+    GrainDeclaration,
+    LevelMapping,
+    OneUnitDeclaration,
+    UnitRule,
+)
 from clinical_analytics.contracts.quality import RANGE_METRIC, UNIT_MIX_METRIC, QualityReport
-from clinical_analytics.contracts.unit_mix import UnitMix, detect_unit_mix, unit_pair_for
 from clinical_analytics.core.plan_values import plan_values
 from clinical_analytics.core.query_plan import QueryPlan
 from clinical_analytics.core.result_presentation import line_count_text
@@ -45,8 +50,6 @@ from clinical_analytics.core.schema_inference import patient_key_by_name
 _STATISTIC_INTENTS = frozenset({"DESCRIBE", "COMPARE_GROUPS"})
 # Report checks an answer already handles itself (hold or disclosure), so not repeated as notes.
 _HANDLED_METRICS = frozenset({RANGE_METRIC, "duplicateValues", "censoredValues", "levelVariants", UNIT_MIX_METRIC})
-# Plan filters that keep a range of a column's values ("glucose above 30": one unit's cluster).
-_RANGE_OPERATORS = {">": "gt", ">=": "ge", "<": "lt", "<=": "le"}
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,14 @@ class Findings:
     grain_to_declare: GrainDeclaration | None = None
     levels_to_declare: list[LevelMapping] = field(default_factory=list)
     units_to_declare: list[UnitRule] = field(default_factory=list)
+    one_unit_to_declare: list[OneUnitDeclaration] = field(default_factory=list)
+    # A unit hold the doctor settles by choosing one of these (core.unit_checks.UnitChoice); a
+    # plain confirmation does not settle it. Empty: no choice is pending.
+    unit_options: list[Any] = field(default_factory=list)
+    # Numeric limits read in the other unit and converted before the plan runs, and the words
+    # the plan line adds for each (core.unit_checks.LimitUnit).
+    limit_conversions: list[Any] = field(default_factory=list)
+    plan_line_notes: list[str] = field(default_factory=list)
     keyed: bool = False  # the dataset has a patient key, so every n can say what it counts
     visits: bool = False  # rows are declared visits (on this dataset version)
     key: str | None = None  # the patient key
@@ -383,90 +394,3 @@ def flagged_columns(report: QualityReport | None) -> set[str]:
         for c in report.checks
         if c.metric == "nullValues" and c.status in ("failed", "warning", "review") and c.column
     }
-
-
-# --- Mixed units (DQ M3) ----------------------------------------------------------------------
-
-
-def _range_limited(plan: QueryPlan, column: str, values: pl.Series, counts: pl.Series) -> tuple[pl.Series, pl.Series]:
-    """The distinct values (and their counts) that the plan's own range limits on ``column``
-    keep: "average glucose above 30" reads one unit's cluster only."""
-    frame = pl.DataFrame({"v": values, "n": counts})
-    for spec in plan.filters:
-        method = _RANGE_OPERATORS.get(spec.operator)
-        if spec.column != column or method is None or isinstance(spec.value, bool | str | list):
-            continue
-        frame = frame.filter(getattr(pl.col("v"), method)(spec.value))
-    return frame.get_column("v").alias(column), frame.get_column("n")
-
-
-def unit_mix_in_layer(layer: Any, column: str, plan: QueryPlan) -> UnitMix | None:
-    """``column`` read as a mix of its two units, or None. The statistic's own column is read as
-    the plan limits it, so a question about one unit ("glucose above 30") is answered; any
-    other use (a limit, a group, a share) reads the whole column. Distinct values only (the
-    layer's shared value counts), never the column."""
-    view = layer.get_base_view()
-    if unit_pair_for(column) is None or column not in view.columns:
-        return None
-    dtype = view[column].type()
-    if not (dtype.is_string() or (dtype.is_numeric() and not dtype.is_boolean())):
-        return None
-    values, counts = value_counts(layer, column)
-    if column == plan.metric and plan.intent in _STATISTIC_INTENTS and not dtype.is_string():
-        values, counts = _range_limited(plan, column, values, counts)
-    return detect_unit_mix(column, values, counts)
-
-
-def _side_text(side: str, cutoff: float) -> str:
-    return f"below {cutoff:g}" if side == "below" else f"of {cutoff:g} and above"
-
-
-def unit_mix_sentence(mix: UnitMix, rule: UnitRule | None) -> str:
-    """The one sentence for a column that mixes two units. With a cut point that separates the
-    clusters (``rule``) confirming converts the other unit's values; without one it cannot,
-    and the doctor corrects the file. No value and no count is named."""
-    name = short_name(mix.column)
-    mixed = f"{name} looks like it mixes {mix.target} and {mix.other}."
-    if rule is None:
-        return f"{mixed} Correct the file so each value is in one unit, or ask about one unit."
-    side = _side_text(rule.side, rule.cutoff)
-    convert = f"Confirm that values {side} are {rule.source_unit} to convert them to {rule.target_unit}"
-    return f"{mixed} {convert}, or ask about one unit."
-
-
-def unit_mix_findings(
-    plan: QueryPlan, layer: Any, dataset_version: str | None, predictors: list[str]
-) -> list[tuple[UnitMix, UnitRule | None, str]]:
-    """(mix, rule the doctor may confirm, sentence) for each plan column (and predictor) that
-    mixes two units. A rule is offered only on a numeric column whose clusters do not overlap."""
-    found = []
-    for column in dict.fromkeys([*plan_columns(plan), *predictors]):
-        mix = unit_mix_in_layer(layer, column, plan)
-        if mix is None:
-            continue
-        numeric = not _is_string(layer, column)
-        rule = mix.rule(dataset_version) if numeric else None
-        found.append((mix, rule, unit_mix_sentence(mix, rule)))
-    return found
-
-
-def unit_rule_text(rule: UnitRule) -> str:
-    """'glucose values below 30 read as mmol/L and converted to mg/dL (1 mmol/L = 18.016 mg/dL)'."""
-    side = _side_text(rule.side, rule.cutoff)
-    return (
-        f"{short_name(rule.column)} values {side} read as {rule.source_unit} and converted to "
-        f"{rule.target_unit} ({rule.relation})"
-    )
-
-
-def applied_unit_rules(plan: QueryPlan, rules: tuple[UnitRule, ...], predictors: list[str]) -> list[UnitRule]:
-    """The confirmed unit rules on the columns this plan reads."""
-    columns = {*plan_columns(plan), *predictors}
-    return [rule for rule in rules if rule.column in columns]
-
-
-def with_unit_rules(plan_line: str, rules: list[UnitRule]) -> str:
-    """The plan line with each applied unit conversion named, so the line says what ran."""
-    if not rules:
-        return plan_line
-    return f"{plan_line} · units {'; '.join(unit_rule_text(rule) for rule in rules)}"

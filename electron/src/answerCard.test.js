@@ -412,6 +412,32 @@ describe('buildHeldCard: next step (H5)', () => {
     expect(first.classList.contains('btn-primary')).toBe(true);
   });
 
+  it('buildHeldCard_unitHoldOptions_oneButtonEachSendingItsHash', () => {
+    // Arrange: a unit hold offers its options instead of a plain run
+    const onConfirm = vi.fn();
+    const unitHeld = {
+      ...held('weight looks like it mixes kg and lb.'),
+      confirmOptions: [
+        { label: 'Convert weight values of 50 and above from lb to kg', planHash: 'convert' },
+        { label: 'Every weight value is in kg', planHash: 'one_unit' },
+      ],
+    };
+
+    // Act
+    const card = buildHeldCard(unitHeld, { columns: [], onConfirm, onReject: vi.fn() });
+    const options = card.querySelectorAll('[data-testid="confirm-option-btn"]');
+    options[1].click();
+
+    // Assert
+    expect([...options].map((b) => b.textContent)).toEqual([
+      'Convert weight values of 50 and above from lb to kg',
+      'Every weight value is in kg',
+    ]);
+    expect(testid(card, 'confirm-query-btn')).toBeNull();
+    expect(testid(card, 'reject-query-btn')).not.toBeNull();
+    expect(onConfirm).toHaveBeenCalledWith(card, 'one_unit');
+  });
+
   it('buildHeldCard_buttons_callTheHandlersWithTheCard', () => {
     // Arrange
     const onConfirm = vi.fn();

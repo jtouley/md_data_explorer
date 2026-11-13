@@ -694,10 +694,10 @@ def unit_mix_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) -> li
     """Numeric columns of a variable with a known unit pair whose values look like a mix of the
     two units (``contracts.unit_mix``): glucose in mg/dL and mmol/L has no meaningful mean.
 
-    A warning at upload; a statistic on the column is held until the doctor says which unit
-    each value is in. Counts follow the small-cell rule (``_unit_count``). Text columns are left
-    to the answer checks: their unreadable entries would make the counts add up to a count the
-    report hides.
+    A warning at upload; a question on the column is held until the doctor confirms a
+    conversion or that every value is in one unit. Counts follow the small-cell rule
+    (``_unit_count``). Text columns are left to the answer checks: their unreadable entries
+    would make the counts add up to a count the report hides.
     """
     from clinical_analytics.contracts.unit_mix import detect_unit_mix, unit_pair_for
 
@@ -706,11 +706,12 @@ def unit_mix_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) -> li
     schema = lf.collect_schema()
     props = {p.physicalName or p.name: p for p in contract.schema_[0].properties or []}
     skipped = {column for column, p in props.items() if _is_id_property(p) or _is_restricted(p)}
-    numeric = [
-        c
+    pairs = {
+        c: pair
         for c, dtype in schema.items()
-        if c in props and c not in skipped and dtype.is_numeric() and unit_pair_for(c) is not None
-    ]
+        if c in props and c not in skipped and dtype.is_numeric() and (pair := unit_pair_for(c)) is not None
+    }
+    numeric = list(pairs)
     if not numeric:
         return []
     # One collect: each column's distinct values with their row counts, and the row count.
@@ -724,7 +725,7 @@ def unit_mix_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) -> li
         levels = pl.DataFrame(
             counted.get_column(column)[0].to_list(), schema={"value": schema[column], "__n": pl.UInt32}
         )
-        mix = detect_unit_mix(column, levels.get_column("value").alias(column), levels.get_column("__n"))
+        mix = detect_unit_mix(column, levels.get_column("value").alias(column), levels.get_column("__n"), pairs[column])
         if mix is None:
             continue
         prop = props[column]
@@ -744,8 +745,8 @@ def unit_mix_results(lf: pl.LazyFrame, contract: OpenDataContractStandard) -> li
                 message=(
                     f"{_display(prop)}: values look like a mix of {mix.target} "
                     f"({_unit_count(target, other, unclustered, rows)}) and {mix.other} "
-                    f"({_unit_count(other, target, unclustered, rows)}); statistics on it are held until you "
-                    "say which unit each value is in"
+                    f"({_unit_count(other, target, unclustered, rows)}); questions on it are held until you "
+                    "confirm a conversion or that every value is in one unit"
                 ),
             )
         )

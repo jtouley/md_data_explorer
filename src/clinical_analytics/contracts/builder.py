@@ -80,26 +80,39 @@ def logical_type(dtype: pl.DataType) -> str:
 
 
 def plausibility_key(column: str) -> str:
-    """'Age (years)' and 'age_years' -> 'ageyears'; codebooks in headers are dropped first."""
-    return re.sub(r"[^a-z0-9]", "", short_name(column).lower())
+    """'Age (years)' and 'age_years' -> 'ageyears'; codebooks in headers are dropped first. The
+    micro sign (either code point) reads as "u", so 'Creatinine (µmol/L)' -> 'creatinineumoll'."""
+    lowered = short_name(column).lower().replace("\u00b5", "u").replace("\u03bc", "u")
+    return re.sub(r"[^a-z0-9]", "", lowered)
 
 
-def _hinted(key: str, aliases: frozenset[str]) -> bool:
+def _unit_hints(variable: str) -> tuple[str, ...]:
+    """The lab unit suffixes, plus those of the variable's unit pair ('tempf', 'temperaturec')."""
+    pair = next((p for p in config.UNIT_PAIRS if p.variable == variable), None)
+    return config.UNIT_HINTS if pair is None else (*config.UNIT_HINTS, *pair.low_hints, *pair.high_hints)
+
+
+def _hinted(key: str, aliases: frozenset[str], hints: tuple[str, ...]) -> bool:
     """An alias followed by a unit in the header: 'Na (mmol/L)' -> 'nammoll', 'Glucose (mg/dL)'
-    -> 'glucosemgdl'."""
-    return any(key == alias + unit for alias in aliases for unit in config.UNIT_HINTS)
+    -> 'glucosemgdl', 'Temp (°F)' -> 'tempf'."""
+    return any(key == alias + unit for alias in aliases for unit in hints)
 
 
 def find_plausibility_range(column: str) -> config.PlausibilityRange | None:
     """The configured range for ``column`` by its normalised short name, or None.
 
     Any alias also matches with a unit after it, as lab exports write headers ("Glucose (mg/dL)",
-    "creatinine umol/L"). A short alias ("na", "k", "tc") matches only with a unit in the header:
-    a column literally named "na" or "tc" (not applicable, treatment code) gets no lab range.
+    "creatinine umol/L", "Temp (°F)"). A short alias ("na", "k", "tc") matches only with a unit
+    in the header: a column literally named "na" or "tc" (not applicable, treatment code) gets no
+    lab range.
     """
     key = plausibility_key(column)
     return next(
-        (r for r in config.PLAUSIBILITY_RANGES if key in r.aliases or _hinted(key, r.aliases | r.hinted_aliases)),
+        (
+            r
+            for r in config.PLAUSIBILITY_RANGES
+            if key in r.aliases or _hinted(key, r.aliases | r.hinted_aliases, _unit_hints(r.variable))
+        ),
         None,
     )
 

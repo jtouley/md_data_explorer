@@ -3,6 +3,7 @@ Tests for Query API routes with SSE streaming.
 """
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import polars as pl
@@ -244,6 +245,34 @@ class TestQueryStatusEndpoint:
         assert data["intent"] == "DESCRIBE"
         assert data["result_data"] == {"mean_age": 45.5, "std_age": 12.3}
         assert data["confidence"] == 0.95
+
+    def test_queries_get_unitHold_returnsEachOptionWithItsHash(
+        self, test_client: Any, mock_async_query_service: Any
+    ) -> None:
+        """A unit hold is settled by picking an option; each option's hash is what confirms it."""
+        # Arrange
+        from clinical_analytics.api.services.query_service import AsyncQueryResult
+
+        options = [
+            {"label": "Convert weight values of 50 and above from lb to kg", "plan_hash": "b" * 64},
+            {"label": "Every weight value is in kg", "plan_hash": "c" * 64},
+        ]
+        mock_async_query_service.get_result = AsyncMock(
+            return_value=AsyncQueryResult(
+                query_id="qry_units",
+                status="awaiting_confirmation",
+                requires_confirmation=True,
+                plan_hash="a" * 64,
+                confirm_options=options,
+            )
+        )
+
+        # Act
+        response = test_client.get("/api/queries/qry_units")
+
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["confirm_options"] == options
 
     def test_queries_get_missing_returns_404(self, test_client, mock_async_query_service):
         """Missing query ID returns 404."""

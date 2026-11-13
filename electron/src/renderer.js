@@ -614,7 +614,7 @@ function buildThinking(message) {
 /**
  * What the held card's two buttons do.
  * @param {ChatMessage} message the held message
- * @returns {{ columns: string[], onConfirm: (card: HTMLElement) => void, onReject: (card: HTMLElement) => void }}
+ * @returns {{ columns: string[], onConfirm: (card: HTMLElement, planHash?: string) => void, onReject: (card: HTMLElement) => void }}
  */
 function heldCardHandlers(message) {
   const held = message.result;
@@ -622,7 +622,7 @@ function heldCardHandlers(message) {
   return {
     columns:
       info && info.datasetId === (held.datasetId || state.currentDatasetId) ? info.columns : [],
-    onConfirm: (card) => {
+    onConfirm: (card, planHash) => {
       if (state.isProcessing) {
         // Another answer is still streaming; leave the hold actionable instead of greying it out.
         setCardNote(card, 'Wait for the current answer to finish, then run this.');
@@ -630,7 +630,9 @@ function heldCardHandlers(message) {
       }
       // One decision per held plan: a second click must not run it again.
       setCardButtonsDisabled(card, true);
-      void handleConfirmPendingQuery(held, card, message.questionId);
+      // A unit hold's option confirms the plan with that option's hash.
+      const chosen = planHash ? { ...held, planHash } : held;
+      void handleConfirmPendingQuery(chosen, card, message.questionId);
     },
     onReject: (card) => {
       setCardButtonsDisabled(card, true);

@@ -123,6 +123,13 @@ class QueryResult(BaseModel):
     failure_reason: str | None = Field(None, description="Hold or refuse reason from the execution gate")
     plan_line: str | None = Field(None, description="One-line plan summary shown on confirmation hold")
     plan_hash: str | None = Field(None, description="Hash of the held plan; send it back as confirm_plan_hash")
+    confirm_options: list[dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Ways to settle a unit hold, each {label, plan_hash}: confirming sends that option's "
+            "plan_hash as confirm_plan_hash. A plain plan_hash confirmation does not settle it."
+        ),
+    )
 
 
 # ============================================================================

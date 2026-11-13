@@ -214,6 +214,7 @@ async def get_query_result(
         failure_reason=result.failure_reason,
         plan_line=result.plan_line,
         plan_hash=result.plan_hash,
+        confirm_options=result.confirm_options,
     )
 
 

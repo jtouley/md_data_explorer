@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import polars as pl
@@ -933,13 +934,15 @@ def test_compileContract_tableDuplicateOnUncheckedColumns_stillRuns():
 
 # --- Mixed units (DQ M3) ----------------------------------------------------------------------
 
+ContractFactory = Callable[..., OpenDataContractStandard]
 
-def _unit_checks(df: pl.DataFrame, make_contract: Any) -> list[Any]:
+
+def _unit_checks(df: pl.DataFrame, make_contract: ContractFactory) -> list[Any]:
     report = run_quality(df.lazy(), make_contract(df))
     return [c for c in report.checks if c.metric == UNIT_MIX_METRIC]
 
 
-def test_runQuality_mixedGlucose_warnsNamingColumnAndBothUnits(make_contract):
+def test_runQuality_mixedGlucose_warnsNamingColumnAndBothUnits(make_contract: ContractFactory) -> None:
     # Arrange
     df = mixed_glucose_frame()
 
@@ -950,11 +953,11 @@ def test_runQuality_mixedGlucose_warnsNamingColumnAndBothUnits(make_contract):
     assert [c.status for c in checks] == ["warning"]
     assert checks[0].message == (
         "glucose: values look like a mix of mg/dL (150 values) and mmol/L (50 values); "
-        "statistics on it are held until you say which unit each value is in"
+        "questions on it are held until you confirm a conversion or that every value is in one unit"
     )
 
 
-def test_runQuality_mixedGlucose_inUploadSummary(make_contract):
+def test_runQuality_mixedGlucose_inUploadSummary(make_contract: ContractFactory) -> None:
     # Arrange
     df = mixed_glucose_frame()
 
@@ -987,7 +990,9 @@ def test_runQuality_mixedGlucose_inUploadSummary(make_contract):
         ),
     ],
 )
-def test_runQuality_mixedUnits_countsSuppressedUnder11(make_contract, frame, expected):
+def test_runQuality_mixedUnits_countsSuppressedUnder11(
+    make_contract: ContractFactory, frame: pl.DataFrame, expected: str
+) -> None:
     # Act
     checks = _unit_checks(frame, make_contract)
 
@@ -996,7 +1001,7 @@ def test_runQuality_mixedUnits_countsSuppressedUnder11(make_contract, frame, exp
     assert expected in checks[0].message
 
 
-def test_runQuality_mixedUnitsTinyTable_noCounts(make_contract):
+def test_runQuality_mixedUnitsTinyTable_noCounts(make_contract: ContractFactory) -> None:
     # Arrange: 12 rows (is_tiny_table): no count is reported
     df = lab_frame("glucose", [5.5, 6.0, 6.4, 7.1, 110.0, 95.0, 120.0, 101.0, 99.0, 130.0, 105.0, 115.0])
 
@@ -1017,14 +1022,21 @@ def test_runQuality_mixedUnitsTinyTable_noCounts(make_contract):
         pytest.param(pl.DataFrame({"patient_id": ["a"] * 0, "glucose": pl.Series([], dtype=pl.Float64)}), id="empty"),
     ],
 )
-def test_runQuality_noUnitMix_noWarning(make_contract, frame):
+def test_runQuality_noUnitMix_noWarning(make_contract: ContractFactory, frame: pl.DataFrame) -> None:
     # Act / Assert
     assert _unit_checks(frame, make_contract) == []
 
 
-def test_runQuality_cleanSyntheticCohort_noUnitWarning(load_synthetic_dataset, make_contract):
+@pytest.mark.slow
+@pytest.mark.integration
+def test_runQuality_cleanSyntheticCohort_noUnitWarning(
+    load_synthetic_dataset: Callable[[str], pl.DataFrame], make_contract: ContractFactory
+) -> None:
     # Arrange: ldl and hdl have unit pairs; the cohort is in one unit
     df = load_synthetic_dataset("cohort")
 
-    # Act / Assert
-    assert _unit_checks(df, make_contract) == []
+    # Act
+    checks = _unit_checks(df, make_contract)
+
+    # Assert
+    assert checks == []

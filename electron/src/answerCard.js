@@ -325,7 +325,9 @@ export function renderAnswerCard(result, opts = {}) {
  * plan text on demand, and two plain-language actions. When words of the question were left out,
  * "Not what I meant" is the primary action.
  * @param {Object} held result from buildConfirmationHoldPresentation
- * @param {{ columns?: string[], onConfirm: (card: HTMLElement) => void,
+ * A unit hold (`held.confirmOptions`) shows one button per option instead of "Run this
+ * analysis": the doctor picks how the values are read, and a plain run would not pick for them.
+ * @param {{ columns?: string[], onConfirm: (card: HTMLElement, planHash?: string) => void,
  *   onReject: (card: HTMLElement) => void }} handlers
  * @returns {HTMLElement}
  */
@@ -362,6 +364,25 @@ export function buildHeldCard(held, { columns = [], onConfirm, onReject }) {
   }
 
   const actions = el('div', 'result-confirm-actions');
+  const options = Array.isArray(held.confirmOptions) ? held.confirmOptions : [];
+  if (options.length) {
+    options.forEach((option, index) => {
+      const kind = index === 0 ? 'btn-primary' : 'btn-secondary';
+      const optionBtn = el('button', `btn ${kind} btn-confirm`, option.label);
+      optionBtn.type = 'button';
+      optionBtn.dataset.testid = 'confirm-option-btn';
+      optionBtn.addEventListener('click', () => onConfirm(card, option.planHash));
+      actions.appendChild(optionBtn);
+    });
+    const rejectOption = el('button', 'btn btn-secondary btn-reject', 'Not what I meant');
+    rejectOption.type = 'button';
+    rejectOption.dataset.testid = 'reject-query-btn';
+    rejectOption.addEventListener('click', () => onReject(card));
+    actions.appendChild(rejectOption);
+    card.appendChild(actions);
+    card.appendChild(el('p', 'result-card-note hidden'));
+    return card;
+  }
   const confirmBtn = el(
     'button',
     `btn ${next.dropped ? 'btn-secondary' : 'btn-primary'} btn-confirm`,

@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import polars as pl
 import pytest
 
 from clinical_analytics.contracts import config
-from clinical_analytics.contracts.declarations import Declarations
+from clinical_analytics.contracts.builder import find_plausibility_range
+from clinical_analytics.contracts.declarations import Declarations, OneUnitDeclaration
 from clinical_analytics.contracts.unit_mix import detect_unit_mix, header_unit, unit_pair_for
 from tests.eval.dq_probes import interleave, lognormal_values, mixed_glucose_frame, skewed_glucose_frame
 
@@ -40,7 +42,7 @@ class TestDetectUnitMix:
             pytest.param("triglycerides", 1.7, 0.35, "mmol/L", "mg/dL", id="triglycerides"),
             pytest.param("creatinine", 1.0, 0.3, "mg/dL", "µmol/L", id="creatinine_mg_umol"),
             pytest.param("temperature", 37.0, 0.02, "°C", "°F", id="temperature_c_f"),
-            pytest.param("weight", 75.0, 0.18, "kg", "lb", id="weight_kg_lb"),
+            pytest.param("weight", 75.0, 0.1, "kg", "lb", id="weight_kg_lb"),
             pytest.param("height", 67.0, 0.05, "in", "cm", id="height_in_cm"),
         ],
     )
@@ -95,7 +97,7 @@ class TestDetectUnitMix:
         [
             pytest.param([], id="empty"),
             pytest.param([None] * 50, id="all_null"),
-            pytest.param([5.5, 100.0, 6.0, 110.0, 6.2], id="too_few_values"),
+            pytest.param([6.0, 110.0], id="too_few_values"),
             pytest.param([100.0] * 200, id="one_value"),
             pytest.param([0.0] * 100 + [-1.0] * 100, id="no_positive_values"),
         ],
@@ -120,6 +122,81 @@ class TestDetectUnitMix:
 
         # Act / Assert
         assert detect_unit_mix("glucose", series) is None
+
+    @pytest.mark.parametrize(
+        ("values", "low_count", "high_count"),
+        [
+            # On the branch head: "Mean glucose was 12.12" (true about 6.1 mmol/L), 0/200 detected.
+            pytest.param(interleave(lognormal_values(6.0, 0.1, 38), [110.0, 145.0]), 38, 2, id="two_of_forty_mg_dl"),
+            pytest.param([5.5, 100.0, 6.0, 110.0, 6.2], 3, 2, id="five_values"),
+            pytest.param(lognormal_values(110, 0.2, 59) + [6.1], 1, 59, id="one_mmol_value_set_apart"),
+        ],
+    )
+    def test_detect_smallMinorityAtTheFactor_foundBelowClusterMinimum(
+        self, values: list[float], low_count: int, high_count: int
+    ) -> None:
+        # Arrange
+        series = pl.Series("glucose", values)
+
+        # Act
+        mix = detect_unit_mix("glucose", series)
+
+        # Assert
+        assert mix is not None and mix.reason == "factor"
+        assert (mix.low_count, mix.high_count) == (low_count, high_count)
+
+    def test_detect_valuesImpossibleInMainUnit_foundWhateverTheFit(self) -> None:
+        # Arrange: 60 and 62 are impossible as °C and plausible as °F, though not at 98.6
+        series = pl.Series("temperature", [37.0 + (i % 7) / 10 for i in range(38)] + [60.0, 62.0])
+
+        # Act
+        mix = detect_unit_mix("temperature", series)
+
+        # Assert
+        assert mix is not None and mix.reason == "implausible"
+        assert (mix.target, mix.other, mix.low_count, mix.high_count) == ("°C", "°F", 38, 2)
+        assert mix.one_units == ()  # neither unit holds every value
+
+    def test_detect_wideClusterTails_assignedByCutBetweenCentres(self) -> None:
+        # Arrange: a narrow mmol/L cluster and a wide mg/dL one; the low tail (3.0) is far below
+        # the narrow cluster, where only the wide curve has any density
+        values = lognormal_values(6.5, 0.03, 100) + [3.0] + lognormal_values(110, 0.4, 100, 0)
+        series = pl.Series("glucose", values)
+
+        # Act
+        mix = detect_unit_mix("glucose", series)
+
+        # Assert: 3.0 is counted with the values below the cut, as mmol/L
+        assert mix is not None
+        assert (mix.low_count, mix.high_count) == (101, 100)
+
+    def test_detect_childrenBesideAdultsInKg_heldWithBothOneUnitOptions(self) -> None:
+        # Arrange: 28 kg beside 65 kg is 2.3x apart, inside the kg/lb window
+        series = pl.Series("weight", interleave(lognormal_values(28, 0.15, 100), lognormal_values(65, 0.15, 100)))
+
+        # Act
+        mix = detect_unit_mix("weight", series)
+        named = detect_unit_mix("weight_kg", series.alias("weight_kg"))
+
+        # Assert: the doctor can say "all kg"; a header naming kg offers kg only
+        assert mix is not None and set(mix.one_units) == {"kg", "lb"}
+        assert named is not None and named.one_units == ("kg",) and named.target == "kg"
+
+    def test_detect_thirtyKgBesideThirtyLb_caughtInEverySeededDraw(self) -> None:
+        # Arrange: 30 weights near 75 kg and 30 near 165 lb (log-sd 0.18), 200 seeded draws. On
+        # the branch head 27 of these 200 were missed (BIC gain under 10), and shown as answers.
+        draws = []
+        for seed in range(200):
+            rng = np.random.default_rng(seed)
+            kg = np.exp(rng.normal(math.log(75), 0.18, 30))
+            lb = np.exp(rng.normal(math.log(165), 0.18, 30))
+            draws.append(pl.Series("weight", np.round(np.concatenate([kg, lb]), 1)))
+
+        # Act
+        missed = [seed for seed, series in enumerate(draws) if detect_unit_mix("weight", series) is None]
+
+        # Assert
+        assert missed == []
 
     def test_detect_columnWithoutUnitPair_notChecked(self) -> None:
         # Arrange: crp has a plausibility range but no unit pair (mg/L only)
@@ -231,6 +308,14 @@ class TestUnitPairs:
             pytest.param("creatinine umol/L", "creatinine", id="creatinine_umol"),
             pytest.param("weight_kg", "weight", id="weight_kg"),
             pytest.param("Height (cm)", "height", id="height_cm"),
+            pytest.param("Temp (°F)", "temperature", id="temp_degrees_f"),
+            pytest.param("Temperature (°C)", "temperature", id="temperature_degrees_c"),
+            pytest.param("temp_c", "temperature", id="temp_c"),
+            pytest.param("temp_f", "temperature", id="temp_f"),
+            pytest.param("Creatinine (µmol/L)", "creatinine", id="creatinine_micro_sign"),
+            pytest.param("Creatinine (\u03bcmol/L)", "creatinine", id="creatinine_greek_mu"),
+            pytest.param("creatinine_umol", "creatinine", id="creatinine_umol"),
+            pytest.param("Glucose (mmol/L)", "glucose", id="glucose_mmol_l"),
             pytest.param("ht", None, id="ht_could_be_hypertension"),
             pytest.param("crp", None, id="no_pair"),
             pytest.param("age", None, id="not_unit_dependent"),
@@ -249,6 +334,14 @@ class TestUnitPairs:
             pytest.param("Glucose (mg/dL)", "mg/dL", id="mg_dl"),
             pytest.param("glucose_mmol_l", "mmol/L", id="mmol_l"),
             pytest.param("weight_lbs", "lb", id="lb"),
+            pytest.param("Temp (°F)", "°F", id="degrees_f"),
+            pytest.param("Temperature (°C)", "°C", id="degrees_c"),
+            pytest.param("temp_c", "°C", id="temp_c"),
+            pytest.param("temp_f", "°F", id="temp_f"),
+            pytest.param("Creatinine (µmol/L)", "µmol/L", id="micro_mol"),
+            pytest.param("creatinine_umol", "µmol/L", id="umol"),
+            pytest.param("Creatinine (mg/dL)", "mg/dL", id="creatinine_mg_dl"),
+            pytest.param("Glucose (mmol/L)", "mmol/L", id="glucose_mmol_l"),
             pytest.param("glucose", None, id="none"),
         ],
     )
@@ -284,7 +377,73 @@ class TestUnitPairs:
         assert math.isclose(scales["height"], 2.54)
 
 
+class TestHeaderUnits:
+    @pytest.mark.parametrize(
+        ("column", "variable", "low_centre", "log_sd"),
+        [
+            pytest.param("Temp (°F)", "temperature", 37.0, 0.02, id="temp_f"),
+            pytest.param("temp_c", "temperature", 37.0, 0.02, id="temp_c"),
+            pytest.param("Creatinine (µmol/L)", "creatinine", 1.0, 0.3, id="creatinine_umol"),
+        ],
+    )
+    def test_detect_headerNamesOneUnit_mixStillFound(
+        self, column: str, variable: str, low_centre: float, log_sd: float
+    ) -> None:
+        # Arrange: a header naming a unit is evidence, not proof; on the branch head these
+        # headers switched the check off ("Mean Creatinine (µmol/L) was 49.37")
+        series = _mixed(variable, low_centre, low_n=100, high_n=100, log_sd=log_sd).alias(column)
+
+        # Act
+        mix = detect_unit_mix(column, series)
+
+        # Assert
+        pair = unit_pair_for(column)
+        assert mix is not None and pair is not None
+        assert mix.target == header_unit(column, pair)
+
+    def test_findPlausibilityRange_unitHeaders_rangeFound(self) -> None:
+        # Act / Assert: the entry-error check reads these headers too
+        assert {
+            column: (found.variable if (found := find_plausibility_range(column)) else None)
+            for column in ("Temp (°F)", "temp_c", "Creatinine (µmol/L)", "creatinine_umol")
+        } == {
+            "Temp (°F)": "temperature",
+            "temp_c": "temperature",
+            "Creatinine (µmol/L)": "creatinine",
+            "creatinine_umol": "creatinine",
+        }
+
+    def test_unitHints_noHintThatNormalisedHeadersCannotMatch(self) -> None:
+        # Act / Assert: headers are normalised to a-z and 0-9, so "µ" in a hint never matches
+        hints = [*config.UNIT_HINTS, *(h for p in config.UNIT_PAIRS for h in (*p.low_hints, *p.high_hints))]
+        assert all(hint.isascii() and hint.isalnum() for hint in hints)
+
+
 class TestUnitDeclarations:
+    def test_withUnit_secondRuleSameColumn_keptAfterTheFirst(self) -> None:
+        # Arrange: the live layer applied both; a rebuilt one must apply both, in order
+        mix = detect_unit_mix("glucose", mixed_glucose_frame().get_column("glucose"))
+        assert mix is not None and (first := mix.rule("v1")) is not None
+        second = first.model_copy(update={"cutoff": 3.0})
+
+        # Act
+        declarations = Declarations().with_unit(first).with_unit(second).with_unit(first)
+
+        # Assert
+        assert declarations.units_for("v1") == (first, second)
+
+    def test_withOneUnit_sameColumnTwice_keepsTheLatest(self) -> None:
+        # Act
+        declarations = (
+            Declarations()
+            .with_one_unit(OneUnitDeclaration(column="weight", unit="lb", dataset_version="v1"))
+            .with_one_unit(OneUnitDeclaration(column="weight", unit="kg", dataset_version="v1"))
+        )
+
+        # Assert
+        assert declarations.one_unit_for("v1") == {"weight": "kg"}
+        assert declarations.one_unit_for("v2") == {}
+
     def test_withUnit_sameColumnTwice_keepsOneRule(self) -> None:
         # Arrange
         mix = detect_unit_mix("glucose", mixed_glucose_frame().get_column("glucose"))

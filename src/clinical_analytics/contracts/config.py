@@ -184,8 +184,9 @@ class UnitBounds:
     median_below: float | None
 
 
-# Header suffixes that name a lab unit (normalised: lower case, letters and digits only).
-UNIT_HINTS: Final[tuple[str, ...]] = ("mmoll", "mmol", "mgdl", "mgl", "meql", "meq", "gdl", "gl", "umoll", "µmoll")
+# Header suffixes that name a lab unit (normalised: lower case, "µ" read as "u", letters and
+# digits only: "Creatinine (µmol/L)" -> "creatinineumoll").
+UNIT_HINTS: Final[tuple[str, ...]] = ("mmoll", "mmol", "mgdl", "mgl", "meql", "meq", "gdl", "gl", "umoll", "umol")
 WIDE_BOUND_NOTE: Final = "unit unknown, wide bound"
 
 
@@ -327,7 +328,7 @@ class UnitPair:
 # Header suffixes (normalised like UNIT_HINTS) that name each unit.
 _MG_DL: Final = ("mgdl",)
 _MMOL_L: Final = ("mmoll", "mmol")
-_UMOL_L: Final = ("umoll", "µmoll")
+_UMOL_L: Final = ("umoll", "umol")
 
 
 def _lab(
@@ -456,7 +457,21 @@ UNIT_MIX_RATIO_TOLERANCE_SHARE: Final = 0.25
 # Two components must explain the values better than one by a BIC difference of at least 10,
 # "very strong" evidence (Kass RE, Raftery AE. Bayes factors. J Am Stat Assoc 1995;90:773).
 UNIT_MIX_MIN_BIC_GAIN: Final = 10.0
-# Each cluster needs this many values; a column needs twice this many.
+# The two units at their exact factor (one spread, three parameters) must explain the values
+# better than one distribution by BIC (difference above 0, Kass & Raftery 1995). A lower bar
+# than two free components: the factor is known, not fitted, and a hold costs the doctor one
+# click ("all values are kg") while a missed mix shows a wrong number. 30 kg beside 30 lb
+# values (log-sd 0.18): missed 27/200 at the free-component bar, 0/200 here.
+UNIT_MIX_MIN_FACTOR_GAIN: Final = 0.0
+# An even mix of the two units with no variation between patients has a log spread of half the
+# units' log distance (0.39 for kg/lb). A column at least this share of that distance wide
+# (0.36 for kg/lb; adult weights in one unit spread about 0.25) is held even when no fit
+# separates two groups: one population that wide cannot be told from a mix. 0.45 rather than
+# 0.5 covers the sampling spread of a small mix: 30 kg beside 30 lb values (log-sd 0.18) over
+# 2,000 seeded draws, none missed.
+UNIT_MIX_SPREAD_SHARE: Final = 0.45
+# Each cluster needs this many values; a column needs twice this many. A smaller minority (1
+# or 2 values) counts when an empty stretch (UNIT_MIX_CLEAN_GAP_SHARE) parts it from the rest.
 UNIT_MIX_MIN_CLUSTER_VALUES: Final = 3
 # Share of each cluster that must lie inside its unit's bounds.
 UNIT_MIX_IN_RANGE_SHARE: Final = 0.95
@@ -464,11 +479,10 @@ UNIT_MIX_IN_RANGE_SHARE: Final = 0.95
 # the fit (log 1.02: values 2% apart).
 UNIT_MIX_MIN_LOG_SD: Final = 0.02
 UNIT_MIX_EM_ITERATIONS: Final = 200
-# A conversion rule is offered only when every value belongs to its cluster with at least this
-# posterior probability: no value sits in the valley where its unit cannot be told.
-UNIT_MIX_CLEAN_POSTERIOR: Final = 0.99
-# ...and the clusters leave an empty stretch of at least this share of the units' log distance
-# (glucose: the lowest mg/dL value at least 18 ** 0.25 = 2.1x the highest mmol/L one). Values in
-# a narrower valley could be either unit (30: 30 mmol/L or 30 mg/dL), which no cut point settles.
+# A conversion rule is offered only when the clusters leave an empty stretch of at least this
+# share of the units' log distance (glucose: the lowest mg/dL value at least 18 ** 0.25 = 2.1x
+# the highest mmol/L one). Values in a narrower valley could be either unit (30: 30 mmol/L or
+# 30 mg/dL), which no cut point settles. A minority of 1 or 2 values counts only past such a
+# stretch.
 UNIT_MIX_CLEAN_GAP_SHARE: Final = 0.25
 UNIT_MIX_RULE_SUFFIX: Final = "_units"

@@ -85,6 +85,18 @@ def mixed_glucose_frame(mmol_rows: int = 50, mg_rows: int = 150) -> pl.DataFrame
     )
 
 
+def minority_glucose_frame() -> pl.DataFrame:
+    """Glucose of 40 patients: 38 in mmol/L (median 6.0) and 2 in mg/dL (110, 145). On the
+    branch head "Mean glucose was 12.12", twice the true 6.1 mmol/L."""
+    return lab_frame("glucose", interleave(lognormal_values(6.0, 0.1, 38), [110.0, 145.0]))
+
+
+def small_temperature_frame() -> pl.DataFrame:
+    """Temperature of 20 patients: 18 in °C and 2 in °F. On the branch head confirming the
+    entry-error hold gave "Mean temperature was 43.22" (true 37.0 °C)."""
+    return lab_frame("temperature", interleave([37.0 + (i % 5) / 10 for i in range(18)], [98.6, 99.1]))
+
+
 def skewed_glucose_frame() -> pl.DataFrame:
     """Glucose of 200 patients, all mg/dL and wide: 140 near 100 and 60 hyperglycaemic near 180
     (right-skewed, two clinical groups 1.8x apart, not the 18x of a unit). Must be answered."""
@@ -150,6 +162,11 @@ SHOWN_PROBES: tuple[tuple[str, str | QueryPlan, bool, object], ...] = (
 # Unit probes: a column that mixes mg/dL and mmol/L must be held; a single-unit skewed one
 # must be answered with its true mean (the unit check must not hold plain wide variation).
 UNIT_HELD: tuple[str, ...] = ("average glucose", "what is the mean glucose?")
+# Small mixes that miss a two-cluster fit: held, also when the doctor presses confirm.
+UNIT_SMALL_HELD: tuple[tuple[str, str], ...] = (
+    ("dq_minority_glucose", "average glucose"),
+    ("dq_small_temperature", "average temperature"),
+)
 UNIT_ANSWERED: tuple[str, ...] = ("average glucose",)
 
 

@@ -622,7 +622,11 @@ class SemanticLayer:
             if not configured:
                 # Never leave an unconfigured in-memory database open behind a failed build.
                 self.con.disconnect()
-        self._con_lock = threading.Lock()
+        # Re-entrant: a unit rule is applied under it from inside a locked question.
+        self._con_lock = threading.RLock()
+        # Unit rules applied to the base view (UnitRule.model_dump_json(): the rule and the
+        # dataset version it was confirmed on), so each one converts the values exactly once.
+        self._applied_unit_rules: set[str] = set()
         # Temporary views the current cohort query created; dropped once its rows are read.
         self._cohort_views: list[str] = []
 
@@ -2036,6 +2040,7 @@ class SemanticLayer:
         confidence_threshold: float = 0.75,
         query_text: str | None = None,
         confirmed: bool = False,
+        stated_plan: "QueryPlan | None" = None,
     ) -> dict[str, Any]:
         """
         Execute a QueryPlan with pre-execution gate + warnings (ADR003 + issue #52).
@@ -2048,6 +2053,9 @@ class SemanticLayer:
             confidence_threshold: Minimum confidence for auto-execute (default: 0.75)
             query_text: Optional query text for run_key generation
             confirmed: When True, release a low-confidence hold
+            stated_plan: The plan with its limits as the question states them, when ``plan``
+                compares in another unit ("above 7 mmol/L" run as > 126.112 mg/dL); the
+                question's constraints are checked against it. Default: ``plan``
 
         Returns:
             dict with keys:
@@ -2214,7 +2222,7 @@ class SemanticLayer:
             from clinical_analytics.core.cohort_constraints import unapplied_constraints
 
             gap_columns = list(self.get_base_view().columns)
-            gaps = unapplied_constraints(query_text, plan, gap_columns)
+            gaps = unapplied_constraints(query_text, stated_plan or plan, gap_columns)
             if gaps:
                 # Each word once, in order. A stem ("diabete") is dropped only when an inflection of
                 # it ("diabetes") is listed; unrelated words sharing a prefix ("men", "menopause") stay.
@@ -3096,17 +3104,27 @@ class SemanticLayer:
         self._base_counts.pop(column, None)
         self._value_counts.pop(column, None)
 
-    def convert_units(self, column: str, cutoff: float, below: bool, scale: float, offset: float) -> None:
+    def convert_units(self, key: str, column: str, cutoff: float, below: bool, scale: float, offset: float) -> bool:
         """Read the values of ``column`` below ``cutoff`` (or at and above it, ``below`` False) as
         ``value * scale + offset`` from now on (a confirmed unit rule: glucose below 30 is mmol/L,
-        read in mg/dL). Rows, missing values and the other values are unchanged."""
-        view = self.get_base_view()
-        values = view[column].cast("float64")
-        side = values < cutoff if below else values >= cutoff
-        self._base_view = view.mutate(**{column: side.ifelse(values * scale + offset, values)})
-        # The column's values changed: its cached distinct count and value counts are stale.
-        self._base_counts.pop(column, None)
-        self._value_counts.pop(column, None)
+        read in mg/dL). Rows, missing values and the other values are unchanged.
+
+        Exactly once per ``key`` (the rule and its dataset version), under the layer's lock: a
+        second call, from this thread or another service on the same layer, changes nothing
+        (converting twice would move -5 mmol/L to -90, then -1620). True when it converted.
+        """
+        with self._con_lock:
+            if key in self._applied_unit_rules:
+                return False
+            view = self.get_base_view()
+            values = view[column].cast("float64")
+            side = values < cutoff if below else values >= cutoff
+            self._base_view = view.mutate(**{column: side.ifelse(values * scale + offset, values)})
+            self._applied_unit_rules.add(key)
+            # The column's values changed: its cached distinct count and value counts are stale.
+            self._base_counts.pop(column, None)
+            self._value_counts.pop(column, None)
+            return True
 
     def _column_is_string(self, view: Any, column: str) -> bool:
         """From the schema: no rows are read."""
