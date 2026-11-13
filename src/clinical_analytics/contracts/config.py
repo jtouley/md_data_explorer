@@ -56,6 +56,30 @@ TOO_FEW_ROWS_NOTE: Final = "too few rows to report counts"
 # Fewer rows than the small-cell threshold: every count would be suppressed.
 MIN_ROW_COUNT: Final = MIN_CELL_SIZE
 
+# Cell values that mean "missing" in clinical exports (R NA, SAS/Stata ".", Excel #N/A, ...),
+# matched case-insensitively after strip. Staging nulls them only in a column that otherwise
+# types as numbers or dates; a text column keeps every value ("None" can be a category level).
+# Same constant as PR #96 (answer side) plus "#n/a".
+MISSING_VALUE_TOKENS: Final[tuple[str, ...]] = (
+    "",
+    "na",
+    "n/a",
+    "nan",
+    "null",
+    "none",
+    "missing",
+    ".",
+    "-",
+    "?",
+    "inf",
+    "+inf",
+    "-inf",
+    "infinity",
+    "+infinity",
+    "-infinity",
+    "#n/a",
+)
+
 # Upload notice length: a short list; the full result is in the report's checks.
 SUMMARY_MAX_LINES: Final = 8
 
@@ -76,16 +100,6 @@ NO_ID_COLUMN_REASON: Final = "no ID column identified"
 # text the bounds go in this custom property so the range check is reported as not run.
 PLAUSIBILITY_RANGE_PROPERTY: Final = "plausibilityRange"
 
-
-# One list of text that means "no value" in a column of numbers stored as text, used by the
-# quality report (nullValues on numeric-text columns only) and by the analysis. Compared after
-# strip() and lower(). "inf" is a non-finite value, missing like NaN. In a categorical column
-# these are real levels ("None" = no complications) and are never counted as missing.
-# Kept identical to the same constant in PR #95.
-MISSING_VALUE_TOKENS: Final[tuple[str, ...]] = (
-    "", "na", "n/a", "nan", "null", "none", "missing", ".", "-", "?", "inf", "+inf", "-inf", "infinity",
-    "+infinity", "-infinity", "#n/a",
-)  # fmt: skip
 
 # A value recorded as a limit ("<5", "> 100", "<=0.1", "< 0.5 mg/L"): censored, never the limit
 # itself. An optional unit may follow the number.

@@ -8,8 +8,10 @@ INVARIANT (see versioning.py for full contract):
     Tables are persisted as: {upload_id}_{table_name}_{dataset_version}
     Guarantees: same (upload_id, dataset_version) → storage reuse
 
-MVP scope: Basic save/load operations, lazy frame support.
-Deferred to Phase 5+: Table deduplication, storage optimization, compression.
+Uploads no longer write here: each dataset version is stored as typed Parquet
+(see ui.storage.user_datasets), and the semantic layer reads that Parquet. This store keeps the
+tables of uploads made before that change until they are deleted (storage.dataset_deletion),
+and the connection registry that lets a purge rewrite the file safely.
 """
 
 import logging
@@ -155,7 +157,6 @@ class DataStore:
 
     MVP Features:
     - Save tables to persistent DuckDB
-    - Load tables as Polars lazy frames
     - List all datasets and tables
     - ACID guarantees via DuckDB
 
@@ -215,57 +216,6 @@ class DataStore:
         self.conn.execute(f"CREATE OR REPLACE TABLE {qualified_name} AS SELECT * FROM data")
 
         logger.info(f"Saved table '{table_name}' ({data.height:,} rows) to DuckDB as '{qualified_name}'")
-
-    def load_table(
-        self,
-        upload_id: str,
-        table_name: str,
-        dataset_version: str,
-    ) -> pl.LazyFrame:
-        """
-        Load table as Polars lazy frame.
-
-        Boundary: Returns LazyFrame (lazy transform), not eager DataFrame.
-
-        Args:
-            upload_id: Upload identifier
-            table_name: Original table name
-            dataset_version: Content-based dataset version
-
-        Returns:
-            Polars LazyFrame for lazy evaluation
-
-        Raises:
-            ValueError: If table not found
-        """
-        # Build qualified table name (sanitize table_name for SQL safety)
-        sanitized_table_name = _sanitize_table_name(table_name)
-        qualified_name = f"{upload_id}_{sanitized_table_name}_{dataset_version}"
-
-        # Check if table exists
-        tables = self.list_tables()
-        if qualified_name not in tables:
-            raise ValueError(f"Table '{qualified_name}' not found in DuckDB. Available tables: {', '.join(tables)}")
-
-        # Load as lazy frame using pl.scan_sql() for deferred execution
-        # Note: pl.scan_sql() was added in Polars 0.20+, fallback to read_database if needed
-        lazy_df: pl.LazyFrame
-        try:
-            # Preferred: scan_sql for true lazy evaluation
-            lazy_df = pl.scan_sql(  # type: ignore[attr-defined]
-                query=f"SELECT * FROM {qualified_name}",
-                connection_uri=str(self.db_path),
-            )
-        except AttributeError:
-            # Fallback: read_database then convert to lazy (Polars < 0.20)
-            eager_df = pl.read_database(
-                query=f"SELECT * FROM {qualified_name}",
-                connection=self.conn,
-            )
-            lazy_df = eager_df.lazy()
-
-        logger.debug(f"Loaded table '{qualified_name}' as LazyFrame")
-        return lazy_df
 
     def list_tables(self) -> list[str]:
         """

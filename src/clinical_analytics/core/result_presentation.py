@@ -494,6 +494,12 @@ def _split_fold_allowed(sizes: Mapping[Any, Any], hidden: set[Any], floor: int =
         low, high = max(floor * k, mass - h * cap), min((limit - 1) * k, mass - limit * h)
         if low > high:
             continue  # no such split is possible
+        if h > 1 or (h == 1 and k > 1):
+            # Two small groups next to a complement say the small ones alone were exposed (at
+            # their cap); several tied complements say how the algorithm stopped. Either pins a
+            # small group ({10, 10, 11, 15}, {3, 11, 11, 50}), so only one small group with one
+            # complement, or small groups alone, may be split.
+            return False
         one_low, one_high = max(floor, low - (limit - 1) * (k - 1)), min(limit - 1, high - floor * (k - 1))
         if one_high - one_low < 1 + SPLIT_FOLD_SLACK:
             return False

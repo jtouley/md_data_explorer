@@ -60,7 +60,7 @@ def layer_for(dataset_id: str, workspace: Path | None = None) -> SemanticLayer:
     csv_path = _cache_dir() / f"{dataset_id}.csv"
     frame.write_csv(csv_path)
     config: dict[str, Any] = {
-        "init_params": {"source_path": str(csv_path)},
+        "init_params": {"source_path": str(csv_path), "source_format": "csv"},
         "column_mapping": {},
         "time_zero": {"value": "2020-01-01"},
         "outcomes": {},

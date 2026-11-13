@@ -69,7 +69,8 @@ def test_deleteDataset_uploadWithSessionsOverlaysAndResults_leavesNoTraceInDataH
     needles = [dataset_id.encode(), marker.encode()]
     assert _traces(data_home(), needles), "the upload should have left data to delete"
     store = data_home() / "data" / "analytics.duckdb"
-    assert dataset_id.encode() in store.read_bytes(), "the DuckDB catalog should name the dataset's tables"
+    # Uploads are stored as typed Parquet; they no longer copy rows into the DuckDB store.
+    assert not store.exists() or dataset_id.encode() not in store.read_bytes()
     assert marker.encode() in _session_db_bytes()
 
     # Act
@@ -79,9 +80,9 @@ def test_deleteDataset_uploadWithSessionsOverlaysAndResults_leavesNoTraceInDataH
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["deleted_sessions"] == 1
-    assert body["dropped_tables"] >= 1
+    assert body["dropped_tables"] == 0  # typed Parquet only: nothing was in the DuckDB store
     assert _traces(data_home(), needles) == []
-    assert dataset_id.encode() not in store.read_bytes()
+    assert not store.exists() or dataset_id.encode() not in store.read_bytes()
     assert marker.encode() not in _session_db_bytes()
     assert dataset_id.encode() not in _session_db_bytes()
     assert dataset_id not in queries._query_services
@@ -143,11 +144,11 @@ def test_deleteDataset_queryAndPreviewArriveDuringPurge_rejected409AndNothingCac
     assert dataset_id not in dependencies._deleting_datasets
 
 
-def test_submitQuery_storeLockHeld_eventLoopStaysResponsiveAnd503(
+def test_submitQuery_storeLockHeld_layerBuildDoesNotWaitOnStore(
     test_client: TestClient, real_server: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Arrange: a dataset whose semantic layer must be built from the store, while a long
-    # purge holds the store lock in another thread.
+    # Arrange: a long purge holds the store lock in another thread. The semantic layer is
+    # built from the dataset's typed Parquet, so a query on another dataset must not wait.
     import threading
     import time
 
@@ -182,11 +183,11 @@ def test_submitQuery_storeLockHeld_eventLoopStaysResponsiveAnd503(
     # Act
     try:
         submitter.start()
-        time.sleep(0.3)  # the submit is now waiting on the store lock
         started = time.monotonic()
         health = requests.get(f"{real_server}/health", timeout=10)
         health_latency = time.monotonic() - started
         submitter.join(15)
+        answered_while_locked = not release.is_set()
     finally:
         release.set()
         purge.join()
@@ -194,8 +195,8 @@ def test_submitQuery_storeLockHeld_eventLoopStaysResponsiveAnd503(
     # Assert
     assert health.status_code == 200
     assert health_latency < 1.0
-    assert result["submit"].status_code == 503
-    assert "Try again" in result["submit"].json()["detail"]
+    assert answered_while_locked
+    assert result["submit"].status_code == 202, result["submit"].text
 
 
 def test_generateUploadId_sameFilenameTwice_distinctIdsMatchingDeletePattern(upload_storage: Any) -> None:
@@ -279,7 +280,6 @@ def test_deleteDataset_storeConnectionHeld_returns409AndChangesNothing(test_clie
     with SessionLocal() as db:
         assert db.get(db_models.Session, session_id) is not None
         assert db.get(db_models.Message, f"m_{marker}") is not None
-    assert dataset_id.encode() in store.read_bytes()
     assert test_client.get(f"/api/datasets/{dataset_id}").status_code == 200
 
 

@@ -18,7 +18,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Path, status
 
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.datasets.uploaded.definition import UploadedDatasetFactory
+from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError, UploadedDatasetFactory
 from clinical_analytics.storage.datastore import STORE_BUSY_MESSAGE, StoreBusyError
 
 # ============================================================================
@@ -132,6 +132,13 @@ def get_semantic_layer(dataset_id: Annotated[str, Path(..., description="Dataset
 
             except StoreBusyError as e:
                 raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STORE_BUSY_MESSAGE) from e
+            except SemanticLayerBuildError as e:
+                # The dataset exists but its query view could not be built: say so, never "not found".
+                # Nothing is cached, so the next request tries again.
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Dataset '{dataset_id}' could not be loaded for questions. Upload it again.",
+                ) from e
             except (FileNotFoundError, ValueError) as e:
                 # UploadedDataset.__init__ raises ValueError when no metadata exists for
                 # dataset_id at all; UploadedDataset.load() raises FileNotFoundError when
