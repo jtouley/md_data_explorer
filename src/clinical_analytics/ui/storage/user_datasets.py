@@ -40,6 +40,7 @@ from typing import Any, Final
 import polars as pl
 import structlog
 
+from clinical_analytics.core.schema import DataQualityError
 from clinical_analytics.storage.atomic import atomic_write
 from clinical_analytics.storage.staging import (
     ID_COLUMN_NAMES,
@@ -70,6 +71,7 @@ COHORT_PARQUET_KEY: Final = "cohort_parquet"
 RAW_LANDING_KEY: Final = "raw_landing"
 COLUMN_TYPES_KEY: Final = "column_types"
 COLUMN_UNITS_KEY: Final = "column_units"
+COHORT_BUILD_KEY: Final = "cohort_build"  # multi-table: tables left out of the cohort, and why
 PARQUET_DIRNAME: Final = "parquet"
 COHORT_FILE_STEM: Final = "_cohort"  # {upload_id}__cohort_{version}: no sanitized table name starts with "_"
 PARQUET_COMPRESSION: Final = "zstd"
@@ -980,9 +982,49 @@ def cohort_parquet_path(storage: "UserDatasetStorage", upload_id: str, dataset_v
     return _parquet_dir(storage) / f"{upload_id}_{COHORT_FILE_STEM}_{dataset_version}.parquet"
 
 
-def _write_parquet(df: pl.DataFrame, path: Path) -> None:
-    """Write a versioned data file once; an existing file already holds this version's data."""
-    atomic_write(path, lambda part: df.write_parquet(part, compression=PARQUET_COMPRESSION), exclusive=True)
+def _write_parquet(df: pl.DataFrame, path: Path) -> bool:
+    """Write a versioned data file once (True); an existing file already holds this version's data (False)."""
+    return atomic_write(path, lambda part: df.write_parquet(part, compression=PARQUET_COMPRESSION), exclusive=True)
+
+
+def _discard_uncommitted(storage: "UserDatasetStorage", upload_id: str, created: list[Path]) -> None:
+    """After a failed save, remove the data files this save wrote (never files that existed before).
+
+    Nothing references them (metadata was not committed), so they would only hold patient rows
+    no one can see or delete. For an upload that was never committed at all, its derived
+    contract and quality files go too.
+    """
+    import shutil
+
+    from clinical_analytics.contracts.config import CONTRACTS_DIRNAME, DQ_DIRNAME
+
+    log = logger.bind(upload_id=upload_id, files=len(created))
+    for path in created:
+        path.unlink(missing_ok=True)
+    landing_dir = storage.raw_dir / upload_id
+    if landing_dir.is_dir() and not any(landing_dir.iterdir()):
+        landing_dir.rmdir()
+    if not (storage.metadata_dir / f"{upload_id}.json").exists():
+        for dirname in (CONTRACTS_DIRNAME, DQ_DIRNAME):
+            shutil.rmtree(storage.upload_dir.parent / dirname / upload_id, ignore_errors=True)
+    log.info("uncommitted_files_removed")
+
+
+def describe_cohort_build(report: dict[str, Any] | None) -> list[str]:
+    """One sentence per thing the multi-table cohort left out (from MultiTableHandler's report)."""
+    if not report:
+        return []
+    lines = [
+        f"{t['table']}: not in the cohort ({t['classification']} table): {t['reason']}."
+        for t in report.get("excluded_tables", [])
+    ]
+    if report.get("null_key_note"):
+        lines.append(f"{report['null_key_note']}.")
+    lines.extend(
+        f"{table}: latest-value columns not created: {why}."
+        for table, why in (report.get("omitted_features") or {}).items()
+    )
+    return lines
 
 
 def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
@@ -999,7 +1041,7 @@ def _upload_failure_reason(e: BaseException) -> str:
     """
     if isinstance(e, pl.exceptions.PolarsError):
         return type(e).__name__
-    if isinstance(e, StagingError | UploadError | SecurityError | ValueError):
+    if isinstance(e, StagingError | UploadError | SecurityError | DataQualityError | ValueError):
         return str(e)
     return type(e).__name__
 
@@ -1036,6 +1078,7 @@ def save_table_list(
         (success, message)
     """
     log = logger.bind(upload_id=upload_id, table_count=len(tables))
+    created: list[Path] = []  # data files this call wrote; removed if the save does not commit
     try:
         # 1. Extract documentation context (Phase 1: ADR004)
         # Skip extraction if doc_context already exists (idempotency safeguard)
@@ -1086,19 +1129,32 @@ def save_table_list(
         table_fingerprints = [compute_table_fingerprint(t["data"], t["name"]) for t in tables]
         table_names = [t["name"] for t in tables]
 
-        # 4. Unified cohort (single table: the table itself)
+        # 4. Unified cohort (single table: the table itself). A multi-table cohort reports the
+        # tables it left out; a key that breaks one row per patient raises DataQualityError.
+        cohort_build: dict[str, Any] | None = None
         if len(tables) == 1:
             unified_df = tables[0]["data"]
         else:
             from clinical_analytics.core.multi_table_handler import MultiTableHandler
 
-            handler = MultiTableHandler({t["name"]: t["data"] for t in tables})
-            if not metadata.get("relationships"):
-                relationships = handler.detect_relationships()
-                metadata["relationships"] = [str(rel) for rel in relationships]
-                log.info("relationships_detected", count=len(relationships))
-            unified_df = handler.build_unified_cohort()
-            handler.close()
+            with MultiTableHandler({t["name"]: t["data"] for t in tables}) as handler:
+                if not metadata.get("relationships"):
+                    relationships = handler.detect_relationships()
+                    metadata["relationships"] = [str(rel) for rel in relationships]
+                    log.info("relationships_detected", count=len(relationships))
+                build = handler.build_unified_cohort_with_report()
+            unified_df = build.data
+            cohort_build = {
+                "anchor_table": build.anchor_table,
+                "grain_key": build.grain_key,
+                "excluded_tables": [
+                    {"table": t.table_name, "classification": t.classification, "reason": t.reason}
+                    for t in build.excluded_tables
+                ],
+                "null_key_note": build.null_key_note,
+                "omitted_features": dict(build.omitted_features),
+            }
+            log.info("cohort_built", excluded_tables=len(build.excluded_tables))
 
         # 5. Raw landing + typed Parquet per table (versioned, never replaced)
         for table in tables:
@@ -1109,18 +1165,21 @@ def save_table_list(
         if raw_bytes is not None:
             ext = Path(str(metadata.get("original_filename", ""))).suffix.lower() or ".bin"
             raw_landing = storage.raw_dir / upload_id / f"{dataset_version}{ext}"
-            atomic_write(raw_landing, lambda part: part.write_bytes(raw_bytes), exclusive=True)
+            if atomic_write(raw_landing, lambda part: part.write_bytes(raw_bytes), exclusive=True):
+                created.append(raw_landing)
 
         parquet_paths: dict[str, str] = {}
         for table in tables:
             path = table_parquet_path(storage, upload_id, table["name"], dataset_version)
-            _write_parquet(table["data"], path)
+            if _write_parquet(table["data"], path):
+                created.append(path)
             parquet_paths[table["name"]] = str(path)
         if len(tables) == 1:
             cohort_path = Path(parquet_paths[tables[0]["name"]])
         else:
             cohort_path = cohort_parquet_path(storage, upload_id, dataset_version)
-            _write_parquet(unified_df, cohort_path)
+            if _write_parquet(unified_df, cohort_path):
+                created.append(cohort_path)
         log.info("typed_parquet_written", tables=len(parquet_paths))
 
         # 6. From here on, the stored frame is the one source of truth (what queries will read).
@@ -1196,6 +1255,7 @@ def save_table_list(
             RAW_LANDING_KEY: str(raw_landing) if raw_landing else None,
             COLUMN_TYPES_KEY: column_types,
             COLUMN_UNITS_KEY: column_units,
+            COHORT_BUILD_KEY: cohort_build,
             "tables": table_names,
             "table_counts": {t["name"]: t["data"].height for t in tables},
             "row_count": stored_df.height,
@@ -1218,6 +1278,7 @@ def save_table_list(
             probe_query_view(storage, upload_id, full_metadata, expected_rows=stored_df.height)
         except SemanticLayerBuildError as e:
             log.error("upload_query_view_failed", reason=str(e))
+            _discard_uncommitted(storage, upload_id, created)
             return False, f"The dataset could not be prepared for questions: {e}"
 
         # 8. Example questions (best effort: a failure here never blocks the upload)
@@ -1267,6 +1328,7 @@ def save_table_list(
     except (
         UploadError,
         StagingError,
+        DataQualityError,
         OSError,
         RuntimeError,
         ValueError,
@@ -1274,6 +1336,12 @@ def save_table_list(
         pl.exceptions.PolarsError,
     ) as e:
         log.error("save_tables_failed", error_type=type(e).__name__)
+        try:
+            _discard_uncommitted(storage, upload_id, created)
+        except OSError as cleanup_error:
+            log.error("uncommitted_files_not_removed", error_type=type(cleanup_error).__name__)
+        if isinstance(e, DataQualityError):
+            return False, f"The tables could not be combined into one row per patient: {e}"
         return False, f"Error saving tables: {_upload_failure_reason(e)}"
 
 
@@ -2424,9 +2492,8 @@ class UserDatasetStorage:
 
             from clinical_analytics.core.multi_table_handler import MultiTableHandler
 
-            handler = MultiTableHandler(tables_dict)
-            relationships = handler.detect_relationships()
-            handler.close()
+            with MultiTableHandler(tables_dict) as handler:
+                relationships = handler.detect_relationships()
 
             logger.info(f"Detected {len(relationships)} relationships")
             if relationships:
@@ -2498,11 +2565,9 @@ class UserDatasetStorage:
                 )
 
             logger.info(f"Multi-table upload successful: {len(tables_list)} tables")
-            return (
-                True,
-                f"Multi-table upload successful: {len(tables_list)} tables",
-                upload_id,
-            )
+            notes = describe_cohort_build((self.get_upload_metadata(upload_id) or {}).get(COHORT_BUILD_KEY))
+            message = f"Multi-table upload successful: {len(tables_list)} tables"
+            return True, " ".join([message, *notes]), upload_id
 
         except Exception as e:
             import traceback

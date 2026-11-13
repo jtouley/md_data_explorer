@@ -397,6 +397,10 @@ class DatasetUploadResponse(BaseModel):
         default_factory=list,
         description="Columns kept as text or partly unreadable, and units rows, each with the reason",
     )
+    cohort_notes: list[str] = Field(
+        default_factory=list,
+        description="Multi-table uploads: tables, rows and features left out of the cohort, and why",
+    )
 
 
 def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
@@ -409,6 +413,13 @@ def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]
     return describe_column_types(
         metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {}, SMALL_CELL_THRESHOLD
     )
+
+
+def _upload_cohort_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
+    """What a multi-table cohort left out (tables, keyless rows, features), for the user."""
+    from clinical_analytics.ui.storage.user_datasets import COHORT_BUILD_KEY, describe_cohort_build
+
+    return describe_cohort_build((storage.get_upload_metadata(upload_id) or {}).get(COHORT_BUILD_KEY))
 
 
 class DatasetDeleteResponse(BaseModel):
@@ -459,6 +470,7 @@ def load_sample_dataset() -> DatasetUploadResponse:
         message=message or "Sample cohort loaded",
         quality=_upload_quality(storage, upload_id),
         type_notes=_upload_type_notes(storage, upload_id),
+        cohort_notes=_upload_cohort_notes(storage, upload_id),
     )
 
 
@@ -528,6 +540,7 @@ async def upload_dataset(
         message=message,
         quality=await asyncio.to_thread(_upload_quality, storage, upload_id),
         type_notes=_upload_type_notes(storage, upload_id),
+        cohort_notes=_upload_cohort_notes(storage, upload_id),
     )
 
 

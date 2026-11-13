@@ -404,3 +404,77 @@ def test_layerBuild_failsPartWay_leavesNoPartialLayer(store, monkeypatch):
     with pytest.raises(SemanticLayerBuildError):
         dataset.get_semantic_layer()
     assert dataset._semantic is None
+
+
+# --- multi-table cohort build (#92 report) and cleanup on failure ---------------------------
+
+
+def _owned_files(store: UserDatasetStorage, upload_id: str) -> list[str]:
+    data_dir = store.upload_dir.parent
+    return sorted(str(p.relative_to(data_dir)) for p in data_dir.rglob("*") if upload_id in str(p) and p.is_file())
+
+
+def test_saveTableList_tableLeftOutOfCohort_reportedInMetadataAndNotes(store, make_cohort_with_categorical):
+    # Arrange: a small repeated-key table classifies as reference and is not joined
+    from clinical_analytics.ui.storage.user_datasets import describe_cohort_build, save_table_list
+
+    patients = make_cohort_with_categorical(n_patients=30)
+    visits = pl.DataFrame({"patient_id": ["P001", "P001", "P002"], "sbp": [120, 130, 140]})
+    tables = [{"name": "patients", "data": patients}, {"name": "visits", "data": visits}]
+
+    # Act
+    ok, message = save_table_list(store, tables, "user_upload_multi0001", {"original_filename": "m.zip"})
+
+    # Assert
+    assert ok, message
+    report = store.get_upload_metadata("user_upload_multi0001")["cohort_build"]
+    assert [t["table"] for t in report["excluded_tables"]] == ["visits"]
+    lines = describe_cohort_build(report)
+    assert lines[0].startswith("visits: not in the cohort")
+
+
+def test_saveTableList_duplicateAnchorKey_failsClearly_andLeavesNoFiles(store, make_cohort_with_categorical):
+    # Arrange
+    from clinical_analytics.ui.storage.user_datasets import save_table_list
+
+    cohort = make_cohort_with_categorical(n_patients=300)
+    patients = pl.concat([cohort, cohort.head(11)])
+    visits = pl.DataFrame({"patient_id": ["P001", "P001", "P002"], "sbp": [120, 130, 140]})
+    tables = [{"name": "patients", "data": patients}, {"name": "visits", "data": visits}]
+
+    # Act
+    ok, message = save_table_list(
+        store, tables, "user_upload_dup0001", {"original_filename": "d.zip"}, raw_bytes=b"zip bytes"
+    )
+
+    # Assert
+    assert not ok
+    assert "duplicate rows on key 'patient_id'" in message
+    assert _owned_files(store, "user_upload_dup0001") == []
+
+
+def test_saveUpload_failsAfterDataWritten_removesOnlyFilesItWrote(store, monkeypatch):
+    # Arrange: v1 committed; v2's query view will fail after its files are written
+    import duckdb
+
+    from clinical_analytics.core.semantic import SemanticLayer
+
+    upload_id = _upload(store, _cohort_csv(), name="trial")
+    v1_files = _owned_files(store, upload_id)
+
+    def broken(self):
+        raise duckdb.ConversionException("bad")
+
+    monkeypatch.setattr(SemanticLayer, "get_base_view", broken)
+
+    # Act
+    ok, _, _ = store.save_upload(
+        _cohort_csv(300, age_offset=60),
+        "trial.csv",
+        {"dataset_name": "trial", "variable_mapping": dict(MAPPING)},
+        overwrite=True,
+    )
+
+    # Assert
+    assert not ok
+    assert _owned_files(store, upload_id) == v1_files

@@ -32,6 +32,7 @@ def test_uploadDataset_mixedDateFormats_readyThenQueryable(test_client: TestClie
     # Assert
     assert response.status_code == 200, body
     assert body["status"] == "ready"
+    assert body["cohort_notes"] == []  # single table: nothing left out of the cohort
     assert frame.height == 200
     assert frame.schema["age"] == pl.Int64
     assert frame["admit_date"].unique().to_list() == [dt.date(2023, 1, 15)]
