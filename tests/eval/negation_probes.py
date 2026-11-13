@@ -140,7 +140,13 @@ PROBES: tuple[ScopeProbe, ...] = (
     hold("coh", "how many women not on placebo?"),
     hold("coh", "how many patients on placebo without diabetes?"),
     hold("coh", "how many statin non-users on placebo?"),
-    hold("own", "how many smokers without hypertension?"),
+    # A Yes/No column whose own values say which is No, negated right before: as on main.
+    ScopeProbe(
+        "own",
+        "how many smokers without hypertension?",
+        _limits(("eq", SMOKER, 1), ("eq", "Hypertension", False)),
+        count((c(SMOKER) == 1) & (c("Hypertension") == "No")),
+    ),
     hold("coh", "how many patients without diabetes?"),
     # ------------------------------------------------------------------
     # Negation x comparison

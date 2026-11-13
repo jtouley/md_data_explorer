@@ -245,7 +245,6 @@ NARROWED: frozenset[tuple[str, str]] = frozenset(
         ("coh", "how many events in women?"),
         ("coh", "average age of statin non-users"),
         ("coh", "how many statin non-users are women?"),
-        ("coh", "how many non users of statin?"),
         ("coh", "how many patients not on placebo?"),
         ("coh", "how many patients excluding women?"),
         ("coh", "how many patients other than men?"),
