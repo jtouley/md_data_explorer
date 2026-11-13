@@ -37,6 +37,9 @@ jobs:
       - name: No tracked data files
         run: make check-data
 
+      - name: SPDX headers
+        run: make check-spdx
+
       - name: Type Check
         run: make type-check
 

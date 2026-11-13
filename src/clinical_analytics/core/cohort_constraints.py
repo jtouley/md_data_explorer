@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Bind the unmatched tail of a question to columns and their stored values.
 
 Cohort limits are FilterSpec-shaped steps. The only operators added here that a

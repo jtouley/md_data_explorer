@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Hard and provider-style questions with DuckDB SQL oracles.
 
 The SQL is the ground truth. The parser never sees it. Cohort cutoffs use the

@@ -21,8 +21,8 @@ accepted under the project's [MIT licence](LICENSE).
   approach. Branch from `main`, keep the PR to one concern, and fill in the pull request template.
   `main` only takes changes through pull requests; the maintainer ([MAINTAINERS.md](MAINTAINERS.md))
   reviews and merges.
-- **CI must pass:** lint, format check, tracked-data guard, type check, fast tests, coverage,
-  the Electron quality gate and the installed-wheel smoke test (`.github/workflows/ci.yml`).
+- **CI must pass:** lint, format check, tracked-data guard, SPDX headers, type check, fast tests,
+  coverage, the Electron quality gate and the installed-wheel smoke test (`.github/workflows/ci.yml`).
 
 ## Set up
 
@@ -34,7 +34,7 @@ git clone https://github.com/jtouley/md_data_explorer.git
 cd md_data_explorer
 make install-dev                 # uv sync --extra dev --group dev
 cd electron && npm ci && cd ..
-make fetch-embedding-model       # pinned ONNX model, SHA-256 checked; needed by the tests
+make fetch-embedding-model       # already done by install-dev; re-run after a model bump
 ```
 
 ## Run the app

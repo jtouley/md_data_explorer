@@ -33,6 +33,9 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
+          # Read the package from source (griffe parses it statically), so the docs job only
+          # needs the docs tooling, not the app and its dependencies.
+          paths: [src]
           options:
             docstring_style: google
             show_source: true
