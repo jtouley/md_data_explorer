@@ -294,7 +294,7 @@ pre-commit-check: ensure-venv ## Run pre-commit checks (test fixture enforcement
 	@$(PYTHON_RUN) scripts/check_test_fixtures.py $$(find $(TEST_DIR) -name "test_*.py" -type f) || (echo "$(RED)❌ Pre-commit checks failed$(NC)" && exit 1)
 	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"
 
-type-check: ensure-venv ## Run mypy type checker (matches pre-commit config)
+type-check: ensure-venv ## Run mypy on all of src (locked mypy; pre-commit pins the same rev but checks staged files only)
 	@echo "$(GREEN)Running mypy type checker...$(NC)"
 	$(MYPY) --ignore-missing-imports $(SRC_DIR)
 

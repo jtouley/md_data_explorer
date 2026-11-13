@@ -4,7 +4,7 @@
 
 - macOS 13 (Ventura) or later on Apple silicon or Intel; Windows 10/11 x64; Linux x86_64/aarch64 with glibc 2.28+. These are the platforms ONNX Runtime 1.23.2, the embedding runtime, ships wheels for (macOS 12 has none for Python 3.13). See `docs/development/packaging.md`.
 - [uv](https://docs.astral.sh/uv/) - installs a supported Python for you (`pyproject.toml` requires `>=3.11,<3.14`)
-- Node.js 20 and npm, for the Electron desktop app (CI uses Node 20)
+- Node.js 22.12 or later and npm, for the Electron desktop app (Electron 43 needs it; CI uses Node 22)
 - `make` on macOS/Linux
 - Optional: [Ollama](https://ollama.com/download), a local LLM used for questions the pattern matcher cannot handle
 

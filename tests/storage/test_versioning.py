@@ -8,7 +8,10 @@ Tests follow AAA pattern (Arrange, Act, Assert) and MVP scope:
 - Deferred: Re-upload detection, perfect deduplication (Phase 5+)
 """
 
+from pathlib import Path
+
 import polars as pl
+import pytest
 
 
 class TestComputeDatasetVersion:
@@ -190,3 +193,107 @@ class TestSaveTableListStoresVersion:
             assert "name" in table_info
             assert "row_count" in table_info
             assert "fingerprint" in table_info
+
+
+_SYNTHETIC_COHORT = Path(__file__).resolve().parents[1] / "fixtures" / "synthetic" / "cohort.csv"
+
+# dataset_version of tests/fixtures/synthetic/cohort.csv. Computed with Polars 1.35.2 and 2.1.0
+# (PR #83): the hash must not move when Polars does. If this fails after a dependency bump, the
+# canonical form changed: fix versioning.py, do not update this value.
+_SYNTHETIC_COHORT_VERSION = "6c159f3dde1491ec"
+
+
+def _multi_chunk(df: pl.DataFrame) -> pl.DataFrame:
+    return pl.concat([df.head(1), df.tail(df.height - 1)], rechunk=False)
+
+
+def _sorted_flag(df: pl.DataFrame) -> pl.DataFrame:
+    return df.sort("patient_id").with_columns(pl.col("patient_id").set_sorted())
+
+
+def _categorical_text(df: pl.DataFrame) -> pl.DataFrame:
+    # Polars keeps categoricals as dictionary codes plus its own field metadata; the content is the text.
+    return df.with_columns(pl.col("site").cast(pl.Categorical))
+
+
+class TestDatasetVersionLibraryIndependence:
+    """dataset_version depends on the data only, not on what metadata the Polars version writes."""
+
+    def test_canonicalBytes_syntheticCohort_containNoLibraryNameOrVersion(self):
+        # Arrange
+        from clinical_analytics.storage.versioning import canonical_table_bytes
+
+        df = pl.read_csv(_SYNTHETIC_COHORT)
+
+        # Act
+        payload = canonical_table_bytes(df)
+
+        # Assert: Parquet's created_by footer ("Polars (python) <version>") made the old hash move.
+        assert b"Polars" not in payload
+        assert pl.__version__.encode() not in payload
+
+    def test_computeDatasetVersion_syntheticCohort_matchesValuePinnedAcrossPolarsVersions(self):
+        # Arrange
+        from clinical_analytics.storage.versioning import compute_dataset_version
+
+        df = pl.read_csv(_SYNTHETIC_COHORT)
+
+        # Act
+        version = compute_dataset_version([df])
+
+        # Assert
+        assert version == _SYNTHETIC_COHORT_VERSION
+
+    @pytest.mark.parametrize(
+        "relayout",
+        [_multi_chunk, _sorted_flag, _categorical_text],
+        ids=["multiChunk", "sortedFlag", "categoricalText"],
+    )
+    def test_computeDatasetVersion_sameDataDifferentPolarsMetadata_sameVersion(self, relayout):
+        # Arrange
+        from clinical_analytics.storage.versioning import compute_dataset_version
+
+        df = pl.read_csv(_SYNTHETIC_COHORT)
+        relaid = relayout(df)
+
+        # Act
+        baseline = compute_dataset_version([df])
+        version = compute_dataset_version([relaid])
+
+        # Assert
+        assert version == baseline
+
+    @pytest.mark.parametrize(
+        "frame",
+        [
+            pl.DataFrame({"a": pl.Series([], dtype=pl.Int64)}),
+            pl.DataFrame({"a": [None, None]}, schema={"a": pl.String}),
+            pl.DataFrame({"a": [0, -(2**63), 2**63 - 1]}),
+        ],
+        ids=["empty", "allNull", "int64Bounds"],
+    )
+    def test_computeDatasetVersion_edgeCaseFrames_stableAcrossCalls(self, frame):
+        # Arrange
+        from clinical_analytics.storage.versioning import compute_dataset_version
+
+        # Act
+        first = compute_dataset_version([frame])
+        second = compute_dataset_version([frame.clone()])
+
+        # Assert
+        assert first == second
+        assert len(first) == 16
+
+    def test_computeDatasetVersion_categoricalVsString_sameVersion(self):
+        # Arrange: same text, one column a Categorical whose dictionary order differs
+        from clinical_analytics.storage.versioning import compute_dataset_version
+
+        as_text = pl.DataFrame({"site": ["b", "a", "b"]})
+        as_categorical = pl.DataFrame({"site": pl.Series(["a", "b", "b"], dtype=pl.Categorical)})
+
+        # Act
+        text_version = compute_dataset_version([as_text])
+        categorical_version = compute_dataset_version([as_categorical])
+
+        # Assert
+        assert text_version == categorical_version

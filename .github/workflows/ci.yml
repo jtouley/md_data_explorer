@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# The Python every job installs. uv would otherwise pick whatever the runner image offers, so
+# CI could drift from the 3.13 developers use (uv.lock still resolves some packages, e.g. scipy,
+# differently on 3.11).
+env:
+  UV_PYTHON: "3.13"
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -103,7 +109,8 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "20"
+          # Electron 43 and its installer (@electron/get 5) need Node >= 22.12 (electron/package.json engines).
+          node-version: "22"
           cache: npm
           cache-dependency-path: electron/package-lock.json
 
