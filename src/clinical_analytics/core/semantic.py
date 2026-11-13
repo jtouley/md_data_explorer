@@ -605,7 +605,8 @@ class SemanticLayer:
                     f"Directory sources need dataset-specific handling. See {self.dataset_name} dataset implementation."
                 )
             else:
-                # Single file (CSV)
+                # Single file: typed Parquet (uploads, the stored source of truth) or CSV (bundled
+                # registry datasets, whose configs name a CSV).
                 abs_path = str(source_path.resolve())
                 logger.debug(f"Registering source file with DuckDB: {abs_path}")
 
@@ -620,14 +621,31 @@ class SemanticLayer:
                 # Use quoted identifiers for extra safety + parameter binding for file path
                 # DuckDB supports ? placeholders for parameterized queries
                 quoted_table = f'"{validated_name}"'
+                reader = "read_parquet" if source_path.suffix.lower() == ".parquet" else "read_csv_auto"
                 duckdb_con.execute(
-                    f"CREATE OR REPLACE TABLE {quoted_table} AS SELECT * FROM read_csv_auto(?)",
+                    f"CREATE OR REPLACE TABLE {quoted_table} AS SELECT * FROM {reader}(?)",
                     [abs_path],
                 )
 
                 # Now reference it via Ibis
                 self.raw = self.con.table(validated_name)
                 logger.info(f"Successfully registered source table '{validated_name}' from {abs_path}")
+
+        elif "frame" in init_params:
+            # A typed Polars frame held in memory (a legacy upload whose conversion to Parquet
+            # could not be saved; see UserDatasetStorage.stored_dataset).
+            frame = init_params["frame"]
+            if not isinstance(frame, pl.DataFrame):
+                raise TypeError(f"init_params['frame'] must be a polars DataFrame, got {type(frame).__name__}")
+            validated_name = _validate_table_identifier(f"{_safe_identifier(self.dataset_name)}_raw")
+            duckdb_con = self.con.con
+            duckdb_con.register("_staged_frame", frame.to_arrow())
+            try:
+                duckdb_con.execute(f'CREATE OR REPLACE TABLE "{validated_name}" AS SELECT * FROM _staged_frame')
+            finally:
+                duckdb_con.unregister("_staged_frame")
+            self.raw = self.con.table(validated_name)
+            logger.info(f"Registered in-memory source table '{validated_name}'")
 
         elif "db_table" in init_params:
             # Database table source (already registered)

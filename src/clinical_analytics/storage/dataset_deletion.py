@@ -3,10 +3,12 @@
 
 An upload leaves data in several places under the data home (``<data home>/data``):
 
-* ``uploads/raw/{id}.csv``, ``uploads/raw/{id}_tables/``, ``uploads/raw/{id}/`` and the stored
-  original file named in metadata (``stored_relpath`` / ``stored_filename``)
-* ``uploads/metadata/{id}.json`` and the enrichment overlays ``uploads/metadata/overlays/{id}/``
-* Parquet exports ``parquet/{id}_<table>_<version>.parquet``
+* ``uploads/raw/{id}.csv``, ``uploads/raw/{id}_tables/`` (legacy), ``uploads/raw/{id}/`` (the raw
+  landing of each version) and the stored original file named in metadata (``stored_relpath`` /
+  ``stored_filename``)
+* ``uploads/metadata/{id}.json``, its write lock ``.{id}.json.lock`` and the enrichment overlays
+  ``uploads/metadata/overlays/{id}/``
+* Typed Parquet ``parquet/{id}_<table>_<version>.parquet`` and ``parquet/{id}__cohort_<version>.parquet``
 * Data contracts ``contracts/{id}/`` and quality reports ``dq/{id}/``
 * DuckDB tables ``{id}_<table>_<version>`` in ``analytics.duckdb``, and any pre-upgrade backup
   copies of the store (``analytics.duckdb.backup-*``, see ``storage.store_format``)
@@ -306,6 +308,7 @@ def purge_dataset_files(
                 raw_dir / f"{dataset_id}_tables",
                 raw_dir / dataset_id,
                 metadata_dir / "overlays" / dataset_id,
+                metadata_dir / f".{dataset_id}.json.lock",  # metadata write lock (user_datasets)
             ]:
                 _remove(path, uploads_root, report)
 

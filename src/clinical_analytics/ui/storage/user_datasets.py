@@ -3,31 +3,58 @@
 User Dataset Storage Manager
 
 Handles secure storage, metadata management, and persistence of uploaded datasets.
+
+Storage layout per dataset version (``STORAGE_LAYOUT``), all under the data home's ``data/``:
+
+* ``uploads/raw/{upload_id}/{dataset_version}{ext}``: the uploaded bytes as received (raw landing,
+  kept so a version can be re-staged or audited; never rewritten).
+* ``parquet/{upload_id}_{table}_{dataset_version}.parquet``: each table, typed once at staging
+  (``storage.staging``). For a multi-table upload, the unified cohort is
+  ``parquet/{upload_id}__cohort_{dataset_version}.parquet``; a single-table upload's cohort is
+  its one table file. This typed Parquet is the one source of truth: the semantic layer, the
+  preview and the contract checks all read it.
+* ``uploads/metadata/{upload_id}.json``: written last, as the commit point. Until it names a
+  version, that version does not exist for readers.
+
+Every file goes through ``storage.atomic.atomic_write`` (temp file, fsync, rename). Data files
+are named by content version and never replaced. Uploads made before this layout (``{id}.csv``)
+are converted to it on first load (``UserDatasetStorage.stored_dataset``).
 """
 
 import hashlib
+import io
 import json
-import logging
 import platform
 import threading
 import time
 import uuid
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import polars as pl
+import structlog
 
+from clinical_analytics.storage.atomic import atomic_write
+from clinical_analytics.storage.staging import (
+    ID_COLUMN_NAMES,
+    StagedTable,
+    StagingError,
+    detect_header_row,
+    read_csv_typed,
+    read_excel_rows,
+    read_excel_typed,
+)
 from clinical_analytics.ui.config import MULTI_TABLE_ENABLED
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
-# Common ID column names stored as text (prevents integer overflow, keeps schemas consistent)
-ID_COLUMN_NAMES = frozenset({"patient_id", "patientid", "subject_id", "subjectid", "id", "mrn", "study_id"})
+__all__ = ["ID_COLUMN_NAMES"]  # defined once, in storage.staging; re-exported for old imports
 
 # Cross-dataset dedup key: compute_dataset_version over the dataset as stored (its Parquet files),
 # so it matches for identical data whatever Polars version or upload path produced it. It sits
@@ -35,6 +62,18 @@ ID_COLUMN_NAMES = frozenset({"patient_id", "patientid", "subject_id", "subjectid
 # uploads made before PR #83, hashes Parquet bytes that name the Polars version.
 CONTENT_HASH_KEY = "content_hash"
 CONTENT_HASH_SCHEME_KEY = "content_hash_scheme"
+
+# Metadata keys of the typed storage layout (see module docstring).
+STORAGE_LAYOUT_KEY: Final = "storage_layout"
+STORAGE_LAYOUT: Final = "typed_parquet_v1"
+COHORT_PARQUET_KEY: Final = "cohort_parquet"
+RAW_LANDING_KEY: Final = "raw_landing"
+COLUMN_TYPES_KEY: Final = "column_types"
+COLUMN_UNITS_KEY: Final = "column_units"
+PARQUET_DIRNAME: Final = "parquet"
+COHORT_FILE_STEM: Final = "_cohort"  # {upload_id}__cohort_{version}: no sanitized table name starts with "_"
+PARQUET_COMPRESSION: Final = "zstd"
+METADATA_LOCK_TIMEOUT_S: Final = 10.0
 
 
 class SchemaDriftPolicy(Enum):
@@ -64,7 +103,7 @@ class FileLockTimeoutError(Exception):
 
 
 @contextmanager
-def file_lock(file_path: Path, timeout: float = 10.0):
+def file_lock(file_path: Path, timeout: float = 10.0) -> Iterator[Any]:
     """
     Cross-platform file locking context manager.
 
@@ -86,13 +125,10 @@ def file_lock(file_path: Path, timeout: float = 10.0):
     Raises:
         FileLockTimeoutError: If lock cannot be acquired within timeout
 
-    Example:
-        >>> with file_lock(metadata_path) as f:
-        ...     metadata = json.load(f)
-        ...     metadata['updated'] = True
-        ...     f.seek(0)
-        ...     f.truncate()
-        ...     json.dump(metadata, f)
+    Metadata is never written through the yielded handle: callers lock the sidecar
+    ``metadata_lock_path(...)`` and replace the metadata atomically (``_write_metadata``,
+    ``_update_metadata``), so a crash can never leave it truncated.
+
     """
     file_path = Path(file_path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,10 +185,55 @@ def file_lock(file_path: Path, timeout: float = 10.0):
                 import fcntl
 
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass  # Best-effort unlock
+        except OSError:
+            logger.debug("file_lock_unlock_failed", lock=file_path.name)  # closing releases it anyway
 
         f.close()
+
+
+def metadata_lock_path(metadata_path: Path) -> Path:
+    """Sidecar lock file for a dataset's metadata (the metadata file itself is replaced, not locked)."""
+    return metadata_path.with_name(f".{metadata_path.name}.lock")
+
+
+def _json_writer(payload: dict[str, Any]) -> Callable[[Path], object]:
+    text = json.dumps(payload, indent=2)
+    return lambda part: part.write_text(text, encoding="utf-8")
+
+
+def _write_metadata(metadata_path: Path, metadata: dict[str, Any]) -> None:
+    """Replace a dataset's metadata atomically under its lock: the commit point of every save.
+
+    Raises:
+        RuntimeError: the lock was not acquired in time.
+        OSError: the write failed; the previous metadata is unchanged.
+    """
+    try:
+        with file_lock(metadata_lock_path(metadata_path), timeout=METADATA_LOCK_TIMEOUT_S):
+            atomic_write(metadata_path, _json_writer(metadata))
+    except FileLockTimeoutError as e:
+        raise RuntimeError(f"Failed to acquire lock on {metadata_path.name} (timeout after 10s)") from e
+
+
+def _update_metadata(metadata_path: Path, mutate: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
+    """Read, change and atomically replace metadata under its lock (``mutate`` False: no write).
+
+    Returns:
+        The metadata as it now stands.
+
+    Raises:
+        RuntimeError: the lock was not acquired in time.
+        FileNotFoundError: no metadata for this dataset.
+        OSError: the write failed; the previous metadata is unchanged.
+    """
+    try:
+        with file_lock(metadata_lock_path(metadata_path), timeout=METADATA_LOCK_TIMEOUT_S):
+            current = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if mutate(current):
+                atomic_write(metadata_path, _json_writer(current))
+            return dict(current)
+    except FileLockTimeoutError as e:
+        raise RuntimeError(f"Failed to acquire lock on {metadata_path.name} (timeout after 10s)") from e
 
 
 # Re-export schema conversion functions for backward compatibility
@@ -178,7 +259,8 @@ def normalize_upload_to_table_list(
 
     Returns:
         (tables, table_metadata) where:
-        - tables: list of {"name": str, "data": pl.DataFrame}
+        - tables: list of {"name": str, "data": pl.DataFrame, "notes": column type notes,
+          "units": units by column}
         - table_metadata: dict with table_count, table_names, etc.
     """
     # Detect upload type from file extension
@@ -193,9 +275,9 @@ def normalize_upload_to_table_list(
         logger.info(f"Extracted {len(doc_files)} documentation files from ZIP")
     else:
         # Single-file: wrap in list (becomes multi-table with 1 table)
-        df = load_single_file(file_bytes, filename)
+        staged = load_single_file_staged(file_bytes, filename)
         table_name = Path(filename).stem  # Use original filename stem
-        tables = [{"name": table_name, "data": df}]
+        tables = [{"name": table_name, "data": staged.data, "notes": staged.notes, "units": staged.units}]
         doc_files = []  # No docs for single-file uploads by default
 
     # Handle external PDF/documentation files (standalone upload)
@@ -283,11 +365,11 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
         file_bytes: ZIP file content
 
     Returns:
-        List of {"name": str, "data": pl.DataFrame} dicts
+        List of {"name": str, "data": pl.DataFrame, "notes": ..., "units": ...} dicts
 
     Raises:
         SecurityError: If path traversal or invalid paths detected
-        UploadError: If no CSV files or corrupted ZIP
+        UploadError: If no CSV files, corrupted ZIP, or a table that cannot be staged
     """
     import gzip
     import io
@@ -332,41 +414,13 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
                 if entry.endswith(".gz"):
                     csv_content = gzip.decompress(csv_content)
 
-                # Load as Polars DataFrame with robust schema inference
+                # Typed over the whole file, column by column (storage.staging); no all-text fallback.
                 try:
-                    # Common ID columns that should be strings to prevent overflow
-                    id_column_names = {
-                        "patient_id",
-                        "patientid",
-                        "subject_id",
-                        "subjectid",
-                        "id",
-                        "mrn",
-                        "study_id",
-                    }
-
-                    # First, peek at schema to identify ID columns
-                    sample_df = pl.read_csv(io.BytesIO(csv_content), n_rows=0)
-                    schema_overrides = {}
-                    for col_name in sample_df.columns:
-                        if col_name.lower() in {name.lower() for name in id_column_names}:
-                            schema_overrides[col_name] = pl.Utf8
-
-                    df = pl.read_csv(
-                        io.BytesIO(csv_content),
-                        infer_schema_length=10000,  # Scan more rows for better type inference
-                        try_parse_dates=True,
-                        schema_overrides=schema_overrides if schema_overrides else None,
-                    )
-                except Exception as e:
-                    logger.warning(f"Schema inference failed for {name}, falling back to string types: {e}")
-                    # Fallback: read with all columns as strings
-                    df = pl.read_csv(
-                        io.BytesIO(csv_content),
-                        infer_schema_length=0,  # Treat all as strings
-                    )
-
-                tables.append({"name": name, "data": df})
+                    staged = read_csv_typed(csv_content)
+                except StagingError as e:
+                    raise UploadError(f"Table '{name}': {e}") from e
+                df = staged.data
+                tables.append({"name": name, "data": df, "notes": staged.notes, "units": staged.units})
                 logger.debug(f"Loaded table '{name}': {df.height:,} rows, {df.width} cols")
 
             return tables
@@ -377,117 +431,59 @@ def extract_zip_tables(file_bytes: bytes) -> list[dict[str, Any]]:
 
 def _detect_excel_header_row(file_bytes: bytes, max_rows_to_check: int = 5) -> int:
     """
-    Intelligently detect the best header row in an Excel file.
+    Detect the header row of an Excel file (0-based); 0 when the file cannot be read.
 
-    Analyzes the first few rows to find which one looks most like column headers:
-    - Headers typically have many non-empty cells
-    - Headers are usually strings (not numeric data)
-    - Headers are relatively short
-    - Headers are unique/distinct
+    Scores the first rows for header-likeness (filled, textual, short, distinct); see
+    ``storage.staging.detect_header_row``.
 
     Args:
-        file_bytes: Excel file content
+        file_bytes: Excel file content (bytes or a readable file object)
         max_rows_to_check: Maximum number of rows to analyze (default 5)
 
     Returns:
         Row index (0-based) to use as header, or 0 if detection fails
     """
-    import io
-
-    import pandas as pd
-
+    if not isinstance(file_bytes, bytes):
+        if hasattr(file_bytes, "read"):
+            file_bytes = file_bytes.read()
+        else:
+            raise TypeError(f"Expected bytes, got {type(file_bytes)}")
     try:
-        if not isinstance(file_bytes, bytes):
-            if hasattr(file_bytes, "read"):
-                file_bytes = file_bytes.read()
-            else:
-                raise TypeError(f"Expected bytes, got {type(file_bytes)}")
-
-        df_preview = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", header=None, nrows=max_rows_to_check)
-
-        if df_preview.empty:
-            return 0
-
-        scores = []
-        for row_idx in range(min(max_rows_to_check, len(df_preview))):
-            row = df_preview.iloc[row_idx]
-
-            # Count non-empty cells
-            non_empty = row.notna().sum()
-            if non_empty == 0:
-                scores.append(0.0)
-                continue
-
-            # Calculate score components
-            score = 0.0
-
-            # 1. More non-empty cells = better (weight: 40%)
-            fill_ratio = non_empty / len(row)
-            score += fill_ratio * 0.4
-
-            # 2. Check if values look like headers (strings, not numeric data)
-            string_count = 0
-            avg_length = 0
-            unique_count = 0
-
-            for val in row.dropna():
-                val_str = str(val).strip()
-                if not val_str:
-                    continue
-
-                # Headers are usually strings, not pure numbers
-                try:
-                    float(val_str)  # If it's a number, less likely to be a header
-                    # But allow short numbers (like "1", "2" for coded values)
-                    if len(val_str) > 3:
-                        continue
-                except ValueError:
-                    string_count += 1
-
-                # Track length and uniqueness
-                avg_length += len(val_str)
-                unique_count += 1
-
-            if unique_count > 0:
-                avg_length = int(avg_length / unique_count)
-                uniqueness_ratio = row.dropna().nunique() / unique_count
-
-                # 3. Higher string ratio = better (weight: 30%)
-                string_ratio = string_count / unique_count if unique_count > 0 else 0
-                score += string_ratio * 0.3
-
-                # 4. Reasonable length (not too short, not too long) (weight: 15%)
-                # Headers are usually 5-50 characters
-                if 5 <= avg_length <= 50:
-                    score += 0.15
-                elif avg_length < 5:
-                    score += (avg_length / 5) * 0.15
-                else:
-                    score += max(0, (50 / avg_length)) * 0.15
-
-                # 5. High uniqueness (headers should be distinct) (weight: 15%)
-                score += min(uniqueness_ratio, 1.0) * 0.15
-
-            scores.append(score)
-
-        # Find row with highest score
-        if scores and max(scores) > 0.3:  # Minimum threshold
-            best_row = scores.index(max(scores))
-            logger.debug(f"Detected header row: {best_row} (score: {max(scores):.2f})")
-            return best_row
-
-        # Default to row 0 if no good candidate found
-        logger.debug("No clear header row detected, using row 0")
+        rows = read_excel_rows(file_bytes)
+    except StagingError as e:
+        logger.warning("excel_header_detection_failed", reason=str(e))
         return 0
+    return detect_header_row(rows, max_rows_to_check)
 
-    except Exception as e:
-        logger.warning(f"Header detection failed: {e}, using default row 0")
-        return 0
+
+def load_single_file_staged(file_bytes: bytes, filename: str) -> StagedTable:
+    """
+    Load a single file (CSV, Excel, SPSS) as one typed table with its staging notes.
+
+    CSV and Excel are read as text and typed column by column over the whole file
+    (``storage.staging``). SPSS files carry their own types and are read straight to Polars.
+
+    Raises:
+        ValueError: Unsupported file type.
+        StagingError: The file cannot be read or has a row with no ID and no values.
+    """
+    file_ext = Path(filename).suffix.lower()
+    if file_ext == ".csv":
+        return read_csv_typed(file_bytes)
+    if file_ext in {".xlsx", ".xls"}:
+        # Openpyxl reads .xlsx only; an .xls file fails here with a clear StagingError.
+        return read_excel_typed(file_bytes)
+    if file_ext == ".sav":
+        import pyreadstat
+
+        df, _meta = pyreadstat.read_sav(io.BytesIO(file_bytes), output_format="polars")
+        return StagedTable(data=df)
+    raise ValueError(f"Unsupported file type: {file_ext}")
 
 
 def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
     """
-    Load single file (CSV, Excel, SPSS) as Polars DataFrame.
+    Load single file (CSV, Excel, SPSS) as a typed Polars DataFrame.
 
     Args:
         file_bytes: File content
@@ -497,115 +493,9 @@ def load_single_file(file_bytes: bytes, filename: str) -> pl.DataFrame:
         Polars DataFrame
 
     Raises:
-        ValueError: If unsupported file type
+        ValueError: If unsupported file type (StagingError, a ValueError, if unreadable)
     """
-    import io
-
-    file_ext = Path(filename).suffix.lower()
-
-    if file_ext == ".csv":
-        # For CSV files, use Polars directly
-        try:
-            # Common ID columns that should be strings
-            id_column_names = {
-                "patient_id",
-                "patientid",
-                "subject_id",
-                "subjectid",
-                "id",
-                "mrn",
-                "study_id",
-            }
-
-            # Peek at schema first
-            sample_df = pl.read_csv(io.BytesIO(file_bytes), n_rows=0)
-            schema_overrides = {}
-            for col_name in sample_df.columns:
-                if col_name.lower() in {name.lower() for name in id_column_names}:
-                    schema_overrides[col_name] = pl.Utf8
-
-            return pl.read_csv(
-                io.BytesIO(file_bytes),
-                infer_schema_length=10000,
-                try_parse_dates=True,
-                schema_overrides=schema_overrides if schema_overrides else None,
-            )
-        except Exception as e:
-            logger.warning(f"CSV read failed with schema inference: {e}. Retrying with ID columns as strings.")
-            # Fallback: force ID columns to strings
-            try:
-                fallback_overrides = {
-                    "patient_id": pl.Utf8,
-                    "patientid": pl.Utf8,
-                    "subject_id": pl.Utf8,
-                    "subjectid": pl.Utf8,
-                    "id": pl.Utf8,
-                }
-                return pl.read_csv(
-                    io.BytesIO(file_bytes),
-                    infer_schema_length=10000,
-                    try_parse_dates=True,
-                    schema_overrides=fallback_overrides,
-                )
-            except Exception as e2:
-                logger.warning(f"Retry failed: {e2}. Falling back to all-string schema.")
-                return pl.read_csv(io.BytesIO(file_bytes), infer_schema_length=0)
-
-    elif file_ext in {".xlsx", ".xls"}:
-        # PANDAS EXCEPTION: Use pandas as primary for Excel files
-        # Polars read_excel() can miss columns or stop early on complex Excel files
-        import pandas as pd
-
-        try:
-            header_row = _detect_excel_header_row(file_bytes, max_rows_to_check=5)
-            df_pandas = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", header=header_row)
-
-            # Clean up any remaining "Unnamed" columns (from empty header cells)
-            df_pandas.columns = [
-                f"column_{i}" if str(col).startswith("Unnamed") else col for i, col in enumerate(df_pandas.columns)
-            ]
-
-            # Try converting pandas DataFrame to Polars
-            try:
-                return pl.from_pandas(df_pandas)
-            except Exception as polars_error:
-                logger.warning(f"pl.from_pandas failed: {polars_error}. Trying Polars read_excel as fallback.")
-                # Fallback to Polars read_excel and compare column counts
-                try:
-                    df_polars_fallback = pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-                    pandas_column_count = len(df_pandas.columns)
-                    polars_column_count = len(df_polars_fallback.columns)
-
-                    # Use whichever has more columns
-                    if pandas_column_count >= polars_column_count:
-                        # Convert object columns to string to handle mixed types
-                        for col in df_pandas.columns:
-                            if df_pandas[col].dtype == "object":
-                                df_pandas[col] = df_pandas[col].astype(str).replace("nan", None)
-                        return pl.from_pandas(df_pandas)
-                    else:
-                        return df_polars_fallback
-                except Exception as polars_error:
-                    logger.error(f"Both pandas and Polars failed to read Excel file: {polars_error}")
-                    raise ValueError(f"Failed to read Excel file: {polars_error}") from polars_error
-        except Exception as e:
-            logger.warning(f"Pandas Excel read failed: {e}. Trying Polars as fallback.")
-            # Fallback to Polars if pandas fails completely
-            try:
-                return pl.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-            except Exception as polars_error:
-                logger.error(f"Both pandas and Polars failed to read Excel file: {polars_error}")
-                raise ValueError(f"Failed to read Excel file: {polars_error}") from polars_error
-
-    elif file_ext == ".sav":
-        # Load SPSS file
-        import pyreadstat
-
-        df_pandas, meta = pyreadstat.read_sav(io.BytesIO(file_bytes))
-        return pl.from_pandas(df_pandas)
-
-    else:
-        raise ValueError(f"Unsupported file type: {file_ext}")
+    return load_single_file_staged(file_bytes, filename).data
 
 
 def _safe_store_upload(
@@ -1074,73 +964,103 @@ def assert_metadata_invariants(metadata: dict[str, Any]) -> None:
         raise ValueError("Active version 'tables' must be a dict")
 
 
+def _parquet_dir(storage: "UserDatasetStorage") -> Path:
+    return storage.upload_dir.parent / PARQUET_DIRNAME
+
+
+def table_parquet_path(storage: "UserDatasetStorage", upload_id: str, table_name: str, dataset_version: str) -> Path:
+    """Typed Parquet of one table of one version (the name DataStore used, so deletes still find it)."""
+    from clinical_analytics.storage.datastore import _sanitize_table_name
+
+    return _parquet_dir(storage) / f"{upload_id}_{_sanitize_table_name(table_name)}_{dataset_version}.parquet"
+
+
+def cohort_parquet_path(storage: "UserDatasetStorage", upload_id: str, dataset_version: str) -> Path:
+    """Typed Parquet of a multi-table upload's unified cohort for one version."""
+    return _parquet_dir(storage) / f"{upload_id}_{COHORT_FILE_STEM}_{dataset_version}.parquet"
+
+
+def _write_parquet(df: pl.DataFrame, path: Path) -> None:
+    """Write a versioned data file once; an existing file already holds this version's data."""
+    atomic_write(path, lambda part: df.write_parquet(part, compression=PARQUET_COMPRESSION), exclusive=True)
+
+
+def _cast_id_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """ID-named columns as text, all in one pass (staging already does this for uploads)."""
+    id_cols = [c for c in df.columns if c.lower() in ID_COLUMN_NAMES and df.schema[c] != pl.String]
+    return df.with_columns(pl.col(id_cols).cast(pl.Utf8)) if id_cols else df
+
+
+def _upload_failure_reason(e: BaseException) -> str:
+    """A reason for the user that never quotes cell values (DuckDB/Polars errors can).
+
+    Our own errors (staging, upload, security, plain ValueError) carry messages written for the
+    user; library errors are named by type only.
+    """
+    if isinstance(e, pl.exceptions.PolarsError):
+        return type(e).__name__
+    if isinstance(e, StagingError | UploadError | SecurityError | ValueError):
+        return str(e)
+    return type(e).__name__
+
+
 def save_table_list(
     storage: "UserDatasetStorage",
     tables: list[dict[str, Any]],
     upload_id: str,
     metadata: dict[str, Any],
     progress_cb: Callable[[int, str], None] | None = None,
+    raw_bytes: bytes | None = None,
 ) -> tuple[bool, str]:
     """
-    Save normalized table list to disk (unified persistence for both upload types).
+    Save normalized tables as one new dataset version (unified persistence for every upload type).
 
-    CRITICAL: Schema conversion happens AFTER normalization (fixes circular dependency).
+    Order (each step crash-safe; metadata last as the commit point, so a crash at any step leaves
+    the previous version as the one readers see):
 
-    TECHNICAL DEBT (Boundary Leakage - MVP acceptable, fix in Phase 5+):
-        This function couples UI upload concerns with semantic storage:
-        1. ID column normalization (lines ~725-743): Type coercion based on UI heuristics
-        2. Schema conversion (lines ~652-659): UI variable_mapping influences semantic schema
-        3. Schema inference fallback (lines ~772-778): UI-driven fallback logic
-
-        Ideal: Semantic layer owns data types/schema, UI layer only provides hints.
-        Reality: Upload wizard directly mutates data before semantic layer sees it.
-
-        Deferred to Phase 5+: Move type coercion to semantic layer boundary validator.
+    1. Write the raw landing (``raw_bytes``) and each table's typed Parquet, named by version.
+    2. Read the cohort back from its Parquet: everything after this uses that one frame.
+    3. Build and probe the query view from that Parquet. If it cannot be built, the upload fails.
+    4. Run the contract and quality checks on the same frame.
+    5. Write metadata (atomic replace).
 
     Args:
         storage: UserDatasetStorage instance
-        tables: Normalized table list [{"name": str, "data": pl.DataFrame}]
+        tables: Normalized table list [{"name": str, "data": pl.DataFrame, "notes"?, "units"?}]
         upload_id: Upload identifier
         metadata: Upload metadata
         progress_cb: Optional progress callback
+        raw_bytes: The uploaded file as received (raw landing); None when there is none
 
     Returns:
         (success, message)
     """
+    log = logger.bind(upload_id=upload_id, table_count=len(tables))
     try:
         # 1. Extract documentation context (Phase 1: ADR004)
         # Skip extraction if doc_context already exists (idempotency safeguard)
         if "doc_files" in metadata and metadata["doc_files"]:
             if "doc_context" not in metadata:
-                # Extract doc_context from doc_files
                 import tempfile
 
                 from clinical_analytics.core.doc_parser import extract_context_from_docs
 
-                # Save doc files to temp directory for extraction
                 with tempfile.TemporaryDirectory() as temp_dir:
                     temp_path = Path(temp_dir)
                     doc_paths = []
-
                     for doc_file in metadata["doc_files"]:
-                        # Save doc file content to temp file
                         doc_temp_path = temp_path / doc_file.name
                         doc_temp_path.write_bytes(doc_file.content)
                         doc_paths.append(doc_temp_path)
-
-                    # Extract text context from all documentation files
                     doc_context = extract_context_from_docs(doc_paths)
                     metadata["doc_context"] = doc_context
-                    logger.info(f"Extracted doc_context ({len(doc_context)} chars) from {len(doc_paths)} files")
+                    log.info("doc_context_extracted", chars=len(doc_context), files=len(doc_paths))
             else:
-                # doc_context already exists, skip extraction (idempotency)
-                logger.debug("doc_context already exists, skipping extraction")
-
-            # Always remove doc_files from metadata (not JSON serializable, only doc_context needed)
+                log.debug("doc_context_exists_skipped")
+            # doc_files are not JSON serializable; only doc_context is kept
             metadata.pop("doc_files", None)
 
-        # Remove external_pdf_bytes and external_pdf_filename from metadata (not JSON serializable)
-        # These are processed into doc_files above, so they're no longer needed
+        # Processed into doc_files above; not JSON serializable
         metadata.pop("external_pdf_bytes", None)
         metadata.pop("external_pdf_filename", None)
 
@@ -1150,330 +1070,211 @@ def save_table_list(
 
             metadata["inferred_schema"] = convert_schema(
                 metadata["variable_mapping"],
-                tables[0]["data"],  # Access normalized DataFrame
+                tables[0]["data"],
                 metadata.get("synthetic_id_metadata"),
             )
 
-        # 3. Compute dataset version and table fingerprints (MVP - Phase 1)
+        # 3. Dataset version and table fingerprints
         from clinical_analytics.storage.versioning import (
+            CONTENT_HASH_SCHEME,
             compute_dataset_version,
             compute_table_fingerprint,
         )
 
-        # Extract DataFrames for versioning
-        table_dfs = [t["data"] for t in tables]
-        dataset_version = compute_dataset_version(table_dfs)
-        logger.info(f"Computed dataset_version: {dataset_version}")
-
-        # Compute table fingerprints for provenance
+        dataset_version = compute_dataset_version([t["data"] for t in tables])
+        log = log.bind(dataset_version=dataset_version)
         table_fingerprints = [compute_table_fingerprint(t["data"], t["name"]) for t in tables]
+        table_names = [t["name"] for t in tables]
 
-        # 3. Save individual tables to {upload_id}_tables/
-        tables_dir = storage.raw_dir / f"{upload_id}_tables"
-        tables_dir.mkdir(exist_ok=True)
-
-        table_names = []
-        for table in tables:
-            table_name = table["name"]
-            table_names.append(table_name)
-            table_path = tables_dir / f"{table_name}.csv"
-            table["data"].write_csv(table_path)
-            logger.debug(f"Saved table '{table_name}' ({table['data'].height:,} rows) to {table_path}")
-
-        # 3. Build unified cohort (for backward compatibility)
+        # 4. Unified cohort (single table: the table itself)
         if len(tables) == 1:
-            # Single-table: unified cohort = first table
             unified_df = tables[0]["data"]
         else:
-            # Multi-table: use MultiTableHandler to build unified cohort
             from clinical_analytics.core.multi_table_handler import MultiTableHandler
 
-            # Convert list of dicts to dict for handler
-            tables_dict = {t["name"]: t["data"] for t in tables}
-            handler = MultiTableHandler(tables_dict)
-
-            # Use relationships from metadata if present (avoid duplicate detection)
-            if "relationships" in metadata and metadata["relationships"]:
-                # Relationships already detected, just build unified cohort
-                logger.debug("Using relationships from metadata")
-            else:
-                # Detect relationships and store in metadata
+            handler = MultiTableHandler({t["name"]: t["data"] for t in tables})
+            if not metadata.get("relationships"):
                 relationships = handler.detect_relationships()
                 metadata["relationships"] = [str(rel) for rel in relationships]
-                logger.info(f"Detected {len(relationships)} relationships")
-
+                log.info("relationships_detected", count=len(relationships))
             unified_df = handler.build_unified_cohort()
             handler.close()
 
-        # 4. Save unified cohort CSV
-        csv_path = storage.raw_dir / f"{upload_id}.csv"
-        unified_df.write_csv(csv_path)
-        logger.info(f"Saved unified cohort ({unified_df.height:,} rows) to {csv_path}")
-
-        # 4.5. Save to persistent DuckDB and export to Parquet (Phase 2 + Phase 3)
-        from clinical_analytics.storage.datastore import DataStore
-
-        # Get or create DataStore (persistent DuckDB at data/analytics.duckdb)
-        db_path = storage.upload_dir.parent / "analytics.duckdb"
-        parquet_dir = storage.upload_dir.parent / "parquet"
-
-        # Convert ID columns to strings before persisting (ensures consistent schema)
-        # Cast every ID column in one pass: casting each on the original frame kept only the last.
+        # 5. Raw landing + typed Parquet per table (versioned, never replaced)
         for table in tables:
-            id_cols = [col for col in table["data"].columns if col.lower() in ID_COLUMN_NAMES]
-            if id_cols:
-                # Strings prevent integer overflow and keep the schema consistent across uploads
-                table["data"] = table["data"].with_columns(pl.col(id_cols).cast(pl.Utf8))
-                logger.debug("Converted %d ID columns to Utf8", len(id_cols))
+            table["data"] = _cast_id_columns(table["data"])
+        unified_df = _cast_id_columns(unified_df)
 
-        parquet_paths = {}
-        # Opened right before the try so every path out closes it (an open connection blocks deletes).
-        datastore = DataStore(db_path)
-        try:
-            # Save all individual tables to DuckDB and export to Parquet
-            for table in tables:
-                # Save to DuckDB (Phase 2)
-                datastore.save_table(
-                    table_name=table["name"],
-                    data=table["data"],
-                    upload_id=upload_id,
-                    dataset_version=dataset_version,
-                )
-                logger.debug(f"Saved table '{table['name']}' to DuckDB")
+        raw_landing: Path | None = None
+        if raw_bytes is not None:
+            ext = Path(str(metadata.get("original_filename", ""))).suffix.lower() or ".bin"
+            raw_landing = storage.raw_dir / upload_id / f"{dataset_version}{ext}"
+            atomic_write(raw_landing, lambda part: part.write_bytes(raw_bytes), exclusive=True)
 
-                # Export to Parquet (Phase 3)
-                parquet_path = datastore.export_to_parquet(
-                    upload_id=upload_id,
-                    table_name=table["name"],
-                    dataset_version=dataset_version,
-                    parquet_dir=parquet_dir,
-                )
-                parquet_paths[table["name"]] = str(parquet_path)
-                logger.debug(f"Exported table '{table['name']}' to Parquet")
+        parquet_paths: dict[str, str] = {}
+        for table in tables:
+            path = table_parquet_path(storage, upload_id, table["name"], dataset_version)
+            _write_parquet(table["data"], path)
+            parquet_paths[table["name"]] = str(path)
+        if len(tables) == 1:
+            cohort_path = Path(parquet_paths[tables[0]["name"]])
+        else:
+            cohort_path = cohort_parquet_path(storage, upload_id, dataset_version)
+            _write_parquet(unified_df, cohort_path)
+        log.info("typed_parquet_written", tables=len(parquet_paths))
 
-            logger.info(f"Saved {len(tables)} tables to persistent DuckDB and exported to Parquet at {parquet_dir}")
-        finally:
-            datastore.close()
-
-        # 4.6. Dedup hash over what was just stored (the same input a backfill of an older upload reads)
-        from clinical_analytics.storage.versioning import CONTENT_HASH_SCHEME
-
+        # 6. From here on, the stored frame is the one source of truth (what queries will read).
+        stored_df = pl.read_parquet(cohort_path)
         content_hash = compute_stored_content_hash({"tables": table_names, "parquet_paths": parquet_paths})
 
-        # 5. Infer schema for unified cohort (if not already present)
         if "inferred_schema" not in metadata:
             from clinical_analytics.core.schema_inference import SchemaInferenceEngine
 
-            engine = SchemaInferenceEngine()
-            schema = engine.infer_schema(unified_df)
-            metadata["inferred_schema"] = schema.to_dataset_config()
+            metadata["inferred_schema"] = SchemaInferenceEngine().infer_schema(stored_df).to_dataset_config()
 
-        # Phase 2: Build canonical tables structure for version history
-        canonical_tables = {}
-        for table in tables:
-            table_name = table["name"]
-            table_df = table["data"]
+        column_types = [n.as_dict() for t in tables for n in t.get("notes", ())]
+        column_units: dict[str, str] = {}
+        for t in tables:
+            column_units.update(t.get("units") or {})
 
-            canonical_tables[table_name] = {
-                "parquet_path": parquet_paths[table_name],
-                "duckdb_table": table_name,  # DuckDB table name (same as table_name for now)
-                "row_count": table_df.height,
-                "column_count": table_df.width,
-                "schema_fingerprint": compute_schema_fingerprint(table_df),
+        canonical_tables = {
+            t["name"]: {
+                "parquet_path": parquet_paths[t["name"]],
+                "row_count": t["data"].height,
+                "column_count": t["data"].width,
+                "schema_fingerprint": compute_schema_fingerprint(t["data"]),
             }
+            for t in tables
+        }
 
-        # Phase 2/5: Create version history entry with event metadata
+        # Version history entry and event (Phase 2/5)
         is_overwrite = metadata.pop("_is_overwrite", False)
-        event_type_str = "overwrite" if is_overwrite else "upload"
-        # Phase 5: Event structure - UUID4 hex format, ISO 8601 UTC with Z suffix
         now_utc = datetime.now(UTC)
-        event_id = uuid.uuid4().hex  # Phase 5: UUID4 hex format (no dashes)
-        timestamp = now_utc.isoformat().replace("+00:00", "Z")  # ISO 8601 UTC with Z
-
+        event_id = uuid.uuid4().hex
+        timestamp = now_utc.isoformat().replace("+00:00", "Z")
         version_entry = {
             "version": dataset_version,
             "created_at": timestamp,
             "event_id": event_id,
-            "event_type": event_type_str,  # Phase 5: upload/overwrite/rollback
-            "is_active": True,  # New version is always active
+            "event_type": "overwrite" if is_overwrite else "upload",
+            "is_active": True,
             "tables": canonical_tables,
-            "source_filename": metadata.get("original_filename", ""),  # Phase 5: breadcrumbs
+            COHORT_PARQUET_KEY: str(cohort_path),
+            "source_filename": metadata.get("original_filename", ""),
         }
-
-        # Phase 4.2: Handle existing version history (overwrite case)
         existing_version_history = metadata.pop("_existing_version_history", None)
         if existing_version_history:
-            # Mark all existing versions as inactive before appending new version
+            previous_active = next((v for v in existing_version_history if v.get("is_active", False)), None)
             for existing_version in existing_version_history:
                 existing_version["is_active"] = False
-            # Overwrite: append to existing history
             version_history = existing_version_history + [version_entry]
-            logger.info(f"Appending to existing version history (now {len(version_history)} versions)")
         else:
-            # Initial upload: create new history
+            previous_active = None
             version_history = [version_entry]
-
-        # Phase 2: Ensure version_history is sorted by created_at ascending (oldest first)
         version_history.sort(key=lambda v: v.get("created_at", ""))
 
-        # Phase 5: Create separate event entry for events list
-        existing_events = metadata.pop("_existing_events", None)  # Phase 5: Preserve existing events
-        if is_overwrite:
-            # Overwrite: record version_activated event
-            event_entry = {
-                "event_id": event_id,
-                "timestamp": timestamp,
-                "event_type": "version_activated",
-                "version": dataset_version,
-                "upload_id": upload_id,
-            }
-            # Add previous_version if available
-            if existing_version_history:
-                previous_active = next((v for v in existing_version_history if v.get("is_active", False)), None)
-                if previous_active:
-                    event_entry["previous_version"] = previous_active["version"]
-        else:
-            # Initial upload: record upload_created event
-            event_entry = {
-                "event_id": event_id,
-                "timestamp": timestamp,
-                "event_type": "upload_created",
-                "version": dataset_version,
-                "upload_id": upload_id,
-            }
+        existing_events = metadata.pop("_existing_events", None)
+        event_entry: dict[str, Any] = {
+            "event_id": event_id,
+            "timestamp": timestamp,
+            "event_type": "version_activated" if is_overwrite else "upload_created",
+            "version": dataset_version,
+            "upload_id": upload_id,
+        }
+        if is_overwrite and previous_active:
+            event_entry["previous_version"] = previous_active["version"]
+        events = (existing_events or []) + [event_entry]
 
-        # Phase 5: Initialize or append to events list
-        if existing_events is not None:
-            # Overwrite: append to existing events
-            events = existing_events + [event_entry]
-        else:
-            # Initial upload: create new events list
-            events = [event_entry]
+        full_metadata = {
+            **metadata,
+            "upload_id": upload_id,
+            "dataset_version": dataset_version,
+            CONTENT_HASH_KEY: content_hash,
+            CONTENT_HASH_SCHEME_KEY: CONTENT_HASH_SCHEME,
+            STORAGE_LAYOUT_KEY: STORAGE_LAYOUT,
+            COHORT_PARQUET_KEY: str(cohort_path),
+            RAW_LANDING_KEY: str(raw_landing) if raw_landing else None,
+            COLUMN_TYPES_KEY: column_types,
+            COLUMN_UNITS_KEY: column_units,
+            "tables": table_names,
+            "table_counts": {t["name"]: t["data"].height for t in tables},
+            "row_count": stored_df.height,
+            "column_count": stored_df.width,
+            "columns": list(stored_df.columns),
+            "provenance": {
+                "upload_type": "single" if len(tables) == 1 else "multi",
+                "tables": table_fingerprints,
+            },
+            "parquet_paths": parquet_paths,
+            "alias_mappings": metadata.get("alias_mappings", {"user_aliases": {}, "system_aliases": {}}),
+            "version_history": version_history,
+            "events": events,
+        }
 
-        # Phase 4: Generate upload-time example questions (ADR004 Phase 4)
-        # Skip if example_questions already exists (idempotency safeguard)
+        # 7. Build and probe the query view from the stored Parquet, before anything is committed.
+        from clinical_analytics.datasets.uploaded.definition import SemanticLayerBuildError, probe_query_view
+
+        try:
+            probe_query_view(storage, upload_id, full_metadata, expected_rows=stored_df.height)
+        except SemanticLayerBuildError as e:
+            log.error("upload_query_view_failed", reason=str(e))
+            return False, f"The dataset could not be prepared for questions: {e}"
+
+        # 8. Example questions (best effort: a failure here never blocks the upload)
         if "example_questions" not in metadata:
+            from unittest.mock import MagicMock
+
+            from clinical_analytics.core.question_generator import generate_upload_questions
+            from clinical_analytics.core.schema_inference import SchemaInferenceEngine
+
             try:
-                from unittest.mock import MagicMock
-
-                from clinical_analytics.core.question_generator import generate_upload_questions
-                from clinical_analytics.core.schema_inference import SchemaInferenceEngine
-
-                # Create minimal mock semantic layer for question generation
-                # We only need get_column_alias_index() which returns column aliases
-                # For upload-time questions, we can use column names directly
                 mock_semantic_layer = MagicMock()
-                # Build alias index from unified_df columns
-                # Simple mapping: column name -> column name (no aliases at upload time)
-                alias_index = {col: col for col in unified_df.columns}
-                mock_semantic_layer.get_column_alias_index.return_value = alias_index
-
-                # Get InferredSchema object (re-infer if needed, or use existing)
-                inferred_schema_config = metadata.get("inferred_schema")
-                if inferred_schema_config:
-                    # We have config, but need InferredSchema object
-                    # Re-infer to get InferredSchema (lightweight - just schema detection)
-                    engine = SchemaInferenceEngine()
-                    inferred_schema_obj = engine.infer_schema(unified_df)
-                else:
-                    # No inferred_schema yet - infer it now
-                    engine = SchemaInferenceEngine()
-                    inferred_schema_obj = engine.infer_schema(unified_df)
-                    # Store config for later use
-                    metadata["inferred_schema"] = inferred_schema_obj.to_dataset_config()
-
-                # Generate questions
-                # Use doc_context from metadata (already extracted earlier in function)
-                example_questions = generate_upload_questions(
+                mock_semantic_layer.get_column_alias_index.return_value = {c: c for c in stored_df.columns}
+                full_metadata["example_questions"] = generate_upload_questions(
                     semantic_layer=mock_semantic_layer,
-                    inferred_schema=inferred_schema_obj,
+                    inferred_schema=SchemaInferenceEngine().infer_schema(stored_df),
                     doc_context=metadata.get("doc_context"),
                 )
+            except (ValueError, KeyError, TypeError, AttributeError, pl.exceptions.PolarsError) as e:
+                log.warning("upload_questions_failed", error_type=type(e).__name__)
 
-                # Store in metadata
-                metadata["example_questions"] = example_questions
-                logger.info(f"Generated {len(example_questions)} example questions for upload {upload_id}")
-            except Exception as e:
-                # Graceful degradation: log error but don't fail upload
-                logger.warning(f"Failed to generate upload questions for {upload_id}: {e}", exc_info=True)
-                # Don't set example_questions - will be empty list or None
+        # 9. Data contract + quality checks on the stored frame
+        from clinical_analytics.contracts import service as contract_service
 
-        # 5.5 Data contract + quality checks for this version (ID columns as stored: text)
-        from clinical_analytics.contracts.service import check_upload_or_log
-
-        stored_id_cols = [col for col in unified_df.columns if col.lower() in ID_COLUMN_NAMES]
-        quality_report = check_upload_or_log(
+        quality_report = contract_service.check_upload_or_log(
             storage.upload_dir.parent,
-            unified_df.with_columns(pl.col(stored_id_cols).cast(pl.Utf8)) if stored_id_cols else unified_df,
+            stored_df,
             upload_id=upload_id,
             dataset_version=dataset_version,
-            metadata=metadata,
+            metadata=full_metadata,
             overlay_dir=storage.metadata_dir,
         )
-        # Recorded either way, so the upload response never shows an older run as this one's.
         if quality_report.status == "ran":
-            metadata["quality"] = {
+            full_metadata["quality"] = {
                 "status": "ran",
                 "run_ts": quality_report.run_ts,
                 "failed": quality_report.failed,
                 "warnings": quality_report.warnings,
             }
         else:
-            metadata["quality"] = {"status": "not_run", "reason": quality_report.reason}
+            full_metadata["quality"] = {"status": "not_run", "reason": quality_report.reason}
 
-        # 6. Save metadata with tables list, dataset_version, provenance, Parquet paths, and version_history
-        full_metadata = {
-            **metadata,
-            "upload_id": upload_id,
-            "dataset_version": dataset_version,  # Phase 1: Content-based version
-            CONTENT_HASH_KEY: content_hash,
-            CONTENT_HASH_SCHEME_KEY: CONTENT_HASH_SCHEME,
-            "tables": table_names,
-            "table_counts": {t["name"]: t["data"].height for t in tables},
-            "row_count": unified_df.height,
-            "column_count": unified_df.width,
-            "columns": list(unified_df.columns),
-            "provenance": {  # Phase 1: Basic provenance tracking
-                "upload_type": "single" if len(tables) == 1 else "multi",
-                "tables": table_fingerprints,
-            },
-            "parquet_paths": parquet_paths,  # Phase 3: Parquet file paths for lazy loading
-            # Phase 2: Alias persistence structure (ADR003)
-            "alias_mappings": metadata.get(
-                "alias_mappings",
-                {
-                    "user_aliases": {},
-                    "system_aliases": {},
-                },
-            ),
-            # Phase 2/4.2: Version history (initial or appended)
-            "version_history": version_history,
-            # Phase 5: Separate events list for audit trail
-            "events": events,
-        }
-
-        # Phase 0/8: Thread-safe metadata write using file lock
-        metadata_path = storage.metadata_dir / f"{upload_id}.json"
-        try:
-            with file_lock(metadata_path, timeout=10.0) as f:
-                # Use the locked file handle for atomic write
-                # Truncate and write from beginning
-                f.seek(0)
-                f.truncate()
-                json.dump(full_metadata, f, indent=2)
-                f.flush()  # Ensure write completes before lock releases
-        except FileLockTimeoutError:
-            raise RuntimeError(f"Failed to acquire lock on {metadata_path} (timeout after 10s)")
-
-        logger.info(f"Saved {len(tables)} tables for upload {upload_id}")
+        # 10. Commit: metadata last
+        _write_metadata(storage.metadata_dir / f"{upload_id}.json", full_metadata)
+        log.info("dataset_version_committed", rows=stored_df.height, columns=stored_df.width)
         return True, f"Saved {len(tables)} tables"
 
-    except Exception as e:
-        logger.error(f"Error saving tables for upload {upload_id}: {e}")
-        import traceback
-
-        logger.debug(traceback.format_exc())
-        return False, f"Error saving tables: {str(e)}"
+    except (
+        UploadError,
+        StagingError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        KeyError,
+        pl.exceptions.PolarsError,
+    ) as e:
+        log.error("save_tables_failed", error_type=type(e).__name__)
+        return False, f"Error saving tables: {_upload_failure_reason(e)}"
 
 
 _MIGRATION_LOCKS: dict[str, threading.Lock] = {}
@@ -1481,81 +1282,112 @@ _MIGRATION_LOCKS_GUARD = threading.Lock()
 
 
 def _migration_lock(upload_id: str) -> threading.Lock:
-    """Per-upload lock so concurrent readers never migrate the same legacy upload twice."""
+    """Per-upload lock so concurrent readers never convert the same legacy upload twice."""
     with _MIGRATION_LOCKS_GUARD:
         return _MIGRATION_LOCKS.setdefault(upload_id, threading.Lock())
 
 
-def _migrate_legacy_upload(
-    storage: "UserDatasetStorage",
-    upload_id: str,
-    metadata: dict[str, Any],
-) -> None:
+@dataclass(frozen=True)
+class StoredDataset:
+    """Where one dataset version's typed data is: Parquet files, or (legacy fallback) frames in memory.
+
+    ``frames`` is set only for a legacy upload whose conversion could not be saved; the frames
+    are staged exactly as the conversion would have written them.
     """
-    Migrate legacy single-table upload to unified format.
 
-    Creates {upload_id}_tables/ directory and copies/derives table from existing CSV.
-    Converts variable_mapping to inferred_schema if needed.
-    Updates metadata with tables list and migrated_to_v2 marker.
+    metadata: dict[str, Any]
+    cohort_path: Path | None
+    table_paths: dict[str, Path] = field(default_factory=dict)
+    cohort_frame: pl.DataFrame | None = None
+    table_frames: dict[str, pl.DataFrame] = field(default_factory=dict)
 
-    Args:
-        storage: UserDatasetStorage instance
-        upload_id: Upload identifier
-        metadata: Upload metadata (will be updated in place)
+    def scan_cohort(self) -> pl.LazyFrame:
+        if self.cohort_frame is not None:
+            return self.cohort_frame.lazy()
+        if self.cohort_path is None:
+            raise FileNotFoundError("No stored cohort for this dataset")
+        return pl.scan_parquet(self.cohort_path)
+
+
+def _legacy_source_path(storage: "UserDatasetStorage", upload_id: str, metadata: dict[str, Any]) -> Path | None:
+    """The unified cohort file of an upload made before typed storage."""
+    candidates = [storage.raw_dir / f"{upload_id}.csv"]
+    for key in ("stored_relpath", "stored_filename"):
+        if metadata.get(key):
+            candidates.append(storage.raw_dir / str(metadata[key]))
+    return next((p for p in candidates if p.is_file()), None)
+
+
+def _stage_legacy_file(path: Path) -> pl.DataFrame:
+    if path.suffix.lower() == ".xlsx":
+        return _cast_id_columns(read_excel_typed(path.read_bytes()).data)
+    return _cast_id_columns(read_csv_typed(path.read_bytes()).data)
+
+
+def _convert_legacy_upload(storage: "UserDatasetStorage", upload_id: str, metadata: dict[str, Any]) -> StoredDataset:
     """
-    # Load existing CSV
-    csv_path = storage.raw_dir / f"{upload_id}.csv"
-    if not csv_path.exists():
-        logger.warning(f"Legacy CSV not found for migration: {csv_path}")
-        return  # Nothing to migrate
+    Convert an upload made before typed storage to typed Parquet, once, on first load.
 
-    logger.info(f"Migrating legacy upload {upload_id} to unified format")
+    The unified CSV (what the semantic layer used to read) and each ``{id}_tables/*.csv`` are
+    staged with the same typing as new uploads and written as versioned Parquet; per-table
+    Parquet that already exists is reused. Metadata is updated last. If the Parquet or metadata
+    cannot be written, the staged frames are served from memory and the fallback is logged.
 
-    # Load as Polars DataFrame
-    df = pl.read_csv(csv_path)
+    Raises:
+        FileNotFoundError: no stored data for this upload.
+        StagingError: the stored file cannot be staged.
+    """
+    log = logger.bind(upload_id=upload_id)
+    source = _legacy_source_path(storage, upload_id, metadata)
+    if source is None:
+        raise FileNotFoundError(f"No stored data for upload {upload_id}")
+    cohort = _stage_legacy_file(source)
 
-    # Create tables directory
+    from clinical_analytics.storage.versioning import compute_dataset_version
+
+    version = str(metadata.get("dataset_version") or compute_dataset_version([cohort]))
     tables_dir = storage.raw_dir / f"{upload_id}_tables"
-    tables_dir.mkdir(exist_ok=True)
+    existing = {name: Path(p) for name, p in (metadata.get("parquet_paths") or {}).items() if Path(p).is_file()}
+    table_frames: dict[str, pl.DataFrame] = {}
+    for name in metadata.get("tables") or []:
+        if name not in existing and (tables_dir / f"{name}.csv").is_file():
+            table_frames[name] = _stage_legacy_file(tables_dir / f"{name}.csv")
 
-    # Determine table name (use original filename stem if available)
-    table_name = Path(metadata.get("original_filename", "data.csv")).stem
-    if not table_name or table_name == "data":
-        # Fallback to generic name
-        table_name = "table_0"
-
-    # Save as individual table
-    table_path = tables_dir / f"{table_name}.csv"
-    df.write_csv(table_path)
-    logger.info(f"Migrated table '{table_name}' to {table_path}")
-
-    # Convert variable_mapping to inferred_schema if needed
-    if "variable_mapping" in metadata and "inferred_schema" not in metadata:
-        from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
-
-        synthetic_id_metadata = metadata.get("synthetic_id_metadata")
-        metadata["inferred_schema"] = convert_schema(
-            metadata["variable_mapping"], df, synthetic_id_metadata=synthetic_id_metadata
-        )
-        logger.info("Converted variable_mapping to inferred_schema")
-
-    # Update metadata
-    metadata["tables"] = [table_name]
-    metadata["migrated_to_v2"] = True
-
-    # Write back metadata with file locking (Phase 0)
-    metadata_path = storage.metadata_dir / f"{upload_id}.json"
     try:
-        with file_lock(metadata_path, timeout=10.0) as f:
-            # Use the locked file handle for atomic write
-            f.seek(0)
-            f.truncate()
-            json.dump(metadata, f, indent=2)
-            f.flush()  # Ensure write completes before lock releases
-    except FileLockTimeoutError:
-        raise RuntimeError(f"Failed to acquire lock on {metadata_path} (timeout after 10s)")
+        cohort_path = cohort_parquet_path(storage, upload_id, version)
+        _write_parquet(cohort, cohort_path)
+        table_paths = dict(existing)
+        for name, df in table_frames.items():
+            table_paths[name] = table_parquet_path(storage, upload_id, name, version)
+            _write_parquet(df, table_paths[name])
 
-    logger.info(f"Migration complete for upload {upload_id}")
+        def mutate(current: dict[str, Any]) -> bool:
+            current[STORAGE_LAYOUT_KEY] = STORAGE_LAYOUT
+            current[COHORT_PARQUET_KEY] = str(cohort_path)
+            current["parquet_paths"] = {name: str(p) for name, p in table_paths.items()}
+            current.setdefault("dataset_version", version)
+            current.setdefault("tables", [])
+            if "variable_mapping" in current and "inferred_schema" not in current:
+                from clinical_analytics.datasets.uploaded.schema_conversion import convert_schema
+
+                current["inferred_schema"] = convert_schema(
+                    current["variable_mapping"], cohort, synthetic_id_metadata=current.get("synthetic_id_metadata")
+                )
+            current["legacy_converted_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            return True
+
+        updated = _update_metadata(storage.metadata_dir / f"{upload_id}.json", mutate)
+    except (OSError, RuntimeError) as e:
+        log.warning("legacy_upload_fallback", reason=type(e).__name__, source=source.suffix)
+        return StoredDataset(
+            metadata=metadata,
+            cohort_path=None,
+            table_paths=existing,
+            cohort_frame=cohort,
+            table_frames=table_frames,
+        )
+    log.info("legacy_upload_converted", tables=len(table_paths))
+    return StoredDataset(metadata=updated, cohort_path=cohort_path, table_paths=table_paths)
 
 
 class UserDatasetStorage:
@@ -1683,21 +1515,17 @@ class UserDatasetStorage:
             )
             return metadata
 
+        def mutate(current: dict[str, Any]) -> bool:
+            if current.get("parquet_paths") != metadata.get("parquet_paths"):
+                return False  # overwritten since we read it: that save stored its own hash; keep it
+            current[CONTENT_HASH_KEY] = content_hash
+            current[CONTENT_HASH_SCHEME_KEY] = CONTENT_HASH_SCHEME
+            return True
+
         try:
-            with file_lock(metadata_path, timeout=10.0) as f:
-                f.seek(0)
-                current = json.load(f)
-                if current.get("parquet_paths") != metadata.get("parquet_paths"):
-                    # Overwritten since we read it: that save stored its own hash; keep it.
-                    return dict(current)
-                current[CONTENT_HASH_KEY] = content_hash
-                current[CONTENT_HASH_SCHEME_KEY] = CONTENT_HASH_SCHEME
-                f.seek(0)
-                f.truncate()
-                json.dump(current, f, indent=2)
-                f.flush()
-        except FileLockTimeoutError:
-            logger.warning("content_hash backfill for upload %s not saved: metadata lock timed out", upload_id)
+            current = _update_metadata(metadata_path, mutate)
+        except (RuntimeError, OSError) as e:
+            logger.warning("content_hash_backfill_not_saved", upload_id=upload_id, error_type=type(e).__name__)
             return {**metadata, CONTENT_HASH_KEY: content_hash, CONTENT_HASH_SCHEME_KEY: CONTENT_HASH_SCHEME}
 
         logger.info("Backfilled content_hash for upload %s", upload_id)
@@ -1842,16 +1670,14 @@ class UserDatasetStorage:
                             f"version_history={existing_version_history is not None}, "
                             f"{len(existing_version_history) if existing_version_history else 0} versions)"
                         )
-                        # Mark all existing versions as inactive (after schema drift check)
-                        # Note: Schema drift check needs active version, so we mark inactive later
                         break
 
             # Generate upload ID (or use existing if overwriting)
             if progress_cb:
                 try:
                     progress_cb(10, "Generating unique upload identifier...")
-                except Exception:
-                    pass  # Best-effort
+                except Exception:  # noqa: BLE001 - UI callback is best-effort by contract
+                    pass
 
             # Phase 4.2: Use existing upload_id if overwriting
             if existing_upload_id:
@@ -1863,84 +1689,12 @@ class UserDatasetStorage:
             if progress_cb:
                 try:
                     progress_cb(20, "Normalizing upload to table list...")
-                except Exception:
-                    pass  # Best-effort
+                except Exception:  # noqa: BLE001 - UI callback is best-effort by contract
+                    pass
 
             tables, table_metadata = normalize_upload_to_table_list(file_bytes, original_filename, metadata)
 
-            # Phase 3: Schema drift policy enforcement (overwrite only) - BEFORE ensure_patient_id modifies schema
-            if (
-                existing_version_history is not None
-                and len(existing_version_history) > 0
-                and overwrite
-                and existing_upload_id
-            ):
-                logger.info(
-                    f"Schema drift check: existing_version_history={len(existing_version_history)} versions, "
-                    f"overwrite={overwrite}, existing_upload_id={existing_upload_id}"
-                )
-                # Get active version from existing history
-                active_version_entry = None
-                for version_entry in existing_version_history:
-                    if version_entry.get("is_active", False):
-                        active_version_entry = version_entry
-                        break
-
-                if active_version_entry:
-                    # Extract old schema from existing CSV file (simpler than parquet)
-                    old_schema = None
-                    try:
-                        # Load existing CSV to get schema
-                        existing_csv_path = self.raw_dir / f"{existing_upload_id}.csv"
-                        logger.debug(
-                            f"Checking schema drift: existing_csv_path={existing_csv_path}, "
-                            f"exists={existing_csv_path.exists()}"
-                        )
-                        if existing_csv_path.exists():
-                            # Scan CSV to get schema (lazy, doesn't load data)
-                            old_lf = pl.scan_csv(existing_csv_path, n_rows=0)
-                            old_schema_dict = old_lf.collect_schema()
-                            # Convert to format expected by classify_schema_drift
-                            old_schema = {"columns": [(col, str(dtype)) for col, dtype in old_schema_dict.items()]}
-                            logger.debug(f"Loaded old schema: {old_schema}")
-                    except Exception as e:
-                        logger.warning(f"Could not load old schema for drift check: {e}")
-
-                    # Extract new schema from current tables (BEFORE patient_id addition)
-                    if old_schema and tables:
-                        # Get schema from first table DataFrame (before ensure_patient_id modifies it)
-                        new_schema_dict = tables[0]["data"].schema
-                        new_schema = {"columns": [(col, str(dtype)) for col, dtype in new_schema_dict.items()]}
-
-                        # Account for patient_id being added by ensure_patient_id
-                        # If old schema has patient_id but new doesn't, it will be added by ensure_patient_id
-                        # So don't count it as "removed" in the drift check
-                        old_columns = {col for col, _ in old_schema.get("columns", [])}
-                        new_columns = set(new_schema_dict.keys())
-
-                        if "patient_id" in old_columns and "patient_id" not in new_columns:
-                            # Add patient_id to new schema for comparison (it will be added by ensure_patient_id)
-                            new_schema["columns"].append(("patient_id", "Utf8"))
-                            logger.debug("Added patient_id to new schema (will be created by ensure_patient_id)")
-
-                        logger.debug(f"New schema: {new_schema}")
-
-                        # Phase 3: Classify and apply schema drift policy
-                        drift_result = classify_schema_drift(old_schema, new_schema)
-                        logger.debug(f"Drift result: {drift_result}")
-                        override = metadata.get("schema_drift_override", False)
-                        allowed, message, warnings = apply_schema_drift_policy(drift_result, override=override)
-                        logger.info(f"Schema drift policy: allowed={allowed}, message={message}, warnings={warnings}")
-
-                        if not allowed:
-                            # Block overwrite due to breaking schema changes
-                            return False, message, None
-
-                        # Log warnings if any (even if allowed)
-                        if warnings:
-                            logger.warning(f"Schema drift warnings: {'; '.join(warnings)}")
-
-            # Mark all existing versions as inactive (after schema drift check)
+            # Mark all existing versions as inactive (the drift check below reads stored metadata)
             if existing_version_history is not None:
                 for version_entry in existing_version_history:
                     version_entry["is_active"] = False
@@ -1977,11 +1731,13 @@ class UserDatasetStorage:
                     f"columns: {list(df_with_id.columns)}"
                 )
 
-                # Convert to pandas for validation (existing validation logic uses pandas)
-                df = df_with_id.to_pandas()
-            else:
-                # Multi-table: use first table for validation (shouldn't happen in save_upload, but handle gracefully)
-                df = tables[0]["data"].to_pandas()
+            df = tables[0]["data"]
+
+            # Overwrite: block breaking type drift against the stored version (same reader both sides)
+            if existing_version_history and overwrite and existing_upload_id:
+                blocked = self._check_overwrite_drift(existing_upload_id, df, metadata)
+                if blocked is not None:
+                    return False, blocked, None
 
             # Validate schema if variable mapping is provided
             # This enforces the UnifiedCohort schema contract at save-time
@@ -2001,14 +1757,12 @@ class UserDatasetStorage:
                     UnifiedCohort,
                 )
 
-                # Create a view with renamed columns to validate schema
-                cohort_df = df.copy()
+                # Validate a renamed view of the typed frame (the stored frame is not changed)
+                cohort_df = df
 
-                # Apply column mapping if patient_id is mapped
                 patient_id_col = variable_mapping.get("patient_id")
                 outcome_col = variable_mapping.get("outcome")
 
-                # Rename columns to UnifiedCohort schema
                 rename_map = {}
                 if patient_id_col and patient_id_col in cohort_df.columns:
                     rename_map[patient_id_col] = UnifiedCohort.PATIENT_ID
@@ -2016,7 +1770,6 @@ class UserDatasetStorage:
                 if outcome_col and outcome_col in cohort_df.columns:
                     rename_map[outcome_col] = UnifiedCohort.OUTCOME
 
-                # Add time_zero if specified
                 time_vars = variable_mapping.get("time_variables", {})
                 if time_vars:
                     time_zero_col = time_vars.get("time_zero")
@@ -2026,26 +1779,21 @@ class UserDatasetStorage:
                 if rename_map:
                     # Drop pre-existing columns that already carry a canonical name but are not the
                     # mapped source (e.g. a raw "outcome" column when the user maps outcome -> "mortality").
-                    # Renaming onto them would create duplicate column names and crash validation.
                     colliding = [
                         target
                         for source, target in rename_map.items()
                         if target != source and target in cohort_df.columns and target not in rename_map
                     ]
                     if colliding:
-                        logger.info(f"Dropping columns shadowed by canonical schema names for validation: {colliding}")
-                        cohort_df = cohort_df.drop(columns=colliding)
-                    cohort_df = cohort_df.rename(columns=rename_map)
+                        cohort_df = cohort_df.drop(colliding)
+                    cohort_df = cohort_df.rename({k: v for k, v in rename_map.items() if k != v})
 
-                    # Add outcome_label if not present
                     if UnifiedCohort.OUTCOME_LABEL not in cohort_df.columns:
-                        cohort_df[UnifiedCohort.OUTCOME_LABEL] = outcome_col or "outcome"
-
-                    # Add time_zero placeholder if not present
+                        cohort_df = cohort_df.with_columns(
+                            pl.lit(outcome_col or "outcome").alias(UnifiedCohort.OUTCOME_LABEL)
+                        )
                     if UnifiedCohort.TIME_ZERO not in cohort_df.columns:
-                        from datetime import datetime as dt
-
-                        cohort_df[UnifiedCohort.TIME_ZERO] = dt.now()
+                        cohort_df = cohort_df.with_columns(pl.lit(datetime.now()).alias(UnifiedCohort.TIME_ZERO))
 
                     # Validate the cohort schema using complete validator
                     from clinical_analytics.ui.components.data_validator import DataQualityValidator
@@ -2119,11 +1867,6 @@ class UserDatasetStorage:
                     metadata["_existing_events"] = existing_meta_for_events.get("events", [])
                 metadata["_is_overwrite"] = True  # Phase 5: Mark as overwrite event
 
-            # Update table with validated data (convert back to Polars for save_table_list)
-            if len(tables) == 1:
-                # Convert validated pandas DataFrame back to Polars
-                tables[0]["data"] = pl.from_pandas(df)
-
             # Save using unified save_table_list() function
             if progress_cb:
                 try:
@@ -2131,7 +1874,7 @@ class UserDatasetStorage:
                 except Exception:
                     pass  # Best-effort
 
-            success, message = save_table_list(self, tables, upload_id, metadata, progress_cb)
+            success, message = save_table_list(self, tables, upload_id, metadata, progress_cb, raw_bytes=file_bytes)
 
             if not success:
                 return False, message, None
@@ -2168,104 +1911,90 @@ class UserDatasetStorage:
 
             return True, success_message, upload_id
 
-        except Exception as e:
+        except (UploadError, SecurityError, OSError, RuntimeError, ValueError, pl.exceptions.PolarsError) as e:
+            logger.error("save_upload_failed", error_type=type(e).__name__)
             if progress_cb:
                 try:
-                    progress_cb(100, f"Error: {str(e)}")
-                except Exception:
-                    pass  # Best-effort
-            return False, f"Error saving upload: {str(e)}", None
+                    progress_cb(100, f"Error: {_upload_failure_reason(e)}")
+                except Exception:  # noqa: BLE001 - UI callback is best-effort by contract
+                    pass
+            return False, f"Error saving upload: {_upload_failure_reason(e)}", None
 
-    def rollback_to_version(self, upload_id: str, target_version: str) -> tuple[bool, str]:
+    def _stored_cohort_schema(self, upload_id: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
+        """Typed schema of the stored active version, read the way new uploads are typed.
+
+        Returns None only when the dataset has no stored data at all (nothing to drift from).
+
+        Raises:
+            OSError, StagingError, polars.exceptions.PolarsError: stored data exists but is unreadable.
         """
-        Rollback dataset to a specific version (Phase 6).
+        if metadata.get(STORAGE_LAYOUT_KEY) == STORAGE_LAYOUT:
+            schema = pl.read_parquet_schema(metadata[COHORT_PARQUET_KEY])
+        else:
+            source = _legacy_source_path(self, upload_id, metadata)
+            if source is None:
+                return None
+            schema = dict(_stage_legacy_file(source).schema)
+        return {"columns": [(col, str(dtype)) for col, dtype in schema.items()]}
 
-        Atomically switches active version to target_version, marks all other versions
-        as inactive, and creates a rollback event entry in version_history.
+    def _check_overwrite_drift(self, upload_id: str, new_df: pl.DataFrame, metadata: dict[str, Any]) -> str | None:
+        """Message blocking the overwrite on breaking schema drift, or None when it may proceed.
+
+        Compares the new staged frame with the stored active version's typed schema. A stored
+        version that exists but cannot be read refuses the overwrite (never skips the check).
+        """
+        log = logger.bind(upload_id=upload_id)
+        existing = self.get_upload_metadata(upload_id) or {}
+        try:
+            old_schema = self._stored_cohort_schema(upload_id, existing)
+        except (OSError, StagingError, pl.exceptions.PolarsError) as e:
+            log.error("drift_check_stored_unreadable", error_type=type(e).__name__)
+            return (
+                "The stored version of this dataset could not be read to compare column types "
+                f"({type(e).__name__}). Overwrite refused; delete the dataset and upload it again."
+            )
+        if old_schema is None:
+            log.warning("drift_check_no_stored_data")
+            return None
+        new_schema = {"columns": [(col, str(dtype)) for col, dtype in new_df.schema.items()]}
+        drift_result = classify_schema_drift(old_schema, new_schema)
+        allowed, message, warnings = apply_schema_drift_policy(
+            drift_result, override=metadata.get("schema_drift_override", False)
+        )
+        log.info("drift_check_done", drift_type=drift_result["drift_type"], allowed=allowed)
+        if warnings:
+            log.warning("drift_check_warnings", count=len(warnings))
+        return None if allowed else message
+
+    def stored_dataset(self, upload_id: str, metadata: dict[str, Any] | None = None) -> StoredDataset:
+        """
+        The typed data of a dataset's active version (the one source of truth for every reader).
+
+        Uploads made before typed storage are converted on first call (``_convert_legacy_upload``).
 
         Args:
             upload_id: Upload identifier
-            target_version: The dataset_version to rollback to (must exist in version_history)
+            metadata: Metadata to use instead of the stored file (the upload probe, before commit)
 
-        Returns:
-            Tuple of (success, message)
+        Raises:
+            FileNotFoundError: no metadata, or the stored data is missing.
+            StagingError: a legacy file cannot be staged.
         """
-        metadata_path = self.metadata_dir / f"{upload_id}.json"
-
-        if not metadata_path.exists():
-            return False, f"Dataset {upload_id} not found"
-
-        try:
-            # Thread-safe metadata update using file lock
-            # Use locked file handle for both read and write (atomic read-modify-write)
-            with file_lock(metadata_path, timeout=10.0) as f:
-                # Load current metadata from locked file handle
-                f.seek(0)
-                metadata = json.load(f)
-
-                # Verify version_history exists
-                version_history = metadata.get("version_history", [])
-                if not version_history:
-                    return False, f"No version history found for dataset {upload_id}"
-
-                # Find target version
-                target_entry = None
-                for entry in version_history:
-                    if entry.get("version") == target_version:
-                        target_entry = entry
-                        break
-
-                if not target_entry:
-                    available_versions = [v.get("version") for v in version_history]
-                    return False, (
-                        f"Version {target_version} not found in version history. "
-                        f"Available versions: {available_versions}"
-                    )
-
-                # Mark all versions as inactive
-                for entry in version_history:
-                    entry["is_active"] = False
-
-                # Mark target version as active
-                target_entry["is_active"] = True
-
-                # Create rollback event entry with unique version identifier
-                # Use "rollback:<event_id>" to avoid duplicate version values in history
-                rollback_event_id = uuid.uuid4().hex  # Phase 5: UUID4 hex format
-                now_utc = datetime.now(UTC)
-                rollback_event = {
-                    "version": f"rollback:{rollback_event_id}",  # Unique version identifier
-                    "created_at": now_utc.isoformat().replace("+00:00", "Z"),  # ISO 8601 UTC with Z
-                    "event_id": rollback_event_id,
-                    "event_type": "rollback",
-                    "is_active": False,  # Event entry itself is not active
-                    "rollback_target": target_version,  # Reference to which version was activated
-                }
-                version_history.append(rollback_event)
-
-                # Update metadata
-                metadata["version_history"] = version_history
-
-                # Validate metadata invariants
-                assert_metadata_invariants(metadata)
-
-                # Write metadata atomically using locked file handle
-                f.seek(0)
-                f.truncate()
-                json.dump(metadata, f, indent=2)
-                f.flush()  # Ensure write completes before lock releases
-
-                logger.info(
-                    f"Rolled back dataset {upload_id} to version {target_version} (event_id={rollback_event_id})"
-                )
-
-                return True, f"Successfully rolled back to version {target_version}"
-
-        except FileLockTimeoutError:
-            return False, "Failed to acquire lock on metadata file (timeout after 10s)"
-        except Exception as e:
-            logger.error(f"Error during rollback: {e}")
-            return False, f"Error during rollback: {str(e)}"
+        if metadata is None:
+            metadata = self.get_upload_metadata(upload_id)
+            if metadata is None:
+                raise FileNotFoundError(f"Upload {upload_id} not found")
+        if metadata.get(STORAGE_LAYOUT_KEY) != STORAGE_LAYOUT:
+            with _migration_lock(upload_id):
+                current = self.get_upload_metadata(upload_id) or metadata
+                if current.get(STORAGE_LAYOUT_KEY) != STORAGE_LAYOUT:
+                    return _convert_legacy_upload(self, upload_id, current)
+                metadata = current
+        cohort_path = Path(metadata[COHORT_PARQUET_KEY])
+        if not cohort_path.is_file():
+            raise FileNotFoundError(f"Stored data missing for upload {upload_id}")
+        table_paths = {name: Path(p) for name, p in (metadata.get("parquet_paths") or {}).items()}
+        return StoredDataset(metadata=metadata, cohort_path=cohort_path, table_paths=table_paths)
 
     def get_active_version(self, upload_id: str) -> dict[str, Any] | None:
         """
@@ -2330,166 +2059,24 @@ class UserDatasetStorage:
             result = json.load(f)
             return dict(result) if isinstance(result, dict) else None
 
-    def _needs_legacy_migration(self, upload_id: str, metadata: dict[str, Any]) -> bool:
-        """Whether an upload predates the unified multi-table format."""
-        tables_dir = self.raw_dir / f"{upload_id}_tables"
-        return not metadata.get("migrated_to_v2", False) and (not metadata.get("tables") or not tables_dir.exists())
-
     def get_upload_data(self, upload_id: str, lazy: bool = True) -> pl.LazyFrame | None:
         """
-        Load uploaded dataset with automatic legacy migration.
+        The dataset's typed cohort as a LazyFrame (the same Parquet the semantic layer reads).
 
-        Uses upload_id as immutable storage key: always {upload_id}.csv
-        Automatically migrates legacy single-table uploads to unified format.
-
-        IO Boundary Behavior:
-        - CSV files: When lazy=True, uses pl.scan_csv() for true lazy IO
-        - Excel files: Eagerly loaded via pandas (due to Polars Excel limitations),
-                      then converted to LazyFrame. Lazy execution applies from
-                      transformation/filtering onward, not from IO.
-        - SPSS files: Eagerly loaded via pyreadstat, then converted to LazyFrame.
-
-        Internal Representation:
-        - Returns pl.LazyFrame for all code paths.
-        - The lazy flag is retained for API compatibility but no longer changes return type.
+        Legacy uploads are converted to typed Parquet on first call (see ``stored_dataset``).
 
         Args:
             upload_id: Upload identifier (immutable storage key)
             lazy: Backward-compatibility flag (ignored). Result is always LazyFrame.
 
         Returns:
-            LazyFrame, or None if not found
-
-        Note:
-            Excel eager read is due to Polars read_excel() limitations with complex files
-            (header detection, mixed types). See load_single_file() for details.
+            LazyFrame, or None if the upload or its stored data is not found
         """
-        # Load metadata
-        metadata = self.get_upload_metadata(upload_id)
-        if not metadata:
-            return None
-
-        # Check if legacy upload needs migration
-        if self._needs_legacy_migration(upload_id, metadata):
-            # Reads (API preview, concurrent queries) can reach this path at the same time;
-            # serialize per upload and re-check so only one caller migrates.
-            with _migration_lock(upload_id):
-                metadata = self.get_upload_metadata(upload_id)
-                if metadata and self._needs_legacy_migration(upload_id, metadata):
-                    logger.info(f"Detected legacy upload {upload_id}, migrating to unified format")
-                    _migrate_legacy_upload(self, upload_id, metadata)
-                    # Reload metadata after migration
-                    metadata = self.get_upload_metadata(upload_id)
-
-        # Primary: upload_id is the immutable storage key
-        csv_path = self.raw_dir / f"{upload_id}.csv"
-
-        # Backward compatibility: check for old friendly-name files
-        if not csv_path.exists():
-            if metadata:
-                # Try old stored_relpath or stored_filename (legacy uploads)
-                if "stored_relpath" in metadata:
-                    legacy_path = self.raw_dir / metadata["stored_relpath"]
-                    if legacy_path.exists():
-                        csv_path = legacy_path
-                elif "stored_filename" in metadata:
-                    legacy_path = self.raw_dir / metadata["stored_filename"]
-                    if legacy_path.exists():
-                        csv_path = legacy_path
-
-        if not csv_path.exists():
-            return None
-
-        # Phase 3: Prefer Parquet for lazy loading (columnar, compressed, lazy IO)
-        # Check if Parquet paths available in metadata (Phase 3+)
-        from clinical_analytics.core.type_guards import safe_get
-
-        parquet_paths = safe_get(metadata, "parquet_paths", {})
-        tables = safe_get(metadata, "tables", [])
-        # Parquet holds the raw source tables. Only a single-table upload's table is the
-        # unified cohort; a multi-table upload must load {upload_id}.csv (the unified cohort
-        # the semantic layer queries), not its first source table.
-        if parquet_paths and len(tables) == 1:
-            first_table_name = tables[0]
-            if first_table_name in parquet_paths:
-                from pathlib import Path
-
-                from clinical_analytics.storage.datastore import DataStore
-
-                parquet_path = Path(parquet_paths[first_table_name])
-                if parquet_path.exists():
-                    logger.info(f"Loading from Parquet (lazy): {parquet_path}")
-                    return DataStore.load_from_parquet(parquet_path)
-                else:
-                    logger.warning(f"Parquet file missing: {parquet_path}. Falling back to CSV.")
-
-        # Fallback to CSV if Parquet not available (backward compatibility)
-        logger.debug(f"Loading from CSV (lazy): {csv_path}")
-
-        # Build schema overrides for ID columns to prevent integer overflow
-        # Common ID column names that should always be strings
-        id_column_names = {
-            "patient_id",
-            "patientid",
-            "subject_id",
-            "subjectid",
-            "id",
-            "mrn",
-            "study_id",
-        }
-
-        # Check metadata for synthetic ID info to identify ID columns
-        synthetic_id_metadata = safe_get(metadata, "synthetic_id_metadata", {})
-        if "patient_id" in synthetic_id_metadata:
-            # If patient_id was created synthetically, it's definitely an ID column
-            id_column_names.add("patient_id")
-
-        # Try to read CSV with schema overrides for ID columns
         try:
-            # First, scan CSV to get column names without materializing
-            # We need to peek at the schema to know which columns exist
-            sample_lf = pl.scan_csv(csv_path, n_rows=0)
-            try:
-                schema = sample_lf.collect_schema()  # Preferred method (Polars 0.19+)
-            except AttributeError:
-                schema = sample_lf.schema  # Fallback for older Polars versions
-
-            # Build schema_overrides dict: force ID columns to Utf8
-            schema_overrides = {}
-            for col_name in schema.keys():
-                if col_name.lower() in {name.lower() for name in id_column_names}:
-                    schema_overrides[col_name] = pl.Utf8
-                    logger.debug(f"Overriding {col_name} to Utf8 to prevent integer overflow")
-
-            # If we have overrides, use them; otherwise use default inference
-            if schema_overrides:
-                return pl.scan_csv(csv_path, schema_overrides=schema_overrides)
-            return pl.scan_csv(csv_path)
-
-        except Exception as e:
-            # If schema inference fails (e.g., integer overflow), retry with patient_id as string
-            logger.warning(f"CSV schema inference failed for {upload_id}: {e}. Retrying with patient_id as string.")
-            # Fallback: force common ID columns to strings
-            fallback_overrides = {
-                "patient_id": pl.Utf8,
-                "patientid": pl.Utf8,
-                "subject_id": pl.Utf8,
-                "subjectid": pl.Utf8,
-                "id": pl.Utf8,
-            }
-            try:
-                return pl.scan_csv(csv_path, schema_overrides=fallback_overrides)
-            except Exception as e2:
-                # Last resort: read all as strings
-                logger.warning(f"Retry with ID overrides failed: {e2}. Falling back to all-string schema.")
-                # Get column names first
-                sample_lf = pl.scan_csv(csv_path, n_rows=0)
-                try:
-                    schema = sample_lf.collect_schema()
-                except AttributeError:
-                    schema = sample_lf.schema
-                all_string_overrides = {col: pl.Utf8 for col in schema.keys()}
-                return pl.scan_csv(csv_path, schema_overrides=all_string_overrides)
+            return self.stored_dataset(upload_id).scan_cohort()
+        except FileNotFoundError:
+            logger.warning("upload_data_not_found", upload_id=upload_id)
+            return None
 
     def list_uploads(self) -> list[dict[str, Any]]:
         """
@@ -2555,28 +2142,15 @@ class UserDatasetStorage:
         if not metadata_path.exists():
             return False, f"Upload {upload_id} not found"
 
+        def mutate(current: dict[str, Any]) -> bool:
+            current.update(metadata_updates)
+            return True
+
         try:
-            # Phase 0: Use file locking for thread-safe metadata write
-            with file_lock(metadata_path, timeout=10.0) as f:
-                # Load existing metadata
-                f.seek(0)
-                metadata = json.load(f)
-
-                # Update with new fields
-                metadata.update(metadata_updates)
-
-                # Save updated metadata atomically
-                f.seek(0)
-                f.truncate()
-                json.dump(metadata, f, indent=2)
-                f.flush()  # Ensure write completes before lock releases
-
-            return True, "Metadata updated successfully"
-
-        except FileLockTimeoutError:
-            return False, f"Failed to acquire lock on {metadata_path} (timeout after 10s)"
-        except Exception as e:
-            return False, f"Error updating metadata: {str(e)}"
+            _update_metadata(metadata_path, mutate)
+        except (RuntimeError, OSError, ValueError) as e:
+            return False, f"Error updating metadata: {type(e).__name__}"
+        return True, "Metadata updated successfully"
 
     def add_documentation_to_upload(
         self,
@@ -2677,20 +2251,18 @@ class UserDatasetStorage:
 
                     logger.info("Re-ran schema inference with doc_context")
 
-            # Save updated metadata atomically
-            with file_lock(metadata_path, timeout=10.0) as f:
-                f.seek(0)
-                f.truncate()
-                json.dump(metadata, f, indent=2)
-                f.flush()
+            doc_updates = {k: metadata[k] for k in ("doc_context", "variable_types") if k in metadata}
 
+            def mutate(current: dict[str, Any]) -> bool:
+                current.update(doc_updates)
+                return True
+
+            _update_metadata(metadata_path, mutate)
             return True, f"Documentation added successfully ({len(doc_context)} chars extracted)"
 
-        except FileLockTimeoutError:
-            return False, f"Failed to acquire lock on {metadata_path} (timeout after 10s)"
-        except Exception as e:
-            logger.error(f"Error adding documentation to upload: {type(e).__name__}: {str(e)}")
-            return False, f"Error adding documentation: {str(e)}"
+        except (RuntimeError, OSError, ValueError, pl.exceptions.PolarsError) as e:
+            logger.error("add_documentation_failed", upload_id=upload_id, error_type=type(e).__name__)
+            return False, f"Error adding documentation: {type(e).__name__}"
 
     def save_zip_upload(
         self,
@@ -2907,7 +2479,9 @@ class UserDatasetStorage:
                     # Map to ZIP upload progress format
                     progress_callback(step_num + 2 + progress // 10, 10, message, {})
 
-            success, message = save_table_list(self, tables_list, upload_id, metadata, progress_adapter)
+            success, message = save_table_list(
+                self, tables_list, upload_id, metadata, progress_adapter, raw_bytes=file_bytes
+            )
 
             if not success:
                 return False, message, None

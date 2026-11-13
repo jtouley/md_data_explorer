@@ -393,6 +393,22 @@ class DatasetUploadResponse(BaseModel):
     quality: QualityReport | QualityNotRun | None = Field(
         None, description="This upload's data-quality report, or status 'not_run' with a reason"
     )
+    type_notes: list[str] = Field(
+        default_factory=list,
+        description="Columns kept as text or partly unreadable, and units rows, each with the reason",
+    )
+
+
+def _upload_type_notes(storage: UserDatasetStorage, upload_id: str) -> list[str]:
+    """How staging typed this upload's columns, for the user (value counts 1-10 never shown)."""
+    from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
+    from clinical_analytics.storage.staging import describe_column_types
+    from clinical_analytics.ui.storage.user_datasets import COLUMN_TYPES_KEY, COLUMN_UNITS_KEY
+
+    metadata = storage.get_upload_metadata(upload_id) or {}
+    return describe_column_types(
+        metadata.get(COLUMN_TYPES_KEY) or [], metadata.get(COLUMN_UNITS_KEY) or {}, SMALL_CELL_THRESHOLD
+    )
 
 
 class DatasetDeleteResponse(BaseModel):
@@ -442,6 +458,7 @@ def load_sample_dataset() -> DatasetUploadResponse:
         status="ready",
         message=message or "Sample cohort loaded",
         quality=_upload_quality(storage, upload_id),
+        type_notes=_upload_type_notes(storage, upload_id),
     )
 
 
@@ -496,6 +513,7 @@ async def upload_dataset(
     )
 
     if not success or upload_id is None:
+        # Never "ready" unless the stored version answered the upload-time query-view probe.
         log.error("dataset_upload_failed", message=message)
         raise HTTPException(status_code=500, detail=message)
 
@@ -509,6 +527,7 @@ async def upload_dataset(
         status="ready",
         message=message,
         quality=await asyncio.to_thread(_upload_quality, storage, upload_id),
+        type_notes=_upload_type_notes(storage, upload_id),
     )
 
 
