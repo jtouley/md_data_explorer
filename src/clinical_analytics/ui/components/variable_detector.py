@@ -24,6 +24,13 @@ import polars as pl
 logger = logging.getLogger(__name__)
 
 
+def _is_measurement(df: pl.DataFrame, column: str) -> bool:
+    """A float column holds measurements (a rate, a bound, a lab value), never an identifier:
+    an ID built from it changes when the value is re-estimated, and renaming it to patient_id
+    deletes the measurement from the dataset."""
+    return df.schema[column].is_float()
+
+
 def _ensure_polars_df(df: Any) -> pl.DataFrame:
     """Convert pandas DataFrame to polars if needed."""
     if isinstance(df, pl.DataFrame):
@@ -283,6 +290,8 @@ class VariableTypeDetector:
             # Skip if too many missing values
             if missing_pct > 10:
                 continue
+            if _is_measurement(df, col):
+                continue
 
             # Prefer categorical, continuous, or identifier types
             # Exclude datetime, binary, and text (too high cardinality alone)
@@ -382,7 +391,7 @@ class VariableTypeDetector:
         best_uniqueness = 0.0
 
         for col, info in variable_info.items():
-            if info["type"] == "identifier":
+            if info["type"] == "identifier" and not _is_measurement(df, col):
                 uniqueness = info["metadata"].get("uniqueness", 0)
                 if uniqueness > best_uniqueness:
                     best_uniqueness = uniqueness
