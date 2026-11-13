@@ -1,6 +1,9 @@
 import { describe, test, expect, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { tokenProof } from './apiAuth.js';
@@ -9,8 +12,11 @@ import {
   BackendSidecar,
   DEFAULT_PREFERRED_PORT,
   STORE_CHECK_FAILED_EXIT,
+  BACKEND_CWD_NAME,
   buildBackendArgs,
   buildBackendEnv,
+  ensureBackendCwd,
+  resolveSidecarSettings,
   cannotStartLine,
   choosePort,
   ephemeralPort,
@@ -147,8 +153,112 @@ describe('configuration', () => {
     expect(() => resolveHealthTimeoutMs({ CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS: raw })).toThrow();
   });
 
-  test('backend args bind loopback, pass the port and the parent pid for the watchdog', () => {
+  test.each([
+    [{}, { preferredPort: DEFAULT_PREFERRED_PORT, healthTimeoutMs: 60000 }],
+    [
+      { CLINICAL_ANALYTICS_API_PORT: '8123', CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS: '1500' },
+      { preferredPort: 8123, healthTimeoutMs: 1500 },
+    ],
+  ])('sidecar settings from %o', (env, expected) => {
+    expect(resolveSidecarSettings(env)).toEqual(expected);
+  });
+
+  test.each([
+    [{ CLINICAL_ANALYTICS_API_PORT: 'abc' }, /CLINICAL_ANALYTICS_API_PORT must be a port number/],
+    [{ CLINICAL_ANALYTICS_API_PORT: '0' }, /CLINICAL_ANALYTICS_API_PORT/],
+    [{ CLINICAL_ANALYTICS_API_PORT: '70000' }, /CLINICAL_ANALYTICS_API_PORT/],
+    [{ CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS: 'soon' }, /CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS/],
+    [{ CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS: '-5' }, /CLINICAL_ANALYTICS_BACKEND_TIMEOUT_MS/],
+  ])('a bad setting %o is a config failure: correct the setting, not reinstall', (env, pattern) => {
+    // Act
+    let failure;
+    try {
+      resolveSidecarSettings(env);
+    } catch (thrown) {
+      failure = thrown;
+    }
+    const { message } = startupFailureMessage(failure);
+
+    // Assert
+    expect(failure).toMatchObject({ reason: 'config', detail: expect.stringMatching(pattern) });
+    expect(message).toMatch(pattern);
+    expect(message).toMatch(/\. Correct the setting, then start Clinical Analytics again\.$/);
+    expect(message).not.toMatch(/[Rr]einstall/);
+  });
+
+  test('backend cwd is a folder of the app, created owner-only; never the home directory', () => {
+    // Arrange
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-userdata-'));
+    try {
+      // Act
+      const cwd = ensureBackendCwd(userData);
+      const again = ensureBackendCwd(userData); // a second launch finds it there
+
+      // Assert
+      expect(cwd).toBe(path.join(userData, BACKEND_CWD_NAME));
+      expect(again).toBe(cwd);
+      expect(fs.statSync(cwd).isDirectory()).toBe(true);
+      if (process.platform !== 'win32') expect(fs.statSync(cwd).mode & 0o777).toBe(0o700);
+      expect(cwd).not.toBe(os.homedir());
+    } finally {
+      fs.rmSync(userData, { recursive: true, force: true });
+    }
+  });
+
+  test.each([[''], [undefined], ['relative/dir']])(
+    'backend cwd: user-data dir %j is refused',
+    (dir) => {
+      const mkdirSync = vi.fn();
+      expect(() => ensureBackendCwd(dir, { mkdirSync })).toThrow(/absolute path/);
+      expect(mkdirSync).not.toHaveBeenCalled();
+    }
+  );
+
+  test('backend cwd: a directory that cannot be created fails loudly', () => {
+    const mkdirSync = () => {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    };
+    expect(() => ensureBackendCwd('/var/app-data', { mkdirSync })).toThrow(/EACCES/);
+  });
+
+  test.each(['json', 'argparse'])(
+    'a %s.py planted in the working directory is not imported by the interpreter the app starts',
+    (name) => {
+      // Arrange: a real interpreter, started with the app's flags, in a cwd holding a shadow module
+      const python = process.platform === 'win32' ? 'python' : 'python3';
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-shadow-'));
+      fs.writeFileSync(path.join(cwd, `${name}.py`), 'raise SystemExit("planted module ran")\n');
+      const safePathFlag = buildBackendArgs(51234, 999)[0];
+      // json.tool imports json and argparse; it adds nothing to sys.path itself
+      const probe = ['-m', 'json.tool'];
+      const run = (flags) => {
+        try {
+          execFileSync(python, [...flags, ...probe], { cwd, input: '{}', stdio: 'pipe' });
+          return 'real module';
+        } catch (error) {
+          return String(error.stderr).includes('planted module ran')
+            ? 'planted'
+            : `failed: ${error}`;
+        }
+      };
+      try {
+        // Act
+        const withoutFlag = run([]);
+        const withAppFlags = run([safePathFlag]);
+
+        // Assert: `-m` alone puts the cwd first on sys.path; the app's flag does not
+        expect(safePathFlag).toBe('-P');
+        expect(withoutFlag).toBe('planted');
+        expect(withAppFlags).toBe('real module');
+      } finally {
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    }
+  );
+
+  test('backend args: safe path first, bind loopback, pass the port and the parent pid', () => {
     expect(buildBackendArgs(51234, 999)).toEqual([
+      '-P',
       '-m',
       'clinical_analytics.api.serve',
       '--host',
@@ -165,6 +275,7 @@ describe('configuration', () => {
     // Arrange
     const base = {
       PATH: '/usr/bin',
+      PYTHONPATH: '/home/doctor/scripts',
       CLINICAL_ANALYTICS_DEV_NO_AUTH: '1',
       CLINICAL_ANALYTICS_OLLAMA_AUTOINIT: '1',
       ELECTRON_RUN_AS_NODE: '1',
@@ -179,6 +290,7 @@ describe('configuration', () => {
     expect(env).not.toHaveProperty('CLINICAL_ANALYTICS_DEV_NO_AUTH');
     expect(env).not.toHaveProperty('CLINICAL_ANALYTICS_OLLAMA_AUTOINIT');
     expect(env).not.toHaveProperty('ELECTRON_RUN_AS_NODE');
+    expect(env).not.toHaveProperty('PYTHONPATH'); // no import path from the user's shell
     expect(base.CLINICAL_ANALYTICS_DEV_NO_AUTH).toBe('1'); // input not mutated
   });
 });
@@ -260,7 +372,10 @@ describe('startup failure messages', () => {
       { reason: 'config', detail: 'VITE_API_URL must be http://127.0.0.1:<port>' },
       /^VITE_API_URL must be/,
     ],
-    [{ reason: 'config' }, /^A startup setting is not valid\.$/],
+    [
+      { reason: 'config' },
+      /^A startup setting is not valid\. Correct the setting, then start Clinical Analytics again\.$/,
+    ],
   ])('%o', (failure, pattern) => {
     expect(startupFailureMessage(failure).message).toMatch(pattern);
   });

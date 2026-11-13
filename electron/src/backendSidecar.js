@@ -4,9 +4,12 @@
  *
  * Lifecycle:
  * 1. Pick a port on 127.0.0.1: the preferred one if free, otherwise one the OS hands out.
- * 2. Spawn `<python> -m clinical_analytics.api.serve --host 127.0.0.1 --port <port>
- *    --exit-with-parent <electron pid> --stop-on-stdin-close` with this launch's API token in its environment
- *    (never the dev no-auth opt-out, never Ollama auto-download).
+ * 2. Spawn `<python> -P -m clinical_analytics.api.serve --host 127.0.0.1 --port <port>
+ *    --exit-with-parent <electron pid> --stop-on-stdin-close` with this launch's API token in its
+ *    environment (never the dev no-auth opt-out, never Ollama auto-download), from a directory
+ *    of the app's own. `-P` keeps the working directory off Python's import path, so a stray
+ *    json.py or yaml.py there (or in the home directory) is never imported in place of the real
+ *    module; PYTHONPATH from the user's shell is dropped for the same reason.
  * 3. Wait until anything answers /health, then check the server proves it knows the token
  *    (apiAuth.js), so a program squatting on the port is never used.
  * 4. On quit: SIGTERM to the process group (Windows: close its stdin), then a forced kill of the
@@ -18,6 +21,7 @@
  * CLINICAL_ANALYTICS_EXTERNAL_BACKEND=1 and keeps using an already-running API.
  */
 import { spawn as nodeSpawn, execFile as nodeExecFile } from 'node:child_process';
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { verifyBackendEnforcesAuth } from './apiAuth.js';
@@ -42,7 +46,15 @@ export const STORE_CHECK_FAILED_EXIT = 2;
 const STDERR_TAIL_LINES = 40;
 // Never handed to the sidecar: the dev opt-out would let the renderer accept an unauthenticated
 // backend, and auto-init downloads Ollama models.
-const STRIPPED_ENV = ['CLINICAL_ANALYTICS_DEV_NO_AUTH', 'CLINICAL_ANALYTICS_OLLAMA_AUTOINIT'];
+// PYTHONPATH from the user's shell would put directories from outside the app on the import
+// path of a process that holds the API token.
+const STRIPPED_ENV = [
+  'CLINICAL_ANALYTICS_DEV_NO_AUTH',
+  'CLINICAL_ANALYTICS_OLLAMA_AUTOINIT',
+  'PYTHONPATH',
+];
+/** Folder under the app's user-data directory that the backend runs in. */
+export const BACKEND_CWD_NAME = 'backend';
 
 /** @param {Record<string, string | undefined>} env */
 export function useExternalBackend(env) {
@@ -70,7 +82,7 @@ export function resolvePreferredPort(env) {
   if (!raw) return DEFAULT_PREFERRED_PORT;
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`${PORT_ENV} must be a port number (1-65535), got "${raw}"`);
+    throw new Error(`${PORT_ENV} must be a port number (1-65535), got "${raw}".`);
   }
   return port;
 }
@@ -81,15 +93,49 @@ export function resolveHealthTimeoutMs(env) {
   const value = raw ? Number(raw) : DEFAULT_HEALTH_TIMEOUT_MS;
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(
-      `${HEALTH_TIMEOUT_ENV} must be a positive number of milliseconds, got "${raw}"`
+      `${HEALTH_TIMEOUT_ENV} must be a positive number of milliseconds, got "${raw}".`
     );
   }
   return value;
 }
 
+/**
+ * Port and health timeout from the environment. A bad value is a setting to correct, not a
+ * broken install, so it is reported as { reason: 'config' } (the message says which variable).
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ preferredPort: number, healthTimeoutMs: number }}
+ */
+export function resolveSidecarSettings(env) {
+  try {
+    return {
+      preferredPort: resolvePreferredPort(env),
+      healthTimeoutMs: resolveHealthTimeoutMs(env),
+    };
+  } catch (error) {
+    throw { reason: 'config', detail: error.message };
+  }
+}
+
+/**
+ * The directory the backend runs in: a folder of the app's own, created owner-only. Never the
+ * home directory, where the user's scratch files live.
+ * @param {string} userDataDir - app.getPath('userData')
+ * @param {{ mkdirSync: typeof fs.mkdirSync }} [fsImpl]
+ * @returns {string}
+ */
+export function ensureBackendCwd(userDataDir, fsImpl = fs) {
+  if (!userDataDir || !path.isAbsolute(userDataDir)) {
+    throw new Error(`the app's data directory must be an absolute path, got "${userDataDir}"`);
+  }
+  const dir = path.join(userDataDir, BACKEND_CWD_NAME);
+  fsImpl.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
 /** @param {number} port @param {number} parentPid */
 export function buildBackendArgs(port, parentPid) {
   return [
+    '-P', // safe path (Python 3.11+): the working directory is not put on sys.path
     '-m',
     'clinical_analytics.api.serve',
     '--host',
@@ -215,7 +261,12 @@ export function startupFailureMessage(failure) {
     };
   }
   if (failure.reason === 'config') {
-    return { title, message: failure.detail || 'A startup setting is not valid.' };
+    return {
+      title,
+      message:
+        `${failure.detail || 'A startup setting is not valid.'} ` +
+        'Correct the setting, then start Clinical Analytics again.',
+    };
   }
   return {
     title,

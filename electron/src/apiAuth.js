@@ -46,8 +46,7 @@ export function externalApiBaseUrl(viteApiUrl) {
   const url = apiBaseUrlFromArgv([`${API_BASE_URL_ARG_PREFIX}${configured}`]);
   if (!url) {
     throw new Error(
-      `VITE_API_URL must be http://127.0.0.1:<port> (no path, not "localhost"), got "${configured}". ` +
-        'Fix it and start the app again.'
+      `VITE_API_URL must be http://127.0.0.1:<port> (no path, not "localhost"), got "${configured}".`
     );
   }
   return url;

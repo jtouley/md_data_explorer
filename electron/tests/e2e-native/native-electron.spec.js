@@ -457,6 +457,54 @@ test.describe.serial('Native Electron binary harness', () => {
     }
   });
 
+  test('modules planted in the home directory and the backend folder are not imported by the backend', async () => {
+    // Arrange: a home directory with scratch files named like modules the backend imports, and
+    // the same files in the folder the backend runs in
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-home-'));
+    const userData = path.join(home, 'user-data');
+    const marker = path.join(home, 'planted-module-ran');
+    const planted = `open(${JSON.stringify(marker)}, "a").write(__name__ + "\\n")\nraise SystemExit("planted module ran")\n`;
+    fs.mkdirSync(path.join(userData, 'backend'), { recursive: true });
+    for (const dir of [home, path.join(userData, 'backend')]) {
+      for (const name of ['json.py', 'yaml.py', 'secrets.py']) {
+        fs.writeFileSync(path.join(dir, name), planted);
+      }
+    }
+    const env = {
+      ...process.env,
+      ELECTRON_DISABLE_SANDBOX: '1',
+      HOME: home,
+      CLINICAL_ANALYTICS_DATA_HOME: path.join(home, 'data-home'),
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.CLINICAL_ANALYTICS_EXTERNAL_BACKEND;
+    delete env.CLINICAL_ANALYTICS_DEV_NO_AUTH;
+    delete env.CLINICAL_ANALYTICS_API_TOKEN;
+    const app = await electron.launch({
+      args: ['--no-sandbox', `--user-data-dir=${userData}`, ELECTRON_ROOT],
+      env,
+    });
+    try {
+      // Act: the app starts its backend and connects
+      const page = await appWindow(app);
+      await expect(page.locator('#connection-status')).toHaveClass(/status-connected/, {
+        timeout: 90000,
+      });
+      const appUserData = await app.evaluate(({ app: a }) => a.getPath('userData'));
+      const backendCwd = path.join(appUserData, 'backend');
+
+      // Assert: the backend ran in the app's folder, and no planted file was executed
+      expect(backendCwd).toBe(path.join(userData, 'backend'));
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      await app.close();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('a killed app (no quit handler) still leaves no backend', async () => {
     // Arrange
     const { app, electronPid, cleanup } = await launchWithSidecar();

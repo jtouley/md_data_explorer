@@ -10,7 +10,6 @@
  * - The window cannot navigate away from the app or open new windows; the renderer is sandboxed.
  */
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, session } from 'electron';
-import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -38,9 +37,9 @@ import {
 import { API_BASE_URL_ARG_PREFIX, externalApiBaseUrl } from './apiAuth.js';
 import {
   BackendSidecar,
-  resolveHealthTimeoutMs,
-  resolvePreferredPort,
+  ensureBackendCwd,
   resolvePythonExecutable,
+  resolveSidecarSettings,
   startupFailureMessage,
   unexpectedExitMessage,
   useExternalBackend,
@@ -294,10 +293,10 @@ async function startBackend() {
       python: resolvePythonExecutable(process.env, { appRoot: app.getAppPath() }),
       token: apiToken,
       env: process.env,
-      preferredPort: resolvePreferredPort(process.env),
-      healthTimeoutMs: resolveHealthTimeoutMs(process.env),
+      ...resolveSidecarSettings(process.env),
       parentPid: process.pid,
-      cwd: os.homedir(),
+      // A folder of the app's own, not the home directory (see ensureBackendCwd and `-P`).
+      cwd: ensureBackendCwd(app.getPath('userData')),
       log: (line) => console.log(line),
       onUnexpectedExit: (info) => void handleBackendCrash(info),
     });
