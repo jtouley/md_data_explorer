@@ -16,7 +16,6 @@ Model: sentence-transformers/all-MiniLM-L6-v2, Apache-2.0 (see THIRD_PARTY_NOTIC
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 import urllib.error
 import urllib.request
@@ -30,6 +29,7 @@ from clinical_analytics.core.embeddings import (  # noqa: E402
     MODEL_REPO,
     MODEL_REVISION,
     bundled_model_dir,
+    sha256_file,
 )
 
 DEFAULT_BASE_URL = "https://huggingface.co"
@@ -40,18 +40,10 @@ class ModelIntegrityError(RuntimeError):
     """A downloaded file does not match its pinned SHA-256."""
 
 
-def sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        while block := f.read(CHUNK):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def fetch_file(base_url: str, name: str, expected: str, dest: Path) -> str:
     """Download one pinned file into ``dest``; returns 'kept' or 'fetched'."""
     target = dest / name
-    if target.is_file() and sha256_of(target) == expected:
+    if target.is_file() and sha256_file(target) == expected:
         return "kept"
     target.parent.mkdir(parents=True, exist_ok=True)
     part = target.with_name(target.name + ".part")
@@ -60,7 +52,7 @@ def fetch_file(base_url: str, name: str, expected: str, dest: Path) -> str:
         with urllib.request.urlopen(url, timeout=120) as resp, part.open("wb") as out:  # noqa: S310 - https, pinned
             while block := resp.read(CHUNK):
                 out.write(block)
-        actual = sha256_of(part)
+        actual = sha256_file(part)
         if actual != expected:
             raise ModelIntegrityError(f"{name}: SHA-256 {actual} does not match pinned {expected}")
         part.replace(target)
@@ -71,7 +63,7 @@ def fetch_file(base_url: str, name: str, expected: str, dest: Path) -> str:
 
 def verify(dest: Path) -> list[str]:
     """Names of pinned files that are missing or do not match their hash."""
-    return [n for n, h in MODEL_FILES.items() if not (dest / n).is_file() or sha256_of(dest / n) != h]
+    return [n for n, h in MODEL_FILES.items() if not (dest / n).is_file() or sha256_file(dest / n) != h]
 
 
 def main(argv: list[str] | None = None) -> int:

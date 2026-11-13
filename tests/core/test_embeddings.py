@@ -270,15 +270,20 @@ def test_embedding_path_socketsBlocked_loadsAndMatchesWithoutNetwork(sockets_blo
     assert sockets_blocked == [], f"embedding path tried the network: {sockets_blocked}"
 
 
-def test_nl_query_engine_unknownEmbeddingModel_raisesValueError(make_semantic_layer):
+def test_nl_query_engine_embeddingModel_isTheBundledOneAndNotAParameter(make_semantic_layer):
     # Arrange
+    import inspect
+
     from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
     semantic = make_semantic_layer(dataset_name="model_name_check", data={"patient_id": [1], "age": [1]})
 
-    # Act / Assert
-    with pytest.raises(ValueError, match="bundled embedding model"):
-        NLQueryEngine(semantic, embedding_model="all-mpnet-base-v2")
+    # Act
+    engine = NLQueryEngine(semantic)
+
+    # Assert: one model ships, so there is nothing to choose
+    assert engine.embedding_model_name == embeddings.MODEL_NAME
+    assert list(inspect.signature(NLQueryEngine).parameters) == ["semantic_layer"]
 
 
 @pytest.fixture
@@ -312,8 +317,8 @@ def test_check_embedding_model_verifiedCache_skipsHashUntilFileChanges(pinned_mo
     cache = tmp_path / "cache" / "check.json"
     check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)
     hashed: list[str] = []
-    real_sha = embeddings._sha256
-    monkeypatch.setattr(embeddings, "_sha256", lambda p: hashed.append(p.name) or real_sha(p))
+    real_sha = embeddings.sha256_file
+    monkeypatch.setattr(embeddings, "sha256_file", lambda p: hashed.append(p.name) or real_sha(p))
 
     # Act: unchanged files -> no hashing; a touched file -> hashed (and still verified)
     check_embedding_model(pinned_model_copy, verify=True, cache_path=cache)
@@ -340,8 +345,9 @@ def test_check_embedding_model_cacheSaysVerifiedButBytesReplaced_stillCaught(pin
 
 @pytest.fixture
 def fresh_encoder_cache(monkeypatch):
-    """An empty process-wide encoder cache for one test (the real one is put back afterwards)."""
+    """Empty process-wide encoder and embedding caches for one test (the real ones are put back)."""
     monkeypatch.setattr(embeddings, "_ENCODERS", {})
+    monkeypatch.setattr(embeddings, "_TEXT_EMBEDDINGS", {})
 
 
 @pytest.fixture
@@ -415,7 +421,6 @@ def test_nl_query_engine_modelMissing_semanticMatchOffAndModelNotRetriedPerQuery
     # Assert
     assert intents == [None] * queries
     assert engine.encoder is None
-    assert engine._encoder_unavailable is True
     assert engine._golden_embeddings is None
     assert len(counted_encoder_loads) == 1
 
@@ -425,10 +430,8 @@ def test_nl_query_engine_severalDatasets_shareOneEncoderAndGoldenEmbeddings(
     fresh_encoder_cache, counted_encoder_loads, monkeypatch, make_semantic_layer, engine_count
 ):
     # Arrange: one engine per dataset, as get_query_service_for_dataset builds them
-    from clinical_analytics.core import nl_query_engine
     from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-    monkeypatch.setattr(nl_query_engine, "_GOLDEN_EMBEDDING_CACHE", {})
     layers = [
         make_semantic_layer(
             dataset_name=f"shared_{i}",
@@ -455,10 +458,8 @@ def test_golden_embedding_cache_fileEdited_embedsAgain(fresh_encoder_cache, monk
     # Arrange: an engine pointed at its own golden examples file
     import yaml
 
-    from clinical_analytics.core import nl_query_engine
     from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-    monkeypatch.setattr(nl_query_engine, "_GOLDEN_EMBEDDING_CACHE", {})
     config = tmp_path / "golden_examples.yaml"
     config.write_text(yaml.safe_dump({"questions": [{"id": "a", "query": "how many patients?"}]}))
     semantic = make_semantic_layer(dataset_name="edited_golden", data={"patient_id": [1, 2], "age": [40, 50]})
@@ -482,3 +483,144 @@ def test_golden_embedding_cache_fileEdited_embedsAgain(fresh_encoder_cache, monk
     assert again is first
     assert first.shape == (1, EMBEDDING_DIM)
     assert edited.shape == (2, EMBEDDING_DIM)
+
+
+def _damage(model_dir: Path, damaged: str) -> None:
+    target = model_dir / damaged
+    if damaged.endswith(".onnx"):
+        target.write_bytes(target.read_bytes()[:4096])  # truncated download or disk error
+    else:
+        target.write_text("{ not a tokenizer")
+
+
+@pytest.mark.parametrize("damaged", embeddings.RUNTIME_FILES)
+@pytest.mark.parametrize("calls", [1, 3])
+def test_get_encoder_modelDamaged_raisesLoadErrorAndIsNotLoadedAgain(
+    fresh_encoder_cache, counted_encoder_loads, pinned_model_copy, monkeypatch, damaged, calls
+):
+    # Arrange: every runtime file is present, one is unusable (library use: no serve.py hash check)
+    _damage(pinned_model_copy, damaged)
+    monkeypatch.setenv(embeddings.EMBEDDING_MODEL_DIR_ENV, str(pinned_model_copy))
+
+    # Act / Assert: a clear domain error each time, one load attempt in total
+    for _ in range(calls):
+        with pytest.raises(embeddings.EmbeddingModelLoadError, match="could not be loaded.*reinstall the app"):
+            embeddings.get_encoder()
+    assert len(counted_encoder_loads) == 1
+
+
+def test_get_encoder_runtimeNotImportable_raisesLoadErrorOnce(fresh_encoder_cache, counted_encoder_loads, monkeypatch):
+    # Arrange: onnxruntime cannot be imported (a broken install)
+    import sys
+
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+
+    # Act / Assert
+    for _ in range(2):
+        with pytest.raises(embeddings.EmbeddingModelLoadError, match="could not be imported"):
+            embeddings.get_encoder()
+    assert len(counted_encoder_loads) == 1
+
+
+@pytest.mark.parametrize("queries", [1, 4], ids=["one_query", "four_queries"])
+def test_nl_query_engine_modelDamaged_semanticMatchOffAndModelNotReloadedPerQuery(
+    fresh_encoder_cache, counted_encoder_loads, pinned_model_copy, monkeypatch, make_semantic_layer, queries
+):
+    # Arrange
+    from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+    _damage(pinned_model_copy, "onnx/model.onnx")
+    monkeypatch.setenv(embeddings.EMBEDDING_MODEL_DIR_ENV, str(pinned_model_copy))
+    semantic = make_semantic_layer(dataset_name="damaged_model", data={"patient_id": [1, 2], "age": [40, 50]})
+
+    # Act
+    engine = NLQueryEngine(semantic)
+    intents = [engine._semantic_match("how many patients?") for _ in range(queries)]
+
+    # Assert: Tier 2 is off; the ~90 MB session is not built again for every query
+    assert intents == [None] * queries
+    assert engine.encoder is None
+    assert len(counted_encoder_loads) == 1
+
+
+class _CountingEncoder:
+    """A stand-in encoder: counts encode calls and returns one row per text."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def encode(self, texts):
+        self.calls += 1
+        return np.ones((len(texts), EMBEDDING_DIM), dtype=np.float32)
+
+
+@pytest.mark.parametrize(
+    ("second_key", "second_texts", "same_encoder", "expected_calls"),
+    [
+        ("k", ["a", "b"], True, 1),
+        ("other", ["a", "b"], True, 2),
+        ("k", ["a", "b", "c"], True, 2),
+        ("k", ["a", "b"], False, 2),
+    ],
+    ids=["same_key_reused", "different_key", "text_count_changed", "different_encoder"],
+)
+def test_encode_cached_secondCall_reusesOnlyForSameKeyTextsAndEncoder(
+    fresh_encoder_cache, second_key, second_texts, same_encoder, expected_calls
+):
+    # Arrange
+    encoder = _CountingEncoder()
+    other = encoder if same_encoder else _CountingEncoder()
+
+    # Act
+    first = embeddings.encode_cached(encoder, "k", ["a", "b"])
+    second = embeddings.encode_cached(other, second_key, second_texts)
+
+    # Assert
+    assert encoder.calls + (0 if same_encoder else other.calls) == expected_calls
+    assert (second is first) is (expected_calls == 1)
+    assert not first.flags.writeable
+
+
+def test_encode_cached_manyThreadsManyKeys_noErrorsAndBounded(fresh_encoder_cache):
+    """Engines are built concurrently (one per dataset, in API worker threads)."""
+    # Arrange
+    import threading
+
+    encoder = _CountingEncoder()
+    errors: list[BaseException] = []
+    start = threading.Barrier(16)
+
+    def worker(n: int) -> None:
+        try:
+            start.wait(timeout=10)
+            for i in range(200):
+                out = embeddings.encode_cached(encoder, (n, i % 20), ["x"])
+                assert out.shape == (1, EMBEDDING_DIM)
+        except BaseException as e:  # noqa: BLE001 - collected and asserted below
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(16)]
+
+    # Act
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    # Assert
+    assert errors == []
+    assert 0 < len(embeddings._TEXT_EMBEDDINGS) <= embeddings.TEXT_EMBEDDINGS_MAX_ENTRIES
+
+
+def test_reset_encoder_cache_afterUse_dropsEncodersAndTheEmbeddingsThatHoldThem(fresh_encoder_cache):
+    # Arrange: a cached encoder and embeddings made with it (the cache entry references the encoder)
+    encoder = embeddings.get_encoder()
+    embeddings.encode_cached(encoder, "golden", ["how many patients?"])
+    assert embeddings._ENCODERS and embeddings._TEXT_EMBEDDINGS
+
+    # Act
+    embeddings.reset_encoder_cache()
+
+    # Assert: nothing keeps the old ~90 MB session alive
+    assert embeddings._ENCODERS == {}
+    assert embeddings._TEXT_EMBEDDINGS == {}

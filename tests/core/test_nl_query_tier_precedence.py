@@ -84,7 +84,9 @@ class TestNLQueryEngineTierPrecedence:
 
         from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-        with patch("clinical_analytics.core.config_loader.shipped_config_dir", return_value=tmp_path / "config"):
+        with patch(
+            "clinical_analytics.core.config_loader.config_file", side_effect=lambda name: tmp_path / "config" / name
+        ):
             engine = NLQueryEngine(semantic)
 
             # Act: Parse query - should try semantic first due to config
@@ -119,7 +121,9 @@ class TestNLQueryEngineTierPrecedence:
 
         from clinical_analytics.core.nl_query_engine import NLQueryEngine
 
-        with patch("clinical_analytics.core.config_loader.shipped_config_dir", return_value=tmp_path / "config"):
+        with patch(
+            "clinical_analytics.core.config_loader.config_file", side_effect=lambda name: tmp_path / "config" / name
+        ):
             engine = NLQueryEngine(semantic)
 
             # Act: Parse query

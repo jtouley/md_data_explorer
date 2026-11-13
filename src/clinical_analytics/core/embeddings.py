@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 import threading
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from pathlib import Path
 from typing import Final
 
@@ -68,6 +68,18 @@ class EmbeddingModelIntegrityError(EmbeddingModelMissingError):
     """A bundled model file is present but its SHA-256 is not the pinned one (corrupt or replaced)."""
 
 
+class EmbeddingModelLoadError(RuntimeError):
+    """The model files are there but the encoder could not be built from them.
+
+    A truncated ``model.onnx``, an unreadable ``tokenizer.json``, or ``onnxruntime``/``tokenizers``
+    failing to import. The original error is the ``__cause__``.
+    """
+
+
+# Everything get_encoder() can raise; callers that degrade (semantic matching off) catch this.
+ENCODER_LOAD_ERRORS: Final = (EmbeddingModelMissingError, EmbeddingModelLoadError)
+
+
 def bundled_model_dir() -> Path:
     """Where the build puts the model inside the package."""
     return resources_root() / "models" / MODEL_NAME
@@ -79,7 +91,8 @@ def embedding_model_dir() -> Path:
     return Path(override).expanduser() if override else bundled_model_dir()
 
 
-def _sha256(path: Path) -> str:
+def sha256_file(path: Path) -> str:
+    """SHA-256 of a file, read in 1 MiB blocks (the one helper; the fetch script uses it too)."""
     digest = hashlib.sha256()
     with path.open("rb") as f:
         while block := f.read(1 << 20):
@@ -137,7 +150,7 @@ def check_embedding_model(
         path = root / name
         key = [str(path.resolve()), *_stat_key(path), MODEL_FILES[name]]
         if cache.get(name) != key:
-            if _sha256(path) != MODEL_FILES[name]:
+            if sha256_file(path) != MODEL_FILES[name]:
                 raise EmbeddingModelIntegrityError(
                     f"The embedding model file {name} in {root} does not match its pinned SHA-256 "
                     f"(damaged or replaced). {FETCH_HINT} again, or reinstall the app."
@@ -152,27 +165,38 @@ class OnnxSentenceEncoder:
     """Drop-in for ``SentenceTransformer.encode`` returning normalised float32 embeddings."""
 
     def __init__(self, model_dir: Path | None = None, *, batch_size: int = 32) -> None:
-        # Imported here so modules that only need the constants stay light.
-        import onnxruntime as ort
-        from tokenizers import Tokenizer
-
         root = check_embedding_model(model_dir)
         if batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {batch_size}")
         self.model_dir = root
         self.batch_size = batch_size
+        try:
+            # Imported here so modules that only need the constants stay light.
+            import onnxruntime as ort
+            from tokenizers import Tokenizer
+        except ImportError as e:
+            raise EmbeddingModelLoadError(f"The embedding runtime could not be imported ({e}).") from e
         if hasattr(ort, "disable_telemetry_events"):
             ort.disable_telemetry_events()  # Windows ETW events; the app reports nothing anywhere
-        tokenizer = Tokenizer.from_file(str(root / "tokenizer.json"))
-        tokenizer.enable_truncation(max_length=MAX_SEQ_LENGTH)
-        pad_id = tokenizer.token_to_id("[PAD]")
-        tokenizer.enable_padding(pad_id=0 if pad_id is None else pad_id, pad_token="[PAD]")  # longest in batch
+        try:
+            tokenizer = Tokenizer.from_file(str(root / "tokenizer.json"))
+            tokenizer.enable_truncation(max_length=MAX_SEQ_LENGTH)
+            pad_id = tokenizer.token_to_id("[PAD]")
+            tokenizer.enable_padding(pad_id=0 if pad_id is None else pad_id, pad_token="[PAD]")  # longest in batch
+            options = ort.SessionOptions()
+            options.log_severity_level = 3
+            session = ort.InferenceSession(
+                str(root / "onnx" / "model.onnx"), sess_options=options, providers=["CPUExecutionProvider"]
+            )
+        except Exception as e:  # noqa: BLE001 - third-party boundary, re-raised as a domain error
+            # onnxruntime's errors (InvalidProtobuf, Fail, ...) and tokenizers' plain Exception share
+            # no base class below Exception, so this is the narrowest catch that covers a damaged file.
+            raise EmbeddingModelLoadError(
+                f"The embedding model {MODEL_NAME} in {root} could not be loaded ({type(e).__name__}). "
+                f"{FETCH_HINT} again, or reinstall the app."
+            ) from e
         self._tokenizer = tokenizer
-        options = ort.SessionOptions()
-        options.log_severity_level = 3
-        self._session = ort.InferenceSession(
-            str(root / "onnx" / "model.onnx"), sess_options=options, providers=["CPUExecutionProvider"]
-        )
+        self._session = session
         self._input_names = {i.name for i in self._session.get_inputs()}
         logger.info("embedding_model_loaded", model=MODEL_NAME, revision=MODEL_REVISION[:12], runtime="onnx")
 
@@ -196,18 +220,28 @@ class OnnxSentenceEncoder:
 
 
 # One encoder per process and model directory: the model is a fixed, stateless artifact (~90 MB as
-# an ONNX session), so every NLQueryEngine shares it. A missing model is remembered as well, so it
-# is looked for once per process, not on every query.
-_ENCODERS: dict[Path, OnnxSentenceEncoder | EmbeddingModelMissingError] = {}
+# an ONNX session), so every NLQueryEngine shares it. Any load failure (model missing, damaged, or
+# the runtime not importable) is remembered as well: it is tried once per process, not per query.
+_ENCODERS: dict[Path, OnnxSentenceEncoder | EmbeddingModelMissingError | EmbeddingModelLoadError] = {}
 _ENCODERS_LOCK: Final = threading.Lock()
+
+# Embeddings of fixed text lists (the golden examples), shared by every engine. Value: the encoder
+# that produced them (compared by identity, so another encoder never reuses them) and the
+# read-only array. Guarded by its own lock: engines are built concurrently in API worker threads.
+_TEXT_EMBEDDINGS: dict[Hashable, tuple[object, Embeddings]] = {}
+_TEXT_EMBEDDINGS_LOCK: Final = threading.Lock()
+TEXT_EMBEDDINGS_MAX_ENTRIES: Final = 8
 
 
 def get_encoder() -> OnnxSentenceEncoder:
     """The shared encoder for the current model directory, loaded on first use.
 
     Raises:
-        EmbeddingModelMissingError: the model is not there. The same error is raised again on
-            later calls without looking again; installing the model needs a restart.
+        EmbeddingModelMissingError: the model is not there.
+        EmbeddingModelLoadError: the model is there but could not be loaded.
+
+    Either error is raised again on later calls without trying again (``ENCODER_LOAD_ERRORS``);
+    a repaired model needs a restart or ``reset_encoder_cache()``.
     """
     root = embedding_model_dir()
     with _ENCODERS_LOCK:
@@ -215,19 +249,47 @@ def get_encoder() -> OnnxSentenceEncoder:
         if cached is None:
             try:
                 cached = OnnxSentenceEncoder(root)
-            except EmbeddingModelMissingError as e:
-                logger.error("embedding_model_missing", error=str(e), effect="semantic matching disabled")
+            except ENCODER_LOAD_ERRORS as e:
+                logger.error(
+                    "embedding_model_unavailable",
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    effect="semantic matching disabled until the model is repaired and the app restarted",
+                )
                 cached = e
             _ENCODERS[root] = cached
-    if isinstance(cached, EmbeddingModelMissingError):
+    if isinstance(cached, ENCODER_LOAD_ERRORS):
         raise cached
     return cached
 
 
+def encode_cached(encoder: OnnxSentenceEncoder, key: Hashable, texts: Sequence[str]) -> Embeddings:
+    """Embeddings of ``texts``, computed once per ``key`` and encoder; the array is read-only.
+
+    ``key`` must change when the texts change (for a file: path, size and mtime). At most
+    ``TEXT_EMBEDDINGS_MAX_ENTRIES`` lists are kept; the oldest is dropped first.
+    """
+    with _TEXT_EMBEDDINGS_LOCK:
+        cached = _TEXT_EMBEDDINGS.get(key)
+        if cached is not None and cached[0] is encoder and cached[1].shape[0] == len(texts):
+            return cached[1]
+        embeddings = encoder.encode(texts)
+        if not isinstance(embeddings, np.ndarray):
+            return embeddings  # a stand-in encoder (tests): nothing worth sharing
+        embeddings.setflags(write=False)
+        _TEXT_EMBEDDINGS.pop(key, None)
+        while len(_TEXT_EMBEDDINGS) >= TEXT_EMBEDDINGS_MAX_ENTRIES:
+            _TEXT_EMBEDDINGS.pop(next(iter(_TEXT_EMBEDDINGS)))
+        _TEXT_EMBEDDINGS[key] = (encoder, embeddings)
+        return embeddings
+
+
 def reset_encoder_cache() -> None:
-    """Forget the shared encoders and remembered failures (tests; after replacing the model)."""
+    """Forget the shared encoders, remembered failures and cached embeddings (which hold encoders)."""
     with _ENCODERS_LOCK:
         _ENCODERS.clear()
+    with _TEXT_EMBEDDINGS_LOCK:
+        _TEXT_EMBEDDINGS.clear()
 
 
 def mean_pool_normalize(hidden: npt.NDArray[np.float32], attention_mask: npt.NDArray[np.int64]) -> Embeddings:

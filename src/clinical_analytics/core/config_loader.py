@@ -6,7 +6,7 @@ This module provides functions to load configuration from YAML files with:
 - Schema validation using dataclasses
 - Graceful degradation (a missing file uses defaults)
 
-The shipped files live inside the package (``resources.shipped_config_dir()``). A missing config
+The shipped files live inside the package and are resolved with ``resources.config_file(name)``. A missing config
 *directory* is an incomplete install and raises ``ResourceNotFoundError``; it never runs on defaults.
 """
 
@@ -20,7 +20,7 @@ from typing import Any
 
 import yaml  # type: ignore
 
-from clinical_analytics.core.resources import shipped_config_dir
+from clinical_analytics.core.resources import config_file
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +257,7 @@ def load_nl_query_config(config_path: Path | None = None) -> dict[str, Any]:
 
     # Determine config file path
     if config_path is None:
-        config_path = shipped_config_dir() / "nl_query.yaml"
+        config_path = config_file("nl_query.yaml")
 
     # Load YAML if file exists
     config = defaults.copy()
@@ -369,7 +369,7 @@ def load_ui_config(config_path: Path | None = None) -> dict[str, Any]:
 
     # Determine config file path
     if config_path is None:
-        config_path = shipped_config_dir() / "ui.yaml"
+        config_path = config_file("ui.yaml")
 
     # Load YAML if file exists
     config = defaults.copy()
@@ -466,7 +466,7 @@ def load_logging_config(config_path: Path | None = None) -> dict[str, Any]:
 
     # Determine config file path
     if config_path is None:
-        config_path = shipped_config_dir() / "logging.yaml"
+        config_path = config_file("logging.yaml")
 
     # Load YAML if file exists
     config = defaults.copy()
@@ -555,7 +555,7 @@ def load_patterns_config(config_path: Path | None = None) -> dict[str, list[dict
     """
     # Determine config file path
     if config_path is None:
-        config_path = shipped_config_dir() / "nl_query_patterns.yaml"
+        config_path = config_file("nl_query_patterns.yaml")
 
     # Load YAML if file exists
     if not config_path.exists():
@@ -598,11 +598,6 @@ def load_patterns_config(config_path: Path | None = None) -> dict[str, list[dict
     return compiled
 
 
-def golden_examples_config_path() -> Path:
-    """Path of the shipped golden examples file (raises ResourceNotFoundError without a config dir)."""
-    return shipped_config_dir() / "golden_examples.yaml"
-
-
 def load_golden_examples_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     Load golden examples from config.
@@ -619,7 +614,7 @@ def load_golden_examples_config(config_path: Path | None = None) -> dict[str, An
     """
     # Determine config file path
     if config_path is None:
-        config_path = golden_examples_config_path()
+        config_path = config_file("golden_examples.yaml")
 
     # Load YAML if file exists
     if not config_path.exists():
@@ -662,7 +657,7 @@ def load_validation_config(config_path: Path | None = None) -> dict[str, Any]:
     """
     # Determine config file path
     if config_path is None:
-        config_path = shipped_config_dir() / "validation.yaml"
+        config_path = config_file("validation.yaml")
 
     # Validation config is required - raise if missing
     if not config_path.exists():
