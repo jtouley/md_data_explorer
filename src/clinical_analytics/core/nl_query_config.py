@@ -32,6 +32,10 @@ AUTO_EXECUTE_CONFIDENCE_THRESHOLD: float = _config["auto_execute_confidence_thre
 # Small-cell suppression for displayed patient counts
 SMALL_CELL_THRESHOLD: int = int(_config["small_cell_threshold"])
 
+# A numeric column with more distinct values than this is a measurement, never a grouping:
+# one group per exact value (289 LDL levels) identifies patients and answers nothing.
+MAX_NUMERIC_GROUP_LEVELS: int = 10
+
 # Performance/timeout settings
 TIER_TIMEOUT_SECONDS: float = _config["tier_timeout_seconds"]
 ENABLE_PARALLEL_TIER_MATCHING: bool = _config["enable_parallel_tier_matching"]

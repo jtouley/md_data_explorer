@@ -21,24 +21,15 @@ from clinical_analytics.eval.headless import ask, classify
 # 0.0 rather than given a confidence.
 HARD_NOT_ANSWERED_IDS: frozenset[str] = frozenset(
     {
-        "cohort-analytical-003",
-        "cohort-analytical-005",
-        "cohort-analytical-020",
-        "cohort-analytical-021",
-        "cohort-analytical-022",
-        "cohort-analytical-023",
-        "cohort-analytical-025",
-        "cohort-provider-001",
-        "cohort-provider-002",
-        "cohort-provider-004",
-        "cohort-provider-005",
-        "cohort-provider-006",
-        "cohort-provider-009",
+        "cohort-analytical-025",  # correlation: the parse is below the auto-run confidence
+        "cohort-provider-001",  # "ldl for women?": no statistic named
+        "cohort-provider-002",  # "median ldl over 70?": 70 could limit age or ldl
+        "cohort-provider-005",  # "Risk check:": words that name nothing in the data
     }
 )
 # Ambiguous on purpose: "median ldl over 70?" could cut on ldl or on age. Must never run.
 HARD_MUST_HOLD_IDS: frozenset[str] = frozenset({"cohort-provider-002"})
-HARD_MIN_ANSWERED_RATE = 0.5
+HARD_MIN_ANSWERED_RATE = 0.85
 
 
 def test_hardQuestions_catalog_uniqueQueriesAndCitedProviderQuestions() -> None:

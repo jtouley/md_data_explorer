@@ -38,6 +38,7 @@ from clinical_analytics.core.query_plan import (
     CohortStep,
     CohortStepError,
     generate_chart_spec,
+    grouped_statistic,
 )
 
 logger = logging.getLogger(__name__)
@@ -188,7 +189,7 @@ def _format_share_result(frame: pl.DataFrame, plan: "QueryPlan", group: str | No
 
 def _format_grouped_statistic(frame: pl.DataFrame, plan: "QueryPlan", base_rows: int) -> dict[str, Any]:
     """One statistic of the metric per group, as the plan computed it."""
-    statistic = plan.statistic or "mean"
+    statistic = grouped_statistic(plan) or "mean"
     group = str(plan.group_by)
     return {
         "type": "grouped_statistic",
@@ -2169,7 +2170,7 @@ class SemanticLayer:
             formatted = _format_share_result(result_df_pl, query_plan, None, self.get_base_row_count())
         elif query_plan.rate_column and query_plan.group_by:
             formatted = _format_share_result(result_df_pl, query_plan, query_plan.group_by, self.get_base_row_count())
-        elif query_plan.intent == "DESCRIBE" and query_plan.metric and query_plan.group_by:
+        elif grouped_statistic(query_plan) is not None:
             formatted = _format_grouped_statistic(result_df_pl, query_plan, self.get_base_row_count())
         elif query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
@@ -2572,6 +2573,15 @@ class SemanticLayer:
             raise CohortStepError(problem)
         if step.op == "eq":
             return self._filter_equal(view, column, step.value)
+        if step.op == "ne":
+            # Patients with another recorded value; an empty value is not "not placebo".
+            excluded = self._equality_value(view, column, step.value)
+            return view.filter(view[column].notnull() & (view[column] != excluded))
+        if step.op == "in":
+            values = step.value if isinstance(step.value, list) else [step.value]
+            if not values:
+                raise CohortStepError(_unsupported_step_message(step.op, column))
+            return view.filter(view[column].isin([self._equality_value(view, column, value) for value in values]))
         if step.op in {"gt", "lt", "ge", "le"}:
             if not view[column].type().is_numeric():
                 raise CohortStepError(_text_order_message(column))
@@ -2712,10 +2722,10 @@ class SemanticLayer:
             else:
                 # Total count
                 result = view.count()
-        elif plan.intent == "DESCRIBE":
-            # DESCRIBE: Type-aware aggregation
+        elif grouped_statistic(plan) is not None:
+            # One statistic per group: DESCRIBE, or a comparison that asked for a median etc.
             if plan.metric and plan.group_by:
-                statistic = plan.statistic or "mean"
+                statistic = grouped_statistic(plan) or "mean"
                 if not view[plan.metric].type().is_numeric():
                     raise CohortStepError(_text_statistic_message(statistic, plan.metric))
                 metric_col = view[plan.metric]
@@ -2726,7 +2736,9 @@ class SemanticLayer:
                     .aggregate([aggregate.name(statistic), metric_col.count().name("n"), _.count().name("n_rows")])
                     .order_by(plan.group_by)
                 )
-            elif plan.metric:
+        elif plan.intent == "DESCRIBE":
+            # DESCRIBE: Type-aware aggregation
+            if plan.metric:
                 # Detect if categorical or numeric
                 is_categorical = self._detect_categorical_encoding(view[plan.metric])
                 if is_categorical:

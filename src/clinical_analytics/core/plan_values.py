@@ -50,8 +50,9 @@ def _plan_values(plan: Any) -> Iterator[tuple[str, Any, bool]]:
             for value in spec.value if isinstance(spec.value, list) else [spec.value]:
                 yield str(spec.column), value, spec.operator in _FILTER_COMPARISON
     for step in getattr(plan, "cohort_steps", None) or []:
-        if step.op == "eq" or step.op in _STEP_COMPARISON:
-            yield str(step.column), step.value, step.op in _STEP_COMPARISON
+        if step.op in {"eq", "ne", "in"} or step.op in _STEP_COMPARISON:
+            for value in step.value if isinstance(step.value, list) else [step.value]:
+                yield str(step.column), value, step.op in _STEP_COMPARISON
     for column_attr, value_attr in (("proportion_column", "proportion_value"), ("rate_column", "rate_value")):
         column = getattr(plan, column_attr, None)
         if column:

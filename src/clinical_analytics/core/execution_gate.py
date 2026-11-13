@@ -155,6 +155,11 @@ def _step_text(step: CohortStep) -> str:
     column = step.column
     if step.op == "eq":
         return f"{column} = {_value_text(column, step.value)}"
+    if step.op == "ne":
+        return f"{column} ≠ {_value_text(column, step.value)}"
+    if step.op == "in":
+        values = step.value if isinstance(step.value, list) else [step.value]
+        return f"{column} is one of " + ", ".join(_value_text(column, value) for value in values)
     if step.op == "gt":
         return f"{column} > {_number(step.value)}"
     if step.op == "lt":

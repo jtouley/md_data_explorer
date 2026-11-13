@@ -30,8 +30,27 @@ STATISTIC_WORDS: dict[str, Statistic] = {
 
 # Cohort ops the semantic layer can execute. Anything else must refuse, not be skipped.
 SUPPORTED_COHORT_OPS: frozenset[str] = frozenset(
-    {"eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"}
+    {"eq", "ne", "in", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"}
 )
+
+
+def grouped_statistic(plan: Any) -> Statistic | None:
+    """The statistic a plan computes once per group, or None when it computes no such summary.
+
+    DESCRIBE with a measure and a grouping computes its own statistic (mean when none was
+    asked). COMPARE_GROUPS compares means with a test; when the question asked for another
+    statistic ("compare median ldl by sex") it computes that statistic per group instead, the
+    same way DESCRIBE does, because a test of means would answer a different question.
+    """
+    if not getattr(plan, "metric", None) or not getattr(plan, "group_by", None):
+        return None
+    intent = getattr(plan, "intent", None)
+    statistic = getattr(plan, "statistic", None)
+    if intent == "DESCRIBE":
+        return statistic or "mean"
+    if intent == "COMPARE_GROUPS" and statistic not in (None, "mean"):
+        return statistic  # type: ignore[no-any-return]
+    return None
 
 
 class CohortStepError(ValueError):
@@ -50,9 +69,10 @@ class CohortStep:
     which is the SQL equivalent of a CTE cutoff.
     """
 
-    op: Literal["eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"]
+    op: Literal["eq", "ne", "in", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"]
     column: str
-    value: str | int | float | None = None
+    # "in": a list of stored values (any of them); "ne": the one value excluded.
+    value: str | int | float | list[str | int | float] | None = None
     quantile: float | None = None
 
 

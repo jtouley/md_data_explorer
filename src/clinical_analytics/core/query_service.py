@@ -21,7 +21,12 @@ from clinical_analytics.core.plan_values import absent_value_reason
 from clinical_analytics.core.query_plan import CohortStepError, QueryPlan
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
-from clinical_analytics.core.word_accounting import hold_reason, unjustified_elements, unjustified_reason, unused_words
+from clinical_analytics.core.word_accounting import (
+    explain_hold,
+    measurement_grouping_reason,
+    unjustified_elements,
+    unjustified_reason,
+)
 
 _GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len", "n_rows", "n_pairs", "events"})
 NO_MATCH_REASON = "No patients matched the question's limits, so there is no value to report."
@@ -237,7 +242,28 @@ class QueryService:
             plan_changed = True
 
         if not validation_result.get("valid", False):
-            # Fail closed: an invalid plan is refused here and never reaches execution.
+            # Fail closed: an invalid plan never reaches execution. When the parser added filters
+            # and the question has words the plan does not use, that misreading is the cause the
+            # reader can fix: hold with it and the plan line, as for any plan that answers a
+            # different question.
+            accounting_reason = (
+                self._accounting_hold_reason(normalized_query, query_plan, context)
+                if not confirmed and query_plan.filters and self._plan_columns_exist(query_plan)
+                else None
+            )
+            if accounting_reason:
+                return QueryResult(
+                    plan=query_plan,
+                    issues=issues,
+                    result=None,
+                    confidence=query_intent.confidence,
+                    run_key=None,
+                    context=context,
+                    requires_confirmation=True,
+                    failure_reason=accounting_reason,
+                    plan_line=shown_plan_line,
+                    plan_hash=plan_hash,
+                )
             failure_reason = next(
                 (str(item["message"]) for item in issues if item.get("severity") == "error"),
                 "Query plan is invalid",
@@ -266,6 +292,22 @@ class QueryService:
                 failure_reason=PLAN_CHANGED_REASON,
                 plan_line=shown_plan_line,
                 plan_hash=plan_hash,
+            )
+
+        # A grouping by a measurement makes one group per exact value, which identifies
+        # patients. Refused whatever the words say, and a confirmation cannot release it.
+        measured = measurement_grouping_reason(
+            query_plan, list(self.semantic_layer.get_base_view().columns), self.nl_engine._distinct_values
+        )
+        if measured:
+            return QueryResult(
+                plan=query_plan,
+                issues=[*issues, {"message": measured, "severity": "error"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=context,
+                failure_reason=measured,
             )
 
         # Word accounting (all tiers): a plan that leaves a word of the question unused answers
@@ -345,6 +387,13 @@ class QueryService:
             plan_hash=plan_hash,
         )
 
+    def _plan_columns_exist(self, plan: QueryPlan) -> bool:
+        """Every column the plan names is in the dataset (an invalid plan may name one that is not)."""
+        columns = set(self.semantic_layer.get_base_view().columns)
+        named = {plan.metric, plan.group_by, plan.proportion_column, plan.rate_column}
+        named |= {spec.column for spec in plan.filters} | {step.column for step in plan.cohort_steps}
+        return {column for column in named if column} <= columns
+
     def _accounting_hold_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
         """Why this plan must be reviewed before it runs, or None when question and plan agree.
 
@@ -355,9 +404,9 @@ class QueryService:
         raw_index = self.semantic_layer.get_column_alias_index()
         alias_index = raw_index if isinstance(raw_index, dict) else None
         values_for = self.nl_engine._distinct_values
-        unused = unused_words(question, plan, columns, values_for, alias_index=alias_index, context=context)
-        if unused:
-            return hold_reason(unused)
+        explained = explain_hold(question, plan, columns, values_for, alias_index=alias_index, context=context)
+        if explained:
+            return explained
         unasked = unjustified_elements(question, plan, columns, values_for, alias_index=alias_index, context=context)
         if unasked:
             return unjustified_reason(unasked)
