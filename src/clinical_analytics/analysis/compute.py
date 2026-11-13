@@ -620,7 +620,7 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
         if n_groups == 2:
             a, b = group_data
             if min(len(a), len(b)) < MIN_GROUP_N:
-                return {**base, "error": "Each group needs at least 2 observations for a t-test"}
+                return {**base, "error": f"Each group needs at least {MIN_GROUP_N} observations for a t-test"}
             constant = _constant_groups(groups, group_data)
             if constant:
                 # Zero within-group variance: scipy returns p=0 with t=inf and the Welch df is NaN.
@@ -651,7 +651,10 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
             }
         small = [str(g) for g, d in zip(groups, group_data, strict=True) if len(d) < MIN_GROUP_N]
         if small:
-            return {**base, "error": f"Each group needs at least 2 observations for ANOVA ({', '.join(small)})"}
+            return {
+                **base,
+                "error": f"Each group needs at least {MIN_GROUP_N} observations for ANOVA ({', '.join(small)})",
+            }
         if len(_constant_groups(groups, group_data)) == n_groups:
             # No within-group variation: scipy returns F=inf and p=0.
             return {
@@ -1027,7 +1030,7 @@ def compute_predictor_analysis(df: pl.DataFrame, context: AnalysisContext) -> di
     }
 
     if n_used < MIN_REGRESSION_N:
-        return {**base, "error": "Need at least 10 complete observations"}
+        return {**base, "error": f"Need at least {MIN_REGRESSION_N} complete observations"}
 
     outcome_series = analysis_df[outcome_col]
     n_unique = outcome_series.n_unique()
@@ -1123,7 +1126,7 @@ def compute_survival_analysis(df: pl.DataFrame, context: AnalysisContext) -> dic
     }
 
     if n_used < MIN_SURVIVAL_N:
-        return {**base, "error": "Need at least 10 complete observations"}
+        return {**base, "error": f"Need at least {MIN_SURVIVAL_N} complete observations"}
 
     unique_vals = sorted(analysis_df[event_col].unique().to_list(), key=str)
     if len(unique_vals) != 2:
@@ -1271,7 +1274,7 @@ def compute_relationship_analysis(df: pl.DataFrame, context: AnalysisContext) ->
     analysis_df = _drop_missing(df.select(numeric_variables))
 
     if analysis_df.height < MIN_CORRELATION_N:
-        return {"type": "relationship", "error": "Need at least 3 observations with complete data"}
+        return {"type": "relationship", "error": f"Need at least {MIN_CORRELATION_N} observations with complete data"}
 
     # Cast to numeric for correlation (should all be numeric now, but ensure Float64)
     numeric_df = analysis_df.select([pl.col(v).cast(pl.Float64) for v in numeric_variables])

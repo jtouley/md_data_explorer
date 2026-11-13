@@ -1235,3 +1235,58 @@ def test_compute_comparison_infTextInNumericOutcome_excludedAsMissing(token, sam
     # Assert
     assert result["test_type"] == "welch_t_test"
     assert (result["n_used"], result["n_excluded"]) == (20, 1)
+
+
+@pytest.mark.parametrize(
+    ("compute", "context_fixture", "floor", "data", "expected"),
+    [
+        (
+            compute_predictor_analysis,
+            "sample_context_predictor",
+            "MIN_REGRESSION_N",
+            {"outcome": [0, 1] * 2, "age": [25, 30, 35, 40], "score": [10, 20, 30, 40]},
+            "Need at least 7 complete observations",
+        ),
+        (
+            compute_survival_analysis,
+            "sample_context_survival",
+            "MIN_SURVIVAL_N",
+            {"time": [10, 20, 30, 40], "event": [1, 0, 1, 0]},
+            "Need at least 7 complete observations",
+        ),
+        (
+            compute_relationship_analysis,
+            "sample_context_relationship",
+            "MIN_CORRELATION_N",
+            {"age": [25, 30, 35, 40], "score": [10, 25, 30, 45], "value": [3, 1, 4, 1]},
+            "Need at least 7 observations with complete data",
+        ),
+        (
+            compute_comparison_analysis,
+            "sample_context_compare",
+            "MIN_GROUP_N",
+            {"score": [5.0, 5.5, 6.0, 6.5], "category": ["A", "A", "B", "B"]},
+            "Each group needs at least 7 observations for a t-test",
+        ),
+        (
+            compute_comparison_analysis,
+            "sample_context_compare",
+            "MIN_GROUP_N",
+            {"score": [5.0, 5.5, 6.0, 6.5, 7.0, 7.5], "category": ["A", "A", "B", "B", "C", "C"]},
+            "Each group needs at least 7 observations for ANOVA (A, B, C)",
+        ),
+    ],
+    ids=["regression", "survival", "correlation", "t_test", "anova"],
+)
+def test_compute_analysis_belowSampleFloor_errorNamesTheFloorConstant(
+    compute, context_fixture, floor, data, expected, request, monkeypatch
+):
+    # Arrange: raise the floor to 7, above the four (or six) synthetic rows
+    monkeypatch.setattr(f"clinical_analytics.analysis.compute.{floor}", 7)
+    context = request.getfixturevalue(context_fixture)
+
+    # Act
+    result = compute(pl.DataFrame(data), context)
+
+    # Assert: the message quotes the constant, not a number written into the string
+    assert result["error"] == expected
