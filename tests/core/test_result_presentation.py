@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from clinical_analytics.analysis.grouping import OTHER_LABEL
 from clinical_analytics.core import result_presentation
 from clinical_analytics.core.result_presentation import (
     SECONDARY_SUPPRESSED,
@@ -47,8 +48,9 @@ class TestPresentAnalysisClaims:
             ),
             (
                 {**T_TEST, "mean_diff": 2.5, "p_value": 0.2, "ci_lower": None, "ci_upper": None, "group_sizes": None},
-                "Mean ldl was 2.50 higher in drug than placebo, not statistically significant (t-test p=0.200; n=300). "
-                "Unadjusted comparison by treatment.",
+                # Without group sizes nothing shows each group is large: the comparison is withheld.
+                "The comparison of mean ldl by treatment is not shown because a group has fewer than 11 patients "
+                "(n=300).",
             ),
             (
                 {
@@ -340,8 +342,9 @@ class TestPresentAnalysisStatisticalReporting:
         # Act
         table = present_analysis(analysis)["table"]
 
-        # Assert: the small cell is hidden, and so is the other one, or it is total minus 115
-        assert table["rows"] == [{"sex": "F", "count": "suppressed"}, {"sex": "M", "count": "suppressed"}]
+        # Assert: the small cell is hidden, and so is the other one, or it is total minus 115;
+        # both labels fold into Other, so no label names the 5 patients
+        assert table["rows"] == [{"sex": OTHER_LABEL, "count": "suppressed"}]
 
 
 class TestSmallCellSuppression:
@@ -402,8 +405,9 @@ class TestSmallCellSuppression:
         assert "%" not in presentation["claim"].split("withheld")[0]
         assert "withheld" in presentation["claim"]
         cells = {(row["y"], key): value for row in presentation["table"]["rows"] for key, value in row.items()}
-        assert cells[("y=1", "A")] == "suppressed"
-        assert cells[("y=0", "A")] == "suppressed"
+        # Every cell is hidden (95 too, as the complement in its row), so every arm and level
+        # folds into Other: no label is left beside a hidden cell
+        assert cells == {(OTHER_LABEL, "y"): OTHER_LABEL, (OTHER_LABEL, OTHER_LABEL): "suppressed"}
 
     def test_present_survival_ungrouped_showsSummaryNotEventTimes(self):
         # Arrange
@@ -467,10 +471,9 @@ class TestSmallCellSuppression:
         # median would mark A as the large group and give B away as n - A
         assert "20.9" not in presentation["claim"]
         assert "300.0" not in presentation["claim"]
-        assert "A not shown, B not shown (log-rank p=0.200; n=60)" in presentation["claim"]
-        rows = {row["arm"]: row for row in presentation["table"]["rows"]}
-        assert rows["B"] == {"arm": "B", "n": "suppressed", "median days": "suppressed"}
-        assert rows["A"] == {"arm": "A", "n": "suppressed", "median days": "suppressed"}
+        # Both labels fold into one Other row, so no label is shown for the 3 patients
+        assert f"{OTHER_LABEL} not shown (log-rank p=0.200; n=60)" in presentation["claim"]
+        assert presentation["table"]["rows"] == [{"arm": OTHER_LABEL, "n": "suppressed", "median days": "suppressed"}]
 
 
 # --- Brute-force recovery audit -------------------------------------------------------------
@@ -796,7 +799,7 @@ class TestSmallGroupStatistics:
         ("sizes", "expected_means"),
         [
             ((1, 1, 1), ["suppressed", "suppressed", "suppressed"]),
-            ((10, 50, 60), ["suppressed", "suppressed", 30.0]),
+            ((10, 50, 60), [30.0, "suppressed"]),
             ((11, 11, 11), [10.0, 20.0, 30.0]),
             ((0, 50, 60), [10.0, 20.0, 30.0]),
         ],
@@ -821,7 +824,8 @@ class TestSmallGroupStatistics:
         # Act
         presentation = present_analysis(analysis)
 
-        # Assert: the overall test is still reported; each hidden size hides its mean
+        # Assert: the overall test is still reported; each hidden size hides its mean, and the
+        # groups it hides are shown only as one Other row
         assert presentation["claim"].startswith("Mean ldl differed across 3 site groups (ANOVA p=0.030")
         rows = presentation["table"]["rows"]
         assert [row["mean ldl"] for row in rows] == expected_means
@@ -1177,8 +1181,9 @@ class TestMissingCountsFailClosed:
         # Act
         rows = present_analysis(analysis)["table"]["rows"]
 
-        # Assert
-        assert rows[1]["mean ldl"] == SECONDARY_SUPPRESSED
+        # Assert: b's mean is never shown, under its own label or in Other
+        assert all(row["site"] != "b" or row["mean ldl"] == SECONDARY_SUPPRESSED for row in rows)
+        assert 20.0 not in [row["mean ldl"] for row in rows]
         assert all((row["mean ldl"] == SECONDARY_SUPPRESSED) == (not isinstance(row["n"], int)) for row in rows)
 
     @pytest.mark.parametrize(
@@ -1195,7 +1200,8 @@ class TestMissingCountsFailClosed:
 
         # Assert
         assert "20.9" not in json.dumps(presentation)
-        assert "B not shown" in presentation["claim"]
+        assert f"{OTHER_LABEL} not shown" in presentation["claim"]
+        assert "B not shown" not in presentation["claim"]
 
     @pytest.mark.parametrize("cell", [None, "3", 3.0], ids=["none", "text", "float"])
     def test_present_chiSquare_cellNotACount_withholdsPercentages(self, cell):
@@ -1351,8 +1357,8 @@ class TestCellsHiddenThroughAnotherLine:
 
         # Assert
         assert rows == [
-            {"y": "y=0", "A": "suppressed", "B": "suppressed", "C": "suppressed", "D": 30},
-            {"y": "y=1", "A": "suppressed", "B": "suppressed", "C": "suppressed", "D": 70},
+            {"y": "y=0", "D": 30, OTHER_LABEL: "suppressed"},
+            {"y": "y=1", "D": 70, OTHER_LABEL: "suppressed"},
         ]
 
     @pytest.mark.parametrize("scale", [1, 1_000, 1_000_000], ids=["reviewer_example", "thousands", "millions"])

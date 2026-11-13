@@ -16,6 +16,7 @@ from typing import Any, TypedDict, TypeGuard
 
 import numpy as np
 
+from clinical_analytics.analysis.grouping import MAX_GROUP_LEVELS, OTHER_LABEL, too_many_levels_message
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
     MIN_CORRELATION_N,
@@ -421,6 +422,84 @@ def _table(rows: list[dict[str, Any]], count_columns: tuple[str, ...] = ()) -> T
     return {"columns": list(rows[0].keys()), "rows": safe_rows}
 
 
+def _hidden_cell(value: Any) -> bool:
+    return isinstance(value, str) and value == SECONDARY_SUPPRESSED
+
+
+def _small_parts(sizes: Mapping[Any, Any], hidden: set[Any]) -> set[Any]:
+    """Groups whose label is folded into ``OTHER_LABEL``: the sizes the group-size line hides.
+
+    With n shown, those are exactly the sizes the answer marks hidden, so the fold follows from
+    what a reader sees. With n hidden every size is marked hidden whatever the groups are, and a
+    fold chosen from the true sizes would tell the reader which groups are small (and, with the
+    row count, the exclusions): then no label is folded and every group's values stay hidden.
+    """
+    if N_USED in hidden:
+        return set()
+    # A size that is missing or not a count cannot show the group is large: folded (fail closed).
+    return _suppress_lines(sizes, [list(sizes)]) | {g for g, n in sizes.items() if not _is_count(n)}
+
+
+def _fold_rows(table: TablePayload | None, fold: set[str]) -> TablePayload | None:
+    """The table with the rows labelled in ``fold`` folded into one ``OTHER_LABEL`` row (last).
+
+    A group's label beside its hidden size still names the few patients in it (and, beside
+    another group's 0, says which arm they are in). The rows folded are the ones the size
+    suppression hides, so which they are follows from the hidden markers a reader sees anyway.
+    The Other row shows no number: every cell of it is hidden.
+    """
+    if table is None or not table["rows"] or not fold:
+        return table
+    label_col = table["columns"][0]
+    kept = [row for row in table["rows"] if str(row.get(label_col)) not in fold]
+    if len(kept) == len(table["rows"]):
+        return table
+    other = {col: SECONDARY_SUPPRESSED for col in table["columns"]}
+    other[label_col] = OTHER_LABEL
+    return {"columns": table["columns"], "rows": [*kept, other]}
+
+
+def _masked_labels(table: TablePayload | None, gate: str) -> set[str]:
+    """Labels of rows whose ``gate`` count the table hides."""
+    if table is None or not table["rows"]:
+        return set()
+    label_col = table["columns"][0]
+    return {str(row.get(label_col)) for row in table["rows"] if _hidden_cell(row.get(gate))}
+
+
+def _fold_crosstab(
+    rows: list[dict[str, Any]], groups: list[str], fold_cols: set[str], fold_rows: set[int]
+) -> list[dict[str, Any]]:
+    """Contingency rows with the ``fold_cols`` columns and ``fold_rows`` rows folded into one
+    ``OTHER_LABEL`` column and row, every cell of which is hidden.
+
+    A column of hidden cells and zeros (drug hidden, placebo 0) under a label such as ldl=80.9
+    says which arm the patients with that exact value are in, whatever the cells hide.
+    """
+    if not rows:
+        return rows
+    label_col = next(iter(rows[0]))
+    kept_cols = [g for g in groups if g not in fold_cols]
+    out = []
+    for i, row in enumerate(rows):
+        if i in fold_rows:
+            continue
+        shown = {label_col: row[label_col], **{g: row[g] for g in kept_cols}}
+        if fold_cols:
+            shown[OTHER_LABEL] = SECONDARY_SUPPRESSED
+        out.append(shown)
+    if fold_rows:
+        out.append({label_col: OTHER_LABEL, **{g: SECONDARY_SUPPRESSED for g in kept_cols}})
+        if fold_cols:
+            out[-1][OTHER_LABEL] = SECONDARY_SUPPRESSED
+    return out
+
+
+def _too_many_levels(column: str, levels: int) -> Presentation:
+    """No table for a grouping with more levels than a reader can scan without seeing patients."""
+    return {"claim": too_many_levels_message(column, levels), "table": None}
+
+
 def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     outcome = analysis.get("outcome_col") or "outcome"
     group_col = analysis.get("group_col") or "group"
@@ -430,6 +509,10 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     group_means = analysis.get("group_means") or {}
     group_sizes = analysis.get("group_sizes") or {}
     groups = [str(g) for g in analysis.get("groups") or []]
+    if len(groups) > MAX_GROUP_LEVELS or len(analysis.get("contingency") or []) > MAX_GROUP_LEVELS:
+        dimension = group_col if len(groups) > MAX_GROUP_LEVELS else outcome
+        levels = len(groups) if len(groups) > MAX_GROUP_LEVELS else len(analysis.get("contingency") or [])
+        return _too_many_levels(str(dimension), levels)
     label = {g: display_level(group_col, g) for g in groups}
     outcome_name = short_name(outcome)
     p_clause = f"{test} {_fmt_p(p)}" if p is not None else None
@@ -437,6 +520,8 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     if test_type in ("welch_t_test", "t_test", "anova"):
         sizes = {str(g): group_sizes.get(str(g)) for g in group_means}
         hidden = suppress_with_exclusions(analysis, sizes, floor=MIN_GROUP_N * max(len(sizes), 1))
+        small_groups = _small_parts(sizes, hidden)
+        fold = {label.get(g, g) for g in small_groups}
         n_clause = _n_clause(analysis, hidden)
         # A mean of a handful of patients is close to their values (one patient: that value),
         # so a group's mean is hidden with its size, as the Kaplan-Meier median is. Hiding only
@@ -455,6 +540,15 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         diff = _num(analysis.get("mean_diff"))
         lo, hi = _num(analysis.get("ci_lower")), _num(analysis.get("ci_upper"))
         claim: str | None = None
+        if small_groups:
+            # A difference of means with a group of a few patients is close to their values, and
+            # naming the groups names that group: the comparison is withheld.
+            claim = _with_details(
+                f"The comparison of mean {outcome_name} by {group_col} is not shown because a group has fewer "
+                f"than {_limit(None)} patients",
+                [n_clause],
+            )
+            return {"claim": claim + ".", "table": _fold_rows(_table(rows), fold)}
         if len(groups) == 2 and diff is not None:
             first, second = label[groups[0]], label[groups[1]]
             if round(abs(diff), 2) == 0:
@@ -471,7 +565,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
                 claim += ", not statistically significant"
             claim = _with_details(claim, [ci_clause, p_clause, n_clause])
             claim += f". Unadjusted comparison by {group_col}."
-        return {"claim": claim, "table": _table(rows)}
+        return {"claim": claim, "table": _fold_rows(_table(rows), fold)}
 
     if test_type == "anova":
         claim = None
@@ -482,7 +576,7 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
                 f"Mean {outcome_name} {verb} across {n_groups} {group_col} groups", [p_clause, n_clause]
             )
             claim += ". Unadjusted."
-        return {"claim": claim, "table": _table(rows)}
+        return {"claim": claim, "table": _fold_rows(_table(rows), fold)}
 
     # chi-square / Fisher on a contingency table (rows = outcome levels, columns = groups)
     contingency = [dict(row) for row in analysis.get("contingency") or []]
@@ -491,9 +585,9 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
     lines += [[(i, j) for i in range(len(contingency))] for j in range(len(groups))]
     hidden = suppress_with_exclusions(analysis, cells, lines, floor=MIN_COMPARISON_N)
     n_clause = _n_clause(analysis, hidden)
-    small_groups = any(_is_count(n) and 0 < int(n) < _limit(None) for n in group_sizes.values())
+    any_small_group = any(_is_count(n) and 0 < int(n) < _limit(None) for n in group_sizes.values())
     unchecked = any(not _is_count(v) for v in cells.values())  # the shares cannot be checked
-    withheld = bool(hidden & cells.keys()) or small_groups or unchecked
+    withheld = bool(hidden & cells.keys()) or any_small_group or unchecked
     proportions = analysis.get("group_proportions") or {}
     event_level = analysis.get("event_level")
     claim = None
@@ -524,6 +618,18 @@ def _present_comparison(analysis: Mapping[str, Any]) -> Presentation:
         for j, g in enumerate(groups):
             shown[label[g]] = _mask(row.get(g)) if (i, j) in hidden else row.get(g)
         rows.append(shown)
+    # Fold every group (column) and level (row) none of whose non-zero cells shows on the cell
+    # lines alone: its label would name a handful of patients and, beside 0s, their group.
+    parts = set() if N_USED in hidden else hidden
+    blank_cols = {
+        label[g]
+        for j, g in enumerate(groups)
+        if all((i, j) in parts or not cells[(i, j)] for i in range(len(contingency)))
+    }
+    blank_rows = {
+        i for i in range(len(contingency)) if all((i, j) in parts or not cells[(i, j)] for j in range(len(groups)))
+    }
+    rows = _fold_crosstab(rows, [label[g] for g in groups], blank_cols, blank_rows)
     return {"claim": claim, "table": _table(rows)}
 
 
@@ -613,9 +719,14 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
         hidden = suppress_with_exclusions(analysis, sizes, floor=MIN_SURVIVAL_N)
         n_clause = _n_clause(analysis, hidden)
         small = {g for g in group_medians if _unchecked(g, sizes[g], hidden)}
+        folded = _small_parts(sizes, hidden)
         medians_text = ", ".join(
-            f"{display_level(group_col, g)} {'not shown' if g in small else _median_text(m)}"
-            for g, m in group_medians.items()
+            [
+                f"{display_level(group_col, g)} {'not shown' if g in small else _median_text(m)}"
+                for g, m in group_medians.items()
+                if g not in folded
+            ]
+            + ([f"{OTHER_LABEL} not shown"] if folded else [])
         )
         logrank = _num(analysis.get("logrank_p_value"))
         claim = _with_details(
@@ -633,7 +744,7 @@ def _present_survival(analysis: Mapping[str, Any]) -> Presentation:
             }
             for g, m in group_medians.items()
         ]
-        return {"claim": claim, "table": _table(rows)}
+        return {"claim": claim, "table": _fold_rows(_table(rows), {display_level(group_col, g) for g in folded})}
     n_used, n_events = analysis.get("n_used"), analysis.get("n_events")
     parts: dict[str, Any] = {}
     if _is_count(n_used) and _is_count(n_events):
@@ -722,12 +833,15 @@ def _present_descriptive(analysis: Mapping[str, Any]) -> Presentation:
             if i in hidden:
                 row["count"] = _mask(row["count"])
         table = _table(rows)
+        table = _fold_rows(table, _masked_labels(table, "count"))
         claim = None
-        if rows and table:
-            # Quote the top count as the table shows it: it may be the complement of a small cell.
-            shown = table["rows"][0]["count"]
-            count_text = "count hidden" if shown == SECONDARY_SUPPRESSED else f"{shown} patients"
-            claim = f"Most common {name}: {rows[0][name]} ({count_text})."
+        if table and table["rows"]:
+            top = table["rows"][0]
+            if top[name] == OTHER_LABEL:
+                # The top level's count is hidden: its label is folded with the other small ones.
+                claim = f"The most common {name} is not shown because its count is hidden to protect privacy."
+            else:
+                claim = f"Most common {name}: {top[name]} ({top['count']} patients)."
         return {"claim": claim, "table": table}
     rows_n = analysis.get("row_count")
     cols = analysis.get("column_count")
@@ -744,6 +858,8 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
             rows = [{group_col: k, "count": v} for k, v in group_counts.items()]
         else:
             rows = [dict(r) for r in group_counts]
+        if len(rows) > MAX_GROUP_LEVELS:
+            return _too_many_levels(str(group_col), len(rows))
         for row in rows:
             row[group_col] = display_level(group_col, row.get(group_col))
         if _total_hidden(analysis, total):
@@ -753,7 +869,8 @@ def _present_count(analysis: Mapping[str, Any]) -> Presentation:
             return {"claim": _hidden_total_claim(analysis, total), "table": None}
         noun = "group" if len(rows) == 1 else "groups"
         claim = f"{total} total across {len(rows)} {group_col} {noun}." if total is not None else None
-        return {"claim": claim, "table": _table(rows, count_columns=("count",))}
+        table = _table(rows, count_columns=("count",))
+        return {"claim": claim, "table": _fold_rows(table, _masked_labels(table, "count"))}
     if _total_hidden(analysis, total):
         return {"claim": _hidden_total_claim(analysis, total), "table": None}
     claim = f"Total count: {total}." if total is not None else None
@@ -821,9 +938,12 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
     group_col = str(analysis.get("group_col") or "group")
     event = _event_phrase(column, analysis.get("value"))
     groups = list(analysis.get("groups") or [])
+    if len(groups) > MAX_GROUP_LEVELS:
+        return _too_many_levels(group_col, len(groups))
     sizes = {str(g.get("group")): g.get("n") for g in groups}
     hidden = suppress_with_exclusions(analysis, sizes)
     n_clause = _n_clause(analysis, hidden)
+    small_groups = _small_parts(sizes, hidden)
     rows, parts, withheld = [], [], False
     for g in groups:
         key, n, events = str(g.get("group")), g.get("n"), g.get("events")
@@ -838,11 +958,16 @@ def _present_rate(analysis: Mapping[str, Any]) -> Presentation:
                 "n": SECONDARY_SUPPRESSED if key in hidden else n,
             }
         )
+        if key in small_groups:
+            continue  # its label is folded into Other, in the table and the claim
         parts.append(f"{label} {'not shown' if rate_hidden else ('no values' if rate is None else _percent(rate))}")
+    if small_groups:
+        parts.append(f"{OTHER_LABEL} not shown")
     claim = _with_details(f"{event} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
     if withheld:
         claim += f" A rate is not shown when one of its counts is fewer than {_limit(None)} patients."
-    return {"claim": claim, "table": _table(rows)}
+    fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
+    return {"claim": claim, "table": _fold_rows(_table(rows), fold)}
 
 
 def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
@@ -852,10 +977,13 @@ def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
     metric = short_name(str(analysis.get("metric") or "value"))
     group_col = str(analysis.get("group_col") or "group")
     groups = list(analysis.get("groups") or [])
+    if len(groups) > MAX_GROUP_LEVELS:
+        return _too_many_levels(group_col, len(groups))
     sizes = {str(g.get("group")): g.get("n") for g in groups}
     hidden = suppress_with_exclusions(analysis, sizes)
     n_clause = _n_clause(analysis, hidden)
     value_column = f"{statistic} {metric}"
+    small_groups = _small_parts(sizes, hidden)
     rows, parts = [], []
     for g in groups:
         key, value = str(g.get("group")), _num(g.get("value"))
@@ -863,12 +991,16 @@ def _present_grouped_statistic(analysis: Mapping[str, Any]) -> Presentation:
         shown = SECONDARY_SUPPRESSED if _unchecked(key, g.get("n"), hidden) else value
         rows.append({group_col: label, value_column: shown, "n": SECONDARY_SUPPRESSED if key in hidden else g.get("n")})
         withheld = shown == SECONDARY_SUPPRESSED
-        parts.append(f"{label} {'not shown' if withheld else ('no values' if value is None else _fmt(value))}")
+        if key not in small_groups:  # a small group's label is folded into Other
+            parts.append(f"{label} {'not shown' if withheld else ('no values' if value is None else _fmt(value))}")
+    if small_groups:
+        parts.append(f"{OTHER_LABEL} not shown")
     label = _STATISTIC_LABELS.get(statistic, statistic)
     claim = _with_details(f"{label} {metric} by {group_col}: {', '.join(parts)}", [n_clause]) + ". Unadjusted."
     if any(key in hidden for key in sizes):
         claim += " Values are not shown for groups whose size is hidden to protect privacy."
-    return {"claim": claim, "table": _table(rows)}
+    fold = {_group_label(group_col, g.get("group")) for g in groups if str(g.get("group")) in small_groups}
+    return {"claim": claim, "table": _fold_rows(_table(rows), fold)}
 
 
 def _total_hidden(analysis: Mapping[str, Any], total: Any) -> bool:

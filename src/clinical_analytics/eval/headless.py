@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 import polars as pl
 
+from clinical_analytics.analysis.grouping import OTHER_LABEL
 from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.query_service import QueryService
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
@@ -259,7 +260,31 @@ def presented_answer(presentation: dict[str, Any] | None) -> Any:
     value_column = next((c for c in columns[1:] if c == "rate" or c == "count" or c.split(" ")[0] in _STAT_NAMES), None)
     if value_column is None:
         return _crosstab(columns, rows)
-    return {str(row[columns[0]]): _shown(row[value_column]) for row in rows}
+    # The folded "Other" row stands for small groups, never for one group: it is hidden.
+    return {
+        str(row[columns[0]]): HIDDEN if row[columns[0]] == OTHER_LABEL else _shown(row[value_column]) for row in rows
+    }
+
+
+def shown_labels(presentation: dict[str, Any] | None) -> set[str]:
+    """Every group or level label a reader sees: table headers past the first, and row labels."""
+    table = (presentation or {}).get("table") or {}
+    columns = list(table.get("columns") or [])
+    if not columns:
+        return set()
+    return {str(c) for c in columns[1:]} | {str(row.get(columns[0])) for row in table.get("rows") or []}
+
+
+def small_level_labels(frame: pl.DataFrame, columns: list[str], threshold: int) -> set[str]:
+    """Labels the app would give levels of ``columns`` held by 1..threshold-1 rows."""
+    labels: set[str] = set()
+    for column in columns:
+        if column not in frame.columns:
+            continue
+        counts = frame.get_column(column).drop_nulls().value_counts()
+        small = counts.filter((pl.col("count") > 0) & (pl.col("count") < threshold)).get_column(column)
+        labels |= {display_level(column, value) for value in small.to_list()}
+    return labels
 
 
 def _shown(value: Any) -> Any:
@@ -268,7 +293,13 @@ def _shown(value: Any) -> Any:
 
 def _crosstab(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """A contingency table (first column the level, one column per group) as {group: {level: n}}."""
-    return {group: {str(row[columns[0]]): _shown(row[group]) for row in rows} for group in columns[1:]}
+    return {
+        group: {
+            str(row[columns[0]]): HIDDEN if OTHER_LABEL in (group, row[columns[0]]) else _shown(row[group])
+            for row in rows
+        }
+        for group in columns[1:]
+    }
 
 
 def _is_hidden(value: Any) -> bool:

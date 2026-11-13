@@ -12,6 +12,7 @@ from typing import Any
 
 import polars as pl
 
+from clinical_analytics.analysis.grouping import grouping_problem
 from clinical_analytics.core.analysis_types import AnalysisContext, AnalysisIntent
 from clinical_analytics.core.conversation_manager import ConversationManager
 from clinical_analytics.core.execution_gate import PLAN_CHANGED_REASON, format_plan_line, plan_fingerprint
@@ -268,6 +269,20 @@ class QueryService:
                 plan_hash=plan_hash,
             )
 
+        # Refused whatever the confirmation: a grouping by a many-level column (an exact lab
+        # value per group) would label each group with a few patients' values.
+        grouping_refusal = self._grouping_refusal(query_plan)
+        if grouping_refusal:
+            return QueryResult(
+                plan=query_plan,
+                issues=[*issues, {"message": grouping_refusal, "severity": "error"}],
+                result=None,
+                confidence=query_intent.confidence,
+                run_key=None,
+                context=context,
+                failure_reason=grouping_refusal,
+            )
+
         # Word accounting (all tiers): a plan that leaves a word of the question unused answers
         # a different question. Hold it for review regardless of confidence; only the user's
         # confirmation of this exact plan (by hash) releases it.
@@ -344,6 +359,19 @@ class QueryService:
             plan_line=plan_line,
             plan_hash=plan_hash,
         )
+
+    def _grouping_refusal(self, plan: QueryPlan) -> str | None:
+        """Why the plan's grouping column cannot split patients into groups, or None.
+
+        A correlation's second column is a measurement, not a grouping, so it is exempt.
+        """
+        if not plan.group_by or plan.intent == "CORRELATIONS":
+            return None
+        view = self.semantic_layer.get_base_view()
+        if plan.group_by not in view.columns:
+            return None  # validation reports the missing column
+        levels = int(view[plan.group_by].nunique().execute())
+        return grouping_problem(plan.group_by, levels)
 
     def _accounting_hold_reason(self, question: str, plan: QueryPlan, context: AnalysisContext) -> str | None:
         """Why this plan must be reviewed before it runs, or None when question and plan agree.

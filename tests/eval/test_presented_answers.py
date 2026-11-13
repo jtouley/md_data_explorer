@@ -14,6 +14,7 @@ from typing import Any
 import polars as pl
 import pytest
 
+from clinical_analytics.core.nl_query_config import SMALL_CELL_THRESHOLD
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED
 from clinical_analytics.eval.catalog import questions_for_dataset
 from clinical_analytics.eval.hard_questions import all_hard_questions, oracle_value
@@ -22,8 +23,11 @@ from clinical_analytics.eval.headless import (
     ask,
     classify_presented,
     classify_presented_generic,
+    frame_for,
     presented_answer,
     register_frame,
+    shown_labels,
+    small_level_labels,
 )
 from tests.eval.adversarial_probes import own_frame, probes
 from tests.eval.reviewer_probes import PROBES
@@ -119,14 +123,42 @@ class TestPresentedAnswer:
         assert outcome == expected_outcome
 
 
+# Privacy probes (design review): the answer may be refused or held, never a table whose labels
+# name levels held by 1-10 patients. On main the first showed 289 columns, one per exact LDL value.
+PRIVACY_QUERIES = (
+    "compare treatment between ldl groups",
+    "count by ldl",
+    "average age by ldl",
+    "compare ldl between hdl groups",
+)
+
+
+def _label_leak(result: dict[str, Any], workspace: Path | None) -> str | None:
+    """A shown label for a level with 1-10 patients in the dataset, or None."""
+    if not result["success"]:
+        return None
+    frame = frame_for(result["dataset_id"], workspace)
+    columns = [c for c in (result.get("group_by"), result.get("metric")) if c]
+    leaked = shown_labels(result["presentation"]) & small_level_labels(frame, columns, SMALL_CELL_THRESHOLD)
+    return f"{result['query']!r} shows labels of small levels: {sorted(leaked)[:5]}" if leaked else None
+
+
 def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
-    """Ask every question of the four suites and grade the presented answer."""
+    """Ask every question of the four suites and grade the presented answer.
+
+    A presented label that names a level held by 1-10 patients counts as wrong too.
+    """
     tally: dict[str, int] = {}
     wrong: list[str] = []
 
     def record(suite: str, query: str, outcome: str, expected: Any, result: dict[str, Any]) -> None:
+        leak = _label_leak(result, project_root if suite in ("golden", "hard", "reviewer", "privacy") else None)
+        if leak:
+            outcome = "wrong"
         tally[outcome] = tally.get(outcome, 0) + 1
-        if outcome == "wrong":
+        if leak:
+            wrong.append(f"{suite} {leak}")
+        elif outcome == "wrong":
             wrong.append(f"{suite} {query!r} expected={expected!r} shown={presented_answer(result['presentation'])!r}")
 
     for question in questions_for_dataset("cohort", project_root):
@@ -156,6 +188,10 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
             expected,
             result,
         )
+
+    for query in PRIVACY_QUERIES:
+        result = ask("cohort", query, project_root)
+        record("privacy", query, _held(result) if not result["success"] else "answered", "no small labels", result)
 
     own = own_frame()
     register_frame("probe_coh", cohort)

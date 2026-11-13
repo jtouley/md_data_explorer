@@ -28,6 +28,7 @@ from clinical_analytics.analysis.compute import (
     compute_predictor_analysis,
     compute_survival_analysis,
 )
+from clinical_analytics.analysis.grouping import OTHER_LABEL
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.datasets.demo import get_demo_csv_path
@@ -324,8 +325,9 @@ class TestGoldenPresentation:
         presentation = present_analysis(analysis)
 
         # Assert
+        # Both are hidden, so both labels fold into one Other row: no label names the 4 exposed
         counts = {row["exposed"]: row["count"] for row in presentation["table"]["rows"]}
-        assert counts == {"no": "suppressed", "yes": "suppressed"}
+        assert counts == {OTHER_LABEL: "suppressed"}
 
 
 class TestEdgeInputs:

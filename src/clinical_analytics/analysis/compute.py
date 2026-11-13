@@ -12,6 +12,7 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from clinical_analytics.analysis.grouping import grouping_problem
 from clinical_analytics.analysis.sample_floors import (
     MIN_COMPARISON_N,
     MIN_CORRELATION_N,
@@ -590,6 +591,13 @@ def compute_comparison_analysis(df: pl.DataFrame, context: AnalysisContext) -> d
                 return {"type": "comparison", "error": "Not enough data for comparison"}
             outcome_series = analysis_df[outcome_col]
     outcome_kind = classify_variable(outcome_series)
+    # A grouping or crosstab dimension with many levels labels each group with a few patients'
+    # exact values (one column per LDL value): refused, never tabulated.
+    dimensions = [group_col] if outcome_kind == "continuous" else [group_col, outcome_col]
+    for dimension in dimensions:
+        problem = grouping_problem(dimension, analysis_df[dimension].n_unique())
+        if problem:
+            return {"type": "comparison", "error": problem}
     if outcome_series.n_unique() < 2:
         return {
             "type": "comparison",
