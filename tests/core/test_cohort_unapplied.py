@@ -29,3 +29,15 @@ def test_unbound_death_word_is_a_gap() -> None:
         ["dod", "gender", "anchor_age"],
     )
     assert "died" in gaps
+
+
+def test_unappliedConstraints_functionWordInCount_isNotAGap() -> None:
+    """'are there' adds no limit: word accounting treats it as a function word, so must this check."""
+    # Arrange
+    columns = ["patient_id", "sex", "age"]
+
+    # Act
+    gaps = unapplied_constraints("how many patients are there", _Plan(), columns)
+
+    # Assert
+    assert gaps == []

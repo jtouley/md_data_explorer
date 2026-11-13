@@ -462,8 +462,12 @@ def unapplied_constraints(
         used_tokens: set[str] = set()
         for column in used:
             used_tokens |= _tokens(str(column))
+        # Words word accounting treats as carrying no limit ("are there", "patients", "taking")
+        # are not gaps: the two checks share one vocabulary.
+        from clinical_analytics.core.word_accounting import FUNCTION_WORDS, LINK_WORDS, SUBJECT_WORDS
+
         # Name the words themselves: the user sees this list.
-        gaps.extend(sorted(tokens - used_tokens))
+        gaps.extend(sorted(tokens - used_tokens - FUNCTION_WORDS - SUBJECT_WORDS - LINK_WORDS))
     return gaps
 
 
