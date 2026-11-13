@@ -1266,10 +1266,13 @@ class NLQueryEngine:
 
             from sklearn.metrics.pairwise import cosine_similarity
 
+            from clinical_analytics.core.embeddings import rank_by_similarity
+
             # First, check golden examples for high similarity
             if self._golden_embeddings is not None and self._golden_examples is not None:
                 golden_similarities = cosine_similarity(query_embedding, self._golden_embeddings)[0]
-                best_golden_idx = golden_similarities.argmax()
+                # Duplicate golden queries score the same up to float noise: lowest index wins on every CPU
+                best_golden_idx = rank_by_similarity(golden_similarities)[0]
                 best_golden_score = golden_similarities[best_golden_idx]
 
                 # If high similarity with golden example, use its intent
@@ -1356,7 +1359,7 @@ class NLQueryEngine:
             similarities = cosine_similarity(query_embedding, self.template_embeddings)[0]
 
             # Get best match
-            best_idx = similarities.argmax()
+            best_idx = rank_by_similarity(similarities)[0]
             best_score = similarities[best_idx]
 
             if best_score > 0.7:  # Threshold

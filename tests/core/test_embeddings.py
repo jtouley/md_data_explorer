@@ -17,12 +17,17 @@ from clinical_analytics.core.embeddings import (
     EmbeddingModelMissingError,
     check_embedding_model,
     mean_pool_normalize,
+    rank_by_similarity,
 )
 
 REFERENCE = json.loads(
     (Path(__file__).resolve().parents[1] / "fixtures" / "embeddings" / "minilm_reference.json").read_text()
 )
 MIN_COSINE = 0.99999  # measured minimum 0.9999999 (1.23.2: 0.99999988)
+# Retrieval may differ from the torch reference only between examples whose scores are closer than
+# this. Measured: ONNX and torch scores differ by at most 3.6e-7; the closest pair of distinct
+# golden examples at a top-3 boundary is 1.0e-4 apart; duplicate golden queries are 0.0 apart.
+BOUNDARY_TOLERANCE = 1e-5
 
 
 def _phrase_id(text: str) -> str:
@@ -53,18 +58,88 @@ def test_encode_fixedClinicalPhrase_matchesTorchCosineAtLeast0999(cached_sentenc
     assert np.isclose(np.linalg.norm(onnx_vec), 1.0, atol=1e-5)
 
 
-def test_encode_goldenExamples_topKIdenticalToTorch(cached_sentence_transformer):
+def test_encode_goldenExamples_topKMatchesTorchWithinBoundaryTolerance(cached_sentence_transformer):
     # Arrange
     golden = [q["query"] for q in load_golden_examples_config()["questions"]]
     assert len(golden) == REFERENCE["golden_example_count"]
+    top_k = REFERENCE["top_k"]
+    torch_phrases = np.asarray(REFERENCE["embeddings"], dtype=np.float32)
 
     # Act
     phrases = cached_sentence_transformer.encode(REFERENCE["phrases"])
     golden_emb = cached_sentence_transformer.encode(golden)
-    top_k = np.argsort(-(phrases @ golden_emb.T), axis=1)[:, : REFERENCE["top_k"]]
+    onnx_scores = phrases @ golden_emb.T
+    torch_scores = torch_phrases @ golden_emb.T  # recorded torch phrase vectors against the same examples
+
+    # Assert: every embedding matches torch, and the retrieved set matches except across a near-tie
+    cosines = (phrases * torch_phrases).sum(axis=1)
+    assert cosines.min() >= MIN_COSINE
+    assert np.abs(onnx_scores - torch_scores).max() < BOUNDARY_TOLERANCE
+    for index, torch_top in enumerate(REFERENCE["golden_top_k"]):
+        onnx_top = rank_by_similarity(onnx_scores[index], top_k=top_k)
+        boundary = np.sort(torch_scores[index])[-top_k]  # torch score of the last retrieved example
+        swapped = set(onnx_top) ^ set(torch_top)
+        off_boundary = {i: float(torch_scores[index][i] - boundary) for i in swapped}
+        assert all(abs(gap) < BOUNDARY_TOLERANCE for gap in off_boundary.values()), (
+            f"phrase #{index}: ONNX top-{top_k} {onnx_top} vs torch {torch_top}; "
+            f"swapped examples are not tied at the boundary (score - boundary): {off_boundary}"
+        )
+
+
+def test_rank_by_similarity_noiseAtRankBoundary_sameTopKOnBothMachines():
+    # Arrange: examples 2 and 4 are duplicates; two CPUs disagree by ~1e-7 on which scores higher
+    machine_a = np.array([0.29260436, 0.27214563, 0.26063693, 0.25978377, 0.26063683], dtype=np.float32)
+    machine_b = np.array([0.29260436, 0.27214563, 0.26063683, 0.25978377, 0.26063693], dtype=np.float32)
+    assert np.argsort(-machine_a)[:3].tolist() != np.argsort(-machine_b)[:3].tolist()  # plain ranking differs
+
+    # Act
+    top_a = rank_by_similarity(machine_a, top_k=3)
+    top_b = rank_by_similarity(machine_b, top_k=3)
 
     # Assert
-    assert top_k.tolist() == REFERENCE["golden_top_k"]
+    assert top_a == top_b == [0, 1, 2]
+
+
+@pytest.mark.parametrize(
+    ("scores", "top_k", "expected"),
+    [
+        ([], 3, []),
+        ([0.5], 3, [0]),
+        ([0.1, 0.9, 0.5], 0, []),
+        ([0.1, 0.9, 0.5], 2, [1, 2]),
+        ([0.7, 0.7, 0.7], 2, [0, 1]),
+        ([0.5, 0.5 + 5e-7, 0.5 - 5e-7], 1, [0]),
+        ([0.5, 0.5 + 1e-4], 1, [1]),
+        ([-0.2, -0.1, -0.3], 3, [1, 0, 2]),
+    ],
+    ids=[
+        "empty",
+        "fewer_than_k",
+        "k_zero",
+        "distinct",
+        "exact_ties",
+        "within_tolerance",
+        "above_tolerance",
+        "negative",
+    ],
+)
+def test_rank_by_similarity_edgeCases_lowestIndexWinsTies(scores, top_k, expected):
+    # Act
+    ranked = rank_by_similarity(scores, top_k=top_k)
+
+    # Assert
+    assert ranked == expected
+
+
+@pytest.mark.parametrize(
+    ("scores", "top_k"),
+    [([0.1, float("nan")], 1), ([0.1, float("inf")], 1), ([[0.1, 0.2]], 1), ([0.1, 0.2], -1)],
+    ids=["nan", "inf", "two_dimensional", "negative_k"],
+)
+def test_rank_by_similarity_invalidInput_raisesValueError(scores, top_k):
+    # Act / Assert
+    with pytest.raises(ValueError, match="scores|top_k"):
+        rank_by_similarity(scores, top_k=top_k)
 
 
 @pytest.mark.parametrize(

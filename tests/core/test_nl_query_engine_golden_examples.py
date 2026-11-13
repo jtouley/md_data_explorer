@@ -8,6 +8,7 @@ Following AGENTS.md guidelines:
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -192,3 +193,34 @@ class TestNLQueryEngineGoldenExamples:
         assert intent.intent_type == "DESCRIBE"
         # Variables should be extracted (either from golden or query)
         # Note: exact variable extraction depends on golden example metadata
+
+    @pytest.mark.parametrize("noisy_duplicate", [0, 1], ids=["first_scores_lower", "second_scores_lower"])
+    def test_semantic_match_duplicateGoldenQueryWithFloatNoise_sameExampleOnEveryMachine(
+        self, make_semantic_layer, mock_encoder, noisy_duplicate
+    ):
+        """Two golden examples with the same query must not be chosen between by ~1e-7 score noise."""
+        # Arrange: duplicates with different intents; one of them scores 1e-7 lower (CPU noise)
+        from clinical_analytics.core.nl_query_engine import NLQueryEngine
+
+        semantic = make_semantic_layer(dataset_name="tie_check", data={"patient_id": [1, 2], "age": [30, 40]})
+        engine = NLQueryEngine(semantic)
+        noise_angle = np.sqrt(2e-7)  # cos(angle) ~ 1 - 1e-7
+        exact, noisy = [1.0, 0.0, 0.0], [np.cos(noise_angle), np.sin(noise_angle), 0.0]
+        golden_embeddings = np.array([exact, exact, [0.0, 0.0, 1.0]], dtype=np.float64)
+        golden_embeddings[noisy_duplicate] = noisy
+        engine._golden_embeddings = golden_embeddings
+        engine._golden_examples = [
+            {"query": "same text", "expected_intent": "COUNT"},
+            {"query": "same text", "expected_intent": "DESCRIBE"},
+            {"query": "other text", "expected_intent": "CORRELATIONS"},
+        ]
+        mock_encoder.encode.side_effect = lambda texts, *args, **kwargs: np.array([exact], dtype=np.float64)
+        engine.encoder = mock_encoder
+
+        # Act
+        intent = engine._semantic_match("same text")
+
+        # Assert: the first duplicate wins whichever of the two the noise favours
+        assert intent is not None
+        assert intent.intent_type == "COUNT"
+        assert intent.confidence == pytest.approx(1.0, abs=1e-6)

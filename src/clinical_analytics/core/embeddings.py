@@ -52,6 +52,10 @@ MODEL_FILES: Final[dict[str, str]] = {
 }
 RUNTIME_FILES: Final = ("onnx/model.onnx", "tokenizer.json")
 
+# Similarity scores closer than this are one tie. float32 cosine scores of the same text differ by
+# up to ~4e-7 between CPUs and runtimes (measured), so an order decided by less than this is noise.
+SCORE_TIE_TOLERANCE: Final = 1e-6
+
 Embeddings = npt.NDArray[np.float32]
 
 
@@ -199,3 +203,32 @@ def mean_pool_normalize(hidden: npt.NDArray[np.float32], attention_mask: npt.NDA
     norms = np.clip(np.linalg.norm(pooled, axis=1, keepdims=True), 1e-12, None)
     result: Embeddings = (pooled / norms).astype(np.float32)
     return result
+
+
+def rank_by_similarity(scores: npt.ArrayLike, top_k: int = 1, tolerance: float = SCORE_TIE_TOLERANCE) -> list[int]:
+    """
+    Indices of the ``top_k`` highest scores, the same on every CPU.
+
+    Scores within ``tolerance`` of the best remaining score count as tied with it, and a tie goes to
+    the lowest index. A plain ``argmax``/``argsort`` lets float noise pick between duplicate entries
+    (two golden examples with the same text), so two machines could retrieve different examples.
+
+    Raises:
+        ValueError: scores are not one-dimensional, hold NaN/inf, or ``top_k``/``tolerance`` < 0.
+    """
+    values = np.asarray(scores, dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError(f"scores must be one-dimensional, got shape {values.shape}")
+    if top_k < 0 or tolerance < 0:
+        raise ValueError(f"top_k and tolerance must be >= 0, got top_k={top_k}, tolerance={tolerance}")
+    if not np.isfinite(values).all():
+        raise ValueError("scores contain NaN or infinite values")
+
+    remaining = values.copy()
+    ranked: list[int] = []
+    for _ in range(min(top_k, values.size)):
+        # argmax of a boolean array is the first True: the lowest index among the tied best
+        pick = int(np.argmax(remaining >= remaining.max() - tolerance))
+        ranked.append(pick)
+        remaining[pick] = -np.inf
+    return ranked
