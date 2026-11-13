@@ -332,6 +332,9 @@ class SemanticLayer:
 
         # Build base semantic view (lazy - no SQL executed yet)
         self._base_view = None
+        # Base-view counts, each counted once (the source does not change): rows under None,
+        # distinct values of an entity key under its column name.
+        self._base_counts: dict[str | None, int] = {}
 
         # Alias index (lazy initialization)
         self._alias_index: dict[str, str] | None = None  # normalized_alias -> canonical_name
@@ -550,6 +553,18 @@ class SemanticLayer:
             self._base_view = self.raw
 
         return self._base_view
+
+    def get_base_row_count(self) -> int:
+        """Rows in the base view (the dataset row count the app shows), counted once per layer."""
+        return self._base_count(None)
+
+    def _base_count(self, entity_key: str | None) -> int:
+        """Rows of the base view, or its distinct ``entity_key`` values; each counted once."""
+        if entity_key not in self._base_counts:
+            view = self.get_base_view()
+            counted = view.count() if entity_key is None else view.select(entity_key).distinct().count()
+            self._base_counts[entity_key] = int(counted.execute())
+        return self._base_counts[entity_key]
 
     def apply_filters(self, view, filters: dict[str, Any]) -> ibis.Table:
         """
@@ -1921,6 +1936,10 @@ class SemanticLayer:
         # Phase 3.3: Pass chart_spec to formatting methods
         if query_plan.intent == "COUNT":
             formatted = self._format_count_result(result_df_pl, query_plan, context)
+            # What the filters removed, in the unit the total is counted in: distinct entities
+            # for an entity count (60 visit rows of 55 patients: 55, not 60), rows otherwise.
+            entity_key = query_plan.entity_key if not query_plan.group_by else None
+            formatted["n_filtered_out"] = self._base_count(entity_key) - formatted["total_count"]
         else:
             # The aggregated SQL frame is not renderer-shaped. Recompute from the
             # filtered base view the plan validated, not from get_cohort().
@@ -1936,6 +1955,14 @@ class SemanticLayer:
                     query_plan.intent,
                 )
             formatted = compute_analysis_by_type(base_rows, context)
+            if not formatted.get("error"):  # a failed result is never presented
+                # Rows the question's filters removed: by the plan's view here, plus by compute
+                # (its legacy context.filters path). The app shows the dataset's row count, so
+                # this is a count the reader can work out; the presenter suppresses it like the
+                # other counts.
+                formatted["n_filtered_out"] = (
+                    self.get_base_row_count() - base_rows.height + formatted.get("n_filtered_out", 0)
+                )
 
         # Phase 3.3: Add chart_spec to formatted result
         formatted["chart_spec"] = chart_spec
