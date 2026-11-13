@@ -20,6 +20,8 @@ from clinical_analytics.analysis.grouping import (
     HIDDEN_GROUPS_LABEL,
     MAX_GROUP_LEVELS,
     OTHER_LABEL,
+    SMALL_VALUE_MODEL_REFUSAL,
+    UNRECORDED_SIZES_MODEL_REFUSAL,
     is_small_level,
     too_many_levels_message,
 )
@@ -736,23 +738,20 @@ def _present_predictor(analysis: Mapping[str, Any]) -> Presentation:
     # A term names a level ("site_West") beside an odds ratio that rests on its patients and its
     # reference level's: with 1-10 of them it is never shown. Folding it into "Other" would be a
     # different model, so the model is withheld (compute refuses it first). ``term_sizes`` maps
-    # each term to those patients, None for a slope; a term missing from it, a size that is not
-    # a count, or a payload without it is treated as small (fail closed).
+    # each term to those patients, None for a slope. A size that is not a count is small; a
+    # payload without sizes, or a term it does not list (stored before sizes were recorded), is
+    # withheld too (fail closed), saying so rather than blaming a small value. Neither names a
+    # column: for a 0/1 predictor the column is the label of its level.
     sizes = analysis.get("term_sizes")
     named = analysis.get("significant_predictors") or []
     terms = [var for var in summary if var != "Intercept"] + [
         s.get("variable") for s in named if isinstance(s, Mapping)
     ]
-    if terms and (
-        not isinstance(sizes, Mapping)
-        or any(var not in sizes or (sizes[var] is not None and is_small_level(sizes[var])) for var in terms)
-    ):
-        withheld = _with_details(
-            f"The model of {outcome_name} is not shown because a predictor has a value held by fewer than "
-            f"{_limit(None)} patients",
-            [n_clause],
-        )
-        return {"claim": withheld + ".", "table": None}
+    if terms:
+        if not isinstance(sizes, Mapping) or any(var not in sizes for var in terms):
+            return {"claim": UNRECORDED_SIZES_MODEL_REFUSAL, "table": None}
+        if any(sizes[var] is not None and is_small_level(sizes[var]) for var in terms):
+            return {"claim": SMALL_VALUE_MODEL_REFUSAL, "table": None}
     rows = [
         {
             "variable": term_label(var),

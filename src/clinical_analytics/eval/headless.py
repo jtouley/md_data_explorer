@@ -312,25 +312,20 @@ def shown_labels(presentation: dict[str, Any] | None) -> set[str]:
     return {str(c) for c in columns[1:]} | {str(row.get(columns[0])) for row in table.get("rows") or []}
 
 
+def _small_values(frame: pl.DataFrame, column: str, threshold: int) -> list[Any]:
+    """Values of ``column`` held by 1..threshold-1 rows of ``frame``."""
+    # Fixed field names, so a column named "count" does not collide with the count.
+    counts = frame.get_column(column).drop_nulls().alias("value").value_counts(name="__n")
+    return counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value").to_list()
+
+
 def small_level_labels(frame: pl.DataFrame, columns: list[str], threshold: int) -> set[str]:
     """Labels the app would give levels of ``columns`` held by 1..threshold-1 rows."""
     labels: set[str] = set()
     for column in columns:
-        if column not in frame.columns:
-            continue
-        # Fixed field names, so a column named "count" does not collide with the count.
-        counts = frame.get_column(column).drop_nulls().alias("value").value_counts(name="__n")
-        small = counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value")
-        labels |= {display_level(column, value) for value in small.to_list()}
+        if column in frame.columns:
+            labels |= {display_level(column, value) for value in _small_values(frame, column, threshold)}
     return labels
-
-
-def _small_levels(frame: pl.DataFrame, column: str, threshold: int) -> tuple[list[Any], bool]:
-    """(values of ``column`` held by 1..threshold-1 rows, whether the column is 0/1 or boolean)."""
-    counts = frame.get_column(column).drop_nulls().alias("value").value_counts(name="__n")
-    small = counts.filter((pl.col("__n") > 0) & (pl.col("__n") < threshold)).get_column("value").to_list()
-    indicator = frame.schema[column] == pl.Boolean or set(counts.get_column("value").to_list()) <= {0, 1}
-    return small, indicator
 
 
 def predictor_label_leaks(
@@ -338,18 +333,21 @@ def predictor_label_leaks(
 ) -> set[str]:
     """Labels of levels held by 1..threshold-1 rows that a predictor answer shows.
 
-    A regression names a level as its indicator term ("site_West", or "DEXA: Osteopenia" for a
-    coded header), as the column itself for a 0/1 or boolean predictor, and the outcome's event
-    value in the claim ("status = Yes"). Each is looked for as a whole word in the claim and in
-    the table's labels.
+    Levels are counted on the complete cases (rows with the outcome and every predictor), the
+    rows the model is fitted on: a level of 12 rows of which 3 lack age rests on 9. A regression
+    names a level as its indicator term ("site_West", or "DEXA: Osteopenia" for a coded header),
+    as the column itself for a 0/1 or boolean predictor, and the outcome's event value in the
+    claim ("status = Yes"). Each is looked for as a whole word in the claim and in the table's
+    labels.
     """
     shown = [str((presentation or {}).get("claim") or ""), *shown_labels(presentation)]
+    columns = [column for column in [*predictors, *([outcome] if outcome else [])] if column in frame.columns]
+    complete = frame.select(columns).drop_nulls()
     labels: set[str] = set()
-    for column in [*predictors, *([outcome] if outcome else [])]:
-        if column not in frame.columns:
-            continue
-        small, indicator = _small_levels(frame, column, threshold)
-        for value in small:
+    for column in columns:
+        values = complete.get_column(column).drop_nulls().unique().to_list()
+        indicator = complete.schema[column] == pl.Boolean or set(values) <= {0, 1}
+        for value in _small_values(complete, column, threshold):
             labels.add(display_level(column, value))
             if column == outcome:
                 continue

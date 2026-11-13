@@ -7,16 +7,19 @@ execution frame.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import polars as pl
 import polars.testing
 import pytest
 
+from clinical_analytics.analysis.numeric_text import WHITESPACE, missing_token_expr
 from clinical_analytics.core.analysis_types import AnalysisContext
 from clinical_analytics.core.query_plan import CohortStep, CohortStepError, QueryPlan
 from clinical_analytics.core.query_service import NO_MATCH_REASON, all_null_statistics_reason
 from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
+from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import unused_words
 
 # 100 patients: statin taking 30, stopped 30, missing 40; site North 60 / South 40.
@@ -321,12 +324,14 @@ _TOKEN_FRAME = pl.DataFrame(
 
 
 @pytest.fixture
-def token_layer(make_semantic_layer):
+def token_layer(make_semantic_layer: Callable[..., SemanticLayer]) -> SemanticLayer:
     return make_semantic_layer(dataset_name="tokens", data=_TOKEN_FRAME)
 
 
 @pytest.mark.parametrize("entity_key", [None, "patient_id"], ids=["rows", "patients"])
-def test_proportion_numericTextMissingTokens_leftOutOfTheDenominator(token_layer, entity_key: str | None) -> None:
+def test_proportion_numericTextMissingTokens_leftOutOfTheDenominator(
+    token_layer: SemanticLayer, entity_key: str | None
+) -> None:
     # Arrange: 30 of the 60 recorded grades are "2"; "N/A", "." and "NA" are missing, as null is.
     token_layer.count_entity_key = entity_key
     plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="grade", proportion_value="2")
@@ -341,7 +346,7 @@ def test_proportion_numericTextMissingTokens_leftOutOfTheDenominator(token_layer
     assert "40 excluded for missing data" in shown["claim"]
 
 
-def test_rate_numericTextMissingTokens_leftOutOfEachGroupsDenominator(token_layer) -> None:
+def test_rate_numericTextMissingTokens_leftOutOfEachGroupsDenominator(token_layer: SemanticLayer) -> None:
     # Arrange: each site has 30 recorded grades, 15 of them "2".
     plan = QueryPlan(intent="COUNT", confidence=0.95, rate_column="grade", rate_value="2", group_by="site")
 
@@ -354,7 +359,7 @@ def test_rate_numericTextMissingTokens_leftOutOfEachGroupsDenominator(token_laye
     pl.testing.assert_frame_equal(rows, expected, check_dtypes=False)
 
 
-def test_proportion_textCategoryNamedNone_staysRecorded(token_layer) -> None:
+def test_proportion_textCategoryNamedNone_staysRecorded(token_layer: SemanticLayer) -> None:
     # Arrange: "None" is a level of a text category, not numeric text, so it is recorded.
     plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="diabetes", proportion_value="Type 2")
 
@@ -364,3 +369,76 @@ def test_proportion_textCategoryNamedNone_staysRecorded(token_layer) -> None:
     # Assert
     row = execution["result"].row(0, named=True)
     assert (row["events"], row["n"]) == (60, 100)
+
+
+@pytest.mark.parametrize("entity_key", [None, "patient_id"], ids=["rows", "patients"])
+@pytest.mark.parametrize("value", ["N/A", "n/a ", ".", "NA"])
+@pytest.mark.parametrize("share", ["proportion", "rate"])
+def test_share_valueIsMissingToken_refused(
+    token_layer: SemanticLayer, entity_key: str | None, value: str, share: str
+) -> None:
+    # Arrange: "N/A" is missing in a numeric-text column, so it is outside n; its share would
+    # count events outside the denominator (40 of 60, or more than 1).
+    token_layer.count_entity_key = entity_key
+    asked = {"proportion_column": "grade", "proportion_value": value}
+    if share == "rate":
+        asked = {"rate_column": "grade", "rate_value": value, "group_by": "site"}
+    plan = QueryPlan(intent="COUNT", confidence=0.95, **asked)
+
+    # Act
+    execution, _shown = _present(token_layer, plan)
+
+    # Assert
+    assert execution["success"] is False
+    assert "missing" in execution["failure_reason"]
+
+
+def test_proportion_eventsNeverOutsideN(token_layer: SemanticLayer) -> None:
+    # Arrange: the share of a recorded value; its events are recorded rows only.
+    plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="grade", proportion_value="3")
+
+    # Act
+    execution, _shown = _present(token_layer, plan)
+
+    # Assert
+    row = execution["result"].row(0, named=True)
+    assert row["events"] <= row["n"]
+    assert 0 <= row["proportion"] <= 1
+
+
+def test_whitespace_isExactlyWhatPolarsStrips() -> None:
+    # Arrange: every code point outside the surrogates, wrapped on both sides.
+    points = [chr(code) for code in range(0x30000) if not 0xD800 <= code < 0xE000]
+    wrapped = pl.Series("text", [f"{point}x{point}" for point in points])
+
+    # Act
+    stripped = wrapped.str.strip_chars()
+
+    # Assert
+    stripped_points = {point for point, text in zip(points, stripped.to_list(), strict=True) if text == "x"}
+    assert stripped_points == set(WHITESPACE)
+
+
+@pytest.mark.parametrize("entity_key", [None, "patient_id"], ids=["rows", "patients"])
+@pytest.mark.parametrize(
+    "token",
+    ["N/A ", "N/A\u00a0", "\u3000n/a", "\u2007.\u2007", "NA\u202f"],
+    ids=["space", "nbsp", "ideographic", "figure_space", "narrow_nbsp"],
+)
+def test_proportion_missingTokenUnicodeWhitespace_sameNAsPolars(
+    make_semantic_layer: Callable[..., SemanticLayer], entity_key: str | None, token: str
+) -> None:
+    # Arrange: 60 numbers and 40 tokens padded with Unicode whitespace (Excel exports use NBSP).
+    frame = _TOKEN_FRAME.with_columns(
+        pl.when(pl.col("grade").is_in(["2", "3"])).then(pl.col("grade")).otherwise(pl.lit(token)).alias("grade")
+    )
+    layer = make_semantic_layer(dataset_name="unicode_tokens", data=frame)
+    layer.count_entity_key = entity_key
+    plan = QueryPlan(intent="COUNT", confidence=0.95, proportion_column="grade", proportion_value="2")
+    polars_n = frame.filter(pl.col("grade").is_not_null() & ~missing_token_expr("grade")).height
+
+    # Act
+    execution, _shown = _present(layer, plan)
+
+    # Assert
+    assert execution["result"].row(0, named=True)["n"] == polars_n == 60

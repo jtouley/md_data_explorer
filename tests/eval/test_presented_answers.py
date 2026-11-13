@@ -277,7 +277,7 @@ def _presented_outcomes(project_root: Path) -> tuple[dict[str, int], list[str]]:
 
     # Predictor answers: a term or the claim never names a level held by 1-10 patients.
     for name, outcome, predictors in PREDICTOR_PROBES:
-        register_frame(f"dq_{name}", predictor_frame())
+        register_frame(f"dq_{name}", predictor_frame(name))
         plan = QueryPlan(intent="FIND_PREDICTORS", metric=outcome, confidence=0.99)
         result = _ask_plan(f"dq_{name}", plan, True, predictors)
         outcome_shown = _held(result) if not result["success"] else "answered"
