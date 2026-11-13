@@ -22,26 +22,44 @@ from clinical_analytics.core.result_presentation import present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.core.word_accounting import hold_reason, unjustified_elements, unjustified_reason, unused_words
 
-_GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len"})
+_GROUP_SIZE_COLUMNS = frozenset({"n", "count", "len", "n_rows", "n_pairs", "events"})
+NO_MATCH_REASON = "No patients matched the question's limits, so there is no value to report."
 
 
 def all_null_statistics_reason(result: Any, plan: QueryPlan) -> str | None:
-    """Plain-language refusal when every requested statistic came back empty.
+    """Plain-language refusal when every requested statistic came back empty, with the real cause.
 
-    A frame of null statistics (for example, no patient matched the limits) is not an
-    answer. Counts are exempt: zero patients is a real answer.
+    A frame of null statistics is not an answer. The reason says why: no patient matched the
+    limits, the patients who matched have no recorded value, or (correlation) too few pairs or
+    a column that does not vary. Counts are exempt: zero patients is a real answer.
     """
-    if plan.intent == "COUNT" or plan.proportion_column or plan.rate_column or result is None:
+    if result is None or (plan.intent == "COUNT" and not (plan.proportion_column or plan.rate_column)):
         return None
     frame = result if isinstance(result, pl.DataFrame) else _to_polars(result)
     if frame is None:
         return None
-    stats = [name for name in frame.columns if name != plan.group_by and name not in _GROUP_SIZE_COLUMNS]
-    if not stats:
+    if frame.height == 0:
+        return NO_MATCH_REASON
+    stats = [
+        name for name in frame.columns if name not in {plan.group_by, plan.metric} and name not in _GROUP_SIZE_COLUMNS
+    ]
+    if not stats or not frame.select(pl.all_horizontal(pl.col(stats).is_null().all())).item():
         return None
-    if frame.height == 0 or frame.select(pl.all_horizontal(pl.col(stats).is_null().all())).item():
-        return "No patients matched the question's limits, so there is no value to report."
-    return None
+    matched = int(frame.get_column("n_rows").sum()) if "n_rows" in frame.columns else None
+    if matched == 0:
+        return NO_MATCH_REASON
+    if plan.proportion_column or plan.rate_column:
+        column = plan.proportion_column or plan.rate_column
+        return f"No patient who matched has '{column}' recorded, so there is no share to report."
+    if "n_pairs" in frame.columns:
+        if int(frame.get_column("n_pairs").sum()) < 2:
+            return "Cannot compute the correlation: fewer than 2 patients who matched have both values recorded."
+        return (
+            "Cannot compute the correlation: one of the two columns has the same value for every patient who matched."
+        )
+    if plan.metric:
+        return f"Every patient who matched is missing '{plan.metric}', so there is no value to report."
+    return "The patients who matched have no recorded values to report."
 
 
 def _to_polars(result: Any) -> pl.DataFrame | None:

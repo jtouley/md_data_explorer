@@ -6,13 +6,16 @@ module must never be exposed through the production API.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
 import polars as pl
 
+from clinical_analytics.analysis.variable_types import display_level
 from clinical_analytics.core.query_service import QueryService
+from clinical_analytics.core.result_presentation import SECONDARY_SUPPRESSED, present_analysis
 from clinical_analytics.core.semantic import SemanticLayer
 from clinical_analytics.eval.catalog import DATASET_FILES, load_dataset_frame
 
@@ -188,6 +191,8 @@ def ask(dataset_id: str, query: str, workspace: Path | None = None) -> dict[str,
         "held": held,
         "failure_reason": result.failure_reason,
         "plan_line": result.plan_line,
+        # What the app shows: the claim and table built from the analysis, nothing else.
+        "presentation": present_analysis(result.analysis) if success else {"claim": None, "table": None},
     }
 
 
@@ -215,3 +220,120 @@ def classify(question: dict[str, Any], expected: Any, result: dict[str, Any]) ->
     if expected is not None and values_match(expected, actual):
         return "answered", actual
     return "wrong", actual
+
+
+# ----------------------------------------------------------------------------
+# Presented-answer grading: read the answer the way the user does, from the claim
+# sentence and the table the app shows, never from the raw execution frame.
+# ----------------------------------------------------------------------------
+
+HIDDEN = "hidden"
+_PRESENTED_TOLERANCE = 1e-4  # table cells are rounded to 4 decimals
+_TOTAL_COUNT = re.compile(r"^Total count: (\S+?)\.$")
+_STAT_NAMES = ("mean", "median", "std", "min", "max")
+
+
+def presented_answer(presentation: dict[str, Any] | None) -> Any:
+    """The comparable value a reader gets from a presentation, or None when it states none.
+
+    A count: the number in "Total count: N.". A one-row statistics table: its statistics by
+    name. A table with one row per group: {group label: value}. A proportion or correlation:
+    that number. HIDDEN when the app withheld the value to protect small cells.
+    """
+    if not presentation:
+        return None
+    table = presentation.get("table")
+    claim = presentation.get("claim") or ""
+    if not table or not table.get("rows"):
+        match = _TOTAL_COUNT.match(claim)
+        if not match:
+            return None
+        return int(match.group(1)) if match.group(1).isdigit() else HIDDEN
+    columns, rows = list(table["columns"]), list(table["rows"])
+    for single in ("proportion", "r"):
+        if single in columns and len(rows) == 1:
+            return _shown(rows[0][single])
+    if "variable" in columns and len(rows) == 1:
+        return {name: _shown(rows[0].get(name)) for name in _STAT_NAMES if name in columns}
+    value_column = next((c for c in columns[1:] if c == "rate" or c == "count" or c.split(" ")[0] in _STAT_NAMES), None)
+    if value_column is None:
+        return _crosstab(columns, rows)
+    return {str(row[columns[0]]): _shown(row[value_column]) for row in rows}
+
+
+def _shown(value: Any) -> Any:
+    return HIDDEN if value == SECONDARY_SUPPRESSED or (isinstance(value, str) and value.startswith("<")) else value
+
+
+def _crosstab(columns: list[str], rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """A contingency table (first column the level, one column per group) as {group: {level: n}}."""
+    return {group: {str(row[columns[0]]): _shown(row[group]) for row in rows} for group in columns[1:]}
+
+
+def _is_hidden(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_is_hidden(item) for item in value.values())
+    return isinstance(value, str) and value == HIDDEN
+
+
+def _labelled(expected: Any, column: str | None) -> Any:
+    """Expected group keys as the app labels them ("1" on a coded header reads "Yes")."""
+    if not isinstance(expected, dict) or column is None:
+        return expected
+    return {("null" if key == "null" else display_level(column, key)): value for key, value in expected.items()}
+
+
+def presented_matches(expected: Any, shown: Any) -> bool:
+    if expected is None or shown is None:
+        return False
+    if isinstance(expected, dict):
+        if not isinstance(shown, dict) or set(expected) != set(shown):
+            return False
+        return all(presented_matches(expected[key], shown[key]) for key in expected)
+    if isinstance(shown, dict) or isinstance(shown, str):
+        return False
+    if isinstance(expected, int) and not isinstance(expected, bool) and isinstance(shown, int):
+        return expected == shown
+    try:
+        return abs(float(expected) - float(shown)) <= _PRESENTED_TOLERANCE
+    except (TypeError, ValueError):
+        return False
+
+
+PresentedOutcome = Literal["answered", "held", "refused", "hidden", "wrong"]
+
+
+def classify_presented(
+    kind: str, stat: str | None, group_by: str | None, expected: Any, result: dict[str, Any]
+) -> PresentedOutcome:
+    """Grade what the app shows. "hidden": the value was withheld for small cells, which is
+    neither an answer nor an error. "wrong": the app shows no value, or a different one."""
+    if not result["success"]:
+        return "held" if result.get("held") else "refused"
+    shown = presented_answer(result.get("presentation"))
+    if kind == "stat" and isinstance(shown, dict):
+        column = {"average": "mean", "minimum": "min", "maximum": "max"}.get(stat or "mean", stat or "mean")
+        shown = shown.get(column)
+    if _is_hidden(shown):
+        return "hidden"
+    if kind == "crosstab" and isinstance(expected, dict) and group_by:
+        expected = _labelled(expected, group_by)
+    return "answered" if presented_matches(_labelled(expected, group_by), shown) else "wrong"
+
+
+def classify_presented_generic(expected: Any, result: dict[str, Any]) -> PresentedOutcome:
+    """classify_presented for probes that give only a truth: a number, or {group: number}.
+
+    A number is matched against a count, proportion or correlation, or against any statistic
+    of a one-row statistics table (the probe does not say which statistic it computed).
+    """
+    if not result["success"]:
+        return "held" if result.get("held") else "refused"
+    shown = presented_answer(result.get("presentation"))
+    if _is_hidden(shown):
+        return "hidden"
+    if isinstance(expected, dict):
+        return "answered" if presented_matches(_labelled(expected, result.get("group_by")), shown) else "wrong"
+    if isinstance(shown, dict):
+        return "answered" if any(presented_matches(expected, value) for value in shown.values()) else "wrong"
+    return "answered" if presented_matches(expected, shown) else "wrong"

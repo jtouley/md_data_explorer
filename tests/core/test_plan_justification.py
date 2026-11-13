@@ -52,7 +52,9 @@ def _count(*steps: CohortStep, filters: list[FilterSpec] | None = None, group_by
 
 
 def _mean(metric: str, *steps: CohortStep, group_by: str | None = None) -> QueryPlan:
-    return QueryPlan(intent="DESCRIBE", metric=metric, confidence=0.9, cohort_steps=list(steps), group_by=group_by)
+    return QueryPlan(
+        intent="DESCRIBE", metric=metric, confidence=0.9, cohort_steps=list(steps), group_by=group_by, statistic="mean"
+    )
 
 
 TYPE_2 = CohortStep("eq", "diabetes", "Type 2")

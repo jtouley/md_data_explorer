@@ -166,7 +166,7 @@ def _step_text(step: CohortStep) -> str:
         return f"{column} is recorded"
     if step.op == "gt_median":
         return f"{column} above its median among the patients so far"
-    if step.op in {"ge_percent_rank", "ge_quantile"}:
+    if step.op == "ge_percent_rank":
         quantile = 0.9 if step.quantile is None else step.quantile
         return f"{column} at or above its {quantile * 100:g}th percentile among the patients so far"
     return f"{column} {step.op} {step.value}"
@@ -185,6 +185,8 @@ def format_plan_line(plan: QueryPlan, context: Any = None) -> str:
     outcome = plan.metric or "none"
     grouping = plan.group_by or "none"
     parts = [f"{plan.intent}", f"outcome {outcome}", f"grouping {grouping}"]
+    if plan.statistic:
+        parts.append(f"statistic {plan.statistic}")
     predictors = list(getattr(context, "predictor_variables", None) or [])
     if predictors and plan.intent != "CORRELATIONS":
         parts.append(f"predictors {', '.join(str(p) for p in predictors)}")

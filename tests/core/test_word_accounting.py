@@ -39,7 +39,7 @@ def _count(*steps: CohortStep, filters: list[FilterSpec] | None = None) -> Query
 
 
 def _mean(metric: str, *steps: CohortStep) -> QueryPlan:
-    return QueryPlan(intent="DESCRIBE", metric=metric, confidence=0.9, cohort_steps=list(steps))
+    return QueryPlan(intent="DESCRIBE", metric=metric, confidence=0.9, cohort_steps=list(steps), statistic="mean")
 
 
 @pytest.mark.parametrize(
@@ -130,7 +130,13 @@ def test_unusedWords_planBindsEveryWord_returnsNothing(question: str, plan: Quer
         ),
         pytest.param(
             "median ldl over 70?",
-            _mean("ldl", CohortStep("gt", "ldl", 70.0)),
+            QueryPlan(
+                intent="DESCRIBE",
+                metric="ldl",
+                cohort_steps=[CohortStep("gt", "ldl", 70.0)],
+                confidence=0.9,
+                statistic="median",
+            ),
             ["over", "70"],
             id="cutoff_on_summarised_measure_is_ambiguous",
         ),
@@ -284,13 +290,13 @@ _SITE_IN = FilterSpec("site", "IN", ["North", "West"])
         ),
         pytest.param(
             "average ldl by site",
-            QueryPlan(intent="DESCRIBE", metric="ldl", group_by="sex", confidence=0.9),
+            QueryPlan(intent="DESCRIBE", metric="ldl", group_by="sex", confidence=0.9, statistic="mean"),
             ["by", "site"],
             id="by_names_another_grouping",
         ),
         pytest.param(
             "average ldl by site in the north",
-            QueryPlan(intent="DESCRIBE", metric="ldl", group_by="site", confidence=0.9),
+            QueryPlan(intent="DESCRIBE", metric="ldl", group_by="site", confidence=0.9, statistic="mean"),
             ["north"],
             id="one_group_value_is_a_dropped_limit",
         ),
@@ -302,7 +308,13 @@ _SITE_IN = FilterSpec("site", "IN", ["North", "West"])
         ),
         pytest.param(
             "average hba1c above 7",
-            QueryPlan(intent="DESCRIBE", metric="hba1c", cohort_steps=[CohortStep("gt", "hba1c", 7.0)], confidence=0.9),
+            QueryPlan(
+                intent="DESCRIBE",
+                metric="hba1c",
+                cohort_steps=[CohortStep("gt", "hba1c", 7.0)],
+                confidence=0.9,
+                statistic="mean",
+            ),
             ["above", "7"],
             id="cutoff_on_only_mention_of_measure",
         ),
@@ -346,7 +358,13 @@ def test_unusedWords_logicWordOnTheWrongColumn_isUnused(question: str, plan: Que
         ),
         pytest.param(
             "what is the average hdl in patients with hba1c above 7?",
-            QueryPlan(intent="DESCRIBE", metric="hdl", cohort_steps=[CohortStep("gt", "hba1c", 7.0)], confidence=0.9),
+            QueryPlan(
+                intent="DESCRIBE",
+                metric="hdl",
+                cohort_steps=[CohortStep("gt", "hba1c", 7.0)],
+                confidence=0.9,
+                statistic="mean",
+            ),
             id="alphanumeric_measure_cutoff",
         ),
     ],

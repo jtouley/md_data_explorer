@@ -27,7 +27,7 @@ import structlog
 from clinical_analytics.core.config_loader import load_patterns_config
 from clinical_analytics.core.data_home import nl_learning_dir
 from clinical_analytics.core.log_redaction import stable_hash, text_fingerprint
-from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan
+from clinical_analytics.core.query_plan import CohortStep, FilterSpec, QueryPlan, Statistic
 
 logger = structlog.get_logger()
 
@@ -129,6 +129,7 @@ class QueryIntent:
     rate_value: str | int | float | None = None
     locked_metric: str | None = None
     locked_group: str | None = None
+    statistic: Statistic | None = None
 
     def __post_init__(self) -> None:
         """Validate intent_type."""
@@ -2669,11 +2670,9 @@ Fix the errors and return a corrected query intent as JSON.
         cache: dict[str, list[Any]] = getattr(self, "_distinct_value_cache", {})
         if column in cache:
             return cache[column]
-        frame = self.semantic_layer.get_base_view().select(column).execute()
-        if hasattr(frame, "get_column"):
-            values = list(frame.get_column(column).unique().to_list())
-        else:
-            values = [value for value in frame[column].drop_duplicates().tolist()]
+        # DuckDB deduplicates; only the distinct values cross into Python, as Polars.
+        frame = self.semantic_layer.get_base_view().select(column).distinct().order_by(column).to_polars()
+        values = list(frame.get_column(column).to_list())
         cache[column] = values
         self._distinct_value_cache = cache
         return values
@@ -3663,6 +3662,7 @@ Fix the errors and return a corrected query intent as JSON.
             proportion_value=intent.proportion_value,
             rate_column=intent.rate_column,
             rate_value=intent.rate_value,
+            statistic=intent.statistic,
         )
 
         logger.debug(

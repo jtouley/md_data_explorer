@@ -349,7 +349,8 @@ check-data: ensure-venv ## Fail if git tracks data files (patient data must stay
 
 GOLDEN_TESTS := tests/scripts/test_make_synthetic_data.py tests/scripts/test_check_no_data_files.py tests/analysis/test_golden_statistics.py tests/eval/test_golden_questions.py \
 	tests/eval/test_golden_headless.py tests/eval/test_hard_questions.py tests/eval/test_adversarial_probes.py \
-	tests/eval/test_reviewer_probes.py tests/eval/test_reverse_accounting.py
+	tests/eval/test_reviewer_probes.py tests/eval/test_reverse_accounting.py \
+	tests/eval/test_presented_answers.py
 
 golden: ensure-venv ## Synthetic golden kit: regenerate in a temp dir, diff against committed fixtures, run golden + data-guard tests
 	@echo "$(GREEN)Checking the synthetic kit against scripts/make_synthetic_data.py...$(NC)"

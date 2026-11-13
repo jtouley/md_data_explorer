@@ -24,7 +24,7 @@ from typing import Any
 
 from clinical_analytics.core.column_parser import parse_column_name
 from clinical_analytics.core.execution_gate import limit_text
-from clinical_analytics.core.query_plan import CohortStep
+from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep
 
 # Reviewed vocabulary. Adding a word here makes the gate accept it in any question.
 FUNCTION_WORDS: frozenset[str] = frozenset(
@@ -356,8 +356,7 @@ def unused_words(
                 used[lead] = True
 
     # Fixed vocabulary and intent words.
-    stat_ok = bool(metric) and intent in {"DESCRIBE", "COMPARE_GROUPS"}
-    counting = intent == "COUNT" or bool(getattr(plan, "proportion_column", None) or getattr(plan, "rate_column", None))
+    counting = intent == "COUNT" or share_planned(plan)
     for at, word in enumerate(tokens):
         if used[at]:
             continue
@@ -366,7 +365,9 @@ def unused_words(
         elif word in INTENT_WORDS["COUNT"]:
             used[at] = counting
         elif word in INTENT_WORDS["STAT"]:
-            used[at] = stat_ok or (word == "median" and any(step.op == "gt_median" for step in steps))
+            used[at] = statistic_planned(word, plan) or (
+                word == "median" and any(step.op == "gt_median" for step in steps)
+            )
         elif any(
             word in INTENT_WORDS[name] for name in ("COMPARE_GROUPS", "CORRELATIONS", "FIND_PREDICTORS", "SURVIVAL")
         ):
@@ -454,13 +455,40 @@ def _logic_used(
             return bool(after & variables)
         return _has_range(filters, steps)
     if word in RATE_WORDS:
-        return bool(getattr(plan, "proportion_column", None) or getattr(plan, "rate_column", None))
+        return share_planned(plan)
     if word in BY_WORDS:
         return getattr(plan, "group_by", None) in namer.neighbour(tokens, at, 1)
     if word in CUTOFF_WORDS:
         return any(step.op == "ge_percent_rank" for step in steps)
     if word in DIRECTION_OPS:
         return DIRECTION_OPS[word] == "gt" and any(step.op == "gt_median" for step in steps)
+    return False
+
+
+def share_planned(plan: Any) -> bool:
+    """The plan computes a share: a proportion, or a rate within each group.
+
+    A rate with no group is not computed (execution refuses it), so its words stay unused.
+    """
+    if getattr(plan, "proportion_column", None):
+        return True
+    return bool(getattr(plan, "rate_column", None) and getattr(plan, "group_by", None))
+
+
+def statistic_planned(word: str, plan: Any) -> bool:
+    """A statistic word is used only when the plan computes that statistic of a measure.
+
+    DESCRIBE computes the plan's own statistic; COMPARE_GROUPS compares means. "median age
+    by sex" on a plan that computes means leaves "median" unused, so the plan is held.
+    """
+    asked = STATISTIC_WORDS.get(word)
+    if asked is None or not getattr(plan, "metric", None):
+        return False
+    intent = getattr(plan, "intent", None)
+    if intent == "DESCRIBE":
+        return asked == getattr(plan, "statistic", None)
+    if intent == "COMPARE_GROUPS":
+        return asked == "mean"
     return False
 
 

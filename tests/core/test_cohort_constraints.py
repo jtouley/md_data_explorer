@@ -338,6 +338,8 @@ def test_peelCohort_nothingPeeled_residualIsTheQuestionAsAsked(query: str) -> No
     assert peeled.residual == query
 
 
+# An op the semantic layer does not know: it must refuse, never skip.
+_UNSUPPORTED_STEP = CohortStep("ge_decile", "ldl", quantile=0.9)  # type: ignore[arg-type]
 _LAYER_DATA = {"patient_id": [1, 2, 3, 4], "age": [40, 50, 60, 70], "ldl": [100.0, 120.0, 140.0, 160.0]}
 
 
@@ -347,9 +349,7 @@ _LAYER_DATA = {"patient_id": [1, 2, 3, 4], "age": [40, 50, 60, 70], "ldl": [100.
         pytest.param(
             {"cohort_steps": [CohortStep("eq", "missing_col", 1)]}, "not in this dataset", id="missing_column"
         ),
-        pytest.param(
-            {"cohort_steps": [CohortStep("ge_quantile", "ldl", quantile=0.9)]}, "not supported", id="unsupported_op"
-        ),
+        pytest.param({"cohort_steps": [_UNSUPPORTED_STEP]}, "not supported", id="unsupported_op"),
         pytest.param({"filters": [FilterSpec("missing_col", "==", 1)]}, "missing_col", id="missing_filter"),
     ],
 )
@@ -372,7 +372,7 @@ def test_executeQueryPlan_unappliableRestriction_refusesWithReason(
     "step",
     [
         pytest.param(CohortStep("eq", "missing_col", 1), id="missing_column"),
-        pytest.param(CohortStep("ge_quantile", "ldl", quantile=0.9), id="unsupported_op"),
+        pytest.param(_UNSUPPORTED_STEP, id="unsupported_op"),
     ],
 )
 def test_applyCohortStep_unappliableStep_raisesInsteadOfSkipping(make_semantic_layer, step: CohortStep) -> None:

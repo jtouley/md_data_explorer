@@ -9,7 +9,23 @@ This prevents ad-hoc dict structures and ensures type safety.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
+
+Statistic: TypeAlias = Literal["mean", "median", "min", "max", "std"]
+# The statistic each word asks for. A plan carries one; a word is used only when it matches.
+STATISTIC_WORDS: dict[str, Statistic] = {
+    "average": "mean",
+    "avg": "mean",
+    "mean": "mean",
+    "median": "median",
+    "minimum": "min",
+    "min": "min",
+    "maximum": "max",
+    "max": "max",
+    "std": "std",
+    "standard": "std",
+    "deviation": "std",
+}
 
 # Cohort ops the semantic layer can execute. Anything else must refuse, not be skipped.
 SUPPORTED_COHORT_OPS: frozenset[str] = frozenset(
@@ -29,11 +45,11 @@ class CohortStepError(ValueError):
 class CohortStep:
     """One cohort restriction applied in order before aggregation.
 
-    gt_median and ge_quantile are computed on the rows that survive earlier steps,
+    gt_median and ge_percent_rank are computed on the rows that survive earlier steps,
     which is the SQL equivalent of a CTE cutoff.
     """
 
-    op: Literal["eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_quantile", "ge_percent_rank"]
+    op: Literal["eq", "gt", "ge", "lt", "le", "not_null", "gt_median", "ge_percent_rank"]
     column: str
     value: str | int | float | None = None
     quantile: float | None = None
@@ -89,6 +105,8 @@ class QueryPlan:
     # When set with group_by, the result is the rate of this value inside each group.
     rate_column: str | None = None
     rate_value: str | int | float | None = None
+    # The statistic the question asked for (DESCRIBE). None: the question named none.
+    statistic: Statistic | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "QueryPlan":

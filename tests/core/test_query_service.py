@@ -47,6 +47,7 @@ class TestQueryService:
             metric="age",
             confidence=0.9,
             explanation="Calculate descriptive statistics for age",
+            statistic="mean",
         )
         service.nl_engine.parse_query = MagicMock(return_value=mock_intent)
         service.nl_engine._intent_to_plan = MagicMock(return_value=mock_plan)
@@ -81,7 +82,7 @@ class TestQueryService:
         mock_intent.primary_variable = "age"
         mock_intent.confidence = 0.9
         mock_intent.filters = []
-        mock_plan = QueryPlan(intent="DESCRIBE", metric="age", confidence=0.9)
+        mock_plan = QueryPlan(intent="DESCRIBE", metric="age", confidence=0.9, statistic="mean")
         service.nl_engine.parse_query = MagicMock(return_value=mock_intent)
         service.nl_engine._intent_to_plan = MagicMock(return_value=mock_plan)
 

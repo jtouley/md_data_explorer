@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from clinical_analytics.core.column_parser import parse_column_name
-from clinical_analytics.core.query_plan import CohortStep
+from clinical_analytics.core.query_plan import STATISTIC_WORDS, CohortStep, Statistic
 
 _OVER = re.compile(r"\b(?:over|above|older than)\s+(\d+(?:\.\d+)?)\b", re.IGNORECASE)
 # Comparisons: "<direction> N" and "N <direction>" ("65+", "65 or older", "at least 65").
@@ -140,6 +140,21 @@ class PeelResult:
     locked_metric: str | None = None
     locked_group: str | None = None
     force_intent: str | None = None
+    statistic: Statistic | None = None
+
+
+def asked_statistic(text: str, median_is_cutoff: bool = False) -> Statistic | None:
+    """The statistic the question's first statistic word asks for ("median age" -> median).
+
+    "median" in a cutoff ("older than the median age") limits the patients; it is not the
+    statistic asked for, so it is skipped when ``median_is_cutoff``.
+    """
+    for word in re.findall(r"[a-z]+", text.lower()):
+        if word == "median" and median_is_cutoff:
+            continue
+        if word in STATISTIC_WORDS:
+            return STATISTIC_WORDS[word]
+    return None
 
 
 def peel_cohort(
@@ -330,6 +345,7 @@ def peel_cohort(
     return PeelResult(
         residual=residual,
         steps=ordered,
+        statistic=asked_statistic(lowered, median_is_cutoff=median_cut is not None),
         proportion_column=proportion_column,
         proportion_value=proportion_value,
         rate_column=rate_column,
@@ -347,6 +363,10 @@ def attach_cohort(intent: Any, peeled: PeelResult) -> Any:
     residual did not parse, an intent is built at confidence 0.0, so the execution gate
     holds it for confirmation instead of running it.
     """
+    if intent is not None and peeled.statistic:
+        # The asked statistic travels with the plan, so execution computes it and word
+        # accounting can check it; a plan without it leaves the statistic word unused.
+        intent.statistic = peeled.statistic
     has_structure = bool(peeled.steps or peeled.proportion_column or peeled.rate_column or peeled.force_intent)
     if not has_structure:
         return intent
@@ -359,6 +379,8 @@ def attach_cohort(intent: Any, peeled: PeelResult) -> Any:
             parsing_tier="pattern_match",
         )
     intent.cohort_steps.extend(peeled.steps)
+    if peeled.statistic:
+        intent.statistic = peeled.statistic
     if peeled.proportion_column:
         intent.proportion_column = peeled.proportion_column
         intent.proportion_value = peeled.proportion_value
